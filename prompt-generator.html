@@ -81,6 +81,14 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sa
 .output-meta-item { font-size: 12px; color: var(--text-secondary); }
 .output-meta-item strong { color: var(--text); }
 .output-box { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; font-size: 13px; line-height: 1.7; white-space: pre-wrap; word-break: break-all; max-height: 500px; overflow-y: auto; font-family: "SF Mono", "Fira Code", monospace; }
+.output-box-wrapper { position: relative; }
+.output-edit-btn { position: absolute; top: 8px; right: 8px; background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 4px 10px; font-size: 12px; cursor: pointer; color: var(--text-secondary); z-index: 2; display: flex; align-items: center; gap: 4px; transition: all .2s; }
+.output-edit-btn:hover { background: var(--primary-light); color: var(--primary); border-color: var(--primary); }
+.output-edit-btn.editing { background: var(--success-light); color: var(--success); border-color: var(--success); }
+.output-textarea { width: 100%; min-height: 300px; max-height: 500px; background: var(--bg); border: 2px solid var(--primary); border-radius: var(--radius); padding: 16px; font-size: 13px; line-height: 1.7; white-space: pre-wrap; word-break: break-all; overflow-y: auto; font-family: "SF Mono", "Fira Code", monospace; color: var(--text); resize: vertical; outline: none; }
+.output-edit-hint { font-size: 11px; color: var(--success); margin-top: 6px; display: none; }
+.output-edit-hint.show { display: block; }
+
 .copy-toast { position: fixed; top: 70px; right: 20px; background: var(--success); color: #fff; padding: 10px 20px; border-radius: var(--radius); font-size: 13px; opacity: 0; transition: opacity .3s; z-index: 999; }
 .copy-toast.show { opacity: 1; }
 .batch-panel { background: var(--warning-light); border: 1px solid var(--warning); border-radius: var(--radius); padding: 16px; margin-bottom: 16px; }
@@ -190,7 +198,12 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sa
     <div class="card" id="outputCard" style="display:none">
       <div class="card-title">③ 生成结果</div>
       <div class="output-meta" id="outputMeta"></div>
-      <div class="output-box" id="outputBox"></div>
+      <div class="output-box-wrapper">
+        <button class="output-edit-btn" id="editToggle" onclick="toggleEdit()" title="编辑提示词">✏️ 编辑</button>
+        <div class="output-box" id="outputBox"></div>
+        <textarea class="output-textarea" id="outputTextarea" style="display:none"></textarea>
+        <div class="output-edit-hint" id="editHint">📝 编辑中 — 修改后可直接复制或下载</div>
+      </div>
       <div class="btn-group">
         <button class="btn btn-success btn-sm" onclick="copyPrompt()"> 一键复制</button>
         <button class="btn btn-outline btn-sm" onclick="downloadPrompt()">📥 下载 .md</button>
@@ -431,7 +444,7 @@ function generatePrompt() {
 }
 
 function copyPrompt() {
-  const text = document.getElementById('outputBox').textContent;
+  const text = isEditing ? document.getElementById('outputTextarea').value : document.getElementById('outputBox').textContent;
   navigator.clipboard.writeText(text).then(function() {
     const toast = document.getElementById('copyToast');
     toast.classList.add('show');
@@ -441,7 +454,7 @@ function copyPrompt() {
 
 function downloadPrompt() {
   const name = document.getElementById('kpName').value.trim() || 'prompt';
-  const text = document.getElementById('outputBox').textContent;
+  const text = isEditing ? document.getElementById('outputTextarea').value : document.getElementById('outputBox').textContent;
   const blob = new Blob([text], { type: 'text/markdown' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -456,6 +469,8 @@ function resetForm() {
   });
   document.getElementById('kpType').value = '';
   document.getElementById('kpTargetDb').value = '';
+  // Reset edit mode if active
+  if (isEditing) { toggleEdit(); }
   document.getElementById('outputCard').style.display = 'none';
   document.querySelectorAll('.tree-kp').forEach(function(el) { el.classList.remove('active'); });
 }
@@ -550,6 +565,37 @@ function batchGenerate() {
     '<div class="output-meta-item">💡 建议: <strong>逐条使用效果更佳</strong></div>';
   document.getElementById('outputBox').textContent = combined;
   document.getElementById('outputCard').scrollIntoView({ behavior: 'smooth' });
+}
+
+
+let isEditing = false;
+
+function toggleEdit() {
+  const box = document.getElementById('outputBox');
+  const textarea = document.getElementById('outputTextarea');
+  const btn = document.getElementById('editToggle');
+  const hint = document.getElementById('editHint');
+
+  if (!isEditing) {
+    // Enter edit mode
+    textarea.value = box.textContent;
+    box.style.display = 'none';
+    textarea.style.display = '';
+    btn.innerHTML = '✅ 完成';
+    btn.classList.add('editing');
+    hint.classList.add('show');
+    textarea.focus();
+    isEditing = true;
+  } else {
+    // Exit edit mode
+    box.textContent = textarea.value;
+    textarea.style.display = 'none';
+    box.style.display = '';
+    btn.innerHTML = '✏️ 编辑';
+    btn.classList.remove('editing');
+    hint.classList.remove('show');
+    isEditing = false;
+  }
 }
 
 function toggleTheme() {
