@@ -51,6 +51,24 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sa
 .tree-kp:hover { background: var(--primary-light); color: var(--primary); }
 .tree-kp.active { background: var(--primary-light); color: var(--primary); border-left-color: var(--primary); font-weight: 500; }
 .tree-kp .batch-cb { margin-right: 6px; }
+
+.tree-domain { padding: 0; border-bottom: 1px solid var(--border); }
+.tree-domain-title { padding: 10px 14px; font-size: 14px; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 8px; user-select: none; }
+.tree-domain-title.db { color: #2563eb; }
+.tree-domain-title.biz { color: #7c3aed; }
+.tree-domain-title:hover { background: var(--primary-light); }
+.tree-domain-title .arrow { transition: transform .2s; font-size: 11px; }
+.tree-domain-title .arrow.open { transform: rotate(90deg); }
+.tree-domain-content { display: none; }
+.tree-domain-content.show { display: block; }
+.tree-domain-divider { height: 1px; background: var(--border); margin: 4px 0; }
+.tree-subdomain-title { padding: 7px 14px 7px 20px; font-size: 12.5px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 6px; color: var(--accent); user-select: none; }
+.tree-subdomain-title:hover { background: var(--accent-light); }
+.tree-subdomain-title .arrow { transition: transform .2s; font-size: 9px; }
+.tree-subdomain-title .arrow.open { transform: rotate(90deg); }
+.tree-subdomain-content { display: none; }
+.tree-subdomain-content.show { display: block; }
+.tree-placeholder { padding: 6px 14px 6px 36px; font-size: 12px; color: var(--text-secondary); font-style: italic; }
 .main { overflow-y: auto; padding: 24px; }
 .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; margin-bottom: 16px; box-shadow: var(--shadow); }
 .card-title { font-size: 15px; font-weight: 600; margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
@@ -232,6 +250,63 @@ function detectType(name, desc) {
   return "通用基础";
 }
 
+
+const BIZ_OUTLINE = [
+  {"domain": "兼容性领域", "icon": "🔄", "chapters": [
+    {"name": "1. DDL 兼容性", "kps": [
+      {"id": "C1.1", "name": "数据类型映射", "desc": "字符串类型(CHAR/VARCHAR2/NCHAR/NVARCHAR2)、数值类型(NUMBER)、日期时间(DATE/TIMESTAMP)、大对象(CLOB/BLOB)、布尔类型、自定义类型与集合的映射规则"},
+      {"id": "C1.2", "name": "表定义", "desc": "默认值中使用序列、虚拟列/计算列、临时表、表空间/存储子句、只读表的兼容性差异"},
+      {"id": "C1.3", "name": "约束", "desc": "外键匹配规则、检查约束中使用函数、约束的禁用/启用语法、约束命名与延迟检查"},
+      {"id": "C1.4", "name": "索引", "desc": "索引类型(B-tree/位图/函数/部分/全文)、索引选项、唯一索引与唯一约束的区别"},
+      {"id": "C1.5", "name": "视图", "desc": "可更新视图限制、物化视图刷新方式、带ORDER BY的视图"},
+      {"id": "C1.6", "name": "序列与自增列", "desc": "CREATE SEQUENCE与IDENTITY列映射、CURRVAL/NEXTVAL替代方案、序列参数差异"},
+      {"id": "C1.7", "name": "同义词", "desc": "公有/私有同义词在无此特性时的替代方案(视图、别名、search_path等)"},
+      {"id": "C1.8", "name": "分区表", "desc": "分区策略(范围/列表/哈希/复合)、分区操作、子分区模板和间隔分区"},
+      {"id": "C1.9", "name": "其他对象", "desc": "外部表定义差异、注释对象(COMMENT ON)语法"}
+    ]},
+    {"name": "2. DML 兼容性", "kps": [
+      {"id": "C2.1", "name": "INSERT", "desc": "多表插入(INSERT ALL/FIRST)、直接路径插入提示、INSERT...RETURNING、带子查询的插入"},
+      {"id": "C2.2", "name": "UPDATE/DELETE", "desc": "多表连接更新/删除语法、RETURNING子句、TRUNCATE TABLE行为差异"},
+      {"id": "C2.3", "name": "MERGE/UPSERT", "desc": "MERGE INTO与INSERT...ON CONFLICT/REPLACE映射、条件匹配差异、DELETE子句支持度"},
+      {"id": "C2.4", "name": "锁与并发", "desc": "SELECT...FOR UPDATE语法选项(WAIT/NOWAIT/SKIP LOCKED)、表级锁语法"}
+    ]},
+    {"name": "3. 查询兼容性", "kps": [
+      {"id": "C3.1", "name": "SELECT 子句", "desc": "行限制(ROWNUM/FETCH FIRST/TOP/LIMIT)、别名使用、虚表DUAL、不带FROM的SELECT"},
+      {"id": "C3.2", "name": "连接", "desc": "旧式外连接(+)、CROSS/NATURAL JOIN、PARTITION BY外连接"},
+      {"id": "C3.3", "name": "子查询", "desc": "多列子查询、相关子查询、WITH子句递归"},
+      {"id": "C3.4", "name": "集合操作", "desc": "MINUS→EXCEPT、INTERSECT行为差异、ORDER BY位置"},
+      {"id": "C3.5", "name": "公用表表达式(CTE)", "desc": "WITH RECURSIVE语法、物化/非物化提示、CTE在DML中的使用"},
+      {"id": "C3.6", "name": "层次查询", "desc": "CONNECT BY PRIOR/START WITH→递归CTE改写、LEVEL伪列、SYS_CONNECT_BY_PATH"}
+    ]},
+    {"name": "4. 函数与表达式兼容性", "kps": [
+      {"id": "C4.1", "name": "单行函数", "desc": "字符串函数、数值函数、日期函数、转换函数的差异与替代"},
+      {"id": "C4.2", "name": "聚合函数", "desc": "LISTAGG/STRING_AGG、GROUP_CONCAT、聚合函数过滤(FILTER子句)"},
+      {"id": "C4.3", "name": "分析函数(窗口函数)", "desc": "窗口定义差异、RANGE/ROWS子句、LAG/LEAD/NTILE等函数兼容性"},
+      {"id": "C4.4", "name": "类型转换与格式化", "desc": "TO_CHAR/TO_DATE/TO_NUMBER格式模型、隐式类型转换规则、CAST/CONVERT差异"},
+      {"id": "C4.5", "name": "正则表达式", "desc": "REGEXP_LIKE/REGEXP_SUBSTR等正则函数、正则语法差异"},
+      {"id": "C4.6", "name": "条件表达式", "desc": "DECODE→CASE、NVL/NVL2/COALESCE、NULLIF、空值处理差异"}
+    ]},
+    {"name": "5. PL/SQL 兼容性", "kps": [
+      {"id": "C5.1", "name": "包/过程/函数结构", "desc": "CREATE PACKAGE/PACKAGE BODY、参数模式(IN/OUT/IN OUT)、默认值、重载"},
+      {"id": "C5.2", "name": "异常处理", "desc": "预定义异常、自定义异常、EXCEPTION_INIT pragma、异常传播规则"},
+      {"id": "C5.3", "name": "游标", "desc": "显式/隐式游标、游标FOR循环、REF CURSOR、游标表达式(SETECURSOR)"},
+      {"id": "C5.4", "name": "动态SQL", "desc": "EXECUTE IMMEDIATE、DBMS_SQL动态执行、绑定变量、动态游标"},
+      {"id": "C5.5", "name": "触发器", "desc": "行级/语句级触发器、INSTEAD OF触发器、系统事件触发器、触发器顺序(CONTROLS)"},
+      {"id": "C5.6", "name": "内置系统包", "desc": "DBMS_OUTPUT/DBMS_LOCK/DBMS_RANDOM等40+内置包的迁移替代方案"},
+      {"id": "C5.7", "name": "条件编译", "desc": "$IF...$END条件编译块、$ERROR/$WARNING指令"}
+    ]},
+    {"name": "6. 工具与接口兼容性", "kps": [
+      {"id": "C6.1", "name": "客户端命令", "desc": "SQL*Plus命令(/、SET、VARIABLE)→psql \命令、格式化输出、错误处理"},
+      {"id": "C6.2", "name": "导出/导入工具", "desc": "expdp/impdp→pg_dump/pg_restore/mysqldump、跨版本迁移配置"},
+      {"id": "C6.3", "name": "数据库链接", "desc": "@dblink→外部数据包装器(FDW)、跨库查询性能与事务差异"},
+      {"id": "C6.4", "name": "加载与卸载", "desc": "SQL*Loader→COPY命令/\copy/LOAD DATA、外部表加载数据"}
+    ]}
+  ]},
+  {"domain": "性能优化", "icon": "⚡", "placeholder": "待建设"},
+  {"domain": "集群和高可用", "icon": "🔗", "placeholder": "待建设"},
+  {"domain": "培训领域", "icon": "📚", "placeholder": "待建设"}
+];
+
 function getSkillFile(type) {
   const map = {
     "通用基础":"skills/00-通用生成-skill.md",
@@ -328,17 +403,24 @@ function initTree() {
   const container = document.getElementById('treeContainer');
   const partSelect = document.getElementById('kpPart');
   let html = '';
+  
+  // === Domain 1: 数据库 ===
+  html += '<div class="tree-domain">';
+  html += '<div class="tree-domain-title db" onclick="toggleDomain(\'db\')">';
+  html += '<span class="arrow open" id="arrow-domain-db">▶</span> 🗄️ 数据库</div>';
+  html += '<div class="tree-domain-content show" id="domain-content-db">';
+  
   OUTLINE.forEach((part, pi) => {
-    html += '<div class="tree-part" data-part="' + pi + '">';
-    html += '<div class="tree-part-title" onclick="togglePart(' + pi + ')">';
-    html += '<span class="arrow" id="arrow-p' + pi + '">▶</span> ' + part.part + ' <span style="font-weight:normal;font-size:11px;color:var(--text-secondary)">' + part.level + '</span></div>';
-    html += '<div class="tree-chapter" id="chapters-' + pi + '">';
+    html += '<div class="tree-part" data-part="db-' + pi + '">';
+    html += '<div class="tree-part-title" onclick="togglePart(\'db-' + pi + '\')">';
+    html += '<span class="arrow" id="arrow-p-db-' + pi + '">▶</span> ' + part.part + ' <span style="font-weight:normal;font-size:11px;color:var(--text-secondary)">' + part.level + '</span></div>';
+    html += '<div class="tree-chapter" id="chapters-db-' + pi + '">';
     part.chapters.forEach((ch, ci) => {
-      html += '<div class="tree-chapter-title" onclick="toggleChapter(' + pi + ',' + ci + ')">';
-      html += '<span class="arrow" id="arrow-c' + pi + '-' + ci + '">▶</span> ' + ch.name + '</div>';
-      html += '<div class="tree-kps" id="kps-' + pi + '-' + ci + '">';
+      html += '<div class="tree-chapter-title" onclick="toggleChapter(\'db-' + pi + '-' + ci + '\')">';
+      html += '<span class="arrow" id="arrow-c-db-' + pi + '-' + ci + '">▶</span> ' + ch.name + '</div>';
+      html += '<div class="tree-kps" id="kps-db-' + pi + '-' + ci + '">';
       ch.kps.forEach((kp, ki) => {
-        const kpId = pi + '-' + ci + '-' + ki;
+        const kpId = 'db-' + pi + '-' + ci + '-' + ki;
         html += '<div class="tree-kp" id="kp-' + kpId + '" onclick="selectKp(\'' + kpId + '\')" data-name="' + kp.name + '" data-desc="' + kp.desc + '">';
         html += '<input type="checkbox" class="batch-cb" style="display:none" onclick="event.stopPropagation();toggleBatchKp(\'' + kpId + '\')" id="cb-' + kpId + '">';
         html += kp.id + ' ' + kp.name + '</div>';
@@ -348,57 +430,151 @@ function initTree() {
     html += '</div></div>';
     partSelect.innerHTML += '<option value="' + part.part + '">' + part.part + '</option>';
   });
+  
+  html += '</div></div>';
+  
+  // === Divider ===
+  html += '<div class="tree-domain-divider"></div>';
+  
+  // === Domain 2: 业务领域 ===
+  html += '<div class="tree-domain">';
+  html += '<div class="tree-domain-title biz" onclick="toggleDomain(\'biz\')">';
+  html += '<span class="arrow open" id="arrow-domain-biz">▶</span> 💼 业务领域</div>';
+  html += '<div class="tree-domain-content show" id="domain-content-biz">';
+  
+  BIZ_OUTLINE.forEach((subdomain, si) => {
+    html += '<div class="tree-part" data-subdomain="biz-' + si + '">';
+    html += '<div class="tree-subdomain-title" onclick="toggleSubdomain(\'biz-' + si + '\')">';
+    html += '<span class="arrow" id="arrow-sd-biz-' + si + '">▶</span> ' + subdomain.icon + ' ' + subdomain.domain;
+    if (subdomain.placeholder) {
+      html += ' <span style="font-weight:normal;font-size:10px;color:var(--text-secondary);margin-left:auto">' + subdomain.placeholder + '</span>';
+    }
+    html += '</div>';
+    
+    if (subdomain.chapters) {
+      html += '<div class="tree-subdomain-content" id="subdomain-content-biz-' + si + '">';
+      subdomain.chapters.forEach((ch, ci) => {
+        html += '<div class="tree-chapter-title" onclick="toggleChapter(\'biz-' + si + '-' + ci + '\')" style="padding-left:36px">';
+        html += '<span class="arrow" id="arrow-c-biz-' + si + '-' + ci + '">▶</span> ' + ch.name + '</div>';
+        html += '<div class="tree-kps" id="kps-biz-' + si + '-' + ci + '">';
+        ch.kps.forEach((kp, ki) => {
+          const kpId = 'biz-' + si + '-' + ci + '-' + ki;
+          html += '<div class="tree-kp" id="kp-' + kpId + '" onclick="selectKp(\'' + kpId + '\')" data-name="' + kp.name + '" data-desc="' + kp.desc + '" style="padding-left:56px">';
+          html += '<input type="checkbox" class="batch-cb" style="display:none" onclick="event.stopPropagation();toggleBatchKp(\'' + kpId + '\')" id="cb-' + kpId + '">';
+          html += kp.id + ' ' + kp.name + '</div>';
+        });
+        html += '</div>';
+      });
+      html += '</div>';
+    }
+    
+    html += '</div>';
+  });
+  
+  html += '</div></div>';
+  
   container.innerHTML = html;
 }
 
-function togglePart(pi) {
-  const el = document.getElementById('chapters-' + pi);
-  const arrow = document.getElementById('arrow-p' + pi);
+function togglePart(partId) {
+  const el = document.getElementById('chapters-' + partId);
+  const arrow = document.getElementById('arrow-p-' + partId);
   el.classList.toggle('show');
   arrow.classList.toggle('open');
 }
 
-function toggleChapter(pi, ci) {
-  const el = document.getElementById('kps-' + pi + '-' + ci);
-  const arrow = document.getElementById('arrow-c' + pi + '-' + ci);
+
+function toggleDomain(domain) {
+  const el = document.getElementById('domain-content-' + domain);
+  const arrow = document.getElementById('arrow-domain-' + domain);
+  el.classList.toggle('show');
+  arrow.classList.toggle('open');
+}
+
+function toggleSubdomain(subdomainId) {
+  const el = document.getElementById('subdomain-content-' + subdomainId);
+  const arrow = document.getElementById('arrow-sd-' + subdomainId);
+  if (el) {
+    el.classList.toggle('show');
+    arrow.classList.toggle('open');
+  }
+}
+
+function toggleChapter(chapterId) {
+  const el = document.getElementById('kps-' + chapterId);
+  const arrow = document.getElementById('arrow-c-' + chapterId);
   el.classList.toggle('show');
   arrow.classList.toggle('open');
 }
 
 function selectKp(kpId) {
   const parts = kpId.split('-');
-  const pi = parseInt(parts[0]);
-  const ci = parseInt(parts[1]);
-  const ki = parseInt(parts[2]);
-  const part = OUTLINE[pi];
-  const chapter = part.chapters[ci];
-  const kp = chapter.kps[ki];
+  const domain = parts[0]; // 'db' or 'biz'
+  const pi = parseInt(parts[1]);
+  const ci = parseInt(parts[2]);
+  const ki = parseInt(parts[3]);
+  
+  let part, chapter, kp;
+  
+  if (domain === 'db') {
+    part = OUTLINE[pi];
+    chapter = part.chapters[ci];
+    kp = chapter.kps[ki];
+    document.getElementById('kpPart').value = part.part;
+    document.getElementById('kpLevel').value = part.level;
+  } else if (domain === 'biz') {
+    const subdomain = BIZ_OUTLINE[pi];
+    chapter = subdomain.chapters[ci];
+    kp = chapter.kps[ki];
+    document.getElementById('kpPart').value = '业务领域 - ' + subdomain.domain;
+    document.getElementById('kpLevel').value = '★★';
+  }
+  
   document.getElementById('kpName').value = kp.name;
   document.getElementById('kpDesc').value = kp.desc;
-  document.getElementById('kpPart').value = part.part;
+  
   const chSelect = document.getElementById('kpChapter');
   chSelect.innerHTML = '';
-  part.chapters.forEach(ch => {
+  const chapters = domain === 'db' ? OUTLINE[pi].chapters : BIZ_OUTLINE[pi].chapters;
+  chapters.forEach(ch => {
     chSelect.innerHTML += '<option value="' + ch.name + '"' + (ch.name === chapter.name ? ' selected' : '') + '>' + ch.name + '</option>';
   });
+  
   const detected = detectType(kp.name, kp.desc);
   document.getElementById('kpType').value = detected;
-  document.getElementById('kpLevel').value = part.level;
+  
   document.querySelectorAll('.tree-kp').forEach(el => el.classList.remove('active'));
   document.getElementById('kp-' + kpId).classList.add('active');
-  if (detected === '兼容性差异') {
+  
+  if (detected === '兼容性差异' || domain === 'biz') {
     document.getElementById('kpTargetDb').value = 'Oracle';
   }
 }
 
 document.getElementById('kpPart').addEventListener('change', function() {
-  const part = OUTLINE.find(p => p.part === this.value);
-  if (!part) return;
+  const val = this.value;
   const chSelect = document.getElementById('kpChapter');
   chSelect.innerHTML = '';
-  part.chapters.forEach(ch => {
-    chSelect.innerHTML += '<option value="' + ch.name + '">' + ch.name + '</option>';
-  });
+  
+  // Check if it's a database part
+  const dbPart = OUTLINE.find(p => p.part === val);
+  if (dbPart) {
+    dbPart.chapters.forEach(ch => {
+      chSelect.innerHTML += '<option value="' + ch.name + '">' + ch.name + '</option>';
+    });
+    return;
+  }
+  
+  // Check if it's a business domain part (format: "业务领域 - xxx")
+  if (val.startsWith('业务领域 - ')) {
+    const domainName = val.replace('业务领域 - ', '');
+    const bizDomain = BIZ_OUTLINE.find(d => d.domain === domainName);
+    if (bizDomain && bizDomain.chapters) {
+      bizDomain.chapters.forEach(ch => {
+        chSelect.innerHTML += '<option value="' + ch.name + '">' + ch.name + '</option>';
+      });
+    }
+  }
 });
 
 function filterTree(query) {
@@ -410,10 +586,15 @@ function filterTree(query) {
     el.style.display = match ? '' : 'none';
   });
   if (q) {
+    // Expand all parts
     document.querySelectorAll('.tree-part').forEach(el => {
-      const pi = el.dataset.part;
-      document.getElementById('chapters-' + pi).classList.add('show');
-      document.getElementById('arrow-p' + pi).classList.add('open');
+      const partId = el.dataset.part || el.dataset.subdomain;
+      if (partId) {
+        const chaptersEl = document.getElementById('chapters-' + partId) || document.getElementById('subdomain-content-' + partId);
+        const arrowEl = document.getElementById('arrow-p-' + partId) || document.getElementById('arrow-sd-' + partId);
+        if (chaptersEl) chaptersEl.classList.add('show');
+        if (arrowEl) arrowEl.classList.add('open');
+      }
     });
   }
 }
@@ -534,7 +715,14 @@ function updateBatchList() {
   let html = '<p style="font-size:12px;margin:8px 0">已选择 <strong>' + selectedKps.size + '</strong> 个知识点</p>';
   selectedKps.forEach(function(kpId) {
     const p = kpId.split('-');
-    const kp = OUTLINE[parseInt(p[0])].chapters[parseInt(p[1])].kps[parseInt(p[2])];
+    const domain = p[0];
+    const pi = parseInt(p[1]), ci = parseInt(p[2]), ki = parseInt(p[3]);
+    let kp;
+    if (domain === 'db') {
+      kp = OUTLINE[pi].chapters[ci].kps[ki];
+    } else {
+      kp = BIZ_OUTLINE[pi].chapters[ci].kps[ki];
+    }
     html += '<div class="batch-item"><span>✅ ' + kp.id + ' ' + kp.name + '</span></div>';
   });
   list.innerHTML = html;
@@ -548,12 +736,22 @@ function batchGenerate() {
   selectedKps.forEach(function(kpId) {
     idx++;
     const p = kpId.split('-');
-    const pi = parseInt(p[0]), ci = parseInt(p[1]), ki = parseInt(p[2]);
-    const part = OUTLINE[pi];
-    const chapter = part.chapters[ci];
-    const kp = chapter.kps[ki];
+    const domain = p[0];
+    const pi = parseInt(p[1]), ci = parseInt(p[2]), ki = parseInt(p[3]);
+    let partName, chapter, kp;
+    if (domain === 'db') {
+      const part = OUTLINE[pi];
+      chapter = part.chapters[ci];
+      kp = chapter.kps[ki];
+      partName = part.part;
+    } else {
+      const subdomain = BIZ_OUTLINE[pi];
+      chapter = subdomain.chapters[ci];
+      kp = chapter.kps[ki];
+      partName = '业务领域 - ' + subdomain.domain;
+    }
     const type = detectType(kp.name, kp.desc);
-    const data = { name: kp.name, part: part.part, chapter: chapter.name, desc: kp.desc, type: type, targetDb: type === '兼容性差异' ? 'Oracle' : '', refMcp: '', refDesign: '', refOracle: '', refTest: '' };
+    const data = { name: kp.name, part: partName, chapter: chapter.name, desc: kp.desc, type: type, targetDb: type === '兼容性差异' ? 'Oracle' : '', refMcp: '', refDesign: '', refOracle: '', refTest: '' };
     const result = assemblePrompt(data);
     combined += '\n## ' + idx + '. ' + kp.name + '（' + type + '）\n\n';
     combined += result.prompt;
