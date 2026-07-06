@@ -68,6 +68,14 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sa
 .tree-subdomain-title .arrow.open { transform: rotate(90deg); }
 .tree-subdomain-content { display: none; }
 .tree-subdomain-content.show { display: block; }
+
+.tree-section-title { padding: 6px 14px 6px 48px; font-size: 12px; font-weight: 500; cursor: pointer; display: flex; align-items: center; gap: 6px; color: var(--text); user-select: none; }
+.tree-section-title:hover { background: var(--primary-light); }
+.tree-section-title .arrow { transition: transform .2s; font-size: 9px; }
+.tree-section-title .arrow.open { transform: rotate(90deg); }
+.tree-section-kps { display: none; }
+.tree-section-kps.show { display: block; }
+
 .tree-placeholder { padding: 6px 14px 6px 36px; font-size: 12px; color: var(--text-secondary); font-style: italic; }
 .main { overflow-y: auto; padding: 24px; }
 .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; margin-bottom: 16px; box-shadow: var(--shadow); }
@@ -253,65 +261,260 @@ function detectType(name, desc) {
 
 const BIZ_OUTLINE = [
   {"domain": "兼容性领域", "icon": "🔄", "chapters": [
-    {"name": "1. DDL 兼容性", "kps": [
-      {"id": "C1.1", "name": "数据类型映射", "desc": "字符串类型：CHAR/VARCHAR2/NCHAR/NVARCHAR2 → 目标库等价类型（含长度语义 byte/char）；数值类型：NUMBER(p,s) → INTEGER/DECIMAL/NUMERIC 等；日期时间：DATE（含时间）→ TIMESTAMP/DATETIME，TIMESTAMP WITH TIME ZONE 等；大对象：CLOB/BLOB/NCLOB → 对应类型；布尔类型：BOOLEAN（PL/SQL 中）→ 目标库模拟（TINYINT、BOOLEAN 支持情况）；自定义类型与集合：对象类型、VARRAY、嵌套表 → 目标库替代（JSON/数组/自定义类型）"},
-      {"id": "C1.2", "name": "表定义", "desc": "默认值中使用序列：col NUMBER DEFAULT seq.NEXTVAL → 自增列/IDENTITY；虚拟列/计算列：col AS (expression) → 目标库生成列语法；临时表：GLOBAL TEMPORARY TABLE → 局部/全局临时表差异（数据可见性、事务级/会话级）；表空间/存储子句：TABLESPACE、STORAGE 等 → 忽略或映射到目标库对应设置；只读表：ALTER TABLE ... READ ONLY → 目标库对应权限或特性"},
-      {"id": "C1.3", "name": "约束", "desc": "外键匹配规则：ON DELETE SET NULL/CASCADE 等行为差异；检查约束中使用函数：源库允许函数 → 目标库限制（如不可使用 SYSDATE）；约束的禁用/启用语法：ENABLE/DISABLE NOVALIDATE → 目标库替代方式；约束命名与延迟检查：DEFERRABLE INITIALLY DEFERRED 等"},
-      {"id": "C1.4", "name": "索引", "desc": "索引类型：B-tree、位图、函数索引、部分索引、全文索引的语法差异；索引选项：COMPUTE STATISTICS、TABLESPACE 等非标准子句；唯一索引与唯一约束的区别对待"},
-      {"id": "C1.5", "name": "视图", "desc": "可更新视图的限制差异（WITH CHECK OPTION 行为）；物化视图：刷新方式（FAST/COMPLETE/FORCE）、日志、ON DEMAND/COMMIT；带 ORDER BY 的视图（部分目标库不支持）"},
-      {"id": "C1.6", "name": "序列与自增列", "desc": "CREATE SEQUENCE 与 IDENTITY 列映射；CURRVAL/NEXTVAL 的替代方案（LAST_INSERT_ID() 等）；序列缓存/周期等参数差异"},
-      {"id": "C1.7", "name": "同义词", "desc": "公有/私有同义词 → 无此特性时的替代（视图、别名、search_path 等）"},
-      {"id": "C1.8", "name": "分区表", "desc": "分区策略：范围、列表、哈希、复合分区语法；分区操作：ADD/DROP/TRUNCATE/MERGE/SPLIT PARTITION；子分区模板和间隔分区的支持度"},
-      {"id": "C1.9", "name": "其他对象", "desc": "外部表定义差异；注释对象：COMMENT ON TABLE/COLUMN → 目标库对应语法"}
+    {"name": "1. DDL 兼容性", "sections": [
+      {"id": "C1.1", "name": "数据类型映射", "kps": [
+        {"id": "C1.1.1", "name": "字符串类型", "desc": "`CHAR` / `VARCHAR2` / `NCHAR` / `NVARCHAR2` → 目标库等价类型（含长度语义 byte/char）"},
+        {"id": "C1.1.2", "name": "数值类型", "desc": "`NUMBER(p,s)` → `INTEGER` / `DECIMAL` / `NUMERIC` 等"},
+        {"id": "C1.1.3", "name": "日期时间", "desc": "`DATE`（含时间） → `TIMESTAMP` / `DATETIME`；`TIMESTAMP WITH TIME ZONE` 等"},
+        {"id": "C1.1.4", "name": "大对象", "desc": "`CLOB` / `BLOB` / `NCLOB` → 对应类型"},
+        {"id": "C1.1.5", "name": "布尔类型", "desc": "`BOOLEAN`（PL/SQL 中）→ 目标库模拟（`TINYINT`、`BOOLEAN` 支持情况）"},
+        {"id": "C1.1.6", "name": "自定义类型与集合", "desc": "对象类型、`VARRAY`、嵌套表 → 目标库替代（JSON/数组/自定义类型）"},
+      ]},
+      {"id": "C1.2", "name": "表定义", "kps": [
+        {"id": "C1.2.1", "name": "默认值中使用序列", "desc": "`col NUMBER DEFAULT seq.NEXTVAL` → 自增列/`IDENTITY`"},
+        {"id": "C1.2.2", "name": "虚拟列/计算列", "desc": "`col AS (expression)` → 目标库生成列语法"},
+        {"id": "C1.2.3", "name": "临时表", "desc": "`GLOBAL TEMPORARY TABLE` → 局部/全局临时表差异（数据可见性、事务级/会话级）"},
+        {"id": "C1.2.4", "name": "表空间/存储子句", "desc": "`TABLESPACE`、`STORAGE` 等 → 忽略或映射到目标库对应设置"},
+        {"id": "C1.2.5", "name": "只读表", "desc": "`ALTER TABLE ... READ ONLY` → 目标库对应权限或特性"},
+      ]},
+      {"id": "C1.3", "name": "约束", "kps": [
+        {"id": "C1.3.1", "name": "外键匹配规则", "desc": "`ON DELETE SET NULL/CASCADE` 等行为差异"},
+        {"id": "C1.3.2", "name": "检查约束中使用函数", "desc": "源库允许函数 → 目标库限制（如不可使用 `SYSDATE`）"},
+        {"id": "C1.3.3", "name": "约束的禁用/启用语法", "desc": "`ENABLE/DISABLE NOVALIDATE` → 目标库替代方式"},
+        {"id": "C1.3.4", "name": "约束命名与延迟检查", "desc": "`DEFERRABLE INITIALLY DEFERRED` 等"},
+      ]},
+      {"id": "C1.4", "name": "索引", "kps": [
+        {"id": "C1.4.1", "name": "索引类型", "desc": "B-tree、位图、函数索引、部分索引、全文索引的语法差异"},
+        {"id": "C1.4.2", "name": "索引选项", "desc": "`COMPUTE STATISTICS`、`TABLESPACE` 等非标准子句"},
+        {"id": "C1.4.3", "name": "唯一索引与唯一约束的区别对待", "desc": "唯一索引与唯一约束的区别对待"},
+      ]},
+      {"id": "C1.5", "name": "视图", "kps": [
+        {"id": "C1.5.1", "name": "可更新视图的限制差异（`WITH CHECK OPTION`...", "desc": "可更新视图的限制差异（`WITH CHECK OPTION` 行为）"},
+        {"id": "C1.5.2", "name": "物化视图", "desc": "刷新方式（`FAST`/`COMPLETE`/`FORCE`）、日志、`ON DEMAND/COMMIT`"},
+        {"id": "C1.5.3", "name": "带 `ORDER BY` 的视图（部分目标库不支持）", "desc": "带 `ORDER BY` 的视图（部分目标库不支持）"},
+      ]},
+      {"id": "C1.6", "name": "序列与自增列", "kps": [
+        {"id": "C1.6.1", "name": "`CREATE SEQUENCE` 与 `IDENTITY`...", "desc": "`CREATE SEQUENCE` 与 `IDENTITY` 列映射"},
+        {"id": "C1.6.2", "name": "`CURRVAL` / `NEXTVAL` 的替代方案（`L...", "desc": "`CURRVAL` / `NEXTVAL` 的替代方案（`LAST_INSERT_ID()` 等）"},
+        {"id": "C1.6.3", "name": "序列缓存/周期等参数差异", "desc": "序列缓存/周期等参数差异"},
+      ]},
+      {"id": "C1.7", "name": "同义词", "kps": [
+        {"id": "C1.7.1", "name": "公有/私有同义词 → 无此特性时的替代（视图、别名、`sea...", "desc": "公有/私有同义词 → 无此特性时的替代（视图、别名、`search_path` 等）"},
+      ]},
+      {"id": "C1.8", "name": "分区表", "kps": [
+        {"id": "C1.8.1", "name": "分区策略", "desc": "范围、列表、哈希、复合分区语法"},
+        {"id": "C1.8.2", "name": "分区操作", "desc": "`ADD/DROP/TRUNCATE/MERGE/SPLIT PARTITION`"},
+        {"id": "C1.8.3", "name": "子分区模板和间隔分区的支持度", "desc": "子分区模板和间隔分区的支持度"},
+      ]},
+      {"id": "C1.9", "name": "其他对象", "kps": [
+        {"id": "C1.9.1", "name": "外部表定义差异", "desc": "外部表定义差异"},
+        {"id": "C1.9.2", "name": "注释对象", "desc": "`COMMENT ON TABLE/COLUMN` → 目标库对应语法"},
+      ]},
     ]},
-    {"name": "2. DML 兼容性", "kps": [
-      {"id": "C2.1", "name": "INSERT", "desc": "多表插入：INSERT ALL/INSERT FIRST → 使用多条语句或条件插入；直接路径插入提示：/*+ APPEND */ → 目标库批量加载方式；INSERT ... RETURNING 子句 → 目标库 OUTPUT/RETURNING 支持；带子查询的插入中省略 VALUES 关键字"},
-      {"id": "C2.2", "name": "UPDATE/DELETE", "desc": "多表连接更新/删除：UPDATE ... FROM/DELETE ... USING 语法差异；UPDATE/DELETE ... RETURNING 子句；TRUNCATE TABLE 行为差异（触发器触发、回滚可能性、外键处理）"},
-      {"id": "C2.3", "name": "MERGE/UPSERT", "desc": "MERGE INTO 与 INSERT ... ON CONFLICT/REPLACE 映射；条件匹配差异（Oracle 可多次匹配，部分目标库只匹配一次）；MERGE 中的 DELETE 子句支持度"},
-      {"id": "C2.4", "name": "锁与并发", "desc": "SELECT ... FOR UPDATE 语法与选项（WAIT/NOWAIT/SKIP LOCKED）；表级锁语法：LOCK TABLE ... IN ... MODE"}
+    {"name": "2. DML 兼容性", "sections": [
+      {"id": "C2.1", "name": "INSERT", "kps": [
+        {"id": "C2.1.1", "name": "多表插入", "desc": "`INSERT ALL` / `INSERT FIRST` → 使用多条语句或条件插入"},
+        {"id": "C2.1.2", "name": "直接路径插入提示", "desc": "`/*+ APPEND */` → 目标库批量加载方式"},
+        {"id": "C2.1.3", "name": "`INSERT ... RETURNING` 子句 → 目标...", "desc": "`INSERT ... RETURNING` 子句 → 目标库 `OUTPUT` / `RETURNING` 支持"},
+        {"id": "C2.1.4", "name": "带子查询的插入中省略 `VALUES` 关键字", "desc": "带子查询的插入中省略 `VALUES` 关键字"},
+      ]},
+      {"id": "C2.2", "name": "UPDATE/DELETE", "kps": [
+        {"id": "C2.2.1", "name": "多表连接更新/删除", "desc": "`UPDATE ... FROM` / `DELETE ... USING` 语法差异"},
+        {"id": "C2.2.2", "name": "`UPDATE/DELETE ... RETURNING` ...", "desc": "`UPDATE/DELETE ... RETURNING` 子句"},
+        {"id": "C2.2.3", "name": "`TRUNCATE TABLE` 行为差异（触发器触发、回滚...", "desc": "`TRUNCATE TABLE` 行为差异（触发器触发、回滚可能性、外键处理）"},
+      ]},
+      {"id": "C2.3", "name": "MERGE/UPSERT", "kps": [
+        {"id": "C2.3.1", "name": "`MERGE INTO` 与 `INSERT ... ON ...", "desc": "`MERGE INTO` 与 `INSERT ... ON CONFLICT` / `REPLACE` 映射"},
+        {"id": "C2.3.2", "name": "条件匹配差异（Oracle 可多次匹配，部分目标库只匹配一次...", "desc": "条件匹配差异（Oracle 可多次匹配，部分目标库只匹配一次）"},
+        {"id": "C2.3.3", "name": "`MERGE` 中的 `DELETE` 子句支持度", "desc": "`MERGE` 中的 `DELETE` 子句支持度"},
+      ]},
+      {"id": "C2.4", "name": "锁与并发", "kps": [
+        {"id": "C2.4.1", "name": "`SELECT ... FOR UPDATE` 语法与选项（...", "desc": "`SELECT ... FOR UPDATE` 语法与选项（`WAIT`/`NOWAIT`/`SKIP LOCKED`）"},
+        {"id": "C2.4.2", "name": "表级锁语法", "desc": "`LOCK TABLE ... IN ... MODE`"},
+      ]},
     ]},
-    {"name": "3. 查询兼容性", "kps": [
-      {"id": "C3.1", "name": "SELECT 子句", "desc": "行限制：ROWNUM/FETCH FIRST/TOP/LIMIT 语法差异；别名使用：AS 关键字可选性、别名在 WHERE 中引用；虚表访问：SELECT ... FROM DUAL → 目标库无 DUAL 时的替代；SELECT 中不带 FROM 的支持度"},
-      {"id": "C3.2", "name": "连接", "desc": "旧式外连接：(+) → LEFT/RIGHT/FULL OUTER JOIN；CROSS JOIN、NATURAL JOIN 支持度；PARTITION BY 外连接（Oracle 特有）→ 模拟或声明补齐"},
-      {"id": "C3.3", "name": "子查询", "desc": "多列子查询（如 WHERE (a,b) IN (SELECT ...)）；相关子查询在 SELECT 列表中；WITH 子句中的相互递归（WITH RECURSIVE）"},
-      {"id": "C3.4", "name": "集合操作", "desc": "MINUS → EXCEPT；INTERSECT 行为差异（重复行处理）；集合操作中的 ORDER BY 位置与别名引用"},
-      {"id": "C3.5", "name": "公用表表达式(CTE)", "desc": "WITH 子句的递归语法（WITH RECURSIVE）；物化/非物化提示差异；CTE 在 DML 中的使用（如 WITH ... INSERT）"},
-      {"id": "C3.6", "name": "层次查询", "desc": "CONNECT BY PRIOR/START WITH → 递归 CTE 改写；层次伪列/函数：LEVEL、SYS_CONNECT_BY_PATH、CONNECT_BY_ROOT、CONNECT_BY_ISLEAF 替代；层次查询中的排序（ORDER SIBLINGS BY）"},
-      {"id": "C3.7", "name": "PIVOT/UNPIVOT", "desc": "PIVOT 关键字语法差异（Oracle vs SQL Server）；无 PIVOT 时使用 CASE + GROUP BY 替代模式；UNPIVOT 对应转换"},
-      {"id": "C3.8", "name": "分析/窗口函数", "desc": "基础窗口函数：ROW_NUMBER/RANK/DENSE_RANK/LEAD/LAG 参数差异；窗口子句（RANGE/ROWS）默认行为与边界处理；聚合扩展：KEEP (DENSE_RANK FIRST/LAST)、LISTAGG 窗口化等；窗口函数中的 EXCLUDE 子句等高级特性"},
-      {"id": "C3.9", "name": "行模式识别", "desc": "MATCH_RECOGNIZE → 目标库支持度极低，标注为需补齐特性或改用复杂 CTE"},
-      {"id": "C3.10", "name": "其他查询特性", "desc": "闪回查询（AS OF TIMESTAMP）→ 时态表或日志替代；SAMPLE 子句采样 → 目标库 TABLESAMPLE/RANDOM()"}
+    {"name": "3. 查询兼容性", "sections": [
+      {"id": "C3.1", "name": "SELECT 子句", "kps": [
+        {"id": "C3.1.1", "name": "行限制", "desc": "`ROWNUM` / `FETCH FIRST` / `TOP` / `LIMIT` 语法差异"},
+        {"id": "C3.1.2", "name": "别名使用", "desc": "`AS` 关键字可选性、别名在 `WHERE` 中引用"},
+        {"id": "C3.1.3", "name": "虚表访问", "desc": "`SELECT ... FROM DUAL` → 目标库无 `DUAL` 时的替代"},
+        {"id": "C3.1.4", "name": "`SELECT` 中不带 `FROM` 的支持度", "desc": "`SELECT` 中不带 `FROM` 的支持度"},
+      ]},
+      {"id": "C3.2", "name": "连接", "kps": [
+        {"id": "C3.2.1", "name": "旧式外连接", "desc": "`(+)` → `LEFT/RIGHT/FULL OUTER JOIN`"},
+        {"id": "C3.2.2", "name": "`CROSS JOIN`、`NATURAL JOIN` 支持...", "desc": "`CROSS JOIN`、`NATURAL JOIN` 支持度"},
+        {"id": "C3.2.3", "name": "`PARTITION BY` 外连接（Oracle 特有）→...", "desc": "`PARTITION BY` 外连接（Oracle 特有）→ 模拟或声明补齐"},
+      ]},
+      {"id": "C3.3", "name": "子查询", "kps": [
+        {"id": "C3.3.1", "name": "多列子查询（如 `WHERE (a,b) IN (SELEC...", "desc": "多列子查询（如 `WHERE (a,b) IN (SELECT ...)`）"},
+        {"id": "C3.3.2", "name": "相关子查询在 `SELECT` 列表中", "desc": "相关子查询在 `SELECT` 列表中"},
+        {"id": "C3.3.3", "name": "`WITH` 子句中的相互递归（`WITH RECURSIV...", "desc": "`WITH` 子句中的相互递归（`WITH RECURSIVE`）"},
+      ]},
+      {"id": "C3.4", "name": "集合操作", "kps": [
+        {"id": "C3.4.1", "name": "`MINUS` → `EXCEPT`；`INTERSECT`...", "desc": "`MINUS` → `EXCEPT`；`INTERSECT` 行为差异（重复行处理）"},
+        {"id": "C3.4.2", "name": "集合操作中的 `ORDER BY` 位置与别名引用", "desc": "集合操作中的 `ORDER BY` 位置与别名引用"},
+      ]},
+      {"id": "C3.5", "name": "公用表表达式（CTE）", "kps": [
+        {"id": "C3.5.1", "name": "`WITH` 子句的递归语法（`WITH RECURSIVE...", "desc": "`WITH` 子句的递归语法（`WITH RECURSIVE`）"},
+        {"id": "C3.5.2", "name": "物化/非物化提示差异", "desc": "物化/非物化提示差异"},
+        {"id": "C3.5.3", "name": "CTE 在 DML 中的使用（如 `WITH ... INS...", "desc": "CTE 在 DML 中的使用（如 `WITH ... INSERT`）"},
+      ]},
+      {"id": "C3.6", "name": "层次查询", "kps": [
+        {"id": "C3.6.1", "name": "`CONNECT BY PRIOR` / `START WI...", "desc": "`CONNECT BY PRIOR` / `START WITH` → 递归 CTE 改写"},
+        {"id": "C3.6.2", "name": "层次伪列/函数", "desc": "`LEVEL`、`SYS_CONNECT_BY_PATH`、`CONNECT_BY_ROOT`、`CONNECT_BY_ISLEAF` 替代"},
+        {"id": "C3.6.3", "name": "层次查询中的排序（`ORDER SIBLINGS BY`）", "desc": "层次查询中的排序（`ORDER SIBLINGS BY`）"},
+      ]},
+      {"id": "C3.7", "name": "PIVOT / UNPIVOT", "kps": [
+        {"id": "C3.7.1", "name": "`PIVOT` 关键字语法差异（Oracle vs SQL ...", "desc": "`PIVOT` 关键字语法差异（Oracle vs SQL Server）"},
+        {"id": "C3.7.2", "name": "无 `PIVOT` 时使用 `CASE + GROUP BY...", "desc": "无 `PIVOT` 时使用 `CASE + GROUP BY` 替代模式"},
+        {"id": "C3.7.3", "name": "`UNPIVOT` 对应转换", "desc": "`UNPIVOT` 对应转换"},
+      ]},
+      {"id": "C3.8", "name": "分析/窗口函数", "kps": [
+        {"id": "C3.8.1", "name": "基础窗口函数", "desc": "`ROW_NUMBER` / `RANK` / `DENSE_RANK` / `LEAD` / `LAG` 参数差异"},
+        {"id": "C3.8.2", "name": "窗口子句（`RANGE` / `ROWS`）默认行为与边界处...", "desc": "窗口子句（`RANGE` / `ROWS`）默认行为与边界处理"},
+        {"id": "C3.8.3", "name": "聚合扩展", "desc": "`KEEP (DENSE_RANK FIRST/LAST)`、`LISTAGG` 窗口化等"},
+        {"id": "C3.8.4", "name": "窗口函数中的 `EXCLUDE` 子句等高级特性", "desc": "窗口函数中的 `EXCLUDE` 子句等高级特性"},
+      ]},
+      {"id": "C3.9", "name": "行模式识别", "kps": [
+        {"id": "C3.9.1", "name": "`MATCH_RECOGNIZE` → 目标库支持度极低，标...", "desc": "`MATCH_RECOGNIZE` → 目标库支持度极低，标注为需补齐特性或改用复杂 CTE"},
+      ]},
+      {"id": "C3.10", "name": "其他查询特性", "kps": [
+        {"id": "C3.10.1", "name": "闪回查询（`AS OF TIMESTAMP`）→ 时态表或日...", "desc": "闪回查询（`AS OF TIMESTAMP`）→ 时态表或日志替代"},
+        {"id": "C3.10.2", "name": "`SAMPLE` 子句采样 → 目标库 `TABLESAMP...", "desc": "`SAMPLE` 子句采样 → 目标库 `TABLESAMPLE` / `RANDOM()`"},
+      ]},
     ]},
-    {"name": "4. 函数与操作符兼容性", "kps": [
-      {"id": "C4.1", "name": "字符串函数", "desc": "拼接：|| vs CONCAT（参数个数限制）；截取：SUBSTR → SUBSTRING（起始位置与长度语义）；正则：REGEXP_LIKE/REGEXP_REPLACE/REGEXP_SUBSTR/REGEXP_INSTR → 目标库正则函数；INSTR → POSITION/CHARINDEX；INITCAP、LPAD/RPAD、TRANSLATE、REPLACE 等函数差异；LISTAGG（作为聚合函数）→ STRING_AGG/GROUP_CONCAT"},
-      {"id": "C4.2", "name": "数值函数", "desc": "TRUNC（数值）与 FLOOR/CEIL 行为；MOD 负数行为差异；ROUND 精度处理；BITAND 等位运算函数 → & 操作符或函数"},
-      {"id": "C4.3", "name": "日期时间函数", "desc": "当前时间：SYSDATE/SYSTIMESTAMP → CURRENT_TIMESTAMP/NOW()；日期运算：直接用 +1 加一天 vs 要求 INTERVAL 关键字；ADD_MONTHS/LAST_DAY/MONTHS_BETWEEN/NEXT_DAY；TRUNC（日期）截断 → DATE_TRUNC；EXTRACT 函数差异；时区相关函数：FROM_TZ、AT TIME ZONE 等"},
-      {"id": "C4.4", "name": "转换函数", "desc": "TO_CHAR/TO_DATE/TO_NUMBER → CAST/CONVERT/STR_TO_DATE；格式掩码差异（YYYY vs YY、FF、RR 等）；CAST 在类型转换限制上的差异"},
-      {"id": "C4.5", "name": "空值处理", "desc": "NVL → COALESCE/IFNULL；NVL2 → CASE/IIF；DECODE → CASE/IIF；LNNVL、NULLIF 等"},
-      {"id": "C4.6", "name": "聚合函数", "desc": "LISTAGG → STRING_AGG/GROUP_CONCAT；统计聚合：PERCENTILE_CONT/PERCENTILE_DISC、STATS_MODE 等；MEDIAN → PERCENTILE_CONT(0.5)；聚合函数 FIRST/LAST 的 KEEP 子句"},
-      {"id": "C4.7", "name": "加密与哈希函数", "desc": "DBMS_CRYPTO 包函数 → 目标库加密函数（pgcrypto、ENCRYPT 等）；STANDARD_HASH、DBMS_OBFUSCATION_TOOLKIT 等"},
-      {"id": "C4.8", "name": "JSON/XML 处理函数", "desc": "JSON 提取：JSON_VALUE、JSON_QUERY、JSON_TABLE → 目标库操作符（->>/#>>）；XML 函数：XMLELEMENT、XMLAGG、EXTRACT (XML) 等"},
-      {"id": "C4.9", "name": "其他函数", "desc": "GREATEST/LEAST 对 NULL 的处理差异；SYS_GUID() → UUID 生成函数；USER/UID → 目标库当前用户函数"}
+    {"name": "4. 函数与操作符兼容性", "sections": [
+      {"id": "C4.1", "name": "字符串函数", "kps": [
+        {"id": "C4.1.1", "name": "拼接", "desc": "`||` vs `CONCAT`（参数个数限制）"},
+        {"id": "C4.1.2", "name": "截取", "desc": "`SUBSTR` → `SUBSTRING`（起始位置与长度语义）"},
+        {"id": "C4.1.3", "name": "正则", "desc": "`REGEXP_LIKE` / `REGEXP_REPLACE` / `REGEXP_SUBSTR` / `REGEXP_INSTR` → 目标库正则函数"},
+        {"id": "C4.1.4", "name": "`INSTR` → `POSITION` / `CHARIN...", "desc": "`INSTR` → `POSITION` / `CHARINDEX`"},
+        {"id": "C4.1.5", "name": "`INITCAP`、`LPAD` / `RPAD`、`TRA...", "desc": "`INITCAP`、`LPAD` / `RPAD`、`TRANSLATE`、`REPLACE` 等函数差异"},
+        {"id": "C4.1.6", "name": "`LISTAGG`（作为聚合函数）→ `STRING_AGG...", "desc": "`LISTAGG`（作为聚合函数）→ `STRING_AGG` / `GROUP_CONCAT`，及其分隔符和排序"},
+      ]},
+      {"id": "C4.2", "name": "数值函数", "kps": [
+        {"id": "C4.2.1", "name": "`TRUNC`（数值）与 `FLOOR`/`CEIL` 行为", "desc": "`TRUNC`（数值）与 `FLOOR`/`CEIL` 行为"},
+        {"id": "C4.2.2", "name": "`MOD` 负数行为差异", "desc": "`MOD` 负数行为差异"},
+        {"id": "C4.2.3", "name": "`ROUND` 精度处理", "desc": "`ROUND` 精度处理"},
+        {"id": "C4.2.4", "name": "`BITAND` 等位运算函数 → `&` 操作符或函数", "desc": "`BITAND` 等位运算函数 → `&` 操作符或函数"},
+      ]},
+      {"id": "C4.3", "name": "日期时间函数", "kps": [
+        {"id": "C4.3.1", "name": "当前时间", "desc": "`SYSDATE` / `SYSTIMESTAMP` → `CURRENT_TIMESTAMP` / `NOW()`"},
+        {"id": "C4.3.2", "name": "日期运算", "desc": "直接用 `+1` 加一天 vs 要求 `INTERVAL` 关键字"},
+        {"id": "C4.3.3", "name": "`ADD_MONTHS` / `LAST_DAY` / `M...", "desc": "`ADD_MONTHS` / `LAST_DAY` / `MONTHS_BETWEEN` / `NEXT_DAY`"},
+        {"id": "C4.3.4", "name": "`TRUNC`（日期）截断 → `DATE_TRUNC`", "desc": "`TRUNC`（日期）截断 → `DATE_TRUNC`"},
+        {"id": "C4.3.5", "name": "`EXTRACT` 函数差异", "desc": "`EXTRACT` 函数差异"},
+        {"id": "C4.3.6", "name": "时区相关函数", "desc": "`FROM_TZ`、`AT TIME ZONE` 等"},
+      ]},
+      {"id": "C4.4", "name": "转换函数", "kps": [
+        {"id": "C4.4.1", "name": "`TO_CHAR` / `TO_DATE` / `TO_NU...", "desc": "`TO_CHAR` / `TO_DATE` / `TO_NUMBER` → `CAST` / `CONVERT` / `STR_TO_DATE`"},
+        {"id": "C4.4.2", "name": "格式掩码差异（`YYYY` vs `YY`、`FF`、`RR...", "desc": "格式掩码差异（`YYYY` vs `YY`、`FF`、`RR` 等）"},
+        {"id": "C4.4.3", "name": "`CAST` 在类型转换限制上的差异", "desc": "`CAST` 在类型转换限制上的差异"},
+      ]},
+      {"id": "C4.5", "name": "空值处理", "kps": [
+        {"id": "C4.5.1", "name": "`NVL` → `COALESCE` / `IFNULL`", "desc": "`NVL` → `COALESCE` / `IFNULL`"},
+        {"id": "C4.5.2", "name": "`NVL2` → `CASE` / `IIF`", "desc": "`NVL2` → `CASE` / `IIF`"},
+        {"id": "C4.5.3", "name": "`DECODE` → `CASE` / `IIF`", "desc": "`DECODE` → `CASE` / `IIF`"},
+        {"id": "C4.5.4", "name": "`LNNVL`、`NULLIF` 等", "desc": "`LNNVL`、`NULLIF` 等"},
+      ]},
+      {"id": "C4.6", "name": "聚合函数", "kps": [
+        {"id": "C4.6.1", "name": "`LISTAGG` → `STRING_AGG` / `GR...", "desc": "`LISTAGG` → `STRING_AGG` / `GROUP_CONCAT`"},
+        {"id": "C4.6.2", "name": "统计聚合", "desc": "`PERCENTILE_CONT` / `PERCENTILE_DISC`、`STATS_MODE` 等"},
+        {"id": "C4.6.3", "name": "`MEDIAN` → `PERCENTILE_CONT(0....", "desc": "`MEDIAN` → `PERCENTILE_CONT(0.5)`"},
+        {"id": "C4.6.4", "name": "聚合函数 `FIRST` / `LAST` 的 `KEEP`...", "desc": "聚合函数 `FIRST` / `LAST` 的 `KEEP` 子句"},
+      ]},
+      {"id": "C4.7", "name": "加密与哈希函数", "kps": [
+        {"id": "C4.7.1", "name": "`DBMS_CRYPTO` 包函数 → 目标库加密函数（`p...", "desc": "`DBMS_CRYPTO` 包函数 → 目标库加密函数（`pgcrypto`、`ENCRYPT` 等）"},
+        {"id": "C4.7.2", "name": "`STANDARD_HASH`、`DBMS_OBFUSCAT...", "desc": "`STANDARD_HASH`、`DBMS_OBFUSCATION_TOOLKIT` 等"},
+      ]},
+      {"id": "C4.8", "name": "JSON/XML 处理函数", "kps": [
+        {"id": "C4.8.1", "name": "JSON 提取", "desc": "`JSON_VALUE`、`JSON_QUERY`、`JSON_TABLE` → 目标库操作符（`->>` / `#>>`）"},
+        {"id": "C4.8.2", "name": "XML 函数", "desc": "`XMLELEMENT`、`XMLAGG`、`EXTRACT` (XML) 等"},
+      ]},
+      {"id": "C4.9", "name": "其他函数", "kps": [
+        {"id": "C4.9.1", "name": "`GREATEST` / `LEAST` 对 NULL 的处...", "desc": "`GREATEST` / `LEAST` 对 NULL 的处理差异"},
+        {"id": "C4.9.2", "name": "`SYS_GUID()` → `UUID` 生成函数", "desc": "`SYS_GUID()` → `UUID` 生成函数"},
+        {"id": "C4.9.3", "name": "`USER` / `UID` → 目标库当前用户函数", "desc": "`USER` / `UID` → 目标库当前用户函数"},
+      ]},
     ]},
-    {"name": "5. 过程化语言兼容性", "kps": [
-      {"id": "C5.1", "name": "块结构与声明", "desc": "匿名块语法：DECLARE ... BEGIN ... END → 目标库 DO 块或直接执行；变量声明：:= 赋值、DEFAULT 关键字；%TYPE/%ROWTYPE 属性 → 无此特性时的显式类型声明；记录类型与集合类型：TYPE ... IS RECORD、TYPE ... IS TABLE OF/VARRAY"},
-      {"id": "C5.2", "name": "控制流", "desc": "IF ... ELSIF ... ELSE → 目标库 ELSEIF/ELSE IF 差异；FOR i IN 1..n LOOP 整数范围循环；FOR rec IN cursor LOOP 隐式游标循环；GOTO 语句支持度；CASE 语句/表达式差异"},
-      {"id": "C5.3", "name": "游标管理", "desc": "显式游标：OPEN/FETCH/CLOSE 及 %FOUND/%NOTFOUND/%ROWCOUNT；参数化游标；REF CURSOR（SYS_REFCURSOR）返回结果集 → 目标库 REFCURSOR 或表值函数；CURSOR FOR ... 隐式游标与 FOR UPDATE 结合"},
-      {"id": "C5.4", "name": "异常处理", "desc": "EXCEPTION WHEN 块结构；预定义异常名称映射（NO_DATA_FOUND → SQLSTATE '02000'）；RAISE_APPLICATION_ERROR → RAISE EXCEPTION；异常传播与 PRAGMA EXCEPTION_INIT"},
-      {"id": "C5.5", "name": "存储过程与函数", "desc": "参数模式：IN/OUT/IN OUT 对应实现；默认参数值、命名参数调用；管道函数（PIPELINED）→ 表值函数/RETURN QUERY；函数返回值类型限制（如不可返回 BOOLEAN 在某些目标库）"},
-      {"id": "C5.6", "name": "包/模块", "desc": "包规范与包体分离 → 使用 schema + 函数/过程 + 类型组织；包级变量和常量（会话级全局状态）→ 替代方案（临时表、自定义上下文变量）；包初始化块"},
-      {"id": "C5.7", "name": "触发器", "desc": "行级/语句级 BEFORE/AFTER/INSTEAD OF；复合触发器（COMPOUND TRIGGER）→ 拆分为多个触发器；:OLD/:NEW 引用差异（OLD/NEW 无冒号）；触发器执行顺序控制（FOLLOWS 等）"},
-      {"id": "C5.8", "name": "动态 SQL", "desc": "EXECUTE IMMEDIATE 语法差异；OPEN FOR 动态游标；DBMS_SQL 包替代（构建动态 SQL 的 API）"},
-      {"id": "C5.9", "name": "事务管理", "desc": "自治事务（PRAGMA AUTONOMOUS_TRANSACTION）→ 目标库 dblink 或模拟；SAVEPOINT/部分回滚行为；隐式提交差异（DDL 是否自动提交等）"},
-      {"id": "C5.10", "name": "内置系统包", "desc": "调试输出：DBMS_OUTPUT/DBMS_DEBUG/DBMS_PROFILER/DBMS_TRACE/DBMS_ERRLOG/UTL_CALL_STACK；作业调度：DBMS_JOB/DBMS_SCHEDULER/DBMS_REFRESH；文件交互：UTL_FILE/UTL_RAW/UTL_I18N/UTL_ENCODE/UTL_COMPRESS；网络通信：UTL_MAIL/UTL_SMTP/UTL_HTTP/UTL_TCP/UTL_URL；安全加密：DBMS_CRYPTO/DBMS_RLS/DBMS_FGA/DBMS_LDAP；XML处理：DBMS_XMLDOM/DBMS_XMLPARSER/DBMS_XSLPROCESSOR 等8个包；JSON处理：JSON_OBJECT_T/JSON_TABLE/APEX_JSON；队列消息：DBMS_AQ/DBMS_AQADM/DBMS_PIPE/DBMS_ALERT；动态SQL：DBMS_SQL/DBMS_PARALLEL_EXECUTE；统计分析：DBMS_STATS/DBMS_SQLTUNE；元数据管理：DBMS_METADATA/DBMS_DDL/DBMS_REDEFINITION；事务恢复：DBMS_FLASHBACK/DBMS_LOGMNR/DBMS_XA；常用工具：DBMS_UTILITY/DBMS_RANDOM/DBMS_SESSION/DBMS_LOCK/DBMS_ASSERT；空间数据：SDO_GEOMETRY相关包；数据泵：DBMS_DATAPUMP/DBMS_FILE_TRANSFER；其他：DBMS_MVIEW/DBMS_SPACE/DBMS_CDC/DBMS_RECYCLEBIN/DBMS_RESUMABLE"},
-      {"id": "C5.11", "name": "条件编译", "desc": "$IF ... $END 条件编译块 → 目标库预处理指令"}
+    {"name": "5. 过程化语言兼容性", "sections": [
+      {"id": "C5.1", "name": "块结构与声明", "kps": [
+        {"id": "C5.1.1", "name": "匿名块语法", "desc": "`DECLARE ... BEGIN ... END` → 目标库 `DO` 块或直接执行"},
+        {"id": "C5.1.2", "name": "变量声明", "desc": "`:=` 赋值、`DEFAULT` 关键字"},
+        {"id": "C5.1.3", "name": "`%TYPE` / `%ROWTYPE` 属性 → 无此特性...", "desc": "`%TYPE` / `%ROWTYPE` 属性 → 无此特性时的显式类型声明"},
+        {"id": "C5.1.4", "name": "记录类型与集合类型", "desc": "`TYPE ... IS RECORD`、`TYPE ... IS TABLE OF` / `VARRAY`"},
+      ]},
+      {"id": "C5.2", "name": "控制流", "kps": [
+        {"id": "C5.2.1", "name": "`IF ... ELSIF ... ELSE` → 目标库 ...", "desc": "`IF ... ELSIF ... ELSE` → 目标库 `ELSEIF` / `ELSE IF` 差异"},
+        {"id": "C5.2.2", "name": "`FOR i IN 1..n LOOP` 整数范围循环", "desc": "`FOR i IN 1..n LOOP` 整数范围循环"},
+        {"id": "C5.2.3", "name": "`FOR rec IN cursor LOOP` 隐式游标循...", "desc": "`FOR rec IN cursor LOOP` 隐式游标循环"},
+        {"id": "C5.2.4", "name": "`GOTO` 语句支持度", "desc": "`GOTO` 语句支持度"},
+        {"id": "C5.2.5", "name": "`CASE` 语句/表达式差异", "desc": "`CASE` 语句/表达式差异"},
+      ]},
+      {"id": "C5.3", "name": "游标管理", "kps": [
+        {"id": "C5.3.1", "name": "显式游标", "desc": "`OPEN` / `FETCH` / `CLOSE` 及 `%FOUND` / `%NOTFOUND` / `%ROWCOUNT`"},
+        {"id": "C5.3.2", "name": "参数化游标", "desc": "参数化游标"},
+        {"id": "C5.3.3", "name": "`REF CURSOR`（`SYS_REFCURSOR`）返...", "desc": "`REF CURSOR`（`SYS_REFCURSOR`）返回结果集 → 目标库 `REFCURSOR` 或表值函数"},
+        {"id": "C5.3.4", "name": "`CURSOR FOR ...` 隐式游标与 `FOR UP...", "desc": "`CURSOR FOR ...` 隐式游标与 `FOR UPDATE` 结合"},
+      ]},
+      {"id": "C5.4", "name": "异常处理", "kps": [
+        {"id": "C5.4.1", "name": "`EXCEPTION WHEN` 块结构", "desc": "`EXCEPTION WHEN` 块结构"},
+        {"id": "C5.4.2", "name": "预定义异常名称映射（`NO_DATA_FOUND` → `S...", "desc": "预定义异常名称映射（`NO_DATA_FOUND` → `SQLSTATE '02000'`）"},
+        {"id": "C5.4.3", "name": "`RAISE_APPLICATION_ERROR` → `R...", "desc": "`RAISE_APPLICATION_ERROR` → `RAISE EXCEPTION`"},
+        {"id": "C5.4.4", "name": "异常传播与 `PRAGMA EXCEPTION_INIT`", "desc": "异常传播与 `PRAGMA EXCEPTION_INIT`"},
+      ]},
+      {"id": "C5.5", "name": "存储过程与函数", "kps": [
+        {"id": "C5.5.1", "name": "参数模式", "desc": "`IN` / `OUT` / `IN OUT` 对应实现"},
+        {"id": "C5.5.2", "name": "默认参数值、命名参数调用", "desc": "默认参数值、命名参数调用"},
+        {"id": "C5.5.3", "name": "管道函数（`PIPELINED`）→ 表值函数 / `RET...", "desc": "管道函数（`PIPELINED`）→ 表值函数 / `RETURN QUERY`"},
+        {"id": "C5.5.4", "name": "函数返回值类型限制（如不可返回 `BOOLEAN` 在某些目...", "desc": "函数返回值类型限制（如不可返回 `BOOLEAN` 在某些目标库）"},
+      ]},
+      {"id": "C5.6", "name": "包/模块", "kps": [
+        {"id": "C5.6.1", "name": "包规范与包体分离 → 使用 schema + 函数/过程 +...", "desc": "包规范与包体分离 → 使用 schema + 函数/过程 + 类型组织"},
+        {"id": "C5.6.2", "name": "包级变量和常量（会话级全局状态）→ 替代方案（临时表、自定义...", "desc": "包级变量和常量（会话级全局状态）→ 替代方案（临时表、自定义上下文变量）"},
+        {"id": "C5.6.3", "name": "包初始化块", "desc": "包初始化块"},
+      ]},
+      {"id": "C5.7", "name": "触发器", "kps": [
+        {"id": "C5.7.1", "name": "行级/语句级 `BEFORE` / `AFTER` / `I...", "desc": "行级/语句级 `BEFORE` / `AFTER` / `INSTEAD OF`"},
+        {"id": "C5.7.2", "name": "复合触发器（`COMPOUND TRIGGER`）→ 拆分为...", "desc": "复合触发器（`COMPOUND TRIGGER`）→ 拆分为多个触发器"},
+        {"id": "C5.7.3", "name": "`", "desc": "OLD` / `:NEW` 引用差异（`OLD` / `NEW` 无冒号）"},
+        {"id": "C5.7.4", "name": "触发器执行顺序控制（`FOLLOWS` 等）", "desc": "触发器执行顺序控制（`FOLLOWS` 等）"},
+      ]},
+      {"id": "C5.8", "name": "动态 SQL", "kps": [
+        {"id": "C5.8.1", "name": "`EXECUTE IMMEDIATE` 语法差异", "desc": "`EXECUTE IMMEDIATE` 语法差异"},
+        {"id": "C5.8.2", "name": "`OPEN FOR` 动态游标", "desc": "`OPEN FOR` 动态游标"},
+        {"id": "C5.8.3", "name": "`DBMS_SQL` 包替代（构建动态 SQL 的 API）", "desc": "`DBMS_SQL` 包替代（构建动态 SQL 的 API）"},
+      ]},
+      {"id": "C5.9", "name": "事务管理", "kps": [
+        {"id": "C5.9.1", "name": "自治事务（`PRAGMA AUTONOMOUS_TRANSA...", "desc": "自治事务（`PRAGMA AUTONOMOUS_TRANSACTION`）→ 目标库 `dblink` 或模拟"},
+        {"id": "C5.9.2", "name": "`SAVEPOINT` / 部分回滚行为", "desc": "`SAVEPOINT` / 部分回滚行为"},
+        {"id": "C5.9.3", "name": "隐式提交差异（DDL 是否自动提交等）", "desc": "隐式提交差异（DDL 是否自动提交等）"},
+      ]},
+      {"id": "C5.10", "name": "内置系统包", "kps": [
+      ]},
+      {"id": "C5.11", "name": "条件编译", "kps": [
+        {"id": "C5.11.1", "name": "`$IF ... $END` 条件编译块 → 目标库预处理指...", "desc": "`$IF ... $END` 条件编译块 → 目标库预处理指令"},
+      ]},
     ]},
-    {"name": "6. 工具与接口兼容性", "kps": [
-      {"id": "C6.1", "name": "客户端命令", "desc": "SQL*Plus 的 /（执行缓冲区）、SET 命令、VARIABLE、EXEC → psql 的 \\ 命令，GO 等；格式化输出命令（COLUMN、BREAK、COMPUTE）→ 客户端替代方式；错误处理：WHENEVER SQLERROR → shell 脚本错误捕获"},
-      {"id": "C6.2", "name": "导出/导入工具", "desc": "expdp/impdp 参数 → pg_dump/pg_restore、mysqldump/mysqlimport；跨版本、跨平台迁移工具配置差异"},
-      {"id": "C6.3", "name": "数据库链接", "desc": "远程数据库访问：@dblink → 外部数据包装器（FDW）、链接服务器；跨库查询性能与事务差异"},
-      {"id": "C6.4", "name": "加载与卸载", "desc": "SQL*Loader/sqlldr → COPY 命令、\\copy、LOAD DATA；外部表加载数据差异"}
-    ]}
+    {"name": "6. 工具与接口兼容性", "sections": [
+      {"id": "C6.1", "name": "客户端命令", "kps": [
+        {"id": "C6.1.1", "name": "`SQL*Plus` 的 `/`（执行缓冲区）、`SET` ...", "desc": "`SQL*Plus` 的 `/`（执行缓冲区）、`SET` 命令、`VARIABLE`、`EXEC` → `psql` 的 `\\` 命令，`GO` 等"},
+        {"id": "C6.1.2", "name": "格式化输出命令（`COLUMN`、`BREAK`、`COMP...", "desc": "格式化输出命令（`COLUMN`、`BREAK`、`COMPUTE`）→ 客户端替代方式"},
+        {"id": "C6.1.3", "name": "错误处理", "desc": "`WHENEVER SQLERROR` → shell 脚本错误捕获"},
+      ]},
+      {"id": "C6.2", "name": "导出/导入工具", "kps": [
+        {"id": "C6.2.1", "name": "`expdp` / `impdp` 参数 → `pg_dum...", "desc": "`expdp` / `impdp` 参数 → `pg_dump` / `pg_restore`、`mysqldump` / `mysqlimport`"},
+        {"id": "C6.2.2", "name": "跨版本、跨平台迁移工具配置差异", "desc": "跨版本、跨平台迁移工具配置差异"},
+      ]},
+      {"id": "C6.3", "name": "数据库链接", "kps": [
+        {"id": "C6.3.1", "name": "远程数据库访问", "desc": "`@dblink` → 外部数据包装器（FDW）、链接服务器"},
+        {"id": "C6.3.2", "name": "跨库查询性能与事务差异", "desc": "跨库查询性能与事务差异"},
+      ]},
+      {"id": "C6.4", "name": "加载与卸载", "kps": [
+        {"id": "C6.4.1", "name": "`SQL*Loader` / `sqlldr` → `COP...", "desc": "`SQL*Loader` / `sqlldr` → `COPY` 命令、`\\copy`、`LOAD DATA`"},
+        {"id": "C6.4.2", "name": "外部表加载数据差异", "desc": "外部表加载数据差异"},
+      ]},
+    ]},
   ]},
   {"domain": "性能优化", "icon": "⚡", "placeholder": "待建设"},
   {"domain": "集群和高可用", "icon": "🔗", "placeholder": "待建设"},
@@ -466,15 +669,28 @@ function initTree() {
     if (subdomain.chapters) {
       html += '<div class="tree-subdomain-content" id="subdomain-content-biz-' + si + '">';
       subdomain.chapters.forEach((ch, ci) => {
+        // 章标题（可展开）
         html += '<div class="tree-chapter-title" onclick="toggleChapter(\'biz-' + si + '-' + ci + '\')" style="padding-left:36px">';
         html += '<span class="arrow" id="arrow-c-biz-' + si + '-' + ci + '">▶</span> ' + ch.name + '</div>';
         html += '<div class="tree-kps" id="kps-biz-' + si + '-' + ci + '">';
-        ch.kps.forEach((kp, ki) => {
-          const kpId = 'biz-' + si + '-' + ci + '-' + ki;
-          html += '<div class="tree-kp" id="kp-' + kpId + '" onclick="selectKp(\'' + kpId + '\')" data-name="' + kp.name + '" data-desc="' + kp.desc + '" style="padding-left:56px">';
-          html += '<input type="checkbox" class="batch-cb" style="display:none" onclick="event.stopPropagation();toggleBatchKp(\'' + kpId + '\')" id="cb-' + kpId + '">';
-          html += kp.id + ' ' + kp.name + '</div>';
+        
+        // 遍历节（sections）
+        ch.sections.forEach((sec, sci) => {
+          // 节标题（可展开）
+          html += '<div class="tree-section-title" onclick="toggleSection(\'biz-' + si + '-' + ci + '-' + sci + '\')" style="padding-left:52px">';
+          html += '<span class="arrow" id="arrow-s-biz-' + si + '-' + ci + '-' + sci + '">▶</span> ' + sec.id + ' ' + sec.name + '</div>';
+          html += '<div class="tree-section-kps" id="section-kps-biz-' + si + '-' + ci + '-' + sci + '">';
+          
+          // 遍历知识点（kps）
+          sec.kps.forEach((kp, ki) => {
+            const kpId = 'biz-' + si + '-' + ci + '-' + sci + '-' + ki;
+            html += '<div class="tree-kp" id="kp-' + kpId + '" onclick="selectKp(\'' + kpId + '\')" data-name="' + kp.name + '" data-desc="' + kp.desc + '" style="padding-left:68px">';
+            html += '<input type="checkbox" class="batch-cb" style="display:none" onclick="event.stopPropagation();toggleBatchKp(\'' + kpId + '\')" id="cb-' + kpId + '">';
+            html += kp.id + ' ' + kp.name + '</div>';
+          });
+          html += '</div>';
         });
+        
         html += '</div>';
       });
       html += '</div>';
@@ -512,6 +728,16 @@ function toggleSubdomain(subdomainId) {
   }
 }
 
+function toggleSection(sectionId) {
+  const el = document.getElementById('section-kps-' + sectionId);
+  const arrow = document.getElementById('arrow-s-' + sectionId);
+  if (el) {
+    el.classList.toggle('show');
+    arrow.classList.toggle('open');
+  }
+}
+
+
 function toggleChapter(chapterId) {
   const el = document.getElementById('kps-' + chapterId);
   const arrow = document.getElementById('arrow-c-' + chapterId);
@@ -524,20 +750,25 @@ function selectKp(kpId) {
   const domain = parts[0]; // 'db' or 'biz'
   const pi = parseInt(parts[1]);
   const ci = parseInt(parts[2]);
-  const ki = parseInt(parts[3]);
   
   let part, chapter, kp;
   
   if (domain === 'db') {
+    // 数据库：db-pi-ci-ki
+    const ki = parseInt(parts[3]);
     part = OUTLINE[pi];
     chapter = part.chapters[ci];
     kp = chapter.kps[ki];
     document.getElementById('kpPart').value = part.part;
     document.getElementById('kpLevel').value = part.level;
   } else if (domain === 'biz') {
+    // 业务领域：biz-si-ci-sci-ki（三级结构）
+    const sci = parseInt(parts[3]);
+    const ki = parseInt(parts[4]);
     const subdomain = BIZ_OUTLINE[pi];
     chapter = subdomain.chapters[ci];
-    kp = chapter.kps[ki];
+    const section = chapter.sections[sci];
+    kp = section.kps[ki];
     document.getElementById('kpPart').value = '业务领域 - ' + subdomain.domain;
     document.getElementById('kpLevel').value = '★★';
   }
@@ -607,6 +838,13 @@ function filterTree(query) {
         if (chaptersEl) chaptersEl.classList.add('show');
         if (arrowEl) arrowEl.classList.add('open');
       }
+    });
+    // Expand all sections (for business domain)
+    document.querySelectorAll('.tree-section-kps').forEach(el => {
+      el.classList.add('show');
+    });
+    document.querySelectorAll('.tree-section-title .arrow').forEach(el => {
+      el.classList.add('open');
     });
   }
 }
@@ -728,12 +966,15 @@ function updateBatchList() {
   selectedKps.forEach(function(kpId) {
     const p = kpId.split('-');
     const domain = p[0];
-    const pi = parseInt(p[1]), ci = parseInt(p[2]), ki = parseInt(p[3]);
+    const pi = parseInt(p[1]), ci = parseInt(p[2]);
     let kp;
     if (domain === 'db') {
+      const ki = parseInt(p[3]);
       kp = OUTLINE[pi].chapters[ci].kps[ki];
     } else {
-      kp = BIZ_OUTLINE[pi].chapters[ci].kps[ki];
+      // 业务领域：biz-si-ci-sci-ki
+      const sci = parseInt(p[3]), ki = parseInt(p[4]);
+      kp = BIZ_OUTLINE[pi].chapters[ci].sections[sci].kps[ki];
     }
     html += '<div class="batch-item"><span>✅ ' + kp.id + ' ' + kp.name + '</span></div>';
   });
@@ -749,17 +990,21 @@ function batchGenerate() {
     idx++;
     const p = kpId.split('-');
     const domain = p[0];
-    const pi = parseInt(p[1]), ci = parseInt(p[2]), ki = parseInt(p[3]);
+    const pi = parseInt(p[1]), ci = parseInt(p[2]);
     let partName, chapter, kp;
     if (domain === 'db') {
+      const ki = parseInt(p[3]);
       const part = OUTLINE[pi];
       chapter = part.chapters[ci];
       kp = chapter.kps[ki];
       partName = part.part;
     } else {
+      // 业务领域：biz-si-ci-sci-ki
+      const sci = parseInt(p[3]), ki = parseInt(p[4]);
       const subdomain = BIZ_OUTLINE[pi];
       chapter = subdomain.chapters[ci];
-      kp = chapter.kps[ki];
+      const section = chapter.sections[sci];
+      kp = section.kps[ki];
       partName = '业务领域 - ' + subdomain.domain;
     }
     const type = detectType(kp.name, kp.desc);
