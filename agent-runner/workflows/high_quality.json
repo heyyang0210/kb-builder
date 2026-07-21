@@ -1,0 +1,37 @@
+{
+  "id": "high_quality",
+  "name": "高质量模式",
+  "description": "增加审查步骤，确保文档质量",
+  "steps": [
+    {
+      "name": "planner",
+      "agent": "planner",
+      "config": {}
+    },
+    {
+      "name": "retriever",
+      "agent": "retriever",
+      "config": {}
+    },
+    {
+      "name": "generator",
+      "agent": "generator",
+      "config": {}
+    },
+    {
+      "name": "reviewer",
+      "agent": "validator",
+      "config": {
+        "strict_mode": true
+      }
+    },
+    {
+      "name": "validator",
+      "agent": "validator",
+      "config": {}
+    }
+  ],
+  "is_default": false,
+  "created_at": "2026-07-07T07:02:35.703Z",
+  "updated_at": "2026-07-07T07:02:35.703Z"
+}

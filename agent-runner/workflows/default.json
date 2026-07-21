@@ -1,0 +1,30 @@
+{
+  "id": "default",
+  "name": "默认4步流程",
+  "description": "标准的文档生成流程，包含规划、检索、生成和验证",
+  "steps": [
+    {
+      "name": "planner",
+      "agent": "planner",
+      "config": {}
+    },
+    {
+      "name": "retriever",
+      "agent": "retriever",
+      "config": {}
+    },
+    {
+      "name": "generator",
+      "agent": "generator",
+      "config": {}
+    },
+    {
+      "name": "validator",
+      "agent": "validator",
+      "config": {}
+    }
+  ],
+  "is_default": true,
+  "created_at": "2026-07-07T07:02:35.703Z",
+  "updated_at": "2026-07-07T07:02:35.703Z"
+}

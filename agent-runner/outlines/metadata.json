@@ -1,0 +1,640 @@
+{
+  "outlines": [
+    {
+      "id": "outline_1783581157783",
+      "name": "oracle的OCA知识点大纲.md",
+      "type": "db",
+      "file": "outline_1783581157782_guxcaa.md",
+      "content": {
+        "title": "上传的大纲",
+        "parts": [
+          {
+            "part": "一、Oracle 数据库 SQL 基础",
+            "level": "⭐",
+            "chapters": [
+              {
+                "name": "1.1 基础查询与数据检索",
+                "kps": [
+                  {
+                    "id": "1.1.1",
+                    "name": "基本 SELECT 语句结构与执行",
+                    "desc": "基本 SELECT 语句结构与执行"
+                  },
+                  {
+                    "id": "1.1.2",
+                    "name": "列的筛选与别名",
+                    "desc": "列的筛选与别名"
+                  },
+                  {
+                    "id": "1.1.3",
+                    "name": "算术表达式、NULL 值处理",
+                    "desc": "算术表达式、NULL 值处理"
+                  },
+                  {
+                    "id": "1.1.4",
+                    "name": "连接操作符与字面量字符串",
+                    "desc": "连接操作符与字面量字符串"
+                  },
+                  {
+                    "id": "1.1.5",
+                    "name": "DISTINCT 消除重复行",
+                    "desc": "DISTINCT 消除重复行"
+                  },
+                  {
+                    "id": "1.1.6",
+                    "name": "使用 DESCRIBE 查看表结构",
+                    "desc": "使用 DESCRIBE 查看表结构"
+                  }
+                ]
+              },
+              {
+                "name": "1.2 数据过滤与排序",
+                "kps": [
+                  {
+                    "id": "1.2.1",
+                    "name": "使用 WHERE 子句限制行",
+                    "desc": "使用 WHERE 子句限制行"
+                  },
+                  {
+                    "id": "1.2.2",
+                    "name": "比较操作符与逻辑操作符（AND、OR、NOT）",
+                    "desc": "比较操作符与逻辑操作符（AND、OR、NOT）"
+                  },
+                  {
+                    "id": "1.2.3",
+                    "name": "BETWEEN、IN、LIKE 及通配符",
+                    "desc": "BETWEEN、IN、LIKE 及通配符"
+                  },
+                  {
+                    "id": "1.2.4",
+                    "name": "NULL 条件过滤（IS NULL、IS NOT NULL）",
+                    "desc": "NULL 条件过滤（IS NULL、IS NOT NULL）"
+                  },
+                  {
+                    "id": "1.2.5",
+                    "name": "ORDER BY 子句排序（升序、降序、多列排序）",
+                    "desc": "ORDER BY 子句排序（升序、降序、多列排序）"
+                  },
+                  {
+                    "id": "1.2.6",
+                    "name": "替代变量与 DEFINE/VERIFY 命令",
+                    "desc": "替代变量与 DEFINE/VERIFY 命令"
+                  }
+                ]
+              },
+              {
+                "name": "1.3 单行函数",
+                "kps": [
+                  {
+                    "id": "1.3.1",
+                    "name": "字符函数",
+                    "desc": "UPPER、LOWER、INITCAP、CONCAT、SUBSTR、LENGTH、INSTR、TRIM、REPLACE"
+                  },
+                  {
+                    "id": "1.3.2",
+                    "name": "数值函数",
+                    "desc": "ROUND、TRUNC、MOD"
+                  },
+                  {
+                    "id": "1.3.3",
+                    "name": "日期函数",
+                    "desc": "SYSDATE、CURRENT_DATE、MONTHS_BETWEEN、ADD_MONTHS、NEXT_DAY、LAST_DAY、ROUND、TRUNC"
+                  },
+                  {
+                    "id": "1.3.4",
+                    "name": "数据类型隐式转换与显式转换（TO_CHAR、TO_DATE、TO_NUMBER）",
+                    "desc": "数据类型隐式转换与显式转换（TO_CHAR、TO_DATE、TO_NUMBER）"
+                  },
+                  {
+                    "id": "1.3.5",
+                    "name": "通用函数",
+                    "desc": "NVL、NVL2、NULLIF、COALESCE"
+                  },
+                  {
+                    "id": "1.3.6",
+                    "name": "条件表达式",
+                    "desc": "CASE 与 DECODE"
+                  }
+                ]
+              },
+              {
+                "name": "1.4 多表查询与联接",
+                "kps": [
+                  {
+                    "id": "1.4.1",
+                    "name": "笛卡尔积与不同联接类型",
+                    "desc": "笛卡尔积与不同联接类型"
+                  },
+                  {
+                    "id": "1.4.2",
+                    "name": "内连接（等值连接 / 非等值连接）",
+                    "desc": "内连接（等值连接 / 非等值连接）"
+                  },
+                  {
+                    "id": "1.4.3",
+                    "name": "外连接（LEFT、RIGHT、FULL OUTER JOIN）",
+                    "desc": "外连接（LEFT、RIGHT、FULL OUTER JOIN）"
+                  },
+                  {
+                    "id": "1.4.4",
+                    "name": "自连接",
+                    "desc": "自连接"
+                  },
+                  {
+                    "id": "1.4.5",
+                    "name": "Oracle 传统联接语法（+）与新式 ANSI 语法",
+                    "desc": "Oracle 传统联接语法（+）与新式 ANSI 语法"
+                  },
+                  {
+                    "id": "1.4.6",
+                    "name": "自然连接与 USING 子句",
+                    "desc": "自然连接与 USING 子句"
+                  }
+                ]
+              },
+              {
+                "name": "1.5 分组函数与分组数据",
+                "kps": [
+                  {
+                    "id": "1.5.1",
+                    "name": "常用分组函数",
+                    "desc": "SUM、AVG、COUNT、MIN、MAX"
+                  },
+                  {
+                    "id": "1.5.2",
+                    "name": "分组函数与 NULL 的行为",
+                    "desc": "分组函数与 NULL 的行为"
+                  },
+                  {
+                    "id": "1.5.3",
+                    "name": "GROUP BY 子句与多列分组",
+                    "desc": "GROUP BY 子句与多列分组"
+                  },
+                  {
+                    "id": "1.5.4",
+                    "name": "HAVING 子句过滤分组结果",
+                    "desc": "HAVING 子句过滤分组结果"
+                  },
+                  {
+                    "id": "1.5.5",
+                    "name": "嵌套分组函数",
+                    "desc": "嵌套分组函数"
+                  }
+                ]
+              },
+              {
+                "name": "1.6 子查询",
+                "kps": [
+                  {
+                    "id": "1.6.1",
+                    "name": "单行子查询与比较操作符",
+                    "desc": "单行子查询与比较操作符"
+                  },
+                  {
+                    "id": "1.6.2",
+                    "name": "多行子查询（IN、ANY、ALL）",
+                    "desc": "多行子查询（IN、ANY、ALL）"
+                  },
+                  {
+                    "id": "1.6.3",
+                    "name": "关联子查询",
+                    "desc": "关联子查询"
+                  },
+                  {
+                    "id": "1.6.4",
+                    "name": "EXISTS 与 NOT EXISTS 操作符",
+                    "desc": "EXISTS 与 NOT EXISTS 操作符"
+                  },
+                  {
+                    "id": "1.6.5",
+                    "name": "子查询在 SELECT、FROM、WHERE、HAVING 中的使用",
+                    "desc": "子查询在 SELECT、FROM、WHERE、HAVING 中的使用"
+                  },
+                  {
+                    "id": "1.6.6",
+                    "name": "标量子查询",
+                    "desc": "标量子查询"
+                  }
+                ]
+              },
+              {
+                "name": "1.7 集合操作符",
+                "kps": [
+                  {
+                    "id": "1.7.1",
+                    "name": "UNION 与 UNION ALL",
+                    "desc": "UNION 与 UNION ALL"
+                  },
+                  {
+                    "id": "1.7.2",
+                    "name": "INTERSECT",
+                    "desc": "INTERSECT"
+                  },
+                  {
+                    "id": "1.7.3",
+                    "name": "MINUS",
+                    "desc": "MINUS"
+                  },
+                  {
+                    "id": "1.7.4",
+                    "name": "集合操作的排序与列匹配规则",
+                    "desc": "集合操作的排序与列匹配规则"
+                  }
+                ]
+              },
+              {
+                "name": "1.8 数据操作语言（DML）",
+                "kps": [
+                  {
+                    "id": "1.8.1",
+                    "name": "INSERT 语句（单行、多行、从子查询插入）",
+                    "desc": "INSERT 语句（单行、多行、从子查询插入）"
+                  },
+                  {
+                    "id": "1.8.2",
+                    "name": "UPDATE 语句与关联更新",
+                    "desc": "UPDATE 语句与关联更新"
+                  },
+                  {
+                    "id": "1.8.3",
+                    "name": "DELETE 语句",
+                    "desc": "DELETE 语句"
+                  },
+                  {
+                    "id": "1.8.4",
+                    "name": "事务控制",
+                    "desc": "COMMIT、ROLLBACK、SAVEPOINT"
+                  },
+                  {
+                    "id": "1.8.5",
+                    "name": "读一致性与锁的基础概念",
+                    "desc": "读一致性与锁的基础概念"
+                  }
+                ]
+              },
+              {
+                "name": "1.9 数据定义语言（DDL）",
+                "kps": [
+                  {
+                    "id": "1.9.1",
+                    "name": "常用数据类型（VARCHAR2、NUMBER、DATE、CLOB、BLOB）",
+                    "desc": "常用数据类型（VARCHAR2、NUMBER、DATE、CLOB、BLOB）"
+                  },
+                  {
+                    "id": "1.9.2",
+                    "name": "创建表（CREATE TABLE）",
+                    "desc": "创建表（CREATE TABLE）"
+                  },
+                  {
+                    "id": "1.9.3",
+                    "name": "约束（NOT NULL、UNIQUE、PRIMARY KEY、FOREIGN KEY、CHECK）",
+                    "desc": "约束（NOT NULL、UNIQUE、PRIMARY KEY、FOREIGN KEY、CHECK）"
+                  },
+                  {
+                    "id": "1.9.4",
+                    "name": "修改表（ALTER TABLE",
+                    "desc": "增删列、修改列、增删约束）"
+                  },
+                  {
+                    "id": "1.9.5",
+                    "name": "删除表（DROP TABLE）与重命名",
+                    "desc": "删除表（DROP TABLE）与重命名"
+                  },
+                  {
+                    "id": "1.9.6",
+                    "name": "截断表（TRUNCATE）",
+                    "desc": "截断表（TRUNCATE）"
+                  },
+                  {
+                    "id": "1.9.7",
+                    "name": "视图基础（CREATE VIEW、简单视图与复杂视图、WITH READ ONLY）",
+                    "desc": "视图基础（CREATE VIEW、简单视图与复杂视图、WITH READ ONLY）"
+                  },
+                  {
+                    "id": "1.9.8",
+                    "name": "序列、索引、同义词的创建与使用",
+                    "desc": "序列、索引、同义词的创建与使用"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "part": "二、Oracle 数据库管理基础",
+            "level": "⭐⭐",
+            "chapters": [
+              {
+                "name": "2.1 数据库体系结构与工具",
+                "kps": [
+                  {
+                    "id": "2.1.1",
+                    "name": "Oracle 数据库服务器架构概述（实例与数据库）",
+                    "desc": "Oracle 数据库服务器架构概述（实例与数据库）"
+                  },
+                  {
+                    "id": "2.1.2",
+                    "name": "内存结构（SGA、PGA）",
+                    "desc": "内存结构（SGA、PGA）"
+                  },
+                  {
+                    "id": "2.1.3",
+                    "name": "进程结构（DBWn、LGWR、CKPT、SMON、PMON 等）",
+                    "desc": "进程结构（DBWn、LGWR、CKPT、SMON、PMON 等）"
+                  },
+                  {
+                    "id": "2.1.4",
+                    "name": "存储结构（控制文件、数据文件、联机重做日志文件、归档重做日志文件）",
+                    "desc": "存储结构（控制文件、数据文件、联机重做日志文件、归档重做日志文件）"
+                  },
+                  {
+                    "id": "2.1.5",
+                    "name": "表空间与数据文件的关系",
+                    "desc": "表空间与数据文件的关系"
+                  },
+                  {
+                    "id": "2.1.6",
+                    "name": "常用管理工具（SQL*Plus、SQL Developer、Oracle Enterprise Manager Database Express）",
+                    "desc": "常用管理工具（SQL*Plus、SQL Developer、Oracle Enterprise Manager Database Express）"
+                  }
+                ]
+              },
+              {
+                "name": "2.2 创建数据库与实例管理",
+                "kps": [
+                  {
+                    "id": "2.2.1",
+                    "name": "使用 DBCA 创建数据库",
+                    "desc": "使用 DBCA 创建数据库"
+                  },
+                  {
+                    "id": "2.2.2",
+                    "name": "初始化参数文件（PFILE、SPFILE）管理",
+                    "desc": "初始化参数文件（PFILE、SPFILE）管理"
+                  },
+                  {
+                    "id": "2.2.3",
+                    "name": "数据库启动与关闭的三个阶段（NOMOUNT、MOUNT、OPEN）",
+                    "desc": "数据库启动与关闭的三个阶段（NOMOUNT、MOUNT、OPEN）"
+                  },
+                  {
+                    "id": "2.2.4",
+                    "name": "告警日志与跟踪文件",
+                    "desc": "告警日志与跟踪文件"
+                  }
+                ]
+              },
+              {
+                "name": "2.3 网络配置",
+                "kps": [
+                  {
+                    "id": "2.3.1",
+                    "name": "Oracle Net Services 架构（监听器、客户端连接过程）",
+                    "desc": "Oracle Net Services 架构（监听器、客户端连接过程）"
+                  },
+                  {
+                    "id": "2.3.2",
+                    "name": "配置监听器（listener.ora）",
+                    "desc": "配置监听器（listener.ora）"
+                  },
+                  {
+                    "id": "2.3.3",
+                    "name": "配置本地命名方式（tnsnames.ora）",
+                    "desc": "配置本地命名方式（tnsnames.ora）"
+                  },
+                  {
+                    "id": "2.3.4",
+                    "name": "使用 lsnrctl 管理监听器",
+                    "desc": "使用 lsnrctl 管理监听器"
+                  },
+                  {
+                    "id": "2.3.5",
+                    "name": "连接描述符与网络服务名",
+                    "desc": "连接描述符与网络服务名"
+                  }
+                ]
+              },
+              {
+                "name": "2.4 用户安全管理",
+                "kps": [
+                  {
+                    "id": "2.4.1",
+                    "name": "用户与模式的概念",
+                    "desc": "用户与模式的概念"
+                  },
+                  {
+                    "id": "2.4.2",
+                    "name": "创建用户、修改用户、删除用户",
+                    "desc": "创建用户、修改用户、删除用户"
+                  },
+                  {
+                    "id": "2.4.3",
+                    "name": "系统权限与对象权限",
+                    "desc": "系统权限与对象权限"
+                  },
+                  {
+                    "id": "2.4.4",
+                    "name": "角色（预定义角色、自定义角色）",
+                    "desc": "角色（预定义角色、自定义角色）"
+                  },
+                  {
+                    "id": "2.4.5",
+                    "name": "概要文件（PROFILE）与密码管理",
+                    "desc": "概要文件（PROFILE）与密码管理"
+                  }
+                ]
+              },
+              {
+                "name": "2.5 存储结构管理",
+                "kps": [
+                  {
+                    "id": "2.5.1",
+                    "name": "表空间的创建与管理（本地管理表空间、字典管理表空间）",
+                    "desc": "表空间的创建与管理（本地管理表空间、字典管理表空间）"
+                  },
+                  {
+                    "id": "2.5.2",
+                    "name": "更改表空间状态（联机、脱机、只读）",
+                    "desc": "更改表空间状态（联机、脱机、只读）"
+                  },
+                  {
+                    "id": "2.5.3",
+                    "name": "为表空间添加、调整、删除数据文件",
+                    "desc": "为表空间添加、调整、删除数据文件"
+                  },
+                  {
+                    "id": "2.5.4",
+                    "name": "临时表空间的管理",
+                    "desc": "临时表空间的管理"
+                  },
+                  {
+                    "id": "2.5.5",
+                    "name": "UNDO 表空间与数据读一致性、闪回操作的关系",
+                    "desc": "UNDO 表空间与数据读一致性、闪回操作的关系"
+                  },
+                  {
+                    "id": "2.5.6",
+                    "name": "段、区、块的管理概念",
+                    "desc": "段、区、块的管理概念"
+                  },
+                  {
+                    "id": "2.5.7",
+                    "name": "自动存储管理（ASM）入门",
+                    "desc": "自动存储管理（ASM）入门"
+                  }
+                ]
+              },
+              {
+                "name": "2.6 数据并发与锁",
+                "kps": [
+                  {
+                    "id": "2.6.1",
+                    "name": "事务与并发概念",
+                    "desc": "事务与并发概念"
+                  },
+                  {
+                    "id": "2.6.2",
+                    "name": "锁的类型（DML 锁、DDL 锁、锁模式）",
+                    "desc": "锁的类型（DML 锁、DDL 锁、锁模式）"
+                  },
+                  {
+                    "id": "2.6.3",
+                    "name": "行级锁与表级锁",
+                    "desc": "行级锁与表级锁"
+                  },
+                  {
+                    "id": "2.6.4",
+                    "name": "死锁的检测与预防",
+                    "desc": "死锁的检测与预防"
+                  },
+                  {
+                    "id": "2.6.5",
+                    "name": "使用自动锁管理机制",
+                    "desc": "使用自动锁管理机制"
+                  }
+                ]
+              },
+              {
+                "name": "2.7 审计基础",
+                "kps": [
+                  {
+                    "id": "2.7.1",
+                    "name": "标准数据库审计（启用、配置审计策略）",
+                    "desc": "标准数据库审计（启用、配置审计策略）"
+                  },
+                  {
+                    "id": "2.7.2",
+                    "name": "统一的审计（UNIFIED_AUDIT）简介",
+                    "desc": "统一的审计（UNIFIED_AUDIT）简介"
+                  },
+                  {
+                    "id": "2.7.3",
+                    "name": "审计记录的查询与管理",
+                    "desc": "审计记录的查询与管理"
+                  }
+                ]
+              },
+              {
+                "name": "2.8 备份与恢复基础",
+                "kps": [
+                  {
+                    "id": "2.8.1",
+                    "name": "故障类型（语句失败、用户错误、介质故障）",
+                    "desc": "故障类型（语句失败、用户错误、介质故障）"
+                  },
+                  {
+                    "id": "2.8.2",
+                    "name": "备份概念（物理备份与逻辑备份，冷备份与热备份）",
+                    "desc": "备份概念（物理备份与逻辑备份，冷备份与热备份）"
+                  },
+                  {
+                    "id": "2.8.3",
+                    "name": "使用 RMAN（Recovery Manager）进行基本备份",
+                    "desc": "使用 RMAN（Recovery Manager）进行基本备份"
+                  },
+                  {
+                    "id": "2.8.4",
+                    "name": "配置快速恢复区（FRA）",
+                    "desc": "配置快速恢复区（FRA）"
+                  },
+                  {
+                    "id": "2.8.5",
+                    "name": "完全恢复与不完全恢复的概念",
+                    "desc": "完全恢复与不完全恢复的概念"
+                  },
+                  {
+                    "id": "2.8.6",
+                    "name": "闪回技术",
+                    "desc": "闪回查询、闪回表（回收站）、闪回版本查询"
+                  }
+                ]
+              },
+              {
+                "name": "2.9 数据移动",
+                "kps": [
+                  {
+                    "id": "2.9.1",
+                    "name": "外部表的使用",
+                    "desc": "外部表的使用"
+                  },
+                  {
+                    "id": "2.9.2",
+                    "name": "Data Pump 导出导入（expdp / impdp）基础",
+                    "desc": "Data Pump 导出导入（expdp / impdp）基础"
+                  },
+                  {
+                    "id": "2.9.3",
+                    "name": "SQL*Loader 加载数据",
+                    "desc": "SQL*Loader 加载数据"
+                  }
+                ]
+              },
+              {
+                "name": "2.10 数据库维护与性能监控",
+                "kps": [
+                  {
+                    "id": "2.10.1",
+                    "name": "优化器统计信息收集",
+                    "desc": "优化器统计信息收集"
+                  },
+                  {
+                    "id": "2.10.2",
+                    "name": "自动工作量资料档案库（AWR）与自动数据库诊断监视器（ADDM）",
+                    "desc": "自动工作量资料档案库（AWR）与自动数据库诊断监视器（ADDM）"
+                  },
+                  {
+                    "id": "2.10.3",
+                    "name": "使用告警日志与动态性能视图（V$视图）监控",
+                    "desc": "使用告警日志与动态性能视图（V$视图）监控"
+                  },
+                  {
+                    "id": "2.10.4",
+                    "name": "管理调度作业（DBMS_SCHEDULER 基本使用）",
+                    "desc": "管理调度作业（DBMS_SCHEDULER 基本使用）"
+                  }
+                ]
+              },
+              {
+                "name": "2.11 资源管理",
+                "kps": [
+                  {
+                    "id": "2.11.1",
+                    "name": "Oracle Resource Manager 基本概念",
+                    "desc": "Oracle Resource Manager 基本概念"
+                  },
+                  {
+                    "id": "2.11.2",
+                    "name": "资源计划与使用者组的创建和分配",
+                    "desc": "资源计划与使用者组的创建和分配"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "kp_count": 102,
+      "created_at": "2026-07-09T07:12:37.783Z",
+      "updated_at": "2026-07-09T07:12:37.783Z"
+    }
+  ]
+}

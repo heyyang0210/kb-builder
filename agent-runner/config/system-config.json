@@ -1,0 +1,28 @@
+{
+  "server": {
+    "port": 4100,
+    "host": "localhost"
+  },
+  "security": {
+    "encryption_key_env": "AGENT_RUNNER_KEY",
+    "cors_origins": [
+      "http://localhost:*",
+      "http://127.0.0.1:*"
+    ],
+    "rate_limit": {
+      "window_ms": 60000,
+      "max_requests": 10
+    }
+  },
+  "logging": {
+    "level": "info",
+    "file": "logs/execution.log",
+    "max_size": "10m",
+    "max_files": 5
+  },
+  "paths": {
+    "output": "../output",
+    "templates": "../templates",
+    "references": "../references"
+  }
+}

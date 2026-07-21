@@ -1,0 +1,22 @@
+{
+  "keyword_extraction": {
+    "min_base_queries": 1,
+    "max_expanded_queries": 10,
+    "reject_patterns": ["[A-Z]{1}[^A-Z]{0,2}[A-Z]{1}"]
+  },
+  "mcp_query": {
+    "min_success_rate": 0.5,
+    "min_content_length": 500,
+    "max_retries": 3
+  },
+  "document_generation": {
+    "min_length": 500,
+    "require_yaml": true,
+    "require_sql_examples": true,
+    "current_date_required": true
+  },
+  "content_validation": {
+    "min_completeness_score": 0.8,
+    "min_accuracy_score": 0.9
+  }
+}

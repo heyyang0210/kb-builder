@@ -1,0 +1,25 @@
+{
+  "id": "fast",
+  "name": "快速生成",
+  "description": "跳过验证步骤，快速生成文档",
+  "steps": [
+    {
+      "name": "planner",
+      "agent": "planner",
+      "config": {}
+    },
+    {
+      "name": "retriever",
+      "agent": "retriever",
+      "config": {}
+    },
+    {
+      "name": "generator",
+      "agent": "generator",
+      "config": {}
+    }
+  ],
+  "is_default": false,
+  "created_at": "2026-07-07T07:02:35.703Z",
+  "updated_at": "2026-07-07T07:02:35.703Z"
+}
