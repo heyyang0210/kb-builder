@@ -14,10 +14,10 @@ YashanDB 作为企业级数据库，需要为 DBA 和开发者提供完整的技
 
 ```mermaid
 graph LR
-    A[挑战1: 知识点分散<br>200+知识点散落各处] --> D[痛点]
+    A["挑战1: 知识点分散<br>200+知识点散落各处"] --> D[痛点]
     B[挑战2: 质量不一致<br>每人写作风格差异大] --> D
-    C[挑战3: 效率低下<br>手写提示词+手动执行] --> D
-    C2[挑战4: 历史文档问题<br>大量文档未体系化<br>过时/不准确/质量参差<br>测试用例/工单/代码<br>无法直接转换为文档] --> D
+    C["挑战3: 效率低下<br>手写提示词+手动执行"] --> D
+    C2["挑战4: 历史文档问题<br>大量文档未体系化<br>过时/不准确/质量参差<br>测试用例/工单/代码<br>无法直接转换为文档"] --> D
     D --> E[需要系统化解决方案]
     
     style D fill:#ffebee,stroke:#c62828
@@ -46,7 +46,7 @@ graph TB
     subgraph "阶段2: 自动化执行引擎 v2.0"
         E1[前后端分离架构<br>agent-runner/]
         E2[功能: 一键执行全流程]
-        E3[能力: MCP检索 + LLM生成 + 质量验证]
+        E3["能力: MCP检索 + LLM生成 + 质量验证"]
         E1 --> E2 --> E3
     end
     
@@ -77,11 +77,11 @@ graph TB
     subgraph "用户层"
         U1[浏览器前端<br>prompt-generator.html]
         U2[配置面板<br>模型/MCP/Agent]
-        U3[知识点导航树<br>200+知识点]
+        U3["知识点导航树<br>200+知识点"]
     end
     
     subgraph "执行引擎层 agent-runner"
-        API[REST API + WebSocket<br>server.js]
+        API["REST API + WebSocket<br>server.js"]
         
         subgraph "工作流引擎"
             WF[Workflow Engine<br>workflow-engine.js]
@@ -108,7 +108,7 @@ graph TB
     subgraph "外部服务层"
         LLM_API[大模型 API<br>OpenAI/阿里云/智谱]
         MCP_Server[YashanDB 知识库 MCP<br>实时检索]
-        FS[文件系统<br>output/ + logs/]
+        FS["文件系统<br>output/ + logs/"]
     end
     
     subgraph "知识资产层"
@@ -183,7 +183,7 @@ sequenceDiagram
     P-->>W: 返回执行计划
     
     W->>R: 5. 检索阶段
-    R->>MCP: 查询知识库（并行）
+    R->>MCP: 查询知识库-并行
     MCP-->>R: 返回相关知识片段
     R->>FS: 读取Oracle知识库
     R->>FS: 读取设计文档
@@ -219,15 +219,15 @@ sequenceDiagram
 
 ```mermaid
 graph LR
-    subgraph "Skill 仓库（知识资产）"
-        S1[Skill 文件<br>7个生成规则]
+    subgraph "Skill 仓库 - 知识资产"
+        S1["Skill 文件<br>7个生成规则"]
         S2[模板文件<br>7套标准模板]
-        S3[知识点大纲<br>200+知识点]
+        S3["知识点大纲<br>200+知识点"]
         S4[共享配置<br>格式规范/质量标准]
         S5[参考资料<br>Oracle知识库/设计文档]
     end
     
-    subgraph "执行引擎（自动化系统）"
+    subgraph "执行引擎 - 自动化系统"
         E1[前端界面<br>prompt-generator.html]
         E2[后端服务<br>agent-runner/]
         E3[工作流引擎<br>Workflow Agent]
@@ -278,7 +278,7 @@ graph LR
 ```mermaid
 graph TB
     subgraph "前端模块"
-        F1[知识点导航树<br>200+知识点]
+        F1["知识点导航树<br>200+知识点"]
         F2[配置面板<br>模型/MCP/Agent]
         F3[进度显示<br>实时状态更新]
     end
@@ -367,7 +367,7 @@ graph LR
 
 ```mermaid
 graph TB
-    KP[知识点<br>200+个] -->|确定类型| TYPE[文档类型<br>7种]
+    KP["知识点<br>200+个"] -->|确定类型| TYPE[文档类型<br>7种]
     TYPE -->|匹配| SKILL[Skill 文件<br>生成规则]
     TYPE -->|匹配| TEMPLATE[模板文件<br>文档结构]
     
@@ -446,13 +446,13 @@ graph LR
     B -.->|章节完整性 格式正确性| B
     C -.->|技术准确性 SQL正确性| C
     D -.->|Oracle vs YashanDB 执行对比| D
-    E -.->|配置数据库<br>执行SQL和SOP<br>验证功能正确性| E
+    D -.->|配置数据库 执行SQL和SOP 验证功能正确性| E
     
     style A fill:#e3f2fd,stroke:#1565c0
     style B fill:#f3e5f5,stroke:#7b1fa2
     style C fill:#fff3e0,stroke:#e65100
     style D fill:#e8f5e9,stroke:#2e7d32
-    style E fill:#ffebee,stroke:#c62828,stroke-dasharray: 5 5
+    style E fill:#ffebee,stroke:#c62828
     style F fill:#fce4ec,stroke:#c2185b
 ```
 
@@ -508,9 +508,9 @@ graph TB
     V1 --> V2
     V2 --> V3
     
-    style C1 fill:#ffebee,stroke:#c62828,stroke-dasharray: 5 5
-    style E1 fill:#ffebee,stroke:#c62828,stroke-dasharray: 5 5
-    style V1 fill:#ffebee,stroke:#c62828,stroke-dasharray: 5 5
+    style C1 fill:#ffebee,stroke:#c62828
+    style E1 fill:#ffebee,stroke:#c62828
+    style V1 fill:#ffebee,stroke:#c62828
 ```
 
 **工作流程（待实现）**：
