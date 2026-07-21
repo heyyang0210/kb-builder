@@ -45,6 +45,7 @@ MCP_CONFIG_FILES=(
     "${CODEX_HOME}/config/mcp.json"
     "${REPO_ROOT}/.codex/mcp.json"
     "${REPO_ROOT}/mcp.json"
+    "${REPO_ROOT}/agent-runner/config/mcp-config.json"
 )
 
 for config_file in "${MCP_CONFIG_FILES[@]}"; do
