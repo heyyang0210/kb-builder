@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["chunks", "documentType", "extractionProfile"],
+  "properties": {
+    "chunks": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 5,
+      "items": {
+        "type": "object",
+        "required": ["chunkId", "content"],
+        "properties": {
+          "chunkId": {"type": "string"},
+          "content": {"type": "string"},
+          "headingPath": {
+            "type": "array",
+            "items": {"type": "string"}
+          },
+          "documentOffsets": {
+            "type": "object",
+            "properties": {
+              "start": {"type": "integer"},
+              "end": {"type": "integer"}
+            }
+          }
+        }
+      }
+    },
+    "documentType": {
+      "type": "string",
+      "enum": ["feature_design", "test_design", "principle_introduction", "problem_analysis", "general_technical"]
+    },
+    "extractionProfile": {
+      "type": "string"
+    },
+    "domain": {
+      "type": "string",
+      "default": "yashandb"
+    },
+    "document": {
+      "type": "object",
+      "properties": {
+        "title": {"type": "string"},
+        "semanticTitle": {"type": "string"},
+        "category": {"type": "string"},
+        "summary": {"type": "string"},
+        "domainTerms": {
+          "type": "array",
+          "items": {"type": "object"}
+        }
+      }
+    }
+  }
+}

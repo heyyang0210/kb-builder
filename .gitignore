@@ -1,0 +1,77 @@
+# 环境变量（包含敏感信息）
+.env
+.env.local
+.env.production
+
+# 数据目录（大文件，不提交）
+data/
+output/
+scripts/pingcode/runtime/
+scripts/pingcode/config/pingcode.json
+*.db
+*.sqlite
+
+# 日志
+logs/
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 浏览器数据
+.browser-data/
+
+# 临时文件
+tmp/
+temp/
+*.tmp
+
+# 测试输出
+_test_output/
+scripts/pingcode/web/backend/tests/reports/
+coverage/
+.coverage
+htmlcov/
+
+# Docker
+.docker/
+
+# 外部源码检出
+src/FastGPT/

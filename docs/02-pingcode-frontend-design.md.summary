@@ -1,0 +1,64 @@
+# PingCode 文档下载与预处理前端 - 设计摘要
+
+> 版本：v1.2  
+> 日期：2026-07-24  
+> 当前范围：非容器化前端设计
+
+## 核心结论
+
+1. 前端围绕 `MaterialBatch` 素材批次组织，不再使用四个相互割裂的平级 Tab；
+2. 第一阶段建设独立 Vue 3 路由页面，通过现有生成器导航进入；
+3. 空间树使用懒加载、虚拟滚动和“包含规则 + 排除规则”；
+4. 下载、预处理和质量分析都通过批次 ID、任务 ID 恢复上下文；
+5. 任务控制使用 HTTP，实时进度使用 SSE，失败时降级轮询；
+6. 局域网用户通过资源 ID 在线预览和下载文件，不访问服务器绝对路径；
+7. 预处理增加源文件扫描、样例预览、质量门禁和数据集版本；
+8. 图谱分析以来源覆盖、可追溯和关系可信度为核心，不以节点或边数量作为质量结论；
+9. Docker 和容器编排仅作为后续规划，不进入当前排期。
+10. 加工执行采用 FastAPI 控制面 + 独立 Processing Worker + SQLite 租约任务；
+11. 首期接入图片说明、摘要分类、知识提取和语义质量复核四类模型能力，Embedding 独立标识；
+12. Prompt 支持草稿编辑、验证、试运行和不可变发布，Skill/Prompt/模型调用全程可追溯。
+
+## 页面结构
+
+| 页面 | 核心职责 |
+|------|----------|
+| 素材空间 | 浏览空间、筛选页面、定义来源范围、创建批次 |
+| 素材批次 | 下载进度、文件清单、失败重试、在线预览和打包下载 |
+| 加工任务 | 阶段进度、模型调用、Prompt/Skill、产物、人工门禁和发布版本 |
+| 质量分析 | 来源覆盖、追溯、局部图谱、抽样复核和检索验证 |
+
+## 核心技术边界
+
+- 前端：Vue 3 + Router，独立页面 `/pingcode-materials/`；
+- 后端：FastAPI 控制面 + 独立 Processing Worker；
+- 任务存储：SQLite 元数据、租约和事件，大体积内容进入 Artifact Store；
+- 实时通信：HTTP 命令 + SSE 事件；
+- 文件访问：后端资源 ID + 预览/下载接口；
+- 配置：运行时配置，默认同源 `/api`；
+- 大数据展示：服务端筛选、分页、虚拟滚动、局部图谱。
+
+## 实施阶段
+
+| 阶段 | 内容 |
+|------|------|
+| Phase 1 | MaterialBatch、任务状态机、OpenAPI 和 SSE 契约 |
+| Phase 2 | Vue 页面骨架、运行时配置、路由和全局状态 |
+| Phase 3 | 素材空间、虚拟树、选择规则和批次创建 |
+| Phase 4 | 下载进度、文件清单、在线预览和失败重试 |
+| Phase 5 | 扫描、预览、加工任务、质量门禁和数据集版本 |
+| Phase 6 | 质量指标、来源追溯、局部图谱和检索验证 |
+| Phase 7 | 真实后端 API 联调、断线恢复和可用性测试 |
+| Phase 8 | Processing Worker、SQLite 运行库和阶段事件 |
+| Phase 9 | Prompt/Skill 管理、验证、试运行、发布和权限 |
+| Phase 10 | 四类模型能力和调用级审计 |
+| Phase 11 | Embedding、证据图谱和人工质量门禁 |
+| Phase 12 | 真实模型全流程、故障恢复和浏览器验收 |
+
+## 相关文档
+
+- 总体设计：`docs/02-pingcode-frontend-design.md`
+- 交互详细设计：`docs/03-pingcode-frontend-interaction-detail.md`
+- LLM 可控加工专项设计：`docs/05-pingcode-processing-llm-control-design.md`
+- PingCode 下载器设计：`scripts/pingcode/docs/design.md`
+- PingCode 下载器使用说明：`scripts/pingcode/docs/usage.md`

@@ -1,0 +1,17 @@
+categories:
+  - id: feature_design
+    name: 特性设计
+    keywords: [设计, 方案, 功能, 需求, feature]
+    weight: 1.0
+  - id: test_design
+    name: 测试设计
+    keywords: [测试, test, 用例, 验收]
+    weight: 1.0
+  - id: principle_introduction
+    name: 原理介绍
+    keywords: [原理, 架构, 机制, 内幕]
+    weight: 1.0
+  - id: problem_analysis
+    name: 问题分析
+    keywords: [问题, 故障, 错误, 排查, 分析, issue, error]
+    weight: 1.0

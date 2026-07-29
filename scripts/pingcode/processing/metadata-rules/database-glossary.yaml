@@ -1,0 +1,67 @@
+terms:
+  - termId: database.recovery.redo_log
+    canonicalName: Redo Log
+    displayName: 重做日志
+    aliases: [redo, REDO日志, 重做日志]
+    termType: database_concept
+    category: 日志与恢复
+  - termId: database.transaction.deadlock
+    canonicalName: Deadlock
+    displayName: 死锁
+    aliases: [deadlock, 死锁]
+    termType: database_concept
+    category: 事务
+  - termId: database.object.index
+    canonicalName: Index
+    displayName: 索引
+    aliases: [index, 索引]
+    termType: database_object
+    category: 数据库对象
+  - termId: database.metadata.data_dictionary
+    canonicalName: 数据字典
+    displayName: 数据字典
+    aliases: [Data Dictionary]
+    termType: database_concept
+    category: 元数据
+  - termId: database.object.sequence
+    canonicalName: Sequence
+    displayName: 序列
+    aliases: [SEQUENCE, 序列, 序列号生成器]
+    termType: database_object
+    category: 数据库对象
+  - termId: database.storage.tablespace
+    canonicalName: Tablespace
+    displayName: 表空间
+    aliases: [tablespace, 表空间]
+    termType: database_concept
+    category: 存储
+  - termId: database.replication.physical_replication
+    canonicalName: Replication
+    displayName: 主备复制
+    aliases: [replication, 主备复制, 物理复制]
+    termType: database_concept
+    category: 高可用
+  - termId: database.transaction.transaction
+    canonicalName: 事务
+    displayName: 事务
+    aliases: [Transaction, transaction]
+    termType: database_concept
+    category: 事务
+  - termId: database.durability.persistence
+    canonicalName: 持久化
+    displayName: 持久化
+    aliases: [Persistence, persistence, 数据持久化]
+    termType: database_concept
+    category: 存储与恢复
+  - termId: database.storage.lob
+    canonicalName: LOB
+    displayName: 大对象
+    aliases: [lob, Large Object, 大对象]
+    termType: database_object
+    category: 数据类型
+  - termId: database.storage.columnar_storage
+    canonicalName: 列式存储
+    displayName: 列式存储
+    aliases: [Columnar Storage, columnar storage, 可变列式存储]
+    termType: database_concept
+    category: 存储

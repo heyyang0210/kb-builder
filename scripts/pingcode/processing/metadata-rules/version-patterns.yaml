@@ -1,0 +1,3 @@
+patterns:
+  - id: dotted_version
+    pattern: "(?<![\\w.])v?\\d+(?:\\.\\d+){1,3}(?![\\w.])"

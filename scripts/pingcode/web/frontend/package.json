@@ -1,0 +1,25 @@
+{
+  "name": "pingcode-materials-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "preview": "vite preview --host 0.0.0.0"
+  },
+  "dependencies": {
+    "dompurify": "^3.4.12",
+    "echarts": "^6.1.0",
+    "lucide-vue-next": "^0.468.0",
+    "marked": "^18.0.7",
+    "mermaid": "^11.16.0",
+    "monaco-editor": "^0.56.0",
+    "vue": "^3.5.18",
+    "vue-router": "^4.5.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.1",
+    "vite": "^7.0.6"
+  }
+}

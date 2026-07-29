@@ -1,0 +1,10 @@
+patterns:
+  - id: error_code
+    pattern: "\\b(?:YAS|ORA)-\\d{5}\\b"
+    weight: 1.0
+  - id: versioned_identifier
+    pattern: "\\b[A-Za-z][A-Za-z0-9_]{2,}(?:_[A-Za-z0-9]+)+\\b"
+    weight: 0.5
+exclusionPatterns:
+  - id: technical_tracking_id
+    pattern: "^(?:dataset|file|chunk|resource|document|task|batch|run|node|edge|unit)_[0-9a-fA-F:._-]+$"

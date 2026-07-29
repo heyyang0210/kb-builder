@@ -1,0 +1,20 @@
+removeTerms:
+  - YashanDB
+  - DSI
+titleGlossaryConfidence: 0.9
+removeSuffixes:
+  - 内幕文档
+  - 内幕
+  - 文档
+replacementPatterns:
+  - pattern: "\\s*[（(]\\d+[）)]\\s*$"
+    replacement: ""
+  - pattern: "[_\\-—–]+"
+    replacement: " "
+  - pattern: "\\s*(?:&&|&|/|\\\\|\\|)\\s*"
+    replacement: " "
+  - pattern: "[（）()]"
+    replacement: " "
+  - pattern: "\\s+"
+    replacement: " "
+trimCharacters: " ._-—–()（）[]【】"

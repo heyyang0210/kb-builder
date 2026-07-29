@@ -1,0 +1,16 @@
+id: knowledge-point-extraction
+version: 1.2.0
+status: published
+capability: chat
+description: 从技术文档处理单元中提取知识点、实体和关系，支持批量处理
+inputSchema: schemas/input.schema.json
+outputSchema: schemas/output.schema.json
+prompts:
+  system: prompts/system.md
+  user: prompts/user.md
+defaults:
+  maxTokens: 4000
+  timeoutMs: 60000
+  maxRetries: 2
+  concurrency: 3
+  batchSize: 3

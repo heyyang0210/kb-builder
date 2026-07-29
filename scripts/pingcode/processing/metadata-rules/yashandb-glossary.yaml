@@ -1,0 +1,32 @@
+terms:
+  - termId: yashandb.error_code
+    canonicalName: YashanDB Error Code
+    displayName: YashanDB 错误码
+    aliases: [YAS错误码, YAS error code]
+    termType: yashandb_concept
+    category: 故障诊断
+    officialSources:
+      - sourceType: yashandb_official_knowledge_mcp
+        knowledgeUnit: YDB-KU-reference-error_code_overview
+        title: YashanDB错误码概述
+  - termId: yashandb.redo
+    canonicalName: YashanDB Redo
+    displayName: YashanDB 重做日志
+    aliases: [YashanDB Redo, YAS Redo]
+    termType: yashandb_component
+    category: 日志与恢复
+    relatedGenericTerm: database.recovery.redo_log
+    officialSources:
+      - sourceType: yashandb_official_knowledge_mcp
+        knowledgeUnit: YDB-KU-reference_redo_statistics
+        title: YashanDB重做日志统计信息
+  - termId: yashandb.parameter
+    canonicalName: YashanDB Parameter
+    displayName: YashanDB 参数
+    aliases: [YashanDB 参数, YAS参数]
+    termType: yashandb_concept
+    category: 配置参数
+    officialSources:
+      - sourceType: yashandb_official_knowledge_mcp
+        knowledgeUnit: YDB-KU-concept-yashandb_configuration_parameters
+        title: YashanDB配置参数概述
