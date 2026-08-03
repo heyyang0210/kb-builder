@@ -1,0 +1,25 @@
+schemaVersion: "1.0.0"
+minEvidenceCount: 1
+scopeWords:
+  - YashanDB
+  - DSI
+  - 数据库
+namingNoiseWords:
+  - 内幕
+  - 内幕文档
+  - 文档
+  - 副本
+strongTopicTerms:
+  - 事务
+  - 持久化
+  - LOB
+  - Replication
+  - 列式存储
+  - 备份恢复
+  - REDO
+  - 数据缓存区
+rejectionPatterns:
+  - id: technical_identifier
+    pattern: "^(?:dataset|file|chunk|resource|document|task|batch|run|node|edge|unit)[_-][0-9a-fA-F:._-]{4,}$"
+  - id: short_hash
+    pattern: "^[0-9a-fA-F]{8,}$"

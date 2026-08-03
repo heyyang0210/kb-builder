@@ -1,0 +1,34 @@
+schemaVersion: "1.0"
+profile:
+  id: resource-preprocessing-embedding-v1
+  version: "1.0.0"
+  enabled: true
+provider:
+  type: deterministic_hash
+  model: hash-embedding-v1
+  dimension: 64
+  textKind: semantic_title_summary_chunk
+  batchSize: 16
+  timeoutMs: 30000
+  maxRetries: 0
+gateway:
+  enabled: false
+  endpoint: /embedding
+cache:
+  namespace: resource-preprocessing
+  directory: model-results/embedding-cache
+failureMode:
+  onProviderUnavailable: warning
+  onTimeout: warning
+  onDimensionMismatch: warning
+  onCacheCorrupted: warning_recompute
+cluster:
+  enabled: true
+  algorithm: cosine_threshold_connected_components
+  threshold: 0.82
+  minClusterSize: 2
+  singletonMode: include
+  representativeTitleStrategy:
+    - semantic_title_frequency
+    - topic_candidate_confidence
+    - centroid_similarity

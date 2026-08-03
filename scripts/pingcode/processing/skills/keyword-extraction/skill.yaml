@@ -1,0 +1,20 @@
+id: keyword-extraction
+version: 1.1.0
+status: published
+capability: chat
+description: 从文档名称、正文主要内容和数据库领域术语中抽取质量分析关键词
+inputSchema: schemas/input.schema.json
+outputSchema: schemas/output.schema.json
+prompts:
+  system: prompts/system.md
+  user: prompts/user.md
+defaults:
+  maxTokens: 1800
+  timeoutMs: 45000
+  maxRetries: 0
+  concurrency: 3
+  maxChunksPerBatch: 5
+  maxBatchInputCharacters: 14000
+  maxCandidatesPerChunk: 4
+  repairRetries: 1
+  slowResponseMs: 30000

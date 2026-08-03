@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["results"],
+  "properties": {
+    "results": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["chunkId", "keywordCandidates"],
+        "properties": {
+          "chunkId": {"type": "string"},
+          "keywordCandidates": {
+            "type": "array",
+            "items": {"$ref": "#/$defs/keywordCandidate"}
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "properties": {
+        "skillId": {"type": "string"},
+        "skillVersion": {"type": "string"},
+        "processedChunks": {"type": "integer"}
+      }
+    }
+  },
+  "$defs": {
+    "keywordCandidate": {
+      "type": "object",
+      "required": ["name", "aliases", "category", "evidenceSource", "evidenceText", "confidence"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "aliases": {"type": "array", "items": {"type": "string"}},
+        "category": {"type": "string"},
+        "evidenceSource": {
+          "type": "string",
+          "enum": ["title", "heading", "content", "domain_glossary"]
+        },
+        "evidenceText": {"type": "string", "minLength": 1},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "termId": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    }
+  }
+}

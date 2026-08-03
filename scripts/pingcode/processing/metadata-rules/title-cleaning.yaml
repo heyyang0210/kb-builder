@@ -2,6 +2,8 @@ removeTerms:
   - YashanDB
   - DSI
 titleGlossaryConfidence: 0.9
+titleTopicConfidence: 0.78
+titleTopicMaxCharacters: 40
 removeSuffixes:
   - 内幕文档
   - 内幕

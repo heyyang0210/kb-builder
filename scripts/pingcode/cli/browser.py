@@ -62,7 +62,8 @@ def launch_browser(config, headless=False):
         browser = p.chromium.launch_persistent_context(
             user_data_dir=str(user_data_dir),
             headless=headless,
-            viewport={'width': 1920, 'height': 1080}
+            viewport={'width': 1920, 'height': 1080},
+            ignore_https_errors=True,
         )
         
         page = browser.pages[0] if browser.pages else browser.new_page()

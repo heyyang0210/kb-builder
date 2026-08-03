@@ -1,6 +1,6 @@
 # Processing 资源
 
-本目录保存加工流水线的文件化 Skill、Prompt 和 Schema。当前实现采用三步知识加工流水线：资料预处理、知识提取、索引生成。元数据整理归入资料预处理阶段，证据校验、语义补充和跨 chunk 关系识别归入知识提取 Workflow Agent，不再作为前端独立阶段展示。
+本目录保存加工流水线的文件化 Skill、Prompt 和 Schema。当前实现采用三步知识加工流水线：资料预处理、知识提取、索引生成。默认质量分析任务执行 `keyword_analysis`，只调用关键词抽取 Skill 并生成关键词图谱；正式知识构建由用户在质量分析页确认关键词后显式触发 `formal_knowledge`，再生成知识点、实体和关系。元数据整理归入资料预处理阶段，证据校验、语义补充和跨 chunk 关系识别归入正式知识提取 Workflow Agent，不再作为前端独立阶段展示。
 
 ## Workflow Agent 架构（新）
 
@@ -23,7 +23,7 @@
 
 **新工作流（3步）：**
 1. `material_preparation` - 资料预处理
-2. `knowledge_extraction` - 知识提取（由 Workflow Agent 处理）
+2. `knowledge_extraction` - 默认执行关键词抽取；正式知识构建才由 Workflow Agent 处理知识点、实体和关系
 3. `index_generation` - 索引生成
 
 相比原有架构，新 Workflow Agent 可节省 30-60% 的 token 消耗，并支持跨 chunk 关系识别。详细设计见 `web/backend/app/agents/README.md`。
@@ -116,5 +116,8 @@ training-runs/<taskId>/
 
 当前正式语义 Skill：
 
+- `keyword-extraction@1.1.0`：质量分析默认档使用。先由清洗标题、章节、正文和领域词典生成确定性候选；词典缺项但标题主题明确且有正文证据时也可生成 `deterministic_title_topic` 候选。仅对主题不明确或需要补充术语的处理单元调用模型。请求按输入预算跨文档动态组批，网络层不整批重试，单 chunk 格式问题只定向修复，已校验候选按正文、语义标题、规则、Skill 和 Prompt 版本缓存；
 - `knowledge-extraction@2.0.0`：每次处理一个完整处理单元，输出知识点、实体、关系和不确定项；
 - `semantic-enrichment@1.0.0`：每次只处理一个 `needs_enrichment`，不能替代完整知识提取。
+
+关键词图谱生成后会写入数据集 `keyword-chunk-index.json`。正式知识构建只读取已确认关键词关联的处理单元；共享处理单元只抽取一次，并把全部 `keywordIds` 保留在正式知识结果中。

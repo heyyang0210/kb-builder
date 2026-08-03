@@ -8,24 +8,12 @@
       "minItems": 1,
       "items": {
         "type": "object",
-        "required": ["chunkId", "keywordCandidates", "knowledgePoints", "entities", "relations"],
+        "required": ["chunkId", "knowledgePoints"],
         "properties": {
           "chunkId": {"type": "string"},
           "knowledgePoints": {
             "type": "array",
             "items": {"$ref": "#/$defs/knowledgePoint"}
-          },
-          "keywordCandidates": {
-            "type": "array",
-            "items": {"$ref": "#/$defs/keywordCandidate"}
-          },
-          "entities": {
-            "type": "array",
-            "items": {"$ref": "#/$defs/entity"}
-          },
-          "relations": {
-            "type": "array",
-            "items": {"$ref": "#/$defs/relation"}
           },
           "documentStructure": {
             "type": "object",
@@ -37,7 +25,8 @@
               "sectionTitle": {"type": "string"}
             }
           }
-        }
+        },
+        "additionalProperties": false
       }
     },
     "metadata": {
@@ -46,30 +35,12 @@
         "skillId": {"type": "string"},
         "skillVersion": {"type": "string"},
         "processedChunks": {"type": "integer"}
-      }
-    }
-  },
-  "$defs": {
-    "keywordCandidate": {
-      "type": "object",
-      "required": ["name", "aliases", "category", "evidenceSource", "evidenceText", "confidence"],
-      "properties": {
-        "name": {"type": "string", "minLength": 1},
-        "aliases": {
-          "type": "array",
-          "items": {"type": "string"}
-        },
-        "category": {"type": "string"},
-        "evidenceSource": {
-          "type": "string",
-          "enum": ["title", "heading", "content", "domain_glossary"]
-        },
-        "evidenceText": {"type": "string", "minLength": 1},
-        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
-        "termId": {"type": ["string", "null"]}
       },
       "additionalProperties": false
-    },
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
     "knowledgePoint": {
       "type": "object",
       "required": ["title", "statement", "knowledgeType", "evidenceText"],
@@ -85,27 +56,8 @@
         },
         "evidenceText": {"type": "string"},
         "confidence": {"type": "number", "minimum": 0, "maximum": 1}
-      }
-    },
-    "entity": {
-      "type": "object",
-      "required": ["name", "type", "evidenceText"],
-      "properties": {
-        "name": {"type": "string"},
-        "type": {"type": "string"},
-        "evidenceText": {"type": "string"},
-        "attributes": {"type": "object"}
-      }
-    },
-    "relation": {
-      "type": "object",
-      "required": ["source", "target", "type", "evidenceText"],
-      "properties": {
-        "source": {"type": "string"},
-        "target": {"type": "string"},
-        "type": {"type": "string"},
-        "evidenceText": {"type": "string"}
-      }
+      },
+      "additionalProperties": false
     }
   }
 }

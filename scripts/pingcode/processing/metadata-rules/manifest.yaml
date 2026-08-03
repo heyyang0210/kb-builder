@@ -1,5 +1,5 @@
 ruleSetId: pingcode-metadata-rules
-ruleSetVersion: 1.3.0
+ruleSetVersion: 1.4.0
 maturity: initial
 files:
   - document-categories.yaml
@@ -9,3 +9,5 @@ files:
   - yashandb-glossary.yaml
   - stopwords.txt
   - title-cleaning.yaml
+  - embedding-rules.yaml
+  - business-keyword-rules.yaml

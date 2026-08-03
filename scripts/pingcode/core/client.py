@@ -7,9 +7,26 @@ CAS 登录客户端
 - 自动重登录
 """
 
+import asyncio
+import logging
 from pathlib import Path
 from playwright.sync_api import sync_playwright, Page, BrowserContext
 from .config import PingCodeConfig
+
+logger = logging.getLogger(__name__)
+
+_MAX_LOGIN_RETRIES = 2
+
+
+def _ensure_clean_asyncio_loop():
+    """确保当前线程没有运行中的 asyncio 事件循环，避免 Playwright Sync API 冲突。"""
+    try:
+        loop = asyncio.get_event_loop_policy().get_event_loop()
+        if loop.is_running():
+            asyncio.set_event_loop(asyncio.new_event_loop())
+    except RuntimeError:
+        pass
+
 
 class PingCodeClient:
     """PingCode CAS 登录客户端"""
@@ -29,6 +46,7 @@ class PingCodeClient:
     
     def start(self) -> Page:
         """启动浏览器并登录"""
+        _ensure_clean_asyncio_loop()
         self._playwright = sync_playwright().start()
         
         self.user_data_dir.mkdir(parents=True, exist_ok=True)
@@ -36,7 +54,8 @@ class PingCodeClient:
         self._browser = self._playwright.chromium.launch_persistent_context(
             user_data_dir=str(self.user_data_dir),
             headless=self.headless,
-            viewport={'width': 1920, 'height': 1080}
+            viewport={'width': 1920, 'height': 1080},
+            ignore_https_errors=True,
         )
         
         self._page = self._browser.pages[0] if self._browser.pages else self._browser.new_page()
@@ -49,12 +68,17 @@ class PingCodeClient:
     
     def _is_logged_in(self) -> bool:
         """检查是否已登录"""
-        try:
-            self._page.goto(self.config.base_url + '/wiki', wait_until='domcontentloaded', timeout=10000)
-            self._page.wait_for_timeout(2000)
-            return 'login' not in self._page.url.lower() and 'Login' not in self._page.title()
-        except Exception:
-            return False
+        url = self.config.base_url + '/wiki'
+        for attempt in range(1, _MAX_LOGIN_RETRIES + 1):
+            try:
+                self._page.goto(url, wait_until='domcontentloaded', timeout=15000)
+                self._page.wait_for_timeout(2000)
+                return 'login' not in self._page.url.lower() and 'Login' not in self._page.title()
+            except Exception as exc:
+                logger.warning("登录检查第 %d 次失败: %s", attempt, exc)
+                if attempt < _MAX_LOGIN_RETRIES:
+                    self._page.wait_for_timeout(2000)
+        return False
     
     def _login(self):
         """执行 CAS 登录"""
@@ -94,9 +118,15 @@ class PingCodeClient:
     def close(self):
         """关闭浏览器"""
         if self._browser:
-            self._browser.close()
+            try:
+                self._browser.close()
+            except Exception:
+                pass
         if self._playwright:
-            self._playwright.stop()
+            try:
+                self._playwright.stop()
+            except Exception:
+                pass
     
     def __enter__(self):
         self.start()
