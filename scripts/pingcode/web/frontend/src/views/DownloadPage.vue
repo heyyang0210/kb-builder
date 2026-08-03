@@ -146,7 +146,8 @@ const renderedPreview = computed(() => {
       if (token.type === 'image') token.href = assetUrl(token.href)
     },
   })
-  return DOMPurify.sanitize(html)
+  const safe = DOMPurify.sanitize(html)
+  return safe.replace(/<table>/g, '<div class="table-wrapper"><table>').replace(/<\/table>/g, '</table></div>')
 })
 
 async function openPreview(file) {

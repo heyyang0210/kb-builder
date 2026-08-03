@@ -169,9 +169,12 @@ button { cursor: pointer; }
 .markdown-preview code { padding: 2px 5px; border-radius: 4px; background: #f0f4fa; color: #9d174d; font-family: "SF Mono", Consolas, monospace; }
 .markdown-preview pre code { padding: 0; color: inherit; background: transparent; }
 .markdown-preview blockquote { margin: 16px 0; padding: 10px 16px; border-left: 4px solid #175cd3; background: #f5f9ff; color: #536176; }
-.markdown-preview table { width: 100%; overflow: hidden; border: 1px solid #dfe5ee; border-collapse: collapse; }
-.markdown-preview th, .markdown-preview td { padding: 9px 12px; border: 1px solid #dfe5ee; text-align: left; }
-.markdown-preview th { background: #f4f7fb; }
+.markdown-preview .table-wrapper { overflow-x: auto; margin: 16px 0; border: 1px solid #dfe5ee; border-radius: 6px; }
+.markdown-preview .table-wrapper table { margin: 0; border: none; border-radius: 0; }
+.markdown-preview table { width: 100%; overflow: hidden; border: 1px solid #dfe5ee; border-collapse: collapse; table-layout: auto; }
+.markdown-preview th, .markdown-preview td { padding: 10px 14px; border: 1px solid #dfe5ee; text-align: left; vertical-align: top; word-break: break-word; min-width: 60px; max-width: 520px; font-size: 14px; line-height: 1.6; }
+.markdown-preview th { background: #f4f7fb; font-weight: 600; white-space: nowrap; }
+.markdown-preview td:first-child, .markdown-preview th:first-child { white-space: nowrap; font-weight: 600; color: #374151; min-width: 48px; max-width: 120px; }
 .markdown-preview img { display: block; max-width: 100%; height: auto; margin: 14px 0; border: 1px solid #dfe5ee; border-radius: 6px; box-shadow: 0 2px 8px rgba(16, 36, 64, .08); }
 .markdown-preview a { color: #175cd3; }
 .markdown-source { white-space: pre-wrap; word-break: break-word; font-family: "SF Mono", Consolas, monospace; font-size: 13px; line-height: 1.7; background: #f8fafc; }
