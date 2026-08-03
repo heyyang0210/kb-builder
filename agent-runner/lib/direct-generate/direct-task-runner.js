@@ -5,6 +5,10 @@ const LLMClient = require('../llm-client');
 const configManager = require('../config-manager');
 const logger = require('../logger');
 const { extractDirectReferences, resolveOutputFilename, standardizePrompt } = require('./prompt-parser');
+const queryPlanner = require('../retrieval/query-planner');
+const YamlMetadataProcessor = require('../document/yaml-metadata-processor');
+const resultFilter = require('../retrieval/result-filter');
+const contextAssembler = require('../retrieval/context-assembler');
 const ProcessStore = require('../process-store');
 const RetrievalStrategy = require('../retrieval-strategy');
 const { writeDirectExecutionLog } = require('./execution-log');
@@ -63,49 +67,6 @@ function formatMcpResult(data, maxResults = 8) {
   return header + '\n\n' + lines.join('\n\n');
 }
 
-
-/**
- * 修复 YAML 代码块未关闭的问题
- * 
- * LLM 有时会在 yaml 代码块中遗漏关闭的 ```，导致正文被包含在代码块中。
- * 此函数检测并修复这个问题：在 --- 分隔线之前插入关闭的 ```。
- */
-function fixYamlCodeBlock(content) {
-  if (!content) return content;
-  
-  // 检查是否有 ```yaml 开头
-  const yamlStartMatch = content.match(/^```yaml\s*\n/);
-  if (!yamlStartMatch) return content;
-  
-  // 找到 ```yaml 之后的位置
-  const yamlStartIdx = yamlStartMatch.index + yamlStartMatch[0].length;
-  
-  // 查找 --- 分隔线（YAML 块结束标记）
-  const afterYamlStart = content.substring(yamlStartIdx);
-  const separatorMatch = afterYamlStart.match(/\n---\s*\n/);
-  
-  if (!separatorMatch) {
-    // 没有找到 --- 分隔线，无法确定 YAML 块边界
-    return content;
-  }
-  
-  // 检查在 --- 之前是否已有关闭的 ```
-  const beforeSeparator = afterYamlStart.substring(0, separatorMatch.index);
-  const closingMatch = beforeSeparator.match(/\n```\s*$/);
-  
-  if (closingMatch) {
-    // 已有关闭标记，无需修复
-    return content;
-  }
-  
-  // 在 --- 之前插入关闭的 ```
-  const insertIdx = yamlStartIdx + separatorMatch.index;
-  content = content.substring(0, insertIdx) + '\n```' + content.substring(insertIdx);
-  logger.info('[direct_generate] Fixed missing YAML code block closing');
-  
-  return content;
-}
-
 async function executeDirectGenerate(req, task) {
   const { prompt, knowledge_point, output_path, filename } = req.body;
   const templatePath = req.body.template;
@@ -161,12 +122,19 @@ async function executeDirectGenerate(req, task) {
     const standardizedPrompt = standardizePrompt(prompt || '', knowledge_point || {});
     await store.save('01-input-preparation', '02-standardized-prompt.md', standardizedPrompt, debugMode);
     
-    // 1.3 关键词抽取 + MCP 查询词构建
-    const { mcpQueries, referenceFiles } = await extractDirectReferences(standardizedPrompt, templatePath, knowledge_point);
+    // 1.3 意图化查询词生成（使用 query-planner）
+    const plan = queryPlanner.generateQueries(knowledge_point || {}, { maxQueries: 6 });
+    const reviewed = queryPlanner.reviewQueries(plan.queries, knowledge_point || {});
+    const mcpQueries = reviewed.queries;
+    
+    // 同时获取参考文件（保留原有逻辑）
+    const { referenceFiles } = await extractDirectReferences(standardizedPrompt, templatePath, knowledge_point);
     
     await store.save('01-input-preparation', '03-keyword-extraction.json', {
-      base_queries: mcpQueries,
+      base_queries: plan.queries,
       mcp_queries: mcpQueries,
+      dimensions: plan.dimensions,
+      dropped_queries: reviewed.dropped,
       reference_files: referenceFiles,
       timestamp: new Date().toISOString()
     }, debugMode);
@@ -198,6 +166,7 @@ async function executeDirectGenerate(req, task) {
 
     // 2.3 MCP 查询执行（优先级 1）
     const parts = [];
+    let mcpResults = [];
     if (mcpQueries.length > 0) {
       const mcpClient = tm.getTool('mcp');
       addDirectDetail(task, 'retrieve', {
@@ -209,7 +178,7 @@ async function executeDirectGenerate(req, task) {
         input_summary: { queries: mcpQueries }
       });
       const mcpStart = Date.now();
-      const mcpResults = await mcpClient.batchQuery(mcpQueries);
+      mcpResults = await mcpClient.batchQuery(mcpQueries);
       
       // 存储每条 MCP 查询结果
       for (let i = 0; i < mcpResults.length; i++) {
@@ -253,8 +222,38 @@ async function executeDirectGenerate(req, task) {
       });
     }
 
-    // 2.4-2.7 按资料引用策略执行其他优先级检索
+    // 2.3.1 P1+P2: 跨查询去重 + 动态 Score 过滤 + 关键词二次排序
     const keywords = extractKeywords(knowledge_point);
+    let filterStats = null;
+    let mcpGrouped = {};
+    if (mcpResults.length > 0) {
+      const mcpRawForPipeline = mcpResults.map((r, i) => ({
+        ...r,
+        query: mcpQueries[i]
+      }));
+      
+      const dimensionMap = plan?.dimensionMap || {};
+      const pipelineResult = resultFilter.pipeline(mcpRawForPipeline, dimensionMap, {
+        topK: 15,
+        keywords
+      });
+      
+      filterStats = pipelineResult.stats;
+      mcpGrouped = pipelineResult.grouped;
+      
+      logger.info('[direct_generate] Filter pipeline completed', {
+        taskId,
+        ...filterStats
+      });
+      
+      await store.save('02-retrieval-plan', '09-filter-stats.json', {
+        ...filterStats,
+        keywords,
+        timestamp: new Date().toISOString()
+      }, debugMode);
+    }
+
+    // 2.4-2.7 P3: 按资料引用策略执行其他优先级检索
     const retrievalStrategy = new RetrievalStrategy(path.join(basePath, '..'), tm); // references 在上级目录
     const retrievalContext = {
       mcpQueries,
@@ -276,9 +275,39 @@ async function executeDirectGenerate(req, task) {
     const coverageAssessment = retrievalStrategy.assessCoverage(retrievalResults, keywords);
     await store.save('02-retrieval-plan', '08-retrieval-assessment.json', coverageAssessment, debugMode);
 
-    // 3.1 参考资料整合（按策略优先级排序）
+    // 3.1 P3: 使用 context-assembler 组装多来源上下文
+    const multiSourceResults = contextAssembler.convertRetrievalResults(retrievalResults);
+    const dimensions = plan ? {
+      required: plan.dimensions.slice(0, 3),
+      optional: plan.dimensions.slice(3)
+    } : null;
+    
+    const assembledContext = contextAssembler.assemble(
+      mcpGrouped,
+      multiSourceResults,
+      knowledge_point,
+      dimensions
+    );
+    
+    // 如果组装结果为空，回退到旧逻辑
     const integratedReferences = retrievalStrategy.integrateResults(retrievalResults);
-    const references = parts.length > 0 ? parts.join('\n\n') + '\n\n' + integratedReferences : integratedReferences;
+    const references = assembledContext.length > 100 
+      ? assembledContext 
+      : (parts.length > 0 ? parts.join('\n\n') + '\n\n' + integratedReferences : integratedReferences);
+    
+    // 存储组装统计
+    if (debugMode) {
+      await store.save('02-retrieval-plan', '10-context-assembly.json', {
+        assembled_length: assembledContext.length,
+        final_references_length: references.length,
+        used_assembler: assembledContext.length > 100,
+        filter_stats: filterStats,
+        multi_source_counts: Object.fromEntries(
+          Object.entries(multiSourceResults).map(([k, v]) => [k, v.length])
+        ),
+        timestamp: new Date().toISOString()
+      }, true);
+    }
     
     await store.save('03-document-generation', '01-context-prompt.md', references, true);
 
@@ -375,8 +404,16 @@ ${references || '无额外参考资料'}`;
 
     let content = response.content;
     
-    // 3.2.4 修复 YAML 代码块未关闭的问题
-    content = fixYamlCodeBlock(content);
+    // 3.2.4 YAML 元数据处理（提取、验证、修复、格式化）
+    const yamlProcessor = new YamlMetadataProcessor();
+    const yamlResult = yamlProcessor.process(content);
+    content = yamlResult.content;
+    if (yamlResult.fixed) {
+      logger.info('[direct_generate] YAML metadata fixed', {
+        taskId,
+        metadata: yamlResult.metadata
+      });
+    }
     
     // 3.2.5 自动填充资料来源追溯（如果模板中有占位符）
     if (content.includes('资料来源追溯:')) {

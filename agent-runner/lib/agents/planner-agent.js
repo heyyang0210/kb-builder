@@ -4,6 +4,7 @@ const {
   buildMcpQueries,
   unique
 } = require('../retrieval-query-builder');
+const queryPlanner = require('../retrieval/query-planner');
 
 class PlannerAgent extends BaseAgent {
   constructor(config = {}) {
@@ -227,7 +228,18 @@ ${input.prompt}
   }
 
   async _buildKnowledgePointQueries(kp) {
-    return await buildMcpQueries({ knowledgePoint: kp });
+    // 使用新的 query-planner 生成意图化查询词
+    const plan = queryPlanner.generateQueries(kp, { maxQueries: 6 });
+    const reviewed = queryPlanner.reviewQueries(plan.queries, kp);
+    
+    logger.info('[planner] Knowledge point queries generated', {
+      type: kp.type,
+      coreTerm: queryPlanner.extractCoreTerm(kp),
+      dimensions: plan.dimensions,
+      queryCount: reviewed.queries.length
+    });
+    
+    return reviewed.queries;
   }
 
   _unique(items) {

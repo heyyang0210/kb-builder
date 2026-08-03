@@ -16,6 +16,7 @@ const agentRoutes = require('./routes/agent');
 const outlineRoutes = require('./routes/outline');
 const workflowRoutes = require('./routes/workflow');
 const documentRoutes = require('./routes/document');
+const modelProviderRoutes = require('./routes/model-provider');
 const ToolManager = require('./lib/tools/tool-manager');
 
 // 全局错误处理（防止未捕获异常导致进程退出）
@@ -83,6 +84,7 @@ app.use('/api/agent', agentRoutes);
 app.use('/api/outline', outlineRoutes);
 app.use('/api/workflow', workflowRoutes);
 app.use('/api/document', documentRoutes);
+app.use('/api/model-provider', modelProviderRoutes);
 
 // 健康检查（无限流）
 app.get('/api/health', (req, res) => {

@@ -11,23 +11,68 @@ const logger = require('../lib/logger');
 
 // 元数据文件路径
 const METADATA_FILE = path.join(OUTPUT_DIR, 'metadata.json');
+// ============================================
+// 并发保护机制 - 文件锁（改进版）
+// ============================================
+const fileLocks = new Map();
 
-function loadMetadata() {
+function acquireLock(key, timeout = 5000) {
+  return new Promise((resolve, reject) => {
+    const startTime = Date.now();
+    const check = () => {
+      const lockInfo = fileLocks.get(key);
+      // 检查锁是否已过期（防止死锁）
+      if (lockInfo && Date.now() - lockInfo.timestamp > 10000) {
+        console.warn(`[Lock] Force releasing stale lock: ${key}`);
+        fileLocks.delete(key);
+      }
+      
+      if (!fileLocks.get(key)) {
+        fileLocks.set(key, { timestamp: Date.now() });
+        resolve();
+      } else if (Date.now() - startTime > timeout) {
+        reject(new Error(`Lock timeout for key: ${key}`));
+      } else {
+        setTimeout(check, 10);
+      }
+    };
+    check();
+  });
+}
+
+function releaseLock(key) {
+  fileLocks.delete(key);
+}
+
+
+async function loadMetadata() {
+  await acquireLock('metadata');
   try {
     if (fs.existsSync(METADATA_FILE)) {
-      return JSON.parse(fs.readFileSync(METADATA_FILE, 'utf-8'));
+      const data = JSON.parse(fs.readFileSync(METADATA_FILE, 'utf-8'));
+      releaseLock('metadata');
+      return data;
     }
+    releaseLock('metadata');
   } catch (err) {
+    releaseLock('metadata');
     logger.error('Failed to load metadata:', err.message);
   }
   return { documents: [], versions: {} };
 }
 
-function saveMetadata(metadata) {
-  if (!fs.existsSync(OUTPUT_DIR)) {
-    fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+async function saveMetadata(metadata) {
+  await acquireLock('metadata');
+  try {
+    if (!fs.existsSync(OUTPUT_DIR)) {
+      fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+    }
+    fs.writeFileSync(METADATA_FILE, JSON.stringify(metadata, null, 2), 'utf-8');
+    releaseLock('metadata');
+  } catch (err) {
+    releaseLock('metadata');
+    throw err;
   }
-  fs.writeFileSync(METADATA_FILE, JSON.stringify(metadata, null, 2), 'utf-8');
 }
 
 function generateDocId() {
@@ -67,15 +112,31 @@ const docUpload = multer({
 
 const DOC_METADATA_PATH = path.join(DOC_PROCESSED_DIR, 'metadata.json');
 
-function loadDocMetadata() {
-  if (fs.existsSync(DOC_METADATA_PATH)) {
-    return JSON.parse(fs.readFileSync(DOC_METADATA_PATH, 'utf-8'));
+async function loadDocMetadata() {
+  await acquireLock('doc_metadata');
+  try {
+    if (fs.existsSync(DOC_METADATA_PATH)) {
+      const data = JSON.parse(fs.readFileSync(DOC_METADATA_PATH, 'utf-8'));
+      releaseLock('doc_metadata');
+      return data;
+    }
+    releaseLock('doc_metadata');
+  } catch (err) {
+    releaseLock('doc_metadata');
+    logger.error('Failed to load doc metadata:', err.message);
   }
   return { documents: [] };
 }
 
-function saveDocMetadata(metadata) {
-  fs.writeFileSync(DOC_METADATA_PATH, JSON.stringify(metadata, null, 2));
+async function saveDocMetadata(metadata) {
+  await acquireLock('doc_metadata');
+  try {
+    fs.writeFileSync(DOC_METADATA_PATH, JSON.stringify(metadata, null, 2));
+    releaseLock('doc_metadata');
+  } catch (err) {
+    releaseLock('doc_metadata');
+    throw err;
+  }
 }
 
 function parseMarkdown(filePath) {
@@ -113,10 +174,20 @@ function parseMarkdown(filePath) {
 // ============================================
 
 // GET /api/document/list
-router.get('/list', (req, res) => {
+// 支持排序参数: sort_by (created_at|updated_at|title), sort_order (asc|desc)
+router.get('/list', async (req, res) => {
   try {
+    const { sort_by = 'created_at', sort_order = 'desc' } = req.query;
+    const validSortFields = ['created_at', 'updated_at', 'title'];
+    const validSortOrders = ['asc', 'desc'];
+    const safeSortBy = validSortFields.includes(sort_by) ? sort_by : 'created_at';
+    const safeSortOrder = validSortOrders.includes(sort_order) ? sort_order : 'desc';
+
     const documents = [];
     if (!fs.existsSync(OUTPUT_DIR)) return res.json({ success: true, data: [] });
+
+    // 在外部加载 metadata，避免在循环中重复加载
+    const metadata = await loadMetadata();
 
     function scanDir(dir, relativePath = '') {
       const files = fs.readdirSync(dir);
@@ -134,7 +205,6 @@ router.get('/list', (req, res) => {
           if (pathParts.length >= 2) knowledge_point = pathParts.slice(0, -1).join(' > ');
 
           // 尝试从 metadata 中获取更多信息
-          const metadata = loadMetadata();
           const meta = metadata.documents.find(d => d.path === docPath);
 
           documents.push({
@@ -154,7 +224,22 @@ router.get('/list', (req, res) => {
       });
     }
     scanDir(OUTPUT_DIR);
-    documents.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+
+    // 动态排序
+    documents.sort((a, b) => {
+      if (safeSortBy === 'title') {
+        const valA = (a.title || '').toLowerCase();
+        const valB = (b.title || '').toLowerCase();
+        return safeSortOrder === 'asc'
+          ? valA.localeCompare(valB, 'zh-CN')
+          : valB.localeCompare(valA, 'zh-CN');
+      } else {
+        const valA = new Date(a[safeSortBy] || 0).getTime();
+        const valB = new Date(b[safeSortBy] || 0).getTime();
+        return safeSortOrder === 'asc' ? valA - valB : valB - valA;
+      }
+    });
+
     res.json({ success: true, data: documents });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -207,7 +292,7 @@ router.post('/generate', async (req, res) => {
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(fullPath, content, 'utf-8');
 
-    const metadata = loadMetadata();
+    const metadata = await loadMetadata();
     const docId = generateDocId();
     const now = new Date().toISOString();
 
@@ -231,7 +316,7 @@ router.post('/generate', async (req, res) => {
     metadata.versions[docId] = [{
       version: 1, content_length: content.length, timestamp: now, change: 'initial generation'
     }];
-    saveMetadata(metadata);
+    await saveMetadata(metadata);
 
     logger.info('Document generated successfully', { id: docId, path: relativePath, tokens: docMeta.tokens_used });
 
@@ -246,14 +331,14 @@ router.post('/generate', async (req, res) => {
 });
 
 // POST /api/document/save - 保存/更新文档内容
-router.post('/save', (req, res) => {
+router.post('/save', async (req, res) => {
   try {
     const { id, content, path: docPath, title } = req.body;
     if (!content) return res.status(400).json({ success: false, message: 'content 是必填项' });
 
     let targetPath = docPath;
     let docId = id;
-    const metadata = loadMetadata();
+    const metadata = await loadMetadata();
 
     if (id && !docPath) {
       const doc = metadata.documents.find(d => d.id === id);
@@ -289,7 +374,7 @@ router.post('/save', (req, res) => {
       };
       metadata.documents.push(docMeta);
     }
-    saveMetadata(metadata);
+    await saveMetadata(metadata);
 
     logger.info('Document saved', { id: docMeta.id, path: targetPath, version: docMeta.version });
 
@@ -304,9 +389,9 @@ router.post('/save', (req, res) => {
 });
 
 // GET /api/document/stats - 文档统计信息
-router.get('/stats', (req, res) => {
+router.get('/stats', async (req, res) => {
   try {
-    const metadata = loadMetadata();
+    const metadata = await loadMetadata();
     const totalDocs = metadata.documents.length;
     const totalSize = metadata.documents.reduce((sum, d) => sum + (d.size || 0), 0);
     const totalTokens = metadata.documents.reduce((sum, d) => sum + (d.tokens_used || 0), 0);
@@ -326,13 +411,13 @@ router.get('/stats', (req, res) => {
 
 
 // GET /api/document/tree - 目录树结构
-router.get('/tree', (req, res) => {
+router.get('/tree', async (req, res) => {
   try {
     if (!fs.existsSync(OUTPUT_DIR)) {
       return res.json({ success: true, data: [] });
     }
     
-    const metadata = loadMetadata();
+    const metadata = await loadMetadata();
     
     function scanDir(dir, relativePath) {
       const nodes = [];
@@ -385,7 +470,7 @@ router.get('/tree', (req, res) => {
 });
 
 // POST /api/document/search - 全文搜索
-router.post('/search', (req, res) => {
+router.post('/search', async (req, res) => {
   try {
     const { keyword, scope } = req.body;
     if (!keyword || keyword.trim().length === 0) {
@@ -394,7 +479,7 @@ router.post('/search', (req, res) => {
     
     const searchScope = scope || 'all'; // "all" | "title"
     const kw = keyword.trim().toLowerCase();
-    const metadata = loadMetadata();
+    const metadata = await loadMetadata();
     const results = [];
     
     function searchInDir(dir, relativePath) {
@@ -477,7 +562,7 @@ router.post('/search', (req, res) => {
 });
 
 // POST /api/document/preprocess - 上传文档预处理
-router.post('/preprocess', docUpload.single('file'), (req, res) => {
+router.post('/preprocess', docUpload.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ success: false, message: '未接收到文件' });
 
@@ -492,9 +577,9 @@ router.post('/preprocess', docUpload.single('file'), (req, res) => {
     };
 
     fs.writeFileSync(path.join(DOC_PROCESSED_DIR, storedName), JSON.stringify(docData, null, 2), 'utf-8');
-    const metadata = loadDocMetadata();
+    const metadata = await loadDocMetadata();
     metadata.documents.push({ id: docId, title: docData.title, original_name: req.file.originalname, uploaded_at: docData.uploaded_at, status: 'processed', section_count: countSections(parsed.sections) });
-    saveDocMetadata(metadata);
+    await saveDocMetadata(metadata);
 
     try { fs.unlinkSync(req.file.path); } catch (e) { /* ignore */ }
     res.json({ success: true, data: docData });
@@ -510,9 +595,9 @@ function countSections(sections) {
 }
 
 // GET /api/document/preprocess - 列出预处理文档
-router.get('/preprocess', (req, res) => {
+router.get('/preprocess', async (req, res) => {
   try {
-    const metadata = loadDocMetadata();
+    const metadata = await loadDocMetadata();
     res.json({ success: true, data: metadata.documents });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -532,9 +617,9 @@ router.get('/preprocess/:id', (req, res) => {
 });
 
 // DELETE /api/document/preprocess/:id
-router.delete('/preprocess/:id', (req, res) => {
+router.delete('/preprocess/:id', async (req, res) => {
   try {
-    const metadata = loadDocMetadata();
+    const metadata = await loadDocMetadata();
     const docIndex = metadata.documents.findIndex(d => d.id === req.params.id);
     if (docIndex === -1) return res.status(404).json({ success: false, message: '文档不存在' });
     const doc = metadata.documents[docIndex];
@@ -543,7 +628,7 @@ router.delete('/preprocess/:id', (req, res) => {
     const jsonPath = path.join(DOC_PROCESSED_DIR, `${doc.id}.json`);
     if (fs.existsSync(jsonPath)) fs.unlinkSync(jsonPath);
     metadata.documents.splice(docIndex, 1);
-    saveDocMetadata(metadata);
+    await saveDocMetadata(metadata);
     res.json({ success: true, message: '文档已删除' });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -555,7 +640,7 @@ router.delete('/preprocess/:id', (req, res) => {
 // ============================================
 
 // GET /api/document/:id - 文档元数据
-router.get('/:id', (req, res) => {
+router.get('/:id', async (req, res) => {
   try {
     const docPath = Buffer.from(req.params.id, 'base64').toString('utf-8');
     const filePath = path.join(OUTPUT_DIR, docPath);
@@ -564,7 +649,7 @@ router.get('/:id', (req, res) => {
     const title = path.basename(filePath, '.md');
     const pathParts = docPath.split(path.sep);
     let knowledge_point = pathParts.length >= 2 ? pathParts.slice(0, -1).join(' > ') : '';
-    const metadata = loadMetadata();
+    const metadata = await loadMetadata();
     const meta = metadata.documents.find(d => d.path === docPath);
 
     res.json({
@@ -583,7 +668,7 @@ router.get('/:id', (req, res) => {
 });
 
 // GET /api/document/:id/content
-router.get('/:id/content', (req, res) => {
+router.get('/:id/content', async (req, res) => {
   try {
     const docPath = Buffer.from(req.params.id, 'base64').toString('utf-8');
     const filePath = path.join(OUTPUT_DIR, docPath);
@@ -593,7 +678,7 @@ router.get('/:id/content', (req, res) => {
     const title = path.basename(filePath, '.md');
     const pathParts = docPath.split(path.sep);
     let knowledge_point = pathParts.length >= 2 ? pathParts.slice(0, -1).join(' > ') : '';
-    const metadata = loadMetadata();
+    const metadata = await loadMetadata();
     const meta = metadata.documents.find(d => d.path === docPath);
 
     res.json({
@@ -623,9 +708,9 @@ router.get('/:id/download', (req, res) => {
 });
 
 // GET /api/document/:id/versions
-router.get('/:id/versions', (req, res) => {
+router.get('/:id/versions', async (req, res) => {
   try {
-    const metadata = loadMetadata();
+    const metadata = await loadMetadata();
     const versions = metadata.versions[req.params.id] || [];
     res.json({ success: true, data: versions });
   } catch (err) {
@@ -634,7 +719,7 @@ router.get('/:id/versions', (req, res) => {
 });
 
 // DELETE /api/document/:id
-router.delete('/:id', (req, res) => {
+router.delete('/:id', async (req, res) => {
   try {
     const docPath = Buffer.from(req.params.id, 'base64').toString('utf-8');
     const filePath = path.join(OUTPUT_DIR, docPath);
@@ -642,9 +727,9 @@ router.delete('/:id', (req, res) => {
     fs.unlinkSync(filePath);
 
     // 清理元数据
-    const metadata = loadMetadata();
+    const metadata = await loadMetadata();
     metadata.documents = metadata.documents.filter(d => d.path !== docPath);
-    saveMetadata(metadata);
+    await saveMetadata(metadata);
 
     res.json({ success: true, message: '文档已删除' });
   } catch (err) {

@@ -99,8 +99,166 @@ class RetrievalStrategy {
 
   /**
    * 优先级 2：特性设计文档检索
+   * 
+   * 优先使用预处理索引（三层渐进式检索）：
+   *   L1 全局索引 → L2 文档摘要 → L3 清洗原文/chunk
+   * 
+   * 如果预处理索引不存在，回退到原始关键词扫描。
    */
   async executeDesignDocsRetrieval(context) {
+    // 尝试使用预处理索引
+    const preprocessedDir = path.join(this.basePath, 'preprocessing-output', 'design-docs');
+    const l1IndexPath = path.join(preprocessedDir, 'index', 'l1-global-index.json');
+
+    try {
+      await fs.access(l1IndexPath);
+      return await this._executeDesignDocsRetrievalIndexed(context, preprocessedDir);
+    } catch {
+      // 预处理索引不存在，回退到原始逻辑
+      logger.info('[retrieval-strategy] Preprocessed index not found, falling back to scan');
+      return await this._executeDesignDocsRetrievalLegacy(context);
+    }
+  }
+
+  /**
+   * 三层渐进式检索（基于预处理索引）
+   */
+  async _executeDesignDocsRetrievalIndexed(context, preprocessedDir) {
+    const { keywords, knowledgePoint } = context;
+    const indexDir = path.join(preprocessedDir, 'index');
+
+    // === L1：全局索引匹配 ===
+    const l1Index = JSON.parse(await fs.readFile(path.join(indexDir, 'l1-global-index.json'), 'utf-8'));
+    const candidates = l1Index.entries
+      .map(entry => ({
+        ...entry,
+        matchScore: this._computeDesignDocMatchScore(entry, keywords, knowledgePoint)
+      }))
+      .filter(entry => entry.matchScore > 0)
+      .sort((a, b) => b.matchScore - a.matchScore)
+      .slice(0, 30);
+
+    logger.info('[retrieval-strategy] Design docs L1 match', {
+      total_entries: l1Index.entries.length,
+      candidates: candidates.length
+    });
+
+    if (candidates.length === 0) {
+      return { files: [], results: [], matchType: 'indexed' };
+    }
+
+    // === L2：摘要确认 ===
+    const MAX_CONFIRMED = 5;
+    const RELEVANCE_THRESHOLD = 0.3;
+    const confirmed = [];
+
+    for (const candidate of candidates) {
+      try {
+        const summaryPath = path.join(indexDir, candidate.summary_path || '');
+        const summaryContent = await fs.readFile(summaryPath, 'utf-8');
+        const summary = JSON.parse(summaryContent);
+
+        const relevance = this._computeDesignDocRelevance(summary, keywords, knowledgePoint);
+        if (relevance > RELEVANCE_THRESHOLD) {
+          confirmed.push({ ...candidate, summary, relevance });
+        }
+      } catch {
+        // 摘要文件不存在或解析失败，跳过
+      }
+
+      if (confirmed.length >= MAX_CONFIRMED) break;
+    }
+
+    logger.info('[retrieval-strategy] Design docs L2 confirm', {
+      candidates: candidates.length,
+      confirmed: confirmed.length
+    });
+
+    // === L3：加载原文或 chunk ===
+    const results = [];
+    const MAX_CONTENT_LENGTH = 4000;
+
+    for (const doc of confirmed) {
+      try {
+        let content = '';
+
+        if (doc.chunk_count > 0 && doc.chunks_index) {
+          // 已分块：加载相关 chunk
+          content = await this._loadRelevantChunks(doc, keywords, preprocessedDir);
+        } else if (doc.content_path) {
+          // 未分块：加载清洗原文
+          const contentPath = path.join(preprocessedDir, doc.content_path);
+          content = await fs.readFile(contentPath, 'utf-8');
+        }
+
+        if (content.length > MAX_CONTENT_LENGTH) {
+          content = content.slice(0, MAX_CONTENT_LENGTH);
+        }
+
+        results.push({
+          source: doc.content_path || doc.id,
+          title: doc.title,
+          version: doc.version,
+          doc_type: doc.doc_type,
+          content,
+          relevance: doc.relevance,
+          matchType: 'design_doc_indexed',
+          matchedKeywords: this._findMatchingKeywords(content, keywords || [])
+        });
+      } catch (err) {
+        logger.warn(`[retrieval-strategy] Failed to load design doc content: ${doc.id}`);
+      }
+    }
+
+    return { results, matchType: 'indexed' };
+  }
+
+  /**
+   * 加载相关 chunk
+   */
+  async _loadRelevantChunks(doc, keywords, preprocessedDir) {
+    try {
+      const chunksIndexPath = path.join(preprocessedDir, doc.chunks_index);
+      const chunksIndex = JSON.parse(await fs.readFile(chunksIndexPath, 'utf-8'));
+      const chunksDir = path.dirname(chunksIndexPath);
+
+      const MAX_CHUNKS = 8;
+      const matchedChunks = chunksIndex.chunks
+        .map(chunk => ({
+          ...chunk,
+          score: (chunk.keywords || []).filter(k =>
+            (keywords || []).some(kw => k.toLowerCase().includes(kw.toLowerCase()))
+          ).length + (
+            (keywords || []).some(kw =>
+              (chunk.section_path || '').toLowerCase().includes(kw.toLowerCase())
+            ) ? 2 : 0
+          )
+        }))
+        .filter(c => c.score > 0)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, MAX_CHUNKS);
+
+      const parts = [];
+      for (const chunk of matchedChunks) {
+        try {
+          const chunkPath = path.join(chunksDir, `${chunk.chunk_id}.md`);
+          const chunkContent = await fs.readFile(chunkPath, 'utf-8');
+          parts.push(chunkContent);
+        } catch {
+          // chunk 文件不存在
+        }
+      }
+
+      return parts.join('\n\n---\n\n');
+    } catch {
+      return '';
+    }
+  }
+
+  /**
+   * 原始关键词扫描（回退逻辑）
+   */
+  async _executeDesignDocsRetrievalLegacy(context) {
     const dir = this.references.designDocs;
     const matchedFiles = await this._scanDirectory(dir, context.keywords || []);
     const results = [];
@@ -111,15 +269,65 @@ class RetrievalStrategy {
         results.push({
           source: path.relative(this.basePath, file),
           content,
-          matchedKeywords: this._findMatchingKeywords(content, context.keywords || [])
+          matchedKeywords: this._findMatchingKeywords(content, keywords || []),
+          matchType: 'design_doc_legacy'
         });
       } catch (err) {
         logger.warn(`[retrieval-strategy] Failed to read design doc: ${file}`);
       }
     }
 
-    logger.info('[retrieval-strategy] Design docs retrieval', { matched: results.length });
-    return { files: matchedFiles, results };
+    logger.info('[retrieval-strategy] Design docs legacy retrieval', { matched: results.length });
+    return { files: matchedFiles, results, matchType: 'legacy' };
+  }
+
+  /**
+   * 设计文档匹配分数计算
+   */
+  _computeDesignDocMatchScore(entry, keywords, knowledgePoint) {
+    let score = 0;
+    const kws = keywords || [];
+
+    for (const kw of kws) {
+      const kwLower = kw.toLowerCase();
+      if ((entry.title || '').toLowerCase().includes(kwLower)) {
+        score += 3;
+      }
+      if ((entry.keywords || []).some(k => k.toLowerCase().includes(kwLower))) {
+        score += 1;
+      }
+    }
+
+    if (entry.feature_id && kws.some(kw =>
+      kw.toLowerCase() === entry.feature_id.toLowerCase()
+    )) {
+      score += 5;
+    }
+
+    if (knowledgePoint?.version && entry.version === knowledgePoint.version) {
+      score += 2;
+    }
+
+    return score;
+  }
+
+  /**
+   * 设计文档相关性计算
+   */
+  _computeDesignDocRelevance(summary, keywords, knowledgePoint) {
+    const kws = keywords || [];
+    if (kws.length === 0) return 0;
+
+    let hits = 0;
+    const text = `${summary.summary || ''} ${(summary.key_points || []).join(' ')}`.toLowerCase();
+
+    for (const kw of kws) {
+      if (text.includes(kw.toLowerCase())) {
+        hits++;
+      }
+    }
+
+    return hits / kws.length;
   }
 
   /**

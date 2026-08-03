@@ -66,13 +66,18 @@ class LLMClient {
     logger.info(`LLM call: model=${model}, messages=${messages.length}, temperature=${temperature}`);
 
     try {
+      const requestOptions = {};
+      if (Number.isFinite(options.timeout_ms)) requestOptions.timeout = options.timeout_ms;
+      if (Number.isInteger(options.max_retries)) requestOptions.maxRetries = options.max_retries;
       const response = await this.client.chat.completions.create({
         model,
         messages,
         temperature,
         max_tokens: maxTokens,
+        ...(typeof options.enable_thinking === 'boolean' ? { enable_thinking: options.enable_thinking } : {}),
+        ...(options.chat_template_kwargs ? { chat_template_kwargs: options.chat_template_kwargs } : {}),
         ...(options.response_format || {})
-      });
+      }, requestOptions);
 
       const content = response.choices[0]?.message?.content || '';
       const usage = response.usage || {};
@@ -102,19 +107,39 @@ class LLMClient {
     });
 
     try {
-      return {
-        ...result,
-        parsed: JSON.parse(result.content)
-      };
-    } catch (err) {
-      logger.warn(`Failed to parse JSON from LLM response, attempting extraction`);
-      const jsonMatch = result.content.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        return {
-          ...result,
-          parsed: JSON.parse(jsonMatch[0])
+      return { ...result, parsed: this._parseJSONContent(result.content), attempts: 1 };
+    } catch (error) {
+      if (options.json_repair === false) {
+        error.responseMetadata = {
+          contentCharacters: result.content.length,
+          usage: result.usage,
+          finishReason: result.finish_reason,
+          attempts: 1
         };
+        throw error;
       }
+      logger.warn('Failed to parse JSON from LLM response, attempting one repair');
+      const repairResult = await this.chat([
+        {
+          role: 'system',
+          content: '你是 JSON 修复器。只修复输入中的 JSON 语法，保留原有字段和值，只返回一个 JSON 对象，不得解释。'
+        },
+        { role: 'user', content: result.content.slice(0, 30000) }
+      ], {
+        ...options,
+        max_tokens: Math.min(options.max_tokens || 2000, 2000),
+        response_format: { type: 'json_object' }
+      });
+      return { ...repairResult, parsed: this._parseJSONContent(repairResult.content), attempts: 2 };
+    }
+  }
+
+  _parseJSONContent(content) {
+    try {
+      return JSON.parse(content);
+    } catch (error) {
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      if (jsonMatch) return JSON.parse(jsonMatch[0]);
       throw new Error('LLM 返回内容无法解析为 JSON');
     }
   }
