@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>YashanDB 知识库文档生成器</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>✨</text></svg>">
 <style>
 :root {
   --bg: #f5f7fa; --sidebar-bg: #fff; --card-bg: #fff;
@@ -660,6 +661,21 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sa
   background: var(--primary); color: #fff; border-color: var(--primary);
 }
 
+/* 排序控件 */
+.doc-sort-bar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 12px; border-bottom: 1px solid var(--border);
+  background: var(--bg); font-size: 12px; color: var(--text-secondary);
+}
+.doc-sort-bar label { white-space: nowrap; }
+.doc-sort-bar select {
+  padding: 4px 8px; border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--card-bg); color: var(--text); font-size: 12px;
+  cursor: pointer; transition: border-color .15s;
+}
+.doc-sort-bar select:hover { border-color: var(--primary); }
+.doc-sort-bar select:focus { outline: none; border-color: var(--primary); }
+
 .doc-mgmt-stats {
   padding: 6px 12px; font-size: 11px; color: var(--text-secondary);
   border-bottom: 1px solid var(--border); display: flex; gap: 10px; flex-wrap: wrap;
@@ -1127,6 +1143,17 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sa
       <div class="doc-view-toggle">
         <button class="doc-view-toggle-btn active" id="treeViewBtn" onclick="switchDocViewMode('tree')">📁 目录</button>
         <button class="doc-view-toggle-btn" id="listViewBtn" onclick="switchDocViewMode('list')">📋 列表</button>
+      </div>
+      <div class="doc-sort-bar">
+        <label for="docSortSelect">排序：</label>
+        <select id="docSortSelect" onchange="handleDocSort()">
+          <option value="created_at_desc">创建时间（最新在前）</option>
+          <option value="created_at_asc">创建时间（最旧在前）</option>
+          <option value="updated_at_desc">修改时间（最新在前）</option>
+          <option value="updated_at_asc">修改时间（最旧在前）</option>
+          <option value="title_asc">标题（A-Z）</option>
+          <option value="title_desc">标题（Z-A）</option>
+        </select>
       </div>
       <div class="doc-mgmt-stats" id="docStats"></div>
       <div class="doc-tree-view" id="docTreeView">
@@ -6835,7 +6862,7 @@ function detectOutlineFormat(content) {
 
 // ========== 后端连接状态检查 ==========
 function getBackendBaseUrl() {
-  return 'http://172.22.69.74:4100';
+  return `http://${window.location.hostname}:4100`;
 }
 
 const BACKEND_URL = getBackendBaseUrl();
@@ -8478,10 +8505,25 @@ function closeDocumentViewer() {
 
 // ---- 数据加载 ----
 
-async function loadDocList() {
+async function loadDocList(sortBy, sortOrder) {
   const container = document.getElementById('docListView');
+  // 如果未传参，从下拉控件读取当前值
+  if (!sortBy || !sortOrder) {
+    const sel = document.getElementById('docSortSelect');
+    if (sel) {
+      const parts = sel.value.split('_');
+      // title_asc / title_desc 特殊处理
+      if (parts[0] === 'title') {
+        sortBy = 'title'; sortOrder = parts[1];
+      } else {
+        sortBy = parts[0] + '_' + parts[1]; sortOrder = parts[2];
+      }
+    } else {
+      sortBy = 'created_at'; sortOrder = 'desc';
+    }
+  }
   try {
-    const resp = await fetch(BACKEND + '/api/document/list');
+    const resp = await fetch(BACKEND + '/api/document/list?sort_by=' + sortBy + '&sort_order=' + sortOrder);
     const result = await resp.json();
     if (result.success) {
       _docManager.documents = result.data;
@@ -8492,6 +8534,22 @@ async function loadDocList() {
   } catch (err) {
     container.innerHTML = '<div class="doc-empty">加载失败: ' + err.message + '</div>';
   }
+}
+
+function handleDocSort() {
+  const sel = document.getElementById('docSortSelect');
+  const val = sel.value;
+  let sortBy, sortOrder;
+  if (val.startsWith('title_')) {
+    sortBy = 'title';
+    sortOrder = val.replace('title_', '');
+  } else {
+    // e.g. created_at_desc
+    const lastUnderscore = val.lastIndexOf('_');
+    sortBy = val.substring(0, lastUnderscore);
+    sortOrder = val.substring(lastUnderscore + 1);
+  }
+  loadDocList(sortBy, sortOrder);
 }
 
 async function loadDocTree() {
@@ -8586,12 +8644,18 @@ function renderDocList(docs) {
   }
   container.innerHTML = docs.map(doc => {
     const isActive = _docManager.currentDoc && _docManager.currentDoc.id === doc.id;
-    const date = new Date(doc.updated_at);
-    const dateStr = date.toLocaleDateString('zh-CN') + ' ' + date.toLocaleTimeString('zh-CN', {hour:'2-digit',minute:'2-digit'});
+    const createdDate = new Date(doc.created_at);
+    const updatedDate = new Date(doc.updated_at);
+    const isModified = Math.abs(createdDate.getTime() - updatedDate.getTime()) > 60000;
+    let timeStr = createdDate.toLocaleDateString('zh-CN') + ' ' +
+                  createdDate.toLocaleTimeString('zh-CN', {hour:'2-digit',minute:'2-digit'});
+    if (isModified) {
+      timeStr += ' <span style="color:var(--text-secondary);font-size:10px">(已修改)</span>';
+    }
     return '<div class="doc-list-item' + (isActive ? ' active' : '') + '" data-doc-id="' + doc.id + '" onclick="viewDocument(this.dataset.docId)">' +
       '<div class="doc-list-item-title">' + escapeHtml(doc.title) + '</div>' +
       '<div class="doc-list-item-meta">' +
-        '<span>' + dateStr + '</span>' +
+        '<span>' + timeStr + '</span>' +
         '<span>' + formatFileSize(doc.file_size) + '</span>' +
         (doc.version > 1 ? '<span class="doc-badge">v' + doc.version + '</span>' : '') +
       '</div>' +
@@ -8703,7 +8767,7 @@ function switchDocViewMode(mode) {
 
 // ---- 文档查看 ----
 
-async function viewDocument(docId) {
+async function viewDocument(docId, updateUrl = true) {
   try {
     const resp = await fetch(BACKEND + '/api/document/' + encodeURIComponent(docId) + '/content');
     const result = await resp.json();
@@ -8732,6 +8796,14 @@ async function viewDocument(docId) {
     
     // 更新侧栏高亮
     updateSidebarActive(docId);
+    
+    // 更新 URL（使用 History API）
+    if (updateUrl) {
+      const url = new URL(window.location);
+      url.searchParams.set('doc', docId);
+      url.searchParams.set('tab', 'doc-mgmt');
+      history.pushState({ docId: docId, tab: 'doc-mgmt' }, '', url);
+    }
   } catch (err) {
     showToast('❌ 加载文档失败: ' + err.message);
   }
@@ -8919,7 +8991,7 @@ async function saveDocContent() {
 
 async function downloadCurrentDoc() {
   if (!_docManager.currentDoc) return;
-  window.open(BACKEND + '/api/document/' + _docManager.currentDoc.id + '/download', '_blank');
+  window.open(BACKEND + '/api/document/' + encodeURIComponent(_docManager.currentDoc.id) + '/download', '_blank');
 }
 
 async function deleteCurrentDoc() {
@@ -8927,13 +8999,19 @@ async function deleteCurrentDoc() {
   if (!confirm('确定要删除文档 "' + _docManager.currentDoc.title + '" 吗？')) return;
   
   try {
-    const resp = await fetch(BACKEND + '/api/document/' + _docManager.currentDoc.id, { method: 'DELETE' });
+    const resp = await fetch(BACKEND + '/api/document/' + encodeURIComponent(_docManager.currentDoc.id), { method: 'DELETE' });
     const result = await resp.json();
     if (result.success) {
       showToast('🗑️ 文档已删除');
       _docManager.currentDoc = null;
       document.getElementById('docViewerEmpty').style.display = 'flex';
       document.getElementById('docViewerPanel').style.display = 'none';
+      
+      // 清除 URL 中的 doc 参数
+      const url = new URL(window.location);
+      url.searchParams.delete('doc');
+      history.replaceState({}, '', url);
+      
       loadDocList();
       loadDocTree();
       loadDocStats();
