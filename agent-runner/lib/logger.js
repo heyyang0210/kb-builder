@@ -40,9 +40,30 @@ const logger = winston.createLogger({
 });
 
 if (process.env.NODE_ENV !== 'production') {
-  logger.add(new winston.transports.Console({
-    format: consoleFormat
-  }));
+  const consoleTransport = new winston.transports.Console({
+    format: consoleFormat,
+    handleExceptions: false
+  });
+  
+  // 防止 EPIPE 错误
+  consoleTransport.on('error', (err) => {
+    // 忽略控制台写入错误
+  });
+  
+  logger.add(consoleTransport);
 }
+
+// 全局 EPIPE 错误处理
+process.stdout.on('error', (err) => {
+  if (err.code === 'EPIPE') {
+    // 忽略 EPIPE 错误
+  }
+});
+
+process.stderr.on('error', (err) => {
+  if (err.code === 'EPIPE') {
+    // 忽略 EPIPE 错误
+  }
+});
 
 module.exports = logger;

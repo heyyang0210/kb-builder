@@ -11,14 +11,21 @@
   },
   "dependencies": {
     "@langchain/langgraph": "^1.4.7",
+    "adm-zip": "^0.6.0",
+    "cheerio": "^1.2.0",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
     "express-rate-limit": "^7.1.5",
+    "mammoth": "^1.12.0",
     "multer": "^2.2.0",
     "openai": "^4.20.0",
+    "pdf-parse": "^1.1.1",
+    "pptx2json": "^0.0.10",
     "socket.io": "^4.6.1",
-    "winston": "^3.11.0"
+    "tar-stream": "^3.2.0",
+    "winston": "^3.11.0",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",
