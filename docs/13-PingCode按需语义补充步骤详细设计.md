@@ -7,6 +7,8 @@
 
 按需语义补充是第四个前端步骤，由代码读取步骤三的 `needs_enrichment`，逐项调用专用 `SemanticEnrichmentAgent`。没有待处理项时状态为 `skipped`，并显示中文原因。本步骤不重新提取全部文档，不处理步骤三已解决候选，Agent 不得扩大任务范围。
 
+> TASK-P0-02 边界：`formal_knowledge` 的最小知识点抽取不产生 `needs_enrichment`，也不进入本步骤。仅后续显式启用、且拥有独立不确定项契约的能力可以写入该队列；知识点模型失败直接记录为 `quality/extraction-issues.json` 中文质量问题。
+
 ## 二、输入与任务边界
 
 输入为 `uncertain-items/pending.jsonl`、步骤二元数据和处理单元上下文、步骤三候选及冲突、Prompt/Skill Registry 和模型测试结果。每次调用只关联一个 `uncertainItemId`，上下文只包括问题、当前证据、标题路径、相邻摘要、候选和约束。禁止传入完整文档、认证信息、完整 Prompt 或无关处理单元正文。

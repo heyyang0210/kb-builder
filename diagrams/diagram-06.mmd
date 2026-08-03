@@ -1,0 +1,11 @@
+graph LR
+    P[Planner<br>规划] -->|执行计划| R[Retriever<br>检索]
+    R -->|参考资料| G[Generator<br>生成]
+    G -->|文档草稿| V[Validator<br>验证]
+    V -->|最终文档| O[输出]
+    
+    style P fill:#e3f2fd,stroke:#1565c0
+    style R fill:#f3e5f5,stroke:#7b1fa2
+    style G fill:#fff3e0,stroke:#e65100
+    style V fill:#e8f5e9,stroke:#2e7d32
+    style O fill:#fce4ec,stroke:#c2185b

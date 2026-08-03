@@ -1,0 +1,46 @@
+version: '3.8'
+
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    volumes:
+      # 数据目录挂载（可配置）
+      - ${DATA_ROOT:-./data}:/app/data
+      # 配置文件挂载（可覆盖）
+      - ./config:/app/config:ro
+    environment:
+      # 从 .env 文件读取
+      - APP_ENV=${APP_ENV:-production}
+      - BACKEND_HOST=0.0.0.0
+      - BACKEND_PORT=8000
+      - DATA_ROOT=/app/data
+      - PINGCODE_BASE_URL=${PINGCODE_BASE_URL}
+      - PINGCODE_EMAIL=${PINGCODE_EMAIL}
+      - PINGCODE_PASSWORD=${PINGCODE_PASSWORD}
+    env_file:
+      - .env
+    restart: unless-stopped
+  
+  frontend:
+    build: ./frontend
+    ports:
+      - "${FRONTEND_PORT:-3000}:80"
+    environment:
+      - VITE_API_BASE_URL=http://backend:8000
+    depends_on:
+      - backend
+    restart: unless-stopped
+  
+  chromadb:
+    image: chromadb/chroma:latest
+    ports:
+      - "${CHROMADB_PORT:-8001}:8000"
+    volumes:
+      - ${DATA_ROOT:-./data}/chromadb:/chroma/chroma
+    restart: unless-stopped
+
+volumes:
+  data:
+    driver: local

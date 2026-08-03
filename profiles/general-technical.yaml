@@ -1,0 +1,6 @@
+id: general-technical
+version: 1.0.0
+documentIndicators: []
+priorityKnowledgeTypes: ["fact", "constraint", "definition", "procedure"]
+priorityRelationTypes: ["CONTAINS", "DEPENDS_ON", "APPLIES_TO", "AFFECTS", "REFERENCES"]
+requiredAttributes: ["assertionStatus"]

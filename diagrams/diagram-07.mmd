@@ -1,0 +1,16 @@
+graph TB
+    KP["知识点<br>200+个"] -->|确定类型| TYPE[文档类型<br>7种]
+    TYPE -->|匹配| SKILL[Skill 文件<br>生成规则]
+    TYPE -->|匹配| TEMPLATE[模板文件<br>文档结构]
+    
+    SKILL -->|指导| GEN[文档生成]
+    TEMPLATE -->|约束| GEN
+    KP -->|提供内容| GEN
+    
+    GEN --> DOC[最终文档<br>标准化 Markdown]
+    
+    style KP fill:#e3f2fd,stroke:#1565c0
+    style TYPE fill:#f3e5f5,stroke:#7b1fa2
+    style SKILL fill:#fff3e0,stroke:#e65100
+    style TEMPLATE fill:#fff3e0,stroke:#e65100
+    style DOC fill:#e8f5e9,stroke:#2e7d32

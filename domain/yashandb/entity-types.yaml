@@ -1,0 +1,16 @@
+entities:
+  - id: Parameter
+    aliases: [参数, 配置参数]
+    attributes: [name, defaultValue, unit, valueRange, activationMode, applicableVersions]
+  - id: ErrorCode
+    aliases: [错误码, 异常码]
+    attributes: [code, domain, severity, applicableVersions]
+  - id: SqlObject
+    aliases: [SQL对象, 数据库对象]
+    attributes: [objectType, schemaName, module]
+  - id: ProductVersion
+    aliases: [版本, 产品版本]
+    attributes: [product, version]
+  - id: ExecutionPlan
+    aliases: [执行计划, 计划]
+    attributes: [operation, cost]

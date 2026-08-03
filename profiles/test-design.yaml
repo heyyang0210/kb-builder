@@ -1,0 +1,6 @@
+id: test-design
+version: 1.0.0
+documentIndicators: ["测试设计", "测试方案", "测试用例", "验收测试"]
+priorityKnowledgeTypes: ["test_condition", "test_step", "expected_result", "observed_result", "test_conclusion"]
+priorityRelationTypes: ["VERIFIES", "COVERS", "TRIGGERS", "EXPECTED_TO_PRODUCE"]
+requiredAttributes: ["assertionStatus", "testStatus"]

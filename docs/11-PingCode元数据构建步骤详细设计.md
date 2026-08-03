@@ -74,4 +74,12 @@ execute(context):
 
 `yashandb-glossary.yaml` 是当前运行时实际加载的生效词典，不是示例；当前成熟度为 `initial`，表示已具备基础规则但不是完整的最终术语全集。词典匹配结果用于：关键词规范化、领域分类辅助、抽取式摘要候选排序、处理单元上下文和后续检索扩展。词典条目通过 YashanDB 官方文档 MCP 离线校对和补充，运行时不实时调用 MCP；每条专有术语保留 `officialSources` 文档和章节信息。
 
-标题清洗规则维护在元数据规则目录，输出必须可审计：`title` 保留原始语义标题，`semanticTitle` 仅移除配置声明的产品范围词、文档命名后缀、文件扩展名、连接符和副本编号。清洗结果为空时保留空值，不把原始文件名回退为关键词。当前实现覆盖：分类加权、版本正则、停用词、标题清洗、YAS/ORA 错误码、通用数据库术语、YashanDB 专有术语、规则集哈希和词典命中输出。规则文件缺失、非法正则或重复 `termId` 时步骤失败，不回退到 Python 内置规则。
+标题清洗规则维护在元数据规则目录，输出必须可审计：`title` 保留原始语义标题，`semanticTitle` 仅移除配置声明的产品范围词、文档命名后缀、文件扩展名、连接符和副本编号。清洗结果为空时保留空值，不把原始文件名回退为关键词。文档和处理单元上下文必须同步输出 `titleNoiseRemoved` 与 `topicCandidates`：前者记录命中的清洗规则类型和值，后者记录从标题、词典或正文证据确定的主题候选、证据来源、命中处理单元和置信度。当前实现覆盖：分类加权、版本正则、停用词、标题清洗、YAS/ORA 错误码、通用数据库术语、YashanDB 专有术语、规则集哈希和词典命中输出。规则文件缺失、非法正则或重复 `termId` 时步骤失败，不回退到 Python 内置规则。
+
+元数据阶段同时生成 `metadata/preselection-report.json`，作为关键词质量分析默认档的低成本初筛输入。状态枚举固定为：
+
+```text
+deterministic_ready / model_required / human_review / skip
+```
+
+每条记录包含 `resourceId/chunkIds/semanticTitle/preselectionState/reasons/evidence/sourceMethods`。`deterministic_ready` 表示 `topicCandidates` 已有可追溯证据，可由确定性候选进入关键词图谱；`model_required` 表示标题存在但缺少稳定主题证据，需要关键词模型补充；`human_review` 表示标题疑似多主题或冲突，默认不直接调用模型；`skip` 表示没有可用处理单元或语义标题为空。初筛报告只决定模型调度和人工确认入口，不直接把资源、文件名或完整标题写入关键词图谱。

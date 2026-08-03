@@ -1,0 +1,18 @@
+graph LR
+    A[AI 生成<br>初稿] --> B[结构检查<br>自动]
+    B --> C[内容审阅<br>人工]
+    C --> D[双库验证<br>测试]
+    D --> E[实际环境验证<br>待实现]
+    E --> F[可发布]
+    
+    B -.->|章节完整性 格式正确性| B
+    C -.->|技术准确性 SQL正确性| C
+    D -.->|Oracle vs YashanDB 执行对比| D
+    D -.->|配置数据库 执行SQL和SOP 验证功能正确性| E
+    
+    style A fill:#e3f2fd,stroke:#1565c0
+    style B fill:#f3e5f5,stroke:#7b1fa2
+    style C fill:#fff3e0,stroke:#e65100
+    style D fill:#e8f5e9,stroke:#2e7d32
+    style E fill:#ffebee,stroke:#c62828
+    style F fill:#fce4ec,stroke:#c2185b

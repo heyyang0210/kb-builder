@@ -1,0 +1,12 @@
+id: yashandb
+version: 1.0.0
+language: zh-CN
+entityTypes: [Product, ProductVersion, DatabaseInstance, Cluster, Node, Module, StorageEngine, Parameter, ConfigurationItem, ErrorCode, SqlObject, Table, Index, View, Partition, Function, Procedure, Permission, User, Role, Transaction, Lock, ExecutionPlan, Command, Tool]
+relationTypes: [BELONGS_TO, CONTAINS, DEPENDS_ON, CONFIGURES, AFFECTS, APPLIES_TO, COMPATIBLE_WITH, ALTERNATIVE_TO, CAUSED_BY, RESOLVED_BY, LIMITS, REFERENCES, CALLS, DEPLOYED_ON, RUNS_ON]
+errorCodePatterns:
+  yashandb: '^YAS-[0-9]{5}$'
+  oracle: '^ORA-[0-9]{5}$'
+contextFiles:
+  - entity-types.yaml
+  - relation-types.yaml
+  - constraints.yaml

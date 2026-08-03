@@ -1,0 +1,6 @@
+id: problem-analysis
+version: 1.0.0
+documentIndicators: ["问题分析", "故障分析", "问题定位", "根因分析", "故障诊断"]
+priorityKnowledgeTypes: ["现象", "条件", "可能原因", "已确认原因", "诊断", "解决方案", "风险"]
+priorityRelationTypes: ["表现为", "导致", "解决", "影响", "规避"]
+requiredAttributes: ["assertionStatus", "causeStatus"]

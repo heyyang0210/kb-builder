@@ -1,0 +1,48 @@
+# app.yaml - 应用级配置
+# 此文件可被外部挂载覆盖（Docker volume）
+
+app:
+  name: pingcode-doc-platform
+  version: 1.0.0
+  environment: ${APP_ENV}
+  debug: ${APP_DEBUG}
+
+server:
+  backend:
+    host: ${BACKEND_HOST}
+    port: ${BACKEND_PORT}
+    cors_origins:
+      - ${FRONTEND_URL}
+      - http://localhost:3000
+  
+  frontend:
+    host: ${FRONTEND_HOST}
+    port: ${FRONTEND_PORT}
+
+storage:
+  # 数据根目录（支持相对路径和绝对路径）
+  root: ${DATA_ROOT}
+  
+  # 子目录配置（相对于 root）
+  downloads: ${DOWNLOAD_DIR}
+  preprocessed: ${PREPROCESS_DIR}
+  graph: ${GRAPH_DIR}
+  
+  # 自动创建目录
+  auto_create: true
+  
+  # 磁盘空间检查
+  min_free_space_gb: 10
+
+logging:
+  level: ${APP_LOG_LEVEL}
+  format: "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+  file: logs/app.log
+  max_size_mb: 100
+  backup_count: 5
+
+resources:
+  max_workers: ${MAX_WORKERS}
+  max_memory_mb: ${MAX_MEMORY_MB}
+  max_disk_space_gb: ${MAX_DISK_SPACE_GB}
+  request_timeout: ${REQUEST_TIMEOUT}

@@ -1,0 +1,20 @@
+graph TB
+    subgraph "阶段1: 提示词生成器 v1.0"
+        P1[单文件HTML应用<br>prompt-generator.html]
+        P2[功能: 选择知识点 → 生成提示词]
+        P3[局限: 需手动复制粘贴到AI工具]
+        P1 --> P2 --> P3
+    end
+    
+    subgraph "阶段2: 自动化执行引擎 v2.0"
+        E1[前后端分离架构<br>agent-runner/]
+        E2[功能: 一键执行全流程]
+        E3["能力: MCP检索 + LLM生成 + 质量验证"]
+        E1 --> E2 --> E3
+    end
+    
+    P3 -.->|痛点驱动| E1
+    
+    style P1 fill:#fff3e0,stroke:#e65100
+    style E1 fill:#e3f2fd,stroke:#1565c0
+    style E3 fill:#e8f5e9,stroke:#2e7d32

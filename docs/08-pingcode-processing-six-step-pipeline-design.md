@@ -207,6 +207,8 @@ material_preparation
 
 ### 4.2 执行方
 
+资源预处理阶段包含清洗、低成本初筛、embedding 生成和聚类报告四类确定性或可降级工作。embedding/cluster 在 `preselection-report.json` 完成后执行，写入 `metadata/embedding-index.jsonl` 与 `metadata/cluster-report.json`；失败只写 `quality/embedding-issues.json` 或 `quality/cluster-issues.json`，后续关键词默认档继续执行。
+
 仅代码执行，不调用大模型。
 
 ### 4.3 输入

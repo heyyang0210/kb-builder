@@ -1,0 +1,23 @@
+sequenceDiagram
+    participant U as 用户
+    participant F as 前端界面
+    participant C as 配置面板
+    participant S as 后端服务
+    
+    U->>F: 打开 prompt-generator.html
+    U->>C: 点击配置按钮
+    C->>C: 配置模型 API Key/Endpoint
+    C->>C: 配置 MCP 知识库地址
+    C->>S: 保存配置
+    S-->>C: 配置成功
+    U->>F: 在导航树中选择知识点
+    U->>F: 点击生成提示词
+    F-->>U: 显示生成的提示词
+    U->>F: 点击执行
+    F->>S: 调用执行 API
+    S-->>F: WebSocket 推送进度
+    F-->>U: 实时显示执行状态
+    S-->>F: 执行完成
+    F-->>U: 显示生成结果
+    U->>F: 查看 output/ 目录
+    Note over U,F: 文档已自动生成

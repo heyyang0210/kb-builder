@@ -1,0 +1,49 @@
+sequenceDiagram
+    participant U as 用户
+    participant F as 前端
+    participant A as API层
+    participant W as 工作流引擎
+    participant P as Planner
+    participant R as Retriever
+    participant G as Generator
+    participant V as Validator
+    participant MCP as MCP服务
+    participant LLM as 大模型
+    participant FS as 文件系统
+    
+    U->>F: 1. 选择知识点
+    U->>F: 2. 配置模型/MCP
+    U->>F: 3. 点击执行
+    F->>A: POST /api/agent/execute
+    A->>W: 启动工作流
+    
+    W->>P: 4. 规划阶段
+    P->>P: 分析知识点类型
+    P->>P: 生成文档大纲
+    P->>P: 构建MCP查询词
+    P-->>W: 返回执行计划
+    
+    W->>R: 5. 检索阶段
+    R->>MCP: 查询知识库-并行
+    MCP-->>R: 返回相关知识片段
+    R->>FS: 读取Oracle知识库
+    R->>FS: 读取设计文档
+    R-->>W: 返回参考资料
+    
+    W->>G: 6. 生成阶段
+    G->>G: 加载Skill规则
+    G->>G: 加载模板结构
+    G->>LLM: 调用大模型生成
+    LLM-->>G: 返回文档内容
+    G-->>W: 返回生成结果
+    
+    W->>V: 7. 验证阶段
+    V->>V: 检查结构完整性
+    V->>V: 验证格式规范
+    V->>FS: 写入output目录
+    V->>FS: 记录生成日志
+    V-->>W: 返回验证结果
+    
+    W-->>A: 工作流完成
+    A-->>F: WebSocket推送进度
+    F-->>U: 8. 显示完成状态

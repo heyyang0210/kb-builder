@@ -1,0 +1,17 @@
+relations:
+  - id: AFFECTS
+    sourceTypes: [Parameter, ConfigurationItem, ErrorCode, Module]
+    targetTypes: [ExecutionPlan, SqlObject, Module, Feature]
+    directed: true
+  - id: APPLIES_TO
+    sourceTypes: [Feature, Parameter, ErrorCode]
+    targetTypes: [ProductVersion, Module]
+    directed: true
+  - id: CAUSED_BY
+    sourceTypes: [Symptom, ErrorCode]
+    targetTypes: [Parameter, ConfigurationItem, Module, Cause]
+    directed: true
+  - id: RESOLVED_BY
+    sourceTypes: [Symptom, ErrorCode, Problem]
+    targetTypes: [Command, Procedure, ConfigurationItem, Solution]
+    directed: true

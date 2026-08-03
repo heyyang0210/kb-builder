@@ -1,0 +1,13 @@
+graph TB
+    A[检查 Node.js >= 18] --> B{已安装?}
+    B -->|否| C[安装 Node.js]
+    B -->|是| D[安装依赖<br>npm install]
+    C --> D
+    D --> E[配置环境变量<br>cp .env.example .env]
+    E --> F[编辑 .env 文件<br>设置 AGENT_RUNNER_KEY]
+    F --> G[初始化配置<br>npm run init-config]
+    G --> H[启动服务<br>npm start]
+    H --> I[访问前端<br>http://localhost:4100]
+    
+    style A fill:#e3f2fd,stroke:#1565c0
+    style I fill:#e8f5e9,stroke:#2e7d32

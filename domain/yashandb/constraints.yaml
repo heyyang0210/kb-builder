@@ -1,0 +1,17 @@
+description: YashanDB 知识提取的领域安全约束和反例规则。
+constraints:
+  - id: error-code-domain
+    name: 错误码领域隔离
+    rule: YAS 和 ORA 错误码必须保持不同领域，不能默认合并。
+  - id: sql-keyword
+    name: SQL 关键字限制
+    rule: 没有数据库对象证据时，SQL 关键字不能识别为实体。
+  - id: version-binding
+    name: 版本绑定
+    rule: 版本必须绑定产品、模块或来源上下文。
+  - id: evidence-required
+    name: 证据必填
+    rule: 每个提取结果必须包含当前处理单元中的 evidenceText。
+  - id: no-common-sense
+    name: 禁止常识补全
+    rule: 不得补充原文没有表达的数据库事实。

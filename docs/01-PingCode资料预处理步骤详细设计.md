@@ -301,6 +301,9 @@ training-runs/<taskId>/
 ├── normalized/
 ├── mappings/
 ├── metadata/
+│   ├── source-resources.jsonl
+│   ├── source-assets.jsonl
+│   ├── ingestion-report.json
 │   ├── source-documents.jsonl
 │   ├── chunks.jsonl
 │   └── structure-blocks.jsonl
@@ -310,6 +313,14 @@ training-runs/<taskId>/
 ```
 
 ### 7.2 源文档记录
+
+资料预处理先输出资源级追溯产物，再输出可进入元数据构建的源文档和处理单元：
+
+- `metadata/source-resources.jsonl`：每个原始、解包或转换登记资源一条记录，包含 `resourceId/sourceResourceId/parentResourceId/sourcePath/displayName/mediaType/formatFamily/contentHash/processingState/originalArtifact/normalizedArtifact/assetPaths/issueCodes`。
+- `metadata/source-assets.jsonl`：图片资源和 Office 转换保留的内嵌素材清单，包含 `assetId/resourceId/sourceResourceId/sourcePath/mediaType/artifactPath/assetKind/processingState`。
+- `metadata/ingestion-report.json`：资源接入汇总，包含资源数、文档数、处理单元数、素材数、状态分布、格式分布和本次输入哈希。
+
+上述三个产物是资源预处理增强的追溯根，不替代既有 `source-documents.jsonl/chunks.jsonl/structure-blocks.jsonl`，后续阶段必须继续兼容旧产物。
 
 ```json
 {
@@ -441,6 +452,9 @@ retry_material(resourceId, options) -> MaterialRetryResult
   "durationMs": 130000,
   "message": "资料预处理完成：38 个资源可进入下一步，4 个资源已隔离，可单独重试。",
   "artifacts": [
+    "metadata/source-resources.jsonl",
+    "metadata/source-assets.jsonl",
+    "metadata/ingestion-report.json",
     "metadata/source-documents.jsonl",
     "metadata/chunks.jsonl",
     "metadata/structure-blocks.jsonl",
@@ -552,6 +566,17 @@ prepare(context):
 16. 预检快照具有唯一 `preflightId`，正式任务可从运行清单反查预检数量和输入哈希。
 
 ## 十三、待实现项
+
+### 13.1 embedding 与聚类增强产物
+
+资源预处理阶段在元数据、标题清洗和低成本初筛完成后，可以生成 embedding 与聚类报告，作为后续质量分析和调度优化依据。
+
+- 配置来源：`scripts/pingcode/processing/metadata-rules/embedding-rules.yaml`。
+- embedding 产物：`metadata/embedding-index.jsonl` 和 `quality/embedding-issues.json`。
+- 聚类产物：`metadata/cluster-report.json` 和 `quality/cluster-issues.json`。
+- 默认 provider：`deterministic_hash`，不依赖外部 API Key，用于本地和 CI 稳定验证。
+- 失败策略：provider 不可用、超时、维度不一致和缓存损坏均降级为 warning，不阻断 `keyword_analysis`。
+- 边界：cluster 不进入关键词图谱，不直接生成关键词，也不接入正式知识构建调度。
 
 - Office/PDF 转换器的细粒度段落、表格、页码来源映射；
 - PDF 文本块到页码的具体解析库和映射算法；

@@ -42,9 +42,15 @@ DOCX 或 PingCode 页面中的图片资产属于来源证据层：数据集可�
 
 数据集图谱来源使用 `graphSource` 标记：`final_knowledge` 表示包含最终知识，`model_keyword` 表示最终知识为空但存在已验证模型关键词，`metadata_keyword` 表示仅使用确定性元数据回退，`empty` 表示没有可用图谱输入。图谱关键词按领域术语、模型主题关键词、受控规则候选的顺序归并；完整文档标题和文件名主体不直接作为节点，但模型可从清洗后的 `semanticTitle` 提取有逐字证据的主题子串。`dataset_*`、`file_*`、`chunk_*` 等技术标识，以及规则配置中的产品范围词和文件命名词，只保留在来源追溯字段中，不进入关键词候选集合、别名列表或关键词统计。
 
+质量分析默认数据集使用 `knowledgeBuildMode=keyword_analysis`。该图谱只允许 `Keyword` 主节点和 `ProcessingUnit` 证据节点，默认视图只展示关键词总览，点击关键词后再加载文档块证据边。关键词节点固定包含 `keywordId`、`canonicalName`、`aliases`、`matchedAliases`、`confidence`、`evidenceSources`、`sourceResourceIds`、`chunkIds`、`occurrences`、`approvalStatus`、`businessStatus`、`businessReasonCodes` 和 `businessEvidenceCoverage`；审批状态取值为 `autoAccepted`、`accepted`、`pending`、`rejected`，业务状态取值为 `businessAccepted`、`businessRejected`、`needsReview`。`graphSummary.keywordApprovalState` 聚合审批状态，`graphSummary.keywordBusinessReviewState` 聚合业务准入、业务排除、待业务确认和原因分布，`formalKnowledgeDatasetId` 记录后续正式知识构建产物，未构建时为空。
+
+正式知识构建使用 `knowledgeBuildMode=formal_knowledge`，由质量分析页显式触发。输入仅取已确认且业务准入的关键词及其关联文档块，拒绝、待确认、业务排除和待业务确认关键词不进入构建。第一版正式构建只产出 `KnowledgePoint`，实体和关系由后续独立阶段生成；正式知识图谱必须与关键词图谱分视图展示，避免默认质量分析阶段误以为已经完成正式知识加工。
+
 模型关键词节点固定记录 `sourceMethods`、`evidenceSources`、`sourceResourceIds`、`chunkIds`、`modelConfidence`、`occurrences`。标题证据关联当前文档的主要处理单元，边同时保留标题、正文上下文和来源路径。最终知识图谱也合并已验证关键词节点，避免知识点存在时反而丢失主题关键词；摘要增加 `keywordSourceCounts` 区分词典、模型和规则来源。
 
 图谱摘要必须记录 `graphSchemaVersion` 和 `metadataRuleSetHash`。质量报告或图谱接口读取数据集时，若图谱版本缺失/过低，或元数据关键词图谱的规则哈希与当前规则集不一致，则使用已保存的源文档和处理单元先刷新确定性元数据，再懒回填图谱，不重新调用大模型。别名查询先解析为 canonical 节点 ID，再使用该 ID 筛选上下文边，以保证 canonicalName 和任一别名返回同一组关联。
+
+关键词图谱生成时必须同时生成 `keyword-chunk-index.json`。该物化索引保存 canonical `keywordId -> chunkIds` 和反向 `chunkId -> keywordIds`，仅表示已验证的证据关联，不重复保存正文。正式知识构建先依据关键词节点的审批状态和业务准入状态过滤索引，再调度最小 chunk 集合；同一 chunk 属于多个已确认且业务准入关键词时只进行一次模型抽取，并在产物中保留全部关键词 ID。审批状态和业务准入状态改变不会改变关键词与 chunk 的证据事实，因此不需要重新调用模型或重建索引。每次正式知识构建还必须写出 `extraction-results/formal-knowledge-input.json`，用于审计 `accepted/rejected/businessRejected/needsReview` 关键词、实际调度 chunk 和去重后的 `chunkKeywordMap`。
 
 图谱展示层采用 `What / How / Why` 知识域组织方式：`What` 用于概念、对象、参数、规则和错误码；`How` 用于步骤、配置、流程、实现方式和操作方案；`Why` 用于原因、约束、设计取舍、风险和故障根因。该分类服务于阅读和质量分析，不替代 `resourceId`、`chunkId`、`sourcePath`、证据文本和最终知识文件。
 

@@ -1,0 +1,1 @@
+{"documentType":"feature_design","text":"参数 max_connections 默认值为 1000，修改后需要重启数据库生效。","expected":{"entities":[{"name":"max_connections","type":"Parameter"}],"assertionStatus":"implemented","relations":[]}}

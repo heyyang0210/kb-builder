@@ -1,0 +1,32 @@
+# pingcode.yaml - PingCode 特定配置
+
+pingcode:
+  base_url: ${PINGCODE_BASE_URL}
+  
+  credentials:
+    email: ${PINGCODE_EMAIL}
+    password: ${PINGCODE_PASSWORD}
+    session_ttl: ${PINGCODE_SESSION_TTL}
+  
+  # 默认目标空间（可被前端覆盖）
+  default_spaces:
+    - key: YASSTORAGE
+      name: YashanDB 存储引擎
+    - key: YASDOC
+      name: YashanDB 文档
+  
+  # API 限制
+  api:
+    max_pages_per_request: 1000
+    request_interval: 0.5    # 请求间隔（秒）
+    retry_count: 3
+    retry_delay: 1.0         # 重试延迟（秒）
+  
+  # 下载配置
+  download:
+    max_workers: ${MAX_WORKERS}
+    timeout: ${REQUEST_TIMEOUT}
+    chunk_size: 1048576      # 下载块大小（1MB）
+    skip_empty: true
+    skip_deleted: true
+    skip_draft: true

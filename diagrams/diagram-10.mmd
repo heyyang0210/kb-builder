@@ -1,0 +1,38 @@
+graph TB
+    subgraph "配置层"
+        C1[数据库连接配置<br>多环境支持]
+        C2[验证策略配置<br>验证范围/深度]
+    end
+    
+    subgraph "解析层"
+        P1[SQL提取器<br>从Markdown提取代码块]
+        P2[SOP解析器<br>识别操作步骤]
+        P3[预期结果提取<br>从文档提取预期输出]
+    end
+    
+    subgraph "执行层"
+        E1[SQL执行引擎<br>连接数据库执行]
+        E2[SOP执行引擎<br>按步骤执行操作]
+        E3[结果收集器<br>捕获执行结果]
+    end
+    
+    subgraph "验证层"
+        V1[结果对比器<br>实际vs预期]
+        V2[错误分类器<br>语法/逻辑/环境]
+        V3[报告生成器<br>生成验证报告]
+    end
+    
+    C1 --> E1
+    C2 --> V1
+    P1 --> E1
+    P2 --> E2
+    P3 --> V1
+    E1 --> E3
+    E2 --> E3
+    E3 --> V1
+    V1 --> V2
+    V2 --> V3
+    
+    style C1 fill:#ffebee,stroke:#c62828
+    style E1 fill:#ffebee,stroke:#c62828
+    style V1 fill:#ffebee,stroke:#c62828

@@ -1,0 +1,47 @@
+# preprocess.yaml - 预处理流水线配置
+
+preprocess:
+  # 处理阶段（按顺序执行）
+  stages:
+    - name: format_convert
+      enabled: true
+      description: "格式转换（docx/pptx → Markdown）"
+    
+    - name: text_clean
+      enabled: true
+      description: "文本清洗"
+    
+    - name: text_chunk
+      enabled: true
+      description: "文本分块"
+      config:
+        chunk_size: ${CHUNK_SIZE}
+        chunk_overlap: ${CHUNK_OVERLAP}
+        separator: "\n\n"
+    
+    - name: embedding
+      enabled: true
+      description: "向量化"
+      config:
+        model: ${EMBEDDING_MODEL}
+        dimension: ${EMBEDDING_DIMENSION}
+        device: ${EMBEDDING_DEVICE}
+        batch_size: 32
+    
+    - name: entity_extract
+      enabled: true
+      description: "实体 & 关系提取"
+      config:
+        method: ${ENTITY_EXTRACTION_METHOD}
+        entity_types: ${ENTITY_TYPES}
+  
+  # 输出配置
+  output:
+    format: json
+    compress: false
+    include_metadata: true
+  
+  # 图谱配置
+  graph:
+    backend: networkx        # networkx | neo4j
+    collection_prefix: ${CHROMADB_COLLECTION_PREFIX}

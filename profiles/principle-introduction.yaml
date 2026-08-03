@@ -1,0 +1,6 @@
+id: principle-introduction
+version: 1.0.0
+documentIndicators: ["原理", "机制", "架构", "工作原理", "技术介绍"]
+priorityKnowledgeTypes: ["概念", "组件", "流程", "机制", "边界"]
+priorityRelationTypes: ["组成", "属于", "依赖", "调用", "影响"]
+requiredAttributes: ["assertionStatus"]

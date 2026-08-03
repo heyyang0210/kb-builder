@@ -931,8 +931,11 @@ agent-runner/logs/intermediate/
 |   |   |   |-- prompt-parser.js       #          提示词解析
 |   |   |   +-- task-store.js          #          任务存储
 |   |   |
-|   |   |-- retrieval-strategy/        #       检索策略
-|   |   |   +-- index.js               #          多级检索策略
+|   |   |-- retrieval/                  #       精准检索模块（新增）
+|   |   |   |-- retrieval-service.js    #          统一检索服务入口
+|   |   |   |-- query-planner.js        #          意图化查询规划+质量检查
+|   |   |   |-- result-filter.js        #          Score过滤+去重+维度归类
+|   |   |   +-- context-assembler.js    #          按维度分组组织上下文
 |   |   |
 |   |   |-- workflow-engine.js         #       工作流引擎
 |   |   |-- retrieval-query-builder.js #       查询词构建
@@ -946,6 +949,8 @@ agent-runner/logs/intermediate/
 |   |   |-- 00-项目总览.md
 |   |   |-- 01-系统架构设计.md
 |   |   |-- 19-知识点驱动的MCP检索流程设计.md
+|   |   |-- 22-Retriever阶段调研-顶级公司方案.md
+|   |   |-- 23-Retriever精准检索优化设计.md
 |   |   +-- ...
 |   |
 |   +-- tests/                         #    测试文件
@@ -1283,3 +1288,6 @@ cat agent-runner/logs/intermediate/<task_id>/02-retrieval-plan/03-mcp-queries/qu
 - 执行引擎设计文档：`agent-runner/DESIGN.md`
 - 前端设计文档：`prompt-generator-design.md`
 - MCP 检索流程设计：`agent-runner/docs/19-知识点驱动的MCP检索流程设计.md`
+- Retriever 调研（顶级公司方案）：`agent-runner/docs/22-Retriever阶段调研-顶级公司方案.md`
+- Retriever 精准检索优化设计：`agent-runner/docs/23-Retriever精准检索优化设计.md`
+- FastGPT 集成改造方案：`docs/16-FastGPT集成改造方案.md`（上游源码快照位于 `src/FastGPT`）

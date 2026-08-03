@@ -1,0 +1,1 @@
+{"documentType":"test_design","text":"预期结果：修改参数后连接数增加。","expected":{"mustNot":{"assertionStatus":"implemented","relation":"PROVES_CURRENT_PRODUCT_BEHAVIOR"},"shouldMark":"expected"}}

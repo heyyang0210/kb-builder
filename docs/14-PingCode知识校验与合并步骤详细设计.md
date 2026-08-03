@@ -56,7 +56,7 @@ execute(context):
 
 ## 六、失败、幂等与验收
 
-单候选失败不阻塞其他候选；Schema、映射或最终文件无法加载时步骤失败，禁止构图。最终知识为空但存在通过证据校验的模型关键词时生成 `warning` 级 `FINAL_KNOWLEDGE_EMPTY`，允许步骤六生成“模型关键词降级图谱”；最终知识和有效模型关键词均为空时才生成阻断级错误。输入哈希、Schema 版本和步骤版本不变时复用结果，任何上游变化使本步骤失效并重新合并。验收覆盖无证据、错误偏移、关系端点缺失、代码与 Agent 冲突、重复知识合并、关键词降级和最终文件唯一输入约束。
+单候选失败不阻塞其他候选；Schema、映射或最终文件无法加载时步骤失败，禁止构图。`formal_knowledge` 模式下，最终知识为空但存在通过证据校验的模型关键词时生成 `warning` 级 `FINAL_KNOWLEDGE_EMPTY`，允许步骤六生成“模型关键词降级图谱”；最终知识和有效模型关键词均为空时才生成阻断级错误。`keyword_analysis` 模式本来不产出最终知识，不执行最终知识合并，也不生成 `FINAL_KNOWLEDGE_EMPTY`。输入哈希、Schema 版本和步骤版本不变时复用结果，任何上游变化使本步骤失效并重新合并。验收覆盖无证据、错误偏移、关系端点缺失、代码与 Agent 冲突、重复知识合并、关键词降级和最终文件唯一输入约束。
 
 ## 七、当前实现说明
 
@@ -66,5 +66,6 @@ execute(context):
 - 按来源、规范化实体名称、类型、关系方向和 Schema 版本生成稳定 `knowledgeId`；
 - `YAS-` 与 `ORA-` 错误码分别规范为 `YashanDBErrorCode` 和 `OracleErrorCode`；
 - 无效 Schema、证据、偏移、关系端点和实体类型冲突分别写入 `final-results/rejected.jsonl` 与 `quality/issues.json`；
-- 最终知识为空时读取 `extraction-results/keyword-candidates.jsonl`：存在有效关键词则 `FINAL_KNOWLEDGE_EMPTY` 为警告并允许发布降级图谱，不存在有效关键词则保持高严重度并阻断；
+- `formal_knowledge` 最终知识为空时读取 `extraction-results/keyword-candidates.jsonl`：存在有效关键词则 `FINAL_KNOWLEDGE_EMPTY` 为警告并允许发布降级图谱，不存在有效关键词则保持高严重度并阻断；
+- `keyword_analysis` 只校验关键词证据和图谱可用性，不写 `final-results/knowledge.jsonl`、`final-results/rejected.jsonl` 或 `extraction-results/knowledge-candidates.jsonl`；
 - 产物使用临时文件原子替换，步骤六必须重新读取 `final-results/knowledge.jsonl`。

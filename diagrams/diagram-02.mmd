@@ -1,0 +1,77 @@
+graph TB
+    subgraph "用户层"
+        U1[浏览器前端<br>prompt-generator.html]
+        U2[配置面板<br>模型/MCP/Agent]
+        U3["知识点导航树<br>200+知识点"]
+    end
+    
+    subgraph "执行引擎层 agent-runner"
+        API["REST API + WebSocket<br>server.js"]
+        
+        subgraph "工作流引擎"
+            WF[Workflow Engine<br>workflow-engine.js]
+            P[Planner Agent<br>规划文档结构]
+            R[Retriever Agent<br>检索参考资料]
+            G[Generator Agent<br>生成文档内容]
+            V[Validator Agent<br>验证文档质量]
+        end
+        
+        subgraph "核心工具"
+            LLM[LLM Client<br>llm-client.js]
+            MCP[MCP Client<br>mcp-client.js]
+            FR[File Reader<br>file-reader.js]
+            FW[File Writer<br>file-writer.js]
+        end
+        
+        subgraph "智能检索"
+            QB[Query Builder<br>查询词构建]
+            SE[Synonym Expander<br>同义词扩展]
+            RS[Retrieval Strategy<br>检索策略]
+        end
+    end
+    
+    subgraph "外部服务层"
+        LLM_API[大模型 API<br>OpenAI/阿里云/智谱]
+        MCP_Server[YashanDB 知识库 MCP<br>实时检索]
+        FS["文件系统<br>output/ + logs/"]
+    end
+    
+    subgraph "知识资产层"
+        SK[Skill 文件<br>7个生成规则]
+        TPL[模板文件<br>7套标准模板]
+        CFG[共享配置<br>格式规范/质量标准]
+        REF[参考资料<br>Oracle知识库/设计文档]
+    end
+    
+    U1 --> API
+    U2 --> API
+    U3 --> U1
+    
+    API --> WF
+    WF --> P --> R --> G --> V
+    
+    P --> QB
+    R --> MCP
+    R --> FR
+    G --> LLM
+    V --> FW
+    
+    QB --> SE
+    R --> RS
+    
+    LLM --> LLM_API
+    MCP --> MCP_Server
+    FW --> FS
+    
+    G --> SK
+    G --> TPL
+    G --> CFG
+    R --> REF
+    
+    style U1 fill:#e3f2fd,stroke:#1565c0
+    style WF fill:#f3e5f5,stroke:#7b1fa2
+    style LLM fill:#fff3e0,stroke:#e65100
+    style MCP fill:#fff3e0,stroke:#e65100
+    style FS fill:#e8f5e9,stroke:#2e7d32
+    style SK fill:#fce4ec,stroke:#c2185b
+    style TPL fill:#fce4ec,stroke:#c2185b

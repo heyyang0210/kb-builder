@@ -101,6 +101,8 @@ Prompt/Skill Registry 在本阶段不依赖 SQLite：以 `scripts/pingcode/proce
 | 6 | document_enrichment | LLM | 首期接入 | 摘要、分类、关键词 |
 | 7 | knowledge_extraction | LLM + 规则 | 首期接入 | 知识点、实体、关系、证据 |
 | 8 | embedding | Embedding | 首期基础能力 | 向量、模型和维度元数据 |
+
+embedding 能力在资料加工平台第一版以“可降级增强能力”接入：默认使用本地 deterministic hash provider，真实网关 `/embedding` 不可用时只写 warning。embedding 配置、维度、缓存目录、profile version、聚类阈值和失败模式统一放在 `metadata-rules/embedding-rules.yaml`，不得写入 API Key。
 | 9 | semantic_quality_review | LLM + 规则 | 首期接入 | 边界样本判断、理由 |
 | 10 | quality_gate | 规则 + 人工 | 必选 | 门禁结果、审批记录 |
 | 11 | publish_dataset | 本地事务 | 人工触发 | 不可变数据集版本 |

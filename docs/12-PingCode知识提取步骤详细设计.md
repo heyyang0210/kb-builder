@@ -5,13 +5,80 @@
 
 ## 一、范围与职责
 
-知识提取是第三个前端步骤，由代码调用专用 `KnowledgeExtractionAgent`。该 Agent 面向知识库提取，参考 Dify 等开源工作流的结构化输出、技能编排、上下文边界和调用可观测设计，但不控制流水线。
+知识提取是第三个前端步骤。默认质量分析任务执行 `keyword_analysis`，由代码调用独立 `keyword-extraction` Skill 只生成关键词候选；正式知识构建任务执行 `formal_knowledge`，由代码调用专用 `KnowledgeExtractionAgent` 生成第一版知识点候选。实体和关系属于后续独立任务。该 Agent 面向知识库提取，参考 Dify 等开源工作流的结构化输出、技能编排、上下文边界和调用可观测设计，但不控制流水线。
 
-代码负责输入范围、锚点预识别、任务拆分、Agent 调用、超时重试、输出 Schema 校验和落盘；Agent 在受控处理单元中提取知识点、实体、关系和类型候选。Agent 不读取完整批次、不直接写文件或图谱。
+代码负责输入范围、锚点预识别、任务拆分、Skill/Agent 调用、超时重试、输出 Schema 校验和落盘。`keyword_analysis` 只允许输出关键词候选，不写 `knowledge-candidates.jsonl`；`formal_knowledge` 第一版只在受控处理单元中提取知识点候选。Agent 不读取完整批次、不直接写文件或图谱。
 
-## 二、Knowledge Extraction Skill 设计
+## 二、关键词默认档与正式知识构建分层
 
-### 2.1 设计结论
+`POST /api/training/tasks` 默认 `mode=keyword_analysis`。该模式输入由清洗后的文档名称、原始标题、摘要、章节标题、正文处理单元和已命中的数据库领域术语组成；输出只包含 `keywordCandidates`。模型不得在该模式输出 `KnowledgePoint`、实体或关系，也不得生成最终知识文件。
+
+正式知识构建作为后置显式动作执行，`mode=formal_knowledge`。它必须以质量分析页已确认且通过业务语义过滤的关键词为输入边界，默认只读取 `approvalStatus in (autoAccepted, accepted)` 且 `businessStatus=businessAccepted` 的关键词及其关联文档块；`rejected/pending/businessRejected/needsReview` 关键词不进入正式知识构建。正式知识输出需要保留关键词上下文，便于回查“哪个关键词触发了哪些知识点、实体和关系”。
+
+正式知识构建的任务生命周期由训练服务控制，Workflow Agent 只负责在受控上下文中执行提取，不负责决定任务终态。Agent 内部模型调用必须接入训练任务的超时、取消、事件和审计契约：每次调用开始前写入 `model_call.started`，并携带 `taskId/stageRunId/agentTaskId/modelCallId/resourceId/chunkId 或 batchIndex/timeoutMs`；成功写入 `model_call.completed`，失败或超时写入 `model_call.failed` 和 `quality/extraction-issues.json`。用户取消后，Agent 必须在 batch 提交前、模型调用前后和结果聚合前检查取消状态，保证取消请求可以在 30 秒内进入 `cancelled` 或可解释的 `failed` 终态。后端启动、训练任务查询和创建任务前必须执行中断恢复，清理不属于当前进程活跃任务的僵尸 `activeTaskIds`。
+
+### 2.1 TASK-P0-02 最小正式知识抽取契约
+
+`formal_knowledge` 的第一版只生成 `knowledge_point` 候选。Workflow Agent 的一个工作项固定对应一个 `chunk`，不得将多个 chunk 合并到同一次模型请求；不执行跨 chunk 关系识别、实体抽取、关系抽取、关键词候选生成或 `needs_enrichment` 路由。实体和关系属于后续独立任务，不得作为本版本输出的隐式副作用。
+
+单元成功时，训练服务将已校验的知识点写入 `extraction-results/knowledge-candidates.jsonl`；每项至少包含 `candidateId`、`taskId`、`stageRunId`、`state=agent_resolved`、`kind=knowledge_point`、`keywordIds`、`keywordContext`、`chunkId`、`resourceId`、`sourceResourceId`、`sourcePath`、`evidenceText`、`evidenceOffsets` 和 `confidence`。`keywordIds/keywordContext` 必须按 `keywordId` 去重并稳定排序。模型工作项无论成功或失败均写入 `model-results/knowledge-extraction-batches.jsonl`。单元失败只写中文 `quality/extraction-issues.json` 问题并继续其他 chunk，不得终止同一正式知识任务。失败分类固定为 `KNOWLEDGE_EXTRACTION_TIMEOUT`、`KNOWLEDGE_EXTRACTION_SCHEMA_INVALID`、`KNOWLEDGE_EXTRACTION_EMPTY_RESULT`、`KNOWLEDGE_EXTRACTION_FAILED`。
+
+进度以处理单元终态为准：每个 chunk 只在成功或不可恢复失败后递增一次，失败同样计入已处理。每个模型调用事件和批次审计必须携带 `taskId`、`stageRunId`、`agentTaskId`、`chunkId`、`modelCallId`；`timeoutMs` 和重试次数只读取 `knowledge-point-extraction/skill.yaml` 的 defaults。
+
+`knowledge-point-extraction` Skill 的 `timeoutMs/maxTokens/maxRetries/concurrency/batchSize` 是正式知识构建的运行时契约。Python 模型网关的 HTTP 等待上限必须由 `timeoutMs` 推导，不能再使用全局默认超时时间覆盖 Skill timeout；否则即使 Skill 声明 60 秒超时，任务仍可能被全局 180 秒连接等待拖住。
+
+关键词抽取语义边界：
+
+- 文档名称是候选来源，但必须先使用元数据阶段的 `semanticTitle` 去除 `YashanDB`、`DSI`、副本编号、文件后缀和命名噪声，再抽取实际主题子串；
+- 正文关键词必须来自处理单元正文、摘要或章节标题中的主要描述内容，并提供逐字证据；
+- 数据库领域词典用于 canonical 名称、稳定 `termId` 和别名归并，不再作为唯一准入白名单；
+- 技术 ID、图片路径、完整文件名和普通下划线标识不得进入关键词候选。
+
+### 2.2 关键词默认档性能策略
+
+质量分析的主要职责是建立“已证实的主题关键词 -> 文档块证据”基础层，而不是对每个文档提前生成完整知识。因此关键词默认档采用以下分级策略：
+
+1. 确定性优先：先使用 `semanticTitle`、章节路径、正文命中和领域词典生成候选。只有标题主题清晰、标题命中词典术语且同一术语在章节或正文中有证据时，才直接写入候选并跳过该文档的模型调用。完整标题仍只作为来源信息，不能直接成为关键词。
+2. 模型补充：标题不明确、存在多个独立主题、标题与正文主题不一致，或需要发现词典外专业术语时，才调用 `keyword-extraction`。调用时传入已确认的确定性主题，模型只补充缺失主题，不重复输出已有候选。
+3. 降级保留：超时、格式错误或局部结果缺失时，不丢弃已确认的确定性候选；受影响处理单元记录为待确认质量提示，不重跑已经成功的处理单元。
+
+该策略不把词典作为关键词准入白名单。词典提供稳定 `termId`、canonical 名和别名归并；有原文证据的模型主题词即使未收录，也可以进入候选。
+
+### 2.3 动态组批与局部修复
+
+关键词模型请求按输入字符预算动态组批，而不是按单一 `resourceId` 固定分组。短文档可与其他短文档同批；每个 chunk 在请求中都必须携带自己的文档上下文（语义标题、摘要、章节路径、领域术语、来源 ID），输出仍以 `chunkId` 对应。
+
+Skill 的受控默认参数定义在 `keyword-extraction/skill.yaml`，包括最大输入字符数、单批最大 chunk 数、每个 chunk 最大关键词数、修复次数、慢响应阈值和并发数。关键词默认档只传递主题判定所需字段，避免重复传入完整元数据。调度器根据已观测的慢响应降低后续波次的并发，防止多个接近超时的请求相互拥塞。
+
+模型响应按 chunk 独立校验。批次中已通过的 chunk 立即保存；只有缺少 `chunkId`、候选字段不完整或证据不合规的 chunk 才会以单 chunk 上下文进行一次定向修复。不得因为一个 chunk 的 Schema 问题重新调用整批请求，也不得把格式错误静默计为成功。
+
+### 2.4 增量候选缓存与正式知识输入边界
+
+关键词候选缓存是可复用的中间产物，缓存键由以下字段组成：
+
+```text
+contentHash + semanticTitle + metadataRuleSetHash + skillVersion + promptHash
+```
+
+其中 `contentHash` 是当前处理单元正文哈希，`promptHash` 包含已发布的 system/user prompt 哈希。正文、语义标题、元数据规则、Skill 版本或 Prompt 任一变化时缓存失效；命中时直接复用已校验的原始模型候选、别名、证据和置信度，并重新写入本次任务的候选 ID 与来源记录。运行报告必须记录命中、未命中和失效原因。
+
+图谱生成阶段同时写入 `keyword-chunk-index.json`，物化 `keywordId -> chunkIds` 和 `chunkId -> keywordIds`。关键词确认、排除、业务准入、别名归并和图谱修复都复用既有候选与证据，不重新调用模型。`formal_knowledge` 先读取该索引，仅调度 `autoAccepted/accepted + businessAccepted` 关键词关联的最小 chunk 集合；一个 chunk 命中多个准入关键词时只提取一次，并向正式知识结果回写全部 `keywordIds`。正式任务启动后必须写入 `extraction-results/formal-knowledge-input.json`，记录来源数据集、已确认关键词、被过滤的 rejected/businessRejected/needsReview 关键词、实际调度 chunk、`chunkKeywordMap` 和去重统计，用于审计“审批状态和业务准入状态如何影响正式构建输入”。
+
+### 2.5 正式构建前业务语义过滤
+
+快速加工得到的关键词在进入正式知识构建前必须执行业务语义过滤。该阶段由规则文件 `business-keyword-rules.yaml` 驱动，不调用正式知识抽取模型，输出 `quality/keyword-business-review.json`，并把 `businessStatus`、`businessReasonCodes`、`businessEvidenceCoverage` 写回关键词节点。
+
+业务状态固定为：
+
+- `businessAccepted`：可进入正式知识构建；
+- `businessRejected`：业务语义不适合正式构建，保留图谱审计但不调度模型；
+- `needsReview`：规则无法安全判断，需要用户在质量分析页确认。
+
+质量分析页必须展示业务准入数、业务排除数、待业务确认数、过滤原因和实体/关系阶段状态。业务状态更新不重建关键词图谱、不重跑关键词抽取，只影响后续正式构建输入集合。
+
+## 三、Knowledge Extraction Skill 设计
+
+### 3.1 设计结论
 
 采用“一个通用知识提取 Skill + 多个文档类型 Profile”的方案，不为每种文档复制一套完整 Skill。通用 Skill 负责统一的证据、输出、边界和安全约束；Profile 负责不同文档类型的提取重点、术语提示和关系优先级。
 
@@ -231,30 +298,50 @@ KnowledgeExtractionStage（代码）
 {
   "candidateId": "candidate_xxx",
   "state": "agent_resolved",
-  "kind": "relation",
+  "taskId": "training_xxx",
+  "stageRunId": "stage-run_xxx",
+  "agentTaskId": "knowledge_point_xxx",
+  "modelCallId": "model_call_xxx",
+  "kind": "knowledge_point",
   "resourceId": "resource_xxx",
+  "sourceResourceId": "resource_xxx",
   "chunkId": "resource_xxx:0",
-  "documentType": "feature_design",
-  "extractionProfile": "feature-design",
-  "domain": "yashandb",
-  "domainContextVersion": "yashandb-domain:1.0.0",
+  "sourcePath": "事务.md",
+  "keywordIds": ["keyword:transaction"],
+  "keywordContext": [
+    {"keywordId": "keyword:transaction", "canonicalName": "事务", "aliases": []}
+  ],
   "value": {
-    "source": "max_connections",
-    "target": "optimizer_resource_estimation",
-    "type": "AFFECTS"
+    "title": "事务提交",
+    "statement": "事务提交需要写入 REDO 日志。",
+    "knowledgeType": "technical_fact"
   },
-  "evidenceText": "max_connections 会影响优化器资源估算。",
+  "evidenceText": "事务提交需要写入 REDO 日志。",
   "evidenceOffsets": {"start": 120, "end": 158},
-  "sourceMethod": "knowledge_extraction_agent",
-  "agentId": "knowledge-extraction-agent",
-  "skillId": "knowledge-extraction",
-  "skillVersion": "2.0.0",
-  "promptVersion": "knowledge-extraction:2.0.0",
-  "profileVersion": "feature-design:1.0.0",
+  "sourceMethod": "knowledge_extraction_workflow_agent",
   "schemaVersion": "2.0.0",
+  "inputHash": "sha256:xxx",
   "confidence": 0.86
 }
 ```
+
+`formal_knowledge` 任务还必须写入 `extraction-results/formal-knowledge-input.json`，用于审计本次正式构建的输入边界：
+
+```json
+{
+  "sourceDatasetId": "dataset_xxx",
+  "acceptedKeywordIds": ["keyword:transaction", "keyword:redo"],
+  "rejectedKeywordIds": ["keyword:rejected"],
+  "scheduledChunkIds": ["resource_xxx:0"],
+  "chunkKeywordMap": {
+    "resource_xxx:0": ["keyword:redo", "keyword:transaction"]
+  },
+  "filteredKeywordCount": 1,
+  "deduplicatedChunkCount": 1
+}
+```
+
+同一处理单元关联多个已确认关键词时，只创建一个 Agent 工作项；候选中的 `keywordIds` 和 `keywordContext` 按 `keywordId` 去重并稳定排序。`rejected` 关键词不得出现在输入计划、Prompt envelope、候选或最终知识结果中。
 
 ### 5.3 不确定项
 
@@ -348,6 +435,7 @@ execute(context):
 - Prompt 统一使用单一 `context_envelope` JSON 变量；运行时发现任何未渲染模板标记即终止当前批次并记录质量问题。
 - 模型关键词先校验证据与置信度，再按 `termId -> 词典别名 -> 规范化名称` 归并；词典负责规范化，不作为准入白名单。
 - 清洗后的 `semanticTitle` 若与当前文档已命中的领域词条 canonical 名或别名存在逐字匹配，代码补充一条 `domain_glossary` 标题主题候选；该规则只覆盖标题主题，不把正文中偶然命中的全部词典项提升为主关键词，置信度由 `title-cleaning.yaml` 配置。
+- 关键词默认档优先读取元数据阶段的 `metadata/preselection-report.json`：`deterministic_ready` 使用确定性候选并跳过模型，`model_required` 才进入 `keyword-extraction` 模型批处理，`human_review/skip` 不调用模型并等待人工确认或后续规则补充；历史运行缺少该报告时回退旧的确定性判断逻辑。
 - Agent 批量结果转换为知识候选时，代码必须为知识点、实体和关系统一补齐 `candidateId`、`evidenceOffsets`、`schemaVersion`、来源和置信度；关系集合不得漏写。偏移只能根据原处理单元中的逐字证据计算，无法回查的候选继续拒绝。
 - Agent 调用缓存位于运行数据目录的 `processing/agent-cache/knowledge-extraction/`；缓存键包含去除 `taskId` 后的输入、Skill/Prompt/Schema 版本与内容哈希和模型配置指纹，命中时不重复调用模型。
 - Schema 校验前由代码规范化无歧义的结构别名，例如 `relationships -> relations`、`sourceEntity -> source`，并删除模型回显的 `taskId/resourceId/chunkId`；Skill、Prompt、Agent 和 Schema 版本由代码权威填写，不能依赖模型生成。
