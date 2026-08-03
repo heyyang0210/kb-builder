@@ -37,6 +37,11 @@ from .models import (
     SkillDetail,
     SkillSummary,
     TaskSnapshot,
+    KeywordStatusUpdate,
+    KeywordBusinessStatusUpdate,
+    KeywordAdmissionUpdate,
+    L2TermCreate,
+    KeywordLinkCreate,
     TrainingTaskCreate,
     TrainingModelConfigUpdate,
     TrainingReviewDecision,
@@ -1026,6 +1031,125 @@ def repair_dataset_graph(dataset_id: str):
         error("DATASET_NOT_FOUND", "数据集版本不存在", 404)
     except FileNotFoundError:
         error("GRAPH_REPAIR_UNAVAILABLE", "该数据集缺少可回填的知识加工产物", 404)
+
+
+@app.post("/api/datasets/{dataset_id}/keywords/{keyword_id}/status")
+def update_keyword_status(dataset_id: str, keyword_id: str, request: KeywordStatusUpdate):
+    try:
+        return training.update_keyword_status(dataset_id, keyword_id, request.status)
+    except KeyError:
+        error("KEYWORD_NOT_FOUND", "数据集版本或关键词不存在", 404)
+    except FileNotFoundError:
+        error("GRAPH_NOT_AVAILABLE", "该数据集尚无关键词图谱产物", 404)
+    except ValueError as exc:
+        error("KEYWORD_STATUS_INVALID", str(exc), 409)
+
+
+@app.post("/api/datasets/{dataset_id}/keywords/filter-by-prompt")
+def filter_keywords_by_prompt(dataset_id: str, request: dict):
+    """根据用户提示词批量过滤关键词"""
+    try:
+        prompt = request.get("prompt", "")
+        if not prompt:
+            return {"success": False, "error": "提示词不能为空"}
+        return training.filter_keywords_by_prompt(dataset_id, prompt)
+    except FileNotFoundError:
+        error("DATASET_NOT_FOUND", "数据集不存在或图谱未生成", 404)
+    except Exception as exc:
+        error("KEYWORD_FILTER_FAILED", str(exc), 500)
+
+
+@app.post("/api/datasets/{dataset_id}/keywords/business-review")
+def review_keyword_business(dataset_id: str):
+    try:
+        return training.review_keyword_business(dataset_id)
+    except KeyError:
+        error("DATASET_NOT_FOUND", "数据集版本或关键词不存在", 404)
+    except FileNotFoundError:
+        error("GRAPH_NOT_AVAILABLE", "该数据集尚无关键词图谱产物", 404)
+
+
+@app.post("/api/datasets/{dataset_id}/keywords/{keyword_id}/business-status")
+def update_keyword_business_status(dataset_id: str, keyword_id: str, request: KeywordBusinessStatusUpdate):
+    try:
+        return training.update_keyword_business_status(
+            dataset_id,
+            keyword_id,
+            request.business_status,
+            request.reason_code,
+            request.note,
+            request.operator_label,
+        )
+    except KeyError:
+        error("KEYWORD_NOT_FOUND", "数据集版本或关键词不存在", 404)
+    except FileNotFoundError:
+        error("GRAPH_NOT_AVAILABLE", "该数据集尚无关键词图谱产物", 404)
+    except ValueError as exc:
+        error("KEYWORD_BUSINESS_STATUS_INVALID", str(exc), 409)
+
+
+@app.post("/api/datasets/{dataset_id}/keywords/{keyword_id}/admission")
+def update_keyword_admission(dataset_id: str, keyword_id: str, request: KeywordAdmissionUpdate):
+    try:
+        return training.update_keyword_admission(dataset_id, keyword_id, request.admission_status, request.note, request.operator_label)
+    except KeyError:
+        error("KEYWORD_NOT_FOUND", "数据集版本或关键词不存在", 404)
+    except FileNotFoundError:
+        error("GRAPH_NOT_AVAILABLE", "该数据集尚无关键词图谱产物", 404)
+    except ValueError as exc:
+        error("KEYWORD_ADMISSION_INVALID", str(exc), 409)
+
+
+@app.post("/api/datasets/{dataset_id}/keywords/l2-terms", status_code=201)
+def create_l2_term(dataset_id: str, request: L2TermCreate):
+    try:
+        return training.create_l2_term(dataset_id, request.name, request.canonical_name, request.description, request.linked_l1_ids)
+    except KeyError:
+        error("DATASET_NOT_FOUND", "数据集版本不存在", 404)
+    except FileNotFoundError:
+        error("GRAPH_NOT_AVAILABLE", "该数据集尚无关键词图谱产物", 404)
+    except ValueError as exc:
+        error("L2_TERM_INVALID", str(exc), 409)
+
+
+@app.post("/api/datasets/{dataset_id}/keywords/{keyword_id}/links")
+def create_keyword_link(dataset_id: str, keyword_id: str, request: KeywordLinkCreate):
+    try:
+        return training.create_keyword_link(dataset_id, keyword_id, request.target_id, request.weight, request.evidence_chunk_ids)
+    except KeyError:
+        error("KEYWORD_NOT_FOUND", "数据集版本或关键词不存在", 404)
+    except FileNotFoundError:
+        error("GRAPH_NOT_AVAILABLE", "该数据集尚无关键词图谱产物", 404)
+    except ValueError as exc:
+        error("KEYWORD_LINK_INVALID", str(exc), 409)
+
+
+@app.get("/api/datasets/{dataset_id}/graph/term-expansion")
+def expand_l2_term(
+    dataset_id: str,
+    term_id: str = Query(..., description="L2 术语节点 ID"),
+    limit: int = Query(default=50, ge=1, le=500),
+):
+    try:
+        return training.expand_l2_term(dataset_id, term_id, limit)
+    except KeyError:
+        error("KEYWORD_NOT_FOUND", "数据集版本或术语不存在", 404)
+    except FileNotFoundError:
+        error("GRAPH_NOT_AVAILABLE", "该数据集尚无关键词图谱产物", 404)
+
+
+@app.post("/api/datasets/{dataset_id}/formal-knowledge/tasks", response_model=TaskSnapshot, status_code=202)
+def start_formal_knowledge_task(dataset_id: str):
+    try:
+        return training.start_formal_knowledge_task(dataset_id)
+    except KeyError:
+        error("DATASET_NOT_FOUND", "数据集版本不存在", 404)
+    except FileNotFoundError:
+        error("GRAPH_NOT_AVAILABLE", "该数据集尚无关键词图谱产物", 404)
+    except ValueError as exc:
+        error("FORMAL_KNOWLEDGE_NOT_READY", str(exc), 409, retryable=True)
+    except ModelTestRequiredError as exc:
+        error("MODEL_TEST_REQUIRED", str(exc), 409, retryable=True)
 
 
 @app.get("/api/datasets/{dataset_id}/graph/nodes")

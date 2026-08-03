@@ -13,6 +13,8 @@ from typing import Any
 import yaml
 
 from .config import settings
+from .embedding_cluster_service import EmbeddingClusterService
+from .embedding_service import EmbeddingService
 from .models import MetadataBuildReport
 from .services import BatchService, FileService, utcnow
 
@@ -61,6 +63,11 @@ class MetadataConstructionService:
         started = utcnow()
         self._emit(event_log, batch_id, run_id, "stage.started", "元数据构建开始", taskId=parent_task_id, stageRunId=stage_run_id)
         documents, contexts, issues = self.build_records(source_docs, chunks)
+        preselection_report = self.build_preselection_report(documents, contexts)
+        embedding_records: list[dict[str, Any]] = []
+        embedding_issues: list[dict[str, Any]] = []
+        cluster_report: dict[str, Any] = {}
+        cluster_issues: list[dict[str, Any]] = []
         for document in documents:
             self._emit(event_log, batch_id, run_id, "work_item.completed", f"元数据构建完成：{document['sourcePath']}", taskId=parent_task_id, stageRunId=stage_run_id, resourceId=document["resourceId"])
         for issue in issues:
@@ -69,7 +76,23 @@ class MetadataConstructionService:
         state = "completed_with_warnings" if issues else "completed"
         self._write_jsonl(run_root / "metadata/documents.jsonl", documents)
         self._write_jsonl(run_root / "metadata/chunk-contexts.jsonl", contexts)
+        self._write_json(run_root / "metadata/preselection-report.json", preselection_report)
         self._write_json(run_root / "quality/metadata-issues.json", issues)
+        try:
+            embedding_service = EmbeddingService(self.rules.get("embedding", {}), self.rule_set_hash)
+            embedding_records, embedding_issues = embedding_service.build(run_root, documents, contexts, chunks)
+        except Exception as exc:
+            embedding_issues = [self._issue("", "EMBEDDING_FAILED", "warning", f"embedding 生成失败，已跳过：{exc}")]
+            self._write_jsonl(run_root / "metadata/embedding-index.jsonl", [])
+            self._write_json(run_root / "quality/embedding-issues.json", embedding_issues)
+        try:
+            cluster_service = EmbeddingClusterService(self.rules.get("embedding", {}))
+            cluster_report, cluster_issues = cluster_service.build(run_root, embedding_records, documents)
+        except Exception as exc:
+            cluster_issues = [self._issue("", "CLUSTER_FAILED", "warning", f"embedding 聚类失败，已跳过：{exc}")]
+            cluster_report = {"schemaVersion": "1.0", "summary": {"embeddingCount": len(embedding_records), "clusterCount": 0, "singletonCount": 0, "warningCount": 1}, "clusters": []}
+            self._write_json(run_root / "metadata/cluster-report.json", cluster_report)
+            self._write_json(run_root / "quality/cluster-issues.json", cluster_issues)
         completed = utcnow()
         stage = {
             "stage": "metadata_construction", "state": state,
@@ -79,8 +102,31 @@ class MetadataConstructionService:
             "startedAt": started.isoformat(), "completedAt": completed.isoformat(),
             "durationMs": int((completed - started).total_seconds() * 1000),
             "message": f"元数据构建完成：{len(documents)} 篇文档、{len(contexts)} 个处理单元。",
-            "artifacts": ["metadata/documents.jsonl", "metadata/chunk-contexts.jsonl", "quality/metadata-issues.json"],
-            "metrics": {"documents": len(documents), "chunks": len(contexts), "issues": len(issues), "inputManifestHash": input_hash, "ruleSetHash": self.rule_set_hash, "ruleSetVersion": self.rules["version"], "executionHash": execution_hash},
+            "artifacts": [
+                "metadata/documents.jsonl",
+                "metadata/chunk-contexts.jsonl",
+                "metadata/preselection-report.json",
+                "metadata/embedding-index.jsonl",
+                "metadata/cluster-report.json",
+                "quality/metadata-issues.json",
+                "quality/embedding-issues.json",
+                "quality/cluster-issues.json",
+            ],
+            "metrics": {
+                "documents": len(documents),
+                "chunks": len(contexts),
+                "issues": len(issues),
+                "preselection": preselection_report["summary"],
+                "embedding": {
+                    "records": len(embedding_records),
+                    "issues": len(embedding_issues),
+                },
+                "cluster": (cluster_report.get("summary") if isinstance(cluster_report, dict) else {}),
+                "inputManifestHash": input_hash,
+                "ruleSetHash": self.rule_set_hash,
+                "ruleSetVersion": self.rules["version"],
+                "executionHash": execution_hash,
+            },
         }
         self._write_json(run_root / "stage-result.json", stage)
         self._emit(event_log, batch_id, run_id, "stage.completed", stage["message"], taskId=parent_task_id, stageRunId=stage_run_id, state=state)
@@ -140,11 +186,13 @@ class MetadataConstructionService:
         heading_title = next((path[-1] for path in heading_paths if path), None)
         title_source = "heading" if heading_title else "filename"
         title = heading_title or Path(str(source["sourcePath"])).stem
-        semantic_title = self._semantic_title(title)
+        semantic_title_audit = self._semantic_title_audit(title)
+        semantic_title = semantic_title_audit["semanticTitle"]
         full_text = "\n\n".join(str(item.get("content") or "") for item in chunks)
         summary = self._summary(full_text, title)
         category, category_issues = self._category(source["resourceId"], title, heading_paths, full_text)
         domain_terms = self._domain_terms(full_text, chunks)
+        topic_candidates = self._topic_candidates(title, semantic_title, domain_terms, chunks)
         keywords = self._keywords(full_text, domain_terms)
         versions = sorted(set(self.rules["versionPattern"].findall(full_text)), key=str.casefold)
         issues: list[dict[str, Any]] = []
@@ -152,6 +200,9 @@ class MetadataConstructionService:
         document = {
             "resourceId": source["resourceId"], "sourcePath": source["sourcePath"], "title": title,
             "semanticTitle": semantic_title,
+            "titleNoiseRemoved": semantic_title_audit["titleNoiseRemoved"],
+            "titleCleaningAudit": semantic_title_audit,
+            "topicCandidates": topic_candidates,
             "titleSource": title_source, "summary": summary, "summaryMethod": "extractive_rule", "category": category,
             "keywords": keywords, "applicableVersions": versions, "headingCount": len({tuple(path) for path in heading_paths if path}),
             "chunkCount": len(chunks), "metadataIssues": [item["code"] for item in issues],
@@ -164,7 +215,10 @@ class MetadataConstructionService:
             following = chunks[index + 1] if index + 1 < len(chunks) else None
             contexts.append({
                 "chunkId": chunk["chunkId"], "resourceId": source["resourceId"],
+                "sourcePath": source.get("sourcePath"),
                 "documentTitle": title, "semanticTitle": semantic_title,
+                "titleNoiseRemoved": semantic_title_audit["titleNoiseRemoved"],
+                "topicCandidates": topic_candidates,
                 "headingPath": chunk.get("headingPath") or [], "chunkSummary": self._summary(str(chunk.get("content") or ""), title),
                 "summaryMethod": "extractive_rule", "previousChunkId": chunk.get("previousChunkId"),
                 "nextChunkId": chunk.get("nextChunkId"), "previousChunkSummary": self._summary(str(previous.get("content") or ""), title) if previous else None,
@@ -174,6 +228,75 @@ class MetadataConstructionService:
                 "ruleSetVersion": self.rules["version"], "ruleSetHash": self.rule_set_hash,
             })
         return document, contexts, issues
+
+    def build_preselection_report(
+        self,
+        documents: list[dict[str, Any]],
+        contexts: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        contexts_by_resource: dict[str, list[dict[str, Any]]] = {}
+        for context in contexts:
+            contexts_by_resource.setdefault(str(context.get("resourceId") or ""), []).append(context)
+        items: list[dict[str, Any]] = []
+        state_counts = {state: 0 for state in ("deterministic_ready", "model_required", "human_review", "skip")}
+        for document in documents:
+            resource_id = str(document.get("resourceId") or "")
+            resource_contexts = contexts_by_resource.get(resource_id, [])
+            chunk_ids = [str(item.get("chunkId") or "") for item in resource_contexts if item.get("chunkId")]
+            topic_candidates = [
+                item for item in document.get("topicCandidates") or []
+                if isinstance(item, dict)
+            ]
+            semantic_title = str(document.get("semanticTitle") or "").strip()
+            reasons: list[str] = []
+            if not chunk_ids:
+                state = "skip"
+                reasons.append("no_processing_unit")
+            elif not semantic_title:
+                state = "skip"
+                reasons.append("empty_semantic_title")
+            elif topic_candidates:
+                state = "deterministic_ready"
+                reasons.append("topic_candidates_with_traceable_evidence")
+            elif self._looks_multi_topic(semantic_title):
+                state = "human_review"
+                reasons.append("semantic_title_contains_multiple_topics")
+            else:
+                state = "model_required"
+                reasons.append("semantic_title_requires_model_confirmation")
+            state_counts[state] += 1
+            items.append({
+                "resourceId": resource_id,
+                "chunkIds": chunk_ids,
+                "semanticTitle": semantic_title,
+                "preselectionState": state,
+                "reasons": reasons,
+                "evidence": [
+                    {
+                        "source": candidate.get("evidenceSource") or "title",
+                        "text": candidate.get("evidenceText") or candidate.get("name"),
+                        "chunkId": candidate.get("chunkId"),
+                        "termId": candidate.get("termId"),
+                    }
+                    for candidate in topic_candidates
+                ],
+                "sourceMethods": sorted({
+                    str(candidate.get("sourceMethod") or "")
+                    for candidate in topic_candidates
+                    if candidate.get("sourceMethod")
+                }),
+            })
+        return {
+            "schemaVersion": "1.0",
+            "ruleSetVersion": self.rules["version"],
+            "ruleSetHash": self.rule_set_hash,
+            "generatedAt": utcnow().isoformat(),
+            "items": items,
+            "summary": {
+                "totalResources": len(items),
+                **state_counts,
+            },
+        }
 
     def _latest_preparation(self, batch_id: str) -> dict[str, Any]:
         latest_path = self.files.manifest_path(batch_id).parent / "preparation/latest.json"
@@ -262,15 +385,138 @@ class MetadataConstructionService:
         return result
 
     def _semantic_title(self, title: str) -> str:
+        return self._semantic_title_audit(title)["semanticTitle"]
+
+    def _semantic_title_audit(self, title: str) -> dict[str, Any]:
         value = str(title or "")
+        original = value
         rules = self.rules["titleCleaning"]
+        removed: list[dict[str, str]] = []
         for term in sorted(rules["removeTerms"], key=len, reverse=True):
-            value = re.sub(re.escape(term), " ", value, flags=re.I)
+            value, count = re.subn(re.escape(term), " ", value, flags=re.I)
+            if count:
+                removed.append({"type": "removeTerm", "value": term})
         for suffix in sorted(rules["removeSuffixes"], key=len, reverse=True):
-            value = re.sub(rf"{re.escape(suffix)}\s*$", " ", value, flags=re.I)
-        for pattern, replacement in rules["replacementPatterns"]:
-            value = pattern.sub(replacement, value)
-        return value.strip(rules["trimCharacters"])
+            value, count = re.subn(rf"{re.escape(suffix)}\s*$", " ", value, flags=re.I)
+            if count:
+                removed.append({"type": "removeSuffix", "value": suffix})
+        for pattern, replacement, label in rules["replacementPatterns"]:
+            value, count = pattern.subn(replacement, value)
+            if count:
+                removed.append({"type": "replacementPattern", "value": label})
+        for suffix in sorted(rules["removeSuffixes"], key=len, reverse=True):
+            value, count = re.subn(rf"{re.escape(suffix)}\s*$", " ", value.strip(rules["trimCharacters"]), flags=re.I)
+            if count:
+                removed.append({"type": "removeSuffix", "value": suffix})
+        semantic_title = value.strip(rules["trimCharacters"])
+        return {
+            "originalTitle": original,
+            "semanticTitle": semantic_title,
+            "titleNoiseRemoved": removed,
+        }
+
+    def _topic_candidates(
+        self,
+        title: str,
+        semantic_title: str,
+        domain_terms: list[dict[str, Any]],
+        chunks: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        semantic_title = str(semantic_title or "").strip()
+        if not semantic_title:
+            return []
+        content_by_chunk = {str(item.get("chunkId") or ""): str(item.get("content") or "") for item in chunks}
+        heading_by_chunk = {
+            str(item.get("chunkId") or ""): " / ".join(str(part) for part in (item.get("headingPath") or []))
+            for item in chunks
+        }
+        candidates: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        semantic_folded = semantic_title.casefold()
+        for term in domain_terms:
+            aliases = [
+                alias for alias in [
+                    term.get("canonicalName"),
+                    *(term.get("aliases") or []),
+                    *(term.get("matchedAliases") or []),
+                ]
+                if alias
+            ]
+            evidence = next(
+                (
+                    alias for alias in sorted(dict.fromkeys(aliases), key=len, reverse=True)
+                    if str(alias).casefold() in semantic_folded
+                ),
+                None,
+            )
+            if not evidence:
+                continue
+            chunk_id = next(
+                (
+                    chunk_id for chunk_id, content in content_by_chunk.items()
+                    if str(evidence).casefold() in content.casefold()
+                    or str(evidence).casefold() in heading_by_chunk.get(chunk_id, "").casefold()
+                ),
+                next(iter(content_by_chunk), None),
+            )
+            key = str(term.get("termId") or term.get("canonicalName") or evidence)
+            if key in seen:
+                continue
+            seen.add(key)
+            candidates.append({
+                "name": term.get("canonicalName") or evidence,
+                "termId": term.get("termId"),
+                "aliases": list(dict.fromkeys(str(alias) for alias in aliases)),
+                "sourceMethod": "deterministic_title_glossary",
+                "evidenceSource": "domain_glossary",
+                "evidenceText": evidence,
+                "chunkId": chunk_id,
+                "confidence": float(self.rules["titleCleaning"]["titleGlossaryConfidence"]),
+            })
+        if candidates:
+            return candidates
+        if not self._title_topic_allowed(semantic_title):
+            return []
+        folded = semantic_title.casefold()
+        chunk_id = next(
+            (
+                chunk_id for chunk_id, content in content_by_chunk.items()
+                if folded in content.casefold()
+                or folded in heading_by_chunk.get(chunk_id, "").casefold()
+            ),
+            next(iter(content_by_chunk), None) if folded in str(title or "").casefold() else None,
+        )
+        if not chunk_id:
+            return []
+        return [{
+            "name": semantic_title,
+            "termId": None,
+            "aliases": [semantic_title],
+            "sourceMethod": "deterministic_title_topic",
+            "evidenceSource": "title",
+            "evidenceText": semantic_title,
+            "chunkId": chunk_id,
+            "confidence": float(self.rules["titleCleaning"]["titleTopicConfidence"]),
+        }]
+
+    def _title_topic_allowed(self, semantic_title: str) -> bool:
+        if not semantic_title:
+            return False
+        if len(semantic_title) > int(self.rules["titleCleaning"]["titleTopicMaxCharacters"]):
+            return False
+        if self._looks_multi_topic(semantic_title):
+            return False
+        if semantic_title.casefold() in self.rules["stopwords"]:
+            return False
+        if any(pattern.fullmatch(semantic_title) for pattern in self.rules["keywordExclusionPatterns"]):
+            return False
+        return True
+
+    @staticmethod
+    def _looks_multi_topic(value: str) -> bool:
+        # 只保留明确的并列分隔符；裸空格不作为判定依据，
+        # 因为中文技术文档标题中英文混排（如 "DXG Sender重分发"）天然包含空格。
+        return any(separator in value for separator in ("&&", "&", "/", "\\", "|", "、", "，", ",", ";", "；"))
 
     def _domain_terms(self, text: str, chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
         result: dict[str, dict[str, Any]] = {}
@@ -310,6 +556,8 @@ class MetadataConstructionService:
             version_rules = payloads[2].get("patterns", [])
             glossaries = {"database": payloads[3].get("terms", []), "yashandb": payloads[4].get("terms", [])}
             title_cleaning = payloads[6]
+            embedding_rules = payloads[7] if len(payloads) > 7 else {}
+            business_keyword_review = payloads[8] if len(payloads) > 8 else {}
             all_terms = [term["termId"] for items in glossaries.values() for term in items]
             if len(all_terms) != len(set(all_terms)):
                 raise ValueError("数据库词典存在重复 termId")
@@ -325,11 +573,24 @@ class MetadataConstructionService:
                     "removeTerms": list(title_cleaning.get("removeTerms", [])),
                     "removeSuffixes": list(title_cleaning.get("removeSuffixes", [])),
                     "titleGlossaryConfidence": float(title_cleaning["titleGlossaryConfidence"]),
+                    "titleTopicConfidence": float(title_cleaning.get("titleTopicConfidence", 0.78)),
+                    "titleTopicMaxCharacters": int(title_cleaning.get("titleTopicMaxCharacters", 40)),
                     "replacementPatterns": [
-                        (re.compile(item["pattern"], re.I), str(item.get("replacement", "")))
+                        (re.compile(item["pattern"], re.I), str(item.get("replacement", "")), str(item.get("name") or item["pattern"]))
                         for item in title_cleaning.get("replacementPatterns", [])
                     ],
                     "trimCharacters": str(title_cleaning.get("trimCharacters", " ")),
+                },
+                "embedding": embedding_rules,
+                "businessKeywordReview": {
+                    "scopeWords": list(business_keyword_review.get("scopeWords", [])),
+                    "namingNoiseWords": list(business_keyword_review.get("namingNoiseWords", [])),
+                    "strongTopicTerms": list(business_keyword_review.get("strongTopicTerms", [])),
+                    "minEvidenceCount": int(business_keyword_review.get("minEvidenceCount", 1)),
+                    "rejectionPatterns": [
+                        (str(item.get("id") or item.get("pattern")), re.compile(str(item["pattern"]), re.I))
+                        for item in business_keyword_review.get("rejectionPatterns", [])
+                    ],
                 },
             }
             raw = b"".join(path.read_bytes() for path in [root / "manifest.yaml", *files])

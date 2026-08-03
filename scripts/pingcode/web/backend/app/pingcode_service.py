@@ -1,5 +1,7 @@
+import asyncio
 import sys
 import json
+import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -18,6 +20,9 @@ from pingcode.core.api_client import PingCodeAPIClient
 from pingcode.core.client import PingCodeClient
 from pingcode.core.config import PingCodeConfig
 from pingcode.core.tree_builder import TreeBuilder
+
+
+logger = logging.getLogger(__name__)
 
 
 class PingCodeService:
@@ -39,13 +44,22 @@ class PingCodeService:
     def _new_executor() -> ThreadPoolExecutor:
         return ThreadPoolExecutor(max_workers=1, thread_name_prefix="pingcode-browser")
 
+    @staticmethod
+    def _isolate_asyncio(callback, *args):
+        """在线程池 worker 中隔离 asyncio 事件循环，防止 Playwright Sync API 冲突。"""
+        try:
+            asyncio.set_event_loop(asyncio.new_event_loop())
+        except Exception:
+            pass
+        return callback(*args)
+
     def _submit(self, callback, *args):
         with self._lock:
             if self._executor is None or self._closed:
                 self._executor = self._new_executor()
                 self._closed = False
             executor = self._executor
-        return executor.submit(callback, *args).result()
+        return executor.submit(self._isolate_asyncio, callback, *args).result()
 
     def close(self) -> None:
         executor = self._executor

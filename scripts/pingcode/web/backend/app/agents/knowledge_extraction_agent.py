@@ -1,12 +1,11 @@
 """
 知识提取 Workflow Agent
 
-6步工作流：
-1. 任务规划：按文档分组，确定 batch 策略
-2. 批量提取：调用 knowledge-extraction skill
-3. 证据校验 + 修复：校验 evidenceText + 重试/降级
-5. 跨 chunk 关系识别 + 建立：识别跨 chunk 实体关系
-6. 结果聚合：去重、合并、格式化输出
+最小工作流：
+1. 任务规划：每个工作项只处理一个 chunk
+2. 知识点提取：调用 knowledge-point-extraction Skill
+3. 证据校验：只校验知识点证据
+4. 结果聚合：保留单元级调用追溯
 """
 
 from __future__ import annotations
@@ -22,9 +21,6 @@ from .base_agent import BaseAgent, AgentTask, AgentResult
 from .workflow_engine import WorkflowEngine, WorkflowStep
 from .tools.extraction_tool import ExtractionTool
 from .tools.validation_tool import ValidationTool
-from .tools.enrichment_tool import EnrichmentTool
-from .tools.relation_tool import RelationTool
-from .tools.context_tool import ContextTool
 
 logger = logging.getLogger(__name__)
 
@@ -40,28 +36,21 @@ class KnowledgeExtractionWorkflowAgent(BaseAgent):
             config: 配置字典，包含：
                 - prompts: PromptRegistry 实例
                 - gateway: ModelGatewayClient 实例
-                - batch_size: 每批 chunk 数量（默认 5）
+                - batch_size: 兼容旧配置，正式知识最小链路固定单 chunk
                 - max_workers: 并行线程数（默认 3）
                 - skill_root: skill 根目录路径
         """
         super().__init__("knowledge-extraction-workflow", config)
         
-        self.batch_size = config.get("batch_size", 5)
-        self.max_workers = config.get("max_workers", 3)
-        
         # 初始化工具
         self.extraction_tool = ExtractionTool(config)
+        self.batch_size = 1
+        self.max_workers = config.get("max_workers") or int(self.extraction_tool.defaults.get("concurrency", 3) or 3)
         self.validation_tool = ValidationTool(config)
-        self.enrichment_tool = EnrichmentTool(config)
-        self.relation_tool = RelationTool(config)
-        self.context_tool = ContextTool(config)
         
         # 注册工具
         self.register_tool("extract_batch", self.extraction_tool.extract_batch)
-        self.register_tool("verify_and_repair", self.validation_tool.verify_and_repair)
-        self.register_tool("resolve_uncertain", self.enrichment_tool.resolve_uncertain_items)
-        self.register_tool("identify_relations", self.relation_tool.identify_and_establish_relations)
-        self.register_tool("aggregate_results", self.context_tool.aggregate_results)
+        self.register_tool("verify_knowledge_points", self.validation_tool.verify_and_repair)
     
     def execute(self, task: AgentTask) -> AgentResult:
         """
@@ -79,6 +68,10 @@ class KnowledgeExtractionWorkflowAgent(BaseAgent):
         chunks = task.input_data.get("chunks", [])
         documents = task.input_data.get("documents", [])
         task_id = task.input_data.get("task_id", task.task_id)
+        cancel_check = task.input_data.get("cancel_check")
+        progress_callback = task.input_data.get("progress_callback")
+        stage_run_id = task.input_data.get("stage_run_id")
+        keyword_context_by_chunk = task.input_data.get("keyword_context_by_chunk") or {}
         
         logger.info(
             "开始知识提取工作流: task=%s, chunks=%d, documents=%d",
@@ -93,6 +86,10 @@ class KnowledgeExtractionWorkflowAgent(BaseAgent):
             "documents": documents,
             "task_id": task_id,
             "batch_size": self.batch_size,
+            "cancel_check": cancel_check,
+            "progress_callback": progress_callback,
+            "stage_run_id": stage_run_id,
+            "keyword_context_by_chunk": keyword_context_by_chunk,
         })
         
         # 构建输出
@@ -102,15 +99,28 @@ class KnowledgeExtractionWorkflowAgent(BaseAgent):
             {
                 "resourceId": (item.get("task") or {}).get("resource_id"),
                 "batchIndex": (item.get("task") or {}).get("batch_index"),
+                "chunkId": (item.get("task") or {}).get("chunk_id"),
+                "agentTaskId": (item.get("task") or {}).get("agent_task_id"),
+                "taskId": task_id,
+                "stageRunId": stage_run_id,
                 "success": bool(item.get("success")),
                 "error": item.get("error"),
+                "errorCode": item.get("errorCode"),
+                "technicalError": item.get("technicalError") or item.get("error"),
+                "durationMs": item.get("durationMs"),
                 "usage": item.get("usage") or {},
                 "result": item.get("result") or {},
+                "modelCallId": item.get("modelCallId"),
+                "modelCallIds": item.get("modelCallIds") or [],
+                "modelCalls": item.get("modelCalls") or {},
             }
             for item in extraction_results
         ]
-        succeeded_batches = sum(1 for item in extraction_results if item.get("success"))
-        failed_batches = len(extraction_results) - succeeded_batches
+        model_calls = {"succeeded": 0, "failed": 0}
+        for item in extraction_results:
+            calls = item.get("modelCalls") or {}
+            model_calls["succeeded"] += int(calls.get("succeeded", 0) or 0)
+            model_calls["failed"] += int(calls.get("failed", 0) or 0)
         
         return AgentResult(
             output_data=aggregated,
@@ -119,13 +129,8 @@ class KnowledgeExtractionWorkflowAgent(BaseAgent):
                 "total_chunks": len(chunks),
                 "total_documents": len(documents),
                 "extraction_count": aggregated.get("metadata", {}).get("total_knowledge_points", 0),
-                "keyword_count": aggregated.get("metadata", {}).get("total_keyword_candidates", 0),
-                "entity_count": aggregated.get("metadata", {}).get("total_entities", 0),
-                "relation_count": aggregated.get("metadata", {}).get("total_relations", 0),
-                "cross_chunk_relations": aggregated.get("metadata", {}).get("cross_chunk_relation_count", 0),
                 "rejected_count": aggregated.get("metadata", {}).get("rejected_count", 0),
-                "unresolved_count": aggregated.get("metadata", {}).get("unresolved_count", 0),
-                "model_calls": {"succeeded": succeeded_batches, "failed": failed_batches},
+                "model_calls": model_calls,
                 "execution_log": [
                     {
                         "step_id": exe.step_id,
@@ -143,7 +148,7 @@ class KnowledgeExtractionWorkflowAgent(BaseAgent):
         )
     
     def _build_workflow(self) -> WorkflowEngine:
-        """构建 6 步工作流"""
+        """构建单处理单元知识点提取工作流"""
         workflow = WorkflowEngine(
             workflow_id="knowledge-extraction",
             max_workers=self.max_workers,
@@ -154,49 +159,38 @@ class KnowledgeExtractionWorkflowAgent(BaseAgent):
             id="task_planning",
             name="任务规划",
             execute_fn=self._task_planning,
-            input_keys=["chunks", "documents", "batch_size"],
+            input_keys=["chunks", "documents", "task_id", "stage_run_id", "keyword_context_by_chunk"],
             output_keys=["task_queue"],
         ))
         
-        # Step 2: 批量提取
+        # Step 2: 单处理单元提取
         workflow.add_step(WorkflowStep(
             id="batch_extraction",
-            name="批量提取",
+            name="单处理单元提取",
             execute_fn=self._batch_extraction,
-            input_keys=["task_queue"],
+            input_keys=["task_queue", "task_id", "cancel_check", "progress_callback"],
             output_keys=["extraction_results"],
             parallel=True,
             parallel_item_key="task_queue",
-            retry_count=2,
+            retry_count=0,
         ))
         
-        # Step 3: 证据校验 + 修复
+        # Step 3: 证据校验
         workflow.add_step(WorkflowStep(
             id="evidence_verification",
-            name="证据校验与修复",
+            name="知识点证据校验",
             execute_fn=self._evidence_verification,
             input_keys=["extraction_results"],
             output_keys=["verified_results", "rejected_items"],
         ))
         
-        # Step 4: 跨 chunk 关系识别 + 建立
-        workflow.add_step(WorkflowStep(
-            id="cross_chunk_relation",
-            name="跨 chunk 关系识别与建立",
-            execute_fn=self._cross_chunk_relation,
-            input_keys=["verified_results"],
-            output_keys=["entity_index", "cross_chunk_relations"],
-        ))
-        
-        # Step 5: 结果聚合
+        # Step 4: 结果聚合
         workflow.add_step(WorkflowStep(
             id="result_aggregation",
             name="结果聚合",
             execute_fn=self._result_aggregation,
             input_keys=[
                 "verified_results",
-                "cross_chunk_relations",
-                "entity_index",
                 "rejected_items",
             ],
             output_keys=["final_knowledge"],
@@ -210,76 +204,64 @@ class KnowledgeExtractionWorkflowAgent(BaseAgent):
         """
         Step 1: 任务规划
         
-        按文档分组 chunk，确定 batch 策略。
+        每个 chunk 创建一个工作项，不跨 chunk 组批。
         """
         chunks = input_data["chunks"]
         documents = input_data["documents"]
-        batch_size = input_data.get("batch_size", self.batch_size)
-        
-        # 按文档分组
-        grouped: Dict[str, List[Dict[str, Any]]] = {}
-        for chunk in chunks:
-            resource_id = chunk.get("resourceId", "unknown")
-            if resource_id not in grouped:
-                grouped[resource_id] = []
-            grouped[resource_id].append(chunk)
-        
-        # 为每个文档创建任务队列
         task_queue = []
         document_map = {doc["resourceId"]: doc for doc in documents}
-        
-        for resource_id, doc_chunks in grouped.items():
+        keyword_context_by_chunk = input_data.get("keyword_context_by_chunk") or {}
+        task_id = str(input_data.get("task_id") or "")
+        stage_run_id = input_data.get("stage_run_id")
+        for index, chunk in enumerate(chunks):
+            resource_id = str(chunk.get("resourceId") or "unknown")
             document = document_map.get(resource_id, {})
             profile = document.get("extractionProfile", "general-technical")
             document_type = document.get("documentType", "general_technical")
-            
-            # 按 chunkIndex 排序
-            doc_chunks.sort(key=lambda c: int(c.get("chunkIndex", 0)))
-            
-            # 分批
-            for i in range(0, len(doc_chunks), batch_size):
-                batch = doc_chunks[i:i + batch_size]
-                task_queue.append({
-                    "resource_id": resource_id,
-                    "profile": profile,
-                    "document_type": document_type,
-                    "document": {
-                        "title": document.get("title", ""),
-                        "semanticTitle": document.get("semanticTitle", ""),
-                        "category": document.get("category", "未分类"),
-                        "summary": document.get("summary", ""),
-                        "keywords": document.get("keywords", []),
-                        "domainTerms": document.get("domainTerms", []),
-                    },
-                    "chunks": [
-                        {
-                            "chunkId": chunk.get("id", f"{resource_id}:{idx}"),
-                            "content": chunk.get("content", ""),
-                            "headingPath": chunk.get("headingPath", []),
-                            "normalizedOffsets": chunk.get("documentOffsets", {}),
-                        }
-                        for idx, chunk in enumerate(batch)
-                    ],
-                    "batch_index": i // batch_size,
-                    "total_batches": (len(doc_chunks) + batch_size - 1) // batch_size,
-                })
+            chunk_id = str(chunk.get("id") or chunk.get("chunkId") or f"{resource_id}:{index}")
+            task_queue.append({
+                "resource_id": resource_id,
+                "chunk_id": chunk_id,
+                "agent_task_id": f"knowledge_point_{hashlib.sha1(f'{task_id}:{chunk_id}'.encode('utf-8')).hexdigest()[:20]}",
+                "stage_run_id": stage_run_id,
+                "profile": profile,
+                "document_type": document_type,
+                "document": {
+                    "title": document.get("title", ""),
+                    "semanticTitle": document.get("semanticTitle", ""),
+                    "category": document.get("category", "未分类"),
+                    "summary": document.get("summary", ""),
+                    "domainTerms": document.get("domainTerms", []),
+                },
+                "keyword_context": keyword_context_by_chunk.get(chunk_id, []),
+                "chunks": [{
+                    "chunkId": chunk_id,
+                    "content": chunk.get("content", ""),
+                    "headingPath": chunk.get("headingPath", []),
+                    "normalizedOffsets": chunk.get("documentOffsets", {}),
+                }],
+                "batch_index": index,
+                "total_batches": len(chunks),
+            })
         
         logger.info(
-            "任务规划完成: %d 个文档, %d 个 chunk, %d 个批次",
-            len(grouped), len(chunks), len(task_queue),
+            "任务规划完成: %d 个 chunk, %d 个单处理单元工作项",
+            len(chunks), len(task_queue),
         )
         
         return {"task_queue": task_queue}
     
     def _batch_extraction(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Step 2: 批量提取
+        Step 2: 单处理单元提取
         
-        调用 knowledge-extraction skill 处理一个 batch。
-        并行执行时，每个 item 是一个 batch。
+        调用 knowledge-point-extraction Skill 处理一个 chunk。
         """
         task = input_data.get("item", {})
         chunks = task.get("chunks", [])
+        cancel_check = input_data.get("cancel_check")
+        if callable(cancel_check):
+            cancel_check()
         
         if not chunks:
             return {"extraction_results": []}
@@ -288,25 +270,68 @@ class KnowledgeExtractionWorkflowAgent(BaseAgent):
         envelope = self._build_extraction_envelope(task)
         
         # 调用提取工具
-        result = self.extraction_tool.extract_batch(envelope)
+        result = self.extraction_tool.extract_batch(
+            envelope,
+            context={
+                "cancel_check": cancel_check,
+                "progress_callback": input_data.get("progress_callback"),
+                "trace": {
+                    "taskId": input_data.get("task_id"),
+                    "stageRunId": task.get("stage_run_id"),
+                    "agentTaskId": task.get("agent_task_id"),
+                    "stage": "deterministic_extraction",
+                    "resourceId": task.get("resource_id"),
+                    "chunkId": task.get("chunk_id"),
+                    "batchIndex": task.get("batch_index"),
+                },
+            },
+        )
+        progress_callback = input_data.get("progress_callback")
+        if callable(progress_callback):
+            progress_callback(
+                "agent_task.completed" if result.get("success") else "agent_task.failed",
+                {
+                    "taskId": input_data.get("task_id"),
+                    "stageRunId": task.get("stage_run_id"),
+                    "agentTaskId": task.get("agent_task_id"),
+                    "resourceId": task.get("resource_id"),
+                    "chunkId": task.get("chunk_id"),
+                    "modelCallId": result.get("modelCallId") or result.get("_modelCallId"),
+                    "skillId": self.extraction_tool.skill_id,
+                    "success": bool(result.get("success")),
+                },
+            )
+        if callable(cancel_check):
+            cancel_check()
+
+        result_data = result.get("result", {})
+        if isinstance(result_data, dict):
+            for chunk_result in result_data.get("results", []):
+                if isinstance(chunk_result, dict):
+                    chunk_result["agentTaskId"] = task.get("agent_task_id")
+                    chunk_result["modelCallId"] = result.get("modelCallId") or result.get("_modelCallId")
         
         # 包装结果
         return {
             "extraction_results": [{
                 "task": task,
                 "chunks": chunks,
-                "result": result.get("result", {}),
+                "result": result_data,
                 "usage": result.get("usage", {}),
                 "success": result.get("success", False),
                 "error": result.get("error"),
+                "errorCode": result.get("errorCode"),
+                "technicalError": result.get("technicalError") or result.get("error"),
+                "durationMs": result.get("durationMs"),
+                "modelCallId": result.get("modelCallId") or result.get("_modelCallId"),
+                "modelCallIds": result.get("modelCallIds") or result.get("_modelCallIds") or [],
+                "modelCalls": result.get("modelCalls") or result.get("_modelCalls") or {},
             }],
         }
     
     def _evidence_verification(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Step 3: 证据校验 + 修复
-        
-        校验 evidenceText 是否在原文中，失败时重试或标记 rejected。
+        Step 3: 知识点证据校验。
         """
         extraction_results = input_data.get("extraction_results", [])
         
@@ -339,54 +364,33 @@ class KnowledgeExtractionWorkflowAgent(BaseAgent):
             "rejected_items": all_rejected,
         }
     
-    # 语义补充步骤已移除，不确定项直接进入最终结果
-    
-    def _cross_chunk_relation(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Step 5: 跨 chunk 关系识别 + 建立
-        
-        识别跨 chunk 的实体重复出现，建立关系记录。
-        """
-        verified_results = input_data.get("verified_results", [])
-        
-        result = self.relation_tool.identify_and_establish_relations(verified_results)
-        
-        logger.info(
-            "跨 chunk 关系识别完成: %d 个实体, %d 个跨 chunk 关系",
-            len(result.get("entity_index", {})),
-            len(result.get("cross_chunk_relations", [])),
-        )
-        
-        return {
-            "entity_index": result.get("entity_index", {}),
-            "cross_chunk_relations": result.get("cross_chunk_relations", []),
-        }
-    
     def _result_aggregation(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Step 6: 结果聚合
-        
-        去重、合并、格式化输出。
+        Step 4: 聚合已验证的知识点，不做跨 chunk 推断。
         """
         verified_results = input_data.get("verified_results", [])
-        cross_chunk_relations = input_data.get("cross_chunk_relations", [])
-        entity_index = input_data.get("entity_index", {})
         rejected_items = input_data.get("rejected_items", [])
-        unresolved_items = input_data.get("enrichment_unresolved", [])
-        
-        aggregated = self.context_tool.aggregate_results(
-            enriched_results=verified_results,
-            cross_chunk_relations=cross_chunk_relations,
-            entity_index=entity_index,
-            rejected_items=rejected_items,
-            unresolved_items=[],
-        )
+        knowledge_points = []
+        for result in verified_results:
+            for item in result.get("knowledgePoints", []):
+                knowledge_points.append({
+                    **item,
+                    "chunkId": result.get("chunkId"),
+                    "agentTaskId": result.get("agentTaskId"),
+                    "modelCallId": result.get("modelCallId"),
+                })
+        aggregated = {
+            "knowledgePoints": knowledge_points,
+            "metadata": {
+                "total_chunks": len(verified_results),
+                "total_knowledge_points": len(knowledge_points),
+                "rejected_count": len(rejected_items),
+            },
+        }
         
         logger.info(
-            "结果聚合完成: %d 个知识点, %d 个实体, %d 个关系",
-            len(aggregated.get("knowledgePoints", [])),
-            len(aggregated.get("entities", [])),
-            len(aggregated.get("relations", [])),
+            "结果聚合完成: %d 个知识点",
+            len(knowledge_points),
         )
         
         return {"final_knowledge": aggregated}
@@ -394,7 +398,7 @@ class KnowledgeExtractionWorkflowAgent(BaseAgent):
     # ========== 辅助方法 ==========
     
     def _build_extraction_envelope(self, task: Dict[str, Any]) -> Dict[str, Any]:
-        """构建批量提取的 envelope"""
+        """构建单处理单元提取的 envelope"""
         chunks = task.get("chunks", [])
         document = task.get("document", {})
         
@@ -418,21 +422,14 @@ class KnowledgeExtractionWorkflowAgent(BaseAgent):
             "domainContextVersion": "yashandb-domain:1.0.0",
             "domainContextHits": [f"{item['candidateType']}:{item['value']}" for item in anchors],
             "profileGuidance": profile_guidance[:4000],
-            "domainContext": {
-                "matchedAnchors": anchors,
-                "constraints": [
-                    "YAS 与 ORA 错误码分域",
-                    "SQL 关键字不能无条件作为实体",
-                    "关系端点必须是当前单元中有证据的实体",
-                ],
-            },
+            "domainContext": {"matchedAnchors": anchors},
             "document": document,
             "chunks": chunks,
-            "schemaVersion": "2.0.0",
+            "keywordContext": task.get("keyword_context", []),
+            "schemaVersion": "3.0.0",
             "constraints": {
                 "evidenceRequired": True,
-                "allowSchemaCandidate": True,
-                "allowNeedsEnrichment": True,
+                "outputKinds": ["knowledge_point"],
             },
         }
     

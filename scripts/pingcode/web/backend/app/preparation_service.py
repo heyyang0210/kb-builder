@@ -284,10 +284,25 @@ class MaterialPreparationService:
         }
         manifest_path = run_root / "manifest.json"
         self._write_json(manifest_path, manifest)
+        source_resources = self._source_resource_records(run)
+        source_assets = self._source_asset_records(run)
+        ingestion_report = self._ingestion_report(run, source_resources, source_assets, input_manifest_hash, state)
+        self._write_jsonl(run_root / "metadata" / "source-resources.jsonl", source_resources)
+        self._write_jsonl(run_root / "metadata" / "source-assets.jsonl", source_assets)
+        self._write_json(run_root / "metadata" / "ingestion-report.json", ingestion_report)
         self._write_jsonl(run_root / "metadata" / "source-documents.jsonl", run.source_documents)
         self._write_jsonl(run_root / "metadata" / "chunks.jsonl", run.chunks)
         self._write_jsonl(run_root / "metadata" / "structure-blocks.jsonl", run.structure_blocks)
         self._write_json(run_root / "quality" / "preparation-issues.json", run.issues)
+        artifact_paths = [
+            "metadata/source-resources.jsonl",
+            "metadata/source-assets.jsonl",
+            "metadata/ingestion-report.json",
+            "metadata/source-documents.jsonl",
+            "metadata/chunks.jsonl",
+            "metadata/structure-blocks.jsonl",
+            "quality/preparation-issues.json",
+        ]
         stage_result = {
             "stage": "material_preparation",
             "state": state,
@@ -298,8 +313,13 @@ class MaterialPreparationService:
             "startedAt": run.started_at.isoformat(),
             "completedAt": utcnow().isoformat(),
             "message": f"资料预处理完成：{len(run.source_documents)} 个资源可进入下一步，{len(run.issues)} 个质量问题。",
-            "artifacts": ["metadata/source-documents.jsonl", "metadata/chunks.jsonl", "metadata/structure-blocks.jsonl", "quality/preparation-issues.json"],
-            "metrics": {"processingUnits": len(run.chunks), "isolatedResources": run.quarantined_resources},
+            "artifacts": artifact_paths,
+            "metrics": {
+                "processingUnits": len(run.chunks),
+                "isolatedResources": run.quarantined_resources,
+                "sourceResources": len(source_resources),
+                "sourceAssets": len(source_assets),
+            },
         }
         self._write_json(run_root / "stage-result.json", stage_result)
         latest_path = batch_root / "preparation" / "latest.json"
@@ -331,8 +351,115 @@ class MaterialPreparationService:
             issues=[PreparationIssue.model_validate(item) for item in run.issues],
             created_at=datetime.now(timezone.utc),
             stage_result_path=self._relative(run_root / "stage-result.json"),
-            artifact_paths=[self._relative(run_root / path) for path in ("metadata/source-documents.jsonl", "metadata/chunks.jsonl", "metadata/structure-blocks.jsonl", "quality/preparation-issues.json")],
+            artifact_paths=[self._relative(run_root / path) for path in artifact_paths],
         )
+
+    def _source_resource_records(self, run: _PreparationRun) -> list[dict[str, Any]]:
+        issues_by_resource: dict[str, list[str]] = {}
+        for issue in run.issues:
+            resource_id = str(issue.get("resourceId") or "")
+            if resource_id:
+                issues_by_resource.setdefault(resource_id, []).append(str(issue.get("code") or ""))
+        documents_by_resource = {str(item.get("resourceId") or ""): item for item in run.source_documents}
+        records: list[dict[str, Any]] = []
+        for resource in run.resources:
+            resource_id = str(resource.get("id") or "")
+            document = documents_by_resource.get(resource_id, {})
+            records.append({
+                "resourceId": resource_id,
+                "batchId": run.batch_id,
+                "sourceResourceId": resource.get("sourceResourceId"),
+                "parentResourceId": resource.get("parentResourceId"),
+                "sourcePath": resource.get("logicalPath"),
+                "displayName": resource.get("name"),
+                "sourceType": resource.get("sourceType"),
+                "mediaType": resource.get("mediaType"),
+                "formatFamily": resource.get("formatFamily"),
+                "kind": resource.get("kind"),
+                "size": resource.get("size"),
+                "contentHash": f"sha256:{resource.get('sha256')}",
+                "processingState": resource.get("processingStatus"),
+                "isExtracted": bool(resource.get("isExtracted")),
+                "extractionDepth": resource.get("extractionDepth"),
+                "originalArtifact": resource.get("originalArtifact"),
+                "normalizedArtifact": document.get("normalizedArtifact") or resource.get("normalizedArtifact"),
+                "assetPaths": document.get("assetPaths") or resource.get("assetPaths") or [],
+                "issueCodes": issues_by_resource.get(resource_id, []),
+            })
+        return records
+
+    def _source_asset_records(self, run: _PreparationRun) -> list[dict[str, Any]]:
+        records: list[dict[str, Any]] = []
+        for resource in run.resources:
+            resource_id = str(resource.get("id") or "")
+            if resource.get("formatFamily") == "image":
+                records.append({
+                    "assetId": resource_id,
+                    "resourceId": resource_id,
+                    "sourceResourceId": resource.get("sourceResourceId"),
+                    "parentResourceId": resource.get("parentResourceId"),
+                    "sourcePath": resource.get("logicalPath"),
+                    "displayName": resource.get("name"),
+                    "mediaType": resource.get("mediaType"),
+                    "size": resource.get("size"),
+                    "contentHash": f"sha256:{resource.get('sha256')}",
+                    "artifactPath": resource.get("originalArtifact"),
+                    "assetKind": "image_resource",
+                    "processingState": resource.get("processingStatus"),
+                })
+            for index, asset_path in enumerate(resource.get("assetPaths") or []):
+                records.append({
+                    "assetId": f"{resource_id}:asset:{index}",
+                    "resourceId": resource_id,
+                    "sourceResourceId": resource.get("sourceResourceId"),
+                    "parentResourceId": resource.get("parentResourceId"),
+                    "sourcePath": resource.get("logicalPath"),
+                    "displayName": Path(str(asset_path)).name,
+                    "mediaType": mimetypes.guess_type(str(asset_path))[0] or "application/octet-stream",
+                    "size": None,
+                    "contentHash": None,
+                    "artifactPath": asset_path,
+                    "assetKind": "embedded_asset",
+                    "processingState": resource.get("processingStatus"),
+                })
+        return records
+
+    def _ingestion_report(
+        self,
+        run: _PreparationRun,
+        source_resources: list[dict[str, Any]],
+        source_assets: list[dict[str, Any]],
+        input_manifest_hash: str,
+        state: str,
+    ) -> dict[str, Any]:
+        states: dict[str, int] = {}
+        families: dict[str, int] = {}
+        for resource in source_resources:
+            states[str(resource.get("processingState") or "unknown")] = states.get(str(resource.get("processingState") or "unknown"), 0) + 1
+            families[str(resource.get("formatFamily") or "unknown")] = families.get(str(resource.get("formatFamily") or "unknown"), 0) + 1
+        return {
+            "schemaVersion": "1.0",
+            "batchId": run.batch_id,
+            "runId": run.run_id,
+            "state": state,
+            "inputManifestHash": input_manifest_hash,
+            "createdAt": utcnow().isoformat(),
+            "resourceCount": len(source_resources),
+            "documentCount": len(run.source_documents),
+            "processingUnitCount": len(run.chunks),
+            "assetCount": len(source_assets),
+            "issueCount": len(run.issues),
+            "stateCounts": states,
+            "formatFamilyCounts": families,
+            "artifacts": [
+                "metadata/source-resources.jsonl",
+                "metadata/source-assets.jsonl",
+                "metadata/source-documents.jsonl",
+                "metadata/chunks.jsonl",
+                "metadata/structure-blocks.jsonl",
+                "quality/preparation-issues.json",
+            ],
+        }
 
     def _process_original(self, run: _PreparationRun, item: dict[str, Any], config: Any) -> None:
         resource_id = str(item.get("id") or self._stable_id(run.batch_id, item["logicalPath"], ""))

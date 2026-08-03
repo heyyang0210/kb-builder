@@ -515,13 +515,13 @@ class AttachmentPolicyTests(unittest.TestCase):
 
 class SkillRegistryTests(unittest.TestCase):
     def test_repository_contains_new_skill_architecture(self):
-        """新架构：使用 knowledge-point-extraction skill"""
+        """新架构：默认关键词抽取和正式知识提取分离为两个 skill"""
         root = Path(__file__).resolve().parents[3] / "processing" / "skills"
         registry = SkillRegistry(root)
         skills = registry.list_published()
-        # 新的 skill 架构
-        self.assertEqual(len(skills), 1)
-        self.assertEqual(skills[0].skill_id, "knowledge-point-extraction")
+        skill_ids = {item.skill_id for item in skills}
+        self.assertIn("keyword-extraction", skill_ids)
+        self.assertIn("knowledge-point-extraction", skill_ids)
 
     def test_get_without_version_returns_highest_published_version(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -566,13 +566,16 @@ class SkillRegistryTests(unittest.TestCase):
 
 class PromptRegistryTests(unittest.TestCase):
     def test_repository_contains_new_prompt_architecture(self):
-        """新架构：使用 knowledge-point-extraction skill prompts"""
+        """新架构：关键词抽取和正式知识提取都有独立 prompts"""
         root = Path(__file__).resolve().parents[3] / "processing" / "skills"
         prompts = PromptRegistry(root).list_published()
-        # 新的 prompt 架构
-        self.assertEqual(len(prompts), 2)
         prompt_ids = {p.prompt_id for p in prompts}
-        self.assertEqual(prompt_ids, {"knowledge-point-extraction.system", "knowledge-point-extraction.user"})
+        self.assertTrue({
+            "keyword-extraction.system",
+            "keyword-extraction.user",
+            "knowledge-point-extraction.system",
+            "knowledge-point-extraction.user",
+        }.issubset(prompt_ids))
 
     def test_detail_contains_content_without_server_path(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -7,10 +7,12 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from app.models import DatasetVersion, PreprocessConfig, TaskSnapshot, TrainingReviewDecision, TrainingTaskCreate
+from app.main import app
 from app.metadata_service import MetadataConstructionService
 from app.training_service import (
     GRAPH_SCHEMA_VERSION,
     ModelGatewayClient,
+    ModelTestRequiredError,
     STAGES,
     TrainingCancelledError,
     TrainingService,
@@ -58,6 +60,9 @@ class FakeBatches:
         self.batch = batch or SimpleNamespace(id="batch-test", state="downloaded", active_task_ids=[])
         self.updates = []
 
+    def list(self):
+        return [self.batch]
+
     def get(self, batch_id):
         if batch_id != self.batch.id:
             raise KeyError(batch_id)
@@ -65,6 +70,12 @@ class FakeBatches:
 
     def update(self, batch_id, **changes):
         self.updates.append((batch_id, changes))
+        for key, value in changes.items():
+            attr = {
+                "activeTaskIds": "active_task_ids",
+                "latestDatasetVersionId": "latest_dataset_version_id",
+            }.get(key, key)
+            setattr(self.batch, attr, value)
 
 
 class FakeStore:
@@ -696,6 +707,35 @@ class KnowledgeValidationAndDatasetTests(unittest.TestCase):
             "target": "并发连接",
             "type": "AFFECTS",
         })
+
+    def test_formal_knowledge_point_candidate_keeps_keyword_and_model_trace(self):
+        point = {
+            "chunkId": "resource-1:0",
+            "title": "连接数限制",
+            "statement": "参数 max_connections 影响并发连接。",
+            "knowledgeType": "technical_fact",
+            "evidenceText": "参数 max_connections 影响并发连接。",
+            "confidence": 0.91,
+            "agentTaskId": "knowledge_point_001",
+            "modelCallId": "model_call_001",
+        }
+
+        candidate = self.service._model_knowledge_candidate(
+            "training-test",
+            "knowledge_point",
+            point,
+            self.chunk,
+            [{"keywordId": "keyword:connections", "canonicalName": "连接数"}],
+        )
+
+        self.assertEqual(candidate["kind"], "knowledge_point")
+        self.assertEqual(candidate["resourceId"], "resource-1")
+        self.assertEqual(candidate["sourceResourceId"], "resource-1")
+        self.assertEqual(candidate["keywordIds"], ["keyword:connections"])
+        self.assertEqual(candidate["agentTaskId"], "knowledge_point_001")
+        self.assertEqual(candidate["modelCallId"], "model_call_001")
+        self.assertNotIn("agentTaskId", candidate["value"])
+        self.assertNotIn("modelCallId", candidate["value"])
 
     def test_metadata_graph_rejects_document_titles_and_scope_words(self):
         self.service.metadata_construction = SimpleNamespace(
@@ -1374,6 +1414,56 @@ class TrainingCancellationTests(unittest.TestCase):
         with self.assertRaises(TrainingCancelledError):
             self.service._raise_if_cancelled(self.task.id)
 
+    def test_reconcile_interrupted_does_not_fail_current_process_active_task(self):
+        self.service._mark_task_active(self.task.id)
+        with TemporaryDirectory() as directory, patch(
+            "app.training_service.settings",
+            SimpleNamespace(data_root=Path(directory)),
+        ):
+            recovered = self.service.reconcile_interrupted()
+
+        self.assertEqual(recovered, 0)
+        self.assertEqual(self.tasks.get(self.task.id).state, "running")
+
+    def test_get_recovers_zombie_graph_task_and_unlocks_batch(self):
+        with TemporaryDirectory() as directory, patch(
+            "app.training_service.settings",
+            SimpleNamespace(data_root=Path(directory)),
+        ):
+            result = self.service.get(self.task.id)
+
+        self.assertEqual(result.state, "failed")
+        self.assertEqual(self.tasks.get(self.task.id).state, "failed")
+        self.assertEqual(self.service.batches.batch.active_task_ids, [])
+        self.assertTrue(any(update.get("activeTaskIds") == [] for _, update in self.service.batches.updates))
+
+    def test_start_recovers_orphan_active_task_before_batch_ready_check(self):
+        now = utcnow()
+        terminal_task = TaskSnapshot(
+            id="training_done",
+            batch_id="batch-test",
+            type="graph",
+            state="completed",
+            stage="index_generation",
+            total=3,
+            can_cancel=False,
+            created_at=now,
+            updated_at=now,
+        )
+        batches = FakeBatches(SimpleNamespace(id="batch-test", state="processing", active_task_ids=["missing_task"]))
+        service = TrainingService(
+            None,
+            batches,
+            FakeTasks(terminal_task),
+            self.preprocess,
+            None,
+            gateway=None,
+        )
+        with self.assertRaisesRegex(ModelTestRequiredError, "请先完成模型真实连接测试"):
+            service.start(TrainingTaskCreate(batchId="batch-test"))
+        self.assertEqual(batches.batch.state, "downloaded")
+        self.assertEqual(batches.batch.active_task_ids, [])
+
 
 # TrainingSkillInvocationTests 已移除（旧 skill 架构测试不再适用）
 
@@ -1418,6 +1508,26 @@ class TrainingObservabilityTests(unittest.TestCase):
         self.assertEqual(payload["logPath"], "training-runs/training_test/events.jsonl")
         self.assertEqual(self.tasks.events.items[0][1], "training.log")
 
+    def test_formal_batch_audit_keeps_failure_classification_and_trace_fields(self):
+        audit = self.service._formal_batch_audit(self.task.id, {
+            "resourceId": "resource-1",
+            "chunkId": "chunk-1",
+            "agentTaskId": "agent-1",
+            "modelCallId": "model-call-1",
+            "success": False,
+            "error": "模型返回结构有效，但没有知识点候选",
+            "durationMs": 321,
+        })
+
+        self.assertEqual(audit["errorCode"], "KNOWLEDGE_EXTRACTION_EMPTY_RESULT")
+        self.assertEqual(audit["taskId"], self.task.id)
+        self.assertTrue(audit["stageRunId"])
+        self.assertEqual(audit["agentTaskId"], "agent-1")
+        self.assertEqual(audit["chunkId"], "chunk-1")
+        self.assertEqual(audit["modelCallId"], "model-call-1")
+        self.assertEqual(audit["technicalError"], "模型返回结构有效，但没有知识点候选")
+        self.assertEqual(audit["durationMs"], 321)
+
     def test_review_decision_is_persisted_with_audit_fields(self):
         with TemporaryDirectory() as directory, patch(
             "app.training_service.settings",
@@ -1442,6 +1552,832 @@ class TrainingObservabilityTests(unittest.TestCase):
         self.assertEqual(persisted["note"], "证据不足")
         self.assertEqual(persisted["operatorLabel"], "tester")
         self.assertTrue(persisted["decidedAt"])
+
+
+class KeywordExtractionPerformanceTests(unittest.TestCase):
+    def _prompt_registry(self, root: Path):
+        skill = SimpleNamespace(
+            root=root,
+            version="1.1.0",
+            manifest={
+                "inputSchema": "input.schema.json",
+                "outputSchema": "output.schema.json",
+                "defaults": {
+                    "maxTokens": 1200,
+                    "timeoutMs": 45000,
+                    "maxRetries": 0,
+                    "concurrency": 2,
+                    "maxChunksPerBatch": 5,
+                    "maxBatchInputCharacters": 20000,
+                    "maxCandidatesPerChunk": 4,
+                    "repairRetries": 1,
+                },
+            },
+        )
+        system = SimpleNamespace(content="系统提示", skill_version="1.1.0", content_hash="sys-hash")
+        user = SimpleNamespace(content="{{context_envelope}}", skill_version="1.1.0", content_hash="user-hash")
+        return SimpleNamespace(
+            skills=SimpleNamespace(get=lambda skill_id, version=None: skill),
+            get=lambda prompt_id, version=None: system if prompt_id.endswith(".system") else user,
+        )
+
+    def _write_keyword_schemas(self, root: Path):
+        (root / "input.schema.json").write_text(json.dumps({
+            "type": "object",
+            "required": ["contextEnvelope"],
+            "properties": {"contextEnvelope": {"type": "object"}},
+        }), encoding="utf-8")
+        (root / "output.schema.json").write_text(json.dumps({
+            "type": "object",
+            "properties": {"results": {"type": "array"}},
+        }), encoding="utf-8")
+
+    def _service(self, task_id="training_keyword_perf", gateway=None, prompts=None, metadata=None):
+        now = utcnow()
+        task = TaskSnapshot(
+            id=task_id,
+            batch_id="batch_test",
+            type="graph",
+            state="running",
+            stage="knowledge_extraction",
+            total=1,
+            created_at=now,
+            updated_at=now,
+        )
+        return TrainingService(
+            None,
+            FakeBatches(),
+            FakeTasks(task),
+            None,
+            prompts,
+            metadata_construction=metadata,
+            gateway=gateway or FakeGateway([]),
+        )
+
+    def test_clear_semantic_title_and_glossary_skip_model(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_keyword_schemas(root)
+            metadata = SimpleNamespace(
+                rule_set_hash="rules-v1",
+                rules={"titleCleaning": {"titleGlossaryConfidence": 0.9}, "stopwords": set(), "glossaries": {}},
+            )
+            gateway = FakeGateway([])
+            service = self._service(gateway=gateway, prompts=self._prompt_registry(root), metadata=metadata)
+            chunks = [{
+                "id": "chunk-1",
+                "chunkId": "chunk-1",
+                "resourceId": "resource-1",
+                "chunkIndex": 0,
+                "sourcePath": "Replication内幕文档.md",
+                "headingPath": ["Replication"],
+                "content": "Replication 负责复制日志并保障副本同步。",
+            }]
+            documents = [{
+                "resourceId": "resource-1",
+                "title": "Replication内幕文档",
+                "semanticTitle": "Replication",
+                "contentHash": "content-1",
+                "domainTerms": [{
+                    "termId": "database.feature.replication",
+                    "canonicalName": "Replication",
+                    "aliases": ["replication"],
+                    "matchedAliases": ["Replication"],
+                    "category": "数据库特性",
+                }],
+            }]
+            with patch("app.training_service.settings", SimpleNamespace(data_root=root)):
+                _, issues, _ = service._extract_keyword_analysis("training_keyword_perf", chunks, documents, root / "run", {"succeeded": 0, "failed": 0, "skipped": 0})
+                candidates = service._read_jsonl(root / "run/extraction-results/keyword-candidates.jsonl")
+        self.assertEqual(gateway.calls, [])
+        self.assertEqual(issues, [])
+        self.assertEqual(candidates[0]["canonicalName"], "Replication")
+        self.assertEqual(candidates[0]["sourceMethod"], "deterministic_title_glossary")
+
+    def test_clear_semantic_title_without_glossary_still_skips_model(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_keyword_schemas(root)
+            metadata = SimpleNamespace(
+                rule_set_hash="rules-v1",
+                rules={
+                    "titleCleaning": {
+                        "titleGlossaryConfidence": 0.9,
+                        "titleTopicConfidence": 0.78,
+                        "titleTopicMaxCharacters": 40,
+                    },
+                    "stopwords": {"yashandb", "dsi", "内幕".casefold()},
+                    "glossaries": {},
+                },
+            )
+            gateway = FakeGateway([])
+            service = self._service(gateway=gateway, prompts=self._prompt_registry(root), metadata=metadata)
+            chunks = [
+                {
+                    "id": "backup:0",
+                    "chunkId": "backup:0",
+                    "resourceId": "backup",
+                    "chunkIndex": 0,
+                    "sourcePath": "备份恢复内幕.docx",
+                    "headingPath": ["备份恢复流程"],
+                    "content": "备份恢复支持全量备份和增量备份。",
+                },
+                {
+                    "id": "redo:0",
+                    "chunkId": "redo:0",
+                    "resourceId": "redo",
+                    "chunkIndex": 0,
+                    "sourcePath": "REDO内幕.docx",
+                    "headingPath": ["Redo结构"],
+                    "content": "Redo文件记录数据库产生的物理日志。",
+                },
+                {
+                    "id": "buffer:0",
+                    "chunkId": "buffer:0",
+                    "resourceId": "buffer",
+                    "chunkIndex": 0,
+                    "sourcePath": "数据缓存区.docx",
+                    "headingPath": ["Data Buffer Pool组织结构"],
+                    "content": "为了降低锁冲突，将整个buffer pool划分了多个partition。",
+                },
+            ]
+            documents = [
+                {"resourceId": "backup", "title": "备份恢复内幕", "semanticTitle": "备份恢复", "contentHash": "backup", "domainTerms": []},
+                {"resourceId": "redo", "title": "REDO内幕", "semanticTitle": "REDO", "contentHash": "redo", "domainTerms": []},
+                {"resourceId": "buffer", "title": "数据缓存区", "semanticTitle": "数据缓存区", "contentHash": "buffer", "domainTerms": []},
+            ]
+            with patch("app.training_service.settings", SimpleNamespace(data_root=root)):
+                _, issues, _ = service._extract_keyword_analysis("training_keyword_perf", chunks, documents, root / "run", {"succeeded": 0, "failed": 0, "skipped": 0})
+                candidates = service._read_jsonl(root / "run/extraction-results/keyword-candidates.jsonl")
+        self.assertEqual(gateway.calls, [])
+        self.assertEqual(issues, [])
+        # 标题降级 + 中文技术术语提取
+        expected_names = {"备份恢复", "REDO", "数据缓存区", "备份", "恢复", "锁"}
+        actual_names = {item["canonicalName"] for item in candidates}
+        # 至少包含标题降级的3个
+        self.assertTrue({"备份恢复", "REDO", "数据缓存区"}.issubset(actual_names))
+        # 可能包含中文技术术语
+        self.assertTrue(actual_names.issubset(expected_names))
+        # 检查 sourceMethod 包含标题降级和中文术语
+        actual_methods = {item["sourceMethod"] for item in candidates}
+        self.assertIn("deterministic_title_fallback", actual_methods)
+
+    def test_keyword_analysis_reads_preselection_report_and_only_model_required_calls_model(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_keyword_schemas(root)
+            metadata = SimpleNamespace(
+                rule_set_hash="rules-v1",
+                rules={
+                    "titleCleaning": {
+                        "titleGlossaryConfidence": 0.9,
+                        "titleTopicConfidence": 0.78,
+                        "titleTopicMaxCharacters": 40,
+                    },
+                    "stopwords": set(),
+                    "glossaries": {},
+                },
+            )
+            gateway = FakeGateway([{
+                "data": {
+                    "results": [{
+                        "chunkId": "model:0",
+                        "keywordCandidates": [{
+                            "name": "事务机制",
+                            "aliases": [],
+                            "category": "数据库机制",
+                            "evidenceSource": "content",
+                            "evidenceText": "事务机制",
+                            "confidence": 0.86,
+                        }],
+                    }]
+                },
+                "usage": {"promptTokens": 10, "completionTokens": 8},
+            }])
+            service = self._service(gateway=gateway, prompts=self._prompt_registry(root), metadata=metadata)
+            chunks = [
+                {
+                    "id": "ready:0",
+                    "chunkId": "ready:0",
+                    "resourceId": "ready",
+                    "chunkIndex": 0,
+                    "sourcePath": "Replication内幕文档.md",
+                    "headingPath": ["Replication"],
+                    "content": "Replication 负责复制日志。",
+                },
+                {
+                    "id": "model:0",
+                    "chunkId": "model:0",
+                    "resourceId": "model",
+                    "chunkIndex": 0,
+                    "sourcePath": "事务机制.md",
+                    "headingPath": ["事务机制"],
+                    "content": "事务机制保证提交一致性。",
+                },
+                {
+                    "id": "skip:0",
+                    "chunkId": "skip:0",
+                    "resourceId": "skip",
+                    "chunkIndex": 0,
+                    "sourcePath": "空标题.md",
+                    "headingPath": [],
+                    "content": "这条记录不进入关键词模型。",
+                },
+            ]
+            documents = [
+                {
+                    "resourceId": "ready",
+                    "title": "Replication内幕文档",
+                    "semanticTitle": "Replication",
+                    "contentHash": "ready",
+                    "domainTerms": [],
+                },
+                {
+                    "resourceId": "model",
+                    "title": "事务机制",
+                    "semanticTitle": "事务机制",
+                    "contentHash": "model",
+                    "domainTerms": [],
+                },
+                {
+                    "resourceId": "skip",
+                    "title": "YashanDB DSI",
+                    "semanticTitle": "",
+                    "contentHash": "skip",
+                    "domainTerms": [],
+                },
+            ]
+            run_dir = root / "run"
+            service._write_json(run_dir / "metadata/preselection-report.json", {
+                "schemaVersion": "1.0",
+                "items": [
+                    {"resourceId": "ready", "preselectionState": "deterministic_ready", "chunkIds": ["ready:0"]},
+                    {"resourceId": "model", "preselectionState": "model_required", "chunkIds": ["model:0"]},
+                    {"resourceId": "skip", "preselectionState": "skip", "chunkIds": ["skip:0"]},
+                ],
+            })
+            with patch("app.training_service.settings", SimpleNamespace(data_root=root)):
+                _, issues, _ = service._extract_keyword_analysis("training_keyword_perf", chunks, documents, run_dir, {"succeeded": 0, "failed": 0, "skipped": 0})
+                candidates = service._read_jsonl(run_dir / "extraction-results/keyword-candidates.jsonl")
+                cache_summary = service._read_json(run_dir / "model-results/keyword-cache-summary.json")
+
+        # 现在只使用确定性提取，不调用模型
+        self.assertEqual(len(gateway.calls), 0)
+        # 只有 Replication 会被提取（来自 deterministic_ready 资源）
+        # model_required 资源现在也走确定性提取，但可能没有匹配到关键词
+        self.assertEqual(cache_summary["modelScheduledChunks"], 0)
+        self.assertEqual(cache_summary["deterministicSkippedChunks"], 3)  # 所有 3 个资源都走确定性提取
+
+    def test_dynamic_batch_packs_short_chunks_across_documents(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            service = self._service(prompts=self._prompt_registry(root), metadata=SimpleNamespace(rule_set_hash="rules-v1"))
+            chunks = [
+                {"id": "chunk-1", "resourceId": "resource-1", "chunkIndex": 0, "content": "事务提交"},
+                {"id": "chunk-2", "resourceId": "resource-2", "chunkIndex": 0, "content": "LOB 存储"},
+                {"id": "chunk-3", "resourceId": "resource-3", "chunkIndex": 0, "content": "持久化"},
+            ]
+            documents = {f"resource-{index}": {"semanticTitle": f"title-{index}"} for index in range(1, 4)}
+            batches = service._keyword_dynamic_batches(chunks, documents, {}, 5, 20000, 4)
+        self.assertEqual(len(batches), 1)
+        self.assertEqual([item["id"] for item in batches[0]], ["chunk-1", "chunk-2", "chunk-3"])
+
+    def test_chunk_validation_marks_only_invalid_chunk_for_repair(self):
+        service = self._service(prompts=SimpleNamespace(), metadata=SimpleNamespace(rules={"stopwords": set(), "glossaries": {}}))
+        chunks = [
+            {"id": "chunk-1", "resourceId": "resource-1", "headingPath": [], "content": "事务 用于保证一致性。"},
+            {"id": "chunk-2", "resourceId": "resource-2", "headingPath": [], "content": "LOB 用于大对象存储。"},
+        ]
+        documents = {
+            "resource-1": {"semanticTitle": "事务"},
+            "resource-2": {"semanticTitle": "LOB"},
+        }
+        valid, invalid = service._valid_keyword_chunk_results({
+            "results": [
+                {"chunkId": "chunk-1", "keywordCandidates": [{
+                    "name": "事务",
+                    "aliases": [],
+                    "category": "数据库机制",
+                    "evidenceSource": "content",
+                    "evidenceText": "事务",
+                    "confidence": 0.9,
+                }]},
+                {"chunkId": "chunk-2", "keywordCandidates": [{"name": "LOB"}]},
+            ],
+        }, chunks, documents, 4)
+        self.assertEqual(sorted(valid), ["chunk-1"])
+        self.assertEqual(invalid, ["chunk-2"])
+
+    def test_keyword_candidate_cache_key_changes_with_semantic_title(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            service = self._service(prompts=self._prompt_registry(root), metadata=SimpleNamespace(rule_set_hash="rules-v1"))
+            skill_context = {
+                "skill": SimpleNamespace(version="1.1.0"),
+                "promptHash": "prompt-hash",
+            }
+            chunk = {"id": "chunk-1", "content": "相同正文", "contentHash": "same"}
+            key_a = service._keyword_candidate_cache_key(chunk, {"semanticTitle": "事务"}, skill_context)
+            key_b = service._keyword_candidate_cache_key(chunk, {"semanticTitle": "持久化"}, skill_context)
+        self.assertNotEqual(key_a, key_b)
+
+    def test_formal_keyword_context_uses_materialized_index_and_filters_rejected(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            service = self._service(prompts=SimpleNamespace(), metadata=SimpleNamespace())
+            dataset_root = root / "datasets" / "dataset-1"
+            dataset_root.mkdir(parents=True)
+            (dataset_root / "keyword-chunk-index.json").write_text(json.dumps({
+                "keywordToChunks": {
+                    "keyword:accepted": ["chunk-1", "chunk-2"],
+                    "keyword:rejected": ["chunk-3"],
+                },
+                "chunkToKeywords": {},
+            }), encoding="utf-8")
+            service.graph = lambda dataset_id, kind: [
+                {"id": "keyword:accepted", "keywordId": "keyword:accepted", "type": "Keyword", "canonicalName": "事务", "aliases": [], "approvalStatus": "accepted", "businessStatus": "businessAccepted"},
+                {"id": "keyword:rejected", "keywordId": "keyword:rejected", "type": "Keyword", "canonicalName": "LOB", "aliases": [], "approvalStatus": "rejected"},
+            ]
+            with patch("app.training_service.settings", SimpleNamespace(data_root=root)):
+                result = service._formal_keyword_context_by_chunk("dataset-1")
+        self.assertEqual(sorted(result), ["chunk-1", "chunk-2"])
+        self.assertNotIn("chunk-3", result)
+
+    def test_formal_keyword_context_deduplicates_sorts_and_excludes_rejected_keywords(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            service = self._service(prompts=SimpleNamespace(), metadata=SimpleNamespace())
+            dataset_root = root / "datasets" / "dataset-1"
+            dataset_root.mkdir(parents=True)
+            (dataset_root / "keyword-chunk-index.json").write_text(json.dumps({
+                "keywordToChunks": {
+                    "keyword:zeta": ["chunk-1", "chunk-1"],
+                    "keyword:rejected": ["chunk-1"],
+                    "keyword:alpha": ["chunk-1"],
+                },
+                "chunkToKeywords": {
+                    "chunk-1": ["keyword:zeta", "keyword:rejected", "keyword:alpha"],
+                },
+            }), encoding="utf-8")
+            service.graph = lambda dataset_id, kind: [
+                {"id": "keyword:zeta", "keywordId": "keyword:zeta", "type": "Keyword", "canonicalName": "Zeta", "aliases": ["z"], "approvalStatus": "accepted", "businessStatus": "businessAccepted"},
+                {"id": "keyword:rejected", "keywordId": "keyword:rejected", "type": "Keyword", "canonicalName": "Rejected", "aliases": [], "approvalStatus": "rejected"},
+                {"id": "keyword:alpha", "keywordId": "keyword:alpha", "type": "Keyword", "canonicalName": "Alpha", "aliases": ["a"], "approvalStatus": "autoAccepted", "businessStatus": "businessAccepted"},
+            ]
+
+            with patch("app.training_service.settings", SimpleNamespace(data_root=root)):
+                result = service._formal_keyword_context_by_chunk("dataset-1")
+
+        self.assertEqual(list(result), ["chunk-1"])
+        self.assertEqual([item["keywordId"] for item in result["chunk-1"]], ["keyword:alpha", "keyword:zeta"])
+        self.assertNotIn("keyword:rejected", [item["keywordId"] for item in result["chunk-1"]])
+
+    def test_business_review_filters_scope_noise_and_marks_domain_topics(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            service = self._service(
+                prompts=SimpleNamespace(),
+                metadata=SimpleNamespace(
+                    rule_set_hash="rules-v1",
+                    rules={
+                        "businessKeywordReview": {
+                            "scopeWords": ["YashanDB", "DSI"],
+                            "namingNoiseWords": ["内幕文档"],
+                            "strongTopicTerms": ["事务", "LOB"],
+                            "minEvidenceCount": 1,
+                        }
+                    },
+                ),
+            )
+            dataset_root = root / "datasets" / "dataset-1"
+            run_dir = root / "training-runs" / "training-1"
+            (dataset_root / "graph").mkdir(parents=True)
+            (run_dir / "graph").mkdir(parents=True)
+            nodes = [
+                {"id": "keyword:scope", "keywordId": "keyword:scope", "type": "Keyword", "canonicalName": "YashanDB", "approvalStatus": "accepted", "chunkIds": ["chunk-1"], "occurrences": [{"evidenceSource": "title", "evidenceText": "YashanDB"}]},
+                {"id": "keyword:tx", "keywordId": "keyword:tx", "type": "Keyword", "canonicalName": "事务", "approvalStatus": "accepted", "chunkIds": ["chunk-2"], "occurrences": [{"evidenceSource": "title", "evidenceText": "事务"}, {"evidenceSource": "content", "evidenceText": "事务提交"}]},
+                {"id": "keyword:lob", "keywordId": "keyword:lob", "type": "Keyword", "canonicalName": "LOB", "approvalStatus": "pending", "chunkIds": ["chunk-3"], "occurrences": [{"evidenceSource": "content", "evidenceText": "LOB"}]},
+                {"id": "keyword:file", "keywordId": "keyword:file", "type": "Keyword", "canonicalName": "file_abc12345", "approvalStatus": "accepted", "chunkIds": ["chunk-4"], "occurrences": [{"evidenceSource": "content", "evidenceText": "file_abc12345"}]},
+            ]
+            index_before = {"keywordToChunks": {"keyword:tx": ["chunk-2"]}, "chunkToKeywords": {"chunk-2": ["keyword:tx"]}}
+            service._write_json(dataset_root / "graph/nodes.json", nodes)
+            service._write_json(dataset_root / "graph/edges.json", [])
+            service._write_json(run_dir / "graph/nodes.json", nodes)
+            service._write_json(run_dir / "graph/edges.json", [])
+            service._write_json(dataset_root / "keyword-chunk-index.json", index_before)
+            service.store = SimpleNamespace(
+                get=lambda collection, item_id: DatasetVersion(
+                    id="dataset-1",
+                    batchId="batch-test",
+                    preprocessTaskId="preprocess-1",
+                    state="candidate",
+                    config=PreprocessConfig(),
+                    totalDocuments=1,
+                    totalChunks=4,
+                    qualityMetrics={},
+                    qualityPassed=True,
+                    trainingTaskId="training-1",
+                    graphAvailable=True,
+                    createdAt=utcnow(),
+                    updatedAt=utcnow(),
+                ),
+                update_record=lambda *args, **kwargs: None,
+            )
+            service.ensure_dataset_graph = lambda dataset_id: service.store.get("datasets", dataset_id)
+
+            with patch("app.training_service.settings", SimpleNamespace(data_root=root)):
+                review = service.review_keyword_business("dataset-1")
+                updated_nodes = json.loads((dataset_root / "graph/nodes.json").read_text(encoding="utf-8"))
+                persisted_review = json.loads((dataset_root / "quality/keyword-business-review.json").read_text(encoding="utf-8"))
+                index_after = json.loads((dataset_root / "keyword-chunk-index.json").read_text(encoding="utf-8"))
+
+        by_id = {item["keywordId"]: item for item in review["items"]}
+        self.assertEqual(by_id["keyword:scope"]["businessStatus"], "businessRejected")
+        self.assertIn("scope_word", by_id["keyword:scope"]["reasonCodes"])
+        self.assertEqual(by_id["keyword:file"]["businessStatus"], "businessRejected")
+        self.assertIn("technical_identifier", by_id["keyword:file"]["reasonCodes"])
+        self.assertEqual(by_id["keyword:tx"]["businessStatus"], "businessAccepted")
+        self.assertEqual(by_id["keyword:lob"]["businessStatus"], "needsReview")
+        node_by_id = {item["keywordId"]: item for item in updated_nodes}
+        self.assertEqual(node_by_id["keyword:tx"]["businessStatus"], "businessAccepted")
+        self.assertEqual(review["summary"]["businessAcceptedCount"], 1)
+        self.assertEqual(persisted_review, review)
+        self.assertEqual(index_after, index_before)
+
+    def test_formal_keyword_context_requires_business_accepted(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            service = self._service(prompts=SimpleNamespace(), metadata=SimpleNamespace())
+            dataset_root = root / "datasets" / "dataset-1"
+            dataset_root.mkdir(parents=True)
+            (dataset_root / "keyword-chunk-index.json").write_text(json.dumps({
+                "keywordToChunks": {
+                    "keyword:business": ["chunk-1"],
+                    "keyword:unreviewed": ["chunk-2"],
+                    "keyword:rejected": ["chunk-3"],
+                },
+                "chunkToKeywords": {},
+            }), encoding="utf-8")
+            service.graph = lambda dataset_id, kind: [
+                {"id": "keyword:business", "keywordId": "keyword:business", "type": "Keyword", "canonicalName": "事务", "approvalStatus": "accepted", "businessStatus": "businessAccepted"},
+                {"id": "keyword:unreviewed", "keywordId": "keyword:unreviewed", "type": "Keyword", "canonicalName": "LOB", "approvalStatus": "accepted"},
+                {"id": "keyword:rejected", "keywordId": "keyword:rejected", "type": "Keyword", "canonicalName": "YashanDB", "approvalStatus": "accepted", "businessStatus": "businessRejected"},
+            ]
+
+            with patch("app.training_service.settings", SimpleNamespace(data_root=root)):
+                result = service._formal_keyword_context_by_chunk("dataset-1")
+
+        self.assertEqual(list(result), ["chunk-1"])
+        self.assertEqual(result["chunk-1"][0]["keywordId"], "keyword:business")
+
+    def test_business_review_yaml_rules_are_loaded_from_metadata_manifest(self):
+        rules, rule_set_hash = MetadataConstructionService._load_rules()
+
+        self.assertIn("businessKeywordReview", rules)
+        self.assertIn("scopeWords", rules["businessKeywordReview"])
+        self.assertIn("YashanDB", rules["businessKeywordReview"]["scopeWords"])
+        self.assertTrue(rule_set_hash.startswith("sha256:"))
+        self.assertEqual(
+            {"businessAccepted", "businessRejected", "needsReview"},
+            {"businessAccepted", "businessRejected", "needsReview"},
+        )
+
+    def test_start_formal_knowledge_requires_business_review(self):
+        service = self._service(prompts=SimpleNamespace(), metadata=SimpleNamespace())
+        now = utcnow()
+        dataset = DatasetVersion(
+            id="dataset-1",
+            batchId="batch-test",
+            preprocessTaskId="preprocess-1",
+            state="candidate",
+            config=PreprocessConfig(),
+            totalDocuments=1,
+            totalChunks=1,
+            qualityMetrics={},
+            qualityPassed=True,
+            trainingTaskId="training-1",
+            graphAvailable=True,
+            createdAt=now,
+            updatedAt=now,
+        )
+        service.ensure_dataset_graph = lambda dataset_id: dataset
+        service.graph = lambda dataset_id, kind: [{
+            "id": "keyword:accepted",
+            "keywordId": "keyword:accepted",
+            "type": "Keyword",
+            "canonicalName": "事务",
+            "approvalStatus": "accepted",
+        }]
+
+        with self.assertRaisesRegex(ValueError, "确认并准入"):
+            service.start_formal_knowledge_task("dataset-1")
+
+    def test_update_keyword_business_status_updates_summary_without_rebuilding_index(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            service = self._service(prompts=SimpleNamespace(), metadata=SimpleNamespace())
+            dataset_root = root / "datasets" / "dataset-1"
+            run_dir = root / "training-runs" / "training-1"
+            (dataset_root / "graph").mkdir(parents=True)
+            (dataset_root / "quality").mkdir(parents=True)
+            (run_dir / "graph").mkdir(parents=True)
+            (run_dir / "quality").mkdir(parents=True)
+            nodes = [
+                {
+                    "id": "keyword:accepted",
+                    "keywordId": "keyword:accepted",
+                    "type": "Keyword",
+                    "canonicalName": "事务",
+                    "approvalStatus": "accepted",
+                    "businessStatus": "needsReview",
+                    "chunkIds": ["chunk-1"],
+                    "occurrences": [{"evidenceSource": "content", "evidenceText": "事务"}],
+                }
+            ]
+            edges = []
+            for graph_dir in (dataset_root / "graph", run_dir / "graph"):
+                service._write_json(graph_dir / "nodes.json", nodes)
+                service._write_json(graph_dir / "edges.json", edges)
+            service.store = SimpleNamespace(
+                get=lambda collection, item_id: DatasetVersion(
+                    id="dataset-1",
+                    batchId="batch-test",
+                    preprocessTaskId="preprocess-1",
+                    state="candidate",
+                    config=PreprocessConfig(),
+                    totalDocuments=1,
+                    totalChunks=1,
+                    qualityMetrics={},
+                    qualityPassed=True,
+                    trainingTaskId="training-1",
+                    graphAvailable=True,
+                    graphSummary={"graphSource": "metadata_keyword", "keywordBusinessReviewState": {"needsReviewCount": 1}},
+                    createdAt=utcnow(),
+                    updatedAt=utcnow(),
+                ),
+                update_record=lambda *args, **kwargs: None,
+            )
+            service.ensure_dataset_graph = lambda dataset_id: service.store.get("datasets", dataset_id)
+
+            with patch("app.training_service.settings", SimpleNamespace(data_root=root)):
+                result = service.update_keyword_business_status("dataset-1", "keyword:accepted", "businessAccepted")
+                summary = json.loads((dataset_root / "quality/entity-relation-stage-status.json").read_text(encoding="utf-8"))
+                self.assertTrue((dataset_root / "graph/nodes.json").is_file())
+                self.assertTrue((run_dir / "graph/nodes.json").is_file())
+
+            self.assertEqual(result["businessStatus"], "businessAccepted")
+            self.assertEqual(result["keywordBusinessReviewState"]["businessAcceptedCount"], 1)
+            self.assertEqual(summary["state"], "pending")
+
+    def test_quality_report_api_exposes_business_and_entity_relation_state(self):
+        import app.main as main_module
+        from fastapi.testclient import TestClient
+
+        now = utcnow()
+        dataset = DatasetVersion(
+            id="dataset-1",
+            batchId="batch-test",
+            preprocessTaskId="preprocess-1",
+            state="candidate",
+            config=PreprocessConfig(),
+            totalDocuments=1,
+            totalChunks=1,
+            qualityMetrics={},
+            qualityPassed=True,
+            trainingTaskId="training-1",
+            graphAvailable=True,
+            graphSummary={
+                "graphSource": "metadata_keyword",
+                "keywordBusinessReviewState": {"businessAcceptedCount": 2, "businessRejectedCount": 1, "needsReviewCount": 0},
+                "entityRelationStage": {"state": "pending", "entityCandidateCount": 0, "relationCandidateCount": 0},
+            },
+            createdAt=now,
+            updatedAt=now,
+        )
+        fake_training = SimpleNamespace(
+            ensure_dataset_graph=lambda dataset_id: dataset,
+            graph=lambda dataset_id, kind: dataset.graph_summary if kind == "summary" else [],
+        )
+        original_training = main_module.training
+        main_module.training = fake_training
+        try:
+            response = TestClient(app).get("/api/quality/reports/dataset-1")
+        finally:
+            main_module.training = original_training
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["graph"]["keywordBusinessReviewState"]["businessAcceptedCount"], 2)
+        self.assertEqual(payload["graph"]["entityRelationStage"]["state"], "pending")
+
+    def test_model_knowledge_candidate_marks_agent_resolved_and_sorts_keyword_ids(self):
+        service = self._service(prompts=SimpleNamespace(), metadata=SimpleNamespace())
+        chunk = {
+            "id": "chunk-1",
+            "resourceId": "resource-1",
+            "sourcePath": "事务.md",
+            "content": "事务提交需要写入 REDO 日志。",
+            "contentHash": "content-hash",
+            "documentOffsets": {"start": 10},
+        }
+        point = {
+            "chunkId": "chunk-1",
+            "title": "事务提交",
+            "statement": "事务提交需要写入 REDO 日志。",
+            "knowledgeType": "technical_fact",
+            "evidenceText": "事务提交需要写入 REDO 日志。",
+            "confidence": 0.92,
+            "agentTaskId": "agent-1",
+            "modelCallId": "model-call-1",
+        }
+
+        candidate = service._model_knowledge_candidate(
+            "training-formal",
+            "knowledge_point",
+            point,
+            chunk,
+            [
+                {"keywordId": "keyword:zeta", "canonicalName": "Zeta"},
+                {"keywordId": "keyword:alpha", "canonicalName": "Alpha"},
+                {"keywordId": "keyword:zeta", "canonicalName": "Zeta"},
+            ],
+        )
+
+        self.assertEqual(candidate["state"], "agent_resolved")
+        self.assertEqual(candidate["kind"], "knowledge_point")
+        self.assertEqual(candidate["keywordIds"], ["keyword:alpha", "keyword:zeta"])
+        self.assertEqual(
+            [item["keywordId"] for item in candidate["keywordContext"]],
+            ["keyword:alpha", "keyword:zeta"],
+        )
+
+    def test_formal_knowledge_run_writes_auditable_input_plan(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            task_id = "training-formal"
+            task = TaskSnapshot(
+                id=task_id,
+                batch_id="batch-test",
+                type="graph",
+                state="running",
+                stage="knowledge_extraction",
+                total=1,
+                created_at=utcnow(),
+                updated_at=utcnow(),
+            )
+            service = TrainingService(
+                None,
+                FakeBatches(),
+                FakeTasks(task),
+                None,
+                SimpleNamespace(),
+                metadata_construction=SimpleNamespace(),
+                gateway=FakeGateway([]),
+            )
+            dataset_root = root / "datasets" / "dataset-1"
+            dataset_root.mkdir(parents=True)
+            (dataset_root / "keyword-chunk-index.json").write_text(json.dumps({
+                "keywordToChunks": {
+                    "keyword:accepted": ["chunk-1", "chunk-1"],
+                    "keyword:also-accepted": ["chunk-1", "chunk-2"],
+                    "keyword:rejected": ["chunk-2"],
+                },
+                "chunkToKeywords": {
+                    "chunk-1": ["keyword:accepted", "keyword:also-accepted"],
+                    "chunk-2": ["keyword:also-accepted", "keyword:rejected"],
+                },
+            }), encoding="utf-8")
+            service.graph = lambda dataset_id, kind: [
+                {"id": "keyword:accepted", "keywordId": "keyword:accepted", "type": "Keyword", "canonicalName": "事务", "approvalStatus": "accepted", "businessStatus": "businessAccepted"},
+                {"id": "keyword:also-accepted", "keywordId": "keyword:also-accepted", "type": "Keyword", "canonicalName": "REDO", "approvalStatus": "autoAccepted", "businessStatus": "businessAccepted"},
+                {"id": "keyword:rejected", "keywordId": "keyword:rejected", "type": "Keyword", "canonicalName": "Rejected", "approvalStatus": "rejected"},
+            ]
+            service._prepare_materials = lambda task_id, request, run_dir: (
+                SimpleNamespace(id="dataset-formal"),
+                [
+                    {"id": "chunk-1", "chunkId": "chunk-1", "resourceId": "resource-1", "sourcePath": "事务.md", "content": "事务提交。"},
+                    {"id": "chunk-2", "chunkId": "chunk-2", "resourceId": "resource-2", "sourcePath": "REDO.md", "content": "REDO 写盘。"},
+                    {"id": "chunk-3", "chunkId": "chunk-3", "resourceId": "resource-3", "sourcePath": "跳过.md", "content": "未关联。"},
+                ],
+                [
+                    {"resourceId": "resource-1", "title": "事务"},
+                    {"resourceId": "resource-2", "title": "REDO"},
+                    {"resourceId": "resource-3", "title": "跳过"},
+                ],
+            )
+            service._extract_deterministic = lambda *args, **kwargs: ([], [], [])
+            service._validate_and_merge = lambda *args, **kwargs: []
+            service._generate_dataset = lambda *args, **kwargs: None
+            request = TrainingTaskCreate(
+                batchId="batch-test",
+                mode="formal_knowledge",
+                sourceDatasetId="dataset-1",
+                keywordIds=["keyword:accepted", "keyword:also-accepted"],
+            )
+
+            with patch("app.training_service.settings", SimpleNamespace(data_root=root)):
+                service._run(task_id, request)
+                input_plan_path = root / "training-runs" / task_id / "extraction-results/formal-knowledge-input.json"
+
+            self.assertTrue(input_plan_path.is_file())
+            input_plan = json.loads(input_plan_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(input_plan["sourceDatasetId"], "dataset-1")
+        self.assertEqual(input_plan["acceptedKeywordIds"], ["keyword:accepted", "keyword:also-accepted"])
+        self.assertEqual(input_plan["rejectedKeywordIds"], ["keyword:rejected"])
+        self.assertEqual(input_plan["scheduledChunkIds"], ["chunk-1", "chunk-2"])
+        self.assertEqual(input_plan["chunkKeywordMap"], {
+            "chunk-1": ["keyword:accepted", "keyword:also-accepted"],
+            "chunk-2": ["keyword:also-accepted"],
+        })
+        self.assertEqual(input_plan["filteredKeywordCount"], 1)
+        self.assertEqual(input_plan["deduplicatedChunkCount"], 2)
+
+    def test_start_formal_knowledge_converts_dataset_preprocess_config(self):
+        service = self._service(prompts=SimpleNamespace(), metadata=SimpleNamespace())
+        now = utcnow()
+        dataset = DatasetVersion(
+            id="dataset-1",
+            batchId="batch-test",
+            preprocessTaskId="preprocess-1",
+            state="candidate",
+            config=PreprocessConfig(maxUnitCharacters=3200),
+            totalDocuments=1,
+            totalChunks=1,
+            qualityMetrics={},
+            qualityPassed=True,
+            trainingTaskId="training-1",
+            graphAvailable=True,
+            graphSummary={"keywordBusinessReviewState": {"businessAcceptedCount": 1}},
+            createdAt=now,
+            updatedAt=now,
+        )
+        captured = {}
+        service.ensure_dataset_graph = lambda dataset_id: dataset
+        service.graph = lambda dataset_id, kind: [{
+            "id": "keyword:accepted",
+            "keywordId": "keyword:accepted",
+            "type": "Keyword",
+            "canonicalName": "事务",
+            "approvalStatus": "accepted",
+            "businessStatus": "businessAccepted",
+        }]
+
+        def fake_start(request):
+            captured["request"] = request
+            return SimpleNamespace(id="training-formal")
+
+        service.start = fake_start
+        result = service.start_formal_knowledge_task("dataset-1")
+
+        self.assertEqual(result.id, "training-formal")
+        self.assertEqual(captured["request"].mode, "formal_knowledge")
+        self.assertEqual(captured["request"].config.max_unit_characters, 3200)
+        self.assertTrue(captured["request"].config.review_low_confidence)
+        self.assertEqual(captured["request"].keyword_ids, ["keyword:accepted"])
+
+    def test_entity_relation_stage_status_is_reported(self):
+        import app.main as main_module
+        from fastapi.testclient import TestClient
+
+        now = utcnow()
+        dataset = DatasetVersion(
+            id="dataset-1",
+            batchId="batch-test",
+            preprocessTaskId="preprocess-1",
+            state="candidate",
+            config=PreprocessConfig(),
+            totalDocuments=1,
+            totalChunks=1,
+            qualityMetrics={},
+            qualityPassed=True,
+            trainingTaskId="training-1",
+            graphAvailable=True,
+            graphSummary={
+                "graphSource": "final_knowledge",
+                "nodeCount": 1,
+                "keywordBusinessReviewState": {"businessAccepted": 1, "businessRejected": 0, "needsReview": 0},
+                "entityRelationStage": {"state": "pending", "entityCandidateCount": 0, "relationCandidateCount": 0},
+            },
+            createdAt=now,
+            updatedAt=now,
+        )
+        fake_training = SimpleNamespace(
+            ensure_dataset_graph=lambda dataset_id: dataset,
+            graph=lambda dataset_id, kind: dataset.graph_summary if kind == "summary" else [],
+        )
+
+        original_training = main_module.training
+        main_module.training = fake_training
+        try:
+            response = TestClient(app).get("/api/quality/reports/dataset-1")
+        finally:
+            main_module.training = original_training
+
+        self.assertEqual(response.status_code, 200)
+        graph = response.json()["graph"]
+        self.assertEqual(graph["entityRelationStage"]["state"], "pending")
+        self.assertEqual(graph["keywordBusinessReviewState"]["businessAccepted"], 1)
 
 
 if __name__ == "__main__":

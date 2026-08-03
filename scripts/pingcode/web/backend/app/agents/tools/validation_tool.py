@@ -146,6 +146,8 @@ class ValidationTool:
             "entities": verified_entities,
             "relations": verified_relations,
             "uncertainItems": chunk_result.get("uncertainItems", []),
+            "agentTaskId": chunk_result.get("agentTaskId"),
+            "modelCallId": chunk_result.get("modelCallId"),
         }
         
         return verified, rejected

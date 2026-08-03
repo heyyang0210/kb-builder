@@ -266,6 +266,39 @@ class TrainingConfig(PreprocessConfig):
 class TrainingTaskCreate(ApiModel):
     batch_id: str
     config: TrainingConfig = Field(default_factory=TrainingConfig)
+    mode: Literal["keyword_analysis", "formal_knowledge"] = "keyword_analysis"
+    source_dataset_id: str | None = None
+    keyword_ids: list[str] = Field(default_factory=list)
+
+
+class KeywordStatusUpdate(ApiModel):
+    status: Literal["accepted", "rejected", "pending"]
+
+
+class KeywordBusinessStatusUpdate(ApiModel):
+    business_status: Literal["businessAccepted", "businessRejected", "needsReview"]
+    reason_code: str = Field(default="", max_length=120)
+    note: str = Field(default="", max_length=1000)
+    operator_label: str = Field(default="当前用户", max_length=120)
+
+
+class KeywordAdmissionUpdate(ApiModel):
+    admission_status: Literal["admitted", "excluded"]
+    note: str = Field(default="", max_length=1000)
+    operator_label: str = Field(default="当前用户", max_length=120)
+
+
+class L2TermCreate(ApiModel):
+    name: str = Field(min_length=1, max_length=200)
+    canonical_name: str = Field(default="", max_length=200)
+    description: str = Field(default="", max_length=1000)
+    linked_l1_ids: list[str] = Field(default_factory=list)
+
+
+class KeywordLinkCreate(ApiModel):
+    target_id: str = Field(min_length=1, max_length=200)
+    weight: float = Field(default=0.5, ge=0, le=1)
+    evidence_chunk_ids: list[str] = Field(default_factory=list)
 
 
 class TrainingModelConfigUpdate(ApiModel):

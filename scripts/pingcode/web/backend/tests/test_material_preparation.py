@@ -145,8 +145,17 @@ class MaterialPreparationTests(unittest.TestCase):
             self.assertTrue((run_root / "normalized" / "text-resource.md").exists())
             chunks = (run_root / "metadata" / "chunks.jsonl").read_text(encoding="utf-8").splitlines()
             blocks = (run_root / "metadata" / "structure-blocks.jsonl").read_text(encoding="utf-8").splitlines()
+            source_resources = [json.loads(line) for line in (run_root / "metadata/source-resources.jsonl").read_text(encoding="utf-8").splitlines()]
+            source_assets = (run_root / "metadata/source-assets.jsonl").read_text(encoding="utf-8").splitlines()
+            ingestion_report = json.loads((run_root / "metadata/ingestion-report.json").read_text(encoding="utf-8"))
             self.assertGreaterEqual(len(chunks), 1)
             self.assertGreaterEqual(len(blocks), 3)
+            self.assertEqual(source_resources[0]["resourceId"], "text-resource")
+            self.assertEqual(source_resources[0]["processingState"], "completed")
+            self.assertEqual(source_resources[0]["normalizedArtifact"], "batches/batch_test0000000000/preparation/runs/" + report.run_id + "/normalized/text-resource.md")
+            self.assertEqual(source_assets, [])
+            self.assertEqual(ingestion_report["resourceCount"], 1)
+            self.assertEqual(ingestion_report["processingUnitCount"], len(chunks))
             self.assertTrue((run_root / "stage-result.json").exists())
 
     def test_c_code_is_excluded_from_processing_view_but_original_is_preserved(self):
@@ -261,10 +270,80 @@ class MaterialPreparationTests(unittest.TestCase):
             contexts = [json.loads(item) for item in (metadata_root / "metadata/chunk-contexts.jsonl").read_text(encoding="utf-8").splitlines()]
             self.assertEqual(documents[0]["summaryMethod"], "extractive_rule")
             self.assertEqual(documents[0]["titleSource"], "heading")
+            self.assertIn("titleNoiseRemoved", documents[0])
+            self.assertIn("topicCandidates", documents[0])
             self.assertIn("YAS-00001", documents[0]["keywords"])
             self.assertEqual(contexts[0]["summaryMethod"], "extractive_rule")
+            self.assertIn("titleNoiseRemoved", contexts[0])
+            self.assertIn("topicCandidates", contexts[0])
             self.assertTrue(any(item["termId"] == "yashandb.error_code" for item in documents[0]["domainTerms"]))
             self.assertIn("ruleSetHash", documents[0])
+
+    def test_metadata_writes_title_audit_topic_candidates_and_preselection_report(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            batch_root = root / "batches" / self.batch_id
+            source = batch_root / "original" / "files" / "YashanDB DSI_Replication内幕文档 (1).md"
+            source.parent.mkdir(parents=True)
+            source.write_text("Replication 负责复制日志。", encoding="utf-8")
+            self._register_archive(root, source)
+            resources = json.loads((batch_root / "resources.json").read_text(encoding="utf-8"))
+            resources[0]["id"] = "metadata-resource"
+            (batch_root / "resources.json").write_text(json.dumps(resources), encoding="utf-8")
+            test_settings = replace(settings, data_root=root)
+            with (
+                patch.object(preparation_module, "settings", test_settings),
+                patch.object(metadata_module, "settings", test_settings),
+                patch.object(services_module, "settings", test_settings),
+            ):
+                MaterialPreparationService(_BatchLookup(), FileService()).prepare(self.batch_id)
+                report = MetadataConstructionService(_BatchLookup(), FileService()).build(self.batch_id)
+            metadata_root = (root / report.stage_result_path).parent
+            documents = [json.loads(item) for item in (metadata_root / "metadata/documents.jsonl").read_text(encoding="utf-8").splitlines()]
+            contexts = [json.loads(item) for item in (metadata_root / "metadata/chunk-contexts.jsonl").read_text(encoding="utf-8").splitlines()]
+            preselection = json.loads((metadata_root / "metadata/preselection-report.json").read_text(encoding="utf-8"))
+
+            self.assertEqual(documents[0]["semanticTitle"], "Replication")
+            removed_values = {item["value"] for item in documents[0]["titleNoiseRemoved"]}
+            self.assertIn("YashanDB", removed_values)
+            self.assertIn("DSI", removed_values)
+            self.assertTrue(documents[0]["topicCandidates"])
+            self.assertEqual(documents[0]["topicCandidates"][0]["sourceMethod"], "deterministic_title_glossary")
+            self.assertEqual(contexts[0]["topicCandidates"][0]["name"], "Replication")
+            self.assertEqual(preselection["items"][0]["preselectionState"], "deterministic_ready")
+            self.assertEqual(preselection["items"][0]["sourceMethods"], ["deterministic_title_glossary"])
+            embedding_index = [json.loads(item) for item in (metadata_root / "metadata/embedding-index.jsonl").read_text(encoding="utf-8").splitlines()]
+            embedding_issues = json.loads((metadata_root / "quality/embedding-issues.json").read_text(encoding="utf-8"))
+            cluster_report = json.loads((metadata_root / "metadata/cluster-report.json").read_text(encoding="utf-8"))
+            cluster_issues = json.loads((metadata_root / "quality/cluster-issues.json").read_text(encoding="utf-8"))
+            self.assertEqual(len(embedding_index), 1)
+            self.assertEqual(embedding_index[0]["provider"], "deterministic_hash")
+            self.assertIn("embeddingId", embedding_index[0])
+            self.assertIn("vectorHash", embedding_index[0])
+            self.assertEqual(embedding_issues, [])
+            self.assertEqual(cluster_report["summary"]["embeddingCount"], 1)
+            self.assertEqual(cluster_issues, [])
+            self.assertNotIn("apiKey", json.dumps(embedding_index, ensure_ascii=False))
+
+    def test_preselection_report_marks_model_required_and_skip(self):
+        service = MetadataConstructionService(_BatchLookup(), FileService())
+        service.rules = {
+            "version": "test",
+            "titleCleaning": {"titleTopicMaxCharacters": 40},
+            "stopwords": set(),
+            "keywordExclusionPatterns": [],
+        }
+        service.rule_set_hash = "sha256:test"
+        report = service.build_preselection_report(
+            [
+                {"resourceId": "model", "semanticTitle": "事务机制", "topicCandidates": []},
+                {"resourceId": "skip", "semanticTitle": "", "topicCandidates": []},
+            ],
+            [{"resourceId": "model", "chunkId": "model:0"}],
+        )
+        states = {item["resourceId"]: item["preselectionState"] for item in report["items"]}
+        self.assertEqual(states["model"], "model_required")
+        self.assertEqual(states["skip"], "skip")
 
     def test_metadata_uses_filename_title_without_missing_title_issue(self):
         with tempfile.TemporaryDirectory() as directory:

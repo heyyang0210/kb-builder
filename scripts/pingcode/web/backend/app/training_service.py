@@ -48,6 +48,18 @@ MAX_METADATA_GRAPH_KEYWORDS_PER_CHUNK = 12
 GRAPH_SCHEMA_VERSION = 4
 DISPLAY_NAME_PREFIX_PATTERN = re.compile(r"^[0-9a-fA-F]{8,24}-")
 TECHNICAL_KEYWORD_PREFIXES = ("dataset_", "file_", "chunk_", "resource_", "document_", "task_", "batch_", "run_", "node_", "edge_", "unit_")
+
+# 关键词排除规则：工单号、人名等不应作为关键词
+EXCLUDED_KEYWORD_PATTERNS = [
+    re.compile(r"^YDBRD[-\s]?\d+", re.IGNORECASE),  # YDBRD-xxxxx 需求编号
+    re.compile(r"^YASHAN[-\s]?\d+", re.IGNORECASE),  # YASHAN-xxxxx
+    re.compile(r"^[0-9a-f]{8}\s", re.IGNORECASE),   # 文件哈希 ID 开头的标题
+]
+
+# 常见人名检测模式（中文2-4字，英文姓+名）
+PERSON_NAME_PATTERNS = [
+    re.compile(r"^[一-鿿]{2,4}$"),  # 纯中文2-4字可能是人名
+]
 KNOWLEDGE_NODE_TYPES = {
     "KnowledgePoint", "Keyword", "Parameter", "Concept", "Component", "Configuration",
     "Version", "ErrorCode", "YashanDBErrorCode", "OracleErrorCode", "Procedure",
@@ -139,7 +151,7 @@ class ModelGatewayClient:
         request_timeout = self.timeout
         if isinstance(options.get("timeout_ms"), (int, float)):
             attempts = max(1, int(options.get("max_retries", 0)) + 1)
-            request_timeout = max(request_timeout, ceil(options["timeout_ms"] / 1000) * attempts + 10)
+            request_timeout = ceil(options["timeout_ms"] / 1000) * attempts + 10
         result = self._request(
             "POST",
             "/chat",
@@ -201,6 +213,9 @@ class TrainingService:
         self._model_test_result: dict[str, Any] | None = None
         self._child_task_lock = threading.RLock()
         self._child_tasks: dict[str, str] = {}
+        self._active_task_lock = threading.RLock()
+        self._active_task_ids: set[str] = set()
+        self._reconcile_lock = threading.RLock()
 
 
         # 初始化 Workflow Agent
@@ -209,15 +224,16 @@ class TrainingService:
         self.extraction_agent = KnowledgeExtractionWorkflowAgent({
             "prompts": self.prompts,
             "gateway": self.gateway,
-            "batch_size": 5,
-            "max_workers": 3,
             "skill_root": str(skill_root),
         })
     def model_config(self) -> dict[str, Any]:
         status = self.gateway.status()
-        prompt = self.prompts.get("knowledge-point-extraction.system")
-        skill = self.prompts.skills.get("knowledge-point-extraction", prompt.skill_version)
-        defaults = skill.manifest.get("defaults", {})
+        keyword_prompt = self.prompts.get("keyword-extraction.system")
+        keyword_skill = self.prompts.skills.get("keyword-extraction", keyword_prompt.skill_version)
+        keyword_defaults = keyword_skill.manifest.get("defaults", {})
+        formal_prompt = self.prompts.get("knowledge-point-extraction.system")
+        formal_skill = self.prompts.skills.get("knowledge-point-extraction", formal_prompt.skill_version)
+        formal_defaults = formal_skill.manifest.get("defaults", {})
         return {
             "provider": status.get("provider"),
             "model": status.get("model"),
@@ -228,12 +244,23 @@ class TrainingService:
             "apiKeyConfigured": bool(status.get("apiKeyConfigured")),
             "configured": bool(status.get("configured")),
             "capabilities": status.get("capabilities", {}),
-            "documentEnrichment": {
-                "maxTokens": int(defaults.get("maxTokens", 1200)),
-                "timeoutMs": int(defaults.get("timeoutMs", 90000)),
-                "maxRetries": int(defaults.get("maxRetries", 0)),
-                "concurrency": int(defaults.get("concurrency", 1)),
-                "maxDirectCharacters": int(defaults.get("maxDirectCharacters", DEFAULT_MAX_DIRECT_CHARACTERS)),
+            "keywordAnalysis": {
+                "maxTokens": int(keyword_defaults.get("maxTokens", 1800)),
+                "timeoutMs": int(keyword_defaults.get("timeoutMs", 45000)),
+                "maxRetries": int(keyword_defaults.get("maxRetries", 1)),
+                "concurrency": int(keyword_defaults.get("concurrency", 1)),
+                "maxChunksPerBatch": int(keyword_defaults.get("maxChunksPerBatch", keyword_defaults.get("batchSize", 3))),
+                "maxBatchInputCharacters": int(keyword_defaults.get("maxBatchInputCharacters", 14000)),
+                "maxCandidatesPerChunk": int(keyword_defaults.get("maxCandidatesPerChunk", 4)),
+                "repairRetries": int(keyword_defaults.get("repairRetries", 1)),
+                "slowResponseMs": int(keyword_defaults.get("slowResponseMs", 30000)),
+            },
+            "formalKnowledge": {
+                "maxTokens": int(formal_defaults.get("maxTokens", 4000)),
+                "timeoutMs": int(formal_defaults.get("timeoutMs", 60000)),
+                "maxRetries": int(formal_defaults.get("maxRetries", 0)),
+                "concurrency": int(formal_defaults.get("concurrency", 1)),
+                "batchSize": int(formal_defaults.get("batchSize", 3)),
             },
             "lastTest": self._valid_model_test(status),
         }
@@ -473,6 +500,7 @@ class TrainingService:
         return hashlib.sha256(json.dumps(values, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
 
     def start(self, request: TrainingTaskCreate) -> TaskSnapshot:
+        self._reconcile_if_needed()
         batch = self._require_batch_ready(request.batch_id)
         self.require_model_test()
         now = utcnow()
@@ -495,6 +523,7 @@ class TrainingService:
             updated_at=now,
         )
         self.tasks._save(task)
+        self._mark_task_active(task.id)
         self.batches.update(batch.id, state="processing", activeTaskIds=[task.id])
         run_dir = self._run_dir(task.id)
         run_dir.mkdir(parents=True, exist_ok=True)
@@ -515,7 +544,7 @@ class TrainingService:
         return batch
 
     def cancel(self, task_id: str) -> TaskSnapshot:
-        task = self.get(task_id)
+        task = self._get_graph_task(task_id)
         if task.state in TERMINAL_STATES:
             raise ValueError("任务已经结束，无法取消")
         if task.state == "cancelling":
@@ -574,13 +603,22 @@ class TrainingService:
         return updated
 
     def list(self, batch_id: str | None = None) -> list[TaskSnapshot]:
-        items = [item for item in self.tasks.list() if item.type == "graph"]
+        self._reconcile_if_needed()
+        items = self._list_graph_tasks()
         if batch_id:
             items = [item for item in items if item.batch_id == batch_id]
         return items
 
     def reconcile_interrupted(self) -> int:
-        interrupted = [item for item in self.list() if item.state in {"queued", "running", "cancelling"}]
+        if self.tasks is None:
+            return 0
+        with self._reconcile_lock:
+            active_ids = self._current_active_task_ids()
+            interrupted = [
+                item for item in self._list_graph_tasks()
+                if item.state in {"queued", "running", "cancelling"} and item.id not in active_ids
+            ]
+            recovered_batches = self._reconcile_orphan_batch_active_tasks(active_ids)
         for task in interrupted:
             if task.state == "cancelling":
                 self._complete_cancellation(task.id, task.batch_id)
@@ -612,10 +650,67 @@ class TrainingService:
                 message,
                 details={"reason": "backend_restart", "previousState": task.state},
             )
-            self.batches.update(task.batch_id, state="failed", activeTaskIds=[])
-        return len(interrupted)
+            if self.batches is not None:
+                self.batches.update(task.batch_id, state="failed", activeTaskIds=[])
+        return len(interrupted) + recovered_batches
+
+    def _reconcile_if_needed(self) -> int:
+        if self.batches is None or self.tasks is None:
+            return 0
+        return self.reconcile_interrupted()
+
+    def _list_graph_tasks(self) -> list[TaskSnapshot]:
+        return [item for item in self.tasks.list() if item.type == "graph"]
+
+    def _mark_task_active(self, task_id: str) -> None:
+        with self._active_task_lock:
+            self._active_task_ids.add(task_id)
+
+    def _mark_task_inactive(self, task_id: str) -> None:
+        with self._active_task_lock:
+            self._active_task_ids.discard(task_id)
+
+    def _current_active_task_ids(self) -> set[str]:
+        with self._active_task_lock:
+            return set(self._active_task_ids)
+
+    def _reconcile_orphan_batch_active_tasks(self, active_ids: set[str]) -> int:
+        if self.batches is None or not hasattr(self.batches, "list"):
+            return 0
+        try:
+            batches = self.batches.list()
+        except Exception:
+            return 0
+        graph_tasks = {item.id: item for item in self._list_graph_tasks()}
+        recovered = 0
+        for batch in batches:
+            active_task_ids = list(getattr(batch, "active_task_ids", None) or getattr(batch, "activeTaskIds", None) or [])
+            if not active_task_ids:
+                continue
+            retained: list[str] = []
+            changed = False
+            for active_task_id in active_task_ids:
+                task = graph_tasks.get(str(active_task_id))
+                if str(active_task_id) in active_ids:
+                    retained.append(str(active_task_id))
+                elif task is not None and task.state not in TERMINAL_STATES:
+                    retained.append(str(active_task_id))
+                else:
+                    changed = True
+            if changed:
+                state = getattr(batch, "state", None)
+                update: dict[str, Any] = {"activeTaskIds": retained}
+                if not retained and state == "processing":
+                    update["state"] = "downloaded"
+                self.batches.update(batch.id, **update)
+                recovered += 1
+        return recovered
 
     def get(self, task_id: str) -> TaskSnapshot:
+        self._reconcile_if_needed()
+        return self._get_graph_task(task_id)
+
+    def _get_graph_task(self, task_id: str) -> TaskSnapshot:
         task = self.tasks.get(task_id)
         if task.type != "graph":
             raise ValueError("任务不是知识图谱训练任务")
@@ -733,7 +828,11 @@ class TrainingService:
             chunk_contexts,
             keyword_candidates,
         )
-        summary = self._graph_summary(nodes, edges, issues, graph_source)
+        summary = {
+            **self._graph_summary(nodes, edges, issues, graph_source),
+            "knowledgeBuildMode": "formal_knowledge" if graph_source == "final_knowledge" else "keyword_analysis",
+            "graphSource": graph_source,
+        }
         for graph_dir in (run_dir / "graph", dataset_root / "graph"):
             self._write_json(graph_dir / "nodes.json", nodes)
             self._write_json(graph_dir / "edges.json", edges)
@@ -754,6 +853,7 @@ class TrainingService:
                 "metadataRuleSetHash": self._metadata_rule_set_hash(),
             })
             self._write_json(dataset_root / "manifest.json", manifest)
+        self._persist_entity_relation_stage_summary(dataset_root, run_dir, summary)
         self.store.update_record("datasets", dataset.id, {
             "graphAvailable": True,
             "graphSummary": summary,
@@ -762,6 +862,814 @@ class TrainingService:
             "graphSummary": summary,
         })
         return summary
+
+    def update_keyword_status(self, dataset_id: str, keyword_id: str, status: str) -> dict[str, Any]:
+        if status not in {"accepted", "rejected", "pending"}:
+            raise ValueError("关键词状态只允许 accepted、rejected 或 pending")
+        dataset = self.ensure_dataset_graph(dataset_id)
+        if dataset.state == "deleted" or not dataset.graph_available or not dataset.training_task_id:
+            raise FileNotFoundError(dataset_id)
+        run_dir = self._run_dir(dataset.training_task_id)
+        dataset_root = settings.data_root / "datasets" / dataset.id
+        nodes_path = run_dir / "graph/nodes.json"
+        edges_path = run_dir / "graph/edges.json"
+        if not nodes_path.exists() or not edges_path.exists():
+            raise FileNotFoundError(dataset_id)
+        nodes = json.loads(nodes_path.read_text(encoding="utf-8"))
+        edges = json.loads(edges_path.read_text(encoding="utf-8"))
+        node = self._resolve_graph_node(nodes, keyword_id)
+        if not node or node.get("type") != "Keyword":
+            raise KeyError(keyword_id)
+        node["approvalStatus"] = status
+        node.setdefault("properties", {})["approvalStatus"] = status
+        summary = self._graph_summary(nodes, edges, self._read_json(dataset_root / "quality-issues.json", []), str(dataset.graph_summary.get("graphSource") or "model_keyword"))
+        for graph_dir in (run_dir / "graph", dataset_root / "graph"):
+            self._write_json(graph_dir / "nodes.json", nodes)
+            self._write_json(graph_dir / "edges.json", edges)
+        self.store.update_record("datasets", dataset.id, {"graphSummary": summary})
+        self.store.update_record("tasks", dataset.training_task_id, {"graphSummary": summary})
+        return {"keywordId": node.get("keywordId") or node.get("id"), "approvalStatus": status, "keywordApprovalState": summary.get("keywordApprovalState", {})}
+
+    def review_keyword_business(self, dataset_id: str) -> dict[str, Any]:
+        dataset = self.ensure_dataset_graph(dataset_id)
+        if dataset.state == "deleted" or not dataset.graph_available or not dataset.training_task_id:
+            raise FileNotFoundError(dataset_id)
+        run_dir = self._run_dir(dataset.training_task_id)
+        dataset_root = settings.data_root / "datasets" / dataset.id
+        nodes_path = run_dir / "graph/nodes.json"
+        edges_path = run_dir / "graph/edges.json"
+        if not nodes_path.exists() or not edges_path.exists():
+            nodes_path = dataset_root / "graph/nodes.json"
+            edges_path = dataset_root / "graph/edges.json"
+        if not nodes_path.exists() or not edges_path.exists():
+            raise FileNotFoundError(dataset_id)
+        nodes = json.loads(nodes_path.read_text(encoding="utf-8"))
+        edges = json.loads(edges_path.read_text(encoding="utf-8"))
+        review = self._keyword_business_review(dataset.id, nodes)
+        for node in nodes:
+            if node.get("type") != "Keyword":
+                continue
+            keyword_id = str(node.get("keywordId") or node.get("id") or "")
+            item = next((entry for entry in review["items"] if entry.get("keywordId") == keyword_id), None)
+            if not item:
+                continue
+            node["businessStatus"] = item["businessStatus"]
+            node["businessReasonCodes"] = item["reasonCodes"]
+            node["businessEvidenceCoverage"] = item["evidenceCoverage"]
+            node.setdefault("properties", {})["businessStatus"] = item["businessStatus"]
+        summary = self._graph_summary(nodes, edges, self._read_json(dataset_root / "quality-issues.json", []), str(dataset.graph_summary.get("graphSource") or "model_keyword"))
+        summary["keywordBusinessReviewState"] = review["summary"]
+        for graph_dir in (run_dir / "graph", dataset_root / "graph"):
+            self._write_json(graph_dir / "nodes.json", nodes)
+            self._write_json(graph_dir / "edges.json", edges)
+        self._write_graph_summary_artifacts(run_dir, dataset_root, summary)
+        for quality_dir in (run_dir / "quality", dataset_root / "quality"):
+            self._write_json(quality_dir / "keyword-business-review.json", review)
+        self._persist_entity_relation_stage_summary(dataset_root, run_dir, summary)
+        self.store.update_record("datasets", dataset.id, {"graphSummary": summary})
+        self.store.update_record("tasks", dataset.training_task_id, {"graphSummary": summary})
+        return review
+
+    def filter_keywords_by_prompt(self, dataset_id: str, prompt: str) -> dict[str, Any]:
+        """使用 LLM Agent 根据用户提示词批量过滤关键词"""
+        dataset = self.ensure_dataset_graph(dataset_id)
+        if dataset.state == "deleted" or not dataset.graph_available or not dataset.training_task_id:
+            raise FileNotFoundError(dataset_id)
+        
+        run_dir = self._run_dir(dataset.training_task_id)
+        dataset_root = settings.data_root / "datasets" / dataset.id
+        nodes_path = run_dir / "graph/nodes.json"
+        
+        if not nodes_path.exists():
+            nodes_path = dataset_root / "graph/nodes.json"
+        if not nodes_path.exists():
+            raise FileNotFoundError(dataset_id)
+        
+        nodes = json.loads(nodes_path.read_text(encoding="utf-8"))
+        
+        # 提取所有关键词
+        keywords = []
+        for node in nodes:
+            if node.get("type") != "Keyword":
+                continue
+            keywords.append({
+                "id": node.get("keywordId") or node.get("id"),
+                "name": node.get("canonicalName") or node.get("name"),
+                "aliases": node.get("aliases", []),
+                "sourceMethods": node.get("sourceMethods", []),
+                "evidenceCount": len(node.get("occurrences", [])),
+            })
+        
+        if not keywords:
+            return {"filtered": 0, "excluded": 0, "admitted": 0, "details": []}
+        
+        # 构建 LLM 请求
+        system_prompt = """你是一个关键词过滤助手。根据用户提供的过滤规则，判断每个关键词是否应该被排除。
+
+对于每个关键词，返回 JSON 格式：
+{
+  "keywordId": "关键词ID",
+  "shouldExclude": true/false,
+  "reason": "排除或保留的原因"
+}
+
+只返回 JSON 数组，不要包含其他内容。"""
+        
+        user_message = f"""过滤规则：{prompt}
+
+关键词列表：
+{json.dumps(keywords, ensure_ascii=False, indent=2)}
+
+请根据上述规则判断每个关键词是否应该被排除。"""
+        
+        # 调用 LLM
+        try:
+            if self.model_gateway is None:
+                raise ValueError("模型网关未配置")
+            
+            result = self.model_gateway.chat_json(
+                [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_message},
+                ],
+                {"temperature": 0.1, "max_retries": 0}
+            )
+            
+            data = result.get("data", {})
+            decisions = data if isinstance(data, list) else []
+            
+        except Exception as e:
+            # LLM 调用失败，返回错误
+            return {"error": str(e), "filtered": 0, "excluded": 0, "admitted": 0, "details": []}
+        
+        # 应用过滤结果
+        decision_map = {d.get("keywordId"): d for d in decisions if d.get("keywordId")}
+        
+        excluded_count = 0
+        admitted_count = 0
+        details = []
+        
+        for node in nodes:
+            if node.get("type") != "Keyword":
+                continue
+            
+            keyword_id = str(node.get("keywordId") or node.get("id") or "")
+            decision = decision_map.get(keyword_id)
+            
+            if decision:
+                should_exclude = decision.get("shouldExclude", False)
+                reason = decision.get("reason", "")
+                
+                if should_exclude:
+                    self._write_admission_status(node, "excluded")
+                    excluded_count += 1
+                else:
+                    self._write_admission_status(node, "admitted")
+                    admitted_count += 1
+                
+                details.append({
+                    "keywordId": keyword_id,
+                    "name": node.get("canonicalName") or node.get("name"),
+                    "excluded": should_exclude,
+                    "reason": reason,
+                })
+        
+        # 保存更新后的图谱
+        edges_path = run_dir / "graph/edges.json"
+        if not edges_path.exists():
+            edges_path = dataset_root / "graph/edges.json"
+        
+        if edges_path.exists():
+            edges = json.loads(edges_path.read_text(encoding="utf-8"))
+        else:
+            edges = []
+        
+        summary = self._graph_summary(nodes, edges, self._read_json(dataset_root / "quality-issues.json", []), str(dataset.graph_summary.get("graphSource") or "model_keyword"))
+        
+        for graph_dir in (run_dir / "graph", dataset_root / "graph"):
+            self._write_json(graph_dir / "nodes.json", nodes)
+            self._write_json(graph_dir / "edges.json", edges)
+        
+        self._write_graph_summary_artifacts(run_dir, dataset_root, summary)
+        self.store.update_record("datasets", dataset.id, {"graphSummary": summary})
+        
+        return {
+            "filtered": len(details),
+            "excluded": excluded_count,
+            "admitted": admitted_count,
+            "details": details,
+        }
+
+    def update_keyword_business_status(
+        self,
+        dataset_id: str,
+        keyword_id: str,
+        business_status: str,
+        reason_code: str = "",
+        note: str = "",
+        operator_label: str = "当前用户",
+    ) -> dict[str, Any]:
+        if business_status not in {"businessAccepted", "businessRejected", "needsReview"}:
+            raise ValueError("业务准入状态只允许 businessAccepted、businessRejected 或 needsReview")
+        dataset = self.ensure_dataset_graph(dataset_id)
+        if dataset.state == "deleted" or not dataset.graph_available or not dataset.training_task_id:
+            raise FileNotFoundError(dataset_id)
+        run_dir = self._run_dir(dataset.training_task_id)
+        dataset_root = settings.data_root / "datasets" / dataset.id
+        nodes_path = run_dir / "graph/nodes.json"
+        edges_path = run_dir / "graph/edges.json"
+        if not nodes_path.exists() or not edges_path.exists():
+            raise FileNotFoundError(dataset_id)
+        nodes = json.loads(nodes_path.read_text(encoding="utf-8"))
+        edges = json.loads(edges_path.read_text(encoding="utf-8"))
+        node = self._resolve_graph_node(nodes, keyword_id)
+        if not node or node.get("type") != "Keyword":
+            raise KeyError(keyword_id)
+        reason_codes = [reason_code] if reason_code else []
+        node["businessStatus"] = business_status
+        node["businessReasonCodes"] = reason_codes
+        node["businessManualOverride"] = {
+            "operatorLabel": operator_label,
+            "note": note,
+            "reasonCode": reason_code,
+            "updatedAt": utcnow().isoformat(),
+        }
+        properties = node.setdefault("properties", {})
+        properties["businessStatus"] = business_status
+        properties["businessReasonCodes"] = reason_codes
+        review = self._keyword_business_review(dataset.id, nodes, preserve_existing=True)
+        summary = self._graph_summary(nodes, edges, self._read_json(dataset_root / "quality-issues.json", []), str(dataset.graph_summary.get("graphSource") or "model_keyword"))
+        summary["keywordBusinessReviewState"] = review["summary"]
+        for graph_dir in (run_dir / "graph", dataset_root / "graph"):
+            self._write_json(graph_dir / "nodes.json", nodes)
+            self._write_json(graph_dir / "edges.json", edges)
+        self._write_graph_summary_artifacts(run_dir, dataset_root, summary)
+        for quality_dir in (run_dir / "quality", dataset_root / "quality"):
+            self._write_json(quality_dir / "keyword-business-review.json", review)
+        self._persist_entity_relation_stage_summary(dataset_root, run_dir, summary)
+        self.store.update_record("datasets", dataset.id, {"graphSummary": summary})
+        self.store.update_record("tasks", dataset.training_task_id, {"graphSummary": summary})
+        return {"keywordId": node.get("keywordId") or node.get("id"), "businessStatus": business_status, "keywordBusinessReviewState": summary.get("keywordBusinessReviewState", {})}
+
+    @staticmethod
+    def _read_admission_status(node: dict) -> str:
+        """读取准入状态，自动从旧字段迁移。"""
+        explicit = node.get("admissionStatus") or node.get("properties", {}).get("admissionStatus")
+        if explicit:
+            return str(explicit)
+        approval = str(node.get("approvalStatus") or node.get("properties", {}).get("approvalStatus") or "autoAccepted")
+        business = str(node.get("businessStatus") or node.get("properties", {}).get("businessStatus") or "")
+        if approval in ("autoAccepted", "accepted") and business == "businessAccepted":
+            return "admitted"
+        return "excluded"
+
+    @staticmethod
+    def _write_admission_status(node: dict, status: str) -> None:
+        """写入准入状态到节点和 properties。"""
+        node["admissionStatus"] = status
+        node.setdefault("properties", {})["admissionStatus"] = status
+
+    def _migrate_admission_statuses(self, nodes: list[dict]) -> bool:
+        """为缺少 admissionStatus 的关键词节点补充迁移值，返回是否有变更。"""
+        changed = False
+        for node in nodes:
+            if node.get("type") != "Keyword":
+                continue
+            if node.get("admissionStatus") or node.get("properties", {}).get("admissionStatus"):
+                continue
+            migrated = self._read_admission_status(node)
+            self._write_admission_status(node, migrated)
+            changed = True
+        return changed
+
+    def update_keyword_admission(
+        self,
+        dataset_id: str,
+        keyword_id: str,
+        admission_status: str,
+        note: str = "",
+        operator_label: str = "当前用户",
+    ) -> dict[str, Any]:
+        if admission_status not in {"admitted", "excluded"}:
+            raise ValueError("准入状态只允许 admitted 或 excluded")
+        dataset = self.ensure_dataset_graph(dataset_id)
+        if dataset.state == "deleted" or not dataset.graph_available or not dataset.training_task_id:
+            raise FileNotFoundError(dataset_id)
+        run_dir = self._run_dir(dataset.training_task_id)
+        dataset_root = settings.data_root / "datasets" / dataset.id
+        nodes_path = run_dir / "graph/nodes.json"
+        edges_path = run_dir / "graph/edges.json"
+        if not nodes_path.exists() or not edges_path.exists():
+            raise FileNotFoundError(dataset_id)
+        nodes = json.loads(nodes_path.read_text(encoding="utf-8"))
+        edges = json.loads(edges_path.read_text(encoding="utf-8"))
+        node = self._resolve_graph_node(nodes, keyword_id)
+        if not node or node.get("type") != "Keyword":
+            raise KeyError(keyword_id)
+        self._write_admission_status(node, admission_status)
+        node["admissionManualOverride"] = {
+            "operatorLabel": operator_label,
+            "note": note,
+            "updatedAt": utcnow().isoformat(),
+        }
+        summary = self._graph_summary(nodes, edges, self._read_json(dataset_root / "quality-issues.json", []), str(dataset.graph_summary.get("graphSource") or "model_keyword"))
+        for graph_dir in (run_dir / "graph", dataset_root / "graph"):
+            self._write_json(graph_dir / "nodes.json", nodes)
+            self._write_json(graph_dir / "edges.json", edges)
+        self._write_graph_summary_artifacts(run_dir, dataset_root, summary)
+        self.store.update_record("datasets", dataset.id, {"graphSummary": summary})
+        self.store.update_record("tasks", dataset.training_task_id, {"graphSummary": summary})
+        return {
+            "keywordId": node.get("keywordId") or node.get("id"),
+            "admissionStatus": admission_status,
+            "keywordAdmissionState": summary.get("keywordAdmissionState", {}),
+        }
+
+    def create_l2_term(
+        self,
+        dataset_id: str,
+        name: str,
+        canonical_name: str = "",
+        description: str = "",
+        linked_l1_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
+        dataset = self.ensure_dataset_graph(dataset_id)
+        if dataset.state == "deleted" or not dataset.graph_available or not dataset.training_task_id:
+            raise FileNotFoundError(dataset_id)
+        run_dir = self._run_dir(dataset.training_task_id)
+        dataset_root = settings.data_root / "datasets" / dataset.id
+        nodes_path = run_dir / "graph/nodes.json"
+        edges_path = run_dir / "graph/edges.json"
+        if not nodes_path.exists() or not edges_path.exists():
+            raise FileNotFoundError(dataset_id)
+        nodes = json.loads(nodes_path.read_text(encoding="utf-8"))
+        edges = json.loads(edges_path.read_text(encoding="utf-8"))
+        term_id = f"l2_{name}_{len(nodes)}".replace(" ", "_")
+        l2_node = {
+            "id": term_id,
+            "keywordId": term_id,
+            "type": "Keyword",
+            "keywordLevel": "L2",
+            "rawName": name,
+            "canonicalName": canonical_name or name,
+            "displayName": canonical_name or name,
+            "description": description,
+            "sourceMethods": ["manual_l2_term"],
+            "admissionStatus": "admitted",
+            "aliases": [],
+            "chunkIds": [],
+            "properties": {
+                "admissionStatus": "admitted",
+                "keywordLevel": "L2",
+            },
+        }
+        nodes.append(l2_node)
+        created_links = []
+        for l1_id in (linked_l1_ids or []):
+            l1_node = self._resolve_graph_node(nodes, l1_id)
+            if not l1_node or l1_node.get("type") != "Keyword":
+                continue
+            edge = {
+                "source": term_id,
+                "target": l1_id,
+                "type": "MAPS_TO_TERM",
+                "weight": 0.5,
+                "evidenceChunkIds": [],
+            }
+            edges.append(edge)
+            created_links.append({"source": term_id, "target": l1_id, "type": "MAPS_TO_TERM", "weight": 0.5})
+        summary = self._graph_summary(nodes, edges, self._read_json(dataset_root / "quality-issues.json", []), str(dataset.graph_summary.get("graphSource") or "model_keyword"))
+        for graph_dir in (run_dir / "graph", dataset_root / "graph"):
+            self._write_json(graph_dir / "nodes.json", nodes)
+            self._write_json(graph_dir / "edges.json", edges)
+        self._write_graph_summary_artifacts(run_dir, dataset_root, summary)
+        self.store.update_record("datasets", dataset.id, {"graphSummary": summary})
+        self.store.update_record("tasks", dataset.training_task_id, {"graphSummary": summary})
+        return {"termId": term_id, "termName": name, "linkedL1Count": len(created_links), "keywordLevelStats": summary.get("keywordLevelStats", {})}
+
+    def create_keyword_link(
+        self,
+        dataset_id: str,
+        keyword_id: str,
+        target_id: str,
+        weight: float = 0.5,
+        evidence_chunk_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
+        dataset = self.ensure_dataset_graph(dataset_id)
+        if dataset.state == "deleted" or not dataset.graph_available or not dataset.training_task_id:
+            raise FileNotFoundError(dataset_id)
+        run_dir = self._run_dir(dataset.training_task_id)
+        dataset_root = settings.data_root / "datasets" / dataset.id
+        nodes_path = run_dir / "graph/nodes.json"
+        edges_path = run_dir / "graph/edges.json"
+        if not nodes_path.exists() or not edges_path.exists():
+            raise FileNotFoundError(dataset_id)
+        nodes = json.loads(nodes_path.read_text(encoding="utf-8"))
+        edges = json.loads(edges_path.read_text(encoding="utf-8"))
+        source_node = self._resolve_graph_node(nodes, keyword_id)
+        target_node = self._resolve_graph_node(nodes, target_id)
+        if not source_node or not target_node:
+            raise KeyError(keyword_id)
+        edge = {
+            "source": keyword_id,
+            "target": target_id,
+            "type": "MAPS_TO_TERM",
+            "weight": max(0.0, min(1.0, weight)),
+            "evidenceChunkIds": evidence_chunk_ids or [],
+        }
+        edges.append(edge)
+        summary = self._graph_summary(nodes, edges, self._read_json(dataset_root / "quality-issues.json", []), str(dataset.graph_summary.get("graphSource") or "model_keyword"))
+        for graph_dir in (run_dir / "graph", dataset_root / "graph"):
+            self._write_json(graph_dir / "nodes.json", nodes)
+            self._write_json(graph_dir / "edges.json", edges)
+        self._write_graph_summary_artifacts(run_dir, dataset_root, summary)
+        self.store.update_record("datasets", dataset.id, {"graphSummary": summary})
+        self.store.update_record("tasks", dataset.training_task_id, {"graphSummary": summary})
+        return {"source": keyword_id, "target": target_id, "type": "MAPS_TO_TERM", "weight": edge["weight"]}
+
+    def expand_l2_term(self, dataset_id: str, term_id: str, limit: int = 50) -> dict[str, Any]:
+        dataset = self.ensure_dataset_graph(dataset_id)
+        if dataset.state == "deleted" or not dataset.graph_available or not dataset.training_task_id:
+            raise FileNotFoundError(dataset_id)
+        run_dir = self._run_dir(dataset.training_task_id)
+        nodes_path = run_dir / "graph/nodes.json"
+        edges_path = run_dir / "graph/edges.json"
+        if not nodes_path.exists() or not edges_path.exists():
+            raise FileNotFoundError(dataset_id)
+        nodes = json.loads(nodes_path.read_text(encoding="utf-8"))
+        edges = json.loads(edges_path.read_text(encoding="utf-8"))
+        term_node = self._resolve_graph_node(nodes, term_id)
+        if not term_node or term_node.get("type") != "Keyword":
+            raise KeyError(term_id)
+        node_lookup = {str(n.get("id") or n.get("keywordId") or ""): n for n in nodes}
+        expansions = []
+        for edge in edges:
+            if edge.get("type") != "MAPS_TO_TERM":
+                continue
+            if str(edge.get("source")) != term_id:
+                continue
+            target_id = str(edge.get("target"))
+            target_node = node_lookup.get(target_id)
+            if not target_node:
+                continue
+            expansions.append({
+                "l1Node": {
+                    "id": target_id,
+                    "name": target_node.get("displayName") or target_node.get("rawName") or target_node.get("canonicalName") or target_id,
+                    "rawName": target_node.get("rawName"),
+                    "canonicalName": target_node.get("canonicalName"),
+                    "admissionStatus": self._read_admission_status(target_node),
+                    "keywordLevel": target_node.get("keywordLevel") or "L1",
+                },
+                "weight": float(edge.get("weight") or 0.5),
+                "evidenceChunkIds": edge.get("evidenceChunkIds") or [],
+                "path": [term_id, "MAPS_TO_TERM", target_id],
+            })
+        expansions.sort(key=lambda item: item["weight"], reverse=True)
+        admitted_count = sum(1 for e in expansions if e["l1Node"]["admissionStatus"] == "admitted")
+        return {
+            "l2Node": {
+                "id": term_id,
+                "name": term_node.get("displayName") or term_node.get("canonicalName") or term_node.get("rawName") or term_id,
+                "canonicalName": term_node.get("canonicalName"),
+                "description": term_node.get("description", ""),
+            },
+            "expansions": expansions[:limit],
+            "totalExpansionCount": len(expansions),
+            "admittedExpansionCount": admitted_count,
+        }
+
+    def _write_graph_summary_artifacts(self, run_dir: Path, dataset_root: Path, summary: dict[str, Any]) -> None:
+        for report_path in (run_dir / "run-report.json", dataset_root / "run-report.json"):
+            report = self._read_json(report_path, {})
+            if isinstance(report, dict):
+                report["graph"] = summary
+                report["graphSummary"] = summary
+                self._write_json(report_path, report)
+
+    def start_formal_knowledge_task(self, dataset_id: str) -> TaskSnapshot:
+        dataset = self.ensure_dataset_graph(dataset_id)
+        if dataset.state == "deleted":
+            raise ValueError("已删除数据集不能构建正式知识")
+        nodes = self.graph(dataset_id, "nodes")
+        accepted = [
+            node for node in nodes
+            if node.get("type") == "Keyword"
+            and self._read_admission_status(node) == "admitted"
+        ]
+        if not accepted:
+            raise ValueError('没有已准入（生效）的关键词，不能构建正式知识。请先对关键词执行「确认并准入」操作。')
+        config = dataset.config.model_dump(mode="json", by_alias=True) if hasattr(dataset.config, "model_dump") else dict(dataset.config or {})
+        request = TrainingTaskCreate(
+            batchId=dataset.batch_id,
+            config=config,
+            mode="formal_knowledge",
+            sourceDatasetId=dataset.id,
+            keywordIds=[str(node.get("keywordId") or node.get("id")) for node in accepted],
+        )
+        return self.start(request)
+
+    def _formal_keyword_context_by_chunk(self, dataset_id: str | None, keyword_ids: list[str] | None = None) -> dict[str, list[dict[str, Any]]]:
+        if not dataset_id:
+            return {}
+        nodes = self.graph(dataset_id, "nodes")
+        dataset_root = settings.data_root / "datasets" / dataset_id
+        index_path = dataset_root / "keyword-chunk-index.json"
+        materialized = None
+        if index_path.is_file():
+            try:
+                materialized = json.loads(index_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                materialized = None
+        allowed_ids = {str(item) for item in (keyword_ids or []) if item}
+        node_lookup = {
+            str(node.get("keywordId") or node.get("id") or ""): node
+            for node in nodes
+            if node.get("type") == "Keyword"
+        }
+        result: dict[str, list[dict[str, Any]]] = {}
+        if isinstance(materialized, dict) and isinstance(materialized.get("keywordToChunks"), dict):
+            for keyword_id, chunk_ids in materialized.get("keywordToChunks", {}).items():
+                node = node_lookup.get(str(keyword_id))
+                if not node:
+                    continue
+                if self._read_admission_status(node) != "admitted":
+                    continue
+                if allowed_ids and str(keyword_id) not in allowed_ids and str(node.get("id") or "") not in allowed_ids:
+                    continue
+                for chunk_id in chunk_ids or []:
+                    if not chunk_id:
+                        continue
+                    result.setdefault(str(chunk_id), []).append(self._formal_keyword_context_entry(str(keyword_id), node))
+            if result:
+                return self._normalize_keyword_context_by_chunk(result)
+        for node in nodes:
+            if node.get("type") != "Keyword":
+                continue
+            keyword_id = str(node.get("keywordId") or node.get("id") or "")
+            if self._read_admission_status(node) != "admitted":
+                continue
+            if allowed_ids and keyword_id not in allowed_ids and str(node.get("id") or "") not in allowed_ids:
+                continue
+            for chunk_id in node.get("chunkIds") or []:
+                if not chunk_id:
+                    continue
+                result.setdefault(str(chunk_id), []).append(self._formal_keyword_context_entry(keyword_id, node))
+        return self._normalize_keyword_context_by_chunk(result)
+
+    @staticmethod
+    def _formal_keyword_context_entry(keyword_id: str, node: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "keywordId": str(keyword_id),
+            "canonicalName": node.get("canonicalName") or node.get("name"),
+            "aliases": node.get("aliases") or [],
+        }
+
+    @staticmethod
+    def _normalize_keyword_context_by_chunk(context_by_chunk: dict[str, list[dict[str, Any]]]) -> dict[str, list[dict[str, Any]]]:
+        normalized: dict[str, list[dict[str, Any]]] = {}
+        for chunk_id in sorted(str(item) for item in context_by_chunk if item):
+            by_keyword: dict[str, dict[str, Any]] = {}
+            for context in context_by_chunk.get(chunk_id) or []:
+                keyword_id = str((context or {}).get("keywordId") or "")
+                if not keyword_id:
+                    continue
+                if keyword_id not in by_keyword:
+                    by_keyword[keyword_id] = dict(context)
+                    by_keyword[keyword_id]["keywordId"] = keyword_id
+                    continue
+                existing = by_keyword[keyword_id]
+                aliases = list(existing.get("aliases") or [])
+                for alias in context.get("aliases") or []:
+                    if alias not in aliases:
+                        aliases.append(alias)
+                existing["aliases"] = aliases
+                if not existing.get("canonicalName") and context.get("canonicalName"):
+                    existing["canonicalName"] = context.get("canonicalName")
+            if by_keyword:
+                normalized[chunk_id] = [by_keyword[keyword_id] for keyword_id in sorted(by_keyword)]
+        return normalized
+
+    def _formal_keyword_input_plan(
+        self,
+        dataset_id: str | None,
+        nodes: list[dict[str, Any]],
+        keyword_context_by_chunk: dict[str, list[dict[str, Any]]],
+    ) -> dict[str, Any]:
+        accepted_ids = sorted({
+            str(context.get("keywordId"))
+            for contexts in keyword_context_by_chunk.values()
+            for context in contexts
+            if context.get("keywordId")
+        })
+        rejected_ids = sorted({
+            str(node.get("keywordId") or node.get("id"))
+            for node in nodes
+            if node.get("type") == "Keyword"
+            and str(node.get("approvalStatus") or node.get("properties", {}).get("approvalStatus") or "autoAccepted") == "rejected"
+            and str(node.get("keywordId") or node.get("id") or "")
+        })
+        chunk_keyword_map = {
+            chunk_id: [str(context.get("keywordId")) for context in contexts if context.get("keywordId")]
+            for chunk_id, contexts in self._normalize_keyword_context_by_chunk(keyword_context_by_chunk).items()
+        }
+        return {
+            "sourceDatasetId": dataset_id,
+            "acceptedKeywordIds": accepted_ids,
+            "rejectedKeywordIds": rejected_ids,
+            "scheduledChunkIds": sorted(chunk_keyword_map),
+            "chunkKeywordMap": chunk_keyword_map,
+            "filteredKeywordCount": len(rejected_ids),
+            "deduplicatedChunkCount": len(chunk_keyword_map),
+        }
+
+    def _keyword_business_review(self, dataset_id: str, nodes: list[dict[str, Any]], preserve_existing: bool = False) -> dict[str, Any]:
+        items = []
+        for node in nodes:
+            if node.get("type") != "Keyword":
+                continue
+            if preserve_existing and node.get("businessStatus"):
+                item = self._keyword_business_review_item_from_node(node)
+            else:
+                item = self._evaluate_keyword_business(node)
+            items.append(item)
+        summary = self._keyword_business_review_summary(items)
+        return {
+            "schemaVersion": "1.0.0",
+            "datasetId": dataset_id,
+            "ruleSetHash": self._metadata_rule_set_hash(),
+            "summary": summary,
+            "items": items,
+        }
+
+    def _keyword_business_review_item_from_node(self, node: dict[str, Any]) -> dict[str, Any]:
+        coverage = node.get("businessEvidenceCoverage") or self._keyword_evidence_coverage(node)
+        reason_codes = node.get("businessReasonCodes") or node.get("properties", {}).get("businessReasonCodes") or []
+        return {
+            "keywordId": str(node.get("keywordId") or node.get("id") or ""),
+            "canonicalName": node.get("canonicalName") or node.get("name") or node.get("displayName"),
+            "businessStatus": node.get("businessStatus") or node.get("properties", {}).get("businessStatus") or "needsReview",
+            "reasonCodes": list(reason_codes),
+            "evidenceCoverage": coverage,
+            "sourceRuleIds": list(node.get("businessSourceRuleIds") or []),
+            "manualOverride": node.get("businessManualOverride"),
+        }
+
+    def _evaluate_keyword_business(self, node: dict[str, Any]) -> dict[str, Any]:
+        rules = (getattr(self.metadata_construction, "rules", {}) or {}).get("businessKeywordReview") or {}
+        keyword_id = str(node.get("keywordId") or node.get("id") or "")
+        canonical = str(node.get("canonicalName") or node.get("name") or node.get("displayName") or "").strip()
+        aliases = [str(item).strip() for item in (node.get("aliases") or []) if str(item).strip()]
+        values = [canonical, *aliases]
+        coverage = self._keyword_evidence_coverage(node)
+        reason_codes: list[str] = []
+        source_rule_ids: list[str] = []
+
+        folded_values = {value.casefold() for value in values if value}
+        scope_words = {str(item).casefold() for item in rules.get("scopeWords", [])}
+        naming_words = {str(item).casefold() for item in rules.get("namingNoiseWords", [])}
+        strong_topics = {str(item).casefold() for item in rules.get("strongTopicTerms", [])}
+        rejection_patterns = rules.get("rejectionPatterns") or []
+
+        if any(value in scope_words for value in folded_values):
+            reason_codes.append("scope_word")
+            source_rule_ids.append("business.scopeWords")
+        if any(value in naming_words for value in folded_values):
+            reason_codes.append("file_naming_noise")
+            source_rule_ids.append("business.namingNoiseWords")
+        if any(pattern.search(canonical) for _, pattern in rejection_patterns) or self._is_technical_keyword(canonical):
+            reason_codes.append("technical_identifier")
+            source_rule_ids.append("business.rejectionPatterns")
+
+        if reason_codes:
+            status = "businessRejected"
+        else:
+            evidence_count = int(coverage.get("total", 0))
+            min_evidence = int(rules.get("minEvidenceCount", 1) or 1)
+            is_strong_topic = any(value in strong_topics for value in folded_values)
+            has_domain_method = any(
+                method in {"domain_term", "domain_glossary_title", "deterministic_title_glossary"}
+                for method in (node.get("sourceMethods") or node.get("properties", {}).get("sourceMethods") or [])
+            )
+            approval_status = str(node.get("approvalStatus") or node.get("properties", {}).get("approvalStatus") or "")
+            if approval_status == "pending":
+                status = "needsReview"
+                reason_codes.append("pending_keyword_approval")
+            elif evidence_count >= min_evidence and (is_strong_topic or has_domain_method):
+                status = "businessAccepted"
+                reason_codes.extend(["domain_topic" if is_strong_topic else "domain_term", "strong_evidence"])
+            elif evidence_count >= min_evidence and approval_status == "accepted":
+                status = "businessAccepted"
+                reason_codes.extend(["user_confirmed", "strong_evidence"])
+            else:
+                status = "needsReview"
+                reason_codes.append("weak_evidence" if evidence_count < min_evidence else "needs_business_review")
+
+        return {
+            "keywordId": keyword_id,
+            "canonicalName": canonical,
+            "businessStatus": status,
+            "reasonCodes": reason_codes,
+            "evidenceCoverage": coverage,
+            "sourceRuleIds": source_rule_ids,
+            "manualOverride": node.get("businessManualOverride"),
+        }
+
+    @staticmethod
+    def _keyword_evidence_coverage(node: dict[str, Any]) -> dict[str, int]:
+        coverage = {"title": 0, "heading": 0, "content": 0, "domain_glossary": 0, "chunkCount": 0, "total": 0}
+        chunk_ids = {str(item) for item in (node.get("chunkIds") or []) if item}
+        occurrences = node.get("occurrences") or []
+        for occurrence in occurrences:
+            source = str((occurrence or {}).get("evidenceSource") or (occurrence or {}).get("source") or "content")
+            if source not in coverage:
+                source = "content"
+            coverage[source] += 1
+            coverage["total"] += 1
+            if (occurrence or {}).get("chunkId"):
+                chunk_ids.add(str((occurrence or {}).get("chunkId")))
+        coverage["chunkCount"] = len(chunk_ids)
+        if not coverage["total"] and chunk_ids:
+            coverage["total"] = len(chunk_ids)
+            coverage["content"] = len(chunk_ids)
+        return coverage
+
+    @staticmethod
+    def _keyword_business_review_summary(items: list[dict[str, Any]]) -> dict[str, Any]:
+        reason_counts: dict[str, int] = {}
+        state = {
+            "totalKeywordCount": len(items),
+            "businessAcceptedCount": 0,
+            "businessRejectedCount": 0,
+            "needsReviewCount": 0,
+            "admittedChunkCount": 0,
+            "reasonCounts": reason_counts,
+        }
+        admitted_chunks = 0
+        for item in items:
+            status = str(item.get("businessStatus") or "needsReview")
+            if status == "businessAccepted":
+                state["businessAcceptedCount"] += 1
+                admitted_chunks += int((item.get("evidenceCoverage") or {}).get("chunkCount") or 0)
+            elif status == "businessRejected":
+                state["businessRejectedCount"] += 1
+            else:
+                state["needsReviewCount"] += 1
+            for reason in item.get("reasonCodes") or []:
+                reason_counts[str(reason)] = reason_counts.get(str(reason), 0) + 1
+        state["admittedChunkCount"] = admitted_chunks
+        return state
+
+    def _entity_relation_stage_summary(self, *roots: Path) -> dict[str, Any]:
+        default = {
+            "state": "pending",
+            "entityCandidateCount": 0,
+            "relationCandidateCount": 0,
+            "validatedEntityCount": 0,
+            "validatedRelationCount": 0,
+            "issueCount": 0,
+        }
+        for root in roots:
+            if not root:
+                continue
+            value = self._read_json(root / "quality/entity-relation-stage-status.json", None)
+            if isinstance(value, dict):
+                return {**default, **value}
+        return default
+
+    def _persist_entity_relation_stage_summary(self, dataset_root: Path, run_dir: Path, summary: dict[str, Any]) -> None:
+        entity_relation_stage = self._entity_relation_stage_summary(dataset_root, run_dir)
+        summary["entityRelationStage"] = entity_relation_stage
+        for quality_dir in (run_dir / "quality", dataset_root / "quality"):
+            self._write_json(quality_dir / "entity-relation-stage-status.json", entity_relation_stage)
+
+    @staticmethod
+    def _keyword_chunk_index(nodes: list[dict[str, Any]]) -> dict[str, Any]:
+        keyword_to_chunks: dict[str, list[str]] = {}
+        chunk_to_keywords: dict[str, list[str]] = {}
+        for node in nodes:
+            if not isinstance(node, dict) or node.get("type") != "Keyword":
+                continue
+            keyword_id = str(node.get("keywordId") or node.get("id") or "")
+            if not keyword_id:
+                continue
+            chunks = []
+            for chunk_id in node.get("chunkIds") or []:
+                chunk_text = str(chunk_id or "")
+                if not chunk_text:
+                    continue
+                if chunk_text not in chunks:
+                    chunks.append(chunk_text)
+                chunk_to_keywords.setdefault(chunk_text, [])
+                if keyword_id not in chunk_to_keywords[chunk_text]:
+                    chunk_to_keywords[chunk_text].append(keyword_id)
+            keyword_to_chunks[keyword_id] = chunks
+        return {
+            "schemaVersion": "1.0.0",
+            "createdAt": utcnow().isoformat(),
+            "keywordToChunks": keyword_to_chunks,
+            "chunkToKeywords": chunk_to_keywords,
+        }
 
     def _needs_graph_backfill(self, dataset) -> bool:
         if getattr(dataset, "state", None) == "deleted" or not getattr(dataset, "training_task_id", None):
@@ -840,12 +1748,547 @@ class TrainingService:
             "category": candidate.get("category"),
         }
 
+    def _keyword_skill_context(self) -> dict[str, Any]:
+        system_prompt = self.prompts.get("keyword-extraction.system")
+        user_prompt = self.prompts.get("keyword-extraction.user", system_prompt.skill_version)
+        skill = self.prompts.skills.get("keyword-extraction", system_prompt.skill_version)
+        defaults = skill.manifest.get("defaults", {})
+        return {
+            "skill": skill,
+            "defaults": defaults,
+            "systemPromptHash": system_prompt.content_hash,
+            "userPromptHash": user_prompt.content_hash,
+            "promptHash": hashlib.sha256(
+                f"{system_prompt.content_hash}:{user_prompt.content_hash}".encode("utf-8")
+            ).hexdigest(),
+        }
+
+    def _keyword_candidate_cache_key(
+        self,
+        chunk: dict[str, Any],
+        document: dict[str, Any],
+        skill_context: dict[str, Any],
+    ) -> str:
+        content = str(chunk.get("content") or "")
+        content_hash = str(chunk.get("contentHash") or "").strip()
+        if not content_hash:
+            content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        payload = {
+            "contentHash": content_hash,
+            "semanticTitle": str(document.get("semanticTitle") or ""),
+            "metadataRuleSetHash": self._metadata_rule_set_hash(),
+            "skillVersion": getattr(skill_context["skill"], "version", ""),
+            "promptHash": skill_context["promptHash"],
+        }
+        return stable_id(
+            "keyword-cache",
+            json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+        ).split(":", 1)[1]
+
+    def _keyword_candidate_cache_path(self, key: str) -> Path:
+        return settings.data_root / "processing" / "keyword-candidate-cache" / f"{key}.json"
+
+    def _read_keyword_candidate_cache(self, key: str) -> list[dict[str, Any]] | None:
+        path = self._keyword_candidate_cache_path(key)
+        if not path.is_file():
+            return None
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        candidates = value.get("keywordCandidates") if isinstance(value, dict) else None
+        if not isinstance(candidates, list):
+            return None
+        return [item for item in candidates if isinstance(item, dict)]
+
+    def _write_keyword_candidate_cache(
+        self,
+        key: str,
+        candidates: list[dict[str, Any]],
+        skill_context: dict[str, Any],
+    ) -> None:
+        path = self._keyword_candidate_cache_path(key)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(".tmp")
+        temporary.write_text(json.dumps({
+            "keywordCandidates": candidates,
+            "skillVersion": getattr(skill_context["skill"], "version", ""),
+            "promptHash": skill_context["promptHash"],
+            "metadataRuleSetHash": self._metadata_rule_set_hash(),
+            "createdAt": utcnow().isoformat(),
+        }, ensure_ascii=False, indent=2), encoding="utf-8")
+        temporary.replace(path)
+
+    def _deterministic_keyword_candidates(
+        self,
+        task_id: str,
+        document: dict[str, Any],
+        resource_chunks: list[dict[str, Any]],
+        low_confidence_threshold: float,
+    ) -> list[dict[str, Any]]:
+        rules = getattr(self.metadata_construction, "rules", {}) or {}
+        title_glossary_confidence = (
+            (rules.get("titleCleaning") or {}).get("titleGlossaryConfidence")
+            or 0.82
+        )
+        title_topic_confidence = float(
+            (rules.get("titleCleaning") or {}).get("titleTopicConfidence")
+            or 0.78
+        )
+        title_topic_max_characters = int(
+            (rules.get("titleCleaning") or {}).get("titleTopicMaxCharacters")
+            or 40
+        )
+        semantic_title = str(document.get("semanticTitle") or "").strip()
+        if not semantic_title or not resource_chunks:
+            return []
+        semantic_folded = semantic_title.casefold()
+        heading_text = "\n".join(
+            " / ".join(str(part) for part in (chunk.get("headingPath") or []))
+            for chunk in resource_chunks
+        )
+        content_text = "\n\n".join(str(chunk.get("content") or "") for chunk in resource_chunks)
+        evidence_haystack = f"{semantic_title}\n{heading_text}\n{content_text}"
+        candidates: list[dict[str, Any]] = []
+        seen: set[tuple[str, str]] = set()
+
+        # === 1. 领域词典匹配（标题+正文） ===
+        for term in document.get("domainTerms") or []:
+            if not isinstance(term, dict):
+                continue
+            aliases = self._valid_keyword_aliases([
+                term.get("canonicalName"),
+                *(term.get("aliases") or []),
+                *(term.get("matchedAliases") or []),
+            ])
+            # 先在标题中查找证据
+            evidence = next(
+                (
+                    alias for alias in sorted(aliases, key=len, reverse=True)
+                    if alias.casefold() in semantic_folded and alias in evidence_haystack
+                ),
+                None,
+            )
+            evidence_source = "domain_glossary"
+            evidence_confidence = float(title_glossary_confidence)
+            # 如果标题中没有，在正文中查找
+            if not evidence:
+                evidence = next(
+                    (
+                        alias for alias in sorted(aliases, key=len, reverse=True)
+                        if alias in content_text
+                    ),
+                    None,
+                )
+                if evidence:
+                    evidence_source = "content_glossary"
+                    evidence_confidence = 0.72
+            canonical = str(term.get("canonicalName") or evidence or "").strip()
+            identity = self._keyword_node_identity(canonical, term.get("termId"))
+            if not evidence or not identity:
+                continue
+            if self._is_excluded_keyword(canonical, context=evidence_haystack[:500]):
+                continue
+            key = (str(term.get("termId") or "").casefold(), identity[1])
+            if key in seen:
+                continue
+            seen.add(key)
+            evidence_chunk = next(
+                (
+                    chunk for chunk in resource_chunks
+                    if evidence in str(chunk.get("content") or "")
+                    or evidence in " / ".join(str(part) for part in (chunk.get("headingPath") or []))
+                ),
+                resource_chunks[0],
+            )
+            candidates.append({
+                "candidateId": stable_id("keyword-candidate", task_id, str(evidence_chunk.get("id") or evidence_chunk.get("chunkId") or ""), canonical, evidence),
+                "taskId": task_id,
+                "stageRunId": self._stage_run_id(task_id, "deterministic_extraction"),
+                "resourceId": str(document.get("resourceId") or ""),
+                "chunkId": str(evidence_chunk.get("id") or evidence_chunk.get("chunkId") or ""),
+                "sourcePath": evidence_chunk.get("sourcePath"),
+                "documentTitle": document.get("title"),
+                "semanticTitle": semantic_title,
+                "sourceMethod": "deterministic_title_glossary" if evidence_source == "domain_glossary" else "deterministic_content_glossary",
+                "canonicalName": canonical,
+                "aliases": aliases,
+                "matchedAliases": self._valid_keyword_aliases([evidence]),
+                "termId": term.get("termId"),
+                "termType": term.get("termType"),
+                "category": term.get("category"),
+                "evidenceSource": evidence_source,
+                "evidenceText": evidence,
+                "confidence": evidence_confidence,
+                "approvalStatus": "autoAccepted" if evidence_confidence >= low_confidence_threshold else "pending",
+            })
+
+        # === 2. 标题降级提取 ===
+        title_identity = self._keyword_identity(semantic_title)
+        title_is_single_topic = (
+            title_identity is not None
+            and len(semantic_title) <= title_topic_max_characters
+            and not any(separator in semantic_title for separator in ("&&", "&", "/", "\\", "|", "、", "，", ",", ";", "；"))
+            and semantic_title.casefold() not in (rules.get("stopwords") or set())
+            and not self._is_excluded_keyword(semantic_title, context=semantic_title)  # 排除工单号、人名等
+        )
+        if title_is_single_topic and not candidates:
+            title_folded = semantic_title.casefold()
+            evidence_chunk = next(
+                (
+                    chunk for chunk in resource_chunks
+                    if title_folded in str(chunk.get("content") or "").casefold()
+                    or title_folded in " / ".join(str(part) for part in (chunk.get("headingPath") or [])).casefold()
+                ),
+                resource_chunks[0],
+            )
+            candidates.append({
+                "candidateId": stable_id("keyword-candidate", task_id, str(evidence_chunk.get("id") or evidence_chunk.get("chunkId") or ""), semantic_title, "title"),
+                "taskId": task_id,
+                "stageRunId": self._stage_run_id(task_id, "deterministic_extraction"),
+                "resourceId": str(document.get("resourceId") or ""),
+                "chunkId": str(evidence_chunk.get("id") or evidence_chunk.get("chunkId") or ""),
+                "sourcePath": evidence_chunk.get("sourcePath"),
+                "documentTitle": document.get("title"),
+                "semanticTitle": semantic_title,
+                "sourceMethod": "deterministic_title_fallback",
+                "canonicalName": semantic_title,
+                "aliases": [semantic_title],
+                "matchedAliases": [semantic_title],
+                "termId": None,
+                "termType": "title_topic",
+                "category": "主题",
+                "evidenceSource": "heading",
+                "evidenceText": semantic_title,
+                "confidence": title_topic_confidence,
+                "approvalStatus": "autoAccepted" if title_topic_confidence >= low_confidence_threshold else "pending",
+            })
+
+        # === 3. 正文模式匹配提取 ===
+        pattern_confidence = 0.75
+        seen_patterns: set[str] = set()
+
+        # 3a. YAS-XXXXX 错误码
+        for match in re.finditer(r"(YAS-\d{4,5})", content_text, re.IGNORECASE):
+            error_code = match.group(1).upper()
+            if error_code in seen_patterns:
+                continue
+            seen_patterns.add(error_code)
+            evidence_chunk = next(
+                (chunk for chunk in resource_chunks if error_code in str(chunk.get("content") or "")),
+                resource_chunks[0],
+            )
+            chunk_id = str(evidence_chunk.get("id") or evidence_chunk.get("chunkId") or "")
+            candidates.append({
+                "candidateId": stable_id("keyword-candidate", task_id, chunk_id, error_code, "error_code"),
+                "taskId": task_id,
+                "stageRunId": self._stage_run_id(task_id, "deterministic_extraction"),
+                "resourceId": str(document.get("resourceId") or ""),
+                "chunkId": chunk_id,
+                "sourcePath": evidence_chunk.get("sourcePath"),
+                "documentTitle": document.get("title"),
+                "semanticTitle": semantic_title,
+                "sourceMethod": "deterministic_pattern_error_code",
+                "canonicalName": error_code,
+                "aliases": [error_code, error_code.lower()],
+                "matchedAliases": [error_code],
+                "termId": f"yashandb.error.{error_code}",
+                "termType": "error_code",
+                "category": "故障诊断",
+                "evidenceSource": "content_pattern",
+                "evidenceText": error_code,
+                "confidence": pattern_confidence,
+                "approvalStatus": "autoAccepted" if pattern_confidence >= low_confidence_threshold else "pending",
+            })
+
+        # 3b. ORA-XXXXX 错误码
+        for match in re.finditer(r"(ORA-\d{4,5})", content_text, re.IGNORECASE):
+            error_code = match.group(1).upper()
+            if error_code in seen_patterns:
+                continue
+            seen_patterns.add(error_code)
+            evidence_chunk = next(
+                (chunk for chunk in resource_chunks if error_code in str(chunk.get("content") or "")),
+                resource_chunks[0],
+            )
+            chunk_id = str(evidence_chunk.get("id") or evidence_chunk.get("chunkId") or "")
+            candidates.append({
+                "candidateId": stable_id("keyword-candidate", task_id, chunk_id, error_code, "oracle_error_code"),
+                "taskId": task_id,
+                "stageRunId": self._stage_run_id(task_id, "deterministic_extraction"),
+                "resourceId": str(document.get("resourceId") or ""),
+                "chunkId": chunk_id,
+                "sourcePath": evidence_chunk.get("sourcePath"),
+                "documentTitle": document.get("title"),
+                "semanticTitle": semantic_title,
+                "sourceMethod": "deterministic_pattern_oracle_error",
+                "canonicalName": error_code,
+                "aliases": [error_code, error_code.lower()],
+                "matchedAliases": [error_code],
+                "termId": f"oracle.error.{error_code}",
+                "termType": "error_code",
+                "category": "故障诊断",
+                "evidenceSource": "content_pattern",
+                "evidenceText": error_code,
+                "confidence": pattern_confidence,
+                "approvalStatus": "autoAccepted" if pattern_confidence >= low_confidence_threshold else "pending",
+            })
+
+        # 3d. 中文技术术语提取（高频出现的专业术语）
+        chinese_term_confidence = 0.65
+        technical_terms = [
+            "索引", "表空间", "数据字典", "事务", "死锁", "主备复制", "大对象",
+            "存储过程", "触发器", "游标", "视图", "序列", "分区", "集群",
+            "归档", "备份", "恢复", "优化器", "执行计划", "统计信息",
+            "权限", "角色", "用户", "模式", "约束",
+            "函数", "包", "类型", "对象", "锁", "缓存",
+        ]
+        seen_chinese_terms: set[str] = set()
+        for term in technical_terms:
+            if term in seen_chinese_terms:
+                continue
+            if term not in content_text:
+                continue
+            if self._is_excluded_keyword(term, context=content_text[:500]):
+                continue
+            term_identity = self._keyword_identity(term)
+            if not term_identity:
+                continue
+            canonical_name, identity_key = term_identity
+            key = ("", identity_key)
+            if key in seen:
+                continue
+            seen.add(key)
+            seen_chinese_terms.add(term)
+            evidence_chunk = next(
+                (chunk for chunk in resource_chunks if term in str(chunk.get("content") or "")),
+                resource_chunks[0],
+            )
+            chunk_id = str(evidence_chunk.get("id") or evidence_chunk.get("chunkId") or "")
+            candidates.append({
+                "candidateId": stable_id("keyword-candidate", task_id, chunk_id, canonical_name, "chinese_term"),
+                "taskId": task_id,
+                "stageRunId": self._stage_run_id(task_id, "deterministic_extraction"),
+                "resourceId": str(document.get("resourceId") or ""),
+                "chunkId": chunk_id,
+                "sourcePath": evidence_chunk.get("sourcePath"),
+                "documentTitle": document.get("title"),
+                "semanticTitle": semantic_title,
+                "sourceMethod": "deterministic_pattern_chinese_term",
+                "canonicalName": canonical_name,
+                "aliases": [canonical_name],
+                "matchedAliases": [canonical_name],
+                "termId": None,
+                "termType": "technical_term",
+                "category": "技术术语",
+                "evidenceSource": "content_pattern",
+                "evidenceText": term,
+                "confidence": chinese_term_confidence,
+                "approvalStatus": "autoAccepted" if chinese_term_confidence >= low_confidence_threshold else "pending",
+            })
+
+        return candidates
+
+    def _keyword_model_envelope(
+        self,
+        batch_chunks: list[dict[str, Any]],
+        document_lookup: dict[str, dict[str, Any]],
+        known_keywords_by_resource: dict[str, list[str]],
+        max_candidates_per_chunk: int,
+    ) -> dict[str, Any]:
+        first_document = document_lookup.get(str(batch_chunks[0].get("resourceId") or ""), {}) if batch_chunks else {}
+        return {
+            "documentType": first_document.get("documentType", "general_technical"),
+            "extractionProfile": first_document.get("extractionProfile", "general-technical"),
+            "domain": "yashandb",
+            "maxCandidatesPerChunk": max_candidates_per_chunk,
+            "document": {
+                "title": first_document.get("title"),
+                "semanticTitle": first_document.get("semanticTitle"),
+                "summary": first_document.get("summary"),
+                "category": first_document.get("category"),
+                "domainTerms": first_document.get("domainTerms") or [],
+            },
+            "chunks": [{
+                "chunkId": str(chunk.get("id") or chunk.get("chunkId") or ""),
+                "resourceId": str(chunk.get("resourceId") or ""),
+                "sourcePath": chunk.get("sourcePath"),
+                "headingPath": chunk.get("headingPath") or [],
+                "content": str(chunk.get("content") or ""),
+                "document": {
+                    "title": document_lookup.get(str(chunk.get("resourceId") or ""), {}).get("title"),
+                    "semanticTitle": document_lookup.get(str(chunk.get("resourceId") or ""), {}).get("semanticTitle"),
+                    "summary": document_lookup.get(str(chunk.get("resourceId") or ""), {}).get("summary"),
+                    "category": document_lookup.get(str(chunk.get("resourceId") or ""), {}).get("category"),
+                    "domainTerms": document_lookup.get(str(chunk.get("resourceId") or ""), {}).get("domainTerms") or [],
+                    "knownKeywords": known_keywords_by_resource.get(str(chunk.get("resourceId") or ""), []),
+                },
+            } for chunk in batch_chunks],
+            "schemaVersion": "2.1.0",
+        }
+
+    def _keyword_dynamic_batches(
+        self,
+        chunks: list[dict[str, Any]],
+        document_lookup: dict[str, dict[str, Any]],
+        known_keywords_by_resource: dict[str, list[str]],
+        max_chunks: int,
+        max_characters: int,
+        max_candidates_per_chunk: int,
+    ) -> list[list[dict[str, Any]]]:
+        batches: list[list[dict[str, Any]]] = []
+        current: list[dict[str, Any]] = []
+        current_size = 0
+        for chunk in sorted(chunks, key=lambda item: (str(item.get("resourceId") or ""), int(item.get("chunkIndex", 0)))):
+            envelope = self._keyword_model_envelope([chunk], document_lookup, known_keywords_by_resource, max_candidates_per_chunk)
+            item_size = len(json.dumps(envelope, ensure_ascii=False))
+            if current and (len(current) >= max_chunks or current_size + item_size > max_characters):
+                batches.append(current)
+                current = []
+                current_size = 0
+            current.append(chunk)
+            current_size += item_size
+        if current:
+            batches.append(current)
+        return batches
+
+    def _invoke_keyword_skill_once(
+        self,
+        envelope: dict[str, Any],
+        trace: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        system_prompt = self.prompts.get("keyword-extraction.system")
+        user_prompt = self.prompts.get("keyword-extraction.user", system_prompt.skill_version)
+        skill = self.prompts.skills.get("keyword-extraction", system_prompt.skill_version)
+        defaults = skill.manifest.get("defaults", {})
+        input_schema = json.loads((skill.root / skill.manifest["inputSchema"]).read_text(encoding="utf-8"))
+        validate(instance={"contextEnvelope": envelope}, schema=input_schema)
+        user = user_prompt.content.replace("{{context_envelope}}", json.dumps(envelope, ensure_ascii=False))
+        options = {"temperature": 0.1, "max_retries": 0}
+        if "maxTokens" in defaults:
+            options["max_tokens"] = int(defaults["maxTokens"])
+        if "timeoutMs" in defaults:
+            options["timeout_ms"] = int(defaults["timeoutMs"])
+        if "enableThinking" in defaults:
+            options["enable_thinking"] = bool(defaults["enableThinking"])
+        if "chatTemplateKwargs" in defaults:
+            options["chat_template_kwargs"] = defaults["chatTemplateKwargs"]
+        if "jsonRepair" in defaults:
+            options["json_repair"] = bool(defaults["jsonRepair"])
+        network_retries = int(defaults.get("maxRetries", 0))
+        messages = [{"role": "system", "content": system_prompt.content}, {"role": "user", "content": user}]
+        model_calls = {"succeeded": 0, "failed": 0}
+        model_call_ids: list[str] = []
+
+        def call_model(retry_of: str | None = None):
+            model_call_id = f"model_call_{uuid.uuid4().hex[:20]}"
+            model_call_ids.append(model_call_id)
+            details = {**(trace or {}), "modelCallId": model_call_id, "retryOf": retry_of, "skillId": "keyword-extraction"}
+            if trace and trace.get("taskId"):
+                self._log(trace["taskId"], "info", trace["stage"], "model_call.started", "模型调用开始：keyword-extraction", details=details)
+            started_at = time.monotonic()
+            try:
+                response = self.gateway.chat_json(messages, options)
+            except Exception as error:
+                model_calls["failed"] += 1
+                if trace and trace.get("taskId"):
+                    self._log(
+                        trace["taskId"], "error", trace["stage"], "model_call.failed",
+                        f"模型调用失败：keyword-extraction - {error_summary(error)}",
+                        details={**details, "durationMs": int((time.monotonic() - started_at) * 1000), "technicalError": str(error)},
+                    )
+                raise
+            if trace and trace.get("taskId"):
+                self._log(
+                    trace["taskId"], "info", trace["stage"], "model_call.completed", "模型调用完成：keyword-extraction",
+                    details={**details, "durationMs": int((time.monotonic() - started_at) * 1000), "attempts": response.get("attempts", 1)},
+                )
+            attempts = max(1, int(response.get("attempts", 1)))
+            model_calls["failed"] += attempts - 1
+            model_calls["succeeded"] += 1
+            response["_modelCalls"] = dict(model_calls)
+            response["_modelCallIds"] = list(model_call_ids)
+            response["_modelCallId"] = model_call_id
+            response["_agentTaskId"] = (trace or {}).get("agentTaskId")
+            response["data"] = self._normalize_skill_output(
+                "keyword-extraction",
+                response.get("data"),
+                {"context_envelope": json.dumps(envelope, ensure_ascii=False)},
+                skill.version,
+            )
+            return response
+
+        retry_of = None
+        for attempt in range(network_retries + 1):
+            try:
+                return call_model(retry_of=retry_of)
+            except Exception as error:
+                if attempt >= network_retries:
+                    error.model_calls = model_calls
+                    error.model_call_ids = list(model_call_ids)
+                    error.model_call_id = model_call_ids[-1] if model_call_ids else None
+                    raise
+                retry_of = model_call_ids[-1] if model_call_ids else None
+        raise AssertionError("关键词模型调用未返回结果")
+
+    def _valid_keyword_chunk_results(
+        self,
+        data: dict[str, Any],
+        batch_chunks: list[dict[str, Any]],
+        document_lookup: dict[str, dict[str, Any]],
+        max_candidates_per_chunk: int,
+    ) -> tuple[dict[str, list[dict[str, Any]]], list[str]]:
+        expected_chunk_ids = {str(chunk.get("id") or chunk.get("chunkId") or "") for chunk in batch_chunks}
+        valid: dict[str, list[dict[str, Any]]] = {}
+        invalid = set(expected_chunk_ids)
+        if not isinstance(data, dict):
+            return valid, sorted(invalid)
+        for result in data.get("results") or []:
+            if not isinstance(result, dict):
+                continue
+            chunk_id = str(result.get("chunkId") or "")
+            if chunk_id not in expected_chunk_ids:
+                continue
+            chunk = next((item for item in batch_chunks if str(item.get("id") or item.get("chunkId") or "") == chunk_id), {})
+            document = document_lookup.get(str(chunk.get("resourceId") or ""), {})
+            candidates: list[dict[str, Any]] = []
+            chunk_invalid = False
+            for keyword in (result.get("keywordCandidates") or [])[:max_candidates_per_chunk]:
+                if not isinstance(keyword, dict):
+                    chunk_invalid = True
+                    continue
+                if not all(keyword.get(key) is not None for key in ("name", "aliases", "category", "evidenceSource", "evidenceText", "confidence")):
+                    chunk_invalid = True
+                    continue
+                normalized = self._normalize_model_keyword(keyword, document)
+                if normalized is None:
+                    continue
+                evidence_source = str(keyword.get("evidenceSource") or "")
+                evidence = str(keyword.get("evidenceText") or "")
+                source_text = "\n".join([
+                    str(document.get("title") or ""),
+                    str(document.get("semanticTitle") or ""),
+                    str(document.get("summary") or ""),
+                    " / ".join(str(part) for part in (chunk.get("headingPath") or [])),
+                    str(chunk.get("content") or ""),
+                    json.dumps(document.get("domainTerms") or [], ensure_ascii=False),
+                ])
+                if evidence_source in {"title", "heading", "content", "domain_glossary"} and evidence and evidence not in source_text:
+                    chunk_invalid = True
+                    continue
+                candidates.append(keyword)
+            if not chunk_invalid:
+                valid[chunk_id] = candidates
+                invalid.discard(chunk_id)
+        return valid, sorted(invalid)
+
     def _model_knowledge_candidate(
         self,
         task_id: str,
         kind: str,
         item: dict[str, Any],
         chunk: dict[str, Any],
+        keyword_context: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         evidence = str(item.get("evidenceText") or "")
         local_start = str(chunk.get("content") or "").find(evidence) if evidence else -1
@@ -857,15 +2300,19 @@ class TrainingService:
         value = {
             key: value
             for key, value in item.items()
-            if key not in {"chunkId", "chunkIds", "evidenceText", "confidence"}
+            if key not in {"chunkId", "chunkIds", "evidenceText", "confidence", "agentTaskId", "modelCallId"}
         }
         chunk_id = str(chunk.get("id") or chunk.get("chunkId") or "")
+        keyword_context = keyword_context or []
+        keyword_context = self._normalize_formal_keyword_context(keyword_context)
         return {
             "candidateId": stable_id("candidate", task_id, kind, chunk_id, evidence, json.dumps(value, ensure_ascii=False, sort_keys=True)),
             "taskId": task_id,
             "stageRunId": self._stage_run_id(task_id, "deterministic_extraction"),
+            "state": "agent_resolved",
             "kind": kind,
             "resourceId": chunk.get("resourceId"),
+            "sourceResourceId": chunk.get("resourceId"),
             "chunkId": chunk_id,
             "sourcePath": chunk.get("sourcePath"),
             "value": value,
@@ -875,7 +2322,23 @@ class TrainingService:
             "schemaVersion": "2.0.0",
             "inputHash": chunk.get("contentHash"),
             "confidence": item.get("confidence"),
+            "agentTaskId": item.get("agentTaskId"),
+            "modelCallId": item.get("modelCallId"),
+            "keywordIds": [item["keywordId"] for item in keyword_context if item.get("keywordId")],
+            "keywordContext": keyword_context,
         }
+
+    @staticmethod
+    def _normalize_formal_keyword_context(keyword_context: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+        unique: dict[str, dict[str, Any]] = {}
+        for item in keyword_context or []:
+            if not isinstance(item, dict):
+                continue
+            keyword_id = str(item.get("keywordId") or "").strip()
+            if not keyword_id:
+                continue
+            unique.setdefault(keyword_id, item)
+        return [unique[key] for key in sorted(unique)]
 
     @staticmethod
     def clean_display_name(value: Any) -> str:
@@ -908,6 +2371,37 @@ class TrainingService:
             re.fullmatch(r"(?:dataset|file|chunk|resource|document|task|batch|run|node|edge|unit)[_-][0-9a-z:-]{4,}", text)
             and (any(ch.isdigit() for ch in text) or ":" in text)
         )
+
+    @classmethod
+    def _is_excluded_keyword(cls, value: Any, context: str = "") -> bool:
+        """检查关键词是否应被排除（工单号、人名等）"""
+        text = cls._normalize_keyword_text(value)
+        if not text:
+            return True
+        
+        # 检查排除模式（YDBRD-xxx, YASHAN-xxx, 文件hash前缀等）
+        for pattern in EXCLUDED_KEYWORD_PATTERNS:
+            if pattern.search(text):
+                return True
+        
+        # 人名检测：纯中文 2-4 字且不在技术术语列表中
+        if re.fullmatch(r"[\u4e00-\u9fff]{2,4}", text):
+            # 常见技术术语关键词（用于排除人名）
+            technical_indicators = [
+                "索引", "表", "事务", "锁", "日志", "存储", "函数", "过程",
+                "数据", "对象", "用户", "权限", "角色", "模式", "视图", "序列",
+                "分区", "集群", "备份", "恢复", "归档", "缓存", "内存", "磁盘",
+                "网络", "连接", "会话", "进程", "线程", "队列", "调度", "优化",
+                "执行", "计划", "统计", "信息", "约束", "触发", "游标", "包",
+                "类型", "死锁", "复制", "大对象", "诊断", "故障", "错误", "代码",
+            ]
+            # 如果包含技术术语指示词，不是人名
+            if any(indicator in text for indicator in technical_indicators):
+                return False
+            # 否则可能是人名，排除
+            return True
+        
+        return False
 
     @classmethod
     def _keyword_identity(cls, value: Any) -> tuple[str, str] | None:
@@ -1432,6 +2926,9 @@ class TrainingService:
                     "taskId": task_id,
                     "batchId": request.batch_id,
                     "pipelineVersion": "2.0",
+                    "knowledgeBuildMode": request.mode,
+                    "sourceDatasetId": request.source_dataset_id,
+                    "keywordIds": request.keyword_ids,
                     "stageRuns": {
                         **{stage: self._stage_run_id(task_id, stage) for stage in STAGES},
                         "metadata_construction": stable_id("stage-run", task_id, "metadata_construction"),
@@ -1447,22 +2944,51 @@ class TrainingService:
             self.tasks._update(task_id, state="running", can_cancel=True)
             self._log(task_id, "info", "queued", "task.started", "知识加工任务开始执行")
             dataset, chunks, documents = self._prepare_materials(task_id, request, run_dir)
-            rule_results, pending, human_required = self._extract_deterministic(
-                task_id,
-                chunks,
-                documents,
-                run_dir,
-                calls,
-                low_confidence_threshold=request.config.low_confidence_threshold,
-            )
-            issues.extend(human_required)
-            # 新工作流：移除语义补充步骤，直接进入验证和合并
-            final_results = self._validate_and_merge(
-                task_id, chunks, rule_results, [], run_dir, issues
-            )
-            self._generate_dataset(
-                task_id, request, dataset, final_results, chunks, run_dir, calls, issues
-            )
+            if request.mode == "keyword_analysis":
+                _, human_required, _ = self._extract_keyword_analysis(
+                    task_id,
+                    chunks,
+                    documents,
+                    run_dir,
+                    calls,
+                    low_confidence_threshold=request.config.low_confidence_threshold,
+                )
+                issues.extend(human_required)
+                self._generate_keyword_dataset(task_id, request, dataset, chunks, run_dir, calls, issues)
+            else:
+                keyword_context_by_chunk = self._formal_keyword_context_by_chunk(request.source_dataset_id, request.keyword_ids)
+                if request.source_dataset_id and not keyword_context_by_chunk:
+                    raise ValueError("没有可用于正式知识构建的已确认关键词文档块")
+                if keyword_context_by_chunk:
+                    allowed_chunk_ids = set(keyword_context_by_chunk)
+                    chunks = [chunk for chunk in chunks if str(chunk.get("id") or chunk.get("chunkId")) in allowed_chunk_ids]
+                    documents = [
+                        document for document in documents
+                        if any(str(chunk.get("resourceId")) == str(document.get("resourceId")) for chunk in chunks)
+                    ]
+                if request.source_dataset_id and not chunks:
+                    raise ValueError("已确认关键词没有可用于正式知识构建的文档块")
+                input_plan_nodes = self.graph(request.source_dataset_id, "nodes") if request.source_dataset_id else []
+                self._write_json(
+                    run_dir / "extraction-results/formal-knowledge-input.json",
+                    self._formal_keyword_input_plan(request.source_dataset_id, input_plan_nodes, keyword_context_by_chunk),
+                )
+                rule_results, pending, human_required = self._extract_deterministic(
+                    task_id,
+                    chunks,
+                    documents,
+                    run_dir,
+                    calls,
+                    low_confidence_threshold=request.config.low_confidence_threshold,
+                    keyword_context_by_chunk=keyword_context_by_chunk,
+                )
+                issues.extend(human_required)
+                final_results = self._validate_and_merge(
+                    task_id, chunks, rule_results, [], run_dir, issues
+                )
+                self._generate_dataset(
+                    task_id, request, dataset, final_results, chunks, run_dir, calls, issues
+                )
         except TrainingCancelledError:
             self._write_incomplete_fix_report(task_id, request, run_dir, issues, "cancelled")
             self._complete_cancellation(task_id, request.batch_id)
@@ -1495,6 +3021,8 @@ class TrainingService:
             )
             self._write_incomplete_fix_report(task_id, request, run_dir, issues, "failed")
             self.batches.update(request.batch_id, state="failed", activeTaskIds=[])
+        finally:
+            self._mark_task_inactive(task_id)
 
     def _prepare_materials(self, task_id: str, request: TrainingTaskCreate, run_dir: Path):
         if self.preparation is not None and self.metadata_construction is not None:
@@ -1527,10 +3055,16 @@ class TrainingService:
         preparation_root = (settings.data_root / preparation_report.manifest_path).resolve().parent
         metadata_root = (settings.data_root / metadata_report.stage_result_path).resolve().parent
         source_documents = self._read_jsonl(preparation_root / "metadata/source-documents.jsonl")
+        source_resources = self._read_jsonl(preparation_root / "metadata/source-resources.jsonl")
+        source_assets = self._read_jsonl(preparation_root / "metadata/source-assets.jsonl")
+        ingestion_report = self._read_json(preparation_root / "metadata/ingestion-report.json", {})
         prepared_chunks = self._read_jsonl(preparation_root / "metadata/chunks.jsonl")
         structure_blocks = self._read_jsonl(preparation_root / "metadata/structure-blocks.jsonl")
         documents = self._read_jsonl(metadata_root / "metadata/documents.jsonl")
         chunk_contexts = self._read_jsonl(metadata_root / "metadata/chunk-contexts.jsonl")
+        preselection_report = self._read_json(metadata_root / "metadata/preselection-report.json", {})
+        embedding_index = self._read_jsonl(metadata_root / "metadata/embedding-index.jsonl") if (metadata_root / "metadata/embedding-index.jsonl").is_file() else []
+        cluster_report = self._read_json(metadata_root / "metadata/cluster-report.json", {})
         for records, stage_run_id in (
             (source_documents, preparation_stage_run_id),
             (prepared_chunks, preparation_stage_run_id),
@@ -1547,6 +3081,8 @@ class TrainingService:
         metadata_issues = json.loads(
             (metadata_root / "quality/metadata-issues.json").read_text(encoding="utf-8")
         )
+        embedding_issues = self._read_json(metadata_root / "quality/embedding-issues.json", [])
+        cluster_issues = self._read_json(metadata_root / "quality/cluster-issues.json", [])
         if not prepared_chunks or not documents:
             raise RuntimeError("资料预处理后没有可进入知识提取的处理单元")
 
@@ -1617,16 +3153,28 @@ class TrainingService:
             document["excludedRanges"] = source.get("excludedRanges", [])
 
         self._write_jsonl(run_dir / "metadata/source-documents.jsonl", source_documents)
+        self._write_jsonl(run_dir / "metadata/source-resources.jsonl", source_resources)
+        self._write_jsonl(run_dir / "metadata/source-assets.jsonl", source_assets)
+        if ingestion_report:
+            self._write_json(run_dir / "metadata/ingestion-report.json", ingestion_report)
         self._write_jsonl(run_dir / "metadata/documents.jsonl", documents)
         self._write_jsonl(run_dir / "metadata/chunks.jsonl", prepared_chunks)
         self._write_jsonl(run_dir / "metadata/structure-blocks.jsonl", structure_blocks)
         self._write_jsonl(run_dir / "metadata/chunk-contexts.jsonl", chunk_contexts)
+        if preselection_report:
+            self._write_json(run_dir / "metadata/preselection-report.json", preselection_report)
+        self._write_jsonl(run_dir / "metadata/embedding-index.jsonl", embedding_index)
+        if cluster_report:
+            self._write_json(run_dir / "metadata/cluster-report.json", cluster_report)
+        self._copy_embedding_cache(metadata_root, run_dir)
         (run_dir / "quality/preparation-issues.json").write_text(
             json.dumps(preparation_issues, ensure_ascii=False, indent=2), encoding="utf-8"
         )
         (run_dir / "quality/metadata-issues.json").write_text(
             json.dumps(metadata_issues, ensure_ascii=False, indent=2), encoding="utf-8"
         )
+        self._write_json(run_dir / "quality/embedding-issues.json", embedding_issues)
+        self._write_json(run_dir / "quality/cluster-issues.json", cluster_issues)
 
         dataset = DatasetVersion(
             id=f"dataset_{uuid.uuid4().hex[:16]}",
@@ -1721,7 +3269,7 @@ class TrainingService:
         )
         return dataset, chunks, documents
 
-    def _extract_deterministic(
+    def _extract_keyword_analysis(
         self,
         task_id: str,
         chunks,
@@ -1731,15 +3279,150 @@ class TrainingService:
         low_confidence_threshold: float = 0.65,
     ):
         """
+        纯确定性关键词提取，不依赖大模型。
+        提取来源：标题、领域词典、正文模式匹配（错误码、函数名等）。
+        """
+        calls = calls if calls is not None else {"succeeded": 0, "failed": 0, "skipped": 0}
+        self._raise_if_cancelled(task_id)
+        self._set_stage(
+            task_id,
+            "deterministic_extraction",
+            current=0,
+            total=len(chunks),
+            unit="个处理单元",
+            message="正在执行确定性关键词抽取",
+        )
+
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for chunk in chunks:
+            grouped.setdefault(str(chunk.get("resourceId") or ""), []).append(chunk)
+
+        document_lookup = {str(document.get("resourceId") or ""): document for document in documents}
+
+        # 文档摘要生成（确定性）
+        grouped_content: dict[str, list[str]] = {}
+        for resource_id, resource_chunks in grouped.items():
+            grouped_content[resource_id] = [str(chunk.get("content") or "") for chunk in resource_chunks]
+
+        for document in documents:
+            summary = self._rule_based_summary(
+                document.get("title", ""),
+                "\n\n".join(grouped_content.get(str(document.get("resourceId") or ""), [])),
+            )
+            document.update({
+                "summary": document.get("summary") or summary["summary"],
+                "category": document.get("category") or summary["category"],
+                "keywords": document.get("keywords") or summary["keywords"],
+            })
+            document.update(self._document_profile(document, grouped_content.get(str(document.get("resourceId") or ""), [])))
+
+        profiles = [{
+            "resourceId": document["resourceId"],
+            "documentType": document.get("documentType"),
+            "extractionProfile": document.get("extractionProfile"),
+            "summary": document.get("summary"),
+            "category": document.get("category"),
+            "semanticTitle": document.get("semanticTitle"),
+            "ruleVersion": "keyword-analysis-v1",
+            "inputHash": "sha256:" + str(document.get("contentHash") or ""),
+        } for document in documents]
+        self._write_jsonl(run_dir / "extraction-results/document-profiles.jsonl", profiles)
+
+        # 纯确定性提取
+        keyword_candidates: list[dict[str, Any]] = []
+        human_required: list[dict[str, Any]] = []
+        cache_summary = {
+            "hits": 0,
+            "misses": 0,
+            "writes": 0,
+            "deterministicSkippedChunks": 0,
+            "modelScheduledChunks": 0,  # 保持为 0，不再使用模型
+            "repairAttempts": 0,
+            "repairSucceededChunks": 0,
+            "repairFailedChunks": 0,
+        }
+
+        chunks_by_id = {str(chunk.get("id") or chunk.get("chunkId") or ""): chunk for chunk in chunks}
+        known_keywords_by_resource: dict[str, list[str]] = {}
+        deterministic_covered_resources: set[str] = set()
+        preselection_by_resource = self._preselection_by_resource(run_dir)
+
+        # 对所有资源执行确定性提取
+        for resource_id, resource_chunks in grouped.items():
+            document = document_lookup.get(resource_id, {})
+            preselection = preselection_by_resource.get(resource_id)
+            
+            # 只有 skip 才真正跳过
+            if preselection and preselection.get("preselectionState") == "skip":
+                cache_summary["deterministicSkippedChunks"] += len(resource_chunks)
+                known_keywords_by_resource[resource_id] = []
+                continue
+            
+            # 执行确定性提取
+            deterministic = self._deterministic_keyword_candidates(
+                task_id,
+                document,
+                sorted(resource_chunks, key=lambda item: int(item.get("chunkIndex", 0))),
+                low_confidence_threshold,
+            )
+            keyword_candidates.extend(deterministic)
+            known_keywords_by_resource[resource_id] = self._merge_unique_values(
+                [],
+                [str(item.get("canonicalName") or "") for item in deterministic],
+            )
+            if deterministic:
+                deterministic_covered_resources.add(resource_id)
+            cache_summary["deterministicSkippedChunks"] += len(resource_chunks)
+
+        # 写入结果
+        self._write_jsonl(run_dir / "extraction-results/keyword-candidates.jsonl", keyword_candidates)
+        self._write_jsonl(run_dir / "model-results/keyword-extraction-batches.jsonl", [])
+        self._write_json(run_dir / "model-results/keyword-cache-summary.json", cache_summary)
+        
+        extraction_issues_path = run_dir / "quality/extraction-issues.json"
+        extraction_issues_path.parent.mkdir(parents=True, exist_ok=True)
+        self._write_json(extraction_issues_path, human_required)
+
+        self._set_stage(
+            task_id,
+            "deterministic_extraction",
+            current=len(chunks),
+            total=len(chunks),
+            unit="个处理单元",
+            message=f"确定性关键词抽取完成：{len(keyword_candidates)} 个关键词候选，{len(human_required)} 个提示",
+            model_calls=dict(calls),
+        )
+        return keyword_candidates, human_required, calls
+
+    def _preselection_by_resource(self, run_dir: Path) -> dict[str, dict[str, Any]]:
+        report = self._read_json(run_dir / "metadata/preselection-report.json", {})
+        items = report.get("items") if isinstance(report, dict) else None
+        if not isinstance(items, list):
+            return {}
+        result: dict[str, dict[str, Any]] = {}
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            resource_id = str(item.get("resourceId") or "")
+            state = str(item.get("preselectionState") or "")
+            if resource_id and state in {"deterministic_ready", "model_required", "human_review", "skip"}:
+                result[resource_id] = item
+        return result
+
+    def _extract_deterministic(
+        self,
+        task_id: str,
+        chunks,
+        documents,
+        run_dir: Path,
+        calls=None,
+        low_confidence_threshold: float = 0.65,
+        keyword_context_by_chunk: dict[str, list[dict[str, Any]]] | None = None,
+    ):
+        """
         使用 Workflow Agent 执行知识提取
         
-        6步工作流：
-        1. 任务规划：按文档分组，确定 batch 策略
-        2. 批量提取：调用 knowledge-extraction skill
-        3. 证据校验 + 修复：校验 evidenceText + 重试/降级
-        4. 语义补充：调用 semantic-enrichment skill 解决不确定项
-        5. 跨 chunk 关系识别 + 建立：识别跨 chunk 实体关系
-        6. 结果聚合：去重、合并、格式化输出
+        最小 Workflow Agent：每个工作项只提取一个 chunk 的知识点候选。
         """
         calls = calls if calls is not None else {"succeeded": 0, "failed": 0, "skipped": 0}
         self._raise_if_cancelled(task_id)
@@ -1754,7 +3437,6 @@ class TrainingService:
         )
         
         # 准备文档信息
-        document_lookup = {item["resourceId"]: item for item in documents}
         grouped_content: dict[str, list[str]] = {}
         for chunk in chunks:
             grouped_content.setdefault(chunk["resourceId"], []).append(chunk["content"])
@@ -1778,8 +3460,6 @@ class TrainingService:
                 "inputHash": "sha256:" + document["contentHash"],
             })
         
-        self._write_jsonl(run_dir / "extraction-results/document-profiles.jsonl", profiles)
-        
         # 检查模型网关
         try:
             status = self.gateway.status()
@@ -1799,6 +3479,55 @@ class TrainingService:
         )
         
         try:
+            completed_agent_tasks: set[str] = set()
+            progress_lock = threading.Lock()
+
+            def formal_progress_callback(event: str, details: dict[str, Any]) -> None:
+                skill_id = details.get("skillId") or "knowledge-point-extraction"
+                if event == "model_call.started":
+                    level = "info"
+                    message = f"模型调用开始：{skill_id}"
+                elif event == "model_call.completed":
+                    level = "info"
+                    message = f"模型调用完成：{skill_id}"
+                elif event == "model_call.failed":
+                    level = "error"
+                    technical_error = details.get("technicalError") or ""
+                    message = f"模型调用失败：{skill_id} - {error_summary(RuntimeError(str(technical_error)))}"
+                elif event in {"agent_task.completed", "agent_task.failed"}:
+                    level = "info" if event == "agent_task.completed" else "error"
+                    agent_task_id = str(details.get("agentTaskId") or details.get("chunkId") or "")
+                    with progress_lock:
+                        if agent_task_id not in completed_agent_tasks:
+                            completed_agent_tasks.add(agent_task_id)
+                        completed_chunks = min(len(chunks), len(completed_agent_tasks))
+                    message = (
+                        f"正式知识处理单元完成：{completed_chunks}/{len(chunks)}"
+                        if event == "agent_task.completed"
+                        else f"正式知识处理单元失败，已记录质量问题并继续处理：{completed_chunks}/{len(chunks)}"
+                    )
+                    self._set_stage(
+                        task_id,
+                        "deterministic_extraction",
+                        current=completed_chunks,
+                        total=len(chunks),
+                        unit="个处理单元",
+                        detail_message=message,
+                    )
+                else:
+                    level = "info"
+                    message = f"知识提取进度：{event}"
+                if details.get("resourceId") is not None and details.get("chunkId") is not None:
+                    message = f"{message}（资源 {details['resourceId']} / 处理单元 {details['chunkId']}）"
+                self._log(
+                    task_id,
+                    level,
+                    "deterministic_extraction",
+                    event,
+                    message,
+                    details=details,
+                )
+
             # 创建 Agent 任务
             agent_task = AgentTask(
                 task_id=task_id,
@@ -1806,6 +3535,10 @@ class TrainingService:
                     "chunks": chunks,
                     "documents": documents,
                     "task_id": task_id,
+                    "stage_run_id": self._stage_run_id(task_id, "deterministic_extraction"),
+                    "cancel_check": lambda: self._raise_if_cancelled(task_id),
+                    "progress_callback": formal_progress_callback,
+                    "keyword_context_by_chunk": keyword_context_by_chunk or {},
                 },
             )
             
@@ -1815,180 +3548,48 @@ class TrainingService:
             # 提取结果
             aggregated = agent_result.output_data
             metadata = agent_result.metadata
-            batch_audits = aggregated.pop("_batchAudits", [])
+            batch_audits = [
+                self._formal_batch_audit(task_id, audit)
+                for audit in aggregated.pop("_batchAudits", [])
+            ]
             
             # 构建输出记录
             results = []
             candidates = []
-            keyword_candidates = []
             human_required = []
 
             for audit in batch_audits:
                 if audit.get("success"):
                     continue
+                issue_code = self._formal_failure_code(audit)
+                technical_error = audit.get("technicalError") or audit.get("error")
                 human_required.append(self._quality_issue(
-                    "KNOWLEDGE_EXTRACTION_FAILED",
+                    issue_code,
                     audit.get("resourceId"),
-                    None,
-                    str(audit.get("error") or "模型知识提取未返回有效结果"),
-                    details={"severity": "error", "batchIndex": audit.get("batchIndex")},
+                    audit.get("chunkId"),
+                    f"知识点提取失败：{error_summary(RuntimeError(str(technical_error or '模型未返回有效知识点候选')))}",
+                    details={
+                        "severity": "error",
+                        "taskId": audit.get("taskId"),
+                        "stageRunId": audit.get("stageRunId"),
+                        "agentTaskId": audit.get("agentTaskId"),
+                        "chunkId": audit.get("chunkId"),
+                        "modelCallId": audit.get("modelCallId"),
+                        "technicalError": technical_error,
+                        "durationMs": audit.get("durationMs"),
+                    },
                 ))
-
-            for keyword in aggregated.get("keywordCandidates", []):
-                chunk_id = str(keyword.get("chunkId") or "")
-                chunk = next(
-                    (item for item in chunks if str(item.get("id") or item.get("chunkId")) == chunk_id),
-                    None,
-                )
-                if not chunk:
-                    continue
-                confidence = float(keyword.get("confidence") or 0)
-                if confidence < low_confidence_threshold:
-                    human_required.append(self._quality_issue(
-                        "KEYWORD_LOW_CONFIDENCE",
-                        chunk.get("resourceId"),
-                        chunk_id,
-                        f"模型关键词置信度低于阈值：{keyword.get('name')}",
-                        source_path=chunk.get("sourcePath"),
-                        evidence=keyword.get("evidenceText"),
-                        details={"severity": "warning", "confidence": confidence},
-                    ))
-                    continue
-                document = document_lookup.get(chunk.get("resourceId"), {})
-                normalized = self._normalize_model_keyword(keyword, document)
-                if normalized is None:
-                    continue
-                keyword_candidates.append({
-                    "candidateId": stable_id("keyword-candidate", task_id, chunk_id, normalized["canonicalName"]),
-                    "taskId": task_id,
-                    "stageRunId": self._stage_run_id(task_id, "deterministic_extraction"),
-                    "resourceId": chunk.get("resourceId"),
-                    "chunkId": chunk_id,
-                    "sourcePath": chunk.get("sourcePath"),
-                    "documentTitle": document.get("title"),
-                    "semanticTitle": document.get("semanticTitle"),
-                    "sourceMethod": "model_keyword",
-                    **normalized,
-                    "evidenceSource": keyword.get("evidenceSource"),
-                    "evidenceText": keyword.get("evidenceText"),
-                    "confidence": confidence,
-                    "category": keyword.get("category") or normalized.get("category"),
-                })
-
-            existing_keyword_keys = {
-                (
-                    str(item.get("resourceId") or ""),
-                    str(item.get("termId") or "").casefold(),
-                    str(item.get("canonicalName") or "").casefold(),
-                )
-                for item in keyword_candidates
-            }
-            chunks_by_resource: dict[str, list[dict[str, Any]]] = {}
-            for chunk in chunks:
-                chunks_by_resource.setdefault(str(chunk.get("resourceId") or ""), []).append(chunk)
-            title_glossary_confidence = (
-                ((getattr(self.metadata_construction, "rules", {}) or {}).get("titleCleaning") or {}).get(
-                    "titleGlossaryConfidence"
-                )
-            )
-            for document in documents:
-                semantic_title = str(document.get("semanticTitle") or "").strip()
-                if not semantic_title or title_glossary_confidence is None:
-                    continue
-                semantic_folded = semantic_title.casefold()
-                resource_id = str(document.get("resourceId") or "")
-                resource_chunks = chunks_by_resource.get(resource_id, [])
-                if not resource_chunks:
-                    continue
-                for term in document.get("domainTerms") or []:
-                    if not isinstance(term, dict):
-                        continue
-                    aliases = self._valid_keyword_aliases([
-                        term.get("canonicalName"),
-                        *(term.get("aliases") or []),
-                        *(term.get("matchedAliases") or []),
-                    ])
-                    evidence = next(
-                        (
-                            alias for alias in sorted(aliases, key=len, reverse=True)
-                            if alias.casefold() in semantic_folded
-                        ),
-                        None,
-                    )
-                    canonical = str(term.get("canonicalName") or evidence or "").strip()
-                    key = (resource_id, str(term.get("termId") or "").casefold(), canonical.casefold())
-                    if not evidence or not canonical or key in existing_keyword_keys:
-                        continue
-                    chunk = resource_chunks[0]
-                    keyword_candidates.append({
-                        "candidateId": stable_id("keyword-candidate", task_id, resource_id, term.get("termId") or canonical),
-                        "taskId": task_id,
-                        "stageRunId": self._stage_run_id(task_id, "deterministic_extraction"),
-                        "resourceId": resource_id,
-                        "chunkId": str(chunk.get("id") or chunk.get("chunkId") or ""),
-                        "sourcePath": chunk.get("sourcePath"),
-                        "documentTitle": document.get("title"),
-                        "semanticTitle": semantic_title,
-                        "sourceMethod": "domain_glossary_title",
-                        "canonicalName": canonical,
-                        "aliases": aliases,
-                        "matchedAliases": self._valid_keyword_aliases([evidence]),
-                        "termId": term.get("termId"),
-                        "termType": term.get("termType"),
-                        "category": term.get("category"),
-                        "evidenceSource": "domain_glossary",
-                        "evidenceText": evidence,
-                        "confidence": float(title_glossary_confidence),
-                    })
-                    existing_keyword_keys.add(key)
             
-            # 处理知识点、实体、关系
+            # 只处理知识点候选；实体、关系、关键词和语义补充由后续独立阶段负责。
             for kp in aggregated.get("knowledgePoints", []):
                 chunk_id = kp.get("chunkId", "")
                 chunk = next((c for c in chunks if c.get("id") == chunk_id), None)
                 if chunk:
-                    candidates.append(self._model_knowledge_candidate(task_id, "knowledge_point", kp, chunk))
-            
-            for entity in aggregated.get("entities", []):
-                chunk_id = entity.get("chunkId", "")
-                chunk = next((c for c in chunks if c.get("id") == chunk_id), None)
-                if chunk:
-                    candidates.append(self._model_knowledge_candidate(task_id, "entity", entity, chunk))
-
-            for relation in aggregated.get("relations", []):
-                chunk_id = relation.get("chunkId", "")
-                chunk = next((c for c in chunks if c.get("id") == chunk_id), None)
-                if chunk:
-                    candidates.append(self._model_knowledge_candidate(task_id, "relation", relation, chunk))
-            
-            # 处理不确定项
+                    candidates.append(self._model_knowledge_candidate(
+                        task_id, "knowledge_point", kp, chunk,
+                        keyword_context_by_chunk.get(chunk_id) if keyword_context_by_chunk else None,
+                    ))
             pending = []
-            for uncertain in aggregated.get("uncertainItems", []):
-                chunk_id = uncertain.get("chunkId", "")
-                chunk = next((c for c in chunks if c.get("id") == chunk_id), None)
-                if chunk:
-                    if uncertain.get("state") == "needs_enrichment":
-                        # 需要语义补充的项，加入 pending 列表
-                        pending.append({
-                            "id": f"uncertain:{chunk_id}:{uncertain.get('type', 'unknown')}",
-                            "state": "needs_enrichment",
-                            "type": uncertain.get("type", "unknown"),
-                            "reason": uncertain.get("reason", ""),
-                            "resourceId": chunk.get("resourceId"),
-                            "chunkId": chunk_id,
-                            "sourcePath": chunk.get("sourcePath"),
-                            "evidenceText": uncertain.get("evidenceText", ""),
-                            "candidateValues": uncertain.get("candidateValues", []),
-                        })
-                    else:
-                        human_required.append(self._quality_issue(
-                            "EXTRACTION_" + uncertain.get("state", "HUMAN_REQUIRED").upper(),
-                            chunk.get("resourceId"),
-                            chunk_id,
-                            uncertain.get("reason", "需要人工处理"),
-                            source_path=chunk.get("sourcePath"),
-                            evidence=uncertain.get("evidenceText", "")[:500],
-                        ))
             
             # 构建结果记录
             results.append({
@@ -2003,9 +3604,7 @@ class TrainingService:
             
             self._log(
                 task_id, "info", "deterministic_extraction", "workflow_agent.completed",
-                f"Workflow Agent 知识提取完成：{metadata.get('keyword_count', 0)} 个关键词, "
-                f"{metadata.get('extraction_count', 0)} 个知识点, "
-                f"{metadata.get('entity_count', 0)} 个实体, {metadata.get('relation_count', 0)} 个关系",
+                f"Workflow Agent 知识点提取完成：{metadata.get('extraction_count', 0)} 个知识点",
                 details={**metadata},
             )
             
@@ -2019,9 +3618,7 @@ class TrainingService:
         
         # 保存结果
         self._write_jsonl(run_dir / "extraction-results/knowledge-candidates.jsonl", candidates)
-        self._write_jsonl(run_dir / "extraction-results/keyword-candidates.jsonl", keyword_candidates)
         self._write_jsonl(run_dir / "model-results/knowledge-extraction-batches.jsonl", batch_audits)
-        self._write_jsonl(run_dir / "uncertain-items/pending.jsonl", pending)
         
         extraction_issues_path = run_dir / "quality/extraction-issues.json"
         extraction_issues_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2037,14 +3634,45 @@ class TrainingService:
             total=len(chunks),
             unit="个处理单元",
             detail_message=(
-                f"Workflow Agent 知识提取完成：{len(keyword_candidates)} 个关键词、{len(candidates)} 个知识候选，"
-                f"{metadata.get('cross_chunk_relations', 0)} 个跨 chunk 关系，"
-                f"{len(human_required)} 个质量问题"
+                f"Workflow Agent 知识点提取完成：{len(candidates)} 个知识候选，{len(human_required)} 个质量问题"
             ),
             model_calls=dict(calls),
         )
         
         return results, pending, human_required
+
+    def _formal_batch_audit(self, task_id: str, audit: dict[str, Any]) -> dict[str, Any]:
+        item = dict(audit or {})
+        item.setdefault("taskId", task_id)
+        item.setdefault("stageRunId", self._stage_run_id(task_id, "deterministic_extraction"))
+        item.setdefault("agentTaskId", item.get("agent_task_id"))
+        item.setdefault("chunkId", item.get("chunk_id"))
+        item.setdefault("modelCallId", item.get("_modelCallId"))
+        item.setdefault("technicalError", item.get("error"))
+        item.setdefault("durationMs", 0)
+        if not item.get("success"):
+            item["errorCode"] = self._formal_failure_code(item)
+        return item
+
+    @staticmethod
+    def _formal_failure_code(audit: dict[str, Any]) -> str:
+        code = str(audit.get("errorCode") or "")
+        if code in {
+            "KNOWLEDGE_EXTRACTION_TIMEOUT",
+            "KNOWLEDGE_EXTRACTION_SCHEMA_INVALID",
+            "KNOWLEDGE_EXTRACTION_EMPTY_RESULT",
+            "KNOWLEDGE_EXTRACTION_FAILED",
+        }:
+            return code
+        technical_error = str(audit.get("technicalError") or audit.get("error") or "")
+        lowered = technical_error.lower()
+        if "timeout" in lowered or "超时" in technical_error:
+            return "KNOWLEDGE_EXTRACTION_TIMEOUT"
+        if "没有知识点候选" in technical_error or "empty" in lowered:
+            return "KNOWLEDGE_EXTRACTION_EMPTY_RESULT"
+        if "schema" in lowered or "校验失败" in technical_error or "validation" in lowered:
+            return "KNOWLEDGE_EXTRACTION_SCHEMA_INVALID"
+        return "KNOWLEDGE_EXTRACTION_FAILED"
 
 
     def _resolve_uncertain_items(self, task_id: str, pending, chunks, documents, run_dir: Path, calls, issues):
@@ -2487,6 +4115,8 @@ class TrainingService:
                 "evidenceOffsets": expected_offsets,
                 "sourceLocations": chunk.get("sourceLocations", []),
                 "confidence": candidate.get("confidence"),
+                "keywordIds": candidate.get("keywordIds") or [],
+                "keywordContext": candidate.get("keywordContext") or [],
                 "sourceMethod": candidate.get("sourceMethod", "knowledge_extraction_agent"),
                 "schemaVersion": "2.0.0",
                 "validationState": "passed",
@@ -2534,11 +4164,17 @@ class TrainingService:
             chunk_contexts,
             keyword_candidates,
         )
+        keyword_chunk_index = self._keyword_chunk_index(nodes)
         issues[:] = self._deduplicate_quality_issues(issues)
         self._write_json(run_dir / "graph/nodes.json", nodes)
         self._write_json(run_dir / "graph/edges.json", edges)
+        self._write_json(run_dir / "graph/keyword-chunk-index.json", keyword_chunk_index)
         self._write_json(run_dir / "quality/issues.json", issues)
-        summary = self._graph_summary(nodes, edges, issues, graph_source)
+        summary = {
+            **self._graph_summary(nodes, edges, issues, graph_source),
+            "knowledgeBuildMode": request.mode,
+            "graphSource": graph_source,
+        }
         high_issues = [item for item in issues if self._is_high_severity(item)]
         quality_state = "blocked" if high_issues else "passed"
         degraded_keyword_graph = graph_source == "model_keyword"
@@ -2590,6 +4226,7 @@ class TrainingService:
         self._write_jsonl(dataset_root / "keyword-candidates.jsonl", keyword_candidates)
         self._write_json(dataset_root / "graph/nodes.json", nodes)
         self._write_json(dataset_root / "graph/edges.json", edges)
+        self._write_json(dataset_root / "keyword-chunk-index.json", keyword_chunk_index)
         self._write_json(dataset_root / "quality-issues.json", issues)
         self.store.update_record("datasets", dataset.id, {
             "trainingTaskId": task_id,
@@ -2614,12 +4251,15 @@ class TrainingService:
             "batchId": request.batch_id,
             "state": "candidate",
             "pipelineVersion": "2.0",
+            "knowledgeBuildMode": request.mode,
+            "sourceDatasetId": request.source_dataset_id,
             "config": request.config.model_dump(mode="json", by_alias=True),
             "knowledgeCount": len(final_results),
             "entityCount": len(entities),
             "relationCount": len(relations),
             "modelCalls": calls,
             "graph": summary,
+            "keywordChunkIndex": "keyword-chunk-index.json",
             "graphSource": graph_source,
             "qualityIssueCount": len(issues),
             "highSeverityIssueCount": len(high_issues),
@@ -2646,6 +4286,8 @@ class TrainingService:
             "qualityNotice": quality_notice,
             "pipelineVersion": "2.0",
             "schemaVersion": "2.0.0",
+            "knowledgeBuildMode": request.mode,
+            "sourceDatasetId": request.source_dataset_id,
             "config": request.config.model_dump(mode="json", by_alias=True),
             "documentCount": len(documents),
             "processingUnitCount": len(processing_units),
@@ -2705,6 +4347,186 @@ class TrainingService:
             "completed",
             "task.completed",
             f"知识加工完成：最终知识 {len(final_results)}，模型成功 {calls['succeeded']}，模型失败 {calls['failed']}，质量问题 {len(issues)}",
+            details={"modelCalls": calls, "graphSummary": summary, "qualityIssueCount": len(issues)},
+        )
+        self.batches.update(request.batch_id, state="downloaded", activeTaskIds=[])
+
+    def _generate_keyword_dataset(self, task_id: str, request, dataset, chunks, run_dir: Path, calls, issues):
+        self._raise_if_cancelled(task_id)
+        self._set_stage(task_id, "dataset_generation", detail_message="正在生成质量分析关键词图谱")
+        documents = self._read_jsonl(run_dir / "metadata/documents.jsonl")
+        chunk_contexts = self._read_jsonl(run_dir / "metadata/chunk-contexts.jsonl")
+        keyword_candidates = self._read_jsonl(run_dir / "extraction-results/keyword-candidates.jsonl")
+        nodes, edges, graph_source = self._build_dataset_graph(
+            chunks,
+            [],
+            issues,
+            documents,
+            chunk_contexts,
+            keyword_candidates,
+        )
+        keyword_chunk_index = self._keyword_chunk_index(nodes)
+        issues[:] = self._deduplicate_quality_issues(self._collect_quality_issues(run_dir, issues))
+        self._write_json(run_dir / "graph/nodes.json", nodes)
+        self._write_json(run_dir / "graph/edges.json", edges)
+        self._write_json(run_dir / "graph/keyword-chunk-index.json", keyword_chunk_index)
+        self._write_json(run_dir / "quality/issues.json", issues)
+        summary = {
+            **self._graph_summary(nodes, edges, issues, graph_source),
+            "knowledgeBuildMode": "keyword_analysis",
+            "formalKnowledgeDatasetId": None,
+            "graphSource": graph_source,
+        }
+        high_issues = [item for item in issues if self._is_high_severity(item)]
+        quality_state = "blocked" if high_issues else "passed"
+        quality_labels = sorted({self._quality_label(item) for item in high_issues})
+        if graph_source in {"model_keyword", "metadata_keyword"}:
+            quality_labels = self._merge_unique_values(quality_labels, ["keyword_analysis_graph"])
+        quality_notice = (
+            "关键词分析存在高严重度质量问题，当前数据集禁止发布。"
+            if high_issues
+            else "质量分析默认档已生成关键词图谱，可在确认关键词后构建正式知识。"
+        )
+        dataset_root = settings.data_root / "datasets" / dataset.id
+        originals_root = dataset_root / "originals"
+        normalized_root = dataset_root / "normalized"
+        mappings_root = dataset_root / "mappings"
+        for path in (originals_root, normalized_root, mappings_root, dataset_root / "graph"):
+            path.mkdir(parents=True, exist_ok=True)
+        source_documents = self._read_jsonl(run_dir / "metadata/source-documents.jsonl")
+        for source in source_documents:
+            resource_id = str(source.get("resourceId") or "resource")
+            for field, target_root in (
+                ("originalArtifact", originals_root),
+                ("normalizedArtifact", normalized_root),
+                ("sourceMapArtifact", mappings_root),
+            ):
+                relative = source.get(field)
+                if not relative:
+                    continue
+                source_path = (settings.data_root / str(relative)).resolve()
+                if settings.data_root.resolve() not in source_path.parents or not source_path.is_file():
+                    continue
+                suffix = source_path.suffix or ".bin"
+                target = target_root / f"{resource_id}{suffix}"
+                temporary = target.with_suffix(target.suffix + ".tmp")
+                shutil.copy2(source_path, temporary)
+                temporary.replace(target)
+        processing_units = self._read_jsonl(run_dir / "metadata/chunks.jsonl")
+        self._write_jsonl(dataset_root / "documents.jsonl", documents)
+        self._write_jsonl(dataset_root / "processing-units.jsonl", processing_units)
+        self._write_jsonl(dataset_root / "knowledge.jsonl", [])
+        self._write_jsonl(dataset_root / "entities.jsonl", [])
+        self._write_jsonl(dataset_root / "relations.jsonl", [])
+        self._write_jsonl(dataset_root / "keyword-candidates.jsonl", keyword_candidates)
+        self._write_json(dataset_root / "graph/nodes.json", nodes)
+        self._write_json(dataset_root / "graph/edges.json", edges)
+        self._write_json(dataset_root / "keyword-chunk-index.json", keyword_chunk_index)
+        self._write_json(dataset_root / "quality-issues.json", issues)
+        self.store.update_record("datasets", dataset.id, {
+            "trainingTaskId": task_id,
+            "graphAvailable": True,
+            "graphSummary": summary,
+            "qualityMetrics": {
+                **dataset.quality_metrics,
+                "knowledgeCount": 0,
+                "keywordCount": summary.get("keywordCount", 0),
+                "contextEdgeCount": summary.get("contextEdgeCount", 0),
+                "pendingKeywordCount": (summary.get("keywordApprovalState") or {}).get("pending", 0),
+                "rejectedKeywordCount": (summary.get("keywordApprovalState") or {}).get("rejected", 0),
+                "qualityIssueCount": len(issues),
+                "highSeverityIssueCount": len(high_issues),
+            },
+            "qualityPassed": not high_issues,
+            "qualityState": quality_state,
+            "publishable": not high_issues,
+            "qualityLabels": quality_labels,
+            "qualityNotice": quality_notice,
+            "datasetPath": f"datasets/{dataset.id}",
+        })
+        report = {
+            "taskId": task_id,
+            "datasetId": dataset.id,
+            "batchId": request.batch_id,
+            "state": "candidate",
+            "pipelineVersion": "2.0",
+            "knowledgeBuildMode": "keyword_analysis",
+            "config": request.config.model_dump(mode="json", by_alias=True),
+            "knowledgeCount": 0,
+            "keywordCount": summary.get("keywordCount", 0),
+            "modelCalls": calls,
+            "graph": summary,
+            "keywordChunkIndex": "keyword-chunk-index.json",
+            "graphSource": graph_source,
+            "qualityIssueCount": len(issues),
+            "highSeverityIssueCount": len(high_issues),
+            "qualityState": quality_state,
+            "publishable": not high_issues,
+            "artifacts": {
+                "dataset": f"datasets/{dataset.id}",
+                "keywords": f"datasets/{dataset.id}/keyword-candidates.jsonl",
+                "graphNodes": f"datasets/{dataset.id}/graph/nodes.json",
+                "graphEdges": f"datasets/{dataset.id}/graph/edges.json",
+            },
+            "completedAt": utcnow().isoformat(),
+        }
+        self._write_json(run_dir / "run-report.json", report)
+        self._write_json(dataset_root / "run-report.json", report)
+        self._write_json(dataset_root / "manifest.json", {
+            "datasetId": dataset.id,
+            "taskId": task_id,
+            "batchId": request.batch_id,
+            "state": "candidate",
+            "qualityState": quality_state,
+            "publishable": not high_issues,
+            "qualityLabels": quality_labels,
+            "qualityNotice": quality_notice,
+            "pipelineVersion": "2.0",
+            "schemaVersion": "2.0.0",
+            "knowledgeBuildMode": "keyword_analysis",
+            "config": request.config.model_dump(mode="json", by_alias=True),
+            "documentCount": len(documents),
+            "processingUnitCount": len(processing_units),
+            "knowledgeCount": 0,
+            "entityCount": 0,
+            "relationCount": 0,
+            "nodeCount": len(nodes),
+            "edgeCount": len(edges),
+            "graphSource": graph_source,
+            "graphSchemaVersion": GRAPH_SCHEMA_VERSION,
+            "metadataRuleSetHash": self._metadata_rule_set_hash(),
+            "keywordApprovalState": summary.get("keywordApprovalState", {}),
+            "qualityIssueCount": len(issues),
+            "sourceResourceIds": sorted({str(item.get("resourceId")) for item in source_documents}),
+            "createdAt": utcnow().isoformat(),
+        })
+        self._write_fix_report(task_id, request, run_dir, documents, processing_units, issues)
+        self._set_stage(
+            task_id,
+            "dataset_generation",
+            "completed",
+            current=summary.get("keywordCount", 0),
+            total=summary.get("keywordCount", 0),
+            unit="个关键词",
+            detail_message=f"关键词图谱生成完成，质量状态：{quality_state}，等待人工确认关键词",
+            graph_summary=summary,
+        )
+        self.tasks._update(
+            task_id,
+            state="completed",
+            stage="completed",
+            message=None,
+            model_calls=dict(calls),
+            graph_summary=summary,
+            can_cancel=False,
+            progress_detail={"stage": "completed", "message": "质量分析关键词默认档执行完成"},
+        )
+        self._log(
+            task_id,
+            "info",
+            "completed",
+            "task.completed",
+            f"关键词分析完成：关键词 {summary.get('keywordCount', 0)}，模型成功 {calls['succeeded']}，模型失败 {calls['failed']}，质量问题 {len(issues)}",
             details={"modelCalls": calls, "graphSummary": summary, "qualityIssueCount": len(issues)},
         )
         self.batches.update(request.batch_id, state="downloaded", activeTaskIds=[])
@@ -4331,6 +6153,17 @@ class TrainingService:
         temporary.replace(path)
 
     @staticmethod
+    def _copy_embedding_cache(source_root: Path, target_root: Path) -> None:
+        source = source_root / "model-results/embedding-cache"
+        target = target_root / "model-results/embedding-cache"
+        if not source.is_dir():
+            target.mkdir(parents=True, exist_ok=True)
+            return
+        if target.exists():
+            shutil.rmtree(target)
+        shutil.copytree(source, target)
+
+    @staticmethod
     def _write_text(path: Path, value: str) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_suffix(path.suffix + ".tmp")
@@ -4626,6 +6459,7 @@ class TrainingService:
             })
             node = nodes.setdefault(keyword_id, {
                 "id": keyword_id,
+                "keywordId": keyword_id,
                 "type": "Keyword",
                 "name": self.clean_display_name(canonical_name),
                 "rawName": canonical_name,
@@ -4637,13 +6471,18 @@ class TrainingService:
                 "evidenceSources": [],
                 "sourceResourceIds": [],
                 "chunkIds": [],
+                "confidence": confidence,
                 "modelConfidence": confidence,
+                "approvalStatus": "autoAccepted" if confidence >= 0.65 else "pending",
                 "occurrences": [],
                 "properties": {
                     "termId": candidate.get("termId"),
                     "termType": candidate.get("termType"),
                     "category": candidate.get("category"),
                     "canonicalName": canonical_name,
+                    "keywordId": keyword_id,
+                    "confidence": confidence,
+                    "approvalStatus": "autoAccepted" if confidence >= 0.65 else "pending",
                     "graphSource": "model_keyword",
                 },
                 "sourceResourceId": resource_id,
@@ -4655,6 +6494,7 @@ class TrainingService:
             node["evidenceSources"] = self._merge_unique_values(node.get("evidenceSources", []), [evidence_source])
             node["sourceResourceIds"] = self._merge_unique_values(node.get("sourceResourceIds", []), [resource_id])
             node["chunkIds"] = self._merge_unique_values(node.get("chunkIds", []), [chunk_id])
+            node["confidence"] = max(float(node.get("confidence") or 0), confidence)
             node["modelConfidence"] = max(float(node.get("modelConfidence") or 0), confidence)
             occurrence = {
                 "candidateId": candidate.get("candidateId"),
@@ -4671,6 +6511,7 @@ class TrainingService:
             properties = node["properties"]
             for key in ("aliases", "matchedAliases", "sourceMethods", "evidenceSources", "sourceResourceIds", "chunkIds"):
                 properties[key] = list(node[key])
+            properties["confidence"] = node["confidence"]
             properties["modelConfidence"] = node["modelConfidence"]
             properties["occurrences"] = list(node["occurrences"])
 
@@ -4764,6 +6605,7 @@ class TrainingService:
                 matched_aliases = self._valid_keyword_aliases(candidate.get("matchedAliases") or [])
                 node = nodes.setdefault(keyword_id, {
                     "id": keyword_id,
+                    "keywordId": keyword_id,
                     "type": "Keyword",
                     "name": self.clean_display_name(canonical_name),
                     "rawName": canonical_name,
@@ -4773,12 +6615,17 @@ class TrainingService:
                     "matchedAliases": [],
                     "sourceResourceIds": [],
                     "chunkIds": [],
+                    "confidence": float(candidate.get("confidence", 0.6)),
+                    "approvalStatus": "autoAccepted" if float(candidate.get("confidence", 0.6)) >= 0.65 else "pending",
                     "occurrences": [],
                     "properties": {
                         **candidate_properties,
                         "graphSource": "metadata_keyword",
                         "sourceMethod": candidate.get("source"),
                         "canonicalName": canonical_name,
+                        "keywordId": keyword_id,
+                        "confidence": float(candidate.get("confidence", 0.6)),
+                        "approvalStatus": "autoAccepted" if float(candidate.get("confidence", 0.6)) >= 0.65 else "pending",
                     },
                     "sourceResourceId": resource_id,
                     "chunkId": chunk_id,
@@ -4787,6 +6634,7 @@ class TrainingService:
                 node["matchedAliases"] = self._merge_unique_values(node.get("matchedAliases", []), matched_aliases)
                 node["sourceResourceIds"] = self._merge_unique_values(node.get("sourceResourceIds", []), [resource_id] if resource_id else [])
                 node["chunkIds"] = self._merge_unique_values(node.get("chunkIds", []), [chunk_id] if chunk_id else [])
+                node["confidence"] = max(float(node.get("confidence") or 0), float(candidate.get("confidence", 0.6)))
                 node["occurrences"].append({
                     "chunkId": chunk_id,
                     "resourceId": resource_id,
@@ -4797,6 +6645,7 @@ class TrainingService:
                 properties = node.setdefault("properties", {})
                 properties["graphSource"] = "metadata_keyword"
                 properties["canonicalName"] = canonical_name
+                properties["confidence"] = node["confidence"]
                 properties["sourceMethod"] = candidate.get("source")
                 properties["sourceMethods"] = self._merge_unique_values(properties.get("sourceMethods", []), [candidate.get("source")])
                 properties["aliases"] = self._merge_unique_values(properties.get("aliases", []), aliases)
@@ -5036,6 +6885,45 @@ class TrainingService:
         for edge in edges:
             edge_types[edge["type"]] = edge_types.get(edge["type"], 0) + 1
         knowledge_count = len(knowledge_nodes)
+        keyword_nodes = [node for node in enriched_nodes if isinstance(node, dict) and node.get("type") == "Keyword"]
+        keyword_approval_state = {"autoAccepted": 0, "accepted": 0, "pending": 0, "rejected": 0}
+        keyword_business_state = {
+            "totalKeywordCount": len(keyword_nodes),
+            "businessAcceptedCount": 0,
+            "businessRejectedCount": 0,
+            "needsReviewCount": 0,
+            "admittedChunkCount": 0,
+            "reasonCounts": {},
+        }
+        keyword_admission_state = {"admitted": 0, "excluded": 0, "totalKeywordCount": len(keyword_nodes)}
+        keyword_level_stats = {"L1": 0, "L2": 0, "unspecified": 0}
+        for node in keyword_nodes:
+            properties = node.get("properties") if isinstance(node.get("properties"), dict) else {}
+            status = str(node.get("approvalStatus") or properties.get("approvalStatus") or "autoAccepted")
+            if status not in keyword_approval_state:
+                status = "pending"
+            keyword_approval_state[status] += 1
+            business_status = str(node.get("businessStatus") or properties.get("businessStatus") or "")
+            if business_status == "businessAccepted":
+                keyword_business_state["businessAcceptedCount"] += 1
+                keyword_business_state["admittedChunkCount"] += len(node.get("chunkIds") or [])
+            elif business_status == "businessRejected":
+                keyword_business_state["businessRejectedCount"] += 1
+            else:
+                keyword_business_state["needsReviewCount"] += 1
+            reason_counts = keyword_business_state["reasonCounts"]
+            for reason in (node.get("businessReasonCodes") or properties.get("businessReasonCodes") or []):
+                reason_counts[str(reason)] = reason_counts.get(str(reason), 0) + 1
+            admission = self._read_admission_status(node)
+            if admission in keyword_admission_state:
+                keyword_admission_state[admission] += 1
+            else:
+                keyword_admission_state["excluded"] += 1
+            level = str(node.get("keywordLevel") or properties.get("keywordLevel") or "")
+            if level in ("L1", "L2"):
+                keyword_level_stats[level] += 1
+            else:
+                keyword_level_stats["unspecified"] += 1
         connected_knowledge_count = sum(1 for node in knowledge_nodes if node.get("id") in connected_node_ids)
         evidence_edges = [edge for edge in edges if edge.get("type") == "CONTEXT_MATCHES_CHUNK"]
         evidence_complete_edges = [
@@ -5069,6 +6957,13 @@ class TrainingService:
             "chunkCount": node_types.get("ProcessingUnit", 0) + node_types.get("Chunk", 0),
             "contextEdgeCount": edge_types.get("CONTEXT_MATCHES_CHUNK", 0),
             "graphSource": graph_source,
+            "knowledgeBuildMode": "formal_knowledge" if graph_source == "final_knowledge" else "keyword_analysis",
+            "keywordApprovalState": keyword_approval_state,
+            "keywordBusinessReviewState": keyword_business_state,
+            "keywordAdmissionState": keyword_admission_state,
+            "keywordLevelStats": keyword_level_stats,
+            "formalKnowledgeDatasetId": None,
+            "entityRelationStage": self._entity_relation_stage_summary(),
             "displayMode": "keyword_overview" if graph_source in {"metadata_keyword", "model_keyword", "final_knowledge"} else "empty",
             "qualityIssueCount": len(issues),
             "knowledgeDomainCounts": knowledge_domain_counts,
