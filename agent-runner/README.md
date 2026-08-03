@@ -11,6 +11,7 @@
 - [开发指南](#开发指南)
 - [测试](#测试)
 - [故障排查](#故障排查)
+- [资料预处理框架](#资料预处理框架)
 
 ---
 
@@ -53,6 +54,9 @@ cp .env.example .env
 # 配置加密密钥（必须设置，用于加密 API Key）
 AGENT_RUNNER_KEY=your-secret-key-here
 
+# 可选：跨进程模型网关鉴权，PingCode 后端需配置相同值
+MODEL_GATEWAY_INTERNAL_TOKEN=your-internal-token
+
 # 服务端口（默认 4100）
 PORT=4100
 
@@ -84,7 +88,9 @@ Health check: http://localhost:4100/api/health
 
 打开浏览器访问 `prompt-generator.html`（位于上级目录）：
 
-测试服务器启动后，访问 `http://192.168.130.180:3500/prompt-generator.html`。前端固定连接 `http://192.168.130.180:4100` 后端。前后端进程均监听 `0.0.0.0`，需确保 Windows 宿主机已将 TCP 3500 和 4100 转发至当前运行环境，并在防火墙中放行这两个端口。
+测试服务器启动后，访问 `http://192.168.130.180:3500/prompt-generator.html`。PingCode 素材平台生产构建通过同一网关访问：`http://192.168.130.180:3500/pingcode-materials/`，其 API 由 `/pingcode-api/` 转发到本机 `127.0.0.1:8001`。前端固定连接 `http://192.168.130.180:4100` 后端。前后端进程均监听 `0.0.0.0`，需确保 Windows 宿主机已将 TCP 3500 和 4100 转发至当前运行环境，并在防火墙中放行这两个端口。
+
+`restart-services.sh` 对 `4100` 和 `8001` 最多等待 30 秒健康检查，避免依赖加载超过固定 2 秒时误判启动失败。
 
 1. 点击右上角 **⚙️ 配置** 按钮
 2. 选择 Provider（推荐阿里云百炼或智谱 AI，OpenAI 在某些地区受限）
@@ -259,6 +265,17 @@ GET /api/health
 | GET | `/api/config/agents` | 获取 Agent 预设列表 |
 | POST | `/api/config/agent` | 保存 Agent 预设 |
 
+### 内部模型网关
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/model-provider/status` | 查询当前模型和能力状态 |
+| POST | `/api/model-provider/chat` | 使用当前模型配置执行 Chat/JSON 调用 |
+| POST | `/api/model-provider/vision` | 使用当前模型配置执行视觉消息调用 |
+| POST | `/api/model-provider/embedding` | Embedding 能力占位，未配置时返回 501 |
+
+模型网关不返回 API Key，默认仅允许本机回环访问。配置 `MODEL_GATEWAY_INTERNAL_TOKEN` 后，调用方必须携带相同的 `X-Internal-Token`。
+
 ### 任务执行
 
 | 方法 | 路径 | 说明 |
@@ -312,6 +329,13 @@ agent-runner/
 │   ├── step-executor.js
 │   ├── agent-manager.js
 │   ├── llm-client.js
+│   ├── preprocessing/   # 资料预处理框架
+│   │   ├── engine.js
+│   │   ├── pipeline.js
+│   │   ├── pipelines/
+│   │   ├── cleaners/
+│   │   ├── chunkers/
+│   │   └── indexers/
 │   ├── config-manager.js
 │   └── logger.js
 ├── middleware/           # 中间件
@@ -461,3 +485,185 @@ MIT
 ## 联系方式
 
 如有问题或建议，请联系开发团队。
+
+## 资料预处理框架
+
+独立的预处理模块，负责将各类原始素材（设计文档、代码、工单等）转化为高质量、可检索的知识资产。
+
+### 核心特性
+
+- **独立性**：与检索/生成流程解耦，可独立运行和测试
+- **通用性**：通过 Pipeline + Adapter 模式扩展新资料类型
+- **统一接入**：支持本地多格式上传和 PingCode 映射下载，统一进入素材加工流程
+- **断点上传**：大文件支持分片、断点续传、完整性校验和失败重试
+- **安全归档**：压缩包安全递归解压，图片保留关联并默认不作为独立文本加工
+- **幂等性**：相同输入产生相同输出，支持增量更新
+- **可回溯**：每次执行生成快照，支持回滚到任意历史版本
+- **可观测**：结构化日志 + 执行报告，每次执行可审计
+- **Office 保真**：DOCX/PPTX 原始图片按字节导出，正文保留图片引用和一句图片说明
+- **保真门禁**：默认要求源文本召回率不低于 98%、媒体导出率为 100%
+
+### 快速开始
+
+```bash
+# 执行设计文档预处理（增量模式）
+node scripts/preprocess.js run design-docs
+
+# 强制全量处理
+node scripts/preprocess.js run design-docs --full
+
+# 预览模式（不写入文件）
+node scripts/preprocess.js run design-docs --dry-run
+
+# 执行所有已注册流水线
+node scripts/preprocess.js run-all
+```
+
+### CLI 命令
+
+| 命令 | 说明 |
+|------|------|
+| `run <pipeline>` | 执行指定流水线 |
+| `run-all` | 执行所有已注册流水线 |
+| `snapshots [pipeline]` | 列出执行快照 |
+| `rollback <pipeline> --snapshot <id>` | 回滚到指定快照 |
+| `logs [pipeline] [--last N]` | 查看执行日志 |
+| `list` | 列出已注册流水线 |
+
+### 配置文件
+
+`config/preprocessing-config.json`：
+
+```json
+{
+  "pipelines": {
+    "design-docs": {
+      "source": {
+        "inputDir": "../refs/pingcode"
+      },
+      "cleaning": {
+        "removeConfluenceMeta": true,
+        "cleanInternalLinks": true,
+        "handleImageRefs": true
+      },
+      "chunking": {
+        "enabled": true,
+        "minTokens": 500,
+        "maxTokens": 1500
+      },
+      "quality": {
+        "textRecallThreshold": 0.98,
+        "mediaCoverageThreshold": 1.0
+      },
+      "captioning": {
+        "enabled": false,
+        "provider": "openai-compatible",
+        "endpoint": {
+          "type": "official",
+          "baseURL": "",
+          "baseUrlEnv": "VISION_BASE_URL"
+        },
+        "apiKeyEnv": "VISION_API_KEY",
+        "model": "gpt-5.6-terra",
+        "modelEnv": "VISION_MODEL",
+        "request": {
+          "reasoningEffort": "none",
+          "maxOutputTokens": 120,
+          "imageDetail": "low",
+          "timeoutMs": 60000
+        }
+      },
+      "officeRendering": {
+        "enabled": true,
+        "provider": "libreoffice",
+        "command": "libreoffice",
+        "pdfToImageCommand": "pdftoppm",
+        "dpi": 144,
+        "timeoutMs": 120000
+      }
+    }
+  }
+}
+```
+
+### 产出目录
+
+```
+preprocessing-output/
+├── pingcode/
+│   ├── cleaned/
+│   │   ├── <source-name>.<ext>.md # 兼容检索入口
+│   │   └── doc-<hash>/
+│   │       ├── source.md          # 标准化原文
+│   │       ├── document.md        # 清洗后文档
+│   │       ├── manifest.json      # 资产/保真清单
+│   │       ├── diff.json          # 清洗差异
+│   │       └── assets/            # Office 原始图片
+│   ├── quarantine/      # 保真门禁失败文档，不进入索引
+│   ├── chunks/          # 语义分块
+│   ├── index/           # 分层索引（L1/L2/L3）
+│   ├── vector/          # 本地向量索引
+│   └── graph/           # 本地知识图谱
+├── _snapshots/          # 执行快照
+└── _reports/            # 执行报告
+```
+
+默认不调用外部视觉模型，图片说明使用源 alt、文档标题和页面位置生成，`manifest.json` 中标记为 `context-fallback`。Office 整页渲染默认开启，用于保留 SmartArt、组合图形和页面布局。Ubuntu 安装依赖：
+
+```bash
+sudo apt-get update
+sudo apt-get install -y libreoffice-core libreoffice-writer libreoffice-impress poppler-utils
+```
+
+OpenAI 官方接口不设置 `VISION_BASE_URL`，并保持 `endpoint.type=official`：
+
+```bash
+export VISION_API_KEY='<your-api-key>'
+export VISION_MODEL='gpt-5.6-terra'
+```
+
+第三方 OpenAI-compatible 接口设置 `endpoint.type=compatible`：
+
+```bash
+export VISION_API_KEY='<your-api-key>'
+export VISION_BASE_URL='https://gateway.example.com/v1'
+export VISION_MODEL='gpt-5.6-terra'
+```
+
+两种方式均需将 `captioning.enabled` 改为 `true`。第三方网关若只接受旧 token 参数，可设置 `request.tokenParameter=max_tokens`；若不接受 `reasoning_effort`，设置 `request.reasoningEffort=false`。
+
+```bash
+libreoffice --version
+pdftoppm -v
+node tests/run-preprocessing-tests.js --verbose
+
+RUN_VISION_INTEGRATION=1 VISION_API_KEY=... VISION_MODEL=gpt-5.6-terra \
+  npx jest tests/preprocessing/vision-api.integration.test.js --runInBand
+```
+
+`manifest.json` 的 `officeRendering` 字段记录 `disabled`、`unavailable`、`success` 或 `failed`，整页渲染资产以 `assetKind=page-render` 标识；`cleaned/_office-rendering.json` 汇总每次处理的文件级渲染结果。
+
+### 扩展新资料类型
+
+实现 `Pipeline` + `SourceAdapter` 即可：
+
+```javascript
+const { Pipeline, SourceAdapter } = require('./lib/preprocessing');
+
+class MyPipeline extends Pipeline {
+  get name() { return 'my-data'; }
+  get adapter() { return new MyAdapter(); }
+
+  async clean(files, config) { /* 清洗逻辑 */ }
+  async index(data, config) { /* 索引逻辑 */ }
+}
+
+class MyAdapter extends SourceAdapter {
+  get name() { return 'my-format'; }
+  get supportedExtensions() { return ['.txt']; }
+  async parse(filePath) { /* 解析逻辑 */ }
+  async scan(dir) { /* 扫描逻辑 */ }
+}
+```
+
+详细设计参见 `docs/27-资料预处理框架概要设计.md` 和 `docs/33-通用素材上传映射下载与加工平台概要设计.md`。

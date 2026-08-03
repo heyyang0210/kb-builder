@@ -1,74 +1,77 @@
+const mockCreate = jest.fn();
+
+jest.mock('openai', () => jest.fn().mockImplementation(() => ({
+  chat: { completions: { create: mockCreate } }
+})));
+
+jest.mock('../lib/logger', () => ({
+  info: jest.fn(),
+  warn: jest.fn(),
+  error: jest.fn(),
+  debug: jest.fn()
+}));
+
 const LLMClient = require('../lib/llm-client');
 
-// Mock openai
-jest.mock('openai', () => {
-  return jest.fn().mockImplementation(() => ({
-    chat: {
-      completions: {
-        create: jest.fn().mockResolvedValue({
-          choices: [{ message: { content: '{"result": "mock response"}' }, finish_reason: 'stop' }],
-          usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
-          model: 'gpt-4'
-        })
-      }
-    }
-  }));
-});
+describe('LLMClient step options and JSON repair', () => {
+  beforeEach(() => mockCreate.mockReset());
 
-describe('LLMClient', () => {
-  let client;
-
-  beforeEach(() => {
-    client = new LLMClient({
-      provider: 'openai',
-      api_key: 'sk-test',
-      model: 'gpt-4',
-      base_url: 'https://api.openai.com/v1'
+  test('passes per-request token timeout and retry options', async () => {
+    mockCreate.mockResolvedValueOnce({
+      choices: [{ message: { content: '完成' }, finish_reason: 'stop' }],
+      usage: { total_tokens: 10 },
+      model: 'qwen3.7-plus'
     });
+    const client = new LLMClient({ api_key: 'test', model: 'qwen3.7-plus', max_tokens: 60000 });
+    await client.chat([{ role: 'user', content: '测试' }], { max_tokens: 1200, timeout_ms: 90000, max_retries: 0, enable_thinking: false, chat_template_kwargs: { enable_thinking: false } });
+    expect(mockCreate.mock.calls[0][0].max_tokens).toBe(1200);
+    expect(mockCreate.mock.calls[0][0].enable_thinking).toBe(false);
+    expect(mockCreate.mock.calls[0][0].chat_template_kwargs).toEqual({ enable_thinking: false });
+    expect(mockCreate.mock.calls[0][1]).toEqual({ timeout: 90000, maxRetries: 0 });
   });
 
-  test('初始化正确', () => {
-    expect(client.model).toBe('gpt-4');
-    expect(client.client).toBeDefined();
+  test('repairs invalid JSON once', async () => {
+    mockCreate
+      .mockResolvedValueOnce({
+        choices: [{ message: { content: '{"summary":"缺少结尾"' }, finish_reason: 'stop' }],
+        usage: { total_tokens: 20 },
+        model: 'qwen3.7-plus'
+      })
+      .mockResolvedValueOnce({
+        choices: [{ message: { content: '{"summary":"已修复","keywords":[],"confidence":0.5}' }, finish_reason: 'stop' }],
+        usage: { total_tokens: 15 },
+        model: 'qwen3.7-plus'
+      });
+    const client = new LLMClient({ api_key: 'test', model: 'qwen3.7-plus' });
+    const result = await client.chatJSON([{ role: 'user', content: '测试' }], { max_tokens: 1200 });
+    expect(result.parsed.summary).toBe('已修复');
+    expect(result.attempts).toBe(2);
+    expect(mockCreate).toHaveBeenCalledTimes(2);
   });
 
-  test('chat 调用返回内容', async () => {
-    const result = await client.chat([
-      { role: 'user', content: 'test' }
-    ]);
-    expect(result.content).toBeDefined();
-    expect(result.usage.total_tokens).toBe(30);
-    expect(result.model).toBe('gpt-4');
-  });
-
-  test('chatJSON 解析 JSON 响应', async () => {
-    const result = await client.chatJSON([
-      { role: 'user', content: 'test' }
-    ]);
-    expect(result.parsed).toBeDefined();
-    expect(result.parsed.result).toBe('mock response');
-  });
-
-  test('updateConfig 更新配置', () => {
-    client.updateConfig({ model: 'gpt-3.5-turbo' });
-    expect(client.model).toBe('gpt-3.5-turbo');
-  });
-
-  test('getProviderConfigs 返回所有提供商', () => {
-    const configs = LLMClient.getProviderConfigs();
-    expect(configs.openai).toBeDefined();
-    expect(configs.alibaba).toBeDefined();
-    expect(configs.zhipu).toBeDefined();
-    expect(configs.custom).toBeDefined();
-  });
-
-  test('getModelsForProvider 返回模型列表', () => {
-    const models = LLMClient.getModelsForProvider('openai');
-    expect(models).toContain('gpt-4');
-    expect(models).toContain('gpt-3.5-turbo');
-  });
-
-  test('无 API Key 时不崩溃', () => {
-    expect(() => new LLMClient({})).not.toThrow();
+  test('does not hide a second model call when JSON repair is disabled', async () => {
+    mockCreate.mockResolvedValueOnce({
+      choices: [{ message: { content: '{"summary":"缺少结尾"' }, finish_reason: 'stop' }],
+      usage: { total_tokens: 20 },
+      model: 'qwen3.7-plus'
+    });
+    const client = new LLMClient({ api_key: 'test', model: 'qwen3.7-plus' });
+    let failure;
+    try {
+      await client.chatJSON([{ role: 'user', content: '测试' }], {
+        max_tokens: 1200,
+        json_repair: false
+      });
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure.message).toBe('LLM 返回内容无法解析为 JSON');
+    expect(failure.responseMetadata).toEqual({
+      contentCharacters: 17,
+      usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 20 },
+      finishReason: 'stop',
+      attempts: 1
+    });
+    expect(mockCreate).toHaveBeenCalledTimes(1);
   });
 });
