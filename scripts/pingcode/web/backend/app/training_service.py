@@ -966,14 +966,18 @@ class TrainingService:
         # 构建 LLM 请求
         system_prompt = """你是一个关键词过滤助手。根据用户提供的过滤规则，判断每个关键词是否应该被排除。
 
-对于每个关键词，返回 JSON 格式：
+对于每个关键词，返回如下 JSON 格式：
 {
-  "keywordId": "关键词ID",
-  "shouldExclude": true/false,
-  "reason": "排除或保留的原因"
+  "decisions": [
+    {
+      "keywordId": "关键词ID",
+      "shouldExclude": true/false,
+      "reason": "排除或保留的原因"
+    }
+  ]
 }
 
-只返回 JSON 数组，不要包含其他内容。"""
+只返回 JSON 对象，不要包含其他内容。"""
         
         user_message = f"""过滤规则：{prompt}
 
@@ -984,10 +988,10 @@ class TrainingService:
         
         # 调用 LLM
         try:
-            if self.model_gateway is None:
+            if self.gateway is None:
                 raise ValueError("模型网关未配置")
             
-            result = self.model_gateway.chat_json(
+            result = self.gateway.chat_json(
                 [
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_message},
@@ -996,7 +1000,7 @@ class TrainingService:
             )
             
             data = result.get("data", {})
-            decisions = data if isinstance(data, list) else []
+            decisions = data.get("decisions", []) if isinstance(data, dict) else []
             
         except Exception as e:
             # LLM 调用失败，返回错误
@@ -1456,12 +1460,6 @@ class TrainingService:
         nodes: list[dict[str, Any]],
         keyword_context_by_chunk: dict[str, list[dict[str, Any]]],
     ) -> dict[str, Any]:
-        accepted_ids = sorted({
-            str(context.get("keywordId"))
-            for contexts in keyword_context_by_chunk.values()
-            for context in contexts
-            if context.get("keywordId")
-        })
         rejected_ids = sorted({
             str(node.get("keywordId") or node.get("id"))
             for node in nodes
@@ -1469,10 +1467,25 @@ class TrainingService:
             and str(node.get("approvalStatus") or node.get("properties", {}).get("approvalStatus") or "autoAccepted") == "rejected"
             and str(node.get("keywordId") or node.get("id") or "")
         })
+        rejected_set = set(rejected_ids)
+        accepted_ids = sorted({
+            str(context.get("keywordId"))
+            for contexts in keyword_context_by_chunk.values()
+            for context in contexts
+            if context.get("keywordId")
+            and str(context.get("keywordId")) not in rejected_set
+        })
         chunk_keyword_map = {
-            chunk_id: [str(context.get("keywordId")) for context in contexts if context.get("keywordId")]
+            chunk_id: [
+                str(context.get("keywordId"))
+                for context in contexts
+                if context.get("keywordId")
+                and str(context.get("keywordId")) not in rejected_set
+            ]
             for chunk_id, contexts in self._normalize_keyword_context_by_chunk(keyword_context_by_chunk).items()
         }
+        # 过滤掉没有关键词的 chunk（所有关键词都被拒绝）
+        chunk_keyword_map = {k: v for k, v in chunk_keyword_map.items() if v}
         return {
             "sourceDatasetId": dataset_id,
             "acceptedKeywordIds": accepted_ids,
