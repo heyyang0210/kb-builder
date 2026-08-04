@@ -1,40 +1,59 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
-  "required": ["results"],
+  "required": [
+    "results"
+  ],
   "properties": {
     "results": {
       "type": "array",
       "minItems": 1,
       "items": {
         "type": "object",
-        "required": ["chunkId", "knowledgePoints"],
+        "required": [
+          "chunkId",
+          "knowledgePoints"
+        ],
         "properties": {
-          "chunkId": {"type": "string"},
+          "chunkId": {
+            "type": "string"
+          },
           "knowledgePoints": {
             "type": "array",
-            "items": {"$ref": "#/$defs/knowledgePoint"}
+            "items": {
+              "$ref": "#/$defs/knowledgePoint"
+            }
           },
           "documentStructure": {
             "type": "object",
             "properties": {
               "headingPath": {
                 "type": "array",
-                "items": {"type": "string"}
+                "items": {
+                  "type": "string"
+                }
               },
-              "sectionTitle": {"type": "string"}
+              "sectionTitle": {
+                "type": "string"
+              }
             }
           }
         },
-        "additionalProperties": false
+        "additionalProperties": true
       }
     },
     "metadata": {
       "type": "object",
       "properties": {
-        "skillId": {"type": "string"},
-        "skillVersion": {"type": "string"},
-        "processedChunks": {"type": "integer"}
+        "skillId": {
+          "type": "string"
+        },
+        "skillVersion": {
+          "type": "string"
+        },
+        "processedChunks": {
+          "type": "integer"
+        }
       },
       "additionalProperties": false
     }
@@ -43,19 +62,40 @@
   "$defs": {
     "knowledgePoint": {
       "type": "object",
-      "required": ["title", "statement", "knowledgeType", "evidenceText"],
+      "required": [
+        "title",
+        "statement",
+        "knowledgeType",
+        "evidenceText"
+      ],
       "properties": {
-        "title": {"type": "string"},
-        "statement": {"type": "string"},
-        "knowledgeType": {"type": "string"},
-        "summary": {"type": "string"},
+        "title": {
+          "type": "string"
+        },
+        "statement": {
+          "type": "string"
+        },
+        "knowledgeType": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
         "keywords": {
           "type": "array",
-          "items": {"type": "string"},
+          "items": {
+            "type": "string"
+          },
           "minItems": 1
         },
-        "evidenceText": {"type": "string"},
-        "confidence": {"type": "number", "minimum": 0, "maximum": 1}
+        "evidenceText": {
+          "type": "string"
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
       },
       "additionalProperties": false
     }

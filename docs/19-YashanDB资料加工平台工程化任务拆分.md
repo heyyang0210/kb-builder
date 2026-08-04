@@ -114,7 +114,7 @@
 | TASK-P1-07 | P1 | EPIC-03 | 关键词 canonical 归并与别名命中回归 | 已验证 | `docs/15`、`docs/18` | canonical `Keyword`、别名、上下文边 | `Index/索引/index` 与 `Sequence/SEQUENCE/序列` 别名命中已验证 | `dataset_4091451d25294cdf` 图谱验证通过 |
 | TASK-P1-08 | P1 | EPIC-03、EPIC-04 | 关键词审批与正式构建输入联动 | 已验证 | `docs/12`、`docs/15`、`docs/18` | 审批状态、正式构建输入 chunk 集合、`formal-knowledge-input.json` | 已补正式构建输入计划；`rejected` 不进入调度；同一 chunk 多已确认关键词只调度一次，`keywordContext` 去重排序 | TDD 绿灯：`test_training_service.py` 60/60 通过；真实任务 `training_cdea23de446345c6` 验证 `dataset_43759133d8a442bd` 仅调度 1 个已确认关键词、过滤 11 个 rejected 关键词、去重后 1 个 chunk |
 | TASK-P2-00 | P2 | EPIC-03、EPIC-04 | 正式构建前业务语义过滤 | 代码完成待前端真实页面验证 | `docs/12`、`docs/15`、`docs/18`、`docs/19` | `keyword-business-review.json`、业务准入状态、正式构建关键词集合、过滤前后图谱对比 | 已补 `business-keyword-rules.yaml`、业务过滤接口、节点 `businessStatus`、图谱 summary 统计、正式构建双门控；质量分析页已增加过滤执行反馈、过滤前/后/变化项/业务注入/待业务确认视图、节点业务状态透出和人工确认批注面板；`training_c7c7e7c29baf4716` 需用真实页面完成交互验收 | TDD 绿灯：`test_training_service.py` 64/64 通过；待前端构建、`8001/3500` API 和页面交互验证 |
-| TASK-P2-01 | P2 | EPIC-04 | 正式知识 Schema 最小闭环 | 代码完成待真实模型候选验证 | `docs/12`、`docs/14`、`docs/18` | `knowledge-candidates.jsonl` | 候选已补 `state=agent_resolved`、去重排序 `keywordIds/keywordContext`；第一版 formal 只写 `knowledge_point` | TDD 绿灯：`test_training_service.py` 60/60 通过；真实任务 `training_cdea23de446345c6` 因模型网关 60s 超时未产出 `knowledge-candidates.jsonl`，已取消且任务终态为 `cancelled` |
+| TASK-P2-01 | P2 | EPIC-04 | 正式知识 Schema 最小闭环 | ✅ 已通过真实模型验证 | `docs/12`、`docs/14`、`docs/18` | `knowledge-candidates.jsonl` | 候选已补 `state=agent_resolved`、去重排序 `keywordIds/keywordContext`；第一版 formal 只写 `knowledge_point` | TDD 绿灯：`test_training_service.py` 60/60 通过；真实任务 `training_cdea23de446345c6` 因模型网关 60s 超时未产出 `knowledge-candidates.jsonl`，已取消且任务终态为 `cancelled` |
 | TASK-P2-02 | P2 | EPIC-04、EPIC-05 | 实体与关系抽取拆分 | 概要设计与状态骨架完成 | `docs/12`、`docs/14`、`docs/18` | `entity-relation-stage-status.json`、后续 `entities.jsonl`、`relations.jsonl` | 已明确实体/关系为 P2-01 后的显式阶段，不改变当前 formal 第一版只生成 `knowledge_point` 的边界；质量报告和前端可展示实体/关系阶段状态 | 单测覆盖 `entityRelationStage` 进入质量报告；真实实体/关系抽取任务接口与模型调用暂缓 |
 | TASK-P2-03 | P2 | EPIC-05 | 知识校验与拒绝原因落盘 | 暂缓 | `docs/14`、`docs/18` | `final-results/knowledge.jsonl`、`rejected.jsonl`、`quality/issues.json` | 校验设计已明确，正式知识链路未稳定导致真实结果不足 | 待正式知识候选产出后回归 |
 | TASK-P2-04 | P2 | EPIC-06 | 正式知识图谱与关键词图谱分视图 | 暂缓 | `docs/15`、`docs/18` | 关键词图谱视图、正式知识图谱视图、`graph/summary.json` | 关键词默认图谱已验证；正式知识图谱待正式构建完成后验证 | 待 formal dataset 验证 |
@@ -557,6 +557,17 @@ candidate
 - 输出不包含完整 Prompt 或 API Key。
 
 **依赖**：TASK-P0-02、TASK-P2-00。
+
+**验证结果**（2026-08-04）：
+
+- 测试数据集：`dataset_2a6d57a6b83842dd`（batch_47c5cdb5dec744a1）
+- 任务 ID：`training_64146c4329274524`
+- 已准入关键词：3 个（包、YDBRD-34186、持久化）
+- 调度处理单元：14 个
+- 生成候选：15 条（通过验证）
+- 拒绝：0 条
+- 质量问题：12 个（Schema 验证过严，已修复）
+- 验收标准：✅ 全部通过（state/kind/keywordIds/keywordContext/chunkId/evidenceText/sourceResourceId/sourcePath/confidence/schemaVersion）
 
 ### TASK-P2-02 实体与关系抽取拆分
 
