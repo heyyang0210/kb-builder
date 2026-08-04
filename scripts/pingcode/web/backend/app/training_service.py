@@ -257,7 +257,7 @@ class TrainingService:
             },
             "formalKnowledge": {
                 "maxTokens": int(formal_defaults.get("maxTokens", 4000)),
-                "timeoutMs": int(formal_defaults.get("timeoutMs", 60000)),
+                "timeoutMs": int(formal_defaults.get("timeoutMs", 120000)),
                 "maxRetries": int(formal_defaults.get("maxRetries", 0)),
                 "concurrency": int(formal_defaults.get("concurrency", 1)),
                 "batchSize": int(formal_defaults.get("batchSize", 3)),

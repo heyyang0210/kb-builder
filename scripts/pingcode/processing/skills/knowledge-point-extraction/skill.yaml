@@ -10,7 +10,7 @@ prompts:
   user: prompts/user.md
 defaults:
   maxTokens: 4000
-  timeoutMs: 60000
+  timeoutMs: 120000
   maxRetries: 2
   concurrency: 3
   batchSize: 1
