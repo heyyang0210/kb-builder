@@ -1,0 +1,18 @@
+{
+  "paths": [
+    {
+      "id": "output",
+      "name": "生成文档",
+      "path": "/data/docs/AI高效应用示例/06-YashanDB知识库Skill仓库/output",
+      "writable": true,
+      "description": "知识库生成器产出的文档"
+    },
+    {
+      "id": "ai-cognitive",
+      "name": "AI 体系认知",
+      "path": "/data/docs/ai 体系认知",
+      "writable": false,
+      "description": "AI 体系认知知识文档"
+    }
+  ]
+}

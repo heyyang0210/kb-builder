@@ -3,16 +3,89 @@ const router = express.Router();
 const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
-
-const OUTPUT_DIR = path.join(__dirname, '..', '..', 'output');
-const LLMClient = require('../lib/llm-client');
-const configManager = require('../lib/config-manager');
 const logger = require('../lib/logger');
 
-// 元数据文件路径
-const METADATA_FILE = path.join(OUTPUT_DIR, 'metadata.json');
 // ============================================
-// 并发保护机制 - 文件锁（改进版）
+// 多路径配置
+// ============================================
+const CONFIG_PATH = path.join(__dirname, '..', 'config', 'document-paths.json');
+
+function loadDocPathsConfig() {
+  try {
+    if (fs.existsSync(CONFIG_PATH)) {
+      const config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
+      return config.paths || [];
+    }
+  } catch (err) {
+    logger.warn('Failed to load document-paths config, using defaults');
+  }
+  return [
+    { id: 'output', name: '生成文档', path: path.join(__dirname, '..', '..', 'output'), writable: true, description: '知识库生成器产出的文档' }
+  ];
+}
+
+function resolveRoots() {
+  const config = loadDocPathsConfig();
+  return config.map(entry => {
+    let absPath = entry.path;
+    if (!path.isAbsolute(absPath)) {
+      absPath = path.resolve(__dirname, '..', absPath);
+    }
+    return {
+      id: entry.id,
+      name: entry.name,
+      absPath,
+      writable: entry.writable !== false,
+      description: entry.description || ''
+    };
+  });
+}
+
+// 路径安全校验
+function isPathUnder(absPath, rootDir) {
+  const normPath = path.resolve(absPath);
+  const normRoot = path.resolve(rootDir);
+  return normPath === normRoot || normPath.startsWith(normRoot + path.sep);
+}
+
+// 解码文档ID → { rootId, relativePath, absPath, root, writable }
+function decodeDocId(docId) {
+  const decoded = Buffer.from(docId, 'base64').toString('utf-8');
+  const roots = resolveRoots();
+  let rootId, relativePath;
+  const colonIdx = decoded.indexOf(':');
+  if (colonIdx > 0) {
+    const candidate = decoded.substring(0, colonIdx);
+    if (roots.some(r => r.id === candidate)) {
+      rootId = candidate;
+      relativePath = decoded.substring(colonIdx + 1);
+    } else {
+      rootId = roots[0]?.id || 'output';
+      relativePath = decoded;
+    }
+  } else {
+    rootId = roots[0]?.id || 'output';
+    relativePath = decoded;
+  }
+  const root = roots.find(r => r.id === rootId);
+  if (!root) return null;
+  const absPath = path.resolve(root.absPath, relativePath);
+  if (!isPathUnder(absPath, root.absPath)) return null;
+  return { rootId, relativePath, absPath, root, writable: root.writable };
+}
+
+function encodeDocId(rootId, relativePath) {
+  const encoded = rootId + ':' + relativePath;
+  const roots = resolveRoots();
+  const root = roots.find(r => r.id === rootId);
+  if (!root) return null;
+  const absPath = path.resolve(root.absPath, relativePath);
+  if (!isPathUnder(absPath, root.absPath)) return null;
+  return Buffer.from(encoded).toString('base64');
+}
+
+// ============================================
+// 并发保护 - 文件锁
 // ============================================
 const fileLocks = new Map();
 
@@ -21,12 +94,10 @@ function acquireLock(key, timeout = 5000) {
     const startTime = Date.now();
     const check = () => {
       const lockInfo = fileLocks.get(key);
-      // 检查锁是否已过期（防止死锁）
       if (lockInfo && Date.now() - lockInfo.timestamp > 10000) {
-        console.warn(`[Lock] Force releasing stale lock: ${key}`);
+        logger.warn(`[Lock] Force releasing stale lock: ${key}`);
         fileLocks.delete(key);
       }
-      
       if (!fileLocks.get(key)) {
         fileLocks.set(key, { timestamp: Date.now() });
         resolve();
@@ -44,12 +115,21 @@ function releaseLock(key) {
   fileLocks.delete(key);
 }
 
+// ============================================
+// 元数据管理
+// ============================================
+function getMetadataFilePath() {
+  const roots = resolveRoots();
+  const outputRoot = roots.find(r => r.id === 'output') || roots[0];
+  return path.join(outputRoot.absPath, 'metadata.json');
+}
 
 async function loadMetadata() {
   await acquireLock('metadata');
   try {
-    if (fs.existsSync(METADATA_FILE)) {
-      const data = JSON.parse(fs.readFileSync(METADATA_FILE, 'utf-8'));
+    const metaFile = getMetadataFilePath();
+    if (fs.existsSync(metaFile)) {
+      const data = JSON.parse(fs.readFileSync(metaFile, 'utf-8'));
       releaseLock('metadata');
       return data;
     }
@@ -64,15 +144,25 @@ async function loadMetadata() {
 async function saveMetadata(metadata) {
   await acquireLock('metadata');
   try {
-    if (!fs.existsSync(OUTPUT_DIR)) {
-      fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+    const metaFile = getMetadataFilePath();
+    const dir = path.dirname(metaFile);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
     }
-    fs.writeFileSync(METADATA_FILE, JSON.stringify(metadata, null, 2), 'utf-8');
+    fs.writeFileSync(metaFile, JSON.stringify(metadata, null, 2), 'utf-8');
     releaseLock('metadata');
   } catch (err) {
     releaseLock('metadata');
     throw err;
   }
+}
+
+function findMetaByPath(metadata, docPath) {
+  return metadata.documents.find(d =>
+    d.path === docPath ||
+    d.path === 'output:' + docPath ||
+    ('output:' + d.path) === docPath
+  );
 }
 
 function generateDocId() {
@@ -131,6 +221,7 @@ async function loadDocMetadata() {
 async function saveDocMetadata(metadata) {
   await acquireLock('doc_metadata');
   try {
+    if (!fs.existsSync(DOC_PROCESSED_DIR)) fs.mkdirSync(DOC_PROCESSED_DIR, { recursive: true });
     fs.writeFileSync(DOC_METADATA_PATH, JSON.stringify(metadata, null, 2));
     releaseLock('doc_metadata');
   } catch (err) {
@@ -169,75 +260,206 @@ function parseMarkdown(filePath) {
   return result;
 }
 
+function countSections(sections) {
+  let count = sections.length;
+  sections.forEach(s => { count += countSections(s.children || []); });
+  return count;
+}
+
 // ============================================
-// 路由定义 — 固定路径优先于参数路径
+// 路由：文档路径管理
 // ============================================
 
-// GET /api/document/list
-// 支持排序参数: sort_by (created_at|updated_at|title), sort_order (asc|desc)
+// GET /api/document/paths - 获取所有配置的文档路径
+router.get('/paths', (req, res) => {
+  try {
+    const roots = resolveRoots();
+    res.json({
+      success: true,
+      data: roots.map(r => ({
+        id: r.id, name: r.name, absPath: r.absPath,
+        writable: r.writable, description: r.description,
+        exists: fs.existsSync(r.absPath)
+      }))
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// POST /api/document/paths - 添加文档路径
+router.post('/paths', (req, res) => {
+  try {
+    const { name, path: pathValue, writable } = req.body;
+    if (!name || !pathValue) {
+      return res.status(400).json({ success: false, message: '名称和路径为必填' });
+    }
+    const resolvedPath = path.isAbsolute(pathValue) ? pathValue : path.resolve(__dirname, '..', pathValue);
+    if (!fs.existsSync(resolvedPath) || !fs.statSync(resolvedPath).isDirectory()) {
+      return res.status(400).json({ success: false, message: '路径不存在或不是目录: ' + pathValue });
+    }
+    const config = fs.existsSync(CONFIG_PATH) ? JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8')) : { paths: [] };
+    let slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''); if (!slug) slug = 'path'; const newId = slug + '-' + Date.now().toString(36);
+    const entry = {
+      id: newId, name,
+      path: pathValue,
+      writable: writable !== undefined ? !!writable : false,
+      description: req.body.description || ''
+    };
+    config.paths.push(entry);
+    fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), 'utf-8');
+    logger.info('Document path added', { id: newId, name, path: pathValue });
+    res.json({ success: true, data: { ...entry, absPath: resolvedPath, exists: true } });
+  } catch (err) {
+    res.status(500).json({ success: false, message: '添加失败: ' + err.message });
+  }
+});
+
+// DELETE /api/document/paths/:id - 删除文档路径
+router.delete('/paths/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    if (id === 'output') return res.status(400).json({ success: false, message: '默认生成文档路径不可删除' });
+    const config = fs.existsSync(CONFIG_PATH) ? JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8')) : { paths: [] };
+    const idx = config.paths.findIndex(p => p.id === id);
+    if (idx === -1) return res.status(404).json({ success: false, message: '路径不存在' });
+    const removed = config.paths.splice(idx, 1)[0];
+    fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), 'utf-8');
+    logger.info('Document path removed', { id, name: removed.name });
+    res.json({ success: true, message: '路径已移除' });
+  } catch (err) {
+    res.status(500).json({ success: false, message: '删除失败: ' + err.message });
+  }
+});
+
+// ============================================
+// 路由：文档树
+// ============================================
+
+router.get('/tree', async (req, res) => {
+  try {
+    const roots = resolveRoots();
+    const metadata = await loadMetadata();
+    const rootNodes = [];
+
+    for (const root of roots) {
+      if (!fs.existsSync(root.absPath)) {
+        rootNodes.push({
+          name: root.name, path: root.id + ':', type: 'root',
+          root_id: root.id, writable: root.writable,
+          children: [], exists: false
+        });
+        continue;
+      }
+      function scanDir(dir, relPath) {
+        const nodes = [];
+        const entries = fs.readdirSync(dir, { withFileTypes: true });
+        const dirs = entries.filter(e => e.isDirectory() && e.name !== 'node_modules' && !e.name.startsWith('.')).sort((a, b) => a.name.localeCompare(b.name));
+        const files = entries.filter(e => e.isFile() && e.name !== 'metadata.json').sort((a, b) => a.name.localeCompare(b.name));
+
+        for (const entry of dirs) {
+          const childRel = relPath ? path.join(relPath, entry.name) : entry.name;
+          const children = scanDir(path.join(dir, entry.name), childRel);
+          nodes.push({ name: entry.name, path: root.id + ':' + childRel, type: 'directory', children });
+        }
+        for (const entry of files) {
+          const fileRel = relPath ? path.join(relPath, entry.name) : entry.name;
+          const absPath = path.join(dir, entry.name);
+          const stat = fs.statSync(absPath);
+          const metaKey = root.id === 'output' ? fileRel : root.id + ':' + fileRel;
+          const meta = findMetaByPath(metadata, metaKey) || metadata.documents.find(d => d.path === metaKey);
+          nodes.push({
+            name: entry.name, path: root.id + ':' + fileRel, type: 'file',
+            id: encodeDocId(root.id, fileRel),
+            size: stat.size, ext: path.extname(entry.name),
+            updated_at: meta?.updated_at || stat.mtime.toISOString(),
+            writable: root.writable
+          });
+        }
+        return nodes;
+      }
+
+      const children = scanDir(root.absPath, '');
+      rootNodes.push({
+        name: root.name, path: root.id + ':', type: 'root',
+        root_id: root.id, writable: root.writable,
+        children, exists: true
+      });
+    }
+
+    res.json({ success: true, data: rootNodes });
+  } catch (err) {
+    logger.error('Failed to build document tree:', err.message);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ============================================
+// 路由：文档列表
+// ============================================
+
 router.get('/list', async (req, res) => {
   try {
     const { sort_by = 'created_at', sort_order = 'desc' } = req.query;
     const validSortFields = ['created_at', 'updated_at', 'title'];
-    const validSortOrders = ['asc', 'desc'];
     const safeSortBy = validSortFields.includes(sort_by) ? sort_by : 'created_at';
-    const safeSortOrder = validSortOrders.includes(sort_order) ? sort_order : 'desc';
+    const safeSortOrder = sort_order === 'asc' ? 'asc' : 'desc';
 
-    const documents = [];
-    if (!fs.existsSync(OUTPUT_DIR)) return res.json({ success: true, data: [] });
-
-    // 在外部加载 metadata，避免在循环中重复加载
+    const roots = resolveRoots();
     const metadata = await loadMetadata();
+    const documents = [];
 
-    function scanDir(dir, relativePath = '') {
-      const files = fs.readdirSync(dir);
-      files.forEach(file => {
-        if (file === 'metadata.json') return;
-        const filePath = path.join(dir, file);
-        const stat = fs.statSync(filePath);
-        if (stat.isDirectory()) {
-          scanDir(filePath, path.join(relativePath, file));
-        } else if (file.endsWith('.md')) {
-          const docPath = path.join(relativePath, file);
-          const title = path.basename(file, '.md');
-          const pathParts = docPath.split(path.sep);
-          let knowledge_point = '';
-          if (pathParts.length >= 2) knowledge_point = pathParts.slice(0, -1).join(' > ');
-
-          // 尝试从 metadata 中获取更多信息
-          const meta = metadata.documents.find(d => d.path === docPath);
-
-          documents.push({
-            id: Buffer.from(docPath).toString('base64'),
-            meta_id: meta?.id || null,
-            title: meta?.title || title,
-            knowledge_point: knowledge_point,
-            file_path: docPath,
-            file_size: stat.size,
-            version: meta?.version || 1,
-            created_at: meta?.created_at || stat.birthtime.toISOString(),
-            updated_at: meta?.updated_at || stat.mtime.toISOString(),
-            created_by: meta?.created_by || 'unknown',
-            status: meta?.status || 'completed'
-          });
+    for (const root of roots) {
+      if (!fs.existsSync(root.absPath)) continue;
+      function scanDir(dir, relPath) {
+        const entries = fs.readdirSync(dir, { withFileTypes: true });
+        for (const entry of entries) {
+          const fullPath = path.join(dir, entry.name);
+          const entryRel = relPath ? path.join(relPath, entry.name) : entry.name;
+          if (entry.isDirectory()) {
+            if (entry.name !== 'node_modules' && !entry.name.startsWith('.')) {
+              scanDir(fullPath, entryRel);
+            }
+          } else if (entry.isFile() && entry.name !== 'metadata.json') {
+            const stat = fs.statSync(fullPath);
+            const metaKey = root.id === 'output' ? entryRel : root.id + ':' + entryRel;
+            const meta = findMetaByPath(metadata, metaKey) || metadata.documents.find(d => d.path === metaKey);
+            const ext = path.extname(entry.name);
+            const title = ext === '.md' ? path.basename(entry.name, '.md') : entry.name;
+            const pathParts = entryRel.split(path.sep);
+            const knowledge_point = pathParts.length >= 2 ? pathParts.slice(0, -1).join(' > ') : '';
+            documents.push({
+              id: encodeDocId(root.id, entryRel),
+              meta_id: meta?.id || null,
+              title: meta?.title || title,
+              knowledge_point,
+              file_path: root.id + ':' + entryRel,
+              file_size: stat.size,
+              version: meta?.version || 1,
+              created_at: meta?.created_at || stat.birthtime.toISOString(),
+              updated_at: meta?.updated_at || stat.mtime.toISOString(),
+              created_by: meta?.created_by || 'unknown',
+              status: meta?.status || 'completed',
+              root_id: root.id,
+              root_name: root.name,
+              writable: root.writable,
+              ext
+            });
+          }
         }
-      });
+      }
+      scanDir(root.absPath, '');
     }
-    scanDir(OUTPUT_DIR);
 
-    // 动态排序
     documents.sort((a, b) => {
       if (safeSortBy === 'title') {
-        const valA = (a.title || '').toLowerCase();
-        const valB = (b.title || '').toLowerCase();
         return safeSortOrder === 'asc'
-          ? valA.localeCompare(valB, 'zh-CN')
-          : valB.localeCompare(valA, 'zh-CN');
-      } else {
-        const valA = new Date(a[safeSortBy] || 0).getTime();
-        const valB = new Date(b[safeSortBy] || 0).getTime();
-        return safeSortOrder === 'asc' ? valA - valB : valB - valA;
+          ? (a.title || '').localeCompare(b.title || '', 'zh-CN')
+          : (b.title || '').localeCompare(a.title || '', 'zh-CN');
       }
+      const valA = new Date(a[safeSortBy] || 0).getTime();
+      const valB = new Date(b[safeSortBy] || 0).getTime();
+      return safeSortOrder === 'asc' ? valA - valB : valB - valA;
     });
 
     res.json({ success: true, data: documents });
@@ -246,12 +468,142 @@ router.get('/list', async (req, res) => {
   }
 });
 
-// POST /api/document/generate - 根据提示词直接生成文档
+// ============================================
+// 路由：文档统计
+// ============================================
+
+router.get('/stats', async (req, res) => {
+  try {
+    const roots = resolveRoots();
+    let totalDocs = 0;
+    let totalSize = 0;
+    let totalTokens = 0;
+
+    // 统计所有根目录的文件数和大小
+    for (const root of roots) {
+      if (!fs.existsSync(root.absPath)) continue;
+      function countDir(dir) {
+        const entries = fs.readdirSync(dir, { withFileTypes: true });
+        for (const entry of entries) {
+          const fullPath = path.join(dir, entry.name);
+          if (entry.isDirectory() && entry.name !== 'node_modules' && !entry.name.startsWith('.')) {
+            countDir(fullPath);
+          } else if (entry.isFile() && entry.name !== 'metadata.json') {
+            totalDocs++;
+            totalSize += fs.statSync(fullPath).size;
+          }
+        }
+      }
+      countDir(root.absPath);
+    }
+
+    // Token统计来自元数据
+    const metadata = await loadMetadata();
+    totalTokens = metadata.documents.reduce((sum, d) => sum + (d.tokens_used || 0), 0);
+
+    res.json({
+      success: true,
+      data: {
+        total_documents: totalDocs,
+        total_size: totalSize,
+        total_tokens: totalTokens,
+        root_count: roots.length
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ============================================
+// 路由：全文搜索
+// ============================================
+
+router.post('/search', async (req, res) => {
+  try {
+    const { keyword, scope } = req.body;
+    if (!keyword || keyword.trim().length === 0) {
+      return res.json({ success: true, data: [] });
+    }
+    const searchScope = scope || 'all';
+    const kw = keyword.trim().toLowerCase();
+    const roots = resolveRoots();
+    const metadata = await loadMetadata();
+    const results = [];
+
+    for (const root of roots) {
+      if (!fs.existsSync(root.absPath)) continue;
+
+      function searchInDir(dir, relPath) {
+        const entries = fs.readdirSync(dir, { withFileTypes: true });
+        for (const entry of entries) {
+          const fullPath = path.join(dir, entry.name);
+          const entryRel = relPath ? path.join(relPath, entry.name) : entry.name;
+
+          if (entry.isDirectory()) {
+            if (entry.name !== 'node_modules' && !entry.name.startsWith('.')) {
+              searchInDir(fullPath, entryRel);
+            }
+          } else if (entry.isFile() && entry.name !== 'metadata.json') {
+            const stat = fs.statSync(fullPath);
+            const ext = path.extname(entry.name);
+            const title = ext === '.md' ? path.basename(entry.name, '.md') : entry.name;
+            const docId = encodeDocId(root.id, entryRel);
+            let matches = [];
+
+            if (title.toLowerCase().includes(kw)) {
+              matches.push({ line: 0, context: title, highlight: keyword.trim(), type: 'title' });
+            }
+
+            // 只搜索文本类文件的内容
+            const textExts = ['.md', '.txt', '.json', '.yaml', '.yml', '.csv', '.log', '.html', '.xml', '.js', '.py', '.sh', '.css'];
+            if (searchScope === 'all' && textExts.includes(ext.toLowerCase())) {
+              try {
+                const content = fs.readFileSync(fullPath, 'utf-8');
+                const lines = content.split('\n');
+                let matchCount = 0;
+                for (let i = 0; i < lines.length && matchCount < 3; i++) {
+                  if (lines[i].toLowerCase().includes(kw)) {
+                    matches.push({ line: i + 1, context: lines[i].trim().substring(0, 120), highlight: keyword.trim(), type: 'content' });
+                    matchCount++;
+                  }
+                }
+              } catch (e) { /* 跳过无法读取的文件 */ }
+            }
+
+            if (matches.length > 0) {
+              results.push({
+                id: docId, title, path: root.id + ':' + entryRel,
+                file_size: stat.size, root_id: root.id, root_name: root.name,
+                writable: root.writable, ext,
+                updated_at: stat.mtime.toISOString(), matches
+              });
+            }
+          }
+        }
+      }
+      searchInDir(root.absPath, '');
+    }
+
+    results.sort((a, b) => b.matches.length - a.matches.length);
+    res.json({ success: true, data: results });
+  } catch (err) {
+    logger.error('Document search failed:', err.message);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ============================================
+// 路由：生成文档
+// ============================================
+
 router.post('/generate', async (req, res) => {
   try {
     const { prompt, title, output_path, filename, metadata: extraMeta } = req.body;
     if (!prompt) return res.status(400).json({ success: false, message: 'prompt 是必填项' });
 
+    const LLMClient = require('../lib/llm-client');
+    const configManager = require('../lib/config-manager');
     const modelConfig = await configManager.getModelConfig();
     if (!modelConfig || (!modelConfig.api_key && !modelConfig.api_key_encrypted)) {
       return res.status(400).json({ success: false, message: '请先配置大模型 API Key' });
@@ -259,34 +611,23 @@ router.post('/generate', async (req, res) => {
 
     const llm = new LLMClient(modelConfig);
     const docTitle = title || '未命名文档';
-
-    const systemPrompt = `你是 YashanDB 数据库知识库文档撰写专家。请根据用户提供的提示词，生成一篇高质量的技术文档。
-
-要求：
-1. 使用 Markdown 格式
-2. 文档标题使用一级标题
-3. 结构清晰，包含概述、详细说明、示例、注意事项等章节
-4. 代码示例使用代码块标注语言类型
-5. 表格数据使用 Markdown 表格
-6. 内容准确、专业、易于理解
-
-文档标题：${docTitle}`;
-
-    logger.info('Document generation started', { title: docTitle, prompt_length: prompt.length });
-
     const response = await llm.chat(
-      [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: prompt }
-      ],
+      [{ role: 'user', content: prompt }],
       { max_tokens: modelConfig.max_tokens || 60000, temperature: 0.7 }
     );
 
     const content = response.content;
     const docFilename = filename || `${docTitle.replace(/[\/\\:*?"<>|]/g, '_')}.md`;
     const docOutputPath = output_path || '';
+
+    // 生成文档始终写入 output 根
+    const roots = resolveRoots();
+    const outputRoot = roots.find(r => r.id === 'output') || roots[0];
     const relativePath = docOutputPath ? path.join(docOutputPath, docFilename) : docFilename;
-    const fullPath = path.join(OUTPUT_DIR, relativePath);
+    const fullPath = path.resolve(outputRoot.absPath, relativePath);
+    if (!isPathUnder(fullPath, outputRoot.absPath)) {
+      return res.status(400).json({ success: false, message: '非法路径' });
+    }
 
     const dir = path.dirname(fullPath);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -297,32 +638,24 @@ router.post('/generate', async (req, res) => {
     const now = new Date().toISOString();
 
     const docMeta = {
-      id: docId,
-      title: docTitle,
-      path: relativePath,
+      id: docId, title: docTitle,
+      path: 'output:' + relativePath,
       size: Buffer.byteLength(content, 'utf-8'),
-      version: 1,
-      created_at: now,
-      updated_at: now,
-      created_by: 'llm',
-      model: modelConfig.model,
+      version: 1, created_at: now, updated_at: now,
+      created_by: 'llm', model: modelConfig.model,
       prompt_length: prompt.length,
       tokens_used: response.usage?.total_tokens || 0,
-      status: 'completed',
-      tags: extraMeta?.tags || []
+      status: 'completed', tags: extraMeta?.tags || []
     };
 
     metadata.documents.push(docMeta);
-    metadata.versions[docId] = [{
-      version: 1, content_length: content.length, timestamp: now, change: 'initial generation'
-    }];
+    metadata.versions[docId] = [{ version: 1, content_length: content.length, timestamp: now, change: 'initial generation' }];
     await saveMetadata(metadata);
 
-    logger.info('Document generated successfully', { id: docId, path: relativePath, tokens: docMeta.tokens_used });
-
+    logger.info('Document generated', { id: docId, path: relativePath, tokens: docMeta.tokens_used });
     res.json({
       success: true,
-      data: { id: docId, title: docTitle, path: relativePath, content, size: docMeta.size, tokens_used: docMeta.tokens_used, created_at: now }
+      data: { id: docId, title: docTitle, path: 'output:' + relativePath, content, size: docMeta.size, tokens_used: docMeta.tokens_used, created_at: now }
     });
   } catch (err) {
     logger.error('Document generation failed:', err.message);
@@ -330,57 +663,58 @@ router.post('/generate', async (req, res) => {
   }
 });
 
-// POST /api/document/save - 保存/更新文档内容
+// ============================================
+// 路由：保存文档
+// ============================================
+
 router.post('/save', async (req, res) => {
   try {
     const { id, content, path: docPath, title } = req.body;
     if (!content) return res.status(400).json({ success: false, message: 'content 是必填项' });
 
-    let targetPath = docPath;
-    let docId = id;
-    const metadata = await loadMetadata();
-
-    if (id && !docPath) {
-      const doc = metadata.documents.find(d => d.id === id);
-      if (doc) targetPath = doc.path;
+    // 通过ID解析目标路径
+    let decoded = null;
+    if (id) {
+      decoded = decodeDocId(id);
     }
-    if (id && !targetPath) {
-      try { targetPath = Buffer.from(id, 'base64').toString('utf-8'); } catch (e) { /* ignore */ }
+    if (!decoded && docPath) {
+      // 尝试解析 docPath 格式
+      decoded = decodeDocId(Buffer.from(docPath).toString('base64'));
     }
-    if (!targetPath) return res.status(400).json({ success: false, message: '无法确定文档路径' });
+    if (!decoded) return res.status(400).json({ success: false, message: '无法确定文档路径' });
+    if (!decoded.writable) return res.status(403).json({ success: false, message: '该文档路径为只读，不可编辑' });
 
-    const fullPath = path.join(OUTPUT_DIR, targetPath);
-    const dir = path.dirname(fullPath);
+    const targetAbsPath = decoded.absPath;
+    const dir = path.dirname(targetAbsPath);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(fullPath, content, 'utf-8');
+    fs.writeFileSync(targetAbsPath, content, 'utf-8');
     const now = new Date().toISOString();
 
-    let docMeta = metadata.documents.find(d => d.id === docId || d.path === targetPath);
+    const metadata = await loadMetadata();
+    const metaKey = decoded.rootId + ':' + decoded.relativePath;
+    let docMeta = metadata.documents.find(d => d.path === metaKey || d.path === decoded.relativePath);
     if (docMeta) {
       docMeta.version = (docMeta.version || 1) + 1;
       docMeta.updated_at = now;
       docMeta.size = Buffer.byteLength(content, 'utf-8');
       if (title) docMeta.title = title;
       if (!metadata.versions[docMeta.id]) metadata.versions[docMeta.id] = [];
-      metadata.versions[docMeta.id].push({
-        version: docMeta.version, content_length: content.length, timestamp: now, change: 'manual edit'
-      });
+      metadata.versions[docMeta.id].push({ version: docMeta.version, content_length: content.length, timestamp: now, change: 'manual edit' });
     } else {
-      docId = docId || generateDocId();
+      const newId = id || generateDocId();
       docMeta = {
-        id: docId, title: title || path.basename(targetPath, '.md'), path: targetPath,
-        size: Buffer.byteLength(content, 'utf-8'), version: 1,
-        created_at: now, updated_at: now, created_by: 'user', status: 'completed'
+        id: newId, title: title || path.basename(targetAbsPath, path.extname(targetAbsPath)),
+        path: metaKey, size: Buffer.byteLength(content, 'utf-8'),
+        version: 1, created_at: now, updated_at: now, created_by: 'user', status: 'completed'
       };
       metadata.documents.push(docMeta);
     }
     await saveMetadata(metadata);
-
-    logger.info('Document saved', { id: docMeta.id, path: targetPath, version: docMeta.version });
+    logger.info('Document saved', { id: docMeta.id, path: metaKey, version: docMeta.version });
 
     res.json({
       success: true,
-      data: { id: docMeta.id, title: docMeta.title, path: targetPath, version: docMeta.version, size: docMeta.size, updated_at: now }
+      data: { id: docMeta.id, title: docMeta.title, path: metaKey, version: docMeta.version, size: docMeta.size, updated_at: now }
     });
   } catch (err) {
     logger.error('Document save failed:', err.message);
@@ -388,199 +722,25 @@ router.post('/save', async (req, res) => {
   }
 });
 
-// GET /api/document/stats - 文档统计信息
-router.get('/stats', async (req, res) => {
-  try {
-    const metadata = await loadMetadata();
-    const totalDocs = metadata.documents.length;
-    const totalSize = metadata.documents.reduce((sum, d) => sum + (d.size || 0), 0);
-    const totalTokens = metadata.documents.reduce((sum, d) => sum + (d.tokens_used || 0), 0);
-    res.json({
-      success: true,
-      data: {
-        total_documents: totalDocs, total_size: totalSize, total_tokens: totalTokens,
-        last_updated: metadata.documents.length > 0
-          ? metadata.documents.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at))[0].updated_at
-          : null
-      }
-    });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-});
+// ============================================
+// 路由：文档预处理（上传）
+// ============================================
 
-
-// GET /api/document/tree - 目录树结构
-router.get('/tree', async (req, res) => {
-  try {
-    if (!fs.existsSync(OUTPUT_DIR)) {
-      return res.json({ success: true, data: [] });
-    }
-    
-    const metadata = await loadMetadata();
-    
-    function scanDir(dir, relativePath) {
-      const nodes = [];
-      const entries = fs.readdirSync(dir, { withFileTypes: true });
-      
-      // 分离目录和文件，目录排前面
-      const dirs = entries.filter(e => e.isDirectory()).sort((a, b) => a.name.localeCompare(b.name));
-      const files = entries.filter(e => e.isFile() && e.name.endsWith('.md') && e.name !== 'metadata.json')
-                           .sort((a, b) => a.name.localeCompare(b.name));
-      
-      for (const entry of dirs) {
-        const childPath = relativePath ? path.join(relativePath, entry.name) : entry.name;
-        const fullPath = path.join(dir, entry.name);
-        const children = scanDir(fullPath, childPath);
-        nodes.push({
-          name: entry.name,
-          path: childPath,
-          type: 'directory',
-          children: children
-        });
-      }
-      
-      for (const entry of files) {
-        const filePath = relativePath ? path.join(relativePath, entry.name) : entry.name;
-        const absPath = path.join(dir, entry.name);
-        const stat = fs.statSync(absPath);
-        const meta = metadata.documents.find(d => d.path === filePath);
-        
-        nodes.push({
-          name: entry.name,
-          path: filePath,
-          type: 'file',
-          id: Buffer.from(filePath).toString('base64'),
-          size: stat.size,
-          version: meta?.version || 1,
-          updated_at: meta?.updated_at || stat.mtime.toISOString(),
-          created_by: meta?.created_by || 'unknown'
-        });
-      }
-      
-      return nodes;
-    }
-    
-    const tree = scanDir(OUTPUT_DIR, '');
-    res.json({ success: true, data: tree });
-  } catch (err) {
-    logger.error('Failed to build document tree:', err.message);
-    res.status(500).json({ success: false, message: err.message });
-  }
-});
-
-// POST /api/document/search - 全文搜索
-router.post('/search', async (req, res) => {
-  try {
-    const { keyword, scope } = req.body;
-    if (!keyword || keyword.trim().length === 0) {
-      return res.json({ success: true, data: [] });
-    }
-    
-    const searchScope = scope || 'all'; // "all" | "title"
-    const kw = keyword.trim().toLowerCase();
-    const metadata = await loadMetadata();
-    const results = [];
-    
-    function searchInDir(dir, relativePath) {
-      if (!fs.existsSync(dir)) return;
-      const entries = fs.readdirSync(dir, { withFileTypes: true });
-      
-      for (const entry of entries) {
-        const fullPath = path.join(dir, entry.name);
-        const filePath = relativePath ? path.join(relativePath, entry.name) : entry.name;
-        
-        if (entry.isDirectory()) {
-          searchInDir(fullPath, filePath);
-        } else if (entry.isFile() && entry.name.endsWith('.md') && entry.name !== 'metadata.json') {
-          const stat = fs.statSync(fullPath);
-          const meta = metadata.documents.find(d => d.path === filePath);
-          const title = path.basename(entry.name, '.md');
-          const docId = Buffer.from(filePath).toString('base64');
-          
-          let matches = [];
-          
-          // 标题搜索
-          if (title.toLowerCase().includes(kw)) {
-            matches.push({
-              line: 0,
-              context: title,
-              highlight: keyword.trim(),
-              type: 'title'
-            });
-          }
-          
-          // 内容搜索
-          if (searchScope === 'all') {
-            try {
-              const content = fs.readFileSync(fullPath, 'utf-8');
-              const lines = content.split('\n');
-              let matchCount = 0;
-              
-              for (let i = 0; i < lines.length && matchCount < 3; i++) {
-                const lineLower = lines[i].toLowerCase();
-                if (lineLower.includes(kw)) {
-                  matches.push({
-                    line: i + 1,
-                    context: lines[i].trim().substring(0, 120),
-                    highlight: keyword.trim(),
-                    type: 'content'
-                  });
-                  matchCount++;
-                }
-              }
-            } catch (e) {
-              // 跳过无法读取的文件
-            }
-          }
-          
-          if (matches.length > 0) {
-            results.push({
-              id: docId,
-              title: meta?.title || title,
-              path: filePath,
-              file_size: stat.size,
-              version: meta?.version || 1,
-              updated_at: meta?.updated_at || stat.mtime.toISOString(),
-              matches: matches
-            });
-          }
-        }
-      }
-    }
-    
-    searchInDir(OUTPUT_DIR, '');
-    
-    // 按匹配数量排序
-    results.sort((a, b) => b.matches.length - a.matches.length);
-    
-    res.json({ success: true, data: results });
-  } catch (err) {
-    logger.error('Document search failed:', err.message);
-    res.status(500).json({ success: false, message: err.message });
-  }
-});
-
-// POST /api/document/preprocess - 上传文档预处理
 router.post('/preprocess', docUpload.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ success: false, message: '未接收到文件' });
-
     const parsed = parseMarkdown(req.file.path);
-    const docId = 'doc_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8);
+    const docId = generateDocId();
     const storedName = `${docId}.json`;
-
     const docData = {
       id: docId, original_name: req.file.originalname, stored_file: storedName,
       title: parsed.title || path.basename(req.file.originalname, path.extname(req.file.originalname)),
       sections: parsed.sections, uploaded_at: new Date().toISOString(), status: 'processed'
     };
-
     fs.writeFileSync(path.join(DOC_PROCESSED_DIR, storedName), JSON.stringify(docData, null, 2), 'utf-8');
     const metadata = await loadDocMetadata();
     metadata.documents.push({ id: docId, title: docData.title, original_name: req.file.originalname, uploaded_at: docData.uploaded_at, status: 'processed', section_count: countSections(parsed.sections) });
     await saveDocMetadata(metadata);
-
     try { fs.unlinkSync(req.file.path); } catch (e) { /* ignore */ }
     res.json({ success: true, data: docData });
   } catch (err) {
@@ -588,13 +748,6 @@ router.post('/preprocess', docUpload.single('file'), async (req, res) => {
   }
 });
 
-function countSections(sections) {
-  let count = sections.length;
-  sections.forEach(s => { count += countSections(s.children || []); });
-  return count;
-}
-
-// GET /api/document/preprocess - 列出预处理文档
 router.get('/preprocess', async (req, res) => {
   try {
     const metadata = await loadDocMetadata();
@@ -604,7 +757,6 @@ router.get('/preprocess', async (req, res) => {
   }
 });
 
-// GET /api/document/preprocess/:id
 router.get('/preprocess/:id', (req, res) => {
   try {
     const jsonPath = path.join(DOC_PROCESSED_DIR, `${req.params.id}.json`);
@@ -616,7 +768,6 @@ router.get('/preprocess/:id', (req, res) => {
   }
 });
 
-// DELETE /api/document/preprocess/:id
 router.delete('/preprocess/:id', async (req, res) => {
   try {
     const metadata = await loadDocMetadata();
@@ -642,24 +793,32 @@ router.delete('/preprocess/:id', async (req, res) => {
 // GET /api/document/:id - 文档元数据
 router.get('/:id', async (req, res) => {
   try {
-    const docPath = Buffer.from(req.params.id, 'base64').toString('utf-8');
-    const filePath = path.join(OUTPUT_DIR, docPath);
-    if (!fs.existsSync(filePath)) return res.status(404).json({ success: false, message: '文档不存在' });
-    const stat = fs.statSync(filePath);
-    const title = path.basename(filePath, '.md');
-    const pathParts = docPath.split(path.sep);
-    let knowledge_point = pathParts.length >= 2 ? pathParts.slice(0, -1).join(' > ') : '';
+    const decoded = decodeDocId(req.params.id);
+    if (!decoded) return res.status(404).json({ success: false, message: '文档不存在或路径无效' });
+    if (!fs.existsSync(decoded.absPath)) return res.status(404).json({ success: false, message: '文档不存在' });
+
+    const stat = fs.statSync(decoded.absPath);
+    const ext = path.extname(decoded.absPath);
+    const title = ext === '.md' ? path.basename(decoded.absPath, '.md') : path.basename(decoded.absPath);
+    const pathParts = decoded.relativePath.split(path.sep);
+    const knowledge_point = pathParts.length >= 2 ? pathParts.slice(0, -1).join(' > ') : '';
+
     const metadata = await loadMetadata();
-    const meta = metadata.documents.find(d => d.path === docPath);
+    const metaKey = decoded.rootId + ':' + decoded.relativePath;
+    const meta = findMetaByPath(metadata, metaKey) || metadata.documents.find(d => d.path === metaKey);
 
     res.json({
       success: true,
       data: {
         id: req.params.id, meta_id: meta?.id, title: meta?.title || title,
-        knowledge_point, file_path: docPath, file_size: stat.size,
-        version: meta?.version || 1, created_at: meta?.created_at || stat.birthtime.toISOString(),
+        knowledge_point, file_path: metaKey, file_size: stat.size,
+        version: meta?.version || 1,
+        created_at: meta?.created_at || stat.birthtime.toISOString(),
         updated_at: meta?.updated_at || stat.mtime.toISOString(),
-        created_by: meta?.created_by || 'unknown', status: meta?.status || 'completed'
+        created_by: meta?.created_by || 'unknown',
+        status: meta?.status || 'completed',
+        root_id: decoded.rootId, root_name: decoded.root.name,
+        writable: decoded.writable, ext
       }
     });
   } catch (err) {
@@ -670,24 +829,31 @@ router.get('/:id', async (req, res) => {
 // GET /api/document/:id/content
 router.get('/:id/content', async (req, res) => {
   try {
-    const docPath = Buffer.from(req.params.id, 'base64').toString('utf-8');
-    const filePath = path.join(OUTPUT_DIR, docPath);
-    if (!fs.existsSync(filePath)) return res.status(404).json({ success: false, message: '文档不存在' });
-    const content = fs.readFileSync(filePath, 'utf-8');
-    const stat = fs.statSync(filePath);
-    const title = path.basename(filePath, '.md');
-    const pathParts = docPath.split(path.sep);
-    let knowledge_point = pathParts.length >= 2 ? pathParts.slice(0, -1).join(' > ') : '';
+    const decoded = decodeDocId(req.params.id);
+    if (!decoded) return res.status(404).json({ success: false, message: '文档不存在或路径无效' });
+    if (!fs.existsSync(decoded.absPath)) return res.status(404).json({ success: false, message: '文档不存在' });
+
+    const content = fs.readFileSync(decoded.absPath, 'utf-8');
+    const stat = fs.statSync(decoded.absPath);
+    const ext = path.extname(decoded.absPath);
+    const title = ext === '.md' ? path.basename(decoded.absPath, '.md') : path.basename(decoded.absPath);
+    const pathParts = decoded.relativePath.split(path.sep);
+    const knowledge_point = pathParts.length >= 2 ? pathParts.slice(0, -1).join(' > ') : '';
+
     const metadata = await loadMetadata();
-    const meta = metadata.documents.find(d => d.path === docPath);
+    const metaKey = decoded.rootId + ':' + decoded.relativePath;
+    const meta = findMetaByPath(metadata, metaKey) || metadata.documents.find(d => d.path === metaKey);
 
     res.json({
       success: true,
       data: {
         id: req.params.id, meta_id: meta?.id, title: meta?.title || title,
-        knowledge_point, content, file_path: docPath, file_size: stat.size,
-        version: meta?.version || 1, created_at: meta?.created_at || stat.birthtime.toISOString(),
-        updated_at: meta?.updated_at || stat.mtime.toISOString()
+        knowledge_point, content, file_path: metaKey, file_size: stat.size,
+        version: meta?.version || 1,
+        created_at: meta?.created_at || stat.birthtime.toISOString(),
+        updated_at: meta?.updated_at || stat.mtime.toISOString(),
+        root_id: decoded.rootId, root_name: decoded.root.name,
+        writable: decoded.writable, ext
       }
     });
   } catch (err) {
@@ -698,10 +864,10 @@ router.get('/:id/content', async (req, res) => {
 // GET /api/document/:id/download
 router.get('/:id/download', (req, res) => {
   try {
-    const docPath = Buffer.from(req.params.id, 'base64').toString('utf-8');
-    const filePath = path.join(OUTPUT_DIR, docPath);
-    if (!fs.existsSync(filePath)) return res.status(404).json({ success: false, message: '文档不存在' });
-    res.download(filePath, path.basename(filePath));
+    const decoded = decodeDocId(req.params.id);
+    if (!decoded) return res.status(404).json({ success: false, message: '文档不存在' });
+    if (!fs.existsSync(decoded.absPath)) return res.status(404).json({ success: false, message: '文档不存在' });
+    res.download(decoded.absPath, path.basename(decoded.absPath));
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -721,14 +887,18 @@ router.get('/:id/versions', async (req, res) => {
 // DELETE /api/document/:id
 router.delete('/:id', async (req, res) => {
   try {
-    const docPath = Buffer.from(req.params.id, 'base64').toString('utf-8');
-    const filePath = path.join(OUTPUT_DIR, docPath);
-    if (!fs.existsSync(filePath)) return res.status(404).json({ success: false, message: '文档不存在' });
-    fs.unlinkSync(filePath);
+    const decoded = decodeDocId(req.params.id);
+    if (!decoded) return res.status(404).json({ success: false, message: '文档不存在' });
+    if (!decoded.writable) return res.status(403).json({ success: false, message: '该文档路径为只读，不可删除' });
+    if (!fs.existsSync(decoded.absPath)) return res.status(404).json({ success: false, message: '文档不存在' });
 
-    // 清理元数据
+    fs.unlinkSync(decoded.absPath);
+
     const metadata = await loadMetadata();
-    metadata.documents = metadata.documents.filter(d => d.path !== docPath);
+    const metaKey = decoded.rootId + ':' + decoded.relativePath;
+    metadata.documents = metadata.documents.filter(d =>
+      d.path !== metaKey && d.path !== decoded.relativePath
+    );
     await saveMetadata(metadata);
 
     res.json({ success: true, message: '文档已删除' });

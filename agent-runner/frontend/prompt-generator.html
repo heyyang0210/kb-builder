@@ -717,6 +717,45 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sa
   font-size: 10px; padding: 0 4px; border-radius: 3px;
   background: var(--success-light); color: var(--success);
 }
+/* 根节点样式 */
+.doc-tree-root { margin-bottom: 4px; }
+.doc-tree-root > .doc-tree-dir-header { font-weight: 600; font-size: 13px; background: var(--bg); border-bottom: 1px solid var(--border); padding: 8px 10px; }
+.doc-tree-root-badge {
+  font-size: 10px; padding: 1px 6px; border-radius: 8px; margin-left: auto; font-weight: 400;
+}
+.doc-tree-root-badge.writable { background: #dcfce7; color: #166534; }
+.doc-tree-root-badge.readonly { background: #fef3c7; color: #92400e; }
+.doc-tree-root > .doc-tree-dir-children { padding-left: 0; }
+
+/* 路径管理按钮 */
+.doc-paths-manage-btn {
+  display: flex; align-items: center; gap: 4px; justify-content: center;
+  padding: 6px 12px; margin: 6px 12px; border: 1px dashed var(--border);
+  border-radius: var(--radius); background: transparent; color: var(--text-secondary);
+  font-size: 12px; cursor: pointer; transition: all .15s;
+}
+.doc-paths-manage-btn:hover { background: var(--primary-light); color: var(--primary); border-color: var(--primary); border-style: solid; }
+
+/* 路径管理对话框 */
+.paths-manage-modal { max-width: 640px; width: 92%; }
+.paths-manage-list { max-height: 300px; overflow-y: auto; margin: 12px 0; }
+.paths-manage-item {
+  display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+  border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 6px;
+  background: var(--card-bg);
+}
+.paths-manage-item .pm-name { font-weight: 500; flex-shrink: 0; min-width: 80px; }
+.paths-manage-item .pm-path { flex: 1; font-size: 12px; color: var(--text-secondary); word-break: break-all; }
+.paths-manage-item .pm-badge { font-size: 10px; padding: 1px 6px; border-radius: 8px; }
+.paths-manage-item .pm-badge.writable { background: #dcfce7; color: #166534; }
+.paths-manage-item .pm-badge.readonly { background: #fef3c7; color: #92400e; }
+.paths-manage-item .pm-remove { background: none; border: none; color: var(--warning); cursor: pointer; font-size: 14px; padding: 2px 6px; }
+.paths-manage-item .pm-remove:hover { color: #dc2626; }
+.paths-manage-add { display: grid; grid-template-columns: 1fr 2fr auto; gap: 8px; align-items: end; margin-top: 12px; }
+.paths-manage-add label { font-size: 12px; color: var(--text-secondary); display: block; margin-bottom: 2px; }
+.paths-manage-add input { width: 100%; padding: 6px 10px; border: 1px solid var(--border); border-radius: var(--radius); font-size: 13px; }
+
+
 
 /* 列表视图 */
 .doc-list-view { flex: 1; overflow-y: auto; padding: 4px 0; }
@@ -1162,6 +1201,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sa
       <div class="doc-list-view" id="docListView" style="display:none">
         <div class="doc-empty">加载中...</div>
       </div>
+      <button class="doc-paths-manage-btn" onclick="openPathsManageDialog()">⚙️ 管理文档路径</button>
     </div>
     
     <!-- 统计分析 Tab 的 Sidebar -->
@@ -1376,6 +1416,26 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sa
       </div>
     </div>
 </div>
+<!-- 路径管理对话框 -->
+<div class="modal-overlay" id="pathsManageModal" style="display:none" onclick="if(event.target===this)closePathsManageDialog()">
+  <div class="modal paths-manage-modal">
+    <div class="modal-header">
+      <h3>📂 管理文档路径</h3>
+      <button class="modal-close" onclick="closePathsManageDialog()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:12px;color:var(--text-secondary);margin-bottom:8px">配置文档管理中展示的目录路径。生成文档始终保存在默认输出目录中，外部路径默认为只读。</p>
+      <div class="paths-manage-list" id="pathsManageList">加载中...</div>
+      <div class="paths-manage-add" id="pathsManageAdd">
+        <div><label>名称</label><input type="text" id="newPathName" placeholder="如：AI 体系认知"></div>
+        <div><label>绝对路径</label><input type="text" id="newPathValue" placeholder="如：/data/docs/xxx"></div>
+        <button class="btn btn-primary btn-sm" onclick="addDocPath()" style="margin-bottom:1px">添加</button>
+      </div>
+      <div id="pathsManageError" style="color:var(--warning);font-size:12px;margin-top:6px;display:none"></div>
+    </div>
+  </div>
+</div>
+
 <div class="copy-toast" id="copyToast">✅ 已复制到剪贴板</div>
 
 <!-- ========== 配置按钮 ========== -->
@@ -8577,7 +8637,8 @@ async function loadDocStats() {
       document.getElementById('docStats').innerHTML = 
         '<span>📄 ' + d.total_documents + ' 篇</span>' +
         '<span>📦 ' + formatFileSize(d.total_size) + '</span>' +
-        '<span>🔤 ' + (d.total_tokens || 0).toLocaleString() + ' tokens</span>';
+        '<span>🔤 ' + (d.total_tokens || 0).toLocaleString() + ' tokens</span>' +
+        (d.root_count > 1 ? '<span>📂 ' + d.root_count + ' 个路径</span>' : '');
     }
   } catch (err) { /* ignore */ }
 }
@@ -8591,7 +8652,12 @@ function renderDocTree(nodes, depth) {
     container.innerHTML = '<div class="doc-empty">暂无文档<br><small>生成提示词后可直接生成文档</small></div>';
     return;
   }
-  container.innerHTML = buildTreeHTML(nodes, depth);
+  // 顶层节点为 root 节点时，特殊渲染
+  if (nodes[0] && nodes[0].type === 'root') {
+    container.innerHTML = buildRootTreeHTML(nodes, depth);
+  } else {
+    container.innerHTML = buildTreeHTML(nodes, depth);
+  }
 }
 
 function buildTreeHTML(nodes, depth) {
@@ -8618,6 +8684,33 @@ function buildTreeHTML(nodes, depth) {
       }
       html += '</div>';
     }
+  }
+  return html;
+}
+
+// 渲染根节点树（多路径模式）
+function buildRootTreeHTML(roots, depth) {
+  let html = '';
+  for (const root of roots) {
+    const rootId = 'tree-root-' + root.root_id.replace(/[^a-zA-Z0-9]/g, '_');
+    const badgeClass = root.writable ? 'writable' : 'readonly';
+    const badgeText = root.writable ? '可写' : '只读';
+    const emptyNote = !root.exists ? ' <span style="color:var(--warning);font-size:11px">(路径不存在)</span>' : '';
+    const childCount = (root.children || []).length;
+    html += '<div class="doc-tree-root doc-tree-dir">';
+    html += '<div class="doc-tree-dir-header" onclick="toggleTreeDir(\'' + rootId + '\', this)">';
+    html += '<span class="tree-arrow open">▶</span>';
+    html += '<span class="tree-icon">📂</span>';
+    html += '<span>' + escapeHtml(root.name) + emptyNote + '</span>';
+    html += '<span class="doc-tree-root-badge ' + badgeClass + '">' + badgeText + '</span>';
+    html += '</div>';
+    html += '<div class="doc-tree-dir-children show" id="' + rootId + '">';
+    if (root.children && root.children.length > 0) {
+      html += buildTreeHTML(root.children, depth + 1);
+    } else if (root.exists) {
+      html += '<div class="doc-empty" style="padding:8px 12px;font-size:12px">暂无文档</div>';
+    }
+    html += '</div></div>';
   }
   return html;
 }
@@ -8655,6 +8748,7 @@ function renderDocList(docs) {
     return '<div class="doc-list-item' + (isActive ? ' active' : '') + '" data-doc-id="' + doc.id + '" onclick="viewDocument(this.dataset.docId)">' +
       '<div class="doc-list-item-title">' + escapeHtml(doc.title) + '</div>' +
       '<div class="doc-list-item-meta">' +
+        (doc.root_name ? '<span style="color:var(--primary);font-size:11px">' + escapeHtml(doc.root_name) + '</span>' : '') +
         '<span>' + timeStr + '</span>' +
         '<span>' + formatFileSize(doc.file_size) + '</span>' +
         (doc.version > 1 ? '<span class="doc-badge">v' + doc.version + '</span>' : '') +
@@ -8781,18 +8875,27 @@ async function viewDocument(docId, updateUrl = true) {
     document.getElementById('docViewerPanel').style.display = 'flex';
     document.getElementById('docViewerTitle').textContent = result.data.title;
     document.getElementById('docViewerMeta').innerHTML = 
-      '<span>📁 ' + escapeHtml(result.data.file_path) + '</span>' +
+      '<span>📁 ' + escapeHtml((result.data.root_name || '') + ' / ' + result.data.file_path) + '</span>' +
       '<span>📦 ' + formatFileSize(result.data.file_size) + '</span>' +
       '<span>📝 v' + (result.data.version || 1) + '</span>' +
       '<span>🕐 ' + new Date(result.data.updated_at).toLocaleString('zh-CN') + '</span>';
     
     renderDocContent(result.data.content, 'preview');
     
-    // 更新按钮状态
+    // 更新按钮状态（只读文档隐藏编辑/删除）
+    const isWritable = result.data.writable !== false;
     document.getElementById('docViewBtn').classList.add('active');
     document.getElementById('docEditBtn').classList.remove('active');
+    document.getElementById('docEditBtn').style.display = isWritable ? '' : 'none';
     document.getElementById('docSaveBtn').style.display = 'none';
     document.getElementById('docSaveStatus').textContent = '';
+    // 删除按钮
+    const delBtn = document.querySelector('#docViewerPanel .doc-viewer-actions button[onclick*="deleteCurrentDoc"]');
+    if (delBtn) delBtn.style.display = isWritable ? '' : 'none';
+    // 只读提示
+    if (!isWritable) {
+      document.getElementById('docSaveStatus').textContent = '🔒 只读文档';
+    }
     
     // 更新侧栏高亮
     updateSidebarActive(docId);
@@ -9027,6 +9130,96 @@ function refreshDocList() {
   loadDocList();
   loadDocTree();
   loadDocStats();
+}
+
+// ---- 路径管理 ----
+
+async function openPathsManageDialog() {
+  document.getElementById('pathsManageModal').style.display = 'flex';
+  document.getElementById('pathsManageError').style.display = 'none';
+  await loadPathsManageList();
+}
+
+function closePathsManageDialog() {
+  document.getElementById('pathsManageModal').style.display = 'none';
+}
+
+async function loadPathsManageList() {
+  const list = document.getElementById('pathsManageList');
+  list.innerHTML = '加载中...';
+  try {
+    const resp = await fetch(BACKEND + '/api/document/paths');
+    const result = await resp.json();
+    if (!result.success) throw new Error(result.message);
+    if (result.data.length === 0) {
+      list.innerHTML = '<div style="text-align:center;color:var(--text-secondary);padding:20px">暂无配置</div>';
+      return;
+    }
+    list.innerHTML = result.data.map(p => {
+      const badgeClass = p.writable ? 'writable' : 'readonly';
+      const badgeText = p.writable ? '可写' : '只读';
+      const removable = p.id !== 'output';
+      return '<div class="paths-manage-item">' +
+        '<span class="pm-name">' + escapeHtml(p.name) + '</span>' +
+        '<span class="pm-path">' + escapeHtml(p.absPath) + '</span>' +
+        '<span class="pm-badge ' + badgeClass + '">' + badgeText + '</span>' +
+        (removable ? '<button class="pm-remove" onclick="removeDocPath(\'' + p.id + '\')" title="移除">✕</button>' : '<span style="width:24px"></span>') +
+        (p.exists ? '' : '<span style="color:var(--warning);font-size:11px">不存在</span>') +
+      '</div>';
+    }).join('');
+  } catch (err) {
+    list.innerHTML = '<div style="color:var(--warning)">加载失败: ' + escapeHtml(err.message) + '</div>';
+  }
+}
+
+async function addDocPath() {
+  const nameEl = document.getElementById('newPathName');
+  const pathEl = document.getElementById('newPathValue');
+  const errEl = document.getElementById('pathsManageError');
+  const name = nameEl.value.trim();
+  const pathValue = pathEl.value.trim();
+  errEl.style.display = 'none';
+  if (!name || !pathValue) {
+    errEl.textContent = '请填写名称和路径';
+    errEl.style.display = 'block';
+    return;
+  }
+  try {
+    const resp = await fetch(BACKEND + '/api/document/paths', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, path: pathValue, writable: false })
+    });
+    const result = await resp.json();
+    if (!result.success) throw new Error(result.message);
+    nameEl.value = '';
+    pathEl.value = '';
+    await loadPathsManageList();
+    // 刷新文档树
+    loadDocTree();
+    loadDocList();
+    loadDocStats();
+    showToast('✅ 路径已添加');
+  } catch (err) {
+    errEl.textContent = '添加失败: ' + err.message;
+    errEl.style.display = 'block';
+  }
+}
+
+async function removeDocPath(id) {
+  if (!confirm('确定要移除该文档路径吗？')) return;
+  try {
+    const resp = await fetch(BACKEND + '/api/document/paths/' + encodeURIComponent(id), { method: 'DELETE' });
+    const result = await resp.json();
+    if (!result.success) throw new Error(result.message);
+    await loadPathsManageList();
+    loadDocTree();
+    loadDocList();
+    loadDocStats();
+    showToast('🗑️ 路径已移除');
+  } catch (err) {
+    showToast('❌ 移除失败: ' + err.message);
+  }
 }
 
 // ---- 从提示词生成文档 ----
