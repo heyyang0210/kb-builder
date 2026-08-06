@@ -177,6 +177,40 @@ router.post('/chat', async (req, res) => {
   }
 });
 
+router.post('/chat/stream', async (req, res) => {
+  const { messages, options = {} } = req.body || {};
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return res.status(400).json({
+      success: false,
+      error: { code: 'MODEL_GATEWAY_INVALID_REQUEST', message: 'messages 必须是非空数组' }
+    });
+  }
+
+  try {
+    const { config, client } = await loadConfiguredProvider();
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+
+    let finishReason = null;
+    for await (const chunk of client.chatStream(messages, options)) {
+      finishReason = chunk.finish || finishReason;
+      res.write(`data: ${JSON.stringify({ delta: chunk.content, finish: null })}\n\n`);
+    }
+
+    res.write(`data: ${JSON.stringify({ delta: '', finish: finishReason || 'stop' })}\n\n`);
+    res.end();
+  } catch (error) {
+    if (!res.headersSent) {
+      return providerError(res, error);
+    }
+    res.write(`data: ${JSON.stringify({ error: error.message })}\n\n`);
+    res.end();
+  }
+});
+
 router.post('/vision', async (req, res) => {
   const { messages, options = {} } = req.body || {};
   if (!Array.isArray(messages) || messages.length === 0) {

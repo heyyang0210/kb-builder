@@ -134,6 +134,42 @@ class LLMClient {
     }
   }
 
+  async *chatStream(messages, options = {}) {
+    const model = options.model || this.model;
+    const temperature = options.temperature ?? this.config.temperature ?? 0.7;
+    const maxTokens = options.max_tokens || this.config.max_tokens || 4000;
+
+    logger.info(`LLM stream: model=${model}, messages=${messages.length}, temperature=${temperature}`);
+
+    const requestOptions = {};
+    if (Number.isFinite(options.timeout_ms)) requestOptions.timeout = options.timeout_ms;
+    requestOptions.maxRetries = 0;
+
+    const stream = await this.client.chat.completions.create({
+      model,
+      messages,
+      temperature,
+      max_tokens: maxTokens,
+      stream: true,
+      ...(typeof options.enable_thinking === 'boolean' ? { enable_thinking: options.enable_thinking } : {})
+    }, requestOptions);
+
+    let chunkCount = 0;
+    for await (const chunk of stream) {
+      chunkCount++;
+      const choice = chunk.choices[0];
+      const content = choice?.delta?.content || '';
+      const finish = choice?.finish_reason;
+      if (chunkCount <= 2 || chunkCount % 50 === 0) {
+        logger.debug(`Stream chunk#${chunkCount}: keys=${Object.keys(choice?.delta || {}).join(',')}, content=${content.length}b, finish=${finish}`);
+      }
+      if (content) {
+        yield { content, finish };
+      }
+    }
+    logger.info(`LLM stream complete: ${chunkCount} chunks`);
+  }
+
   _parseJSONContent(content) {
     try {
       return JSON.parse(content);
