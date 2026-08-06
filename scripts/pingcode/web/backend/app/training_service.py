@@ -5,6 +5,7 @@ import json
 import re
 import shutil
 import threading
+import queue
 import time
 import uuid
 from copy import deepcopy
@@ -13,17 +14,22 @@ from math import ceil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import urlopen
 
 from jsonschema import ValidationError, validate
 
 from .agents import KnowledgeExtractionWorkflowAgent, AgentTask
 from .config import settings
+from .gateways.model_gateway import (
+    HttpModelGatewayAdapter,
+    ModelGateway,
+    ModelGatewayError,
+    error_summary,
+)
 from .markdown_cleaning import clean_markdown
 from .models import DatasetVersion, PreprocessTaskCreate, TaskSnapshot, TrainingReviewDecision, TrainingTaskCreate
 from .processing_units import build_processing_units
-
+from .repositories import ArtifactRepository, LocalArtifactRepository
 
 TERMINAL_STATES = {"completed", "failed", "cancelled"}
 STAGES = [
@@ -89,40 +95,6 @@ def stable_id(prefix: str, *values: str) -> str:
     return f"{prefix}:{digest}"
 
 
-def error_summary(error: BaseException) -> str:
-    technical_error = str(error)
-    normalized = technical_error.lower()
-    if "country, region, or territory not supported" in normalized:
-        return "模型服务拒绝访问（HTTP 403，当前网络所在国家或地区不受支持）"
-    if re.search(r"\b(http\s*)?401\b", normalized):
-        return "模型服务身份认证失败（HTTP 401）"
-    if re.search(r"\b(http\s*)?403\b", normalized):
-        return "模型服务拒绝访问（HTTP 403）"
-    if re.search(r"\b(http\s*)?429\b", normalized):
-        return "模型服务请求过于频繁（HTTP 429）"
-    if "connection refused" in normalized or "econnrefused" in normalized or "errno 111" in normalized:
-        return "模型服务连接失败"
-    if "timed out" in normalized or "timeout" in normalized or "超时" in technical_error:
-        return "模型调用超时"
-    if (
-        "jsondecodeerror" in normalized
-        or "invalid json" in normalized
-        or "expecting value" in normalized
-        or "未返回 json 对象" in technical_error.lower()
-        or "无法解析为 json" in normalized
-        or "不符合输出结构" in technical_error
-    ):
-        return "模型返回格式不正确"
-    http_status = re.search(r"\b(?:http\s*)?(5\d{2})\b", normalized)
-    if http_status:
-        return f"模型服务暂时不可用（HTTP {http_status.group(1)}）"
-    return "模型服务返回错误"
-
-
-class ModelGatewayError(RuntimeError):
-    pass
-
-
 class ModelTestRequiredError(RuntimeError):
     pass
 
@@ -131,56 +103,11 @@ class TrainingCancelledError(RuntimeError):
     pass
 
 
-class ModelGatewayClient:
+class ModelGatewayClient(HttpModelGatewayAdapter):
+    """兼容旧测试补丁点；HTTP 实现由 HttpModelGatewayAdapter 提供。"""
+
     def __init__(self, base_url: str, token: str = "", timeout: int = 180):
-        self.base_url = base_url.rstrip("/")
-        self.token = token
-        self.timeout = timeout
-
-    def status(self) -> dict[str, Any]:
-        return self._request("GET", "/status")
-
-    def update_config(self, config: dict[str, Any]) -> dict[str, Any]:
-        return self._request("POST", "/config", config)
-
-    def test(self) -> dict[str, Any]:
-        return self._request("POST", "/test", {}, timeout=60)
-
-    def chat_json(self, messages: list[dict[str, str]], options: dict[str, Any] | None = None) -> dict[str, Any]:
-        options = options or {}
-        request_timeout = self.timeout
-        if isinstance(options.get("timeout_ms"), (int, float)):
-            attempts = max(1, int(options.get("max_retries", 0)) + 1)
-            request_timeout = ceil(options["timeout_ms"] / 1000) * attempts + 10
-        result = self._request(
-            "POST",
-            "/chat",
-            {"messages": messages, "responseFormat": "json", "options": options},
-            timeout=request_timeout,
-        )
-        data = result.get("data")
-        if not isinstance(data, dict):
-            raise ModelGatewayError("模型网关未返回 JSON 对象")
-        return result
-
-    def _request(self, method: str, path: str, payload: dict[str, Any] | None = None, *, timeout: int | None = None) -> dict[str, Any]:
-        body = json.dumps(payload, ensure_ascii=False).encode("utf-8") if payload is not None else None
-        headers = {"Content-Type": "application/json"}
-        if self.token:
-            headers["X-Internal-Token"] = self.token
-        request = Request(f"{self.base_url}{path}", data=body, method=method, headers=headers)
-        try:
-            with urlopen(request, timeout=timeout or self.timeout) as response:
-                return json.loads(response.read().decode("utf-8"))
-        except HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")
-            try:
-                message = json.loads(detail).get("error", {}).get("message", detail)
-            except json.JSONDecodeError:
-                message = detail
-            raise ModelGatewayError(f"模型网关 HTTP {exc.code}: {message}") from exc
-        except (URLError, TimeoutError, json.JSONDecodeError) as exc:
-            raise ModelGatewayError(f"模型网关不可用: {exc}") from exc
+        super().__init__(base_url, token, timeout, opener=lambda *args, **kwargs: urlopen(*args, **kwargs))
 
 
 class TrainingService:
@@ -193,7 +120,9 @@ class TrainingService:
         prompts,
         preparation=None,
         metadata_construction=None,
-        gateway: ModelGatewayClient | None = None,
+        gateway: ModelGateway | None = None,
+        *,
+        artifact_repository: ArtifactRepository | None = None,
     ):
         self.store = store
         self.batches = batches
@@ -207,6 +136,7 @@ class TrainingService:
             settings.model_gateway_token,
             settings.model_gateway_timeout,
         )
+        self.artifacts = artifact_repository or LocalArtifactRepository()
         self._event_lock = threading.RLock()
         self._review_lock = threading.RLock()
         self._model_test_lock = threading.RLock()
@@ -297,9 +227,10 @@ class TrainingService:
 
     def preflight(self, request: TrainingTaskCreate) -> dict[str, Any]:
         self._require_batch_ready(request.batch_id)
-        model = self.model_config()
+        requires_model = request.mode == "formal_knowledge"
+        model = self.model_config() if requires_model else None
         if self.preparation is not None:
-            return self._preflight_with_material_preparation(request, model)
+            return self._preflight_with_material_preparation(request, model, requires_model=requires_model)
         documents = self.preprocess.files.list_processing_sources(request.batch_id)
         chunk_count = 0
         uncertain_count = 0
@@ -338,18 +269,21 @@ class TrainingService:
                     "content": content,
                 }, {"resourceId": resource.id})
                 uncertain_count += len(uncertain)
-        total_calls = chunk_count + uncertain_count
-        last_test = model.get("lastTest")
+        total_calls = chunk_count + uncertain_count if requires_model else 0
+        last_test = model.get("lastTest") if model else None
         latency = int(last_test.get("latencyMs", 0)) if last_test else 0
         workload_latency = max(latency * 2, 5000) if latency else 0
         estimated_ms = int(workload_latency * ceil(total_calls / 3)) if workload_latency else 0
         risks = []
         if not documents:
             risks.append("当前批次没有可加工的文本文件")
-        if not last_test:
+        if requires_model and not last_test:
             risks.append("当前模型尚未通过最近 10 分钟内的真实结构化连接测试")
-        risks.append(f"知识提取预计调用 {chunk_count} 次；初步识别到 {uncertain_count} 个按需语义补充项")
-        if last_test:
+        if requires_model:
+            risks.append(f"知识提取预计调用 {chunk_count} 次；初步识别到 {uncertain_count} 个按需语义补充项")
+        else:
+            risks.append("当前阶段仅执行规则提取，不调用模型服务")
+        if requires_model and last_test:
             risks.append("预计耗时包含知识提取和按需语义补充；流水线调度、预处理、校验和构图由代码执行")
         config = request.config.model_dump(mode="json", by_alias=True)
         input_hash = self._processing_unit_input_hash(config, unit_fingerprints)
@@ -367,9 +301,9 @@ class TrainingService:
             "semanticUncertainItems": uncertain_count,
             "totalModelCalls": total_calls,
             "estimatedDurationMs": {"minimum": int(estimated_ms * 0.8), "maximum": int(estimated_ms * 1.5)} if estimated_ms else None,
-            "modelTestPassed": bool(last_test),
+            "modelTestPassed": bool(last_test) if requires_model else None,
             "modelTestExpiresAt": last_test.get("expiresAt") if last_test else None,
-            "canStart": bool(documents and last_test),
+            "canStart": bool(documents and (last_test if requires_model else True)),
             "risks": risks,
             "createdAt": utcnow().isoformat(),
         }
@@ -379,7 +313,13 @@ class TrainingService:
         )
         return result
 
-    def _preflight_with_material_preparation(self, request: TrainingTaskCreate, model: dict[str, Any]) -> dict[str, Any]:
+    def _preflight_with_material_preparation(
+        self,
+        request: TrainingTaskCreate,
+        model: dict[str, Any] | None,
+        *,
+        requires_model: bool = True,
+    ) -> dict[str, Any]:
         preparation_report = self.preparation.prepare(
             request.batch_id,
             request.config,
@@ -412,8 +352,8 @@ class TrainingService:
                 "content": content,
             }, {"resourceId": chunk.get("resourceId")})
             uncertain_count += len(uncertain)
-        total_calls = chunk_count + uncertain_count
-        last_test = model.get("lastTest")
+        total_calls = chunk_count + uncertain_count if requires_model else 0
+        last_test = model.get("lastTest") if model else None
         latency = int(last_test.get("latencyMs", 0)) if last_test else 0
         workload_latency = max(latency * 2, 5000) if latency else 0
         estimated_ms = int(workload_latency * ceil(total_calls / 3)) if workload_latency else 0
@@ -426,14 +366,17 @@ class TrainingService:
         risks = []
         if not source_documents:
             risks.append("当前批次没有可进入知识提取的处理单元")
-        if not last_test:
+        if requires_model and not last_test:
             risks.append("当前模型尚未通过最近 10 分钟内的真实结构化连接测试")
         if ocr_required:
             risks.append(f"{ocr_required} 个 PDF 需要 OCR，当前不会进入知识加工")
         if conversion_failed:
             risks.append(f"{conversion_failed} 个文件转换失败，需查看源文件检查中的转换问题")
-        risks.append(f"知识提取预计调用 {chunk_count} 次；初步识别到 {uncertain_count} 个按需语义补充项")
-        if last_test:
+        if requires_model:
+            risks.append(f"知识提取预计调用 {chunk_count} 次；初步识别到 {uncertain_count} 个按需语义补充项")
+        else:
+            risks.append("当前阶段仅执行规则提取，不调用模型服务")
+        if requires_model and last_test:
             risks.append("预计耗时包含资料转换、知识提取和按需语义补充；流水线调度、预处理、校验和构图由代码执行")
         config = request.config.model_dump(mode="json", by_alias=True)
         input_hash = self._processing_unit_input_hash(config, unit_fingerprints)
@@ -456,9 +399,9 @@ class TrainingService:
             "semanticUncertainItems": uncertain_count,
             "totalModelCalls": total_calls,
             "estimatedDurationMs": {"minimum": int(estimated_ms * 0.8), "maximum": int(estimated_ms * 1.5)} if estimated_ms else None,
-            "modelTestPassed": bool(last_test),
+            "modelTestPassed": bool(last_test) if requires_model else None,
             "modelTestExpiresAt": last_test.get("expiresAt") if last_test else None,
-            "canStart": bool(source_documents and last_test),
+            "canStart": bool(source_documents and (last_test if requires_model else True)),
             "conversionWarnings": warnings,
             "risks": risks,
             "createdAt": utcnow().isoformat(),
@@ -502,7 +445,8 @@ class TrainingService:
     def start(self, request: TrainingTaskCreate) -> TaskSnapshot:
         self._reconcile_if_needed()
         batch = self._require_batch_ready(request.batch_id)
-        self.require_model_test()
+        if request.mode == "formal_knowledge":
+            self.require_model_test()
         now = utcnow()
         task_id = f"training_{uuid.uuid4().hex[:16]}"
         task = TaskSnapshot(
@@ -723,23 +667,73 @@ class TrainingService:
         graph_dir = settings.data_root / "training-runs" / dataset.training_task_id / "graph"
         if kind == "summary":
             summary = dict(dataset.graph_summary or {})
-            if summary and "knowledgeDomainCounts" in summary:
-                return summary
             try:
                 nodes = json.loads((graph_dir / "nodes.json").read_text(encoding="utf-8"))
                 edges = json.loads((graph_dir / "edges.json").read_text(encoding="utf-8"))
+                visible_nodes, visible_edges = self._graph_projection(nodes, edges)
                 graph_source = str(summary.get("graphSource") or "") or None
-                enriched = self._graph_summary(nodes, edges, [], graph_source)
-                return {**summary, **enriched}
+                enriched = self._graph_summary(visible_nodes, visible_edges, [], graph_source)
+                return {
+                    **summary,
+                    **enriched,
+                    "keywordFilterState": self._keyword_filter_state(nodes),
+                }
             except (OSError, json.JSONDecodeError):
                 return summary
         path = graph_dir / f"{kind}.json"
         if not path.exists():
             raise FileNotFoundError(dataset_id)
         value = json.loads(path.read_text(encoding="utf-8"))
-        if kind == "nodes" and isinstance(value, list):
-            return self._with_graph_display_names(value)
+        if kind in {"nodes", "edges"} and isinstance(value, list):
+            nodes = value if kind == "nodes" else json.loads((graph_dir / "nodes.json").read_text(encoding="utf-8"))
+            edges = value if kind == "edges" else json.loads((graph_dir / "edges.json").read_text(encoding="utf-8"))
+            visible_nodes, visible_edges = self._graph_projection(nodes, edges)
+            if kind == "nodes":
+                return self._with_graph_display_names(visible_nodes)
+            return visible_edges
         return value
+
+    def _graph_projection(
+        self,
+        nodes: list[dict[str, Any]],
+        edges: list[dict[str, Any]],
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        node_by_id = {
+            str(node.get("id")): node
+            for node in nodes
+            if node.get("id")
+        }
+        visible_ids = {
+            node_id
+            for node_id, node in node_by_id.items()
+            if node.get("type") == "Keyword" and self._read_admission_status(node) == "admitted"
+        }
+        for edge in edges:
+            source_id = str(edge.get("source") or "")
+            target_id = str(edge.get("target") or "")
+            source_node = node_by_id.get(source_id)
+            target_node = node_by_id.get(target_id)
+            if source_id in visible_ids and target_node and target_node.get("type") in {"ProcessingUnit", "Chunk"}:
+                visible_ids.add(target_id)
+            elif target_id in visible_ids and source_node and source_node.get("type") in {"ProcessingUnit", "Chunk"}:
+                visible_ids.add(source_id)
+        visible_nodes = [node for node in nodes if str(node.get("id")) in visible_ids]
+        visible_edges = [
+            edge for edge in edges
+            if str(edge.get("source")) in visible_ids and str(edge.get("target")) in visible_ids
+        ]
+        return visible_nodes, visible_edges
+
+    def _keyword_filter_state(self, nodes: list[dict[str, Any]]) -> dict[str, int]:
+        keyword_nodes = [node for node in nodes if node.get("type") == "Keyword"]
+        retained = sum(1 for node in keyword_nodes if self._read_admission_status(node) == "admitted")
+        excluded = len(keyword_nodes) - retained
+        return {
+            "beforeTotal": len(keyword_nodes),
+            "afterTotal": retained,
+            "retained": retained,
+            "excluded": excluded,
+        }
 
     def graph_neighborhood(self, dataset_id: str, node_id: str, limit: int = 50) -> dict[str, Any]:
         nodes = self.graph(dataset_id, "nodes")
@@ -890,64 +884,27 @@ class TrainingService:
         self.store.update_record("tasks", dataset.training_task_id, {"graphSummary": summary})
         return {"keywordId": node.get("keywordId") or node.get("id"), "approvalStatus": status, "keywordApprovalState": summary.get("keywordApprovalState", {})}
 
-    def review_keyword_business(self, dataset_id: str) -> dict[str, Any]:
-        dataset = self.ensure_dataset_graph(dataset_id)
-        if dataset.state == "deleted" or not dataset.graph_available or not dataset.training_task_id:
-            raise FileNotFoundError(dataset_id)
-        run_dir = self._run_dir(dataset.training_task_id)
-        dataset_root = settings.data_root / "datasets" / dataset.id
-        nodes_path = run_dir / "graph/nodes.json"
-        edges_path = run_dir / "graph/edges.json"
-        if not nodes_path.exists() or not edges_path.exists():
-            nodes_path = dataset_root / "graph/nodes.json"
-            edges_path = dataset_root / "graph/edges.json"
-        if not nodes_path.exists() or not edges_path.exists():
-            raise FileNotFoundError(dataset_id)
-        nodes = json.loads(nodes_path.read_text(encoding="utf-8"))
-        edges = json.loads(edges_path.read_text(encoding="utf-8"))
-        review = self._keyword_business_review(dataset.id, nodes)
-        for node in nodes:
-            if node.get("type") != "Keyword":
-                continue
-            keyword_id = str(node.get("keywordId") or node.get("id") or "")
-            item = next((entry for entry in review["items"] if entry.get("keywordId") == keyword_id), None)
-            if not item:
-                continue
-            node["businessStatus"] = item["businessStatus"]
-            node["businessReasonCodes"] = item["reasonCodes"]
-            node["businessEvidenceCoverage"] = item["evidenceCoverage"]
-            node.setdefault("properties", {})["businessStatus"] = item["businessStatus"]
-        summary = self._graph_summary(nodes, edges, self._read_json(dataset_root / "quality-issues.json", []), str(dataset.graph_summary.get("graphSource") or "model_keyword"))
-        summary["keywordBusinessReviewState"] = review["summary"]
-        for graph_dir in (run_dir / "graph", dataset_root / "graph"):
-            self._write_json(graph_dir / "nodes.json", nodes)
-            self._write_json(graph_dir / "edges.json", edges)
-        self._write_graph_summary_artifacts(run_dir, dataset_root, summary)
-        for quality_dir in (run_dir / "quality", dataset_root / "quality"):
-            self._write_json(quality_dir / "keyword-business-review.json", review)
-        self._persist_entity_relation_stage_summary(dataset_root, run_dir, summary)
-        self.store.update_record("datasets", dataset.id, {"graphSummary": summary})
-        self.store.update_record("tasks", dataset.training_task_id, {"graphSummary": summary})
-        return review
+    def preview_keywords_filter_by_skill(self, dataset_id: str) -> dict[str, Any]:
+        """直接使用 keyword-filter SKILL.md 作为系统提示词进行关键词过滤预览。
 
-    def filter_keywords_by_prompt(self, dataset_id: str, prompt: str) -> dict[str, Any]:
-        """使用 LLM Agent 根据用户提示词批量过滤关键词"""
+        直接读取 SKILL.md 的完整内容作为 system prompt，无需额外参数。
+        """
         dataset = self.ensure_dataset_graph(dataset_id)
         if dataset.state == "deleted" or not dataset.graph_available or not dataset.training_task_id:
             raise FileNotFoundError(dataset_id)
-        
+
         run_dir = self._run_dir(dataset.training_task_id)
         dataset_root = settings.data_root / "datasets" / dataset.id
         nodes_path = run_dir / "graph/nodes.json"
-        
+
         if not nodes_path.exists():
             nodes_path = dataset_root / "graph/nodes.json"
         if not nodes_path.exists():
             raise FileNotFoundError(dataset_id)
-        
+
         nodes = json.loads(nodes_path.read_text(encoding="utf-8"))
-        
-        # 提取所有关键词
+
+        # 提取关键词
         keywords = []
         for node in nodes:
             if node.get("type") != "Keyword":
@@ -956,176 +913,352 @@ class TrainingService:
                 "id": node.get("keywordId") or node.get("id"),
                 "name": node.get("canonicalName") or node.get("name"),
                 "aliases": node.get("aliases", []),
-                "sourceMethods": node.get("sourceMethods", []),
-                "evidenceCount": len(node.get("occurrences", [])),
+                "currentStatus": self._read_admission_status(node) or "none",
             })
-        
+
         if not keywords:
-            return {"filtered": 0, "excluded": 0, "admitted": 0, "details": []}
-        
-        # 构建 LLM 请求
-        system_prompt = """你是一个关键词过滤助手。根据用户提供的过滤规则，判断每个关键词是否应该被排除。
+            return {
+                "preview": True,
+                "skillMode": True,
+                "suggestions": [],
+                "summary": {"total": 0, "suggested_keep": 0, "suggested_exclude": 0},
+            }
 
-对于每个关键词，返回如下 JSON 格式：
-{
-  "decisions": [
-    {
-      "keywordId": "关键词ID",
-      "shouldExclude": true/false,
-      "reason": "排除或保留的原因"
-    }
-  ]
-}
+        # 读取 SKILL.md 作为 system prompt（直接使用，不二次包装）
+        # training_service.py → app → backend → web → pingcode → scripts → repo_root
+        _repo_root = Path(__file__).parent.parent.parent.parent.parent.parent
+        skill_path = _repo_root / "skills" / "keyword-filter" / "SKILL.md"
+        if not skill_path.exists():
+            raise FileNotFoundError(f"keyword-filter SKILL.md not found at {skill_path}")
 
-只返回 JSON 对象，不要包含其他内容。"""
-        
-        user_message = f"""过滤规则：{prompt}
+        skill_md = skill_path.read_text(encoding="utf-8")
 
-关键词列表：
-{json.dumps(keywords, ensure_ascii=False, indent=2)}
+        # system prompt = SKILL.md 原文 + 强制纯 JSON 输出约束
+        system_prompt = skill_md + "\n\n**重要约束：你必须且只能返回一个纯 JSON 对象，不得包含任何 markdown、表格、解释或代码块标记。直接输出 JSON，以 { 开头，以 } 结尾。**"
 
-请根据上述规则判断每个关键词是否应该被排除。"""
-        
+        # user message 只需提供关键词列表
+        user_message = f"请分析以下关键词列表，给出过滤建议。\n\n关键词列表：\n{json.dumps(keywords, ensure_ascii=False, indent=2)}"
+
+        # 动态计算参数
+        # 每个关键词决策约需 80 tokens（keywordId + shouldExclude + reason）
+        # 基础开销 200 tokens（JSON 结构）
+        estimated_max_tokens = min(8000, 200 + len(keywords) * 80)
+        # 超时：基础 60 秒 + 每 10 个关键词 30 秒，上限 300 秒
+        # qwen3.7-plus 处理 43 关键词实测约 160 秒，需留足余量
+        estimated_timeout_ms = min(300000, 60000 + (len(keywords) // 10 + 1) * 30000)
+
         # 调用 LLM
         try:
             if self.gateway is None:
                 raise ValueError("模型网关未配置")
-            
+
             result = self.gateway.chat_json(
                 [
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_message},
                 ],
-                {"temperature": 0.1, "max_retries": 0}
+                {
+                    "temperature": 0.1,
+                    "max_tokens": estimated_max_tokens,
+                    "timeout_ms": estimated_timeout_ms,
+                    "max_retries": 0,
+                    "enable_thinking": False,
+                },
             )
-            
+
             data = result.get("data", {})
             decisions = data.get("decisions", []) if isinstance(data, dict) else []
-            
-        except Exception as e:
-            # LLM 调用失败，返回错误
-            return {"error": str(e), "filtered": 0, "excluded": 0, "admitted": 0, "details": []}
-        
-        # 应用过滤结果
+
+        except Exception as exc:
+            return {
+                "error": str(exc),
+                "preview": True,
+                "skillMode": True,
+                "suggestions": [],
+                "summary": {"total": 0, "suggested_keep": 0, "suggested_exclude": 0},
+            }
+
+        # 构建建议列表（不修改数据）
         decision_map = {d.get("keywordId"): d for d in decisions if d.get("keywordId")}
-        
-        excluded_count = 0
-        admitted_count = 0
-        details = []
-        
+        suggestions: list[dict[str, Any]] = []
+        keep_count = 0
+        exclude_count = 0
+
+        for kw in keywords:
+            kw_id = kw["id"]
+            decision = decision_map.get(kw_id, {})
+            action = "keep" if not decision.get("shouldExclude", False) else "exclude"
+            reason = decision.get("reason", "")
+
+            suggestions.append({
+                "keywordId": kw_id,
+                "keywordName": kw["name"],
+                "currentStatus": kw["currentStatus"],
+                "suggestedAction": action,
+                "reason": reason,
+            })
+
+            if action == "keep":
+                keep_count += 1
+            else:
+                exclude_count += 1
+
+        return {
+            "preview": True,
+            "skillMode": True,
+            "suggestions": suggestions,
+            "estimatedSeconds": round(estimated_timeout_ms / 1000),
+            "summary": {
+                "total": len(suggestions),
+                "suggested_keep": keep_count,
+                "suggested_exclude": exclude_count,
+            },
+        }
+
+    def stream_keywords_filter_by_skill(self, dataset_id: str):
+        """Generator: 流式推送关键词过滤决策的 SSE 事件。
+        使用后台线程 + Queue 模式，避免阻塞事件循环。"""
+        import time as _time
+
+        evt_queue = queue.Queue()
+
+        def _producer():
+            """后台线程：执行模型调用并将事件推入队列。"""
+            try:
+                start_ts = _time.time()
+
+                dataset = self.ensure_dataset_graph(dataset_id)
+                if dataset.state == "deleted" or not dataset.graph_available or not dataset.training_task_id:
+                    evt_queue.put(f"event: error\ndata: {json.dumps({'error': '数据集不存在'})}\n\n")
+                    return
+
+                run_dir = self._run_dir(dataset.training_task_id)
+                dataset_root = settings.data_root / "datasets" / dataset.id
+                nodes_path = run_dir / "graph/nodes.json"
+                if not nodes_path.exists():
+                    nodes_path = dataset_root / "graph/nodes.json"
+                if not nodes_path.exists():
+                    evt_queue.put(f"event: error\ndata: {json.dumps({'error': '图谱数据不存在'})}\n\n")
+                    return
+
+                nodes = json.loads(nodes_path.read_text(encoding="utf-8"))
+
+                keywords = []
+                for node in nodes:
+                    if node.get("type") != "Keyword":
+                        continue
+                    keywords.append({
+                        "id": node.get("keywordId") or node.get("id"),
+                        "name": node.get("canonicalName") or node.get("name"),
+                        "aliases": node.get("aliases", []),
+                        "currentStatus": self._read_admission_status(node) or "none",
+                    })
+
+                if not keywords:
+                    evt_queue.put(f"event: complete\ndata: {json.dumps({'total': 0, 'keep': 0, 'exclude': 0, 'elapsedSeconds': 0})}\n\n")
+                    return
+
+                evt_queue.put(f"event: stage\ndata: {json.dumps({'stage': 'preparing', 'message': '正在读取 Skill 指令...'}, ensure_ascii=False)}\n\n")
+
+                _repo_root = Path(__file__).parent.parent.parent.parent.parent.parent
+                skill_path = _repo_root / "skills" / "keyword-filter" / "SKILL.md"
+                if not skill_path.exists():
+                    evt_queue.put(f"event: error\ndata: {json.dumps({'error': 'keyword-filter SKILL.md 不存在'})}\n\n")
+                    return
+
+                skill_md = skill_path.read_text(encoding="utf-8")
+                system_prompt = skill_md + "\n\n**重要约束：你必须且只能返回一个纯 JSON 对象，不得包含任何 markdown、表格、解释或代码块标记。直接输出 JSON，以 { 开头，以 } 结尾。**"
+
+                evt_queue.put(f"event: stage\ndata: {json.dumps({'stage': 'keywords_loaded', 'total': len(keywords), 'message': f'已加载 {len(keywords)} 个关键词，开始模型分析...'}, ensure_ascii=False)}\n\n")
+
+                user_message = f"请分析以下关键词列表，给出过滤建议。\n\n关键词列表：\n{json.dumps(keywords, ensure_ascii=False, indent=2)}"
+
+                estimated_max_tokens = min(8000, 200 + len(keywords) * 80)
+                estimated_timeout_ms = min(300000, 60000 + (len(keywords) // 10 + 1) * 30000)
+
+                evt_queue.put(f"event: stage\ndata: {json.dumps({'stage': 'calling_model', 'estimatedSeconds': round(estimated_timeout_ms / 1000), 'message': '模型分析中，请耐心等待...'}, ensure_ascii=False)}\n\n")
+
+                if self.gateway is None:
+                    evt_queue.put(f"event: error\ndata: {json.dumps({'error': '模型网关未配置'})}\n\n")
+                    return
+
+                # Incremental JSON parser state
+                accumulated = ""
+                scan_pos = 0
+                emitted_decisions = 0
+                in_decisions_array = False
+                brace_depth = 0
+                current_obj_start = -1
+                keep_count = 0
+                exclude_count = 0
+
+                for chunk in self.gateway.stream_chat(
+                    [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_message},
+                    ],
+                    {
+                        "temperature": 0.1,
+                        "max_tokens": estimated_max_tokens,
+                        "timeout_ms": estimated_timeout_ms,
+                        "max_retries": 0,
+                        "enable_thinking": False,
+                    },
+                ):
+                    if chunk.get("error"):
+                        evt_queue.put(f"event: error\ndata: {json.dumps({'error': chunk['error']}, ensure_ascii=False)}\n\n")
+                        return
+
+                    delta = chunk.get("delta", "")
+                    if not delta:
+                        continue
+
+                    accumulated += delta
+
+                    i = scan_pos
+                    while i < len(accumulated):
+                        ch = accumulated[i]
+                        if not in_decisions_array:
+                            if ch == '[':
+                                before = accumulated[:i].strip()
+                                if '"decisions"' in before:
+                                    in_decisions_array = True
+                                    brace_depth = 0
+                                    i += 1
+                                    continue
+                        if in_decisions_array:
+                            if ch == '{':
+                                if brace_depth == 0:
+                                    current_obj_start = i
+                                brace_depth += 1
+                            elif ch == '}':
+                                brace_depth -= 1
+                                if brace_depth == 0 and current_obj_start >= 0:
+                                    obj_str = accumulated[current_obj_start:i + 1]
+                                    try:
+                                        obj = json.loads(obj_str)
+                                        emitted_decisions += 1
+                                        should_exclude = obj.get("shouldExclude", False)
+                                        if should_exclude:
+                                            exclude_count += 1
+                                        else:
+                                            keep_count += 1
+                                        evt = {
+                                            "index": emitted_decisions,
+                                            "total": len(keywords),
+                                            "keywordId": obj.get("keywordId", ""),
+                                            "keywordName": obj.get("keywordName", ""),
+                                            "shouldExclude": should_exclude,
+                                            "reason": obj.get("reason", ""),
+                                        }
+                                        evt_queue.put(f"event: decision\ndata: {json.dumps(evt, ensure_ascii=False)}\n\n")
+                                    except json.JSONDecodeError:
+                                        pass
+                                    current_obj_start = -1
+                            elif ch == ']':
+                                in_decisions_array = False
+                        i += 1
+                    scan_pos = i
+
+                    if len(accumulated) > 5000 and emitted_decisions > 0:
+                        last_complete = max(accumulated.rfind('}'), accumulated.rfind(']'))
+                        if last_complete > 2000:
+                            accumulated = accumulated[last_complete:]
+                            current_obj_start = -1
+                            scan_pos = 0
+
+                elapsed = round(_time.time() - start_ts, 1)
+                evt_queue.put(f"event: complete\ndata: {json.dumps({'total': emitted_decisions, 'keep': keep_count, 'exclude': exclude_count, 'elapsedSeconds': elapsed}, ensure_ascii=False)}\n\n")
+
+            except Exception as exc:
+                evt_queue.put(f"event: error\ndata: {json.dumps({'error': str(exc)}, ensure_ascii=False)}\n\n")
+            finally:
+                evt_queue.put(None)  # sentinel
+
+        # Start producer thread
+        t = threading.Thread(target=_producer, daemon=True)
+        t.start()
+
+        # Consume events from queue
+        while True:
+            try:
+                evt = evt_queue.get(timeout=1)
+            except queue.Empty:
+                # Send keepalive comment to prevent proxy timeouts
+                yield ": keepalive\n\n"
+                continue
+            if evt is None:
+                break
+            yield evt
+
+    def apply_keywords_filter(self, dataset_id: str, decisions: list[dict]) -> dict[str, Any]:
+        """应用用户确认的关键词过滤决策"""
+        dataset = self.ensure_dataset_graph(dataset_id)
+        if dataset.state == "deleted" or not dataset.graph_available or not dataset.training_task_id:
+            raise FileNotFoundError(dataset_id)
+
+        run_dir = self._run_dir(dataset.training_task_id)
+        dataset_root = settings.data_root / "datasets" / dataset.id
+        nodes_path = run_dir / "graph/nodes.json"
+
+        if not nodes_path.exists():
+            nodes_path = dataset_root / "graph/nodes.json"
+        if not nodes_path.exists():
+            raise FileNotFoundError(dataset_id)
+
+        nodes = json.loads(nodes_path.read_text(encoding="utf-8"))
+
+        # 构建决策映射
+        decision_map = {d.get("keywordId"): d for d in decisions}
+
+        updated_keywords = []
+
+        # 应用决策
         for node in nodes:
             if node.get("type") != "Keyword":
                 continue
-            
+
             keyword_id = str(node.get("keywordId") or node.get("id") or "")
             decision = decision_map.get(keyword_id)
-            
+
             if decision:
-                should_exclude = decision.get("shouldExclude", False)
-                reason = decision.get("reason", "")
-                
-                if should_exclude:
-                    self._write_admission_status(node, "excluded")
-                    excluded_count += 1
-                else:
-                    self._write_admission_status(node, "admitted")
-                    admitted_count += 1
-                
-                details.append({
-                    "keywordId": keyword_id,
-                    "name": node.get("canonicalName") or node.get("name"),
-                    "excluded": should_exclude,
-                    "reason": reason,
-                })
-        
+                action = decision.get("action", "keep")
+                self._write_admission_status(node, "excluded" if action == "exclude" else "admitted")
+                updated_keywords.append(keyword_id)
+            elif not node.get("admissionStatus") and not node.get("properties", {}).get("admissionStatus"):
+                self._write_admission_status(node, "admitted")
+
         # 保存更新后的图谱
         edges_path = run_dir / "graph/edges.json"
         if not edges_path.exists():
             edges_path = dataset_root / "graph/edges.json"
-        
-        if edges_path.exists():
-            edges = json.loads(edges_path.read_text(encoding="utf-8"))
-        else:
-            edges = []
-        
-        summary = self._graph_summary(nodes, edges, self._read_json(dataset_root / "quality-issues.json", []), str(dataset.graph_summary.get("graphSource") or "model_keyword"))
-        
-        for graph_dir in (run_dir / "graph", dataset_root / "graph"):
-            self._write_json(graph_dir / "nodes.json", nodes)
-            self._write_json(graph_dir / "edges.json", edges)
-        
-        self._write_graph_summary_artifacts(run_dir, dataset_root, summary)
-        self.store.update_record("datasets", dataset.id, {"graphSummary": summary})
-        
-        return {
-            "filtered": len(details),
-            "excluded": excluded_count,
-            "admitted": admitted_count,
-            "details": details,
-        }
 
-    def update_keyword_business_status(
-        self,
-        dataset_id: str,
-        keyword_id: str,
-        business_status: str,
-        reason_code: str = "",
-        note: str = "",
-        operator_label: str = "当前用户",
-    ) -> dict[str, Any]:
-        if business_status not in {"businessAccepted", "businessRejected", "needsReview"}:
-            raise ValueError("业务准入状态只允许 businessAccepted、businessRejected 或 needsReview")
-        dataset = self.ensure_dataset_graph(dataset_id)
-        if dataset.state == "deleted" or not dataset.graph_available or not dataset.training_task_id:
-            raise FileNotFoundError(dataset_id)
-        run_dir = self._run_dir(dataset.training_task_id)
-        dataset_root = settings.data_root / "datasets" / dataset.id
-        nodes_path = run_dir / "graph/nodes.json"
-        edges_path = run_dir / "graph/edges.json"
-        if not nodes_path.exists() or not edges_path.exists():
-            raise FileNotFoundError(dataset_id)
-        nodes = json.loads(nodes_path.read_text(encoding="utf-8"))
-        edges = json.loads(edges_path.read_text(encoding="utf-8"))
-        node = self._resolve_graph_node(nodes, keyword_id)
-        if not node or node.get("type") != "Keyword":
-            raise KeyError(keyword_id)
-        reason_codes = [reason_code] if reason_code else []
-        node["businessStatus"] = business_status
-        node["businessReasonCodes"] = reason_codes
-        node["businessManualOverride"] = {
-            "operatorLabel": operator_label,
-            "note": note,
-            "reasonCode": reason_code,
-            "updatedAt": utcnow().isoformat(),
-        }
-        properties = node.setdefault("properties", {})
-        properties["businessStatus"] = business_status
-        properties["businessReasonCodes"] = reason_codes
-        review = self._keyword_business_review(dataset.id, nodes, preserve_existing=True)
+        edges = json.loads(edges_path.read_text(encoding="utf-8")) if edges_path.exists() else []
+
         summary = self._graph_summary(nodes, edges, self._read_json(dataset_root / "quality-issues.json", []), str(dataset.graph_summary.get("graphSource") or "model_keyword"))
-        summary["keywordBusinessReviewState"] = review["summary"]
+
         for graph_dir in (run_dir / "graph", dataset_root / "graph"):
             self._write_json(graph_dir / "nodes.json", nodes)
             self._write_json(graph_dir / "edges.json", edges)
+
         self._write_graph_summary_artifacts(run_dir, dataset_root, summary)
-        for quality_dir in (run_dir / "quality", dataset_root / "quality"):
-            self._write_json(quality_dir / "keyword-business-review.json", review)
-        self._persist_entity_relation_stage_summary(dataset_root, run_dir, summary)
         self.store.update_record("datasets", dataset.id, {"graphSummary": summary})
         self.store.update_record("tasks", dataset.training_task_id, {"graphSummary": summary})
-        return {"keywordId": node.get("keywordId") or node.get("id"), "businessStatus": business_status, "keywordBusinessReviewState": summary.get("keywordBusinessReviewState", {})}
+
+        filter_state = self._keyword_filter_state(nodes)
+
+        return {
+            "success": True,
+            "summary": filter_state,
+            "applied": {"total": len(updated_keywords), **filter_state},
+            "updatedKeywords": updated_keywords,
+        }
 
     @staticmethod
     def _read_admission_status(node: dict) -> str:
-        """读取准入状态，自动从旧字段迁移。"""
+        """读取统一准入状态；历史节点缺失字段时按过滤前状态保留。"""
         explicit = node.get("admissionStatus") or node.get("properties", {}).get("admissionStatus")
-        if explicit:
-            return str(explicit)
-        approval = str(node.get("approvalStatus") or node.get("properties", {}).get("approvalStatus") or "autoAccepted")
-        business = str(node.get("businessStatus") or node.get("properties", {}).get("businessStatus") or "")
-        if approval in ("autoAccepted", "accepted") and business == "businessAccepted":
-            return "admitted"
-        return "excluded"
+        return str(explicit) if explicit in {"admitted", "excluded"} else "admitted"
 
     @staticmethod
     def _write_admission_status(node: dict, status: str) -> None:
@@ -1145,203 +1278,6 @@ class TrainingService:
             self._write_admission_status(node, migrated)
             changed = True
         return changed
-
-    def update_keyword_admission(
-        self,
-        dataset_id: str,
-        keyword_id: str,
-        admission_status: str,
-        note: str = "",
-        operator_label: str = "当前用户",
-    ) -> dict[str, Any]:
-        if admission_status not in {"admitted", "excluded"}:
-            raise ValueError("准入状态只允许 admitted 或 excluded")
-        dataset = self.ensure_dataset_graph(dataset_id)
-        if dataset.state == "deleted" or not dataset.graph_available or not dataset.training_task_id:
-            raise FileNotFoundError(dataset_id)
-        run_dir = self._run_dir(dataset.training_task_id)
-        dataset_root = settings.data_root / "datasets" / dataset.id
-        nodes_path = run_dir / "graph/nodes.json"
-        edges_path = run_dir / "graph/edges.json"
-        if not nodes_path.exists() or not edges_path.exists():
-            raise FileNotFoundError(dataset_id)
-        nodes = json.loads(nodes_path.read_text(encoding="utf-8"))
-        edges = json.loads(edges_path.read_text(encoding="utf-8"))
-        node = self._resolve_graph_node(nodes, keyword_id)
-        if not node or node.get("type") != "Keyword":
-            raise KeyError(keyword_id)
-        self._write_admission_status(node, admission_status)
-        node["admissionManualOverride"] = {
-            "operatorLabel": operator_label,
-            "note": note,
-            "updatedAt": utcnow().isoformat(),
-        }
-        summary = self._graph_summary(nodes, edges, self._read_json(dataset_root / "quality-issues.json", []), str(dataset.graph_summary.get("graphSource") or "model_keyword"))
-        for graph_dir in (run_dir / "graph", dataset_root / "graph"):
-            self._write_json(graph_dir / "nodes.json", nodes)
-            self._write_json(graph_dir / "edges.json", edges)
-        self._write_graph_summary_artifacts(run_dir, dataset_root, summary)
-        self.store.update_record("datasets", dataset.id, {"graphSummary": summary})
-        self.store.update_record("tasks", dataset.training_task_id, {"graphSummary": summary})
-        return {
-            "keywordId": node.get("keywordId") or node.get("id"),
-            "admissionStatus": admission_status,
-            "keywordAdmissionState": summary.get("keywordAdmissionState", {}),
-        }
-
-    def create_l2_term(
-        self,
-        dataset_id: str,
-        name: str,
-        canonical_name: str = "",
-        description: str = "",
-        linked_l1_ids: list[str] | None = None,
-    ) -> dict[str, Any]:
-        dataset = self.ensure_dataset_graph(dataset_id)
-        if dataset.state == "deleted" or not dataset.graph_available or not dataset.training_task_id:
-            raise FileNotFoundError(dataset_id)
-        run_dir = self._run_dir(dataset.training_task_id)
-        dataset_root = settings.data_root / "datasets" / dataset.id
-        nodes_path = run_dir / "graph/nodes.json"
-        edges_path = run_dir / "graph/edges.json"
-        if not nodes_path.exists() or not edges_path.exists():
-            raise FileNotFoundError(dataset_id)
-        nodes = json.loads(nodes_path.read_text(encoding="utf-8"))
-        edges = json.loads(edges_path.read_text(encoding="utf-8"))
-        term_id = f"l2_{name}_{len(nodes)}".replace(" ", "_")
-        l2_node = {
-            "id": term_id,
-            "keywordId": term_id,
-            "type": "Keyword",
-            "keywordLevel": "L2",
-            "rawName": name,
-            "canonicalName": canonical_name or name,
-            "displayName": canonical_name or name,
-            "description": description,
-            "sourceMethods": ["manual_l2_term"],
-            "admissionStatus": "admitted",
-            "aliases": [],
-            "chunkIds": [],
-            "properties": {
-                "admissionStatus": "admitted",
-                "keywordLevel": "L2",
-            },
-        }
-        nodes.append(l2_node)
-        created_links = []
-        for l1_id in (linked_l1_ids or []):
-            l1_node = self._resolve_graph_node(nodes, l1_id)
-            if not l1_node or l1_node.get("type") != "Keyword":
-                continue
-            edge = {
-                "source": term_id,
-                "target": l1_id,
-                "type": "MAPS_TO_TERM",
-                "weight": 0.5,
-                "evidenceChunkIds": [],
-            }
-            edges.append(edge)
-            created_links.append({"source": term_id, "target": l1_id, "type": "MAPS_TO_TERM", "weight": 0.5})
-        summary = self._graph_summary(nodes, edges, self._read_json(dataset_root / "quality-issues.json", []), str(dataset.graph_summary.get("graphSource") or "model_keyword"))
-        for graph_dir in (run_dir / "graph", dataset_root / "graph"):
-            self._write_json(graph_dir / "nodes.json", nodes)
-            self._write_json(graph_dir / "edges.json", edges)
-        self._write_graph_summary_artifacts(run_dir, dataset_root, summary)
-        self.store.update_record("datasets", dataset.id, {"graphSummary": summary})
-        self.store.update_record("tasks", dataset.training_task_id, {"graphSummary": summary})
-        return {"termId": term_id, "termName": name, "linkedL1Count": len(created_links), "keywordLevelStats": summary.get("keywordLevelStats", {})}
-
-    def create_keyword_link(
-        self,
-        dataset_id: str,
-        keyword_id: str,
-        target_id: str,
-        weight: float = 0.5,
-        evidence_chunk_ids: list[str] | None = None,
-    ) -> dict[str, Any]:
-        dataset = self.ensure_dataset_graph(dataset_id)
-        if dataset.state == "deleted" or not dataset.graph_available or not dataset.training_task_id:
-            raise FileNotFoundError(dataset_id)
-        run_dir = self._run_dir(dataset.training_task_id)
-        dataset_root = settings.data_root / "datasets" / dataset.id
-        nodes_path = run_dir / "graph/nodes.json"
-        edges_path = run_dir / "graph/edges.json"
-        if not nodes_path.exists() or not edges_path.exists():
-            raise FileNotFoundError(dataset_id)
-        nodes = json.loads(nodes_path.read_text(encoding="utf-8"))
-        edges = json.loads(edges_path.read_text(encoding="utf-8"))
-        source_node = self._resolve_graph_node(nodes, keyword_id)
-        target_node = self._resolve_graph_node(nodes, target_id)
-        if not source_node or not target_node:
-            raise KeyError(keyword_id)
-        edge = {
-            "source": keyword_id,
-            "target": target_id,
-            "type": "MAPS_TO_TERM",
-            "weight": max(0.0, min(1.0, weight)),
-            "evidenceChunkIds": evidence_chunk_ids or [],
-        }
-        edges.append(edge)
-        summary = self._graph_summary(nodes, edges, self._read_json(dataset_root / "quality-issues.json", []), str(dataset.graph_summary.get("graphSource") or "model_keyword"))
-        for graph_dir in (run_dir / "graph", dataset_root / "graph"):
-            self._write_json(graph_dir / "nodes.json", nodes)
-            self._write_json(graph_dir / "edges.json", edges)
-        self._write_graph_summary_artifacts(run_dir, dataset_root, summary)
-        self.store.update_record("datasets", dataset.id, {"graphSummary": summary})
-        self.store.update_record("tasks", dataset.training_task_id, {"graphSummary": summary})
-        return {"source": keyword_id, "target": target_id, "type": "MAPS_TO_TERM", "weight": edge["weight"]}
-
-    def expand_l2_term(self, dataset_id: str, term_id: str, limit: int = 50) -> dict[str, Any]:
-        dataset = self.ensure_dataset_graph(dataset_id)
-        if dataset.state == "deleted" or not dataset.graph_available or not dataset.training_task_id:
-            raise FileNotFoundError(dataset_id)
-        run_dir = self._run_dir(dataset.training_task_id)
-        nodes_path = run_dir / "graph/nodes.json"
-        edges_path = run_dir / "graph/edges.json"
-        if not nodes_path.exists() or not edges_path.exists():
-            raise FileNotFoundError(dataset_id)
-        nodes = json.loads(nodes_path.read_text(encoding="utf-8"))
-        edges = json.loads(edges_path.read_text(encoding="utf-8"))
-        term_node = self._resolve_graph_node(nodes, term_id)
-        if not term_node or term_node.get("type") != "Keyword":
-            raise KeyError(term_id)
-        node_lookup = {str(n.get("id") or n.get("keywordId") or ""): n for n in nodes}
-        expansions = []
-        for edge in edges:
-            if edge.get("type") != "MAPS_TO_TERM":
-                continue
-            if str(edge.get("source")) != term_id:
-                continue
-            target_id = str(edge.get("target"))
-            target_node = node_lookup.get(target_id)
-            if not target_node:
-                continue
-            expansions.append({
-                "l1Node": {
-                    "id": target_id,
-                    "name": target_node.get("displayName") or target_node.get("rawName") or target_node.get("canonicalName") or target_id,
-                    "rawName": target_node.get("rawName"),
-                    "canonicalName": target_node.get("canonicalName"),
-                    "admissionStatus": self._read_admission_status(target_node),
-                    "keywordLevel": target_node.get("keywordLevel") or "L1",
-                },
-                "weight": float(edge.get("weight") or 0.5),
-                "evidenceChunkIds": edge.get("evidenceChunkIds") or [],
-                "path": [term_id, "MAPS_TO_TERM", target_id],
-            })
-        expansions.sort(key=lambda item: item["weight"], reverse=True)
-        admitted_count = sum(1 for e in expansions if e["l1Node"]["admissionStatus"] == "admitted")
-        return {
-            "l2Node": {
-                "id": term_id,
-                "name": term_node.get("displayName") or term_node.get("canonicalName") or term_node.get("rawName") or term_id,
-                "canonicalName": term_node.get("canonicalName"),
-                "description": term_node.get("description", ""),
-            },
-            "expansions": expansions[:limit],
-            "totalExpansionCount": len(expansions),
-            "admittedExpansionCount": admitted_count,
-        }
 
     def _write_graph_summary_artifacts(self, run_dir: Path, dataset_root: Path, summary: dict[str, Any]) -> None:
         for report_path in (run_dir / "run-report.json", dataset_root / "run-report.json"):
@@ -1464,7 +1400,7 @@ class TrainingService:
             str(node.get("keywordId") or node.get("id"))
             for node in nodes
             if node.get("type") == "Keyword"
-            and str(node.get("approvalStatus") or node.get("properties", {}).get("approvalStatus") or "autoAccepted") == "rejected"
+            and self._read_admission_status(node) == "excluded"
             and str(node.get("keywordId") or node.get("id") or "")
         })
         rejected_set = set(rejected_ids)
@@ -1495,143 +1431,6 @@ class TrainingService:
             "filteredKeywordCount": len(rejected_ids),
             "deduplicatedChunkCount": len(chunk_keyword_map),
         }
-
-    def _keyword_business_review(self, dataset_id: str, nodes: list[dict[str, Any]], preserve_existing: bool = False) -> dict[str, Any]:
-        items = []
-        for node in nodes:
-            if node.get("type") != "Keyword":
-                continue
-            if preserve_existing and node.get("businessStatus"):
-                item = self._keyword_business_review_item_from_node(node)
-            else:
-                item = self._evaluate_keyword_business(node)
-            items.append(item)
-        summary = self._keyword_business_review_summary(items)
-        return {
-            "schemaVersion": "1.0.0",
-            "datasetId": dataset_id,
-            "ruleSetHash": self._metadata_rule_set_hash(),
-            "summary": summary,
-            "items": items,
-        }
-
-    def _keyword_business_review_item_from_node(self, node: dict[str, Any]) -> dict[str, Any]:
-        coverage = node.get("businessEvidenceCoverage") or self._keyword_evidence_coverage(node)
-        reason_codes = node.get("businessReasonCodes") or node.get("properties", {}).get("businessReasonCodes") or []
-        return {
-            "keywordId": str(node.get("keywordId") or node.get("id") or ""),
-            "canonicalName": node.get("canonicalName") or node.get("name") or node.get("displayName"),
-            "businessStatus": node.get("businessStatus") or node.get("properties", {}).get("businessStatus") or "needsReview",
-            "reasonCodes": list(reason_codes),
-            "evidenceCoverage": coverage,
-            "sourceRuleIds": list(node.get("businessSourceRuleIds") or []),
-            "manualOverride": node.get("businessManualOverride"),
-        }
-
-    def _evaluate_keyword_business(self, node: dict[str, Any]) -> dict[str, Any]:
-        rules = (getattr(self.metadata_construction, "rules", {}) or {}).get("businessKeywordReview") or {}
-        keyword_id = str(node.get("keywordId") or node.get("id") or "")
-        canonical = str(node.get("canonicalName") or node.get("name") or node.get("displayName") or "").strip()
-        aliases = [str(item).strip() for item in (node.get("aliases") or []) if str(item).strip()]
-        values = [canonical, *aliases]
-        coverage = self._keyword_evidence_coverage(node)
-        reason_codes: list[str] = []
-        source_rule_ids: list[str] = []
-
-        folded_values = {value.casefold() for value in values if value}
-        scope_words = {str(item).casefold() for item in rules.get("scopeWords", [])}
-        naming_words = {str(item).casefold() for item in rules.get("namingNoiseWords", [])}
-        strong_topics = {str(item).casefold() for item in rules.get("strongTopicTerms", [])}
-        rejection_patterns = rules.get("rejectionPatterns") or []
-
-        if any(value in scope_words for value in folded_values):
-            reason_codes.append("scope_word")
-            source_rule_ids.append("business.scopeWords")
-        if any(value in naming_words for value in folded_values):
-            reason_codes.append("file_naming_noise")
-            source_rule_ids.append("business.namingNoiseWords")
-        if any(pattern.search(canonical) for _, pattern in rejection_patterns) or self._is_technical_keyword(canonical):
-            reason_codes.append("technical_identifier")
-            source_rule_ids.append("business.rejectionPatterns")
-
-        if reason_codes:
-            status = "businessRejected"
-        else:
-            evidence_count = int(coverage.get("total", 0))
-            min_evidence = int(rules.get("minEvidenceCount", 1) or 1)
-            is_strong_topic = any(value in strong_topics for value in folded_values)
-            has_domain_method = any(
-                method in {"domain_term", "domain_glossary_title", "deterministic_title_glossary"}
-                for method in (node.get("sourceMethods") or node.get("properties", {}).get("sourceMethods") or [])
-            )
-            approval_status = str(node.get("approvalStatus") or node.get("properties", {}).get("approvalStatus") or "")
-            if approval_status == "pending":
-                status = "needsReview"
-                reason_codes.append("pending_keyword_approval")
-            elif evidence_count >= min_evidence and (is_strong_topic or has_domain_method):
-                status = "businessAccepted"
-                reason_codes.extend(["domain_topic" if is_strong_topic else "domain_term", "strong_evidence"])
-            elif evidence_count >= min_evidence and approval_status == "accepted":
-                status = "businessAccepted"
-                reason_codes.extend(["user_confirmed", "strong_evidence"])
-            else:
-                status = "needsReview"
-                reason_codes.append("weak_evidence" if evidence_count < min_evidence else "needs_business_review")
-
-        return {
-            "keywordId": keyword_id,
-            "canonicalName": canonical,
-            "businessStatus": status,
-            "reasonCodes": reason_codes,
-            "evidenceCoverage": coverage,
-            "sourceRuleIds": source_rule_ids,
-            "manualOverride": node.get("businessManualOverride"),
-        }
-
-    @staticmethod
-    def _keyword_evidence_coverage(node: dict[str, Any]) -> dict[str, int]:
-        coverage = {"title": 0, "heading": 0, "content": 0, "domain_glossary": 0, "chunkCount": 0, "total": 0}
-        chunk_ids = {str(item) for item in (node.get("chunkIds") or []) if item}
-        occurrences = node.get("occurrences") or []
-        for occurrence in occurrences:
-            source = str((occurrence or {}).get("evidenceSource") or (occurrence or {}).get("source") or "content")
-            if source not in coverage:
-                source = "content"
-            coverage[source] += 1
-            coverage["total"] += 1
-            if (occurrence or {}).get("chunkId"):
-                chunk_ids.add(str((occurrence or {}).get("chunkId")))
-        coverage["chunkCount"] = len(chunk_ids)
-        if not coverage["total"] and chunk_ids:
-            coverage["total"] = len(chunk_ids)
-            coverage["content"] = len(chunk_ids)
-        return coverage
-
-    @staticmethod
-    def _keyword_business_review_summary(items: list[dict[str, Any]]) -> dict[str, Any]:
-        reason_counts: dict[str, int] = {}
-        state = {
-            "totalKeywordCount": len(items),
-            "businessAcceptedCount": 0,
-            "businessRejectedCount": 0,
-            "needsReviewCount": 0,
-            "admittedChunkCount": 0,
-            "reasonCounts": reason_counts,
-        }
-        admitted_chunks = 0
-        for item in items:
-            status = str(item.get("businessStatus") or "needsReview")
-            if status == "businessAccepted":
-                state["businessAcceptedCount"] += 1
-                admitted_chunks += int((item.get("evidenceCoverage") or {}).get("chunkCount") or 0)
-            elif status == "businessRejected":
-                state["businessRejectedCount"] += 1
-            else:
-                state["needsReviewCount"] += 1
-            for reason in item.get("reasonCodes") or []:
-                reason_counts[str(reason)] = reason_counts.get(str(reason), 0) + 1
-        state["admittedChunkCount"] = admitted_chunks
-        return state
 
     def _entity_relation_stage_summary(self, *roots: Path) -> dict[str, Any]:
         default = {
@@ -2177,7 +1976,7 @@ class TrainingService:
         input_schema = json.loads((skill.root / skill.manifest["inputSchema"]).read_text(encoding="utf-8"))
         validate(instance={"contextEnvelope": envelope}, schema=input_schema)
         user = user_prompt.content.replace("{{context_envelope}}", json.dumps(envelope, ensure_ascii=False))
-        options = {"temperature": 0.1, "max_retries": 0}
+        options = {"temperature": 0.1, "max_tokens": 4000, "timeout_ms": 60000, "max_retries": 1}
         if "maxTokens" in defaults:
             options["max_tokens"] = int(defaults["maxTokens"])
         if "timeoutMs" in defaults:
@@ -2580,77 +2379,6 @@ class TrainingService:
         self.get(task_id)
         return self._read_review_items(task_id)
 
-    def quality_issues(
-        self,
-        task_id: str,
-        severity: str | None = None,
-        offset: int = 0,
-        limit: int = 100,
-    ) -> dict[str, Any]:
-        self.get(task_id)
-        path = self._run_dir(task_id) / "quality" / "issues.json"
-        items: list[dict[str, Any]] = []
-        if path.exists():
-            try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-                if isinstance(data, list):
-                    items = [item for item in data if isinstance(item, dict)]
-            except json.JSONDecodeError:
-                items = []
-        items = self._normalize_quality_issues_for_display(items)
-        all_counts: dict[str, int] = {}
-        for item in items:
-            key = self._issue_severity(item)
-            all_counts[key] = all_counts.get(key, 0) + 1
-        overall_total = len(items)
-        if severity:
-            expected = severity.casefold()
-            items = [
-                item for item in items
-                if self._issue_severity(item).casefold() == expected
-            ]
-        counts: dict[str, int] = {}
-        for item in items:
-            key = self._issue_severity(item)
-            counts[key] = counts.get(key, 0) + 1
-        page = items[offset:offset + limit]
-        return {
-            "items": page,
-            "total": len(items),
-            "overallTotal": overall_total,
-            "offset": offset,
-            "nextOffset": offset + len(page),
-            "counts": all_counts,
-            "pageCounts": counts,
-            "artifactPath": f"training-runs/{task_id}/quality/issues.json",
-        }
-
-    @staticmethod
-    def _normalize_quality_issues_for_display(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        normalized: list[dict[str, Any]] = []
-        for item in items:
-            code = str(item.get("code") or "")
-            if code in {"METADATA_TITLE_MISSING", "METADATA_VERSION_UNCLEAR"}:
-                continue
-            current = dict(item)
-            if code in {"METADATA_CATEGORY_CONFLICT", "METADATA_CATEGORY_UNRESOLVED"}:
-                current["severity"] = "info"
-                details = current.get("details") if isinstance(current.get("details"), dict) else {}
-                details = dict(details)
-                details["severity"] = "info"
-                current["details"] = details
-                if code == "METADATA_CATEGORY_CONFLICT":
-                    current["message"] = "文档命中多个分类候选，已暂按未分类处理，不影响知识提取"
-                else:
-                    current["message"] = "文档分类无法由固定规则确定，已归类为“未分类”，不影响知识提取"
-            normalized.append(current)
-        return normalized
-
-    @staticmethod
-    def _issue_severity(item: dict[str, Any]) -> str:
-        details = item.get("details") if isinstance(item.get("details"), dict) else {}
-        return str(item.get("severity") or details.get("severity") or "unknown")
-
     def pending_review_counts_by_batch(self) -> dict[str, int]:
         counts: dict[str, int] = {}
         for task in self.list():
@@ -2852,28 +2580,11 @@ class TrainingService:
         self.tasks.events.publish_event(task_id, "training.log", item)
         return item
 
-    @staticmethod
-    def _read_jsonl(path: Path) -> list[dict[str, Any]]:
-        if not path.exists():
-            return []
-        items = []
-        for line in path.read_text(encoding="utf-8").splitlines():
-            if not line.strip():
-                continue
-            try:
-                items.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-        return items
+    def _read_jsonl(self, path: Path) -> list[dict[str, Any]]:
+        return self.artifacts.read_jsonl(path)
 
-    @staticmethod
-    def _read_json(path: Path, default: Any = None) -> Any:
-        if not path.exists():
-            return default
-        try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return default
+    def _read_json(self, path: Path, default: Any = None) -> Any:
+        return self.artifacts.read_json(path, default)
 
     def _read_review_items(self, task_id: str) -> list[dict[str, Any]]:
         path = self._run_dir(task_id) / "review-items.json"
@@ -3399,6 +3110,7 @@ class TrainingService:
         self._set_stage(
             task_id,
             "deterministic_extraction",
+            "completed",
             current=len(chunks),
             total=len(chunks),
             unit="个处理单元",
@@ -6151,37 +5863,17 @@ class TrainingService:
         for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
             target[key] = target.get(key, 0) + int(source.get(key, 0) or 0)
 
-    @staticmethod
-    def _write_jsonl(path: Path, items: list[dict[str, Any]]) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = path.with_suffix(path.suffix + ".tmp")
-        temporary.write_text("".join(json.dumps(item, ensure_ascii=False) + "\n" for item in items), encoding="utf-8")
-        temporary.replace(path)
+    def _write_jsonl(self, path: Path, items: list[dict[str, Any]]) -> None:
+        self.artifacts.write_jsonl(path, items)
 
-    @staticmethod
-    def _write_json(path: Path, value: Any) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = path.with_suffix(path.suffix + ".tmp")
-        temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
-        temporary.replace(path)
+    def _write_json(self, path: Path, value: Any) -> None:
+        self.artifacts.write_json(path, value)
 
-    @staticmethod
-    def _copy_embedding_cache(source_root: Path, target_root: Path) -> None:
-        source = source_root / "model-results/embedding-cache"
-        target = target_root / "model-results/embedding-cache"
-        if not source.is_dir():
-            target.mkdir(parents=True, exist_ok=True)
-            return
-        if target.exists():
-            shutil.rmtree(target)
-        shutil.copytree(source, target)
+    def _copy_embedding_cache(self, source_root: Path, target_root: Path) -> None:
+        self.artifacts.copy_embedding_cache(source_root, target_root)
 
-    @staticmethod
-    def _write_text(path: Path, value: str) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = path.with_suffix(path.suffix + ".tmp")
-        temporary.write_text(value, encoding="utf-8")
-        temporary.replace(path)
+    def _write_text(self, path: Path, value: str) -> None:
+        self.artifacts.write_text(path, value)
 
     @staticmethod
     def _confidence(data: dict[str, Any]) -> float:
@@ -6486,6 +6178,7 @@ class TrainingService:
                 "chunkIds": [],
                 "confidence": confidence,
                 "modelConfidence": confidence,
+                "admissionStatus": "admitted",
                 "approvalStatus": "autoAccepted" if confidence >= 0.65 else "pending",
                 "occurrences": [],
                 "properties": {
@@ -6495,6 +6188,7 @@ class TrainingService:
                     "canonicalName": canonical_name,
                     "keywordId": keyword_id,
                     "confidence": confidence,
+                    "admissionStatus": "admitted",
                     "approvalStatus": "autoAccepted" if confidence >= 0.65 else "pending",
                     "graphSource": "model_keyword",
                 },
@@ -6629,6 +6323,7 @@ class TrainingService:
                     "sourceResourceIds": [],
                     "chunkIds": [],
                     "confidence": float(candidate.get("confidence", 0.6)),
+                    "admissionStatus": "admitted",
                     "approvalStatus": "autoAccepted" if float(candidate.get("confidence", 0.6)) >= 0.65 else "pending",
                     "occurrences": [],
                     "properties": {
@@ -6638,6 +6333,7 @@ class TrainingService:
                         "canonicalName": canonical_name,
                         "keywordId": keyword_id,
                         "confidence": float(candidate.get("confidence", 0.6)),
+                        "admissionStatus": "admitted",
                         "approvalStatus": "autoAccepted" if float(candidate.get("confidence", 0.6)) >= 0.65 else "pending",
                     },
                     "sourceResourceId": resource_id,
@@ -6900,43 +6596,18 @@ class TrainingService:
         knowledge_count = len(knowledge_nodes)
         keyword_nodes = [node for node in enriched_nodes if isinstance(node, dict) and node.get("type") == "Keyword"]
         keyword_approval_state = {"autoAccepted": 0, "accepted": 0, "pending": 0, "rejected": 0}
-        keyword_business_state = {
-            "totalKeywordCount": len(keyword_nodes),
-            "businessAcceptedCount": 0,
-            "businessRejectedCount": 0,
-            "needsReviewCount": 0,
-            "admittedChunkCount": 0,
-            "reasonCounts": {},
-        }
         keyword_admission_state = {"admitted": 0, "excluded": 0, "totalKeywordCount": len(keyword_nodes)}
-        keyword_level_stats = {"L1": 0, "L2": 0, "unspecified": 0}
         for node in keyword_nodes:
             properties = node.get("properties") if isinstance(node.get("properties"), dict) else {}
             status = str(node.get("approvalStatus") or properties.get("approvalStatus") or "autoAccepted")
             if status not in keyword_approval_state:
                 status = "pending"
             keyword_approval_state[status] += 1
-            business_status = str(node.get("businessStatus") or properties.get("businessStatus") or "")
-            if business_status == "businessAccepted":
-                keyword_business_state["businessAcceptedCount"] += 1
-                keyword_business_state["admittedChunkCount"] += len(node.get("chunkIds") or [])
-            elif business_status == "businessRejected":
-                keyword_business_state["businessRejectedCount"] += 1
-            else:
-                keyword_business_state["needsReviewCount"] += 1
-            reason_counts = keyword_business_state["reasonCounts"]
-            for reason in (node.get("businessReasonCodes") or properties.get("businessReasonCodes") or []):
-                reason_counts[str(reason)] = reason_counts.get(str(reason), 0) + 1
             admission = self._read_admission_status(node)
             if admission in keyword_admission_state:
                 keyword_admission_state[admission] += 1
             else:
                 keyword_admission_state["excluded"] += 1
-            level = str(node.get("keywordLevel") or properties.get("keywordLevel") or "")
-            if level in ("L1", "L2"):
-                keyword_level_stats[level] += 1
-            else:
-                keyword_level_stats["unspecified"] += 1
         connected_knowledge_count = sum(1 for node in knowledge_nodes if node.get("id") in connected_node_ids)
         evidence_edges = [edge for edge in edges if edge.get("type") == "CONTEXT_MATCHES_CHUNK"]
         evidence_complete_edges = [
@@ -6971,10 +6642,13 @@ class TrainingService:
             "contextEdgeCount": edge_types.get("CONTEXT_MATCHES_CHUNK", 0),
             "graphSource": graph_source,
             "knowledgeBuildMode": "formal_knowledge" if graph_source == "final_knowledge" else "keyword_analysis",
-            "keywordApprovalState": keyword_approval_state,
-            "keywordBusinessReviewState": keyword_business_state,
             "keywordAdmissionState": keyword_admission_state,
-            "keywordLevelStats": keyword_level_stats,
+            "keywordFilterState": {
+                "beforeTotal": len(keyword_nodes),
+                "afterTotal": keyword_admission_state["admitted"],
+                "retained": keyword_admission_state["admitted"],
+                "excluded": keyword_admission_state["excluded"],
+            },
             "formalKnowledgeDatasetId": None,
             "entityRelationStage": self._entity_relation_stage_summary(),
             "displayMode": "keyword_overview" if graph_source in {"metadata_keyword", "model_keyword", "final_knowledge"} else "empty",

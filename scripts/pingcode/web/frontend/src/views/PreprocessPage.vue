@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { Activity, AlertTriangle, ChevronDown, ChevronRight, Clock3, FileText, RefreshCw, X } from 'lucide-vue-next'
 import { useRoute } from 'vue-router'
 import { request, taskEventUrl } from '../api'
+import BatchStepNav from '../components/BatchStepNav.vue'
 import MarkdownWorkbench from '../components/MarkdownWorkbench.vue'
 import PaginationControls from '../components/PaginationControls.vue'
 
@@ -16,13 +17,6 @@ const trainingTask = ref(null)
 const downloadTask = ref(null)
 const trainingLogs = ref([])
 const reviewItems = ref([])
-const qualityIssues = ref([])
-const qualityIssueTotal = ref(0)
-const qualityIssueOverallTotal = ref(0)
-const qualityIssueCounts = ref({})
-const qualityIssueSeverity = ref('all')
-const qualityIssueOffset = ref(0)
-const qualityIssueLimit = ref(100)
 const cancelLoading = ref(false)
 const datasets = ref([])
 const error = ref('')
@@ -43,10 +37,6 @@ const sourceQuery = ref('')
 const streamState = ref('idle')
 const stageExpansion = ref({})
 const activityExpanded = ref(false)
-const qualityIssuePreviewCache = ref({})
-const qualityIssuePreviewLoading = ref('')
-const qualityIssuePreviewErrors = ref({})
-const qualityIssuePreviewDialog = ref(null)
 const failureDrawer = ref(null)
 const preflightDialog = ref(null)
 const preflightLoading = ref(false)
@@ -57,7 +47,6 @@ let trainingPoll = null
 let clockTimer = null
 
 const terminalStates = ['completed', 'failed', 'cancelled']
-const qualityIssueCount = computed(() => qualityIssueOverallTotal.value || qualityIssueTotal.value || reviewItems.value.length)
 const activeTrainingStates = ['queued', 'running', 'cancelling']
 const blockingDownloadTask = computed(() => downloadTask.value && downloadTask.value.state !== 'completed')
 const batchReadyForTraining = computed(() => ['uploaded', 'downloaded', 'ready'].includes(batch.value?.state) && !batch.value?.activeTaskIds?.length && !blockingDownloadTask.value)
@@ -285,7 +274,7 @@ async function restoreTrainingTask() {
   const latest = result.items?.[0]
   if (!latest) return
   trainingTask.value = latest
-  await Promise.all([loadTrainingLogs(true), loadReviewItems(), loadQualityIssues(0)])
+  await Promise.all([loadTrainingLogs(true), loadReviewItems()])
   if (!terminalStates.includes(latest.state)) subscribeTraining(latest.id)
 }
 
@@ -371,7 +360,6 @@ async function startTraining() {
   error.value = ''
   preflightLoading.value = true
   try {
-    await request('/api/training/model-test', { method: 'POST' })
     const preflight = await request('/api/training/preflight', {
       method: 'POST',
       body: JSON.stringify(trainingRequestPayload()),
@@ -634,11 +622,6 @@ async function confirmStartTraining() {
   try {
     trainingLogs.value = []
     reviewItems.value = []
-    qualityIssues.value = []
-    qualityIssueTotal.value = 0
-    qualityIssueOverallTotal.value = 0
-    qualityIssueCounts.value = {}
-    qualityIssueOffset.value = 0
     stageExpansion.value = {}
     trainingTask.value = await request('/api/training/tasks', {
       method: 'POST',
@@ -673,11 +656,10 @@ function subscribeTraining(taskId) {
   trainingEvents.onopen = () => { streamState.value = 'connected' }
   trainingEvents.addEventListener('task.progress', async event => {
     trainingTask.value = JSON.parse(event.data)
-    await loadQualityIssues(qualityIssueOffset.value)
     if (terminalStates.includes(trainingTask.value.state)) {
       stopTrainingStream()
       streamState.value = 'completed'
-      await Promise.all([load(), loadTrainingLogs(true), loadReviewItems(), loadQualityIssues(0)])
+      await Promise.all([load(), loadTrainingLogs(true), loadReviewItems()])
     }
   })
   trainingEvents.addEventListener('training.log', event => {
@@ -706,7 +688,7 @@ function startTrainingPolling(taskId) {
         clearInterval(trainingPoll)
         trainingPoll = null
         streamState.value = 'completed'
-        await Promise.all([loadReviewItems(), loadQualityIssues(0)])
+        await loadReviewItems()
       }
     } catch (reason) {
       streamState.value = 'disconnected'
@@ -734,147 +716,6 @@ async function loadReviewItems() {
   if (!trainingTask.value?.id) return
   const result = await request(`/api/training/tasks/${trainingTask.value.id}/review-items`)
   reviewItems.value = result.items
-}
-
-async function loadQualityIssues(offset = 0) {
-  if (!trainingTask.value?.id) return
-  const query = new URLSearchParams({
-    offset: String(offset),
-    limit: String(qualityIssueLimit.value),
-  })
-  if (qualityIssueSeverity.value !== 'all') query.set('severity', qualityIssueSeverity.value)
-  const result = await request(`/api/training/tasks/${trainingTask.value.id}/quality-issues?${query.toString()}`)
-  qualityIssues.value = result.items || []
-  qualityIssueTotal.value = result.total || 0
-  qualityIssueOverallTotal.value = result.overallTotal || result.total || 0
-  qualityIssueCounts.value = result.counts || {}
-  qualityIssueOffset.value = result.offset || 0
-}
-
-async function setQualityIssueSeverity(value) {
-  qualityIssueSeverity.value = value
-  await loadQualityIssues(0)
-}
-
-async function previousQualityIssues() {
-  await loadQualityIssues(Math.max(0, qualityIssueOffset.value - qualityIssueLimit.value))
-}
-
-async function nextQualityIssues() {
-  if (qualityIssueOffset.value + qualityIssues.value.length < qualityIssueTotal.value) {
-    await loadQualityIssues(qualityIssueOffset.value + qualityIssueLimit.value)
-  }
-}
-
-function qualityIssueId(issue) {
-  return issue.issueId || issue.id || `${issue.code}-${issue.resourceId}-${issue.chunkId}-${issue.message}`
-}
-
-function qualityIssueEvidence(issue) {
-  return issue.evidenceText || issue.evidence || issue.details?.evidenceText || issue.details?.evidence || ''
-}
-
-function qualityIssueDetails(issue) {
-  const details = issue.details || {}
-  const entries = Object.entries(details)
-    .filter(([key, value]) => !['severity', 'evidence', 'evidenceText'].includes(key) && value !== undefined && value !== null && value !== '')
-    .map(([key, value]) => `${detailNames[key] || key}：${typeof value === 'object' ? JSON.stringify(value) : value}`)
-  return entries.join('；')
-}
-
-function qualityIssueSource(issue) {
-  return issue.sourcePath || issue.source_path || issue.resourceId || '-'
-}
-
-function qualityIssueSeverityLabel(issue) {
-  const severity = qualityIssueSeverityValue(issue)
-  return severityNames[severity] || severity
-}
-
-function qualityIssueSeverityValue(issue) {
-  return issue.severity || issue.details?.severity || 'info'
-}
-
-function qualityIssuePreview(issue) {
-  return issue.resourceId ? qualityIssuePreviewCache.value[issue.resourceId] : null
-}
-
-function qualityIssuePreviewError(issue) {
-  return qualityIssuePreviewErrors.value[qualityIssueId(issue)] || ''
-}
-
-function qualityIssuePreviewTitle(issue) {
-  const resourceId = issue.resourceId
-  const previewData = qualityIssuePreview(issue)
-  const resource = previewData?.resource
-  return files.value.find(item => item.id === resourceId)?.name || resource?.name || qualityIssueSource(issue)
-}
-
-async function ensureQualityIssuePreview(issue) {
-  const issueId = qualityIssueId(issue)
-  if (!issue.resourceId || qualityIssuePreview(issue)) return
-  qualityIssuePreviewLoading.value = issueId
-  qualityIssuePreviewErrors.value = { ...qualityIssuePreviewErrors.value, [issueId]: '' }
-  try {
-    const result = await request('/api/preprocess/preview', {
-      method: 'POST',
-      body: JSON.stringify({ batchId: route.params.batchId, resourceId: issue.resourceId }),
-    })
-    qualityIssuePreviewCache.value = { ...qualityIssuePreviewCache.value, [issue.resourceId]: result }
-  } catch (reason) {
-    qualityIssuePreviewErrors.value = { ...qualityIssuePreviewErrors.value, [issueId]: reason.message }
-  } finally {
-    qualityIssuePreviewLoading.value = ''
-  }
-}
-
-async function openQualityIssuePreview(issue) {
-  qualityIssuePreviewDialog.value = issue
-  await ensureQualityIssuePreview(issue)
-}
-
-function qualityIssueContext(issue) {
-  const previewData = qualityIssuePreview(issue)
-  if (!previewData) return null
-  const evidence = qualityIssueEvidence(issue)
-  const units = previewData.processingUnits || []
-  const unit = units.find(item => item.chunkId === issue.chunkId || item.id === issue.chunkId)
-  if (unit?.content) {
-    return {
-      label: '已定位到处理单元',
-      chunkId: unit.chunkId || issue.chunkId,
-      heading: (unit.headingPath || []).join(' / '),
-      content: unit.content,
-      evidence,
-      precise: true,
-    }
-  }
-  const sourceText = previewData.cleaned || previewData.original || ''
-  if (evidence && sourceText.includes(evidence)) {
-    const index = sourceText.indexOf(evidence)
-    const start = Math.max(0, index - 500)
-    const end = Math.min(sourceText.length, index + evidence.length + 500)
-    return {
-      label: '已通过证据文本定位',
-      chunkId: issue.chunkId || '-',
-      heading: '',
-      content: sourceText.slice(start, end),
-      evidence,
-      precise: true,
-    }
-  }
-  return {
-    label: '未定位到精确片段，展示文档开头摘要',
-    chunkId: issue.chunkId || '-',
-    heading: '',
-    content: sourceText.slice(0, 1200),
-    evidence,
-    precise: false,
-  }
-}
-
-function closeQualityIssuePreview() {
-  qualityIssuePreviewDialog.value = null
 }
 
 async function deleteDataset(dataset) {
@@ -984,14 +825,6 @@ function preflightValue(...keys) {
   return '待计算'
 }
 
-function preflightDuration() {
-  const direct = preflightDialog.value?.durationText || preflightDialog.value?.estimatedDuration
-  if (direct) return direct
-  const range = preflightDialog.value?.estimatedDurationMs
-  if (!range) return '按实际不确定项数量计算'
-  return `${formatDuration(range.minimum)} ～ ${formatDuration(range.maximum)}`
-}
-
 function formatDuration(milliseconds) {
   if (milliseconds === null || milliseconds === undefined) return '--'
   const seconds = Math.max(0, Math.round(milliseconds / 1000))
@@ -1049,11 +882,7 @@ onBeforeUnmount(() => {
     <div class="page-header">
       <div><h1>加工任务</h1><p class="muted">{{ batch?.name || route.params.batchId }}</p></div>
     </div>
-    <nav class="tabs">
-      <router-link :to="`/batches/${route.params.batchId}/download`">下载文件</router-link>
-      <router-link :to="`/batches/${route.params.batchId}/preprocess`">加工任务</router-link>
-      <router-link :to="`/batches/${route.params.batchId}/quality`">质量分析</router-link>
-    </nav>
+    <BatchStepNav :batch-id="route.params.batchId" />
     <div v-if="error" class="error page-error">{{ error }}</div>
 
     <div class="setup-grid">
@@ -1126,7 +955,7 @@ onBeforeUnmount(() => {
             <X :size="15" />{{ trainingTask?.state === 'cancelling' ? '正在取消' : '取消任务' }}
           </button>
           <button class="button" :disabled="!canStartTraining || preflightLoading" @click="startTraining">
-            {{ preflightLoading ? '正在检查模型与任务' : '开始知识加工' }}
+            {{ preflightLoading ? '正在检查加工任务' : '开始知识加工' }}
           </button>
         </div>
       </header>
@@ -1138,7 +967,6 @@ onBeforeUnmount(() => {
           <span title="模型调用、网关连接或返回格式错误"><strong>{{ trainingTask.modelCalls?.failed || 0 }}</strong>模型失败</span>
           <span title="关键词、知识点、实体和文档块的去重对象总数"><strong>{{ trainingTask.graphSummary?.nodeCount || 0 }}</strong>图谱节点</span>
           <span title="关键词或知识点匹配到文档块的上下文关联，以及具有原文证据的实体关系总数"><strong>{{ trainingTask.graphSummary?.edgeCount || 0 }}</strong>上下文关联</span>
-          <span title="输入缺失、证据不足或模型无法可靠判断的只读质量问题"><strong>{{ qualityIssueCount }}</strong>质量问题</span>
         </div>
         <div class="progress training-progress"><span :style="{ width: `${trainingPercent}%` }"></span></div>
 
@@ -1148,7 +976,6 @@ onBeforeUnmount(() => {
             <div class="source-filters">
               <button :class="{ active: sourceFilter === 'all' }" @click="sourceFilter = 'all'">全部</button>
               <button :class="{ active: sourceFilter === 'failed' }" @click="sourceFilter = 'failed'">失败</button>
-              <button :class="{ active: sourceFilter === 'review' }" @click="sourceFilter = 'review'">质量问题</button>
             </div>
             <input v-model="sourceQuery" class="source-search" placeholder="搜索文件" />
             <div class="source-list">
@@ -1205,52 +1032,6 @@ onBeforeUnmount(() => {
             </section>
           </aside>
         </div>
-        <section class="quality-issues-panel">
-          <header>
-            <div>
-              <h3>质量问题明细</h3>
-              <p>展示本次加工运行落盘的自动质量问题，来源于运行目录 `quality/issues.json`。</p>
-            </div>
-            <div class="quality-issue-filters">
-              <button :class="{ active: qualityIssueSeverity === 'all' }" @click="setQualityIssueSeverity('all')">全部 {{ qualityIssueOverallTotal || qualityIssueTotal }}</button>
-              <button :class="{ active: qualityIssueSeverity === 'warning' }" @click="setQualityIssueSeverity('warning')">警告 {{ qualityIssueCounts.warning || 0 }}</button>
-              <button :class="{ active: qualityIssueSeverity === 'info' }" @click="setQualityIssueSeverity('info')">提示 {{ qualityIssueCounts.info || 0 }}</button>
-              <button :class="{ active: qualityIssueSeverity === 'error' }" @click="setQualityIssueSeverity('error')">错误 {{ qualityIssueCounts.error || 0 }}</button>
-              <button :class="{ active: qualityIssueSeverity === 'unknown' }" @click="setQualityIssueSeverity('unknown')">未知 {{ qualityIssueCounts.unknown || 0 }}</button>
-            </div>
-          </header>
-          <div v-if="qualityIssues.length" class="quality-issue-table-wrap">
-            <table class="quality-issue-table">
-              <thead>
-                <tr><th>级别</th><th>问题代码</th><th>来源</th><th>处理单元</th><th>说明</th><th>文档预览</th></tr>
-              </thead>
-              <tbody>
-                <tr v-for="issue in qualityIssues" :key="qualityIssueId(issue)">
-                  <td><span :class="['quality-severity', qualityIssueSeverityValue(issue)]">{{ qualityIssueSeverityLabel(issue) }}</span></td>
-                  <td>{{ issue.code || '-' }}</td>
-                  <td>{{ qualityIssueSource(issue) }}</td>
-                  <td>{{ issue.chunkId || '-' }}</td>
-                  <td>
-                    <strong>{{ issue.message || '-' }}</strong>
-                    <small v-if="qualityIssueEvidence(issue)" class="quality-evidence-inline">证据：{{ qualityIssueEvidence(issue) }}</small>
-                    <small v-if="qualityIssueDetails(issue)" class="quality-evidence-inline">详情：{{ qualityIssueDetails(issue) }}</small>
-                  </td>
-                  <td>
-                    <button class="button small secondary" :disabled="!issue.resourceId || qualityIssuePreviewLoading === qualityIssueId(issue)" @click="openQualityIssuePreview(issue)">
-                      {{ !issue.resourceId ? '无源文档' : qualityIssuePreviewLoading === qualityIssueId(issue) ? '加载中' : '预览' }}
-                    </button>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-          <div v-else class="empty compact">当前运行没有可展示的质量问题。</div>
-          <footer v-if="qualityIssueTotal > qualityIssueLimit" class="quality-issue-pager">
-            <button class="button small secondary" :disabled="qualityIssueOffset === 0" @click="previousQualityIssues">上一页</button>
-            <span>{{ qualityIssueOffset + 1 }} - {{ qualityIssueOffset + qualityIssues.length }} / {{ qualityIssueTotal }}</span>
-            <button class="button small secondary" :disabled="qualityIssueOffset + qualityIssues.length >= qualityIssueTotal" @click="nextQualityIssues">下一页</button>
-          </footer>
-        </section>
         <div v-if="trainingTask.message" class="error task-message">{{ trainingTask.message }}</div>
       </template>
       <div v-else class="empty compact">尚未启动知识加工流水线。</div>
@@ -1395,33 +1176,6 @@ onBeforeUnmount(() => {
       </section>
     </div>
 
-    <div v-if="qualityIssuePreviewDialog" class="quality-preview-backdrop" @click.self="closeQualityIssuePreview">
-      <section class="quality-preview-dialog" role="dialog" aria-modal="true" :aria-label="`${qualityIssuePreviewTitle(qualityIssuePreviewDialog)} Markdown 预览`">
-        <header>
-          <div>
-            <h2>质量问题文档预览</h2>
-            <p>{{ qualityIssuePreviewTitle(qualityIssuePreviewDialog) }}</p>
-          </div>
-          <button class="icon-action" title="关闭预览" @click="closeQualityIssuePreview"><X :size="17" /></button>
-        </header>
-        <div class="quality-preview-meta">
-          <span><strong>问题代码</strong>{{ qualityIssuePreviewDialog.code || '-' }}</span>
-          <span><strong>处理单元</strong>{{ qualityIssueContext(qualityIssuePreviewDialog)?.chunkId || qualityIssuePreviewDialog.chunkId || '-' }}</span>
-          <span><strong>定位状态</strong>{{ qualityIssueContext(qualityIssuePreviewDialog)?.label || '正在加载文档' }}</span>
-        </div>
-        <div v-if="qualityIssuePreviewError(qualityIssuePreviewDialog)" class="quality-context-error">{{ qualityIssuePreviewError(qualityIssuePreviewDialog) }}</div>
-        <div v-else-if="qualityIssuePreviewLoading === qualityIssueId(qualityIssuePreviewDialog)" class="quality-context-loading">正在加载完整 Markdown 预览...</div>
-        <div v-else-if="qualityIssuePreview(qualityIssuePreviewDialog)" class="quality-markdown-workbench">
-          <MarkdownWorkbench
-            :original="qualityIssuePreview(qualityIssuePreviewDialog).original"
-            :cleaned="qualityIssuePreview(qualityIssuePreviewDialog).cleaned"
-            :assets="qualityIssuePreview(qualityIssuePreviewDialog).assets || {}"
-            initial-tab="rendered"
-          />
-        </div>
-      </section>
-    </div>
-
     <section class="panel datasets-panel">
       <h2>数据集版本</h2>
       <div v-if="!datasets.length" class="empty compact">预处理完成后生成候选版本。</div>
@@ -1442,18 +1196,16 @@ onBeforeUnmount(() => {
     <div v-if="preflightDialog" class="dialog-backdrop" @click.self="preflightDialog = null">
       <section class="preflight-dialog">
         <header>
-          <div><h2>确认启动知识加工</h2><p>模型连接测试已通过，请确认本次任务规模。</p></div>
+          <div><h2>确认启动知识加工</h2><p>本次将按规则提取知识，请确认任务规模。</p></div>
           <button class="icon-action" title="关闭" @click="preflightDialog = null"><X :size="17" /></button>
         </header>
         <div class="preflight-summary">
           <span><strong>{{ preflightValue('documentCount', 'documents') }}</strong>篇文档</span>
           <span><strong>{{ preflightValue('estimatedChunkCount', 'chunkCount', 'chunks') }}</strong>个预计处理单元</span>
-          <span><strong>{{ preflightValue('semanticUncertainItems', 'totalModelCalls', 'modelCalls') }}</strong>个语义不确定项</span>
-          <span><strong>{{ preflightDuration() }}</strong>预计语义耗时</span>
         </div>
         <div class="preflight-principle">
           <strong>执行原则</strong>
-          <p>固定流程由代码执行；大模型仅处理“确定知识提取”内部识别出的语义不确定项，不接收完整文档。</p>
+          <p>知识提取仅按已配置的规则执行，不调用模型服务。</p>
         </div>
         <ul v-if="preflightDialog.risks?.length" class="preflight-risks">
           <li v-for="risk in preflightDialog.risks" :key="risk">{{ risk }}</li>
@@ -1531,65 +1283,16 @@ onBeforeUnmount(() => {
 .danger-button:hover:not(:disabled) { background: #fff4f2; }
 .warning-button { color: #9b6108; border-color: #f0d7ac; background: #fffaf0; }
 .warning-button:hover:not(:disabled) { background: #fff4d6; }
-.metric-strip { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); border-bottom: 1px solid #dde4ee; }
+.metric-strip { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border-bottom: 1px solid #dde4ee; }
 .metric-strip span { min-width: 0; padding: 10px 14px; color: #6d7b90; font-size: 11px; border-right: 1px solid #e5eaf1; }
 .metric-strip span:last-child { border-right: 0; }
 .metric-strip strong { display: block; color: #183b66; font-size: 17px; }
 .training-progress { height: 4px; border-radius: 0; }
 .pipeline-workbench { display: grid; grid-template-columns: 280px minmax(500px, 1fr) 360px; min-height: 570px; }
-.quality-issues-panel { margin: 12px; border: 1px solid #dde4ee; border-radius: 7px; background: white; overflow: hidden; }
-.quality-issues-panel header { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-height: 58px; padding: 12px 14px; border-bottom: 1px solid #e5eaf1; }
-.quality-issues-panel h3, .quality-issues-panel p { margin: 0; }
-.quality-issues-panel h3 { color: #34445b; font-size: 14px; }
-.quality-issues-panel p { margin-top: 4px; color: #78869a; font-size: 11px; }
-.quality-issue-filters { display: flex; gap: 5px; flex-wrap: wrap; }
-.quality-issue-filters button { padding: 5px 9px; border: 0; border-radius: 4px; color: #66758a; background: transparent; font-size: 11px; }
-.quality-issue-filters button.active { color: #175cd3; background: #eaf2ff; }
-.quality-issue-table-wrap { max-height: min(72vh, 760px); overflow: auto; }
-.quality-issue-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
-.quality-issue-table th, .quality-issue-table td { padding: 8px 10px; border-bottom: 1px solid #edf0f5; text-align: left; font-size: 11px; vertical-align: top; overflow-wrap: anywhere; }
-.quality-issue-table th { position: sticky; top: 0; z-index: 1; color: #637086; background: #f7f9fc; }
-.quality-issue-table th:nth-child(1) { width: 64px; }
-.quality-issue-table th:nth-child(2) { width: 160px; }
-.quality-issue-table th:nth-child(4) { width: 130px; }
-.quality-issue-table th:nth-child(6) { width: 150px; }
-.quality-issue-table td:nth-child(6) .button { width: 100%; }
 .quality-severity { display: inline-flex; padding: 2px 6px; border-radius: 999px; font-size: 10px; }
 .quality-severity.warning { color: #9b6108; background: #fff4d6; }
 .quality-severity.error, .quality-severity.critical, .quality-severity.high { color: #b42318; background: #fff0ed; }
 .quality-severity.info { color: #475467; background: #eef1f5; }
-.quality-evidence-inline { display: block; margin-top: 5px; color: #78869a; line-height: 1.45; }
-.quality-context-row td { padding: 0; background: #fbfcfe; }
-.quality-context-card { margin: 10px; padding: 12px; border: 1px solid #cdddf3; border-radius: 7px; background: #f7fbff; }
-.quality-context-card.imprecise { border-color: #f0d7ac; background: #fffaf0; }
-.quality-context-card header { padding: 0 0 8px; border-bottom: 1px solid #e2eaf5; }
-.quality-context-card header strong, .quality-context-card header small { display: block; }
-.quality-context-card header strong { color: #24364d; font-size: 12px; }
-.quality-context-card header small { margin-top: 3px; color: #6d7b90; font-size: 10px; }
-.quality-context-card dl { display: grid; grid-template-columns: 72px minmax(0, 1fr); margin: 10px 0; font-size: 10px; }
-.quality-context-card dt, .quality-context-card dd { margin: 0; padding: 5px 7px; border-bottom: 1px solid #e7edf5; overflow-wrap: anywhere; }
-.quality-context-card dt { color: #637086; background: rgba(255, 255, 255, .7); }
-.quality-context-card pre { max-height: min(58vh, 620px); margin: 0; padding: 11px; overflow: auto; border: 1px solid #dce5ef; border-radius: 6px; color: #34445b; background: white; font: 10px/1.6 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
-.quality-context-snippet { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 6px; margin: 10px 0 0; color: #536176; font-size: 10px; line-height: 1.5; }
-.quality-context-snippet strong { color: #34445b; }
-.quality-context-card mark { padding: 1px 2px; color: #7a3a00; background: #ffe08a; border-radius: 2px; }
-.quality-context-loading, .quality-context-error { margin: 10px; padding: 12px; border-radius: 6px; font-size: 11px; }
-.quality-context-loading { color: #536176; background: #f2f5f9; }
-.quality-context-error { color: #b42318; background: #fff0ed; }
-.quality-preview-backdrop { position: fixed; z-index: 45; inset: 0; display: grid; place-items: center; padding: 22px; background: rgba(23, 32, 51, .42); }
-.quality-preview-dialog { display: flex; flex-direction: column; width: min(1320px, 96vw); height: min(900px, 94vh); overflow: hidden; border-radius: 10px; background: white; box-shadow: 0 24px 80px rgba(16, 36, 64, .3); }
-.quality-preview-dialog > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; padding: 18px 20px 14px; border-bottom: 1px solid #dde4ee; }
-.quality-preview-dialog h2, .quality-preview-dialog p { margin: 0; }
-.quality-preview-dialog h2 { color: #24364d; font-size: 18px; }
-.quality-preview-dialog header p { margin-top: 5px; color: #78869a; font-size: 12px; overflow-wrap: anywhere; }
-.quality-preview-meta { display: grid; grid-template-columns: 220px 220px minmax(0, 1fr); gap: 0; border-bottom: 1px solid #e5eaf1; }
-.quality-preview-meta span { min-width: 0; padding: 10px 14px; color: #536176; font-size: 11px; border-right: 1px solid #e5eaf1; overflow-wrap: anywhere; }
-.quality-preview-meta span:last-child { border-right: 0; }
-.quality-preview-meta strong { display: block; margin-bottom: 4px; color: #183b66; font-size: 12px; }
-.quality-markdown-workbench { min-height: 0; padding: 12px; overflow: hidden; }
-.quality-markdown-workbench :deep(.markdown-workbench) { height: calc(min(900px, 94vh) - 145px); }
-.quality-markdown-workbench :deep(.editor-host), .quality-markdown-workbench :deep(.rendered-markdown) { height: calc(min(900px, 94vh) - 188px); }
-.quality-issue-pager { display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding: 10px 12px; color: #66758a; font-size: 11px; border-top: 1px solid #edf0f5; }
 .source-pane, .pipeline-pane, .activity-pane { min-width: 0; }
 .source-pane, .pipeline-pane { border-right: 1px solid #dde4ee; }
 .pane-heading { height: 42px; justify-content: flex-start; padding: 0 12px; border-bottom: 1px solid #e5eaf1; color: #44536a; font-size: 12px; }
@@ -1779,7 +1482,7 @@ onBeforeUnmount(() => {
 .preflight-dialog h2, .preflight-dialog p { margin: 0; }
 .preflight-dialog h2 { color: #24364d; font-size: 18px; }
 .preflight-dialog header p { margin-top: 5px; color: #78869a; font-size: 12px; }
-.preflight-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-bottom: 1px solid #e5eaf1; }
+.preflight-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border-bottom: 1px solid #e5eaf1; }
 .preflight-summary span { min-width: 0; padding: 15px 16px; color: #6d7b90; font-size: 11px; border-right: 1px solid #e5eaf1; }
 .preflight-summary span:last-child { border-right: 0; }
 .preflight-summary strong { display: block; margin-bottom: 4px; color: #183b66; font-size: 17px; overflow-wrap: anywhere; }

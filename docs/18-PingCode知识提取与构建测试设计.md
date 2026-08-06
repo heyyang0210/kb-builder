@@ -76,6 +76,9 @@ batchId: batch_b46713c20d9c4ada
 | TC-F09A | 业务语义过滤展示 | 调用 `business-review` 并刷新质量分析页 | 生成 `keyword-business-review.json`；图谱摘要包含 `keywordBusinessReviewState`；前端展示业务准入、业务排除、待业务确认和过滤原因 |
 | TC-F09B | 实体/关系阶段状态 | 读取质量报告中的 `entityRelationStage` | 未启动时展示为未启动；后续实体/关系显式阶段可更新 candidate、validated 和 issue 计数 |
 | TC-F10 | 质量问题语义 | 检查 `keyword_analysis` 和 `formal_knowledge` 的质量问题 | `keyword_analysis` 不因 `FINAL_KNOWLEDGE_EMPTY` 阻断；正式知识为空时按设计降级或阻断并给出原因 |
+| TC-F11 | 默认规则任务免模型预检 | 令模型网关的配置、状态、测试和调用接口均返回 HTTP 502，再以省略 `mode` 的请求执行主页预检 | 预检不访问模型接口，`totalModelCalls=0`、`modelTestPassed=null`，且只要批次就绪并存在可处理资料则 `canStart=true` |
+| TC-F12 | 默认规则任务免模型启动 | 在 TC-F11 的假网关条件下调用 `POST /api/training/tasks` 并轮询终态 | 任务创建、运行并终态化，产物只有规则关键词候选和中文质量提示；模型成功、失败、跳过及调用审计均为 0 |
+| TC-F13 | 正式知识模型门禁保持 | 未执行有效模型测试时创建 `formal_knowledge` 任务 | 请求被模型测试门禁拒绝；执行有效模型测试后才允许启动，HTTP 502 等模型故障保留可归因错误 |
 
 ## 五、性能测试用例
 

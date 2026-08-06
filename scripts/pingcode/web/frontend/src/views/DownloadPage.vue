@@ -4,6 +4,7 @@ import DOMPurify from 'dompurify'
 import { marked } from 'marked'
 import { useRoute } from 'vue-router'
 import { fileUrl, request, taskEventUrl } from '../api'
+import BatchStepNav from '../components/BatchStepNav.vue'
 import PaginationControls from '../components/PaginationControls.vue'
 import { createRequestId } from '../utils/ids'
 
@@ -208,11 +209,7 @@ onBeforeUnmount(() => {
       <div><h1>{{ batch.name }}</h1><p class="muted">{{ batch.source?.displayName || batch.sourceSelection?.spaceKey || '本地上传' }} · {{ batch.id }}</p></div>
       <div class="actions"><button class="button secondary" @click="load">刷新</button></div>
     </div>
-    <nav class="tabs">
-      <router-link :to="`/batches/${batch.id}/download`">下载文件</router-link>
-      <router-link :to="`/batches/${batch.id}/preprocess`">加工任务</router-link>
-      <router-link :to="`/batches/${batch.id}/quality`">质量分析</router-link>
-    </nav>
+    <BatchStepNav :batch-id="batch.id" />
     <div v-if="batch.sourceSnapshot.completeness !== 'complete'" class="warning">该任务基于部分来源：{{ batch.sourceSnapshot.incompleteReason }}</div>
     <div v-if="error" class="warning">{{ error }}</div>
     <div class="panel" style="margin-bottom: 16px">

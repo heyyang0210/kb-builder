@@ -13,11 +13,19 @@
 
 `POST /api/training/tasks` 默认 `mode=keyword_analysis`。该模式输入由清洗后的文档名称、原始标题、摘要、章节标题、正文处理单元和已命中的数据库领域术语组成；输出只包含 `keywordCandidates`。模型不得在该模式输出 `KnowledgePoint`、实体或关系，也不得生成最终知识文件。
 
-正式知识构建作为后置显式动作执行，`mode=formal_knowledge`。它必须以质量分析页已确认且通过业务语义过滤的关键词为输入边界，默认只读取 `approvalStatus in (autoAccepted, accepted)` 且 `businessStatus=businessAccepted` 的关键词及其关联文档块；`rejected/pending/businessRejected/needsReview` 关键词不进入正式知识构建。正式知识输出需要保留关键词上下文，便于回查“哪个关键词触发了哪些知识点、实体和关系”。
+正式知识构建作为后置显式动作执行，`mode=formal_knowledge`。它必须以质量分析页应用后的关键词过滤决策为输入边界，默认只读取 `admissionStatus=admitted` 的关键词及其关联文档块；`admissionStatus=excluded` 的关键词不进入正式知识构建。正式知识输出需要保留关键词上下文，便于回查“哪个关键词触发了哪些知识点、实体和关系”。
 
 正式知识构建的任务生命周期由训练服务控制，Workflow Agent 只负责在受控上下文中执行提取，不负责决定任务终态。Agent 内部模型调用必须接入训练任务的超时、取消、事件和审计契约：每次调用开始前写入 `model_call.started`，并携带 `taskId/stageRunId/agentTaskId/modelCallId/resourceId/chunkId 或 batchIndex/timeoutMs`；成功写入 `model_call.completed`，失败或超时写入 `model_call.failed` 和 `quality/extraction-issues.json`。用户取消后，Agent 必须在 batch 提交前、模型调用前后和结果聚合前检查取消状态，保证取消请求可以在 30 秒内进入 `cancelled` 或可解释的 `failed` 终态。后端启动、训练任务查询和创建任务前必须执行中断恢复，清理不属于当前进程活跃任务的僵尸 `activeTaskIds`。
 
-### 2.1 TASK-P0-02 最小正式知识抽取契约
+### 2.1 默认规则任务的模型边界
+
+主页“开始知识加工”默认创建 `mode=keyword_analysis`。该模式是纯确定性规则任务：界面展示、预检、启动和运行均不得读取模型配置、模型测试结果、模型状态或模型网关，亦不得发起模型调用。规则只基于已准备的资料、标题和章节结构、正文逐字证据、明确锚点及领域词典命中生成 `keywordCandidates`；证据不足时写中文质量提示，不以模型补救。
+
+`keyword_analysis` 的预检响应必须固定为 `totalModelCalls=0`、`modelTestPassed=null`；`canStart` 仅取决于批次状态与可处理资料是否存在。`start()` 不得执行 `require_model_test()`。因此模型服务 HTTP 502、未配置或连接异常不得阻断规则任务的创建、运行或终态，运行报告的模型成功、失败和跳过统计均为零。
+
+`formal_knowledge` 是独立的模型任务，保持既有模型配置读取、有效模型测试门禁、模型调用事件和失败分类；不得因默认规则任务免模型而放宽该模式的模型测试要求。
+
+### 2.2 TASK-P0-02 最小正式知识抽取契约
 
 `formal_knowledge` 的第一版只生成 `knowledge_point` 候选。Workflow Agent 的一个工作项固定对应一个 `chunk`，不得将多个 chunk 合并到同一次模型请求；不执行跨 chunk 关系识别、实体抽取、关系抽取、关键词候选生成或 `needs_enrichment` 路由。实体和关系属于后续独立任务，不得作为本版本输出的隐式副作用。
 
@@ -62,19 +70,20 @@ contentHash + semanticTitle + metadataRuleSetHash + skillVersion + promptHash
 
 其中 `contentHash` 是当前处理单元正文哈希，`promptHash` 包含已发布的 system/user prompt 哈希。正文、语义标题、元数据规则、Skill 版本或 Prompt 任一变化时缓存失效；命中时直接复用已校验的原始模型候选、别名、证据和置信度，并重新写入本次任务的候选 ID 与来源记录。运行报告必须记录命中、未命中和失效原因。
 
-图谱生成阶段同时写入 `keyword-chunk-index.json`，物化 `keywordId -> chunkIds` 和 `chunkId -> keywordIds`。关键词确认、排除、业务准入、别名归并和图谱修复都复用既有候选与证据，不重新调用模型。`formal_knowledge` 先读取该索引，仅调度 `autoAccepted/accepted + businessAccepted` 关键词关联的最小 chunk 集合；一个 chunk 命中多个准入关键词时只提取一次，并向正式知识结果回写全部 `keywordIds`。正式任务启动后必须写入 `extraction-results/formal-knowledge-input.json`，记录来源数据集、已确认关键词、被过滤的 rejected/businessRejected/needsReview 关键词、实际调度 chunk、`chunkKeywordMap` 和去重统计，用于审计“审批状态和业务准入状态如何影响正式构建输入”。
+图谱生成阶段同时写入 `keyword-chunk-index.json`，物化 `keywordId -> chunkIds` 和 `chunkId -> keywordIds`。关键词过滤决策、别名归并和图谱修复都复用既有候选与证据，不重新调用模型。`formal_knowledge` 先读取该索引，仅调度 `admissionStatus=admitted` 关键词关联的最小 chunk 集合；一个 chunk 命中多个保留关键词时只提取一次，并向正式知识结果回写全部 `keywordIds`。正式任务启动后必须写入 `extraction-results/formal-knowledge-input.json`，记录来源数据集、保留与排除关键词、实际调度 chunk、`chunkKeywordMap` 和去重统计，用于审计关键词过滤决策如何影响正式构建输入。历史 `approvalStatus`、`businessStatus` 仅允许在旧产物迁移时兼容读取，不参与新任务准入计算，也不由新流程写入。
 
-### 2.5 正式构建前业务语义过滤
+### 2.5 正式构建前关键词智能过滤
 
-快速加工得到的关键词在进入正式知识构建前必须执行业务语义过滤。该阶段由规则文件 `business-keyword-rules.yaml` 驱动，不调用正式知识抽取模型，输出 `quality/keyword-business-review.json`，并把 `businessStatus`、`businessReasonCodes`、`businessEvidenceCoverage` 写回关键词节点。
+快速加工得到的关键词在进入正式知识构建前，通过关键词智能过滤 Skill 生成保留或排除建议。预览和 SSE 分析均为只读操作；用户执行“应用决策”后，后端只把最终结果写入关键词节点的 `admissionStatus`。
 
-业务状态固定为：
+有效状态固定为：
 
-- `businessAccepted`：可进入正式知识构建；
-- `businessRejected`：业务语义不适合正式构建，保留图谱审计但不调度模型；
-- `needsReview`：规则无法安全判断，需要用户在质量分析页确认。
+- `admitted`：保留并进入正式知识构建；
+- `excluded`：排除，不进入正式知识构建，但完整产物仍保留该节点及证据用于内部审计。
 
-质量分析页必须展示业务准入数、业务排除数、待业务确认数、过滤原因和实体/关系阶段状态。业务状态更新不重建关键词图谱、不重跑关键词抽取，只影响后续正式构建输入集合。
+质量分析页只展示“过滤前关键词、过滤后关键词、保留关键词、排除关键词”四项统计，且必须满足 `过滤前关键词 = 保留关键词 + 排除关键词`、`过滤后关键词 = 保留关键词`。应用决策不重跑关键词抽取，也不重建 `keyword-chunk-index.json`；展示图谱仅投影 `admitted` 关键词及两端均可见的边，完整图谱产物继续用于内部审计。
+
+非流式预览和 SSE 分析必须从同一模型配置来源读取模型、温度、超时和 Skill 参数，禁止任一路径硬编码模型名称。两条路径对同一输入和同一模型响应必须产生一致的关键词集合、决策统计和状态语义。
 
 ## 三、Knowledge Extraction Skill 设计
 
@@ -583,3 +592,15 @@ aggregate results into JSON and Markdown reports
 因此知识提取 Skill 固定关闭 Qwen 思考模式（`enableThinking=false`，同时透传 `chatTemplateKwargs.enable_thinking=false`），并关闭网关隐藏 JSON 修复（`jsonRepair=false`）。顶层参数未改变首轮结果，必须以兼容中转实际接受的参数形式验证；若中转仍忽略该参数，报告必须明确记录。JSON 解析失败直接由 Python 调度器记录为当前处理单元质量问题，后续若需要纠正必须显式生成新的 `modelCallId`，不再把隐式修复调用隐藏在一次请求内。
 
 完整请求还必须从 Skill 的 `defaults.outputLimits` 读取单处理单元输出上限，默认最多输出 4 个知识点、8 个实体、4 个关系和 3 个不确定项，最大输出为 1000 Token。限制目的是阻止模型为覆盖全文生成近义重复项，不改变证据准入、实体类型和关系方向要求；模型仍可少于上限或返回空数组。
+
+## 十一、Phase 2 基础设施依赖边界（2026-08-05）
+
+- 模型 HTTP/SSE 调用已由 `app/gateways/model_gateway.py` 提供的 `ModelGateway` Protocol 和 `HttpModelGatewayAdapter` 承载，同时保留 `ModelGatewayClient` 兼容名称、`ModelGatewayError` 与 `error_summary()`；`utcnow()`、`stable_id()` 仍属于 `TrainingService`，未迁入网关模块。
+- 产物文件访问已由 `app/repositories/artifact_repository.py` 提供的 `ArtifactRepository` 和 `LocalArtifactRepository` 承载；`TrainingService` 通过关键字参数注入仓储，并以六个私有方法薄委托保持现有知识提取调用方式。
+- 本阶段没有迁移关键词提取、知识点提取、Skill 调用、Workflow Agent 或任务编排逻辑；关键词过滤的现行边界以本文件 2.4、2.5 节和 `docs/20` 顶部 2026-08-05 收敛设计为准。
+- 当前远端 HTTP/SSE 错误正文仍沿用旧行为，尚未实现长度截断和敏感字段脱敏；这是剩余安全风险。上文相关约束是后续整改目标，不表示当前代码已经满足。
+- Phase 2 聚焦自动化回归 `92/92` 通过；后端全量回归共 223 项，其中 200 项通过、2 项失败、21 项跳过，两项失败分别属于知识点 Skill 错误分类和资料预处理切块算法，不属于本阶段网关与仓储重构范围。
+- 真实链路已完成只读验收：健康检查 HTTP 200；`POST /api/training/model-test` 返回 HTTP 200，模型为 `qwen3.7-plus`，耗时 `3163ms`，`schemaPassed=true`；非流式关键词过滤预览返回 HTTP 200，耗时 `58.99s` 并生成 43 条建议；SSE 过滤返回 HTTP 200，耗时 `20.86s`，产生 3 个 `stage`、43 个 `decision`、1 个 `complete` 和 0 个 `error` 事件。
+- 为避免修改用户数据，本轮未主动执行 apply 决策接口；真实环境中的审批状态持久化仍需使用隔离数据集补充写入型验收。
+- 验收时发现 SSE 路径硬编码 `deepseek-v4-flash-0731`，与非流式路径使用的当前模型不一致，并造成同一批关键词的建议统计不同。现行设计要求两条路径统一读取模型配置；硬编码必须删除并纳入关键词过滤一致性回归。远端错误正文未截断、未脱敏仍作为独立后续整改风险。
+- 完整验收命令、接口证据、范围外失败和风险见 [TrainingService Phase 0-2 重构验收报告](../scripts/pingcode/web/backend/tests/test-report-training-service-phase2.md)。

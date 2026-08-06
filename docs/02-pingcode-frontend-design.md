@@ -652,6 +652,83 @@ complete = len(pages_by_id) == root_page.count and not unresolved
 - 前端只展示逻辑目录和相对资源路径，不展示服务器绝对路径
 - “打开目录”只在后端确认请求来自服务器本机且系统支持时显示；远程访问不显示该操作
 
+#### 6.2.1 批次任务级三步导航
+
+每个素材批次包含“下载文件、加工任务、质量分析”三个独立步骤页面。三个页面保持独立路由和独立数据加载职责，不合并为单页，也不因批次已进入后续阶段而隐藏前序页面。
+
+**路由与组件接口**：
+
+```text
+/pingcode-materials/batches/:batchId/download    -> 下载文件
+/pingcode-materials/batches/:batchId/preprocess  -> 加工任务
+/pingcode-materials/batches/:batchId/quality     -> 质量分析
+
+BatchStepNav
+  input:
+    batchId: string
+  derived:
+    currentStep: download | preprocess | quality
+  output:
+    三个顺序固定、文案一致、可点击的任务步骤入口
+```
+
+工作台与批次列表继续使用批次状态返回的 `recommendedAction.route`，可直接进入当前最需要处理的步骤。进入任一步骤页面后，页面必须使用同一个共享任务级导航组件，使用户能够回看完整批次生命周期。该设计不新增后端 API，也不修改现有推荐动作、任务状态或数据集状态的计算逻辑。
+
+**伪代码**：
+
+```text
+function openBatchFromWorkbench(batch):
+    navigate(batch.recommendedAction.route)
+
+component BatchStepNav(batchId):
+    steps = [
+        { key: "download", label: "下载文件", route: batchRoute(batchId, "download") },
+        { key: "preprocess", label: "加工任务", route: batchRoute(batchId, "preprocess") },
+        { key: "quality", label: "质量分析", route: batchRoute(batchId, "quality") }
+    ]
+
+    currentStep = resolveStepFromCurrentRoute()
+
+    for step in steps:
+        renderNavigationItem(
+            label = step.label,
+            active = step.key == currentStep,
+            disabled = false,
+            onClick = navigate(step.route)
+        )
+
+page DownloadPage(batchId):
+    render BatchStepNav(batchId)
+    render download content
+
+page PreprocessPage(batchId):
+    render BatchStepNav(batchId)
+    render preprocess content
+
+page QualityPage(batchId):
+    render BatchStepNav(batchId)
+    render quality content
+```
+
+**交互规则**：
+
+1. 三个页面始终显示同一组三步导航，顺序固定为“下载文件、加工任务、质量分析”；
+2. 当前路由对应的步骤使用高亮状态，并通过文字或可访问属性表达当前步骤，不能只依赖颜色；
+3. 已完成步骤仍然可点击回看，不因任务状态完成而禁用；
+4. 步骤切换只改变页面路由，必须保持同一个 `batchId`；
+5. 浏览器刷新后根据当前 URL 恢复当前步骤，不强制跳回推荐步骤；
+6. 工作台推荐动作负责“进入当前步骤”，任务级导航负责“查看完整流程”，两者职责不可混用。
+
+**验收标准**：
+
+1. 从工作台打开已有数据集的批次时，可以按 `recommendedAction.route` 直接进入质量分析；
+2. 下载文件、加工任务和质量分析三个页面顶部均展示相同的任务级三步导航；
+3. 在任一步骤点击另外两个步骤后，页面内容和 URL 正确切换且 `batchId` 不变；
+4. 每个页面仅高亮自身步骤，已完成的前序步骤仍可进入；
+5. 刷新任一步骤页面后仍停留在该步骤，且导航高亮正确；
+6. 实现不新增后端 API，不改变工作台推荐动作及批次状态判断；
+7. 前端构建通过，并使用一个已完成加工的真实批次完成三个页面的浏览器切换验证。
+
 ### 6.3 页面 3：加工任务与质量门禁
 
 **功能**：对已下载文档执行六步骤知识加工，展示源文件、元数据、规则处理结果、按需语义补充、质量问题和最终图谱产物。

@@ -1,4 +1,5 @@
 import json
+import re
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -9,7 +10,7 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Str
 from fastapi.staticfiles import StaticFiles
 from starlette.responses import RedirectResponse
 
-from .config import settings
+from .config import PINGCODE_DIR, settings
 from .ingestion import build_default_framework
 from .models import (
     BatchCreate,
@@ -38,10 +39,6 @@ from .models import (
     SkillSummary,
     TaskSnapshot,
     KeywordStatusUpdate,
-    KeywordBusinessStatusUpdate,
-    KeywordAdmissionUpdate,
-    L2TermCreate,
-    KeywordLinkCreate,
     TrainingTaskCreate,
     TrainingModelConfigUpdate,
     TrainingReviewDecision,
@@ -973,21 +970,6 @@ def training_review_items(task_id: str):
         error("TASK_TYPE_MISMATCH", str(exc), 409)
 
 
-@app.get("/api/training/tasks/{task_id}/quality-issues")
-def training_quality_issues(
-    task_id: str,
-    severity: str | None = Query(default=None, pattern="^(info|warning|error|critical|high|unknown)$"),
-    offset: int = Query(default=0, ge=0),
-    limit: int = Query(default=100, ge=1, le=500),
-):
-    try:
-        return training.quality_issues(task_id, severity, offset, limit)
-    except KeyError:
-        error("TASK_NOT_FOUND", "训练任务不存在", 404)
-    except ValueError as exc:
-        error("TASK_TYPE_MISMATCH", str(exc), 409)
-
-
 @app.post("/api/training/tasks/{task_id}/review-items/{item_id}/decision")
 def decide_training_review_item(task_id: str, item_id: str, decision: TrainingReviewDecision):
     try:
@@ -1045,99 +1027,119 @@ def update_keyword_status(dataset_id: str, keyword_id: str, request: KeywordStat
         error("KEYWORD_STATUS_INVALID", str(exc), 409)
 
 
-@app.post("/api/datasets/{dataset_id}/keywords/filter-by-prompt")
-def filter_keywords_by_prompt(dataset_id: str, request: dict):
-    """根据用户提示词批量过滤关键词"""
+
+
+@app.post("/api/datasets/{dataset_id}/keywords/filter-by-skill")
+def filter_keywords_by_skill(dataset_id: str):
+    """直接使用 keyword-filter SKILL 进行关键词过滤预览。
+
+    直接读取 SKILL.md 作为系统提示词，无需额外参数。
+    """
     try:
-        prompt = request.get("prompt", "")
-        if not prompt:
-            return {"success": False, "error": "提示词不能为空"}
-        return training.filter_keywords_by_prompt(dataset_id, prompt)
+        return training.preview_keywords_filter_by_skill(dataset_id)
     except FileNotFoundError:
         error("DATASET_NOT_FOUND", "数据集不存在或图谱未生成", 404)
     except Exception as exc:
-        error("KEYWORD_FILTER_FAILED", str(exc), 500)
+        error("KEYWORD_FILTER_SKILL_FAILED", str(exc), 500)
 
 
-@app.post("/api/datasets/{dataset_id}/keywords/business-review")
-def review_keyword_business(dataset_id: str):
+@app.get("/api/datasets/{dataset_id}/keywords/filter-by-skill/stream")
+async def filter_keywords_by_skill_stream(dataset_id: str):
+    """流式推送关键词过滤决策（SSE）。使用 async generator 确保逐 chunk 刷新。"""
+    import asyncio
+
+    async def event_generator():
+        loop = asyncio.get_event_loop()
+        # Run the sync generator in a thread executor, bridging via queue
+        import queue
+        evt_queue = queue.Queue()
+        DONE = object()
+
+        def _run_sync():
+            try:
+                for evt in training.stream_keywords_filter_by_skill(dataset_id):
+                    evt_queue.put(evt)
+            except Exception as exc:
+                evt_queue.put(f"event: error\ndata: {json.dumps({'error': str(exc)}, ensure_ascii=False)}\n\n")
+            finally:
+                evt_queue.put(DONE)
+
+        # Start sync generator in background thread
+        loop.run_in_executor(None, _run_sync)
+
+        while True:
+            try:
+                evt = evt_queue.get_nowait()
+            except queue.Empty:
+                await asyncio.sleep(0.1)
+                continue
+            if evt is DONE:
+                break
+            yield evt
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.post("/api/datasets/{dataset_id}/keywords/filter-apply")
+def apply_keywords_filter(dataset_id: str, request: dict):
+    """应用用户确认的关键词过滤决策"""
     try:
-        return training.review_keyword_business(dataset_id)
-    except KeyError:
-        error("DATASET_NOT_FOUND", "数据集版本或关键词不存在", 404)
-    except FileNotFoundError:
-        error("GRAPH_NOT_AVAILABLE", "该数据集尚无关键词图谱产物", 404)
+        decisions = request.get("decisions", [])
+        if not decisions:
+            return {"success": False, "error": "决策列表不能为空"}
+        return training.apply_keywords_filter(dataset_id, decisions)
+    except (FileNotFoundError, KeyError):
+        error("DATASET_NOT_FOUND", "数据集不存在或图谱未生成", 404)
+    except Exception as exc:
+        error("KEYWORD_FILTER_APPLY_FAILED", str(exc), 500)
 
 
-@app.post("/api/datasets/{dataset_id}/keywords/{keyword_id}/business-status")
-def update_keyword_business_status(dataset_id: str, keyword_id: str, request: KeywordBusinessStatusUpdate):
+
+@app.post("/api/config/filter-rules")
+def save_filter_rules(request: dict):
+    """新增或更新过滤规则"""
+    rules_path = PINGCODE_DIR.parent.parent / "config" / "filter-rules.json"
     try:
-        return training.update_keyword_business_status(
-            dataset_id,
-            keyword_id,
-            request.business_status,
-            request.reason_code,
-            request.note,
-            request.operator_label,
-        )
-    except KeyError:
-        error("KEYWORD_NOT_FOUND", "数据集版本或关键词不存在", 404)
-    except FileNotFoundError:
-        error("GRAPH_NOT_AVAILABLE", "该数据集尚无关键词图谱产物", 404)
-    except ValueError as exc:
-        error("KEYWORD_BUSINESS_STATUS_INVALID", str(exc), 409)
+        existing = {"rules": []}
+        if rules_path.exists():
+            existing = json.loads(rules_path.read_text(encoding="utf-8"))
+        rule = request.get("rule", {})
+        if not rule.get("id") or not rule.get("label") or not rule.get("prompt"):
+            error("FILTER_RULE_INVALID", "规则必须包含 id、label 和 prompt", 400)
+        rules = existing.get("rules", [])
+        idx = next((i for i, r in enumerate(rules) if r.get("id") == rule["id"]), -1)
+        if idx >= 0:
+            rules[idx] = {**rules[idx], **rule}
+        else:
+            rule.setdefault("description", "")
+            rule.setdefault("icon", "tag")
+            rule.setdefault("color", "info")
+            rules.append(rule)
+        existing["rules"] = rules
+        rules_path.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
+        return {"success": True, "rules": rules}
+    except Exception as exc:
+        error("FILTER_RULE_SAVE_FAILED", str(exc), 500)
 
 
-@app.post("/api/datasets/{dataset_id}/keywords/{keyword_id}/admission")
-def update_keyword_admission(dataset_id: str, keyword_id: str, request: KeywordAdmissionUpdate):
+@app.delete("/api/config/filter-rules/{rule_id}")
+def delete_filter_rule(rule_id: str):
+    """删除指定过滤规则"""
+    rules_path = PINGCODE_DIR.parent.parent / "config" / "filter-rules.json"
+    if not rules_path.exists():
+        error("FILTER_RULES_NOT_FOUND", "过滤规则配置文件不存在", 404)
     try:
-        return training.update_keyword_admission(dataset_id, keyword_id, request.admission_status, request.note, request.operator_label)
-    except KeyError:
-        error("KEYWORD_NOT_FOUND", "数据集版本或关键词不存在", 404)
-    except FileNotFoundError:
-        error("GRAPH_NOT_AVAILABLE", "该数据集尚无关键词图谱产物", 404)
-    except ValueError as exc:
-        error("KEYWORD_ADMISSION_INVALID", str(exc), 409)
-
-
-@app.post("/api/datasets/{dataset_id}/keywords/l2-terms", status_code=201)
-def create_l2_term(dataset_id: str, request: L2TermCreate):
-    try:
-        return training.create_l2_term(dataset_id, request.name, request.canonical_name, request.description, request.linked_l1_ids)
-    except KeyError:
-        error("DATASET_NOT_FOUND", "数据集版本不存在", 404)
-    except FileNotFoundError:
-        error("GRAPH_NOT_AVAILABLE", "该数据集尚无关键词图谱产物", 404)
-    except ValueError as exc:
-        error("L2_TERM_INVALID", str(exc), 409)
-
-
-@app.post("/api/datasets/{dataset_id}/keywords/{keyword_id}/links")
-def create_keyword_link(dataset_id: str, keyword_id: str, request: KeywordLinkCreate):
-    try:
-        return training.create_keyword_link(dataset_id, keyword_id, request.target_id, request.weight, request.evidence_chunk_ids)
-    except KeyError:
-        error("KEYWORD_NOT_FOUND", "数据集版本或关键词不存在", 404)
-    except FileNotFoundError:
-        error("GRAPH_NOT_AVAILABLE", "该数据集尚无关键词图谱产物", 404)
-    except ValueError as exc:
-        error("KEYWORD_LINK_INVALID", str(exc), 409)
-
-
-@app.get("/api/datasets/{dataset_id}/graph/term-expansion")
-def expand_l2_term(
-    dataset_id: str,
-    term_id: str = Query(..., description="L2 术语节点 ID"),
-    limit: int = Query(default=50, ge=1, le=500),
-):
-    try:
-        return training.expand_l2_term(dataset_id, term_id, limit)
-    except KeyError:
-        error("KEYWORD_NOT_FOUND", "数据集版本或术语不存在", 404)
-    except FileNotFoundError:
-        error("GRAPH_NOT_AVAILABLE", "该数据集尚无关键词图谱产物", 404)
-
-
+        existing = json.loads(rules_path.read_text(encoding="utf-8"))
+        rules = existing.get("rules", [])
+        existing["rules"] = [r for r in rules if r.get("id") != rule_id]
+        rules_path.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
+        return {"success": True, "rules": existing["rules"]}
+    except Exception as exc:
+        error("FILTER_RULE_DELETE_FAILED", str(exc), 500)
 @app.post("/api/datasets/{dataset_id}/formal-knowledge/tasks", response_model=TaskSnapshot, status_code=202)
 def start_formal_knowledge_task(dataset_id: str):
     try:
@@ -1211,52 +1213,6 @@ def delete_dataset(dataset_id: str, request: DatasetDeletionRequest):
         error("DATASET_NOT_FOUND", "数据集版本不存在", 404)
     except ValueError as exc:
         error("DATASET_DELETE_FAILED", str(exc), 409)
-
-
-@app.get("/api/quality/reports/{dataset_id}")
-def quality_report(dataset_id: str):
-    try:
-        dataset = training.ensure_dataset_graph(dataset_id)
-    except KeyError:
-        error("DATASET_NOT_FOUND", "数据集版本不存在", 404)
-    except FileNotFoundError:
-        try:
-            dataset = preprocess.get_dataset(dataset_id)
-        except KeyError:
-            error("DATASET_NOT_FOUND", "数据集版本不存在", 404)
-    try:
-        graph_summary = dict(training.graph(dataset_id, "summary") or {})
-    except (KeyError, FileNotFoundError):
-        graph_summary = dict(dataset.graph_summary or {})
-    graph_source = str(graph_summary.get("graphSource") or "").strip()
-    graph_has_content = any(
-        graph_summary.get(key)
-        for key in ("nodeCount", "edgeCount", "keywordCount", "contextEdgeCount")
-    )
-    graph_available = bool(dataset.graph_available and (graph_source or graph_has_content))
-    return {
-        "datasetVersionId": dataset.id,
-        "batchId": dataset.batch_id,
-        "qualityPassed": dataset.quality_passed,
-        "metrics": dataset.quality_metrics,
-        "generatedAt": dataset.created_at,
-        "graph": (
-            {"available": True, **graph_summary}
-            if graph_available
-            else {
-                "available": False,
-                "reason": (
-                    "该数据集的知识图谱尚未完成回填"
-                    if dataset.training_task_id and int((dataset.quality_metrics or {}).get("knowledgeCount") or 0) == 0
-                    else "该数据集尚未执行知识图谱训练"
-                ),
-            }
-        ),
-        "retrievalEvaluation": {"available": False, "reason": "固定检索评测集尚未配置"},
-    }
-
-# ========== 知识索引 API ==========
-
 @app.get("/api/index/directory-tree")
 def get_directory_tree():
     """获取层次目录索引"""
@@ -1337,3 +1293,44 @@ if _frontend_dist.exists():
         if file_path.is_file():
             return FileResponse(file_path)
         return FileResponse(_frontend_dist / "index.html")
+
+
+# ============================================================================
+# Keyword Filter Skill API
+# ============================================================================
+
+def get_skill_md_path() -> Path:
+    """获取 keyword-filter SKILL.md 路径"""
+    return PINGCODE_DIR.parent.parent / "skills" / "keyword-filter" / "SKILL.md"
+
+@app.get("/api/skills/keyword-filter")
+def get_keyword_filter_skill():
+    """获取完整的 SKILL.md 内容"""
+    skill_path = get_skill_md_path()
+    if not skill_path.exists():
+        raise HTTPException(status_code=404, detail="Skill not found")
+
+    try:
+        skill_content = skill_path.read_text(encoding="utf-8")
+        return {"success": True, "content": skill_content}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/api/skills/keyword-filter")
+def update_keyword_filter_skill(request: dict):
+    """更新完整的 SKILL.md"""
+    skill_path = get_skill_md_path()
+    content = request.get("content")
+
+    if not content:
+        raise HTTPException(status_code=400, detail="Content is required")
+
+    try:
+        skill_path.write_text(content, encoding="utf-8")
+        return {"success": True, "message": "Skill updated"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

@@ -5,7 +5,8 @@ import * as echarts from 'echarts'
 const props = defineProps({
   graph: { type: Object, required: true },
   height: { type: String, default: '600px' },
-  showEdgeLabels: { type: Boolean, default: true }
+  showEdgeLabels: { type: Boolean, default: true },
+  showContextLabels: { type: Boolean, default: true }
 })
 
 const emit = defineEmits(['nodeClick', 'edgeClick'])
@@ -68,31 +69,6 @@ function getNodeColor(type) {
   return nodeTypeColors[type] || nodeTypeColors.default
 }
 
-function getBusinessStatus(node) {
-  return node.businessStatus || node.properties?.businessStatus || ''
-}
-
-function getBusinessBorder(node) {
-  const status = getBusinessStatus(node)
-  if (status === 'businessAccepted') return '#1a7f37'
-  if (status === 'businessRejected') return '#c2410c'
-  if (status === 'needsReview') return '#d97706'
-  return '#ffffff'
-}
-
-function isBusinessInjected(node) {
-  const methods = node.sourceMethods || node.properties?.sourceMethods || [node.sourceMethod || node.properties?.sourceMethod]
-  return methods.some(method => ['domain_term', 'domain_glossary_title', 'deterministic_title_glossary'].includes(method))
-}
-
-function businessStatusLabel(status) {
-  return {
-    businessAccepted: '业务准入',
-    businessRejected: '业务排除',
-    needsReview: '待业务确认',
-  }[status] || '待执行业务过滤'
-}
-
 function nodeTypeLabel(type) {
   return nodeTypeLabels[type] || type || '未知类型'
 }
@@ -109,23 +85,19 @@ function initChart() {
   const nodes = (props.graph.nodes || []).map(node => ({
     id: node.id,
     name: nodeDisplayName(node),
-    symbolSize: 30 + (node.occurrences?.length || 1) * 5,
+    symbolSize: !props.showContextLabels && ['ProcessingUnit', 'Chunk'].includes(node.type)
+      ? 16
+      : 30 + (node.occurrences?.length || 1) * 5,
     category: nodeTypeLabel(node.type),
     itemStyle: {
       color: getNodeColor(node.type),
-      borderColor: getBusinessBorder(node),
-      borderWidth: node.type === 'Keyword' ? (isBusinessInjected(node) ? 5 : 3) : 1,
-      opacity: getBusinessStatus(node) === 'businessRejected' ? 0.45 : 1
+      borderColor: '#ffffff',
+      borderWidth: node.type === 'Keyword' ? 3 : 1
     },
     label: {
-      show: true,
+      show: props.showContextLabels || !['ProcessingUnit', 'Chunk'].includes(node.type),
       position: 'right',
-      formatter: function(params) {
-        const value = params.data.value
-        if (value?.type === 'Keyword' && getBusinessStatus(value) === 'needsReview') return `${params.name}\n待业务确认`
-        if (value?.type === 'Keyword' && isBusinessInjected(value)) return `${params.name}\n业务注入`
-        return params.name
-      },
+      formatter: params => params.name,
       fontSize: 11
     },
     value: node
@@ -174,8 +146,6 @@ function initChart() {
               ${Array.isArray(node.matchedAliases) && node.matchedAliases.length ? `<div style="color: #888; font-size: 12px;">命中别名: ${node.matchedAliases.join('、')}</div>` : ''}
               ${node.rawName && node.rawName !== (node.displayName || node.name) ? `<div style="color: #888; font-size: 12px;">原名: ${node.rawName}</div>` : ''}
               <div style="color: #666; font-size: 12px;">类型: ${nodeTypeLabel(node.type)}</div>
-              ${node.type === 'Keyword' ? `<div style="color: #666; font-size: 12px;">业务状态: ${businessStatusLabel(getBusinessStatus(node))}</div>` : ''}
-              ${node.type === 'Keyword' && isBusinessInjected(node) ? '<div style="color: #175cd3; font-size: 12px;">业务注入关键词</div>' : ''}
 		              ${node.evidenceText ? `<div style="margin-top: 4px; font-size: 12px;">证据上下文: ${node.evidenceText}</div>` : ''}
             </div>
           `

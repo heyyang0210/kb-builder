@@ -1,0 +1,44 @@
+{
+  "rules": [
+    {
+      "id": "exclude-generic",
+      "label": "排除通用词",
+      "description": "排除过于宽泛、通用或抽象的词汇",
+      "prompt": "排除过于宽泛、通用或抽象的词汇，如\"系统\"、\"数据\"、\"管理\"、\"处理\"、\"配置\"等。保留具体、有明确业务含义的关键词。",
+      "icon": "filter",
+      "color": "warning"
+    },
+    {
+      "id": "unify-error-codes",
+      "label": "统一错误码格式",
+      "description": "将具体的错误码作为别名内容",
+      "prompt": "识别所有以\"YAS-\"、\"ORA-\"、\"ERR-\"开头的错误码、警告码或版本号，将这些错误码作为相关关键词的别名（alias），而不是独立的关键词。例如，将\"YAS-00402\"作为\"权限错误\"的别名。",
+      "icon": "code",
+      "color": "info"
+    },
+    {
+      "id": "keep-functional",
+      "label": "保留功能词",
+      "description": "保留用户关心的功能特性，排除技术实现细节",
+      "prompt": "保留用户真正关心的功能特性和业务术语，排除底层技术实现细节、内部类名、函数名等开发者视角的词汇。",
+      "icon": "star",
+      "color": "success"
+    },
+    {
+      "id": "prefer-chinese",
+      "label": "统一语言（优先中文）",
+      "description": "对于同一概念的多种语言版本，优先保留中文",
+      "prompt": "对于同一概念的多种语言版本（如中文\"索引\"和英文\"Index\"），优先保留中文版本，将英文版本作为别名或排除。",
+      "icon": "language",
+      "color": "primary"
+    },
+    {
+      "id": "filter-low-evidence",
+      "label": "证据不足过滤",
+      "description": "排除在原始文档中出现次数少于3次的关键词",
+      "prompt": "排除在原始文档中出现次数少于3次的关键词，这些词可能只是偶然提及而非核心概念。",
+      "icon": "eye-off",
+      "color": "secondary"
+    }
+  ]
+}

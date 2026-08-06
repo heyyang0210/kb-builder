@@ -1,0 +1,5 @@
+interface:
+  display_name: "关键词智能过滤"
+  short_description: "分析关键词质量，按规则过滤或保留"
+  default_prompt: "Use $keyword-filter to analyze and filter keyword quality"
+  brand_color: "#3B82F6"

@@ -174,6 +174,99 @@ class FakeGateway:
         return {"configured": True, "capabilities": {"chat": True}, "provider": "fake", "model": "fake-model"}
 
 
+class FailingModelGateway:
+    """验证规则加工路径不会访问任一模型网关接口。"""
+
+    def __init__(self):
+        self.calls = []
+
+    def _fail(self, endpoint):
+        self.calls.append(endpoint)
+        raise RuntimeError("模型网关 HTTP 502: upstream unavailable")
+
+    def status(self):
+        return self._fail("status")
+
+    def test(self):
+        return self._fail("test")
+
+    def chat_json(self, messages, options):
+        return self._fail("chat")
+
+
+class FakeArtifactRepository:
+    def __init__(self):
+        self.calls = []
+
+    def read_json(self, path, default=None):
+        self.calls.append(("read_json", path, default))
+        return {"source": "repository"}
+
+    def read_jsonl(self, path):
+        self.calls.append(("read_jsonl", path))
+        return [{"source": "repository"}]
+
+    def write_json(self, path, value):
+        self.calls.append(("write_json", path, value))
+
+    def write_jsonl(self, path, items):
+        self.calls.append(("write_jsonl", path, items))
+
+    def write_text(self, path, value):
+        self.calls.append(("write_text", path, value))
+
+    def copy_embedding_cache(self, source_root, target_root):
+        self.calls.append(("copy_embedding_cache", source_root, target_root))
+
+
+class FakeStreamingGateway(FakeGateway):
+    def __init__(self, chunks):
+        super().__init__([])
+        self.chunks = chunks
+
+    def stream_chat(self, messages, options):
+        self.calls.append((messages, options))
+        yield from self.chunks
+
+
+class TrainingServiceDependencyTests(unittest.TestCase):
+    def test_original_positional_constructor_and_default_repository_remain_available(self):
+        service = TrainingService(None, None, None, None, None, None, None, FakeGateway([]))
+
+        self.assertIsInstance(service.gateway, FakeGateway)
+        self.assertEqual(type(service.artifacts).__name__, "LocalArtifactRepository")
+
+    def test_repository_injection_and_six_compatibility_delegates(self):
+        repository = FakeArtifactRepository()
+        service = TrainingService(
+            None,
+            None,
+            None,
+            None,
+            None,
+            gateway=FakeGateway([]),
+            artifact_repository=repository,
+        )
+        root = Path("artifacts")
+
+        self.assertIs(service.artifacts, repository)
+        self.assertEqual(service._read_json(root / "data.json", {"default": True}), {"source": "repository"})
+        self.assertEqual(service._read_jsonl(root / "data.jsonl"), [{"source": "repository"}])
+        service._write_json(root / "data.json", {"value": 1})
+        service._write_jsonl(root / "data.jsonl", [{"value": 2}])
+        service._write_text(root / "data.txt", "内容")
+        service._copy_embedding_cache(root / "source", root / "target")
+
+        self.assertEqual(repository.calls, [
+            ("read_json", root / "data.json", {"default": True}),
+            ("read_jsonl", root / "data.jsonl"),
+            ("write_json", root / "data.json", {"value": 1}),
+            ("write_jsonl", root / "data.jsonl", [{"value": 2}]),
+            ("write_text", root / "data.txt", "内容"),
+            ("copy_embedding_cache", root / "source", root / "target"),
+        ])
+
+
 class TrainingGraphTests(unittest.TestCase):
     def setUp(self):
         self.service = TrainingService(None, None, None, None, None, gateway=None)
@@ -258,6 +351,53 @@ class TrainingPreflightTests(unittest.TestCase):
         self.assertEqual(result["estimatedChunkCount"], 2)
         self.assertTrue(result["canStart"])
         self.assertTrue(preparation.calls)
+
+    def test_keyword_analysis_preflight_does_not_access_unavailable_model_gateway(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            preparation = FakePreparation(root)
+            task = TaskSnapshot(
+                id="task-1", batchId="batch-test", type="graph", state="queued", stage="queued",
+                createdAt=utcnow(), updatedAt=utcnow(),
+            )
+            gateway = FailingModelGateway()
+            service = TrainingService(
+                FakeStore(),
+                FakeBatches(),
+                FakeTasks(task),
+                None,
+                FakePromptRegistry(root),
+                preparation=preparation,
+                gateway=gateway,
+            )
+            with patch("app.training_service.settings", SimpleNamespace(data_root=root)):
+                result = service.preflight(TrainingTaskCreate(batchId="batch-test"))
+
+        self.assertEqual(gateway.calls, [])
+        self.assertEqual(result["totalModelCalls"], 0)
+        self.assertIsNone(result["modelTestPassed"])
+        self.assertTrue(result["canStart"])
+
+    def test_keyword_analysis_start_does_not_require_model_test(self):
+        class StartTasks(FakeTasks):
+            def _save(self, task):
+                self.task = task
+
+        task = TaskSnapshot(
+            id="task-previous", batchId="batch-test", type="graph", state="completed", stage="index_generation",
+            createdAt=utcnow(), updatedAt=utcnow(),
+        )
+        gateway = FailingModelGateway()
+        service = TrainingService(
+            FakeStore(), FakeBatches(), StartTasks(task), None, FakePromptRegistry(Path(".")), gateway=gateway,
+        )
+        service._reconcile_if_needed = lambda: None
+        with patch("app.training_service.threading.Thread") as thread:
+            result = service.start(TrainingTaskCreate(batchId="batch-test"))
+
+        self.assertEqual(gateway.calls, [])
+        self.assertEqual(result.state, "queued")
+        thread.return_value.start.assert_called_once()
 
     def test_graph_nodes_expose_clean_display_name_and_raw_name(self):
         class DatasetPreprocess:
@@ -401,25 +541,6 @@ class KnowledgeValidationAndDatasetTests(unittest.TestCase):
             "documentOffsets": {"start": 100, "end": 132},
             "sourceLocations": [{"kind": "page", "pageNumber": 3, "blockIndex": 2}],
         }
-
-    def test_quality_issue_display_normalization_hides_title_missing_version_unclear_and_downgrades_category_metadata(self):
-        items = [
-            {"code": "METADATA_TITLE_MISSING", "severity": "warning", "message": "文档没有可识别标题，已使用文件名作为标题"},
-            {"code": "METADATA_VERSION_UNCLEAR", "severity": "warning", "message": "文档未明确出现适用版本"},
-            {"code": "METADATA_CATEGORY_CONFLICT", "severity": "warning", "message": "文档分类存在冲突候选：特性设计、测试设计"},
-            {"code": "METADATA_CATEGORY_UNRESOLVED", "severity": "warning", "message": "文档分类无法由固定规则确定，已归类为“未分类”"},
-            {"code": "OTHER", "severity": "warning", "message": "保留"},
-        ]
-        normalized = self.service._normalize_quality_issues_for_display(items)
-        self.assertEqual([item["code"] for item in normalized], ["METADATA_CATEGORY_CONFLICT", "METADATA_CATEGORY_UNRESOLVED", "OTHER"])
-        conflict = normalized[0]
-        self.assertEqual(conflict["severity"], "info")
-        self.assertEqual(conflict["details"]["severity"], "info")
-        self.assertIn("不影响知识提取", conflict["message"])
-        unresolved = normalized[1]
-        self.assertEqual(unresolved["severity"], "info")
-        self.assertEqual(unresolved["details"]["severity"], "info")
-        self.assertIn("不影响知识提取", unresolved["message"])
 
     def _candidate(self, candidate_id, kind, value, evidence, offsets):
         return {
@@ -1460,7 +1581,7 @@ class TrainingCancellationTests(unittest.TestCase):
             gateway=None,
         )
         with self.assertRaisesRegex(ModelTestRequiredError, "请先完成模型真实连接测试"):
-            service.start(TrainingTaskCreate(batchId="batch-test"))
+            service.start(TrainingTaskCreate(batchId="batch-test", mode="formal_knowledge"))
         self.assertEqual(batches.batch.state, "downloaded")
         self.assertEqual(batches.batch.active_task_ids, [])
 
@@ -1552,6 +1673,225 @@ class TrainingObservabilityTests(unittest.TestCase):
         self.assertEqual(persisted["note"], "证据不足")
         self.assertEqual(persisted["operatorLabel"], "tester")
         self.assertTrue(persisted["decidedAt"])
+
+
+class KeywordFilterCompatibilityTests(unittest.TestCase):
+    @staticmethod
+    def _dataset():
+        now = utcnow()
+        return DatasetVersion(
+            id="dataset-1",
+            batchId="batch-test",
+            preprocessTaskId="preprocess-1",
+            state="candidate",
+            config=PreprocessConfig(),
+            totalDocuments=1,
+            totalChunks=2,
+            qualityMetrics={},
+            qualityPassed=True,
+            trainingTaskId="training-1",
+            graphAvailable=True,
+            graphSummary={"graphSource": "metadata_keyword"},
+            createdAt=now,
+            updatedAt=now,
+        )
+
+    @staticmethod
+    def _nodes():
+        return [
+            {
+                "id": "keyword:transaction",
+                "keywordId": "keyword:transaction",
+                "type": "Keyword",
+                "canonicalName": "事务隔离级别",
+                "admissionStatus": "admitted",
+                "chunkIds": ["chunk-1"],
+            },
+            {
+                "id": "keyword:function",
+                "keywordId": "keyword:function",
+                "type": "Keyword",
+                "canonicalName": "函数",
+                "admissionStatus": "admitted",
+                "chunkIds": ["chunk-2"],
+            },
+            {"id": "chunk-1", "type": "ProcessingUnit", "content": "事务证据"},
+            {"id": "chunk-2", "type": "ProcessingUnit", "content": "函数证据"},
+        ]
+
+    def _service(self, gateway):
+        service = TrainingService(None, None, None, None, None, gateway=gateway)
+        service.ensure_dataset_graph = lambda dataset_id: self._dataset()
+        return service
+
+    def _write_graph_fixture(self, root):
+        run_graph = root / "training-runs" / "training-1" / "graph"
+        dataset_root = root / "datasets" / "dataset-1"
+        dataset_graph = dataset_root / "graph"
+        run_graph.mkdir(parents=True)
+        dataset_graph.mkdir(parents=True)
+        nodes = self._nodes()
+        edges = [
+            {"source": "keyword:transaction", "target": "chunk-1", "type": "CONTEXT_MATCHES_CHUNK"},
+            {"source": "keyword:function", "target": "chunk-2", "type": "CONTEXT_MATCHES_CHUNK"},
+        ]
+        for graph_dir in (run_graph, dataset_graph):
+            (graph_dir / "nodes.json").write_text(json.dumps(nodes, ensure_ascii=False), encoding="utf-8")
+            (graph_dir / "edges.json").write_text(json.dumps(edges, ensure_ascii=False), encoding="utf-8")
+        index_path = dataset_root / "keyword-chunk-index.json"
+        index_path.write_text(json.dumps({
+            "keywordToChunks": {
+                "keyword:transaction": ["chunk-1"],
+                "keyword:function": ["chunk-2"],
+            },
+            "chunkToKeywords": {
+                "chunk-1": ["keyword:transaction"],
+                "chunk-2": ["keyword:function"],
+            },
+        }), encoding="utf-8")
+        return run_graph, dataset_root, index_path
+
+    def test_filter_preview_returns_suggestions_without_writing_graph_or_index(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            run_graph, _, index_path = self._write_graph_fixture(root)
+            nodes_before = (run_graph / "nodes.json").read_bytes()
+            index_before = index_path.read_bytes()
+            gateway = FakeGateway([{"data": {"decisions": [
+                {
+                    "keywordId": "keyword:transaction",
+                    "keywordName": "事务隔离级别",
+                    "shouldExclude": False,
+                    "reason": "具体数据库概念",
+                },
+                {
+                    "keywordId": "keyword:function",
+                    "keywordName": "函数",
+                    "shouldExclude": True,
+                    "reason": "过于宽泛",
+                },
+            ]}}])
+            service = self._service(gateway)
+
+            with patch("app.training_service.settings", SimpleNamespace(data_root=root)):
+                with patch.object(service, "_write_json", side_effect=AssertionError("预览不得写入产物")):
+                    result = service.preview_keywords_filter_by_skill("dataset-1")
+
+            self.assertEqual(result["summary"], {"total": 2, "suggested_keep": 1, "suggested_exclude": 1})
+            self.assertEqual([item["suggestedAction"] for item in result["suggestions"]], ["keep", "exclude"])
+            self.assertEqual((run_graph / "nodes.json").read_bytes(), nodes_before)
+            self.assertEqual(index_path.read_bytes(), index_before)
+            self.assertEqual(len(gateway.calls), 1)
+
+    def test_filter_stream_emits_stage_decision_complete_in_order(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_graph_fixture(root)
+            gateway = FakeStreamingGateway([{"delta": json.dumps({"decisions": [
+                {
+                    "keywordId": "keyword:transaction",
+                    "keywordName": "事务隔离级别",
+                    "shouldExclude": False,
+                    "reason": "具体数据库概念",
+                },
+                {
+                    "keywordId": "keyword:function",
+                    "keywordName": "函数",
+                    "shouldExclude": True,
+                    "reason": "过于宽泛",
+                },
+            ]}, ensure_ascii=False)}])
+            service = self._service(gateway)
+
+            with patch("app.training_service.settings", SimpleNamespace(data_root=root)):
+                chunks = list(service.stream_keywords_filter_by_skill("dataset-1"))
+
+            event_names = [chunk.splitlines()[0].removeprefix("event: ") for chunk in chunks]
+            self.assertEqual(
+                event_names,
+                ["stage", "stage", "stage", "decision", "decision", "complete"],
+            )
+            complete = json.loads(chunks[-1].splitlines()[1].removeprefix("data: "))
+            self.assertEqual(complete["total"], 2)
+            self.assertEqual(complete["keep"], 1)
+            self.assertEqual(complete["exclude"], 1)
+
+    def test_filter_stream_and_preview_use_the_same_model_selection(self):
+        decisions = {"decisions": [{
+            "keywordId": "keyword:transaction",
+            "keywordName": "事务隔离级别",
+            "shouldExclude": False,
+            "reason": "具体数据库概念",
+        }]}
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_graph_fixture(root)
+            preview_gateway = FakeGateway([{"data": decisions}])
+            stream_gateway = FakeStreamingGateway([{"delta": json.dumps(decisions, ensure_ascii=False)}])
+
+            with patch("app.training_service.settings", SimpleNamespace(data_root=root)):
+                self._service(preview_gateway).preview_keywords_filter_by_skill("dataset-1")
+                list(self._service(stream_gateway).stream_keywords_filter_by_skill("dataset-1"))
+
+        preview_options = preview_gateway.calls[0][1]
+        stream_options = stream_gateway.calls[0][1]
+        self.assertEqual(preview_options.get("model"), stream_options.get("model"))
+
+    def test_apply_filter_updates_status_and_summary_without_rebuilding_index(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            run_graph, dataset_root, index_path = self._write_graph_fixture(root)
+            index_before = index_path.read_bytes()
+            updates = []
+            service = self._service(FakeGateway([]))
+            service.store = SimpleNamespace(
+                update_record=lambda collection, record_id, changes: updates.append((collection, record_id, changes))
+            )
+
+            with patch("app.training_service.settings", SimpleNamespace(data_root=root)):
+                with patch.object(service, "_build_dataset_graph", side_effect=AssertionError("应用决策不得重建图谱")):
+                    result = service.apply_keywords_filter("dataset-1", [
+                        {"keywordId": "keyword:transaction", "action": "keep"},
+                        {"keywordId": "keyword:function", "action": "exclude"},
+                    ])
+
+            run_nodes = json.loads((run_graph / "nodes.json").read_text(encoding="utf-8"))
+            dataset_nodes = json.loads((dataset_root / "graph/nodes.json").read_text(encoding="utf-8"))
+            status_by_id = {
+                item["keywordId"]: item["admissionStatus"]
+                for item in run_nodes
+                if item.get("type") == "Keyword"
+            }
+            self.assertEqual(status_by_id, {
+                "keyword:transaction": "admitted",
+                "keyword:function": "excluded",
+            })
+            self.assertEqual(dataset_nodes, run_nodes)
+            self.assertEqual(index_path.read_bytes(), index_before)
+            expected_state = {"beforeTotal": 2, "afterTotal": 1, "retained": 1, "excluded": 1}
+            self.assertEqual(result["summary"], expected_state)
+            self.assertEqual(result["applied"], {"total": 2, **expected_state})
+            self.assertEqual(result["summary"]["beforeTotal"], result["summary"]["retained"] + result["summary"]["excluded"])
+            self.assertEqual(result["summary"]["afterTotal"], result["summary"]["retained"])
+            self.assertEqual(len(updates), 2)
+            self.assertEqual(updates[0][0:2], ("datasets", "dataset-1"))
+            self.assertEqual(set(updates[0][2]), {"graphSummary"})
+            self.assertEqual(updates[1][0:2], ("tasks", "training-1"))
+
+            with patch("app.training_service.settings", SimpleNamespace(data_root=root)):
+                visible_nodes = service.graph("dataset-1", "nodes")
+                visible_edges = service.graph("dataset-1", "edges")
+                visible_summary = service.graph("dataset-1", "summary")
+
+            visible_ids = {item["id"] for item in visible_nodes}
+            self.assertEqual(visible_ids, {"keyword:transaction", "chunk-1"})
+            self.assertEqual(visible_edges, [{
+                "source": "keyword:transaction",
+                "target": "chunk-1",
+                "type": "CONTEXT_MATCHES_CHUNK",
+            }])
+            self.assertTrue(all(edge["source"] in visible_ids and edge["target"] in visible_ids for edge in visible_edges))
+            self.assertEqual(visible_summary["keywordFilterState"], expected_state)
 
 
 class KeywordExtractionPerformanceTests(unittest.TestCase):
@@ -1881,7 +2221,7 @@ class KeywordExtractionPerformanceTests(unittest.TestCase):
             key_b = service._keyword_candidate_cache_key(chunk, {"semanticTitle": "持久化"}, skill_context)
         self.assertNotEqual(key_a, key_b)
 
-    def test_formal_keyword_context_uses_materialized_index_and_filters_rejected(self):
+    def test_formal_keyword_context_uses_materialized_index_and_only_admitted(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)
             service = self._service(prompts=SimpleNamespace(), metadata=SimpleNamespace())
@@ -1895,15 +2235,15 @@ class KeywordExtractionPerformanceTests(unittest.TestCase):
                 "chunkToKeywords": {},
             }), encoding="utf-8")
             service.graph = lambda dataset_id, kind: [
-                {"id": "keyword:accepted", "keywordId": "keyword:accepted", "type": "Keyword", "canonicalName": "事务", "aliases": [], "approvalStatus": "accepted", "businessStatus": "businessAccepted"},
-                {"id": "keyword:rejected", "keywordId": "keyword:rejected", "type": "Keyword", "canonicalName": "LOB", "aliases": [], "approvalStatus": "rejected"},
+                {"id": "keyword:accepted", "keywordId": "keyword:accepted", "type": "Keyword", "canonicalName": "事务", "aliases": [], "admissionStatus": "admitted", "approvalStatus": "rejected", "businessStatus": "businessRejected"},
+                {"id": "keyword:rejected", "keywordId": "keyword:rejected", "type": "Keyword", "canonicalName": "LOB", "aliases": [], "admissionStatus": "excluded", "approvalStatus": "accepted", "businessStatus": "businessAccepted"},
             ]
             with patch("app.training_service.settings", SimpleNamespace(data_root=root)):
                 result = service._formal_keyword_context_by_chunk("dataset-1")
         self.assertEqual(sorted(result), ["chunk-1", "chunk-2"])
         self.assertNotIn("chunk-3", result)
 
-    def test_formal_keyword_context_deduplicates_sorts_and_excludes_rejected_keywords(self):
+    def test_formal_keyword_context_deduplicates_sorts_and_excludes_filtered_keywords(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)
             service = self._service(prompts=SimpleNamespace(), metadata=SimpleNamespace())
@@ -1920,9 +2260,9 @@ class KeywordExtractionPerformanceTests(unittest.TestCase):
                 },
             }), encoding="utf-8")
             service.graph = lambda dataset_id, kind: [
-                {"id": "keyword:zeta", "keywordId": "keyword:zeta", "type": "Keyword", "canonicalName": "Zeta", "aliases": ["z"], "approvalStatus": "accepted", "businessStatus": "businessAccepted"},
-                {"id": "keyword:rejected", "keywordId": "keyword:rejected", "type": "Keyword", "canonicalName": "Rejected", "aliases": [], "approvalStatus": "rejected"},
-                {"id": "keyword:alpha", "keywordId": "keyword:alpha", "type": "Keyword", "canonicalName": "Alpha", "aliases": ["a"], "approvalStatus": "autoAccepted", "businessStatus": "businessAccepted"},
+                {"id": "keyword:zeta", "keywordId": "keyword:zeta", "type": "Keyword", "canonicalName": "Zeta", "aliases": ["z"], "admissionStatus": "admitted"},
+                {"id": "keyword:rejected", "keywordId": "keyword:rejected", "type": "Keyword", "canonicalName": "Rejected", "aliases": [], "admissionStatus": "excluded"},
+                {"id": "keyword:alpha", "keywordId": "keyword:alpha", "type": "Keyword", "canonicalName": "Alpha", "aliases": ["a"], "admissionStatus": "admitted"},
             ]
 
             with patch("app.training_service.settings", SimpleNamespace(data_root=root)):
@@ -1932,79 +2272,7 @@ class KeywordExtractionPerformanceTests(unittest.TestCase):
         self.assertEqual([item["keywordId"] for item in result["chunk-1"]], ["keyword:alpha", "keyword:zeta"])
         self.assertNotIn("keyword:rejected", [item["keywordId"] for item in result["chunk-1"]])
 
-    def test_business_review_filters_scope_noise_and_marks_domain_topics(self):
-        with TemporaryDirectory() as directory:
-            root = Path(directory)
-            service = self._service(
-                prompts=SimpleNamespace(),
-                metadata=SimpleNamespace(
-                    rule_set_hash="rules-v1",
-                    rules={
-                        "businessKeywordReview": {
-                            "scopeWords": ["YashanDB", "DSI"],
-                            "namingNoiseWords": ["内幕文档"],
-                            "strongTopicTerms": ["事务", "LOB"],
-                            "minEvidenceCount": 1,
-                        }
-                    },
-                ),
-            )
-            dataset_root = root / "datasets" / "dataset-1"
-            run_dir = root / "training-runs" / "training-1"
-            (dataset_root / "graph").mkdir(parents=True)
-            (run_dir / "graph").mkdir(parents=True)
-            nodes = [
-                {"id": "keyword:scope", "keywordId": "keyword:scope", "type": "Keyword", "canonicalName": "YashanDB", "approvalStatus": "accepted", "chunkIds": ["chunk-1"], "occurrences": [{"evidenceSource": "title", "evidenceText": "YashanDB"}]},
-                {"id": "keyword:tx", "keywordId": "keyword:tx", "type": "Keyword", "canonicalName": "事务", "approvalStatus": "accepted", "chunkIds": ["chunk-2"], "occurrences": [{"evidenceSource": "title", "evidenceText": "事务"}, {"evidenceSource": "content", "evidenceText": "事务提交"}]},
-                {"id": "keyword:lob", "keywordId": "keyword:lob", "type": "Keyword", "canonicalName": "LOB", "approvalStatus": "pending", "chunkIds": ["chunk-3"], "occurrences": [{"evidenceSource": "content", "evidenceText": "LOB"}]},
-                {"id": "keyword:file", "keywordId": "keyword:file", "type": "Keyword", "canonicalName": "file_abc12345", "approvalStatus": "accepted", "chunkIds": ["chunk-4"], "occurrences": [{"evidenceSource": "content", "evidenceText": "file_abc12345"}]},
-            ]
-            index_before = {"keywordToChunks": {"keyword:tx": ["chunk-2"]}, "chunkToKeywords": {"chunk-2": ["keyword:tx"]}}
-            service._write_json(dataset_root / "graph/nodes.json", nodes)
-            service._write_json(dataset_root / "graph/edges.json", [])
-            service._write_json(run_dir / "graph/nodes.json", nodes)
-            service._write_json(run_dir / "graph/edges.json", [])
-            service._write_json(dataset_root / "keyword-chunk-index.json", index_before)
-            service.store = SimpleNamespace(
-                get=lambda collection, item_id: DatasetVersion(
-                    id="dataset-1",
-                    batchId="batch-test",
-                    preprocessTaskId="preprocess-1",
-                    state="candidate",
-                    config=PreprocessConfig(),
-                    totalDocuments=1,
-                    totalChunks=4,
-                    qualityMetrics={},
-                    qualityPassed=True,
-                    trainingTaskId="training-1",
-                    graphAvailable=True,
-                    createdAt=utcnow(),
-                    updatedAt=utcnow(),
-                ),
-                update_record=lambda *args, **kwargs: None,
-            )
-            service.ensure_dataset_graph = lambda dataset_id: service.store.get("datasets", dataset_id)
-
-            with patch("app.training_service.settings", SimpleNamespace(data_root=root)):
-                review = service.review_keyword_business("dataset-1")
-                updated_nodes = json.loads((dataset_root / "graph/nodes.json").read_text(encoding="utf-8"))
-                persisted_review = json.loads((dataset_root / "quality/keyword-business-review.json").read_text(encoding="utf-8"))
-                index_after = json.loads((dataset_root / "keyword-chunk-index.json").read_text(encoding="utf-8"))
-
-        by_id = {item["keywordId"]: item for item in review["items"]}
-        self.assertEqual(by_id["keyword:scope"]["businessStatus"], "businessRejected")
-        self.assertIn("scope_word", by_id["keyword:scope"]["reasonCodes"])
-        self.assertEqual(by_id["keyword:file"]["businessStatus"], "businessRejected")
-        self.assertIn("technical_identifier", by_id["keyword:file"]["reasonCodes"])
-        self.assertEqual(by_id["keyword:tx"]["businessStatus"], "businessAccepted")
-        self.assertEqual(by_id["keyword:lob"]["businessStatus"], "needsReview")
-        node_by_id = {item["keywordId"]: item for item in updated_nodes}
-        self.assertEqual(node_by_id["keyword:tx"]["businessStatus"], "businessAccepted")
-        self.assertEqual(review["summary"]["businessAcceptedCount"], 1)
-        self.assertEqual(persisted_review, review)
-        self.assertEqual(index_after, index_before)
-
-    def test_formal_keyword_context_requires_business_accepted(self):
+    def test_formal_keyword_context_ignores_legacy_business_status(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)
             service = self._service(prompts=SimpleNamespace(), metadata=SimpleNamespace())
@@ -2019,30 +2287,19 @@ class KeywordExtractionPerformanceTests(unittest.TestCase):
                 "chunkToKeywords": {},
             }), encoding="utf-8")
             service.graph = lambda dataset_id, kind: [
-                {"id": "keyword:business", "keywordId": "keyword:business", "type": "Keyword", "canonicalName": "事务", "approvalStatus": "accepted", "businessStatus": "businessAccepted"},
-                {"id": "keyword:unreviewed", "keywordId": "keyword:unreviewed", "type": "Keyword", "canonicalName": "LOB", "approvalStatus": "accepted"},
-                {"id": "keyword:rejected", "keywordId": "keyword:rejected", "type": "Keyword", "canonicalName": "YashanDB", "approvalStatus": "accepted", "businessStatus": "businessRejected"},
+                {"id": "keyword:business", "keywordId": "keyword:business", "type": "Keyword", "canonicalName": "事务", "admissionStatus": "excluded", "businessStatus": "businessAccepted"},
+                {"id": "keyword:unreviewed", "keywordId": "keyword:unreviewed", "type": "Keyword", "canonicalName": "LOB", "admissionStatus": "admitted"},
+                {"id": "keyword:rejected", "keywordId": "keyword:rejected", "type": "Keyword", "canonicalName": "YashanDB", "admissionStatus": "admitted", "businessStatus": "businessRejected"},
             ]
 
             with patch("app.training_service.settings", SimpleNamespace(data_root=root)):
                 result = service._formal_keyword_context_by_chunk("dataset-1")
 
-        self.assertEqual(list(result), ["chunk-1"])
-        self.assertEqual(result["chunk-1"][0]["keywordId"], "keyword:business")
+        self.assertEqual(list(result), ["chunk-2", "chunk-3"])
+        self.assertEqual(result["chunk-2"][0]["keywordId"], "keyword:unreviewed")
+        self.assertEqual(result["chunk-3"][0]["keywordId"], "keyword:rejected")
 
-    def test_business_review_yaml_rules_are_loaded_from_metadata_manifest(self):
-        rules, rule_set_hash = MetadataConstructionService._load_rules()
-
-        self.assertIn("businessKeywordReview", rules)
-        self.assertIn("scopeWords", rules["businessKeywordReview"])
-        self.assertIn("YashanDB", rules["businessKeywordReview"]["scopeWords"])
-        self.assertTrue(rule_set_hash.startswith("sha256:"))
-        self.assertEqual(
-            {"businessAccepted", "businessRejected", "needsReview"},
-            {"businessAccepted", "businessRejected", "needsReview"},
-        )
-
-    def test_start_formal_knowledge_requires_business_review(self):
+    def test_start_formal_knowledge_requires_admitted_keyword(self):
         service = self._service(prompts=SimpleNamespace(), metadata=SimpleNamespace())
         now = utcnow()
         dataset = DatasetVersion(
@@ -2066,109 +2323,11 @@ class KeywordExtractionPerformanceTests(unittest.TestCase):
             "keywordId": "keyword:accepted",
             "type": "Keyword",
             "canonicalName": "事务",
-            "approvalStatus": "accepted",
+            "admissionStatus": "excluded",
         }]
 
         with self.assertRaisesRegex(ValueError, "确认并准入"):
             service.start_formal_knowledge_task("dataset-1")
-
-    def test_update_keyword_business_status_updates_summary_without_rebuilding_index(self):
-        with TemporaryDirectory() as directory:
-            root = Path(directory)
-            service = self._service(prompts=SimpleNamespace(), metadata=SimpleNamespace())
-            dataset_root = root / "datasets" / "dataset-1"
-            run_dir = root / "training-runs" / "training-1"
-            (dataset_root / "graph").mkdir(parents=True)
-            (dataset_root / "quality").mkdir(parents=True)
-            (run_dir / "graph").mkdir(parents=True)
-            (run_dir / "quality").mkdir(parents=True)
-            nodes = [
-                {
-                    "id": "keyword:accepted",
-                    "keywordId": "keyword:accepted",
-                    "type": "Keyword",
-                    "canonicalName": "事务",
-                    "approvalStatus": "accepted",
-                    "businessStatus": "needsReview",
-                    "chunkIds": ["chunk-1"],
-                    "occurrences": [{"evidenceSource": "content", "evidenceText": "事务"}],
-                }
-            ]
-            edges = []
-            for graph_dir in (dataset_root / "graph", run_dir / "graph"):
-                service._write_json(graph_dir / "nodes.json", nodes)
-                service._write_json(graph_dir / "edges.json", edges)
-            service.store = SimpleNamespace(
-                get=lambda collection, item_id: DatasetVersion(
-                    id="dataset-1",
-                    batchId="batch-test",
-                    preprocessTaskId="preprocess-1",
-                    state="candidate",
-                    config=PreprocessConfig(),
-                    totalDocuments=1,
-                    totalChunks=1,
-                    qualityMetrics={},
-                    qualityPassed=True,
-                    trainingTaskId="training-1",
-                    graphAvailable=True,
-                    graphSummary={"graphSource": "metadata_keyword", "keywordBusinessReviewState": {"needsReviewCount": 1}},
-                    createdAt=utcnow(),
-                    updatedAt=utcnow(),
-                ),
-                update_record=lambda *args, **kwargs: None,
-            )
-            service.ensure_dataset_graph = lambda dataset_id: service.store.get("datasets", dataset_id)
-
-            with patch("app.training_service.settings", SimpleNamespace(data_root=root)):
-                result = service.update_keyword_business_status("dataset-1", "keyword:accepted", "businessAccepted")
-                summary = json.loads((dataset_root / "quality/entity-relation-stage-status.json").read_text(encoding="utf-8"))
-                self.assertTrue((dataset_root / "graph/nodes.json").is_file())
-                self.assertTrue((run_dir / "graph/nodes.json").is_file())
-
-            self.assertEqual(result["businessStatus"], "businessAccepted")
-            self.assertEqual(result["keywordBusinessReviewState"]["businessAcceptedCount"], 1)
-            self.assertEqual(summary["state"], "pending")
-
-    def test_quality_report_api_exposes_business_and_entity_relation_state(self):
-        import app.main as main_module
-        from fastapi.testclient import TestClient
-
-        now = utcnow()
-        dataset = DatasetVersion(
-            id="dataset-1",
-            batchId="batch-test",
-            preprocessTaskId="preprocess-1",
-            state="candidate",
-            config=PreprocessConfig(),
-            totalDocuments=1,
-            totalChunks=1,
-            qualityMetrics={},
-            qualityPassed=True,
-            trainingTaskId="training-1",
-            graphAvailable=True,
-            graphSummary={
-                "graphSource": "metadata_keyword",
-                "keywordBusinessReviewState": {"businessAcceptedCount": 2, "businessRejectedCount": 1, "needsReviewCount": 0},
-                "entityRelationStage": {"state": "pending", "entityCandidateCount": 0, "relationCandidateCount": 0},
-            },
-            createdAt=now,
-            updatedAt=now,
-        )
-        fake_training = SimpleNamespace(
-            ensure_dataset_graph=lambda dataset_id: dataset,
-            graph=lambda dataset_id, kind: dataset.graph_summary if kind == "summary" else [],
-        )
-        original_training = main_module.training
-        main_module.training = fake_training
-        try:
-            response = TestClient(app).get("/api/quality/reports/dataset-1")
-        finally:
-            main_module.training = original_training
-
-        self.assertEqual(response.status_code, 200)
-        payload = response.json()
-        self.assertEqual(payload["graph"]["keywordBusinessReviewState"]["businessAcceptedCount"], 2)
-        self.assertEqual(payload["graph"]["entityRelationStage"]["state"], "pending")
 
     def test_model_knowledge_candidate_marks_agent_resolved_and_sorts_keyword_ids(self):
         service = self._service(prompts=SimpleNamespace(), metadata=SimpleNamespace())
@@ -2248,9 +2407,9 @@ class KeywordExtractionPerformanceTests(unittest.TestCase):
                 },
             }), encoding="utf-8")
             service.graph = lambda dataset_id, kind: [
-                {"id": "keyword:accepted", "keywordId": "keyword:accepted", "type": "Keyword", "canonicalName": "事务", "approvalStatus": "accepted", "businessStatus": "businessAccepted"},
-                {"id": "keyword:also-accepted", "keywordId": "keyword:also-accepted", "type": "Keyword", "canonicalName": "REDO", "approvalStatus": "autoAccepted", "businessStatus": "businessAccepted"},
-                {"id": "keyword:rejected", "keywordId": "keyword:rejected", "type": "Keyword", "canonicalName": "Rejected", "approvalStatus": "rejected"},
+                {"id": "keyword:accepted", "keywordId": "keyword:accepted", "type": "Keyword", "canonicalName": "事务", "admissionStatus": "admitted"},
+                {"id": "keyword:also-accepted", "keywordId": "keyword:also-accepted", "type": "Keyword", "canonicalName": "REDO", "admissionStatus": "admitted"},
+                {"id": "keyword:rejected", "keywordId": "keyword:rejected", "type": "Keyword", "canonicalName": "Rejected", "admissionStatus": "excluded"},
             ]
             service._prepare_materials = lambda task_id, request, run_dir: (
                 SimpleNamespace(id="dataset-formal"),
@@ -2308,7 +2467,7 @@ class KeywordExtractionPerformanceTests(unittest.TestCase):
             qualityPassed=True,
             trainingTaskId="training-1",
             graphAvailable=True,
-            graphSummary={"keywordBusinessReviewState": {"businessAcceptedCount": 1}},
+            graphSummary={"keywordFilterState": {"beforeTotal": 1, "afterTotal": 1, "retained": 1, "excluded": 0}},
             createdAt=now,
             updatedAt=now,
         )
@@ -2319,8 +2478,7 @@ class KeywordExtractionPerformanceTests(unittest.TestCase):
             "keywordId": "keyword:accepted",
             "type": "Keyword",
             "canonicalName": "事务",
-            "approvalStatus": "accepted",
-            "businessStatus": "businessAccepted",
+            "admissionStatus": "admitted",
         }]
 
         def fake_start(request):
@@ -2335,50 +2493,6 @@ class KeywordExtractionPerformanceTests(unittest.TestCase):
         self.assertEqual(captured["request"].config.max_unit_characters, 3200)
         self.assertTrue(captured["request"].config.review_low_confidence)
         self.assertEqual(captured["request"].keyword_ids, ["keyword:accepted"])
-
-    def test_entity_relation_stage_status_is_reported(self):
-        import app.main as main_module
-        from fastapi.testclient import TestClient
-
-        now = utcnow()
-        dataset = DatasetVersion(
-            id="dataset-1",
-            batchId="batch-test",
-            preprocessTaskId="preprocess-1",
-            state="candidate",
-            config=PreprocessConfig(),
-            totalDocuments=1,
-            totalChunks=1,
-            qualityMetrics={},
-            qualityPassed=True,
-            trainingTaskId="training-1",
-            graphAvailable=True,
-            graphSummary={
-                "graphSource": "final_knowledge",
-                "nodeCount": 1,
-                "keywordBusinessReviewState": {"businessAccepted": 1, "businessRejected": 0, "needsReview": 0},
-                "entityRelationStage": {"state": "pending", "entityCandidateCount": 0, "relationCandidateCount": 0},
-            },
-            createdAt=now,
-            updatedAt=now,
-        )
-        fake_training = SimpleNamespace(
-            ensure_dataset_graph=lambda dataset_id: dataset,
-            graph=lambda dataset_id, kind: dataset.graph_summary if kind == "summary" else [],
-        )
-
-        original_training = main_module.training
-        main_module.training = fake_training
-        try:
-            response = TestClient(app).get("/api/quality/reports/dataset-1")
-        finally:
-            main_module.training = original_training
-
-        self.assertEqual(response.status_code, 200)
-        graph = response.json()["graph"]
-        self.assertEqual(graph["entityRelationStage"]["state"], "pending")
-        self.assertEqual(graph["keywordBusinessReviewState"]["businessAccepted"], 1)
-
 
 if __name__ == "__main__":
     unittest.main()

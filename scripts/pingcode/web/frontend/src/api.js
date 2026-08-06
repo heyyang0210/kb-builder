@@ -9,7 +9,7 @@ export async function initRuntimeConfig() {
   }
 }
 
-function baseUrl() {
+export function baseUrl() {
   return (runtime.apiBaseUrl || '').replace(/\/$/, '')
 }
 

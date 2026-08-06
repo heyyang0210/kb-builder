@@ -42,21 +42,27 @@ DOCX 或 PingCode 页面中的图片资产属于来源证据层：数据集可�
 
 数据集图谱来源使用 `graphSource` 标记：`final_knowledge` 表示包含最终知识，`model_keyword` 表示最终知识为空但存在已验证模型关键词，`metadata_keyword` 表示仅使用确定性元数据回退，`empty` 表示没有可用图谱输入。图谱关键词按领域术语、模型主题关键词、受控规则候选的顺序归并；完整文档标题和文件名主体不直接作为节点，但模型可从清洗后的 `semanticTitle` 提取有逐字证据的主题子串。`dataset_*`、`file_*`、`chunk_*` 等技术标识，以及规则配置中的产品范围词和文件命名词，只保留在来源追溯字段中，不进入关键词候选集合、别名列表或关键词统计。
 
-质量分析默认数据集使用 `knowledgeBuildMode=keyword_analysis`。该图谱只允许 `Keyword` 主节点和 `ProcessingUnit` 证据节点，默认视图只展示关键词总览，点击关键词后再加载文档块证据边。关键词节点固定包含 `keywordId`、`canonicalName`、`aliases`、`matchedAliases`、`confidence`、`evidenceSources`、`sourceResourceIds`、`chunkIds`、`occurrences`、`approvalStatus`、`businessStatus`、`businessReasonCodes` 和 `businessEvidenceCoverage`；审批状态取值为 `autoAccepted`、`accepted`、`pending`、`rejected`，业务状态取值为 `businessAccepted`、`businessRejected`、`needsReview`。`graphSummary.keywordApprovalState` 聚合审批状态，`graphSummary.keywordBusinessReviewState` 聚合业务准入、业务排除、待业务确认和原因分布，`formalKnowledgeDatasetId` 记录后续正式知识构建产物，未构建时为空。
+质量分析默认数据集使用 `knowledgeBuildMode=keyword_analysis`。该图谱只允许 `Keyword` 主节点和 `ProcessingUnit` 证据节点，默认视图只展示关键词总览，点击关键词后再加载文档块证据边。关键词节点固定包含 `keywordId`、`canonicalName`、`aliases`、`matchedAliases`、`confidence`、`evidenceSources`、`sourceResourceIds`、`chunkIds`、`occurrences` 和 `admissionStatus`；`admissionStatus` 是唯一有效过滤状态，只允许 `admitted`、`excluded`。历史 `approvalStatus`、`businessStatus` 仅用于旧产物兼容读取，不参与新图谱统计和正式知识输入计算。`formalKnowledgeDatasetId` 记录后续正式知识构建产物，未构建时为空。
 
-正式知识构建使用 `knowledgeBuildMode=formal_knowledge`，由质量分析页显式触发。输入仅取已确认且业务准入的关键词及其关联文档块，拒绝、待确认、业务排除和待业务确认关键词不进入构建。第一版正式构建只产出 `KnowledgePoint`，实体和关系由后续独立阶段生成；正式知识图谱必须与关键词图谱分视图展示，避免默认质量分析阶段误以为已经完成正式知识加工。
+正式知识构建使用 `knowledgeBuildMode=formal_knowledge`，由质量分析页显式触发。输入仅取 `admissionStatus=admitted` 的关键词及其关联文档块，`excluded` 关键词不进入构建。第一版正式构建只产出 `KnowledgePoint`，实体和关系由后续独立阶段生成；正式知识图谱必须与关键词图谱分视图展示，避免默认质量分析阶段误以为已经完成正式知识加工。
 
 模型关键词节点固定记录 `sourceMethods`、`evidenceSources`、`sourceResourceIds`、`chunkIds`、`modelConfidence`、`occurrences`。标题证据关联当前文档的主要处理单元，边同时保留标题、正文上下文和来源路径。最终知识图谱也合并已验证关键词节点，避免知识点存在时反而丢失主题关键词；摘要增加 `keywordSourceCounts` 区分词典、模型和规则来源。
 
 图谱摘要必须记录 `graphSchemaVersion` 和 `metadataRuleSetHash`。质量报告或图谱接口读取数据集时，若图谱版本缺失/过低，或元数据关键词图谱的规则哈希与当前规则集不一致，则使用已保存的源文档和处理单元先刷新确定性元数据，再懒回填图谱，不重新调用大模型。别名查询先解析为 canonical 节点 ID，再使用该 ID 筛选上下文边，以保证 canonicalName 和任一别名返回同一组关联。
 
-关键词图谱生成时必须同时生成 `keyword-chunk-index.json`。该物化索引保存 canonical `keywordId -> chunkIds` 和反向 `chunkId -> keywordIds`，仅表示已验证的证据关联，不重复保存正文。正式知识构建先依据关键词节点的审批状态和业务准入状态过滤索引，再调度最小 chunk 集合；同一 chunk 属于多个已确认且业务准入关键词时只进行一次模型抽取，并在产物中保留全部关键词 ID。审批状态和业务准入状态改变不会改变关键词与 chunk 的证据事实，因此不需要重新调用模型或重建索引。每次正式知识构建还必须写出 `extraction-results/formal-knowledge-input.json`，用于审计 `accepted/rejected/businessRejected/needsReview` 关键词、实际调度 chunk 和去重后的 `chunkKeywordMap`。
+关键词图谱生成时必须同时生成 `keyword-chunk-index.json`。该物化索引保存 canonical `keywordId -> chunkIds` 和反向 `chunkId -> keywordIds`，仅表示已验证的证据关联，不重复保存正文。正式知识构建先依据关键词节点的 `admissionStatus` 过滤索引，再调度最小 chunk 集合；同一 chunk 属于多个 `admitted` 关键词时只进行一次模型抽取，并在产物中保留全部关键词 ID。过滤状态改变不会改变关键词与 chunk 的证据事实，因此不需要重新调用模型或重建索引。每次正式知识构建还必须写出 `extraction-results/formal-knowledge-input.json`，用于审计 `admitted/excluded` 关键词、实际调度 chunk 和去重后的 `chunkKeywordMap`。
+
+应用过滤决策后，质量分析图谱接口使用完整图谱生成展示投影：仅返回 `admissionStatus=admitted` 的关键词节点，非关键词证据节点按可达关系保留；边仅在 source、target 两端节点均位于投影中时返回，禁止产生悬空边。完整节点和边文件不删除，继续服务于内部质量审计、决策追溯和问题定位。
+
+关键词统计由同一份 `admissionStatus` 节点状态计算：`过滤前关键词 = 保留关键词 + 排除关键词`，`过滤后关键词 = 保留关键词`。应用接口响应、图谱摘要和前端展示不得分别使用审批、业务或预览建议统计拼接结果。
 
 图谱展示层采用 `What / How / Why` 知识域组织方式：`What` 用于概念、对象、参数、规则和错误码；`How` 用于步骤、配置、流程、实现方式和操作方案；`Why` 用于原因、约束、设计取舍、风险和故障根因。该分类服务于阅读和质量分析，不替代 `resourceId`、`chunkId`、`sourcePath`、证据文本和最终知识文件。
 
 v1 的知识域与本体类型采用可解释规则推断，不重新调用大模型：`Concept` 表示对象和概念，`Procedure` 表示操作和实现过程，`Principle` 表示机制和原理，`Decision` 表示设计取舍，`Constraint` 表示限制和边界，`Symptom` 表示现象或报错，`Solution` 表示修复或处理方案。后续如需更高准确率，可将该规则下沉为可配置词表或由知识抽取 Skill 输出结构化字段。
 
 ## 四、质量标注与发布状态
+
+本节定义数据集内部质量审计与发布门禁，不属于质量分析页面的“质量评价”公共功能。质量评价专用报告 API 和页面卡片删除后，来源映射、证据覆盖、产物完整性等内部检查仍必须执行；高严重度问题继续阻止发布，且不得由关键词过滤决策绕过。
 
 高严重度质量问题仍生成候选数据集，但必须特殊标注：
 
@@ -137,3 +143,14 @@ delete_dataset(datasetId, operator, reason):
 - 删除接口为 `DELETE /api/datasets/{datasetId}`，请求必须包含 `operator`、`reason` 和 `confirmed=true`；
 - 删除候选或正式数据集时清理规范化副本、知识、实体、关系和图谱，永久保留 `originals/`、`mappings/`、元数据、质量问题、运行报告和唯一删除审计；
 - 重复删除直接返回已删除状态，不追加第二条审计记录；已删除数据集不能发布或读取图谱。
+
+### 9.1 Phase 2 基础设施依赖边界（2026-08-05）
+
+- `app/repositories/artifact_repository.py` 已提供 `ArtifactRepository` 和 `LocalArtifactRepository`；`TrainingService` 通过关键字参数注入仓储，JSON、JSONL、文本写入与嵌入缓存复制经六个私有薄委托调用仓储。
+- 图谱和数据集仍由 `TrainingService` 计算业务路径、节点、边、质量状态和发布状态，Repository 只负责本地文件系统读写语义，不理解图谱或数据集领域对象。
+- Phase 2 未迁移图谱构建、图谱修复、数据集生成、关键词、Skill 或任务编排逻辑，因此本文件描述的业务 Schema 与流程没有因本次分层而改变。
+- Phase 2 聚焦自动化回归 `92/92` 通过；全量回归 223 项中有 2 项范围外失败和 21 项跳过，不影响本阶段网关、仓储和门面兼容验收结论。
+- 指定数据集 `dataset_1df85d1df97143ca` 的图谱摘要接口返回 HTTP 200，结果包含 43 个关键词、27 个 chunks 和 163 条 edges；非流式过滤预览与 SSE 过滤分析也均返回 HTTP 200。
+- 本轮没有执行数据集发布，也未主动执行关键词 apply 决策接口，因此不能据此判定发布链路或真实写入行为已经验收。
+- 验收时发现 SSE 路径硬编码 `deepseek-v4-flash-0731`，与非流式当前模型不一致。现行设计要求非流式与 SSE 统一读取当前模型配置，并以相同状态和统计契约生成建议；远端错误正文仍未截断、未脱敏，作为独立后续整改风险。
+- 详细验收证据见 [TrainingService Phase 0-2 重构验收报告](../scripts/pingcode/web/backend/tests/test-report-training-service-phase2.md)。
