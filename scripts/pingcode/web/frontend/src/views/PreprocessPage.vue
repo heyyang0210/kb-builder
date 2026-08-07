@@ -14,6 +14,7 @@ const report = ref(null)
 const preview = ref(null)
 const previewMode = ref('metadata')
 const trainingTask = ref(null)
+const scanTask = ref(null)
 const downloadTask = ref(null)
 const trainingLogs = ref([])
 const reviewItems = ref([])
@@ -21,6 +22,7 @@ const cancelLoading = ref(false)
 const datasets = ref([])
 const error = ref('')
 const loading = ref(false)
+const scanLoading = ref(false)
 const selectedResourceId = ref('')
 const textPage = ref(1)
 const textPageSize = ref(20)
@@ -44,15 +46,23 @@ const trainingStartLoading = ref(false)
 const now = ref(Date.now())
 let trainingEvents = null
 let trainingPoll = null
+let scanPoll = null
 let clockTimer = null
 
 const terminalStates = ['completed', 'failed', 'cancelled']
 const activeTrainingStates = ['queued', 'running', 'cancelling']
-const blockingDownloadTask = computed(() => downloadTask.value && downloadTask.value.state !== 'completed')
-const batchReadyForTraining = computed(() => ['uploaded', 'downloaded', 'ready'].includes(batch.value?.state) && !batch.value?.activeTaskIds?.length && !blockingDownloadTask.value)
+const activeScanStates = ['queued', 'running']
+const hasResumableInterruptedDownload = computed(() => downloadTask.value?.state === 'interrupted' && downloadTask.value?.canResume === true)
+const hasOnlyResumableDownloadActive = computed(() => (batch.value?.activeTaskIds || []).every(taskId => taskId === downloadTask.value?.id))
+const canProcessInterruptedDownload = computed(() => hasResumableInterruptedDownload.value && batch.value?.state === 'downloading' && downloadTask.value.completed > 0 && hasOnlyResumableDownloadActive.value)
+const blockingDownloadTask = computed(() => downloadTask.value && downloadTask.value.state !== 'completed' && !canProcessInterruptedDownload.value)
+const batchReadyForTraining = computed(() => canProcessInterruptedDownload.value || (
+  ['uploaded', 'downloaded', 'ready'].includes(batch.value?.state) && !batch.value?.activeTaskIds?.length && !blockingDownloadTask.value
+))
 const processableTotal = computed(() => report.value?.processableCount ?? textTotal.value)
-const canStartTraining = computed(() => Boolean(processableTotal.value && batchReadyForTraining.value && !activeTrainingStates.includes(trainingTask.value?.state)))
+const canStartTraining = computed(() => Boolean(processableTotal.value && batchReadyForTraining.value && !activeScanStates.includes(scanTask.value?.state) && !activeTrainingStates.includes(trainingTask.value?.state)))
 const canCancelTraining = computed(() => activeTrainingStates.includes(trainingTask.value?.state))
+const scanPercent = computed(() => scanTask.value?.total ? Math.min(100, Math.round((scanTask.value.completed || 0) / scanTask.value.total * 100)) : 0)
 const stageNames = {
   material_preparation: '资料预处理',
   knowledge_extraction: '知识提取',
@@ -261,11 +271,35 @@ async function load() {
     batch.value = await request(`/api/material-batches/${route.params.batchId}`)
     const downloadTasks = await request(`/api/download/tasks?batchId=${encodeURIComponent(route.params.batchId)}`)
     downloadTask.value = downloadTasks.items?.find(item => item.type === 'download') || null
-    await loadTextFiles(textPage.value)
-    datasets.value = visibleDatasets((await request(`/api/datasets?batchId=${route.params.batchId}`)).items || [])
-    await restoreTrainingTask()
+    await Promise.all([
+      loadTextFiles(textPage.value),
+      loadDatasets(),
+      restoreScanState(),
+      restoreTrainingTask(),
+    ])
   } catch (reason) {
     error.value = reason.message
+  }
+}
+
+async function loadDatasets() {
+  datasets.value = visibleDatasets((await request(`/api/datasets?batchId=${route.params.batchId}`)).items || [])
+}
+
+async function restoreScanState() {
+  const [tasksResult] = await Promise.all([
+    request(`/api/preprocess/scan-tasks?batchId=${encodeURIComponent(route.params.batchId)}`),
+    loadScanReport(),
+  ])
+  scanTask.value = tasksResult.items?.[0] || null
+  if (activeScanStates.includes(scanTask.value?.state)) startScanPolling(scanTask.value.id)
+}
+
+async function loadScanReport() {
+  try {
+    report.value = await request(`/api/preprocess/scan-reports/${encodeURIComponent(route.params.batchId)}`)
+  } catch (reason) {
+    if (reason.code !== 'SCAN_REPORT_NOT_FOUND') throw reason
   }
 }
 
@@ -320,16 +354,40 @@ async function changePendingPage({ page, pageSize }) {
 }
 
 async function scan() {
-  loading.value = true
+  if (scanLoading.value || activeScanStates.includes(scanTask.value?.state)) return
+  scanLoading.value = true
   error.value = ''
   try {
-    report.value = await request('/api/preprocess/scan', { method: 'POST', body: JSON.stringify({ batchId: route.params.batchId }) })
-    if (pendingOpen.value) await loadPendingFiles(1)
+    scanTask.value = await request('/api/preprocess/scan-tasks', { method: 'POST', body: JSON.stringify({ batchId: route.params.batchId }) })
+    startScanPolling(scanTask.value.id)
   } catch (reason) {
     error.value = reason.message
   } finally {
-    loading.value = false
+    scanLoading.value = false
   }
+}
+
+function startScanPolling(taskId) {
+  clearInterval(scanPoll)
+  scanPoll = setInterval(async () => {
+    try {
+      scanTask.value = await request(`/api/tasks/${taskId}`)
+      if (!activeScanStates.includes(scanTask.value.state)) {
+        clearInterval(scanPoll)
+        scanPoll = null
+        if (scanTask.value.state === 'completed') {
+          await loadScanReport()
+          if (pendingOpen.value) await loadPendingFiles(1)
+        } else {
+          error.value = scanTask.value.message || '源文件检查未能完成，请重新扫描'
+        }
+      }
+    } catch (reason) {
+      clearInterval(scanPoll)
+      scanPoll = null
+      error.value = reason.message
+    }
+  }, 1000)
 }
 
 async function loadPreview(resourceId = selectedResourceId.value) {
@@ -351,7 +409,7 @@ async function loadPreview(resourceId = selectedResourceId.value) {
 
 async function startTraining() {
   if (!canStartTraining.value) {
-    if (!batchReadyForTraining.value) error.value = downloadTask.value?.canResume
+    if (!batchReadyForTraining.value) error.value = hasResumableInterruptedDownload.value
       ? '资料下载已中断，请先到“下载文件”继续下载'
       : '资料下载尚未完成，请等待下载任务结束后再启动知识加工'
     else error.value = processableTotal.value ? '当前已有知识加工任务正在执行' : '当前资料加工任务没有可加工的源文件'
@@ -873,6 +931,8 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   stopTrainingStream()
+  clearInterval(scanPoll)
+  scanPoll = null
   clearInterval(clockTimer)
 })
 </script>
@@ -890,8 +950,13 @@ onBeforeUnmount(() => {
         <div class="compact-heading">
           <div><h2>源文件检查</h2><p class="muted">识别可直接处理、可转换处理、需要 OCR、不支持和转换失败的来源。</p></div>
           <div class="training-actions">
-            <button class="button secondary" :disabled="loading" @click="scan"><RefreshCw :size="15" />扫描</button>
+            <button class="button secondary" :disabled="scanLoading || activeScanStates.includes(scanTask?.state)" @click="scan"><RefreshCw :size="15" />{{ activeScanStates.includes(scanTask?.state) ? `扫描中 ${scanTask?.completed || 0}/${scanTask?.total || 0}` : '扫描' }}</button>
           </div>
+        </div>
+        <div v-if="activeScanStates.includes(scanTask?.state)" class="scan-running" role="status">
+          <div><strong>正在检查源文件</strong><span>{{ scanTask.completed || 0 }} / {{ scanTask.total || 0 }} · {{ scanPercent }}%</span></div>
+          <div class="progress slim"><span :style="{ width: `${scanPercent}%` }"></span></div>
+          <p>{{ scanTask.message || '正在建立可加工资料清单' }}</p>
         </div>
         <div v-if="report" class="scan-summary">
           <span v-for="item in scanSummaryItems" :key="item[0]"><strong>{{ item[1] }}</strong>{{ item[0] }}</span>
@@ -943,8 +1008,11 @@ onBeforeUnmount(() => {
       <header class="training-header">
           <div>
             <div class="title-line"><h2>知识加工流水线</h2><span v-if="trainingTask" :class="['badge', trainingTask.state]">{{ stateNames[trainingTask.state] || trainingTask.state }}</span></div>
-            <p v-if="!batchReadyForTraining" class="warning inline-warning">
-              {{ downloadTask?.canResume ? '资料下载已中断，请先到“下载文件”继续下载。' : '资料下载尚未完成，知识加工流水线将在下载结束后可启动。' }}
+            <p v-if="hasResumableInterruptedDownload" class="warning inline-warning">
+              资料下载已中断，请先到“下载文件”继续下载。<span v-if="canProcessInterruptedDownload">本次将基于已下载资料加工。</span>
+            </p>
+            <p v-else-if="!batchReadyForTraining" class="warning inline-warning">
+              资料下载尚未完成，知识加工流水线将在下载结束后可启动。
             </p>
             <p v-if="trainingTask" class="muted">{{ trainingTask.id }} · 当前步骤：{{ stageNames[displayCurrentStage] || displayCurrentStage }} · 已用 {{ taskDuration() }}</p>
           <p v-else class="muted">资料预处理、知识提取、索引生成。</p>
@@ -1244,6 +1312,10 @@ onBeforeUnmount(() => {
 .compact-heading, .training-header, .title-line, .training-actions, .pane-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .compact-heading h2, .training-header h2 { margin-bottom: 4px; }
 .scan-summary { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); margin-top: 18px; border-top: 1px solid #e5eaf1; border-bottom: 1px solid #e5eaf1; }
+.scan-running { margin-top: 14px; padding: 11px 12px; border: 1px solid #b9d2f3; border-radius: 7px; background: #f3f7fd; }
+.scan-running > div:first-child { display: flex; justify-content: space-between; gap: 12px; color: #44536a; font-size: 12px; }
+.scan-running strong { color: #175cd3; }
+.scan-running p { margin: 7px 0 0; color: #66758a; font-size: 11px; }
 .scan-summary span { padding: 10px 12px; color: #6d7b90; font-size: 11px; border-right: 1px solid #e5eaf1; }
 .scan-summary span:nth-child(6n) { border-right: 0; }
 .scan-summary span:nth-child(n + 7) { border-top: 1px solid #e5eaf1; }

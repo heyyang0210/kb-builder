@@ -47,8 +47,15 @@
 - `TASK-RKE-02` 已完成。本次 502 的直接修复已使默认 `keyword_analysis` 预检和启动不访问模型测试或模型状态；真实 API 预检返回 HTTP 200、`totalModelCalls=0`、`modelTestPassed=null`、`canStart=true`。隔离任务 `training_044352a1274f4420` 的三个公开阶段均已完成，模型调用为零。
 - `formal_knowledge` 的模型测试门禁保持不变；后端 69 项聚焦测试和前端构建均通过。
 
+## 已完成：部分下载资料加工
+
+- `TASK-DIR-01` 已完成：仅当下载任务为 `interrupted`、`canResume=true` 且 `completed>0` 时，主页允许按已完成资料开始知识加工，并持续显示未完成项可续传的中文告警；其他下载中断/失败/暂停及额外活动任务保持阻断，知识加工不改变下载账本或续传状态。
+- `DeterministicPipelineTests` 12 项通过，前端 `npm run build` 通过；真实批次 `_require_batch_ready` 放行验证通过。
+
 ## 后续整改
 
+- 本次方案 A 已在隔离上传批次完成扫描、报告恢复、轻量预检和规则加工真实 API 验收；YASDOC 大批次仅执行轻量预检，未创建真实加工任务。
+- 全量后端测试仍需单独修复既有结构分块测试失败，不属于本次异步扫描范围。
 - 不触碰 Agent Runner、前端、模型配置、运行数据及其他现有脏工作区修改。
 - 以上整改不计入本次任务，后续实施前单独确认。
 

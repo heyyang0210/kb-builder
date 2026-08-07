@@ -1,6 +1,6 @@
 # PingCode 素材平台前端交互与状态详细设计
 
-> 版本：v1.0  
+> 版本：v1.1
 > 日期：2026-07-24  
 > 状态：详细设计  
 > 上位文档：`docs/02-pingcode-frontend-design.md`
@@ -107,6 +107,7 @@ interface TaskSnapshot {
   canPause: boolean
   canCancel: boolean
   canRetry: boolean
+  canResume: boolean
   updatedAt: string
 }
 
@@ -231,7 +232,49 @@ queued -> running -> completed
 - 继续下载默认只处理未完成项，后端重启不会自动继续大批次下载；
 - 前端不乐观修改最终状态，以服务端快照为准。
 
-### 6.3 实时进度
+### 6.3 下载中断后的加工门禁
+
+加工预检和启动均以当前批次最后一个下载任务的服务端快照为准，不允许前端仅因本地文件存在而自行放行。正常 `completed` 下载维持既有放行语义；下载任务为 `interrupted` 时，只有同时满足 `canResume=true`、`completed>0`、批次为 `downloading`，且 `activeTaskIds` 仅包含该下载任务时，才允许启动加工。该例外表示已保留的成功页面可以先进入资料加工，不代表下载已完成。
+
+满足中断例外时，预检和启动均可通过。页面可执行“开始加工”，但必须持续显示“资料下载已中断，请先到‘下载文件’继续下载。本次将基于已下载资料加工。”，不能把该批次显示为“下载完成”。下载任务快照、续传标识和未完成页面保持不变。
+
+以下情形继续阻断加工：`interrupted` 但 `canResume=false`、`interrupted` 且 `completed=0`、`queued/running/pausing/paused/cancelling/cancelled/failed` 下载任务、下载任务或批次快照缺失、批次不在可加工状态、存在其他活动加工任务。阻断响应维持 `BATCH_NOT_READY`，并提供与实际状态对应的中文恢复建议；不得创建加工运行目录、任务或数据集。
+
+接口与服务端伪代码：
+
+```python
+def download_processing_gate(batch, download_task, tasks):
+    if batch.source_type == "upload":
+        require(batch.state in {"uploaded", "downloaded", "ready"})
+        require(not batch.active_task_ids)
+        return Gate(allowed=True)
+    if download_task is None:
+        return Gate(allowed=False, error="资料下载任务不存在，不能启动知识加工")
+    if download_task.state == "completed":
+        require(batch.state in {"uploaded", "downloaded", "ready"})
+        require(not batch.active_task_ids)
+        return Gate(allowed=True)
+    if (download_task.state == "interrupted"
+            and download_task.can_resume
+            and download_task.completed > 0
+            and batch.state == "downloading"
+            and set(batch.active_task_ids).issubset({download_task.id})
+            and all(task.state == "completed" or task.id == download_task.id for task in tasks if task.type == "download")):
+        return Gate(allowed=True)
+    return Gate(allowed=False, error="资料下载尚未达到可加工条件，请继续下载或处理失败项")
+
+def preflight(request):
+    gate = download_processing_gate(load_batch(request.batch_id), latest_download_task(request.batch_id), list_tasks(request.batch_id))
+    return build_preflight(canStart=gate.allowed)
+
+def start(request):
+    gate = download_processing_gate(load_batch(request.batch_id), latest_download_task(request.batch_id), list_tasks(request.batch_id))
+    if not gate.allowed:
+        raise BatchNotReadyError(gate.error)
+    return queue_training_task(request)
+```
+
+### 6.4 实时进度
 
 首次进入页面先请求任务快照，再连接 SSE。事件处理伪代码：
 
@@ -252,7 +295,52 @@ on disconnect:
 
 下载页必须提供失败与告警诊断区：显示任务 ID、页面进度、已完成、跳过、失败、告警、最近错误、中断原因和更新时间；明细表支持按 `failed/warning/completed/pending` 筛选。事件流可发送 `download.item.completed`、`download.item.failed`、`download.item.warning`、`download.task.interrupted`，但不得包含 Cookie、认证头、服务器绝对路径或页面正文全文。
 
-### 6.4 文件查看
+### 6.5 大批次异步扫描与轻量预检
+
+加工页不得用单个同步 HTTP 请求完成全量源文件扫描或资料准备。批次达到数千个资源时，同步扫描会让页面长期停留在无结果状态，客户端断开后还可能留下无法观察的后台计算。
+
+接口契约：
+
+```text
+POST /api/preprocess/scan-tasks                 -> 202 TaskSnapshot(type=scan)
+GET  /api/preprocess/scan-tasks?batchId={id}    -> 最新扫描任务列表
+GET  /api/preprocess/scan-reports/{batchId}     -> 最新持久化 ScanReport；没有报告时返回 404
+GET  /api/tasks/{taskId}/events                 -> 扫描进度 SSE，沿用通用任务事件
+POST /api/training/preflight                    -> 轻量检查，不执行资料转换或生成处理单元
+```
+
+兼容性约束：原 `POST /api/preprocess/scan` 暂时保留给小批次和已有调用；加工页必须使用异步接口。扫描任务复用 `TaskSnapshot`，`completed/total/failed/warnings` 表示已检查资源数、总资源数、失败数和告警数。相同批次已有 `queued/running` 扫描任务时重复创建必须返回现有任务，避免重复全量扫描。
+
+服务端伪代码：
+
+```python
+def create_scan_task(batch_id):
+    if active_scan := latest_active_scan(batch_id):
+        return active_scan
+    task = save(TaskSnapshot(type="scan", state="queued"))
+    run_in_background(scan_resources, task.id, batch_id)
+    return task
+
+def scan_resources(task_id, batch_id):
+    resources = resource_index.list(batch_id)
+    for offset, resource in enumerate(resources, 1):
+        inspect_metadata_without_office_conversion(resource)
+        update_progress(task_id, completed=offset, total=len(resources))
+    report = persist_latest_scan_report(batch_id)
+    complete(task_id, reportSummary=report.summary)
+
+def preflight(request):
+    require_batch_ready(request.batch_id)
+    report = latest_scan_report(request.batch_id)
+    counts = report.counts if report else resource_index.counts(request.batch_id)
+    return build_preflight(counts=counts, canStart=counts.processable > 0)
+```
+
+前端进入加工页时并行加载批次、下载任务、首屏文件、最新扫描任务、扫描报告和加工任务。扫描进行中必须显示确定进度和当前数量；刷新页面后从任务快照与持久化报告恢复。点击“开始知识加工”后，轻量预检应快速返回确认框；正式资料准备只在创建加工任务后执行，并由流水线进度展示。
+
+性能验收：首屏 20 条资源 P95 小于 2 秒；扫描任务创建小于 500 毫秒；预检 P95 小于 2 秒且不创建 `preparation/runs/preflight`；客户端断开不得产生新的隐式预检运行。
+
+### 6.6 文件查看
 
 浏览器端永远不直接打开服务器文件路径。文件操作由资源 ID 驱动：
 
@@ -419,6 +507,8 @@ interface RuntimeConfig {
 13. 任一 LLM、视觉或 Embedding 产物可追溯到输入、Skill、Prompt、Provider、模型和调用记录；
 14. Prompt 编辑不会直接影响运行中任务，发布前必须通过验证和样例试运行；
 15. Worker 或前端重启后，加工运行、阶段进度和失败项能够恢复。
+16. 下载任务为 `interrupted`、`canResume=true`、`completed>0`，且没有其他活动任务时，预检和开始加工均可通过，并持续展示中文继续下载告警。
+17. `interrupted` 但不可继续、已完成数量为零，以及所有其他未完成下载状态均返回 `BATCH_NOT_READY`，不得创建加工任务或数据集。
 
 ## 十三、待接口详细设计确认项
 

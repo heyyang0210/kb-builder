@@ -6,7 +6,7 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from app.models import DatasetVersion, PreprocessConfig, TaskSnapshot, TrainingReviewDecision, TrainingTaskCreate
+from app.models import DatasetVersion, PreprocessConfig, ScanReport, TaskSnapshot, TrainingReviewDecision, TrainingTaskCreate
 from app.main import app
 from app.metadata_service import MetadataConstructionService
 from app.training_service import (
@@ -376,6 +376,52 @@ class TrainingPreflightTests(unittest.TestCase):
         self.assertEqual(gateway.calls, [])
         self.assertEqual(result["totalModelCalls"], 0)
         self.assertIsNone(result["modelTestPassed"])
+        self.assertTrue(result["canStart"])
+
+    def test_preflight_uses_scan_report_without_running_material_preparation(self):
+        class LightweightPreprocess:
+            def __init__(self):
+                self.files = SimpleNamespace(list_processing_sources=lambda batch_id: self.fail())
+
+            @staticmethod
+            def fail():
+                raise AssertionError("已有扫描报告时不应重新遍历资源")
+
+            @staticmethod
+            def latest_scan_report(batch_id):
+                return ScanReport(
+                    batchId=batch_id,
+                    totalFiles=10,
+                    textFiles=8,
+                    unsupportedFiles=2,
+                    emptyFiles=0,
+                    encodingWarningFiles=0,
+                    duplicateGroups=0,
+                    traceableFiles=10,
+                    processableCount=8,
+                    directTextCount=6,
+                    convertibleCount=2,
+                    estimatedProcessingUnitCount=24,
+                )
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            preparation = FakePreparation(root)
+            task = TaskSnapshot(
+                id="task-1", batchId="batch-test", type="graph", state="queued", stage="queued",
+                createdAt=utcnow(), updatedAt=utcnow(),
+            )
+            service = TrainingService(
+                FakeStore(), FakeBatches(), FakeTasks(task), LightweightPreprocess(),
+                FakePromptRegistry(root), preparation=preparation, gateway=FailingModelGateway(),
+            )
+            with patch("app.training_service.settings", SimpleNamespace(data_root=root)):
+                result = service.preflight(TrainingTaskCreate(batchId="batch-test"))
+
+        self.assertEqual(preparation.calls, [])
+        self.assertEqual(result["preflightSource"], "latest_scan_report")
+        self.assertEqual(result["documentCount"], 8)
+        self.assertEqual(result["estimatedChunkCount"], 24)
         self.assertTrue(result["canStart"])
 
     def test_keyword_analysis_start_does_not_require_model_test(self):
@@ -1339,21 +1385,66 @@ class DeterministicPipelineTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "资料下载尚未完成"):
             service._require_batch_ready("batch-downloading")
 
-    def test_training_rejects_interrupted_download_task(self):
+    def test_training_allows_resumable_interrupted_download_with_completed_materials(self):
         now = utcnow()
-        batch = SimpleNamespace(id="batch-interrupted", state="downloaded", active_task_ids=[])
+        batch = SimpleNamespace(id="batch-interrupted", state="downloading", active_task_ids=["task-download"])
         download_task = TaskSnapshot(
             id="task-download",
             batchId="batch-interrupted",
             type="download",
             state="interrupted",
             stage="interrupted",
+            completed=8050,
+            total=8053,
+            failed=3,
+            canResume=True,
+            createdAt=now,
+            updatedAt=now,
+        )
+        service = TrainingService(None, FakeBatches(batch), FakeTasks(download_task), None, None, gateway=None)
+        self.assertIs(service._require_batch_ready("batch-interrupted"), batch)
+
+    def test_training_rejects_interrupted_download_without_completed_materials(self):
+        now = utcnow()
+        batch = SimpleNamespace(id="batch-interrupted-empty", state="downloading", active_task_ids=["task-download"])
+        download_task = TaskSnapshot(
+            id="task-download",
+            batchId="batch-interrupted-empty",
+            type="download",
+            state="interrupted",
+            stage="interrupted",
+            completed=0,
+            total=3,
+            canResume=True,
             createdAt=now,
             updatedAt=now,
         )
         service = TrainingService(None, FakeBatches(batch), FakeTasks(download_task), None, None, gateway=None)
         with self.assertRaisesRegex(ValueError, "资料下载尚未完成"):
-            service._require_batch_ready("batch-interrupted")
+            service._require_batch_ready("batch-interrupted-empty")
+
+    def test_training_rejects_resumable_download_when_another_task_is_active(self):
+        now = utcnow()
+        batch = SimpleNamespace(
+            id="batch-interrupted-with-active-task",
+            state="downloading",
+            active_task_ids=["task-download", "training-other"],
+        )
+        download_task = TaskSnapshot(
+            id="task-download",
+            batchId="batch-interrupted-with-active-task",
+            type="download",
+            state="interrupted",
+            stage="interrupted",
+            completed=1,
+            total=2,
+            canResume=True,
+            createdAt=now,
+            updatedAt=now,
+        )
+        service = TrainingService(None, FakeBatches(batch), FakeTasks(download_task), None, None, gateway=None)
+        with self.assertRaisesRegex(ValueError, "仍有执行任务"):
+            service._require_batch_ready("batch-interrupted-with-active-task")
 
     def test_rules_extract_explicit_yashandb_knowledge_without_model(self):
         chunk = {

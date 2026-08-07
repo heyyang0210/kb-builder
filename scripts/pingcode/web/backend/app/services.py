@@ -1081,6 +1081,10 @@ class FileService:
         ".png", ".jpg", ".jpeg", ".gif", ".webp",
     }
 
+    def __init__(self):
+        self._record_cache: dict[str, tuple[int, int, list[dict[str, Any]], dict[str, dict[str, Any]]]] = {}
+        self._cache_lock = threading.RLock()
+
     def _manifests(self) -> list[Path]:
         manifests = list(settings.data_root.glob("spaces/*/batches/*/resources.json"))
         legacy_root = settings.data_root / "batches"
@@ -1092,7 +1096,16 @@ class FileService:
         path = self.manifest_path(batch_id)
         if not path.exists():
             return []
-        return json.loads(path.read_text(encoding="utf-8"))
+        stat = path.stat()
+        with self._cache_lock:
+            cached = self._record_cache.get(batch_id)
+            if cached and cached[0] == stat.st_mtime_ns and cached[1] == stat.st_size:
+                return cached[2]
+        records = json.loads(path.read_text(encoding="utf-8"))
+        by_id = {str(item.get("id")): item for item in records if item.get("id")}
+        with self._cache_lock:
+            self._record_cache[batch_id] = (stat.st_mtime_ns, stat.st_size, records, by_id)
+        return records
 
     def manifest_path(self, batch_id: str) -> Path:
         candidates = list(settings.data_root.glob(f"spaces/*/batches/{batch_id}/resources.json"))
@@ -1215,11 +1228,12 @@ class FileService:
         if category not in self.LIST_CATEGORIES:
             raise ValueError(f"不支持的文件分类：{category}")
         resources = []
+        tool_status = self._tool_status()
         for item in self._load_resources(batch_id):
             if item.get("kind") not in {"page", "attachment"}:
                 continue
-            path = self._resolve(item["logicalPath"])
-            inspect = self._resource_metadata(item, path, inspect_pdf=False)
+            path = settings.data_root / item["logicalPath"]
+            inspect = self._list_metadata(item, path, tool_status)
             media_type = inspect["mediaType"]
             if inspect["formatFamily"] == "image":
                 continue
@@ -1244,6 +1258,45 @@ class FileService:
                 )
             )
         return sorted(resources, key=lambda item: (item.name.casefold(), item.logical_path))
+
+    @classmethod
+    def _list_metadata(
+        cls,
+        item: dict[str, Any],
+        path: Path,
+        tool_status: dict[str, dict[str, Any]],
+    ) -> dict[str, Any]:
+        """清单只做扩展名与工具就绪检查，避免分页前打开每个 Office/PDF 文件。"""
+        family = cls._format_family(path)
+        status = "unsupported"
+        readiness = "unsupported"
+        previewable = False
+        if family in {"text", "web"}:
+            status = "direct_text"
+            readiness = "direct" if family == "text" else "direct_html"
+            previewable = True
+        elif family == "office":
+            available = bool(tool_status["libreoffice"]["available"]) or path.suffix.lower() == ".docx"
+            status = "convertible" if available else "conversion_pending"
+            readiness = "tool_ready" if available else "tool_missing"
+            previewable = True
+        elif family == "pdf":
+            available = bool(tool_status["pdftotext"]["available"])
+            status = "convertible" if available else "conversion_pending"
+            readiness = "tool_ready" if available else "tool_missing"
+            previewable = True
+        elif family == "image":
+            status, readiness = "asset", "asset"
+        elif family == "archive":
+            status, readiness = "archive", "archive"
+        return {
+            "formatFamily": family,
+            "processingStatus": status,
+            "previewableAfterConversion": previewable,
+            "conversionReadiness": readiness,
+            "latestPreviewState": "available" if status in {"direct_text", "convertible"} else "unavailable",
+            "mediaType": mimetypes.guess_type(path.name)[0] or item.get("mediaType") or "application/octet-stream",
+        }
 
     def list_page(
         self,
@@ -1282,10 +1335,13 @@ class FileService:
 
     def find_record(self, resource_id: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         for manifest in self._manifests():
-            items = json.loads(manifest.read_text(encoding="utf-8"))
-            for item in items:
-                if item.get("id") == resource_id:
-                    return item, items
+            batch_id = manifest.parent.name
+            items = self._load_resources(batch_id)
+            with self._cache_lock:
+                cached = self._record_cache.get(batch_id)
+                item = cached[3].get(resource_id) if cached else None
+            if item is not None:
+                return item, items
         raise KeyError(resource_id)
 
     def preview(self, resource_id: str) -> FilePreview:
@@ -1412,7 +1468,124 @@ class PreprocessService:
         _, units = build_processing_units(cleaning, "preview", "preview", config)
         return len(units)
 
-    def scan(self, batch_id: str) -> ScanReport:
+    def create_scan_task(self, batch_id: str) -> TaskSnapshot:
+        batch = self.batches.get(batch_id)
+        for task in self.tasks.list(batch_id):
+            if task.type == "scan" and task.state in {"queued", "running"}:
+                return task
+        resources = self.files.list(batch_id)
+        now = utcnow()
+        task = TaskSnapshot(
+            id=f"scan_{uuid.uuid4().hex[:16]}",
+            batch_id=batch_id,
+            type="scan",
+            state="queued",
+            stage="source_scan",
+            total=len(resources),
+            can_cancel=False,
+            created_at=now,
+            updated_at=now,
+        )
+        self.tasks._save(task)
+        active_ids = list(getattr(batch, "active_task_ids", None) or [])
+        self.batches.update(batch_id, activeTaskIds=[*active_ids, task.id])
+        threading.Thread(target=self._run_scan_task, args=(task.id,), daemon=True).start()
+        return task
+
+    def list_scan_tasks(self, batch_id: str) -> list[TaskSnapshot]:
+        return [task for task in self.tasks.list(batch_id) if task.type == "scan"]
+
+    def reconcile_interrupted_scans(self) -> None:
+        for task in self.tasks.list():
+            if task.type != "scan" or task.state not in {"queued", "running"}:
+                continue
+            self.tasks._update(
+                task.id,
+                state="interrupted",
+                stage="interrupted",
+                message="后端重启导致扫描中断，请重新扫描",
+            )
+            self._remove_scan_from_active_tasks(task.batch_id, task.id)
+
+    def latest_scan_report(self, batch_id: str) -> ScanReport:
+        self.batches.get(batch_id)
+        path = self._scan_report_path(batch_id)
+        if not path.exists():
+            raise FileNotFoundError(path)
+        return ScanReport.model_validate_json(path.read_text(encoding="utf-8"))
+
+    def _run_scan_task(self, task_id: str) -> None:
+        task = self.tasks._update(task_id, state="running", stage="source_scan", message="正在检查源文件")
+        last_saved = 0
+
+        def update_progress(completed: int, total: int, failed: int, warnings: int) -> None:
+            nonlocal last_saved
+            if completed != total and completed - last_saved < 50:
+                return
+            last_saved = completed
+            self.tasks._update(
+                task_id,
+                completed=completed,
+                total=total,
+                failed=failed,
+                warnings=warnings,
+                progress_detail={"checkedFiles": completed, "totalFiles": total},
+                message=f"正在检查源文件：{completed}/{total}",
+            )
+
+        try:
+            report = self.scan(task.batch_id, lightweight=True, progress=update_progress)
+            self._persist_scan_report(task.batch_id, report)
+            self.tasks._update(
+                task_id,
+                state="completed",
+                stage="completed",
+                completed=report.total_files,
+                total=report.total_files,
+                failed=report.issue_summary.get("error", 0),
+                warnings=report.issue_summary.get("warning", 0),
+                progress_detail={
+                    "checkedFiles": report.total_files,
+                    "totalFiles": report.total_files,
+                    "processableCount": report.processable_count,
+                },
+                message=f"源文件检查完成：{report.processable_count} 个来源可加工",
+            )
+        except Exception as exc:
+            self.tasks._update(
+                task_id,
+                state="failed",
+                stage="failed",
+                message=f"源文件检查失败：{exc}",
+            )
+        finally:
+            self._remove_scan_from_active_tasks(task.batch_id, task_id)
+
+    def _remove_scan_from_active_tasks(self, batch_id: str, task_id: str) -> None:
+        try:
+            batch = self.batches.get(batch_id)
+        except KeyError:
+            return
+        active_ids = list(getattr(batch, "active_task_ids", None) or [])
+        self.batches.update(batch_id, activeTaskIds=[item for item in active_ids if item != task_id])
+
+    def _scan_report_path(self, batch_id: str) -> Path:
+        return self.files.manifest_path(batch_id).parent / "scan-report" / "latest.json"
+
+    def _persist_scan_report(self, batch_id: str, report: ScanReport) -> None:
+        path = self._scan_report_path(batch_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(".tmp")
+        temporary.write_text(report.model_dump_json(by_alias=True, indent=2), encoding="utf-8")
+        temporary.replace(path)
+
+    def scan(
+        self,
+        batch_id: str,
+        *,
+        lightweight: bool = False,
+        progress: Callable[[int, int, int, int], None] | None = None,
+    ) -> ScanReport:
         self.batches.get(batch_id)
         resources = self.files.list(batch_id)
         issues: list[ScanIssue] = []
@@ -1430,9 +1603,13 @@ class PreprocessService:
         traceable = 0
         issue_summary = {"info": 0, "warning": 0, "error": 0}
 
-        for resource in resources:
-            _, path = self.files.find(resource.id)
-            inspect = self.files._resource_metadata(resource.model_dump(mode="json", by_alias=True), path, inspect_pdf=True)
+        for index, resource in enumerate(resources, start=1):
+            path = self.files.resolve(resource.logical_path)
+            inspect = self.files._resource_metadata(
+                resource.model_dump(mode="json", by_alias=True),
+                path,
+                inspect_pdf=not lightweight,
+            )
             resource.format_family = inspect["formatFamily"]
             resource.processing_status = inspect["processingStatus"]
             resource.previewable_after_conversion = inspect["previewableAfterConversion"]
@@ -1443,24 +1620,31 @@ class PreprocessService:
             if path.stat().st_size == 0:
                 empty += 1
                 self._append_scan_issue(issues, issue_summary, "EMPTY_FILE", "error", resource.id, resource.name, "文件内容为空")
-            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            with path.open("rb") as handle:
+                digest = hashlib.file_digest(handle, "sha256").hexdigest()
             hashes.setdefault(digest, []).append(resource)
             if inspect["processingStatus"] == "direct_text":
                 direct_text_count += 1
                 text_files += 1
-                text = self._read_preview_source(path, inspect["formatFamily"])
-                if "\ufffd" in text:
-                    encoding_warnings += 1
-                    self._append_scan_issue(issues, issue_summary, "ENCODING_REPLACEMENT", "warning", resource.id, resource.name, "文本包含无法解码的替换字符")
-                estimated_processing_unit_count += self._estimate_units(text, PreprocessConfig())
+                if lightweight:
+                    estimated_processing_unit_count += max(1, (resource.size + 5999) // 6000)
+                else:
+                    text = self._read_preview_source(path, inspect["formatFamily"])
+                    if "\ufffd" in text:
+                        encoding_warnings += 1
+                        self._append_scan_issue(issues, issue_summary, "ENCODING_REPLACEMENT", "warning", resource.id, resource.name, "文本包含无法解码的替换字符")
+                    estimated_processing_unit_count += self._estimate_units(text, PreprocessConfig())
             elif inspect["processingStatus"] == "convertible":
                 convertible_count += 1
-                try:
-                    conversion = OfficeConversionResult.from_legacy(self._convert_resource_to_markdown(path, inspect["formatFamily"], preview=True))
-                    estimated_processing_unit_count += self._estimate_units(conversion.markdown, PreprocessConfig())
-                except ValueError as exc:
-                    conversion_failed_count += 1
-                    self._append_scan_issue(issues, issue_summary, "CONVERSION_PREVIEW_FAILED", "warning", resource.id, resource.name, f"转换预估失败：{exc}")
+                if lightweight:
+                    estimated_processing_unit_count += max(1, (resource.size + 5999) // 6000)
+                else:
+                    try:
+                        conversion = OfficeConversionResult.from_legacy(self._convert_resource_to_markdown(path, inspect["formatFamily"], preview=True))
+                        estimated_processing_unit_count += self._estimate_units(conversion.markdown, PreprocessConfig())
+                    except ValueError as exc:
+                        conversion_failed_count += 1
+                        self._append_scan_issue(issues, issue_summary, "CONVERSION_PREVIEW_FAILED", "warning", resource.id, resource.name, f"转换预估失败：{exc}")
             elif inspect["processingStatus"] == "ocr_required":
                 ocr_required_count += 1
                 self._append_scan_issue(issues, issue_summary, "PDF_OCR_REQUIRED", "warning", resource.id, resource.name, "PDF 没有可提取文本，当前需要 OCR 后才能进入知识加工")
@@ -1468,6 +1652,8 @@ class PreprocessService:
                 unsupported += 1
                 if inspect["processingStatus"] not in {"asset", "archive"}:
                     self._append_scan_issue(issues, issue_summary, "UNSUPPORTED_FORMAT", "warning", resource.id, resource.name, "当前格式暂不支持进入知识加工")
+            if progress is not None:
+                progress(index, len(resources), issue_summary["error"], issue_summary["warning"])
 
         duplicate_groups = 0
         for group in hashes.values():

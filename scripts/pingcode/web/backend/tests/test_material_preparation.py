@@ -6,6 +6,7 @@ import unittest
 import zipfile
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import app.preparation_service as preparation_module
@@ -17,7 +18,8 @@ from app.preparation_service import (
     DefaultFormatDetector,
     MaterialPreparationService,
 )
-from app.services import FileService, PreprocessService
+from app.services import FileService, PreprocessService, TaskService
+from app.store import JsonStore
 from app.metadata_service import MetadataConstructionService
 from app.models import PreprocessConfig, PreprocessPreviewRequest
 
@@ -575,6 +577,44 @@ class SourceInspectionTests(unittest.TestCase):
             self.assertEqual(report.direct_text_count, 2)
             self.assertEqual(report.convertible_count, 2)
             self.assertGreater(report.estimated_processing_unit_count, 0)
+
+    def test_async_scan_returns_immediately_and_persists_report(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_resources(root, {"readme.md": b"# Title\n\nContent"})
+            test_settings = replace(settings, data_root=root)
+            batch = SimpleNamespace(id=self.batch_id, active_task_ids=[])
+
+            class Batches:
+                def get(self, batch_id):
+                    if batch_id != batch.id:
+                        raise KeyError(batch_id)
+                    return batch
+
+                def update(self, batch_id, **changes):
+                    for key, value in changes.items():
+                        setattr(batch, {"activeTaskIds": "active_task_ids"}.get(key, key), value)
+
+            with patch.object(services_module, "settings", test_settings):
+                store = JsonStore(root / "state.json")
+                tasks = TaskService(store, Batches(), SimpleNamespace())
+                preprocess = PreprocessService(store, Batches(), tasks, FileService())
+                with patch.object(services_module.threading, "Thread") as thread:
+                    created = preprocess.create_scan_task(self.batch_id)
+                    again = preprocess.create_scan_task(self.batch_id)
+
+                self.assertEqual(created.id, again.id)
+                self.assertEqual(created.state, "queued")
+                thread.assert_called_once()
+
+                preprocess._run_scan_task(created.id)
+                report = preprocess.latest_scan_report(self.batch_id)
+                completed = tasks.get(created.id)
+
+            self.assertEqual(report.total_files, 1)
+            self.assertEqual(report.processable_count, 1)
+            self.assertEqual(completed.state, "completed")
+            self.assertEqual(batch.active_task_ids, [])
 
     def test_docx_preview_returns_metadata_markdown_and_structure_comparison(self):
         with tempfile.TemporaryDirectory() as directory:

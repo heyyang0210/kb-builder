@@ -109,6 +109,7 @@ index_service = IndexService(settings.data_root)
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     tasks.reconcile_interrupted()
+    preprocess.reconcile_interrupted_scans()
     training.reconcile_interrupted()
     yield
     pingcode.close()
@@ -744,6 +745,14 @@ def task_events(task_id: str, last_event_id: int = Query(default=0, alias="lastE
     )
 
 
+@app.get("/api/tasks/{task_id}", response_model=TaskSnapshot)
+def get_task(task_id: str):
+    try:
+        return tasks.get(task_id)
+    except KeyError:
+        error("TASK_NOT_FOUND", "任务不存在", 404)
+
+
 @app.get("/api/files/{resource_id}/metadata")
 def file_metadata(resource_id: str):
     try:
@@ -805,6 +814,34 @@ def scan_batch(request: DownloadTaskCreate):
         return preprocess.scan(request.batch_id)
     except KeyError:
         error("BATCH_NOT_FOUND", "资料加工任务不存在", 404)
+
+
+@app.post("/api/preprocess/scan-tasks", response_model=TaskSnapshot, status_code=202)
+def create_scan_task(request: DownloadTaskCreate):
+    try:
+        return preprocess.create_scan_task(request.batch_id)
+    except KeyError:
+        error("BATCH_NOT_FOUND", "资料加工任务不存在", 404)
+
+
+@app.get("/api/preprocess/scan-tasks")
+def list_scan_tasks(batch_id: str = Query(alias="batchId")):
+    try:
+        batches.get(batch_id)
+    except KeyError:
+        error("BATCH_NOT_FOUND", "资料加工任务不存在", 404)
+    items = preprocess.list_scan_tasks(batch_id)
+    return {"items": items, "total": len(items)}
+
+
+@app.get("/api/preprocess/scan-reports/{batch_id}", response_model=ScanReport)
+def get_scan_report(batch_id: str):
+    try:
+        return preprocess.latest_scan_report(batch_id)
+    except KeyError:
+        error("BATCH_NOT_FOUND", "资料加工任务不存在", 404)
+    except FileNotFoundError:
+        error("SCAN_REPORT_NOT_FOUND", "当前批次尚未生成源文件检查报告", 404)
 
 
 @app.post("/api/preprocess/prepare", response_model=PreparationReport)

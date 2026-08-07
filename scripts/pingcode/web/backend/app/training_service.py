@@ -230,6 +230,8 @@ class TrainingService:
         requires_model = request.mode == "formal_knowledge"
         model = self.model_config() if requires_model else None
         if self.preparation is not None:
+            if self.preprocess is not None:
+                return self._preflight_lightweight(request, model, requires_model=requires_model)
             return self._preflight_with_material_preparation(request, model, requires_model=requires_model)
         documents = self.preprocess.files.list_processing_sources(request.batch_id)
         chunk_count = 0
@@ -304,6 +306,87 @@ class TrainingService:
             "modelTestPassed": bool(last_test) if requires_model else None,
             "modelTestExpiresAt": last_test.get("expiresAt") if last_test else None,
             "canStart": bool(documents and (last_test if requires_model else True)),
+            "risks": risks,
+            "createdAt": utcnow().isoformat(),
+        }
+        self._write_json(
+            settings.data_root / "batches" / request.batch_id / "training-preflight" / "latest.json",
+            result,
+        )
+        return result
+
+    def _preflight_lightweight(
+        self,
+        request: TrainingTaskCreate,
+        model: dict[str, Any] | None,
+        *,
+        requires_model: bool,
+    ) -> dict[str, Any]:
+        report = None
+        try:
+            report = self.preprocess.latest_scan_report(request.batch_id)
+        except FileNotFoundError:
+            pass
+        if report is not None:
+            document_count = report.processable_count
+            estimated_chunks = report.estimated_processing_unit_count
+            direct_count = report.direct_text_count
+            convertible_count = report.convertible_count
+            ocr_required = report.ocr_required_count
+            conversion_failed = report.conversion_failed_count
+            unsupported = report.unsupported_count
+            scan_source = "latest_scan_report"
+        else:
+            documents = self.preprocess.files.list_processing_sources(request.batch_id)
+            document_count = len(documents)
+            estimated_chunks = document_count
+            direct_count = sum(1 for item in documents if item.processing_status == "direct_text")
+            convertible_count = sum(1 for item in documents if item.processing_status == "convertible")
+            ocr_required = 0
+            conversion_failed = 0
+            unsupported = 0
+            scan_source = "resource_index"
+        last_test = model.get("lastTest") if model else None
+        risks = []
+        if report is None:
+            risks.append("当前尚无源文件检查报告，将按资源清单启动；任务内会执行正式资料检查")
+        if not document_count:
+            risks.append("当前批次没有可加工的源文件")
+        if requires_model and not last_test:
+            risks.append("当前模型尚未通过最近 10 分钟内的真实结构化连接测试")
+        if not requires_model:
+            risks.append("当前阶段仅执行规则提取，不调用模型服务")
+        config = request.config.model_dump(mode="json", by_alias=True)
+        input_hash = "sha256:" + hashlib.sha256(json.dumps({
+            "batchId": request.batch_id,
+            "config": config,
+            "documentCount": document_count,
+            "estimatedChunkCount": estimated_chunks,
+            "scanSource": scan_source,
+        }, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+        result = {
+            "preflightId": f"preflight_{uuid.uuid4().hex[:16]}",
+            "batchId": request.batch_id,
+            "documentCount": document_count,
+            "processableCount": document_count,
+            "directTextCount": direct_count,
+            "convertibleCount": convertible_count,
+            "ocrRequiredCount": ocr_required,
+            "conversionFailedCount": conversion_failed,
+            "unsupportedCount": unsupported,
+            "estimatedChunkCount": estimated_chunks,
+            "largestDocumentCharacters": 0,
+            "largestUnitCharacters": 0,
+            "config": config,
+            "configSource": "service_default",
+            "preflightSource": scan_source,
+            "inputHash": input_hash,
+            "semanticUncertainItems": 0,
+            "totalModelCalls": 0,
+            "estimatedDurationMs": None,
+            "modelTestPassed": bool(last_test) if requires_model else None,
+            "modelTestExpiresAt": last_test.get("expiresAt") if last_test else None,
+            "canStart": bool(document_count and (last_test if requires_model else True)),
             "risks": risks,
             "createdAt": utcnow().isoformat(),
         }
@@ -477,15 +560,37 @@ class TrainingService:
 
     def _require_batch_ready(self, batch_id: str):
         batch = self.batches.get(batch_id)
-        if batch.state not in {"uploaded", "downloaded", "ready"}:
+        tasks = self.tasks.list(batch_id) if self.tasks is not None else []
+        resumable_download_ids = {
+            task.id for task in tasks if self._is_resumable_partial_download(task)
+        }
+        active_task_ids = list(
+            getattr(batch, "active_task_ids", None)
+            or getattr(batch, "activeTaskIds", None)
+            or []
+        )
+        for task in tasks:
+            if task.type == "download" and task.state != "completed" and task.id not in resumable_download_ids:
+                raise ValueError("资料下载尚未完成，不能启动知识加工")
+        allowed_states = {"uploaded", "downloaded", "ready"}
+        has_resumable_partial_download = bool(resumable_download_ids)
+        if batch.state not in allowed_states and not (
+            batch.state == "downloading" and has_resumable_partial_download
+        ):
             raise ValueError("资料下载尚未完成，不能启动知识加工")
-        if batch.active_task_ids:
+        if any(task_id not in resumable_download_ids for task_id in active_task_ids):
             raise ValueError("当前资料加工任务仍有执行任务在运行，不能启动知识加工")
-        if self.tasks is not None:
-            for task in self.tasks.list(batch_id):
-                if task.type == "download" and task.state != "completed":
-                    raise ValueError("资料下载尚未完成，不能启动知识加工")
         return batch
+
+    @staticmethod
+    def _is_resumable_partial_download(task: TaskSnapshot) -> bool:
+        """已下载部分资料的中断下载只保留告警，不阻断规则加工。"""
+        return bool(
+            task.type == "download"
+            and task.state == "interrupted"
+            and task.can_resume
+            and task.completed > 0
+        )
 
     def cancel(self, task_id: str) -> TaskSnapshot:
         task = self._get_graph_task(task_id)
