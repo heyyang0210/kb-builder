@@ -8431,12 +8431,9 @@ function switchTab(tabName) {
   // 恢复目标 Tab 状态
   restoreTabState(tabName);
   
-  // 如果是首次切换到文档管理 Tab，加载数据
-  if (tabName === 'doc-mgmt' && !docMgmtLoaded) {
-    loadDocList();
-    loadDocTree();
-    loadDocStats();
-    docMgmtLoaded = true;
+  // 每次进入文档管理均刷新，避免保存后仍显示旧列表。
+  if (tabName === 'doc-mgmt') {
+    refreshDocumentManagement();
   }
   
   currentTab = tabName;
@@ -8546,16 +8543,20 @@ let _docManager = {
 function openDocumentViewer() {
   // 切换到文档管理 Tab
   switchTab('doc-mgmt');
-  
-  // 加载文档数据
-  loadDocList();
-  loadDocTree();
-  loadDocStats();
-  
+
   // 显示生成文档按钮（如果有提示词）
   const promptText = (window._currentPromptMarkdown || getCurrentContent() || '').trim();
   const genBtn = document.getElementById('genDocBtn');
   if (genBtn) genBtn.style.display = promptText ? 'inline-flex' : 'none';
+}
+
+async function refreshDocumentManagement() {
+  await Promise.all([
+    loadDocList(),
+    loadDocTree(),
+    loadDocStats()
+  ]);
+  docMgmtLoaded = true;
 }
 
 function closeDocumentViewer() {
@@ -9294,6 +9295,9 @@ async function saveOutputAsDocument() {
     const result = await resp.json();
     if (result.success) {
       showToast('✅ 文档已保存 (v' + result.data.version + ')');
+      if (currentTab === 'doc-mgmt') {
+        refreshDocumentManagement();
+      }
     } else {
       throw new Error(result.message);
     }
