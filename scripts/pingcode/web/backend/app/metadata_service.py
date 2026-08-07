@@ -16,6 +16,9 @@ from .config import settings
 from .embedding_cluster_service import EmbeddingClusterService
 from .embedding_service import EmbeddingService
 from .models import MetadataBuildReport
+from .models import ArtifactSnapshotRef
+from .batch_operation_coordinator import BatchOperationCoordinator
+from .repositories.artifact_repository import LocalArtifactRepository
 from .services import BatchService, FileService, utcnow
 
 
@@ -26,43 +29,65 @@ class MetadataConstructionError(ValueError):
 class MetadataConstructionService:
     PIPELINE_VERSION = "metadata-construction-v1"
 
-    def __init__(self, batches: BatchService, files: FileService):
+    def __init__(
+        self,
+        batches: BatchService,
+        files: FileService,
+        artifacts: LocalArtifactRepository | None = None,
+        coordinator: BatchOperationCoordinator | None = None,
+    ):
         self.batches = batches
         self.files = files
+        self.artifacts = artifacts or LocalArtifactRepository()
+        self.coordinator = coordinator or BatchOperationCoordinator(settings.data_root, self.artifacts)
         self.rules, self.rule_set_hash = self._load_rules()
 
     def build(
         self,
         batch_id: str,
+        preparation_snapshot: ArtifactSnapshotRef,
         parent_task_id: str | None = None,
         stage_run_id: str | None = None,
     ) -> MetadataBuildReport:
         self.batches.get(batch_id)
-        latest = self._latest_preparation(batch_id)
-        input_run_id = latest["runId"]
-        input_manifest = self._resolve(latest["manifestPath"])
+        if preparation_snapshot.batch_id != batch_id or preparation_snapshot.stage != "preparation":
+            raise MetadataConstructionError("资料预处理快照与当前批次或阶段不匹配")
+        input_run_id = preparation_snapshot.run_id
+        input_manifest = self._resolve(preparation_snapshot.manifest_path)
         manifest = self._read_json(input_manifest)
-        input_hash = str(manifest.get("inputManifestHash") or "")
+        input_hash = str(manifest.get("inputManifestHash") or preparation_snapshot.input_hash.removeprefix("sha256:"))
         if not input_hash:
             raise MetadataConstructionError("资料预处理产物缺少输入清单哈希")
         root = input_manifest.parent
-        source_docs = self._read_jsonl(root / "metadata/source-documents.jsonl")
-        chunks = self._read_jsonl(root / "metadata/chunks.jsonl")
+        policy_path = settings.processing_skill_root.parent / "artifact-integrity.yaml"
+        policy = self.artifacts.load_corruption_policy(policy_path)
+        source_docs, source_read_issues = self.artifacts.read_committed_jsonl(
+            preparation_snapshot, "metadata/source-documents.jsonl", settings.data_root, policy
+        )
+        chunks, chunk_read_issues = self.artifacts.read_committed_jsonl(
+            preparation_snapshot, "metadata/chunks.jsonl", settings.data_root, policy
+        )
+        artifact_read_issues = [*source_read_issues, *chunk_read_issues]
         if not source_docs or not chunks:
             raise MetadataConstructionError("资料预处理产物缺少可构建元数据的文档或处理单元")
         self._validate_inputs(root, source_docs, chunks)
-        execution_hash = self._hash_json({"pipelineVersion": self.PIPELINE_VERSION, "inputManifestHash": input_hash, "ruleSetHash": self.rule_set_hash, "sourceDocuments": source_docs, "chunks": chunks})
+        execution_hash = "sha256:" + self._hash_json({"pipelineVersion": self.PIPELINE_VERSION, "inputManifestHash": preparation_snapshot.manifest_hash, "ruleSetHash": self.rule_set_hash})
         batch_root = self.files.manifest_path(batch_id).parent
-        cached = self._cached_report(batch_root, execution_hash)
-        if cached is not None:
-            return cached
+        owner_id = parent_task_id or stage_run_id or f"metadata:{uuid.uuid4().hex}"
+        flight = self.coordinator.reserve_flight(batch_root, "metadata", execution_hash, owner_id)
+        if not flight.is_owner:
+            snapshot_ref = flight.snapshot_ref or self.coordinator.wait_for_flight(
+                batch_root, "metadata", execution_hash
+            )
+            return self._report_from_snapshot(snapshot_ref)
 
         run_id = f"meta_{uuid.uuid4().hex[:16]}"
-        run_root = batch_root / "metadata" / "runs" / run_id
+        run_root = self.artifacts.begin_snapshot(batch_root / "metadata", run_id)
         event_log = run_root / "events.jsonl"
         started = utcnow()
         self._emit(event_log, batch_id, run_id, "stage.started", "元数据构建开始", taskId=parent_task_id, stageRunId=stage_run_id)
         documents, contexts, issues = self.build_records(source_docs, chunks)
+        issues.extend(artifact_read_issues)
         preselection_report = self.build_preselection_report(documents, contexts)
         embedding_records: list[dict[str, Any]] = []
         embedding_issues: list[dict[str, Any]] = []
@@ -78,6 +103,7 @@ class MetadataConstructionService:
         self._write_jsonl(run_root / "metadata/chunk-contexts.jsonl", contexts)
         self._write_json(run_root / "metadata/preselection-report.json", preselection_report)
         self._write_json(run_root / "quality/metadata-issues.json", issues)
+        self._write_jsonl(run_root / "quality/artifact-read-issues.jsonl", artifact_read_issues)
         try:
             embedding_service = EmbeddingService(self.rules.get("embedding", {}), self.rule_set_hash)
             embedding_records, embedding_issues = embedding_service.build(run_root, documents, contexts, chunks)
@@ -111,6 +137,7 @@ class MetadataConstructionService:
                 "quality/metadata-issues.json",
                 "quality/embedding-issues.json",
                 "quality/cluster-issues.json",
+                "quality/artifact-read-issues.jsonl",
             ],
             "metrics": {
                 "documents": len(documents),
@@ -137,9 +164,65 @@ class MetadataConstructionService:
             stage_result_path=self._relative(run_root / "stage-result.json"), event_log_path=self._relative(event_log),
             message=stage["message"], created_at=datetime.now(timezone.utc),
         )
-        self._write_json(run_root / "report.json", report.model_dump(mode="json", by_alias=True))
-        self._write_json(batch_root / "metadata/latest.json", {"runId": run_id, "executionHash": execution_hash, "reportPath": self._relative(run_root / "report.json"), "updatedAt": utcnow().isoformat()})
+        try:
+            snapshot_ref = self.artifacts.commit_snapshot(
+                run_root,
+                batch_id=batch_id,
+                stage="metadata",
+                run_id=run_id,
+                input_hash=preparation_snapshot.manifest_hash,
+                execution_hash=execution_hash,
+                generation=flight.expected_generation + 1,
+                artifact_paths=[*stage["artifacts"], "events.jsonl", "stage-result.json"],
+                data_root=settings.data_root,
+                manifest_extra={
+                    "pipelineVersion": self.PIPELINE_VERSION,
+                    "state": state,
+                    "inputRunId": input_run_id,
+                    "inputManifestHash": input_hash,
+                    "inputSnapshots": [preparation_snapshot.model_dump(mode="json", by_alias=True)],
+                    "metrics": stage["metrics"],
+                    "message": stage["message"],
+                },
+            )
+            self.coordinator.complete_flight(batch_root, "metadata", execution_hash, snapshot_ref)
+            self.coordinator.commit_latest(batch_root, snapshot_ref, flight.expected_generation)
+        except BaseException as exc:
+            self.coordinator.fail_flight(batch_root, "metadata", execution_hash, exc)
+            raise
+        final_root = (settings.data_root / snapshot_ref.manifest_path).parent
+        report.snapshot_ref = snapshot_ref
+        report.manifest_path = snapshot_ref.manifest_path
+        report.output_root = self._relative(final_root)
+        report.stage_result_path = self._relative(final_root / "stage-result.json")
+        report.event_log_path = self._relative(final_root / "events.jsonl")
+        report.artifact_paths = [self._relative(final_root / item) for item in stage["artifacts"]]
         return report
+
+    def _report_from_snapshot(self, snapshot_ref: ArtifactSnapshotRef) -> MetadataBuildReport:
+        manifest_path = settings.data_root / snapshot_ref.manifest_path
+        manifest = self.artifacts.read_json(manifest_path)
+        root = manifest_path.parent
+        metrics = manifest.get("metrics", {})
+        artifacts = [item.get("path") for item in manifest.get("artifacts", []) if item.get("path") not in {"events.jsonl", "stage-result.json"}]
+        return MetadataBuildReport(
+            batch_id=snapshot_ref.batch_id,
+            run_id=snapshot_ref.run_id,
+            state=manifest.get("state", "completed"),
+            input_run_id=manifest.get("inputRunId", ""),
+            input_manifest_hash=manifest.get("inputManifestHash", ""),
+            documents_count=int(metrics.get("documents", 0)),
+            chunks_count=int(metrics.get("chunks", 0)),
+            issue_count=int(metrics.get("issues", 0)),
+            artifact_paths=[self._relative(root / item) for item in artifacts],
+            stage_result_path=self._relative(root / "stage-result.json"),
+            event_log_path=self._relative(root / "events.jsonl"),
+            message=manifest.get("message", "元数据构建完成"),
+            created_at=datetime.now(timezone.utc),
+            snapshot_ref=snapshot_ref,
+            manifest_path=snapshot_ref.manifest_path,
+            output_root=self._relative(root),
+        )
 
     def build_records(
         self,
@@ -303,6 +386,10 @@ class MetadataConstructionService:
         if not latest_path.is_file():
             raise MetadataConstructionError("尚未找到资料预处理结果，请先完成步骤一")
         return self._read_json(latest_path)
+
+    def discover_latest_preparation(self, batch_id: str) -> ArtifactSnapshotRef:
+        """Compatibility discovery for HTTP/UI entry points before a pipeline starts."""
+        return ArtifactSnapshotRef.model_validate(self._latest_preparation(batch_id))
 
     def _validate_inputs(self, root: Path, source_docs: list[dict[str, Any]], chunks: list[dict[str, Any]]) -> None:
         resource_ids = {item.get("resourceId") for item in source_docs}

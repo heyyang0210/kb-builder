@@ -1,0 +1,6 @@
+schemaVersion: artifact-integrity-config/v1
+artifactCorruption:
+  maxRecordRatio: 0.001
+  maxRecordCount: 10
+  redactedPrefixCharacters: 80
+  redactedSuffixCharacters: 80

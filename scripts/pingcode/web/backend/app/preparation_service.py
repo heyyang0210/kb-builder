@@ -20,6 +20,8 @@ from typing import Any, BinaryIO
 from .config import settings
 from .ingestion.contracts import FormatDetection, FormatDetector
 from .models import PreparationIssue, PreparationReport
+from .batch_operation_coordinator import BatchOperationCoordinator
+from .repositories.artifact_repository import LocalArtifactRepository
 from .office_conversion import OfficeConversionResult, convert_office_to_markdown
 from .services import BatchService, FileService, utcnow
 from .markdown_cleaning import clean_markdown, html_to_markdown
@@ -44,6 +46,7 @@ class _PreparationRun:
     run_id: str
     root: Path
     event_log: Path
+    published_root: Path
     parent_task_id: str | None = None
     stage_run_id: str | None = None
     resources: list[dict[str, Any]] = field(default_factory=list)
@@ -201,10 +204,14 @@ class MaterialPreparationService:
         files: FileService,
         detector: FormatDetector | None = None,
         limits: ArchiveLimits | None = None,
+        artifacts: LocalArtifactRepository | None = None,
+        coordinator: BatchOperationCoordinator | None = None,
     ):
         self.batches = batches
         self.files = files
         self.detector = detector or DefaultFormatDetector()
+        self.artifacts = artifacts or LocalArtifactRepository()
+        self.coordinator = coordinator or BatchOperationCoordinator(settings.data_root, self.artifacts)
         self.limits = limits or ArchiveLimits(
             max_files=settings.preparation_max_archive_files,
             max_bytes=settings.preparation_max_archive_bytes,
@@ -233,16 +240,30 @@ class MaterialPreparationService:
         ]
         input_snapshot = self._input_snapshot(raw_records)
         input_manifest_hash = self._hash_json(input_snapshot)
-        run_id = f"prep_{uuid.uuid4().hex[:16]}"
+        execution_hash = "sha256:" + self._hash_json({
+            "pipelineVersion": self.PIPELINE_VERSION,
+            "inputManifestHash": input_manifest_hash,
+            "config": config.model_dump(mode="json", by_alias=True),
+        })
         batch_root = self.files.manifest_path(batch_id).parent
-        run_root = batch_root / "preparation" / "runs" / run_id
-        run_root.mkdir(parents=True, exist_ok=True)
+        owner_id = parent_task_id or stage_run_id or f"prepare:{uuid.uuid4().hex}"
+        flight = self.coordinator.reserve_flight(
+            batch_root, "preparation", execution_hash, owner_id
+        )
+        if not flight.is_owner:
+            snapshot_ref = flight.snapshot_ref or self.coordinator.wait_for_flight(
+                batch_root, "preparation", execution_hash
+            )
+            return self._report_from_snapshot(snapshot_ref)
+        run_id = f"prep_{uuid.uuid4().hex[:16]}"
+        run_root = self.artifacts.begin_snapshot(batch_root / "preparation", run_id)
         event_log = run_root / "events.jsonl"
         run = _PreparationRun(
             batch_id,
             run_id,
             run_root,
             event_log,
+            batch_root / "preparation" / "runs" / run_id,
             parent_task_id=parent_task_id,
             stage_run_id=stage_run_id,
         )
@@ -280,10 +301,9 @@ class MaterialPreparationService:
                 "quarantinedResources": run.quarantined_resources,
                 "securityIssueCount": run.security_issue_count,
             },
-            "eventLogPath": self._relative(event_log),
+            "eventLogPath": self._artifact_relative(run, event_log),
         }
         manifest_path = run_root / "manifest.json"
-        self._write_json(manifest_path, manifest)
         source_resources = self._source_resource_records(run)
         source_assets = self._source_asset_records(run)
         ingestion_report = self._ingestion_report(run, source_resources, source_assets, input_manifest_hash, state)
@@ -322,24 +342,36 @@ class MaterialPreparationService:
             },
         }
         self._write_json(run_root / "stage-result.json", stage_result)
-        latest_path = batch_root / "preparation" / "latest.json"
-        self._write_json(
-            latest_path,
-            {
-                "runId": run_id,
-                "manifestPath": self._relative(manifest_path),
-                "inputManifestHash": input_manifest_hash,
-                "updatedAt": utcnow().isoformat(),
-            },
-        )
         self._emit(run, "run_finished", state=state, metrics=manifest["metrics"])
+        committed_artifacts = [*artifact_paths, "events.jsonl", "stage-result.json"]
+        try:
+            snapshot_ref = self.artifacts.commit_snapshot(
+                run_root,
+                batch_id=batch_id,
+                stage="preparation",
+                run_id=run_id,
+                input_hash="sha256:" + input_manifest_hash,
+                execution_hash=execution_hash,
+                generation=flight.expected_generation + 1,
+                artifact_paths=committed_artifacts,
+                data_root=settings.data_root,
+                manifest_extra=manifest,
+            )
+            self.coordinator.complete_flight(
+                batch_root, "preparation", execution_hash, snapshot_ref
+            )
+            self.coordinator.commit_latest(batch_root, snapshot_ref, flight.expected_generation)
+        except BaseException as exc:
+            self.coordinator.fail_flight(batch_root, "preparation", execution_hash, exc)
+            raise
+        final_root = (settings.data_root / snapshot_ref.manifest_path).parent
         return PreparationReport(
             batch_id=batch_id,
             run_id=run_id,
             state=state,
             input_manifest_hash=input_manifest_hash,
-            manifest_path=self._relative(manifest_path),
-            event_log_path=self._relative(event_log),
+            manifest_path=snapshot_ref.manifest_path,
+            event_log_path=self._relative(final_root / "events.jsonl"),
             total_resources=len(run.resources),
             processable_resources=run.processable_resources,
             archive_resources=run.archive_resources,
@@ -350,8 +382,39 @@ class MaterialPreparationService:
             security_issue_count=run.security_issue_count,
             issues=[PreparationIssue.model_validate(item) for item in run.issues],
             created_at=datetime.now(timezone.utc),
+            stage_result_path=self._relative(final_root / "stage-result.json"),
+            artifact_paths=[self._relative(final_root / path) for path in artifact_paths],
+            snapshot_ref=snapshot_ref,
+            output_root=self._relative(final_root),
+        )
+
+    def _report_from_snapshot(self, snapshot_ref) -> PreparationReport:
+        root = settings.data_root / snapshot_ref.manifest_path
+        manifest = self.artifacts.read_json(root)
+        metrics = manifest.get("metrics", {})
+        run_root = root.parent
+        artifact_paths = [item["path"] for item in manifest.get("artifacts", []) if item.get("path") not in {"events.jsonl", "stage-result.json"}]
+        return PreparationReport(
+            batch_id=snapshot_ref.batch_id,
+            run_id=snapshot_ref.run_id,
+            state=manifest.get("state", "completed"),
+            input_manifest_hash=snapshot_ref.input_hash.removeprefix("sha256:"),
+            manifest_path=snapshot_ref.manifest_path,
+            event_log_path=self._relative(run_root / "events.jsonl"),
+            total_resources=int(metrics.get("totalResources", 0)),
+            processable_resources=int(metrics.get("processableResources", 0)),
+            archive_resources=int(metrics.get("archiveResources", 0)),
+            extracted_resources=int(metrics.get("extractedResources", 0)),
+            image_resources=int(metrics.get("imageResources", 0)),
+            conversion_pending_resources=int(metrics.get("conversionPendingResources", 0)),
+            quarantined_resources=int(metrics.get("quarantinedResources", 0)),
+            security_issue_count=int(metrics.get("securityIssueCount", 0)),
+            issues=[PreparationIssue.model_validate(item) for item in manifest.get("issues", [])],
+            created_at=datetime.now(timezone.utc),
             stage_result_path=self._relative(run_root / "stage-result.json"),
             artifact_paths=[self._relative(run_root / path) for path in artifact_paths],
+            snapshot_ref=snapshot_ref,
+            output_root=self._relative(run_root),
         )
 
     def _source_resource_records(self, run: _PreparationRun) -> list[dict[str, Any]]:
@@ -595,7 +658,7 @@ class MaterialPreparationService:
                     path,
                     run.root / "conversion-tmp",
                     artifact["id"],
-                    self._relative(run.root / "assets" / artifact["id"]),
+                    self._artifact_relative(run, run.root / "assets" / artifact["id"]),
                 )
                 text = conversion.markdown
                 converter = conversion.converter_id
@@ -629,7 +692,7 @@ class MaterialPreparationService:
                 "resourceId": artifact["id"], "sourcePath": artifact["logicalPath"],
                 "sourceType": artifact.get("sourceType"), "mediaType": artifact["mediaType"],
                 "processingState": "completed_with_warnings" if artifact["formatFamily"] in {"office", "pdf"} else "completed", "originalArtifact": artifact["originalArtifact"],
-                "normalizedArtifact": self._relative(normalized_path), "sourceMapArtifact": self._write_source_map(run, artifact, blocks),
+                "normalizedArtifact": self._artifact_relative(run, normalized_path), "sourceMapArtifact": self._write_source_map(run, artifact, blocks),
                 "originalHash": artifact["sha256"], "normalizedHash": self._hash_text(normalized),
                 "converterId": converter, "converterVersion": "1.0.0",
                 "conversionProfile": getattr(conversion, "conversion_profile", "office_pdf_markdown_v1") if artifact["formatFamily"] == "office" else "office_pdf_markdown_v1",
@@ -642,7 +705,7 @@ class MaterialPreparationService:
                 "warnings": [] if artifact["formatFamily"] == "text" else ["转换结果保留原始文件，但细粒度来源映射需转换器提供支持"],
             }
             run.source_documents.append(source_doc)
-            artifact["normalizedArtifact"] = self._relative(normalized_path)
+            artifact["normalizedArtifact"] = self._artifact_relative(run, normalized_path)
             artifact["processingStatus"] = source_doc["processingState"]
             if artifact["formatFamily"] == "office":
                 artifact["conversionProfile"] = source_doc["conversionProfile"]
@@ -692,7 +755,7 @@ class MaterialPreparationService:
             "blocks": [{"blockId": item["blockId"], "markdownRange": item["markdownOffsets"], "locations": []} for item in blocks],
         }
         self._write_json(path, payload)
-        return self._relative(path)
+        return self._artifact_relative(run, path)
 
     def _extract_archive(
         self,
@@ -894,7 +957,7 @@ class MaterialPreparationService:
             "id": resource_id,
             "batchId": run.batch_id,
             "name": display_name,
-            "logicalPath": self._relative(path),
+            "logicalPath": self._artifact_relative(run, path),
             "mediaType": detection.media_type or "application/octet-stream",
             "size": path.stat().st_size,
             "sha256": digest,
@@ -910,7 +973,7 @@ class MaterialPreparationService:
         original_path = run.root / "originals" / f"{resource_id}{path.suffix.lower()}"
         original_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(path, original_path)
-        item["originalArtifact"] = self._relative(original_path)
+        item["originalArtifact"] = self._artifact_relative(run, original_path)
         run.resources.append(item)
         self._emit(
             run,
@@ -1067,6 +1130,15 @@ class MaterialPreparationService:
     @staticmethod
     def _relative(path: Path) -> str:
         return path.resolve().relative_to(settings.data_root.resolve()).as_posix()
+
+    @staticmethod
+    def _artifact_relative(run: _PreparationRun, path: Path) -> str:
+        resolved = path.resolve()
+        try:
+            suffix = resolved.relative_to(run.root.resolve())
+        except ValueError:
+            return MaterialPreparationService._relative(resolved)
+        return MaterialPreparationService._relative(run.published_root / suffix)
 
     @staticmethod
     def _resolve_resource(logical_path: str) -> Path:

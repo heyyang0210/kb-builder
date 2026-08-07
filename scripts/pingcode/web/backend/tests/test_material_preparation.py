@@ -4,6 +4,7 @@ import tarfile
 import tempfile
 import unittest
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -57,6 +58,11 @@ class FormatDetectorTests(unittest.TestCase):
 
 class MaterialPreparationTests(unittest.TestCase):
     batch_id = "batch_test0000000000"
+
+    def test_metadata_build_requires_explicit_preparation_snapshot(self):
+        service = MetadataConstructionService(_BatchLookup(), FileService())
+        with self.assertRaises(TypeError):
+            service.build(self.batch_id)
 
     def test_safe_zip_is_extracted_and_images_are_assets(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -263,8 +269,10 @@ class MaterialPreparationTests(unittest.TestCase):
                 patch.object(services_module, "settings", test_settings),
             ):
                 preparation = MaterialPreparationService(_BatchLookup(), FileService())
-                preparation.prepare(self.batch_id)
-                report = MetadataConstructionService(_BatchLookup(), FileService()).build(self.batch_id)
+                preparation_report = preparation.prepare(self.batch_id)
+                report = MetadataConstructionService(_BatchLookup(), FileService()).build(
+                    self.batch_id, preparation_snapshot=preparation_report.snapshot_ref
+                )
             self.assertEqual(report.documents_count, 1)
             metadata_root = root / report.stage_result_path
             metadata_root = metadata_root.parent
@@ -298,8 +306,10 @@ class MaterialPreparationTests(unittest.TestCase):
                 patch.object(metadata_module, "settings", test_settings),
                 patch.object(services_module, "settings", test_settings),
             ):
-                MaterialPreparationService(_BatchLookup(), FileService()).prepare(self.batch_id)
-                report = MetadataConstructionService(_BatchLookup(), FileService()).build(self.batch_id)
+                preparation_report = MaterialPreparationService(_BatchLookup(), FileService()).prepare(self.batch_id)
+                report = MetadataConstructionService(_BatchLookup(), FileService()).build(
+                    self.batch_id, preparation_snapshot=preparation_report.snapshot_ref
+                )
             metadata_root = (root / report.stage_result_path).parent
             documents = [json.loads(item) for item in (metadata_root / "metadata/documents.jsonl").read_text(encoding="utf-8").splitlines()]
             contexts = [json.loads(item) for item in (metadata_root / "metadata/chunk-contexts.jsonl").read_text(encoding="utf-8").splitlines()]
@@ -365,8 +375,10 @@ class MaterialPreparationTests(unittest.TestCase):
                 patch.object(services_module, "settings", test_settings),
             ):
                 preparation = MaterialPreparationService(_BatchLookup(), FileService())
-                preparation.prepare(self.batch_id)
-                report = MetadataConstructionService(_BatchLookup(), FileService()).build(self.batch_id)
+                preparation_report = preparation.prepare(self.batch_id)
+                report = MetadataConstructionService(_BatchLookup(), FileService()).build(
+                    self.batch_id, preparation_snapshot=preparation_report.snapshot_ref
+                )
             metadata_root = (root / report.stage_result_path).parent
             documents = [json.loads(item) for item in (metadata_root / "metadata/documents.jsonl").read_text(encoding="utf-8").splitlines()]
             issues = json.loads((metadata_root / "quality/metadata-issues.json").read_text(encoding="utf-8"))
@@ -439,8 +451,10 @@ class MaterialPreparationTests(unittest.TestCase):
                 patch.object(services_module, "settings", test_settings),
             ):
                 preparation = MaterialPreparationService(_BatchLookup(), FileService())
-                preparation.prepare(self.batch_id)
-                report = MetadataConstructionService(_BatchLookup(), FileService()).build(self.batch_id)
+                preparation_report = preparation.prepare(self.batch_id)
+                report = MetadataConstructionService(_BatchLookup(), FileService()).build(
+                    self.batch_id, preparation_snapshot=preparation_report.snapshot_ref
+                )
             metadata_root = (root / report.stage_result_path).parent
             documents = [json.loads(item) for item in (metadata_root / "metadata/documents.jsonl").read_text(encoding="utf-8").splitlines()]
             issues = json.loads((metadata_root / "quality/metadata-issues.json").read_text(encoding="utf-8"))
@@ -465,8 +479,10 @@ class MaterialPreparationTests(unittest.TestCase):
                 patch.object(services_module, "settings", test_settings),
             ):
                 preparation = MaterialPreparationService(_BatchLookup(), FileService())
-                preparation.prepare(self.batch_id)
-                report = MetadataConstructionService(_BatchLookup(), FileService()).build(self.batch_id)
+                preparation_report = preparation.prepare(self.batch_id)
+                report = MetadataConstructionService(_BatchLookup(), FileService()).build(
+                    self.batch_id, preparation_snapshot=preparation_report.snapshot_ref
+                )
             metadata_root = (root / report.stage_result_path).parent
             documents = [json.loads(item) for item in (metadata_root / "metadata/documents.jsonl").read_text(encoding="utf-8").splitlines()]
             issues = json.loads((metadata_root / "quality/metadata-issues.json").read_text(encoding="utf-8"))
@@ -493,6 +509,26 @@ class MaterialPreparationTests(unittest.TestCase):
                 limits=effective_limits,
             )
             return service.prepare(self.batch_id)
+
+    def test_concurrent_same_input_reuses_one_committed_snapshot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "batches" / self.batch_id / "original/files/readme.md"
+            source.parent.mkdir(parents=True)
+            source.write_text("# 并发快照\n\n同一份输入只应计算一次。", encoding="utf-8")
+            self._register_archive(root, source)
+            test_settings = replace(settings, data_root=root)
+            with (
+                patch.object(preparation_module, "settings", test_settings),
+                patch.object(services_module, "settings", test_settings),
+            ):
+                service = MaterialPreparationService(_BatchLookup(), FileService())
+                with ThreadPoolExecutor(max_workers=8) as executor:
+                    reports = list(executor.map(lambda _: service.prepare(self.batch_id), range(8)))
+
+            self.assertEqual(len({report.run_id for report in reports}), 1)
+            runs = root / "batches" / self.batch_id / "preparation/runs"
+            self.assertEqual(len([path for path in runs.iterdir() if path.is_dir()]), 1)
 
     def _write_batch_archive(self, root, entries):
         batch_root = root / "batches" / self.batch_id

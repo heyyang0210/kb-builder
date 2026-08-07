@@ -1,6 +1,6 @@
 # 下一步计划
 
-> 自动更新: 2026-08-06
+> 自动更新: 2026-08-07
 
 ## Phase 0-2 状态
 
@@ -51,6 +51,13 @@
 
 - `TASK-DIR-01` 已完成：仅当下载任务为 `interrupted`、`canResume=true` 且 `completed>0` 时，主页允许按已完成资料开始知识加工，并持续显示未完成项可续传的中文告警；其他下载中断/失败/暂停及额外活动任务保持阻断，知识加工不改变下载账本或续传状态。
 - `DeterministicPipelineTests` 12 项通过，前端 `npm run build` 通过；真实批次 `_require_batch_ready` 放行验证通过。
+
+## 已完成：产物不可变快照与并发修复
+
+- P0-01 至 P1-01 已完成：不可变快照、两阶段发布、single-flight、generation CAS、显式 lineage、跨进程 state 锁、损坏隔离和错误分类均已落地。
+- 隔离真实 API 并发启动返回 `202/409`，规则任务完成，模型调用为零，preparation/metadata 快照引用完整。
+- admission/latest 锁 P95 为 0.0401ms；100 并发 committed reader 一致。
+- 后续仅保留固定环境的大规模 5% 性能回退基线和遗留 single-flight/staging 租约回收，不阻断本次核心修复。
 
 ## 后续整改
 

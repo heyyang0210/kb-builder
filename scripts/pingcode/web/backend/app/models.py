@@ -312,6 +312,16 @@ class MetadataBuildRequest(ApiModel):
     batch_id: str
 
 
+class ArtifactSnapshotRef(ApiModel):
+    batch_id: str
+    stage: str
+    run_id: str
+    input_hash: str
+    manifest_path: str
+    manifest_hash: str
+    generation: int = Field(ge=0)
+
+
 class MetadataBuildReport(ApiModel):
     batch_id: str
     run_id: str
@@ -326,6 +336,9 @@ class MetadataBuildReport(ApiModel):
     event_log_path: str
     message: str
     created_at: datetime
+    snapshot_ref: ArtifactSnapshotRef | None = None
+    manifest_path: str | None = None
+    output_root: str | None = None
 
 
 class PreparationIssue(ApiModel):
@@ -355,6 +368,8 @@ class PreparationReport(ApiModel):
     created_at: datetime
     stage_result_path: str | None = None
     artifact_paths: list[str] = Field(default_factory=list)
+    snapshot_ref: ArtifactSnapshotRef | None = None
+    output_root: str | None = None
 
 
 class ScanIssue(ApiModel):

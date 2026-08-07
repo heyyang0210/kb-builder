@@ -1,8 +1,8 @@
 # TrainingService 分层重构详细设计
 
-> 版本：v1.3
-> 更新日期：2026-08-05
-> 状态：Phase 1 已完成；Phase 2 代码、自动化测试和只读真实链路验收有条件通过
+> 版本：v1.4
+> 更新日期：2026-08-07
+> 状态：Phase 1 已完成；Phase 2 有条件通过；方案 C 核心实现与真实 API 验证完成，大规模性能基线待验证
 > 适用范围：`scripts/pingcode/web/backend/app/training_service.py`
 > 上位设计：[12-PingCode知识提取步骤详细设计.md](./12-PingCode知识提取步骤详细设计.md)、[15-PingCode图谱与数据集生成步骤详细设计.md](./15-PingCode图谱与数据集生成步骤详细设计.md)
 
@@ -315,7 +315,7 @@ Phase 2 采用当前业务所需的最小接口，不提前抽象通用对象存
 
 - UTF-8 读写，JSON 使用 `ensure_ascii=False`；
 - `read_json()` 在文件不存在、读取失败或 JSON 损坏时返回调用方默认值；
-- `read_jsonl()` 忽略空行与损坏行，保留合法对象顺序；
+- Phase 2 兼容方法 `read_jsonl()` 忽略空行与损坏行，保留合法对象顺序；方案 C 的 `read_committed_jsonl()` 禁止静默忽略损坏行，必须按 16.7 节隔离并落质量问题，或升级为完整性失败；
 - 写入前自动创建父目录；
 - JSON、JSONL 和文本采用同目录临时文件后原子替换；
 - 嵌入缓存源不存在时创建空目标目录；源存在时完整替换目标缓存。
@@ -325,7 +325,7 @@ Phase 2 采用当前业务所需的最小接口，不提前抽象通用对象存
 ```text
 序列化到内存
   -> 创建父目录
-  -> 写入 target.suffix.tmp（与目标同目录）
+  -> 写入与目标同目录的唯一临时文件（禁止固定 `.tmp` 名称）
   -> 完成 UTF-8 写入
   -> replace(target)
   -> 成功后目标一次切换到完整新内容
@@ -563,3 +563,280 @@ curl -N http://127.0.0.1:8001/api/datasets/<dataset_id>/keywords/filter-by-skill
 | 远端错误正文截断与敏感字段脱敏 | 未实现，列为剩余安全风险 |
 
 因此，本阶段标记为“有条件通过”。模型网关与产物仓储提取满足 Phase 2 功能验收条件；关闭剩余验收缺口前，必须统一流式与非流式模型选择，在隔离数据集补充 `admissionStatus`、四统计和图谱投影验收，并实现远端错误正文截断与敏感字段脱敏。业务三态、L2 和质量评价专用公共 API 不再属于兼容基线；内部质量审计和发布门禁必须继续保护。两项全量回归失败属于 Phase 2 范围外问题，应独立跟踪，不得改写为本阶段新增回归。
+
+## 16. 不可变产物快照与批次协调契约（TASK-BUG-JSON-RACE-P0-01）
+
+本节冻结 Phase 3 的仓储与协调实现边界。跨阶段规范性 Schema、状态机和默认配置以 [六步骤流水线 16 节](./08-pingcode-processing-six-step-pipeline-design.md#十六方案-c不可变快照与并发协调契约) 为唯一基线；本节不得定义另一套同名字段。Phase 2 的单文件原子替换继续保留，但不再被视为跨文件运行产物的一致性边界。资料准备、元数据构建及训练流水线必须显式传递不可变快照引用；共享 `latest.json` 仅用于页面发现、人工查询和流水线开始前的缓存候选发现，不参与运行中流水线选择输入。
+
+### 16.1 兼容边界与读取优先级
+
+- 公共 HTTP 路由、请求体、状态码和既有响应字段保持兼容；本任务不删除 `manifestPath`、`documentsPath`、`chunksPath` 等历史路径字段。
+- `PreparationReport` 与 `MetadataBuildReport` 新增可选 `snapshotRef`。新写入报告必须同时返回 `snapshotRef` 和既有路径字段；兼容期至少跨一个完整发布周期，移除旧字段必须另立公共契约变更任务。
+- 内部读取优先级固定为：调用方显式传入的 `snapshotRef` > 仅历史报告中的 `manifestPath` 经一次性校验后冻结成 `snapshotRef`。`latest.json` 只允许页面查询或在流水线开始前发现缓存候选；方案 C 新运行缺少 `snapshotRef` 时抛 `SchemaValidationError`，不得静默降级到 latest。
+- `latest.json` 的 CAS 失败不改变已提交快照的有效性；调用方继续使用本次返回的 `snapshotRef`，不得回退到 latest。
+
+### 16.2 核心引用与目录布局
+
+所有字段使用唯一的 camelCase JSON 名称；Python 数据类通过显式序列化映射输出相同字段。
+
+```python
+@dataclass(frozen=True)
+class ArtifactSnapshotRef:
+    batch_id: str
+    stage: str
+    run_id: str
+    input_hash: str
+    manifest_path: str
+    manifest_hash: str
+    generation: int
+```
+
+```json
+{
+  "batchId": "batch_xxx",
+  "stage": "material_preparation",
+  "runId": "prep_xxx",
+  "inputHash": "sha256:...",
+  "manifestPath": "runs/prep_xxx/manifest.json",
+  "manifestHash": "sha256:...",
+  "generation": 42
+}
+```
+
+```text
+artifacts/<batchId>/<stage>/
+├── .locks/
+├── single-flight/<executionHash>.json
+├── .staging/<runId>-<randomSuffix>/
+│   ├── <artifacts...>
+│   ├── manifest.json
+│   └── commit.json
+├── runs/<runId>/
+│   ├── <artifacts...>
+│   ├── manifest.json
+│   └── commit.json
+└── latest.json
+```
+
+`.staging` 与 `runs` 必须位于同一文件系统。`runs/<runId>` 在目录级原子发布后不可原地修改；重试必须创建新 `runId`。读取器只接受存在且通过校验的 `commit.json`，不扫描或读取 `.staging`。
+
+### 16.3 manifest、commit 与 latest Schema
+
+`manifest.json` 描述业务输入、版本和产物清单，不代表已经提交：
+
+```json
+{
+  "schemaVersion": "artifact-manifest/v1",
+  "batchId": "batch_xxx",
+  "stage": "metadata_construction",
+  "runId": "meta_xxx",
+  "executionHash": "sha256:...",
+  "inputHash": "sha256:...",
+  "inputSnapshots": [{"stage": "material_preparation", "runId": "prep_xxx", "manifestHash": "sha256:..."}],
+  "stageVersion": "metadata-construction/v1",
+  "configHash": "sha256:...",
+  "ruleSetHash": "sha256:...",
+  "requiredArtifacts": ["metadata/documents.jsonl", "metadata/chunk-contexts.jsonl"],
+  "createdAt": "2026-08-07T10:00:00+08:00"
+}
+```
+
+`commit.json` 必须最后写入 staging，且只引用已经完成哈希、计数和引用校验的 manifest：
+
+```json
+{
+  "schemaVersion": "artifact-commit/v1",
+  "batchId": "batch_xxx",
+  "stage": "metadata_construction",
+  "runId": "meta_xxx",
+  "inputHash": "sha256:...",
+  "manifestPath": "manifest.json",
+  "manifestHash": "sha256:...",
+  "artifacts": [
+    {"path": "metadata/documents.jsonl", "sha256": "sha256:...", "bytes": 1234, "records": 12, "schemaVersion": "metadata-document/v1"}
+  ],
+  "committedAt": "2026-08-07T10:00:01+08:00"
+}
+```
+
+`latest.json` 仅用于发现，generation 从 0 单调递增：
+
+```json
+{
+  "schemaVersion": "artifact-latest/v1",
+  "batchId": "batch_xxx",
+  "stage": "material_preparation",
+  "runId": "prep_xxx",
+  "inputHash": "sha256:...",
+  "manifestPath": "runs/prep_xxx/manifest.json",
+  "manifestHash": "sha256:...",
+  "generation": 42,
+  "committedAt": "2026-08-07T10:00:01+08:00"
+}
+```
+
+读取已提交快照必须同时满足：`commit.json` 可解析；commit 与 ref 的 batch/stage/run/input/manifest hash 一致；manifest hash 匹配；所有必需产物存在且 hash/count/schema 匹配；manifest 的输入快照与调用方固定引用一致。任一条件失败均不得改读 latest 或其他 run。
+
+### 16.4 两阶段发布状态机
+
+```mermaid
+stateDiagram-v2
+    [*] --> registered: single-flight 登记所有者
+    registered --> building: 创建唯一 staging
+    building --> validating: 完成产物与 manifest
+    validating --> committed: 最后写 commit.json 并原子发布目录
+    committed --> latest_published: latest CAS 成功
+    committed --> superseded: latest CAS 失败
+    registered --> failed: 所有者启动失败
+    building --> failed: 计算、I/O 或取消
+    validating --> failed: Schema、hash、count 或引用失败
+    latest_published --> [*]
+    superseded --> [*]
+    failed --> [*]
+```
+
+`committed` 与 `superseded` 的快照都可被持有其 ref 的调用方读取；`superseded` 只表示未成为 latest。`registered/building/validating/failed` 均不可作为下游输入。进程终止遗留的 staging 只能由恢复/清理流程隔离或删除，不得提升为 committed。
+
+### 16.5 single-flight 状态与协调接口
+
+```json
+{
+  "schemaVersion": "single-flight/v1",
+  "batchId": "batch_xxx",
+  "stage": "material_preparation",
+  "executionHash": "sha256:...",
+  "state": "running",
+  "ownerTaskId": "training_xxx",
+  "ownerProcessId": 12345,
+  "runId": "prep_xxx",
+  "attempt": 1,
+  "expectedGeneration": 41,
+  "snapshotRef": null,
+  "error": null,
+  "startedAt": "2026-08-07T10:00:00+08:00",
+  "updatedAt": "2026-08-07T10:00:00+08:00",
+  "completedAt": null
+}
+```
+
+`state` 仅允许 `running/completed/failed`。`completed` 必须带 `snapshotRef`；`failed` 必须带结构化 `error`；等待者不得读取所有者 staging。所有者失败后，等待者接收同一失败结果，后续新请求递增 `attempt` 重新竞争新 run 的所有权。
+
+```python
+class BatchOperationCoordinator(Protocol):
+    def admit(self, batch_id, operation, idempotency_key): ...
+    def single_flight(self, batch_id, stage, execution_hash): ...
+    def commit_latest(self, snapshot_ref, expected_generation): ...
+
+class ArtifactRepository(Protocol):
+    def begin_snapshot(self, batch_id, stage, run_id): ...
+    def commit_snapshot(self, staging_root, manifest) -> ArtifactSnapshotRef: ...
+    def read_committed_json(self, snapshot_ref, artifact_name): ...
+    def read_committed_jsonl(self, snapshot_ref, artifact_name, corruption_policy): ...
+```
+
+执行哈希固定为：
+
+```text
+executionHash = SHA-256(stageVersion + inputSnapshotManifestHash
+                       + resourceSnapshotHash + configHash + ruleSetHash)
+```
+
+不适用的组成项使用空字符串，但字段顺序不得变化。相同 executionHash 的已提交结果直接复用；正在执行时等待同一所有者；不同 hash 可独立计算。
+
+### 16.6 锁顺序与持久化边界
+
+| 锁键 | 保护内容 | 允许的锁内操作 | 禁止的锁内操作 |
+|---|---|---|---|
+| `{batchId}:admission` | 批次状态、任务创建、activeTask 登记 | 单次读改写 | 扫描、转换、分块、模型调用 |
+| `{batchId}:{stage}:{executionHash}` | single-flight 登记、完成结果 | 状态登记/读取 | 业务计算、全文件 hash |
+| `{batchId}:{stage}:latest` | generation CAS | 读指针、比较、唯一临时文件替换 | manifest 校验、产物生成 |
+| `state-store` | `state.json` 跨进程读改写 | 一次读改写 | 调用业务服务 |
+
+禁止嵌套持锁。时间顺序固定为：`admission` 获取并释放 -> single-flight 登记并释放 -> 无锁计算和快照提交 -> single-flight 完成登记并释放 -> latest CAS 获取并释放。进程内 keyed Lock/Condition 与 `fcntl.flock` 组合实现相同键的线程/多进程互斥；不引入外部依赖。所有文件原子写使用同目录唯一临时文件、`flush`、文件 `fsync`、`os.replace` 和父目录 `fsync`，不得复用固定 `.tmp` 文件名。
+
+### 16.7 损坏隔离、质量问题与异常契约
+
+版本化配置固定放在 `scripts/pingcode/processing/artifact-integrity.yaml`，由 manifest 记录配置内容 hash：
+
+```yaml
+schemaVersion: artifact-integrity-config/v1
+artifactCorruption:
+  maxRecordRatio: 0.001
+  maxRecordCount: 10
+  redactedPrefixCharacters: 80
+  redactedSuffixCharacters: 80
+```
+
+业务代码不得覆盖这些阈值。坏记录仅在行边界明确、非 commit/manifest/schema、其余记录可解析、隔离后唯一性和引用仍成立，且坏记录数量与比例均未超过配置上限时隔离。质量问题写入本次下游快照的 `quality/artifact-read-issues.jsonl`：
+
+```json
+{
+  "issueId": "issue_xxx",
+  "schemaVersion": "artifact-read-issue/v1",
+  "code": "ARTIFACT_RECORD_DECODE_FAILED",
+  "severity": "warning",
+  "message": "已隔离一条无法解析的产物记录，其余记录继续处理。",
+  "batchId": "batch_xxx",
+  "taskId": "training_xxx",
+  "stageRunId": "stage_xxx",
+  "traceId": "trace_xxx",
+  "snapshotId": "prep_xxx",
+  "artifactPath": "metadata/source-documents.jsonl",
+  "lineNumber": 7,
+  "byteOffset": 842,
+  "fileSize": 4096,
+  "fileMtimeNs": 123456789,
+  "expectedHash": "sha256:...",
+  "actualHash": "sha256:...",
+  "recordHash": "sha256:...",
+  "redactedPrefix": "{...",
+  "redactedSuffix": "...}",
+  "errorClass": "ArtifactRecordDecodeError",
+  "action": "isolated"
+}
+```
+
+不得保存完整坏行、正文、凭据或绝对路径。异常层级与失败语义固定如下：
+
+| 异常 | HTTP/任务分类 | 是否可隔离 | 阶段语义 |
+|---|---|---:|---|
+| `ArtifactRecordDecodeError` | `artifact_record_decode` | 满足策略时是 | `completed_with_warnings`，否则升级完整性失败 |
+| `ArtifactIntegrityError` | `artifact_integrity` | 否 | 阶段失败，不读取 latest 回退 |
+| `FileNotFoundError/OSError` | `file_io` | 否 | 阶段失败，或沿用步骤一单资源隔离边界 |
+| `SchemaValidationError` | `schema_validation` | 否 | 阶段失败，禁止发布快照 |
+| `ConversionError` | `conversion` | 仅既有单资源边界 | 资源隔离或阶段失败，沿用步骤一规则 |
+| `ModelGatewayError` | `model_gateway` | 否 | 仅模型调用路径使用模型错误摘要 |
+
+结构化异常至少包含 `errorCode/message/traceId/batchId/taskId/stageRunId/snapshotId/artifactPath/lineNumber/byteOffset/expectedHash/actualHash/retryable`；不适用字段为 `null`。普通 JSON、文件 I/O、转换、Schema 或未知异常禁止包装为模型错误。
+
+### 16.8 端到端伪代码
+
+```python
+def execute_stage(batch_id, stage, input_snapshot, versions, idempotency_key):
+    with coordinator.admission(batch_id):
+        coordinator.admit(batch_id, stage, idempotency_key)
+
+    execution_hash = calculate_execution_hash(input_snapshot, versions)
+    flight = coordinator.single_flight(batch_id, stage, execution_hash)
+    # single_flight() 返回前已经释放登记锁。
+    if flight.reusable:
+        return flight.snapshot_ref
+    if flight.follower:
+        return await_owner_result(flight.owner_task_id)
+
+    staging = artifacts.begin_snapshot(batch_id, stage, flight.run_id)
+    try:
+        build_outputs(staging, input_snapshot)              # 无锁长耗时操作
+        manifest = hash_count_and_validate(staging, input_snapshot)
+        write_commit_last(staging, manifest)
+        snapshot_ref = artifacts.commit_snapshot(staging, manifest)
+        coordinator.complete_single_flight(execution_hash, snapshot_ref)
+    except Exception as exc:
+        coordinator.fail_single_flight(execution_hash, classify_error(exc))
+        raise
+
+    coordinator.commit_latest(snapshot_ref, expected_generation=flight.expected_generation)
+    return snapshot_ref
+```
+
+训练运行清单必须记录 `lineage.preparation` 和 `lineage.metadata` 的完整 `ArtifactSnapshotRef`。元数据构建固定接收 preparation ref；后续阶段固定接收本任务的 prep/meta refs。任何阶段开始后更新 latest 都不得改变其输入。

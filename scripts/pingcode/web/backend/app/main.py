@@ -74,6 +74,8 @@ from .upload_service import UploadAuthorizationError, UploadService, UploadServi
 from .training_service import error_summary, ModelGatewayError, ModelTestRequiredError, TrainingService
 from .workbench_service import WorkbenchService
 from .index_service import IndexService
+from .batch_operation_coordinator import BatchOperationCoordinator
+from .repositories import LocalArtifactRepository
 
 
 store = JsonStore(settings.data_root / "state.json")
@@ -81,9 +83,15 @@ pingcode = PingCodeService()
 batches = BatchService(store, pingcode)
 tasks = TaskService(store, batches, pingcode)
 files = FileService()
+artifacts = LocalArtifactRepository()
+coordinator = BatchOperationCoordinator(settings.data_root, artifacts)
 preprocess = PreprocessService(store, batches, tasks, files)
-preparation = MaterialPreparationService(batches, files)
-metadata_construction = MetadataConstructionService(batches, files)
+preparation = MaterialPreparationService(
+    batches, files, artifacts=artifacts, coordinator=coordinator
+)
+metadata_construction = MetadataConstructionService(
+    batches, files, artifacts=artifacts, coordinator=coordinator
+)
 space_mappings = SpaceMappingService(store)
 skills = SkillRegistry(settings.processing_skill_root)
 ingestion_framework = build_default_framework()
@@ -101,6 +109,8 @@ training = TrainingService(
     prompts,
     preparation=preparation,
     metadata_construction=metadata_construction,
+    artifact_repository=artifacts,
+    coordinator=coordinator,
 )
 workbench = WorkbenchService(batches, tasks, preprocess, training)
 index_service = IndexService(settings.data_root)
@@ -857,7 +867,8 @@ def prepare_batch(request: MaterialPrepareRequest):
 @app.post("/api/metadata/build", response_model=MetadataBuildReport)
 def build_metadata(request: MetadataBuildRequest):
     try:
-        return metadata_construction.build(request.batch_id)
+        snapshot = metadata_construction.discover_latest_preparation(request.batch_id)
+        return metadata_construction.build(request.batch_id, preparation_snapshot=snapshot)
     except KeyError:
         error("BATCH_NOT_FOUND", "资料加工任务不存在", 404)
     except MetadataConstructionError as exc:

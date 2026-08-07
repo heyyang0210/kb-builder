@@ -30,6 +30,8 @@
 
 单处理单元模型超时诊断工具位于 `diagnostics/`。它只读取现有运行产物并调用模型网关，不修改模型配置和正式加工产物；诊断用例放在 `knowledge-extraction-timeout-cases.json`，结果写入运行目录的质量诊断目录。
 
+不可变产物读取的损坏隔离策略位于 `artifact-integrity.yaml`。当前契约版本为 `artifact-integrity-config/v1`，单次读取只有在损坏记录比例不超过 `0.001` 且数量不超过 `10` 时才允许隔离并继续；任一阈值超过即按整体完整性失败阻断。业务代码不得硬编码或覆盖这组默认值，运行 manifest 必须记录配置内容哈希。完整快照、single-flight、latest CAS 和错误分类设计见 `docs/08-pingcode-processing-six-step-pipeline-design.md` 第 16 节。
+
 ## Skill 目录
 
 每个 Skill 至少包含：

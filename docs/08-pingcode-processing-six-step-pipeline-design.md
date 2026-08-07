@@ -1,8 +1,8 @@
 # PingCode 知识加工六步骤流水线详细设计
 
-> 版本：v1.0  
-> 日期：2026-07-27  
-> 状态：实施设计基线，功能代码待按步骤实现  
+> 版本：v1.1
+> 日期：2026-08-07
+> 状态：方案 C 核心代码与真实 API 链路已验证，大规模性能基线待固定环境复测
 > 上位设计：`docs/04-pingcode-processing-e2e-framework-design.md`
 
 专项设计：
@@ -974,3 +974,309 @@ resourceId / chunkId / uncertainItemId / artifact / durationMs
 12. 六步骤均展示处理数量、耗时、成功、失败或跳过中文说明；
 13. 所有公开路径为相对路径；
 14. 使用真实后端 API 完成至少一条知识提取 Agent 成功任务和一条语义补充 Agent 调用或跳过任务。
+
+## 十六、方案 C：不可变快照与并发协调契约
+
+> 本节是 `TASK-BUG-JSON-RACE-P0-01` 的跨阶段规范性契约。步骤一、步骤二和训练编排的实现必须引用本节，不得各自定义同名但语义不同的字段。
+
+### 16.1 接口先行
+
+```python
+from dataclasses import dataclass
+from typing import Literal, Protocol
+
+
+@dataclass(frozen=True)
+class ArtifactSnapshotRef:
+    batch_id: str
+    stage: str
+    run_id: str
+    input_hash: str
+    manifest_path: str
+    manifest_hash: str
+    generation: int
+
+
+class BatchOperationCoordinator(Protocol):
+    def admit(self, batch_id: str, operation: str, idempotency_key: str): ...
+    def single_flight(self, batch_id: str, stage: str, execution_hash: str): ...
+    def complete_single_flight(self, execution_hash: str, snapshot_ref: ArtifactSnapshotRef): ...
+    def fail_single_flight(self, execution_hash: str, error: dict): ...
+    def commit_latest(
+        self,
+        snapshot_ref: ArtifactSnapshotRef,
+        expected_generation: int,
+    ) -> Literal["committed", "cas_mismatch"]: ...
+
+
+class ArtifactRepository(Protocol):
+    def begin_snapshot(self, batch_id: str, stage: str, run_id: str): ...
+    def commit_snapshot(self, staging_root, manifest: dict) -> ArtifactSnapshotRef: ...
+    def read_committed_jsonl(
+        self,
+        snapshot_ref: ArtifactSnapshotRef,
+        artifact_name: str,
+    ): ...
+```
+
+报告模型只增加字段，不删除现有路径字段：
+
+```python
+class PreparationReport:
+    snapshot_ref: ArtifactSnapshotRef | None
+    manifest_path: str | None       # 兼容字段
+    output_root: str | None         # 兼容字段
+
+class MetadataBuildReport:
+    snapshot_ref: ArtifactSnapshotRef | None
+    manifest_path: str | None       # 兼容字段
+    output_root: str | None         # 兼容字段
+```
+
+新运行必须写入 `snapshotRef`；旧字段仅用于历史产物读取和兼容响应，不得成为新流水线重新定位输入的依据。公共 HTTP 路径、请求参数和现有响应字段不变。
+
+### 16.2 流水线伪代码
+
+```text
+start_training(batchId, request):
+  admission = coordinator.admit(batchId, "knowledge_processing", request.idempotencyKey)
+  if admission is reused:
+    return admission.task
+
+  resourceRef = freeze_resource_snapshot(batchId)
+  prepExecutionHash = hash(stageVersion, resourceRef.hash, configHash, ruleSetHash)
+  flight = coordinator.single_flight(batchId, "material_preparation", prepExecutionHash)
+
+  if flight is committed:
+    prepRef = flight.snapshotRef
+  else if flight is follower:
+    prepRef = await flight.ownerResult
+  else:
+    # 从此处到产物校验结束均不持有协调锁
+    staging = artifacts.begin_snapshot(batchId, "material_preparation", newRunId())
+    generate_all_artifacts(staging, resourceRef)
+    validate_required_files_counts_hashes_and_references(staging)
+    write_manifest(staging)
+    write_commit_json_last(staging)
+    prepRef = artifacts.commit_snapshot(staging)
+    coordinator.complete_single_flight(prepExecutionHash, prepRef)
+    coordinator.commit_latest(prepRef, flight.expectedGeneration)
+
+  # 正确性依赖固定引用，不重新读取 preparation/latest.json
+  metadataReport = metadata.build(batchId, preparation_snapshot=prepRef)
+  return run_remaining_stages(prepRef, metadataReport.snapshotRef)
+```
+
+`latest.json` 只服务页面发现、人工查询和缓存候选发现。流水线一旦取得 `ArtifactSnapshotRef`，后续阶段必须按该引用无锁读取已经提交的不可变目录。
+
+### 16.3 目录和两阶段发布
+
+```text
+artifacts/<batchId>/<stage>/
+├── .staging/<runId>-<randomSuffix>/
+├── .locks/<sha256(lockKey)>.lock
+├── single-flight/<executionHash>.json
+├── runs/<runId>/
+│   ├── manifest.json
+│   ├── commit.json
+│   └── <stage artifacts>
+└── latest.json
+```
+
+写入顺序固定为：唯一 staging 目录生成产物 -> 校验 -> 写 `manifest.json` -> 最后写 `commit.json` -> 同文件系统目录级 `os.replace()` 发布为 `runs/<runId>` -> latest 短锁/CAS。正式运行目录发布后只读；CAS 失败只表示该运行不是最新发现指针，不删除或判坏已经提交的快照。
+
+单文件原子写必须使用目标同目录的唯一临时文件，完成 `flush`、文件 `fsync`、`os.replace` 和父目录 `fsync`。禁止复用固定的 `target.tmp`。大 JSONL 在流式写入时同步累计字节数、记录数和 SHA-256，不为提交再做一次全量扫描。
+
+### 16.4 JSON Schema 契约
+
+所有时间使用带时区的 ISO 8601，所有哈希使用 `sha256:<hex>`，路径均相对阶段根目录且禁止 `..`。以下对象可直接 JSON 序列化，字段名在 v1 内不得复用为其他含义。
+
+`ArtifactSnapshotRef`：
+
+```json
+{
+  "batchId": "batch_xxx",
+  "stage": "material_preparation",
+  "runId": "prep_xxx",
+  "inputHash": "sha256:...",
+  "manifestPath": "runs/prep_xxx/manifest.json",
+  "manifestHash": "sha256:...",
+  "generation": 42
+}
+```
+
+`manifest.json` 描述业务输入和预期产物；它在计算结束后生成，但不代表已提交：
+
+```json
+{
+  "schemaVersion": "artifact-manifest/v1",
+  "batchId": "batch_xxx",
+  "stage": "material_preparation",
+  "runId": "prep_xxx",
+  "stageVersion": "material-preparation/v2",
+  "executionHash": "sha256:...",
+  "inputHash": "sha256:...",
+  "configHash": "sha256:...",
+  "ruleSetHash": "sha256:...",
+  "inputSnapshots": [{"stage": "resource_download", "runId": "download_xxx", "manifestHash": "sha256:..."}],
+  "requiredArtifacts": ["metadata/source-documents.jsonl", "metadata/chunks.jsonl"],
+  "createdAt": "2026-08-07T12:00:00+08:00"
+}
+```
+
+`commit.json` 是提交标志且必须最后写入：
+
+```json
+{
+  "schemaVersion": "artifact-commit/v1",
+  "batchId": "batch_xxx",
+  "stage": "material_preparation",
+  "runId": "prep_xxx",
+  "inputHash": "sha256:...",
+  "manifestPath": "manifest.json",
+  "manifestHash": "sha256:...",
+  "artifacts": [
+    {"path": "metadata/chunks.jsonl", "sha256": "sha256:...", "bytes": 1024, "records": 8, "schemaVersion": "processing-unit/v1"}
+  ],
+  "committedAt": "2026-08-07T12:01:00+08:00"
+}
+```
+
+`latest.json` 只是可 CAS 的发现指针：
+
+```json
+{
+  "schemaVersion": "artifact-latest/v1",
+  "batchId": "batch_xxx",
+  "stage": "material_preparation",
+  "runId": "prep_xxx",
+  "inputHash": "sha256:...",
+  "manifestPath": "runs/prep_xxx/manifest.json",
+  "manifestHash": "sha256:...",
+  "generation": 42,
+  "committedAt": "2026-08-07T12:01:00+08:00"
+}
+```
+
+single-flight 持久状态：
+
+```json
+{
+  "schemaVersion": "single-flight/v1",
+  "batchId": "batch_xxx",
+  "stage": "material_preparation",
+  "executionHash": "sha256:...",
+  "state": "running",
+  "ownerTaskId": "training_xxx",
+  "ownerProcessId": 12345,
+  "runId": "prep_xxx",
+  "attempt": 1,
+  "expectedGeneration": 41,
+  "snapshotRef": null,
+  "error": null,
+  "startedAt": "2026-08-07T12:00:00+08:00",
+  "updatedAt": "2026-08-07T12:00:00+08:00",
+  "completedAt": null
+}
+```
+
+`state` 只允许 `running/completed/failed`。`completed` 必须携带 `snapshotRef`；`failed` 必须携带脱敏后的结构化 `error`；`running` 不得携带二者。进程退出后的遗留 `running` 由恢复器在确认所有者失活后原子转为 `failed`，等待者随后可以递增 `attempt` 重新竞争。
+
+### 16.5 状态机、锁顺序和 CAS
+
+```mermaid
+stateDiagram-v2
+    [*] --> Admitted: admission 短锁成功
+    Admitted --> Reused: 已有 committed 同键结果
+    Admitted --> Following: 已有 running 所有者
+    Admitted --> Computing: 登记为 owner
+    Following --> Reused: owner completed
+    Following --> Failed: owner failed
+    Computing --> Validating: 锁外生成完成
+    Validating --> Failed: 完整性校验失败
+    Validating --> Committed: commit.json + 原子目录发布
+    Committed --> Latest: latest CAS 成功
+    Committed --> Superseded: latest CAS 未命中
+    Latest --> [*]
+    Superseded --> [*]
+    Reused --> [*]
+    Failed --> [*]
+```
+
+协调器使用线程锁减少同进程系统调用，再使用标准库 `fcntl.flock` 保证多进程正确性；不引入第三方依赖。锁键与临界区如下：
+
+| 锁键 | 临界区 | 禁止事项 |
+|---|---|---|
+| `{batch}:admission` | 校验批次、创建/复用任务、登记 active task | 不扫描或转换文件 |
+| `{batch}:{stage}:{executionHash}` | 登记/完成/失败 single-flight | 不执行阶段计算 |
+| `{batch}:{stage}:latest` | 读取 generation、校验资源版本、替换 latest | 不校验大产物 |
+| `state-store` | 一次 `state.json` 跨进程读改写 | 不调用业务阶段 |
+
+禁止嵌套持锁。逻辑顺序固定为 `admission -> 释放 -> single-flight 登记 -> 释放 -> 锁外计算 -> single-flight 完成登记 -> 释放 -> latest CAS -> 释放`。若一次操作需要另一把锁，必须先释放当前锁后重试状态判断，以消除死锁环。
+
+latest CAS 仅当当前 generation 等于 `expectedGeneration`、输入对应的资源快照仍允许发布且候选 generation 等于 `expectedGeneration + 1` 时替换。CAS 未命中返回 `cas_mismatch`，不得覆盖当前指针。
+
+### 16.6 兼容期和读取优先级
+
+兼容期从 v1.1 发布开始至少跨一个完整发布周期，结束条件是历史运行迁移/归档完成且遥测确认没有 legacy fallback；移除旧字段必须另立公共契约变更任务。
+
+读取优先级固定为：
+
+1. 报告中的 `snapshotRef`，并验证 `commit.json`、manifest 哈希、必需产物和输入引用；
+2. 仅对历史报告，读取显式 `manifestPath/outputRoot`，标记 `legacy=true` 并执行可用的完整性检查；
+3. `latest.json` 只可用于页面查询或在流水线开始前发现缓存候选，不能作为运行中阶段的 fallback；
+4. 新运行缺少 `snapshotRef` 直接报 `SchemaValidationError`，禁止静默降级到 latest。
+
+### 16.7 错误分类与 JSONL 损坏隔离
+
+| 异常类型 | 分类 | 阶段行为 | 用户摘要 |
+|---|---|---|---|
+| `ModelGatewayError` | `model_gateway` | 按模型策略重试或失败 | 允许“模型服务返回错误” |
+| `ArtifactRecordDecodeError` | `artifact_record_decode` | 满足阈值时隔离单记录 | “产物记录损坏，已隔离” |
+| `ArtifactIntegrityError` | `artifact_integrity` | 阻断当前阶段 | “产物完整性校验失败” |
+| `FileNotFoundError/OSError` | `file_io` | 阻断或按资源隔离 | “文件读取或写入失败” |
+| `ConversionError` | `conversion` | 隔离当前资源 | “文档转换失败” |
+| `SchemaValidationError` | `schema_validation` | 阻断当前阶段 | “产物格式校验失败” |
+| 其他异常 | `internal` | 阻断并返回 `traceId` | “知识加工内部错误” |
+
+只有 `ModelGatewayError` 可以进入模型错误摘要函数。普通 JSON、文件、转换和 Schema 异常不得包装成 `ModelGatewayError`。
+
+单条 JSONL 损坏仅在行边界明确、commit/manifest 哈希验证通过、当前行不是控制文件、隔离后 ID/引用/必需计数仍成立且损坏数量和比例均不超过配置阈值时继续。质量记录写入 `quality/artifact-read-issues.jsonl`：
+
+```json
+{
+  "schemaVersion": "artifact-read-issue/v1",
+  "issueId": "issue_xxx",
+  "severity": "warning",
+  "code": "ARTIFACT_RECORD_DECODE_FAILED",
+  "artifactPath": "metadata/chunks.jsonl",
+  "snapshotId": "prep_xxx",
+  "lineNumber": 17,
+  "byteOffset": 4096,
+  "fileSize": 8192,
+  "fileMtimeNs": 1786084800000000000,
+  "expectedHash": "sha256:...",
+  "actualHash": "sha256:...",
+  "recordHash": "sha256:...",
+  "redactedPrefix": "{\"chunkId\":\"...",
+  "redactedSuffix": "...}",
+  "errorClass": "ArtifactRecordDecodeError",
+  "traceId": "trace_xxx",
+  "action": "isolated"
+}
+```
+
+摘要只保存脱敏后的行首尾和原始行哈希，不保存完整正文。`commit.json`、manifest 或 Schema 解析失败、文件哈希不匹配、缺少文件、无明确行边界/中间截断、隔离后引用不成立或超过阈值时抛出 `ArtifactIntegrityError` 并终止。
+
+阈值来自版本化的 `scripts/pingcode/processing/artifact-integrity.yaml`：
+
+```yaml
+schemaVersion: artifact-integrity-config/v1
+artifactCorruption:
+  maxRecordRatio: 0.001
+  maxRecordCount: 10
+  redactedPrefixCharacters: 80
+  redactedSuffixCharacters: 80
+```
+
+数量和比例采用“双阈值同时满足”规则；任一超过即阻断。业务代码不得内置另一套默认值，配置缺失或 Schema 非法时按 `SchemaValidationError` 阻断。

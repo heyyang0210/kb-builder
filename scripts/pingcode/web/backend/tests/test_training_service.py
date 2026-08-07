@@ -12,6 +12,7 @@ from app.metadata_service import MetadataConstructionService
 from app.training_service import (
     GRAPH_SCHEMA_VERSION,
     ModelGatewayClient,
+    ModelGatewayError,
     ModelTestRequiredError,
     STAGES,
     TrainingCancelledError,
@@ -2584,6 +2585,21 @@ class KeywordExtractionPerformanceTests(unittest.TestCase):
         self.assertEqual(captured["request"].config.max_unit_characters, 3200)
         self.assertTrue(captured["request"].config.review_low_confidence)
         self.assertEqual(captured["request"].keyword_ids, ["keyword:accepted"])
+
+class TrainingFailureClassificationTests(unittest.TestCase):
+    def test_json_decode_error_is_not_reported_as_model_failure(self):
+        error = json.JSONDecodeError("Unterminated string", '{"value":"', 9)
+
+        summary = TrainingService._failure_summary(error)
+
+        self.assertIn("JSON 记录解析失败", summary)
+        self.assertNotIn("模型", summary)
+
+    def test_only_model_gateway_error_uses_model_summary(self):
+        summary = TrainingService._failure_summary(ModelGatewayError("HTTP 502"))
+
+        self.assertEqual(summary, "模型服务暂时不可用（HTTP 502）")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,10 +1,12 @@
 import json
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from app.repositories.artifact_repository import LocalArtifactRepository
+from app.repositories.artifact_repository import ArtifactIntegrityError
 
 
 class ArtifactReadTests(unittest.TestCase):
@@ -113,6 +115,92 @@ class ArtifactAtomicWriteTests(unittest.TestCase):
                     self.repository.write_json(path, {"version": "new"})
 
             self.assertEqual(path.read_bytes(), old_bytes)
+
+    def test_concurrent_writers_never_publish_partial_json(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "artifact.json"
+            values = [{"writer": index, "content": "x" * 1000} for index in range(32)]
+            with ThreadPoolExecutor(max_workers=32) as executor:
+                list(executor.map(lambda value: self.repository.write_json(path, value), values))
+
+            self.assertIn(json.loads(path.read_text(encoding="utf-8")), values)
+            self.assertEqual(list(path.parent.glob(f".{path.name}.*.tmp")), [])
+
+
+class CommittedArtifactReadTests(unittest.TestCase):
+    def setUp(self):
+        self.repository = LocalArtifactRepository()
+
+    def test_bad_record_can_be_isolated_when_policy_allows(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            repository = LocalArtifactRepository()
+            stage = root / "batches/batch-1/preparation"
+            staging = repository.begin_snapshot(stage, "prep-1")
+            path = staging / "metadata/chunks.jsonl"
+            path.parent.mkdir(parents=True)
+            path.write_text('{"id": 1}\ninvalid\n{"id": 2}\n', encoding="utf-8")
+            ref = repository.commit_snapshot(
+                staging, batch_id="batch-1", stage="preparation", run_id="prep-1",
+                input_hash="sha256:input", execution_hash="sha256:execution",
+                generation=1, artifact_paths=["metadata/chunks.jsonl"], data_root=root,
+            )
+
+            records, issues = repository.read_committed_jsonl(
+                ref, "metadata/chunks.jsonl", root,
+                {"maxRecordRatio": 1.0, "maxRecordCount": 1,
+                 "redactedPrefixCharacters": 8, "redactedSuffixCharacters": 8},
+            )
+
+            self.assertEqual(records, [{"id": 1}, {"id": 2}])
+            self.assertEqual(issues[0]["lineNumber"], 2)
+            self.assertNotIn("invalid", json.dumps(issues, ensure_ascii=False))
+
+    def test_file_hash_mismatch_blocks_read(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            repository = LocalArtifactRepository()
+            stage = root / "batches/batch-1/preparation"
+            staging = repository.begin_snapshot(stage, "prep-1")
+            path = staging / "metadata/chunks.jsonl"
+            path.parent.mkdir(parents=True)
+            path.write_text('{"id": 1}\n', encoding="utf-8")
+            ref = repository.commit_snapshot(
+                staging, batch_id="batch-1", stage="preparation", run_id="prep-1",
+                input_hash="sha256:input", execution_hash="sha256:execution",
+                generation=1, artifact_paths=["metadata/chunks.jsonl"], data_root=root,
+            )
+            (root / ref.manifest_path).parent.joinpath("metadata/chunks.jsonl").write_text(
+                '{"id": 2}\n', encoding="utf-8"
+            )
+
+            with self.assertRaises(ArtifactIntegrityError):
+                repository.read_committed_jsonl(
+                    ref, "metadata/chunks.jsonl", root,
+                    {"maxRecordRatio": 1.0, "maxRecordCount": 1,
+                     "redactedPrefixCharacters": 8, "redactedSuffixCharacters": 8},
+                )
+
+    def test_truncated_final_record_blocks_even_when_manifest_matches(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            repository = LocalArtifactRepository()
+            staging = repository.begin_snapshot(root / "batches/batch-1/preparation", "prep-1")
+            path = staging / "metadata/chunks.jsonl"
+            path.parent.mkdir(parents=True)
+            path.write_text('{"id": 1}\n{"id": "truncated', encoding="utf-8")
+            ref = repository.commit_snapshot(
+                staging, batch_id="batch-1", stage="preparation", run_id="prep-1",
+                input_hash="sha256:input", execution_hash="sha256:execution",
+                generation=1, artifact_paths=["metadata/chunks.jsonl"], data_root=root,
+            )
+
+            with self.assertRaisesRegex(ArtifactIntegrityError, "尾部记录被截断"):
+                repository.read_committed_jsonl(
+                    ref, "metadata/chunks.jsonl", root,
+                    {"maxRecordRatio": 1.0, "maxRecordCount": 10,
+                     "redactedPrefixCharacters": 8, "redactedSuffixCharacters": 8},
+                )
 
     def test_atomic_write_failure_preserves_old_file(self):
         with TemporaryDirectory() as directory:

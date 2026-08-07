@@ -1,7 +1,7 @@
 # PingCode 知识提取与构建测试设计
 
-> 版本：v1.0  
-> 日期：2026-07-30  
+> 版本：v1.1
+> 日期：2026-08-07
 > 覆盖设计：`docs/12-PingCode知识提取步骤详细设计.md`、`docs/14-PingCode知识校验与合并步骤详细设计.md`、`docs/15-PingCode图谱与数据集生成步骤详细设计.md`
 
 ## 一、测试目标
@@ -434,3 +434,80 @@ scripts/pingcode/runtime/web/training-runs/training_f2bf3ef8e5cd4af3/events.json
 PYTHONPATH=scripts/pingcode/web/backend python3 -m unittest scripts/pingcode/web/backend/tests/test_knowledge_extraction_tools.py -v
 PYTHONPATH=scripts/pingcode/web/backend python3 -m unittest scripts/pingcode/web/backend/tests/test_training_service.py -v
 ```
+
+## 十二、方案 C 并发快照与损坏隔离测试设计
+
+> 适用版本：方案 C v1，更新日期：2026-08-07。被测接口和 Schema 以 [六步骤流水线 16 节](./08-pingcode-processing-six-step-pipeline-design.md#十六方案-c不可变快照与并发协调契约) 为准。本节定义自动化、故障注入、性能和真实 API 验收，不把尚未执行的项目写成已通过。
+
+### 12.1 契约测试夹具与伪代码
+
+统一夹具必须构造可解析的 `ArtifactSnapshotRef`、`artifact-manifest/v1`、`artifact-commit/v1`、`artifact-latest/v1`、`single-flight/v1` 和 `artifact-read-issue/v1`，并验证 JSON round-trip 后字段不丢失。
+
+```text
+fixture committed_snapshot(stage, records):
+  create unique staging on same filesystem
+  stream write records while calculating sha256/bytes/count
+  write manifest.json
+  write commit.json last
+  atomic rename staging -> runs/runId
+  return ArtifactSnapshotRef
+
+concurrent_case(workers, operation):
+  barrier.wait()                 # 放大竞争窗口
+  run operation in threads/processes
+  collect owner/follower/CAS result, lock timings and filesystem snapshot
+  validate no reader observed staging or partial JSON
+```
+
+测试配置必须加载 `scripts/pingcode/processing/artifact-integrity.yaml`，断言 `schemaVersion=artifact-integrity-config/v1`、`maxRecordRatio=0.001`、`maxRecordCount=10`；业务测试不得自行复制另一套阈值。
+
+### 12.2 正确性与故障注入矩阵
+
+| ID | 场景 | 操作 | 预期 |
+|---|---|---|---|
+| SC-01 | 同批次两个启动请求 | 两线程同时调用训练 start | admission 原子检查并登记，只产生一个有效所有者/幂等任务 |
+| SC-02 | 相同 executionHash | 两线程和两进程同时准备 | 只有一个计算 owner、一个 `runs/<runId>`；其余复用同一 snapshotRef |
+| SC-03 | 不同 inputHash | 并发准备两个输入版本 | 使用独立 staging/run，可并行计算，无共享文件覆盖 |
+| SC-04 | 固定上游引用 | 元数据开始后更新 preparation latest | 元数据仍读取传入 prepRef，输出 inputSnapshots 指向原 run |
+| SC-05 | latest 同 generation | 两进程同时 CAS | 仅一个成功，JSON 始终完整，generation 单调 |
+| SC-06 | 旧任务晚完成 | 新输入先提交 latest，旧输入后提交 | 旧任务 CAS 未命中但快照仍可读，不覆盖新 latest |
+| SC-07 | staging 中止 | 写一半时终止进程 | `runs/<runId>` 不存在，reader 不可见半成品，恢复器可识别遗留 staging |
+| SC-08 | commit 前/后故障 | 分别在 manifest、commit、rename、latest 前注入异常 | 只有完成 commit+rename 的 run 可读；latest 失败不损坏 committed run |
+| SC-09 | 唯一临时文件 | 多进程更新 state/latest | 临时文件名不同，目标只出现完整旧值或完整新值，无截断 JSON |
+| SC-10 | single-flight owner 失败 | owner 抛异常，多个 follower 等待 | follower 收到结构化失败；新请求可递增 attempt 竞争，无永久 running |
+| SC-11 | 单条坏 JSONL | 在明确行边界注入一条坏记录 | 写一条中文质量问题，其余记录继续，结果 `completed_with_warnings` |
+| SC-12 | 坏记录超阈值 | 分别超过 count 或 ratio | 任一超过即 `ArtifactIntegrityError`，不发布下游快照 |
+| SC-13 | 整体不可验证 | 损坏 commit/manifest/hash、删必需文件、制造中间截断 | 阶段阻断且包含路径、快照、偏移、预期/实际哈希和 traceId |
+| SC-14 | 隔离后引用失效 | 坏行被其他记录引用 | 不允许隔离继续，整体完整性失败 |
+| SC-15 | 错误分类 | 分别注入模型、JSONL、I/O、转换、Schema、未知异常 | 只有 `ModelGatewayError` 显示模型服务错误；其余使用自身中文分类 |
+| SC-16 | legacy 兼容 | 读取无 snapshotRef 的历史报告 | 只按显式旧路径兼容并标记 legacy；新报告缺 ref 不回退 latest |
+| SC-17 | 多读取者 | 100 个线程读取同一 committed ref | 全部内容一致，不获取写锁，不出现解析失败 |
+
+坏行质量问题还必须断言：`artifactPath/snapshotId/lineNumber/byteOffset/fileSize/fileMtimeNs/expectedHash/actualHash/recordHash/errorClass/traceId` 齐全；只保存脱敏首尾摘要和哈希，不保存完整正文、绝对路径或凭据。
+
+### 12.3 锁顺序与性能验收
+
+通过协调器观测钩子记录 `lockKey/acquiredAt/releasedAt/waitMs/heldMs`，不记录业务正文。断言：
+
+- 不存在任何嵌套锁事件；顺序符合 admission -> single-flight -> 锁外计算 -> single-flight 完成 -> latest CAS；
+- 扫描、转换、分块、模型调用、全文件 hash 和引用校验期间没有协调锁；
+- admission 和 latest CAS 的 P95 持锁时间低于 20ms；
+- 相同 executionHash 的并发请求实际计算次数为 1；
+- 大批次单任务相对无并发基线耗时回退不超过 5%；
+- 记录 CPU 时间、墙钟时间、峰值 RSS、读写字节、锁等待和 staging/正式目录数量，以区分计算、I/O 与协调开销。
+
+性能用例至少覆盖小/中/大三档 fixture，并在同机空载基线下重复 5 次，报告中位数和 P95；阈值仅作为测试门禁，不进入业务判断代码。
+
+### 12.4 真实后端 API 验收
+
+使用隔离的数据根目录启动真实 FastAPI 后端，不复用或修改用户批次。验收顺序：
+
+1. 通过真实 API 创建/导入包含合法记录和可控失败记录的批次；
+2. 并发发起同批次知识加工请求，核对任务、single-flight 和 run 数量；
+3. 在步骤一提交后更新发现指针，确认步骤二仍使用任务报告中的 prepRef；
+4. 注入一条可界定坏 JSONL，核对中文质量问题和 `completed_with_warnings`；
+5. 注入 commit/hash/Schema 破坏，核对阶段阻断和非模型错误摘要；
+6. 查询任务事件、运行报告和 latest，确认 traceId、snapshotRef、generation 和 CAS 结果可追踪；
+7. 记录 API 请求、响应状态、脱敏响应摘要及对应产物路径，测试结束后清理隔离数据。
+
+只有自动化矩阵、真实 API 和性能基线均取得证据后，方案 C 才能标记“真实链路验证完成”；仅代码或单元测试通过应分别标记“代码完成”或“静态验证完成”。

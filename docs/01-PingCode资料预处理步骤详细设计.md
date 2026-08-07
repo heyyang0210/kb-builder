@@ -1,8 +1,8 @@
 # PingCode 资料预处理步骤详细设计
 
-> 版本：v1.0  
-> 日期：2026-07-27  
-> 状态：v2 接口与基础实现已落地，Office/PDF 转换器细粒度来源映射仍需增强  
+> 版本：v1.1
+> 日期：2026-08-07
+> 状态：v2 基础实现已落地；方案 C 快照发布与 single-flight 已实现并通过核心真实 API 验证；Office/PDF 转换器细粒度来源映射仍需增强
 > 上位设计：`docs/08-pingcode-processing-six-step-pipeline-design.md`
 
 ## 一、设计范围
@@ -421,7 +421,7 @@ retry_material(resourceId, options) -> MaterialRetryResult
 3. 原因是否可重试；
 4. 是否存在正在运行的同资源任务。
 
-重试成功后，原资源的相关规范化文件、映射、处理单元和质量问题采用新的版本标识原子替换；其他资源产物不变，步骤二及后续步骤按输入哈希重新判断是否失效。
+重试成功后，原资源的相关规范化文件、映射、处理单元和质量问题采用新的版本标识发布；其他资源产物不变，步骤二及后续步骤按输入哈希重新判断是否失效。方案 C 下“发布”必须创建新的不可变 `runId`，不得原地替换已经提交的运行目录；本段的原子替换仅适用于新 staging 内尚未提交的文件。
 
 ### 8.3 批次级失败
 
@@ -586,3 +586,103 @@ prepare(context):
 - 真实批次 API 的完整验收样例。
 
 当前实现说明：后端已提供统一配置、原始/规范化/结构化三层产物、JSONL 元数据、结构优先处理单元、原子写入和 PDF 无文本隔离；Office/PDF 当前使用系统 `libreoffice`/`pdftotext`，部署环境必须提供这两个命令。单资源重试 API、完整 Office/PDF 精确 source map 和真实转换器回归样例仍未完成，不能宣称已满足对应验收项。
+
+## 十四、不可变资料准备快照（方案 C）
+
+> 适用版本：方案 C v1，更新日期：2026-08-07。公共快照、commit、latest 和 single-flight Schema 以 [六步骤流水线 16 节](./08-pingcode-processing-six-step-pipeline-design.md#十六方案-c不可变快照与并发协调契约) 为准，本节只定义步骤一的生产者职责。
+
+### 14.1 接口与报告契约
+
+```python
+def prepare(
+    batch_id: str,
+    resource_snapshot: ArtifactSnapshotRef,
+    parent_task_id: str | None = None,
+    stage_run_id: str | None = None,
+) -> PreparationReport: ...
+
+
+class PreparationReport:
+    snapshot_ref: ArtifactSnapshotRef | None
+    manifest_path: str | None  # 历史兼容
+    output_root: str | None    # 历史兼容
+    stage_result: StageResult
+```
+
+新执行成功或部分成功时 `snapshot_ref` 必填，并指向 `stage=material_preparation` 的已提交快照。`manifest_path/output_root` 在兼容期继续回填，但步骤二必须优先读取 `snapshot_ref`，不能用它们或 `preparation/latest.json` 替代本次固定输入。
+
+### 14.2 两阶段发布伪代码
+
+```text
+prepare(batchId, resourceSnapshot):
+  executionHash = hash(stageVersion, resourceSnapshot.manifestHash,
+                       preprocessConfigHash, ruleSetHash)
+  flight = single_flight(batchId, "material_preparation", executionHash)
+  if flight.completed: return report(flight.snapshotRef)
+  if flight.follower: return report(await flight.ownerResult)
+
+  staging = begin_snapshot(batchId, stage, uniqueRunId)
+  try:
+    # 不持 admission、single-flight、latest 或 state-store 锁
+    convert_normalize_segment_into(staging)
+    stream_write_jsonl_with_hash_count(staging)
+    validate_required_artifacts_and_cross_references(staging)
+    write manifest.json
+    write commit.json last
+    prepRef = atomic_publish_directory(staging, runs/runId)
+    mark_single_flight_completed(executionHash, prepRef)
+    commit_latest_cas(prepRef, expectedGeneration)
+    return PreparationReport(snapshot_ref=prepRef, legacy_paths=...)
+  except:
+    mark_single_flight_failed(executionHash, classified_error)
+    retain_or_clean_staging_by_recovery_policy
+    raise
+```
+
+原 7.1 节的 `training-runs/<taskId>/` 是兼容视图；方案 C 的规范存储为 `artifacts/<batchId>/material_preparation/runs/<runId>/`。兼容视图只能引用已提交运行，不允许在原位置继续原地改写同一份正式产物。
+
+### 14.3 步骤一 manifest 扩展
+
+除公共字段外，步骤一 `manifest.json` 必须包含：
+
+```json
+{
+  "resourceSnapshotRef": {
+    "batchId": "batch_xxx",
+    "stage": "resource_download",
+    "runId": "download_xxx",
+    "inputHash": "sha256:...",
+    "manifestPath": "runs/download_xxx/manifest.json",
+    "manifestHash": "sha256:...",
+    "generation": 8053
+  },
+  "preprocessConfigVersion": "preprocess-config/v1",
+  "converterRegistryVersion": "converter-registry/v1",
+  "processableResourceCount": 8050,
+  "isolatedResourceCount": 3
+}
+```
+
+开始执行时固定 `resourceSnapshotRef`；下载状态或 latest 在运行期间发生变化，不改变本次输入。下载存在少量失败但仍有可加工资源时，资料下载告警可以保留，步骤一按固定清单继续并把失败资源计入质量问题。
+
+### 14.4 状态与失败语义
+
+```text
+staging -> validating -> committed -> latest | superseded
+   |           |
+   +---------> failed
+```
+
+- `committed`：正式目录存在且 `commit.json`、manifest、必需产物、哈希、记录数和引用完整性均成立；
+- `latest`：committed 后 latest CAS 成功；
+- `superseded`：CAS 未命中，快照仍可按 `ArtifactSnapshotRef` 使用；
+- `completed_with_warnings`：资源级隔离后仍有有效输入，且整个快照完整；
+- `failed`：控制文件不可解析、哈希/引用不成立、没有可加工资源、I/O 或 Schema 阻断；
+- 进程在 staging 阶段终止：不得出现可读的 `runs/<runId>`，恢复器按保留期清理；
+- 所有者失败：single-flight 等待者收到同一结构化失败，可重新竞争下一 attempt。
+
+步骤一的转换异常归类为 `ConversionError`，文件异常归类为 `file_io`，快照校验异常归类为 `ArtifactIntegrityError` 或 `SchemaValidationError`。步骤一不调用模型，任何这些异常都不得显示为“模型服务返回错误”。
+
+### 14.5 锁与性能边界
+
+步骤一只在 single-flight 登记/完成以及 latest CAS 时持对应短锁；扫描、Office/PDF 转换、规范化、分块、JSONL 写入、hash/count 和完整性校验全部锁外执行。相同 `executionHash` 只有一个 owner；不同输入使用不同 staging 和运行目录，可在 Worker 容量范围内并行。

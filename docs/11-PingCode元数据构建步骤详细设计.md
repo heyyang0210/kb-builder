@@ -1,8 +1,9 @@
 # PingCode 元数据构建步骤详细设计
 
-> 版本：v1.0
+> 版本：v1.1
+> 更新日期：2026-08-07
 > 上位设计：`docs/08-pingcode-processing-six-step-pipeline-design.md`
-> 实现状态：代码版 v1 已实现，当前规则由 `scripts/pingcode/processing/metadata-rules/` 维护
+> 实现状态：代码版 v1 与方案 C 显式快照消费已实现，核心真实 API 已验证；当前规则由 `scripts/pingcode/processing/metadata-rules/` 维护
 
 ## 一、范围与职责
 
@@ -58,7 +59,7 @@ execute(context):
 
 - `MetadataConstructionService` 纯代码执行，不调用 Skill、Agent 或大模型；
 - `/api/metadata/build` 接口；
-- 读取步骤一最近成功运行的 `source-documents.jsonl`、`chunks.jsonl`；
+- 兼容实现读取步骤一最近成功运行的 `source-documents.jsonl`、`chunks.jsonl`；方案 C 新运行必须按显式 `ArtifactSnapshotRef` 读取已提交快照；
 - 校验 `resourceId/chunkId` 一一对应、规范化文件哈希和处理单元内容哈希；
 - 生成 `metadata/documents.jsonl`、`metadata/chunk-contexts.jsonl` 和 `quality/metadata-issues.json`；
 - 生成抽取式摘要、分类、关键词、可识别版本、前后单元摘要和标题路径；
@@ -83,3 +84,69 @@ deterministic_ready / model_required / human_review / skip
 ```
 
 每条记录包含 `resourceId/chunkIds/semanticTitle/preselectionState/reasons/evidence/sourceMethods`。`deterministic_ready` 表示 `topicCandidates` 已有可追溯证据，可由确定性候选进入关键词图谱；`model_required` 表示标题存在但缺少稳定主题证据，需要关键词模型补充；`human_review` 表示标题疑似多主题或冲突，默认不直接调用模型；`skip` 表示没有可用处理单元或语义标题为空。初筛报告只决定模型调度和人工确认入口，不直接把资源、文件名或完整标题写入关键词图谱。
+
+## 八、显式快照消费与损坏隔离（方案 C）
+
+> 适用版本：方案 C v1。公共 Schema、锁和状态机见 [六步骤流水线 16 节](./08-pingcode-processing-six-step-pipeline-design.md#十六方案-c不可变快照与并发协调契约)。元数据构建是 committed reader，不参与选择或改写步骤一 latest。
+
+### 8.1 接口先行
+
+```python
+def build(
+    batch_id: str,
+    preparation_snapshot: ArtifactSnapshotRef,
+    parent_task_id: str | None = None,
+    stage_run_id: str | None = None,
+) -> MetadataBuildReport: ...
+
+
+class MetadataBuildReport:
+    snapshot_ref: ArtifactSnapshotRef | None
+    manifest_path: str | None  # 历史兼容
+    output_root: str | None    # 历史兼容
+    stage_result: StageResult
+```
+
+`preparation_snapshot` 对方案 C 新运行是必填语义。为不修改公共 HTTP API，路由层可从当前训练任务已固定的 `PreparationReport.snapshot_ref` 注入；不得在 `build()` 内重新读取 `preparation/latest.json`。
+
+### 8.2 读取与发布伪代码
+
+```text
+build(batchId, preparationSnapshot):
+  validate preparationSnapshot.batchId == batchId
+  committed = repository.open_committed(preparationSnapshot)
+  verify commit.json exists and schemaVersion == artifact-commit/v1
+  verify manifest hash, input hash, required artifact hash/count/schema
+
+  documents = read_committed_jsonl(preparationSnapshot, "metadata/source-documents.jsonl")
+  chunks = read_committed_jsonl(preparationSnapshot, "metadata/chunks.jsonl")
+  structures = read_committed_jsonl(preparationSnapshot, "metadata/structure-blocks.jsonl")
+  validate IDs and cross-file references after record isolation
+
+  metadataExecutionHash = hash(stageVersion, preparationSnapshot.manifestHash,
+                               metadataConfigHash, ruleSetHash)
+  coordinate single-flight and generate into unique staging directory
+  validate outputs, write manifest, write commit last, atomically publish
+  return MetadataBuildReport(snapshot_ref=metadataRef, legacy_paths=...)
+```
+
+读取优先级固定为：`snapshotRef` -> 仅历史报告的显式 `manifestPath/outputRoot` -> 页面发现用途的 latest。新运行缺少 `snapshotRef` 抛 `SchemaValidationError`；运行中禁止 latest fallback。兼容期至少一个完整发布周期，旧字段移除需单独变更公共契约。
+
+### 8.3 JSONL 单记录隔离
+
+committed reader 先验证控制文件和文件级哈希，再流式逐行解析并记录 `artifactPath/snapshotId/lineNumber/byteOffset/fileSize/fileMtimeNs/expectedHash/actualHash/errorClass/traceId`。
+
+仅同时满足以下条件时隔离当前记录：
+
+1. 行边界明确且只影响当前数据行；
+2. 损坏对象不是 manifest、commit、Schema 或其他控制记录；
+3. 隔离后 `resourceId/chunkId` 唯一性、上下游引用和必需计数仍成立；
+4. 损坏记录数不超过 10，且比例不超过 0.001；阈值实际从版本化配置读取。
+
+满足条件时写 `quality/artifact-read-issues.jsonl`，仅保留行 SHA-256 和脱敏首尾摘要，关联资源标记 `isolated`，步骤结果为 `completed_with_warnings`。不得像旧通用 reader 一样静默跳过坏行。
+
+以下情况抛 `ArtifactIntegrityError` 并终止：manifest/commit/Schema 解析失败，文件缺失或哈希不匹配，没有明确行边界或出现中间截断，隔离后引用/计数不成立，数量或比例任一超过阈值。配置缺失或非法抛 `SchemaValidationError`。
+
+### 8.4 错误语义与无模型边界
+
+本步骤完全由规则和代码执行，正常路径模型调用数必须为 0。JSON 解码使用 `ArtifactRecordDecodeError`，整体完整性使用 `ArtifactIntegrityError`，文件使用 `FileNotFoundError/OSError`，规则/产物 Schema 使用 `SchemaValidationError`。这些异常不得调用模型错误摘要；只有后续阶段实际抛出的 `ModelGatewayError` 才可显示“模型服务返回错误”。

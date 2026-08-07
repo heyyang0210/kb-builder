@@ -30,6 +30,8 @@ from .markdown_cleaning import clean_markdown
 from .models import DatasetVersion, PreprocessTaskCreate, TaskSnapshot, TrainingReviewDecision, TrainingTaskCreate
 from .processing_units import build_processing_units
 from .repositories import ArtifactRepository, LocalArtifactRepository
+from .repositories.artifact_repository import ArtifactIntegrityError, ArtifactRecordDecodeError
+from .batch_operation_coordinator import BatchOperationCoordinator
 
 TERMINAL_STATES = {"completed", "failed", "cancelled"}
 STAGES = [
@@ -123,6 +125,7 @@ class TrainingService:
         gateway: ModelGateway | None = None,
         *,
         artifact_repository: ArtifactRepository | None = None,
+        coordinator: BatchOperationCoordinator | None = None,
     ):
         self.store = store
         self.batches = batches
@@ -137,6 +140,7 @@ class TrainingService:
             settings.model_gateway_timeout,
         )
         self.artifacts = artifact_repository or LocalArtifactRepository()
+        self.coordinator = coordinator or BatchOperationCoordinator(settings.data_root, self.artifacts)
         self._event_lock = threading.RLock()
         self._review_lock = threading.RLock()
         self._model_test_lock = threading.RLock()
@@ -527,31 +531,32 @@ class TrainingService:
 
     def start(self, request: TrainingTaskCreate) -> TaskSnapshot:
         self._reconcile_if_needed()
-        batch = self._require_batch_ready(request.batch_id)
         if request.mode == "formal_knowledge":
             self.require_model_test()
-        now = utcnow()
-        task_id = f"training_{uuid.uuid4().hex[:16]}"
-        task = TaskSnapshot(
-            id=task_id,
-            batch_id=batch.id,
-            type="graph",
-            state="queued",
-            stage="queued",
-            total=len(STAGES),
-            stages=[{
-                "id": stage,
-                "stageRunId": stable_id("stage-run", task_id, stage),
-                "state": "pending",
-            } for stage in STAGES],
-            model_calls={"succeeded": 0, "failed": 0, "skipped": 0},
-            can_cancel=True,
-            created_at=now,
-            updated_at=now,
-        )
-        self.tasks._save(task)
-        self._mark_task_active(task.id)
-        self.batches.update(batch.id, state="processing", activeTaskIds=[task.id])
+        with self.coordinator.admission(request.batch_id):
+            batch = self._require_batch_ready(request.batch_id)
+            now = utcnow()
+            task_id = f"training_{uuid.uuid4().hex[:16]}"
+            task = TaskSnapshot(
+                id=task_id,
+                batch_id=batch.id,
+                type="graph",
+                state="queued",
+                stage="queued",
+                total=len(STAGES),
+                stages=[{
+                    "id": stage,
+                    "stageRunId": stable_id("stage-run", task_id, stage),
+                    "state": "pending",
+                } for stage in STAGES],
+                model_calls={"succeeded": 0, "failed": 0, "skipped": 0},
+                can_cancel=True,
+                created_at=now,
+                updated_at=now,
+            )
+            self.tasks._save(task)
+            self._mark_task_active(task.id)
+            self.batches.update(batch.id, state="processing", activeTaskIds=[task.id])
         run_dir = self._run_dir(task.id)
         run_dir.mkdir(parents=True, exist_ok=True)
         self._log(task.id, "info", "queued", "task.queued", "训练任务已进入执行队列")
@@ -2827,7 +2832,7 @@ class TrainingService:
                 self._complete_cancellation(task_id, request.batch_id)
                 return
             current_stage = self.tasks.get(task_id).stage or "failed"
-            summary = error_summary(exc)
+            summary = self._failure_summary(exc)
             if current_stage in STAGES:
                 self._set_stage(task_id, current_stage, "failed", detail_message=summary)
             self.tasks._update(
@@ -2853,6 +2858,22 @@ class TrainingService:
         finally:
             self._mark_task_inactive(task_id)
 
+    @staticmethod
+    def _failure_summary(exc: BaseException) -> str:
+        if isinstance(exc, ModelGatewayError):
+            return error_summary(exc)
+        if isinstance(exc, ArtifactIntegrityError):
+            return f"产物完整性校验失败：{exc}"
+        if isinstance(exc, ArtifactRecordDecodeError):
+            return f"产物记录解析失败：{exc}"
+        if isinstance(exc, json.JSONDecodeError):
+            return f"JSON 记录解析失败：第 {exc.lineno} 行第 {exc.colno} 列"
+        if isinstance(exc, OSError):
+            return f"文件读取或写入失败：{exc}"
+        if isinstance(exc, ValidationError):
+            return f"产物格式校验失败：{exc.message}"
+        return f"知识加工内部错误：{exc}"
+
     def _prepare_materials(self, task_id: str, request: TrainingTaskCreate, run_dir: Path):
         if self.preparation is not None and self.metadata_construction is not None:
             return self._prepare_materials_from_stage_outputs(task_id, request, run_dir)
@@ -2877,22 +2898,44 @@ class TrainingService:
         self._raise_if_cancelled(task_id)
         metadata_report = self.metadata_construction.build(
             request.batch_id,
+            preparation_snapshot=preparation_report.snapshot_ref,
             parent_task_id=task_id,
             stage_run_id=metadata_stage_run_id,
         )
 
         preparation_root = (settings.data_root / preparation_report.manifest_path).resolve().parent
         metadata_root = (settings.data_root / metadata_report.stage_result_path).resolve().parent
-        source_documents = self._read_jsonl(preparation_root / "metadata/source-documents.jsonl")
-        source_resources = self._read_jsonl(preparation_root / "metadata/source-resources.jsonl")
-        source_assets = self._read_jsonl(preparation_root / "metadata/source-assets.jsonl")
+        policy = self.artifacts.load_corruption_policy(
+            settings.processing_skill_root.parent / "artifact-integrity.yaml"
+        )
+        preparation_ref = preparation_report.snapshot_ref
+        metadata_ref = metadata_report.snapshot_ref
+        source_documents, source_document_issues = self.artifacts.read_committed_jsonl(
+            preparation_ref, "metadata/source-documents.jsonl", settings.data_root, policy
+        )
+        source_resources, source_resource_issues = self.artifacts.read_committed_jsonl(
+            preparation_ref, "metadata/source-resources.jsonl", settings.data_root, policy
+        )
+        source_assets, source_asset_issues = self.artifacts.read_committed_jsonl(
+            preparation_ref, "metadata/source-assets.jsonl", settings.data_root, policy
+        )
         ingestion_report = self._read_json(preparation_root / "metadata/ingestion-report.json", {})
-        prepared_chunks = self._read_jsonl(preparation_root / "metadata/chunks.jsonl")
-        structure_blocks = self._read_jsonl(preparation_root / "metadata/structure-blocks.jsonl")
-        documents = self._read_jsonl(metadata_root / "metadata/documents.jsonl")
-        chunk_contexts = self._read_jsonl(metadata_root / "metadata/chunk-contexts.jsonl")
+        prepared_chunks, prepared_chunk_issues = self.artifacts.read_committed_jsonl(
+            preparation_ref, "metadata/chunks.jsonl", settings.data_root, policy
+        )
+        structure_blocks, structure_block_issues = self.artifacts.read_committed_jsonl(
+            preparation_ref, "metadata/structure-blocks.jsonl", settings.data_root, policy
+        )
+        documents, document_issues = self.artifacts.read_committed_jsonl(
+            metadata_ref, "metadata/documents.jsonl", settings.data_root, policy
+        )
+        chunk_contexts, context_issues = self.artifacts.read_committed_jsonl(
+            metadata_ref, "metadata/chunk-contexts.jsonl", settings.data_root, policy
+        )
         preselection_report = self._read_json(metadata_root / "metadata/preselection-report.json", {})
-        embedding_index = self._read_jsonl(metadata_root / "metadata/embedding-index.jsonl") if (metadata_root / "metadata/embedding-index.jsonl").is_file() else []
+        embedding_index, embedding_read_issues = self.artifacts.read_committed_jsonl(
+            metadata_ref, "metadata/embedding-index.jsonl", settings.data_root, policy
+        )
         cluster_report = self._read_json(metadata_root / "metadata/cluster-report.json", {})
         for records, stage_run_id in (
             (source_documents, preparation_stage_run_id),
@@ -2912,6 +2955,17 @@ class TrainingService:
         )
         embedding_issues = self._read_json(metadata_root / "quality/embedding-issues.json", [])
         cluster_issues = self._read_json(metadata_root / "quality/cluster-issues.json", [])
+        artifact_read_issues = [
+            *source_document_issues,
+            *source_resource_issues,
+            *source_asset_issues,
+            *prepared_chunk_issues,
+            *structure_block_issues,
+            *document_issues,
+            *context_issues,
+            *embedding_read_issues,
+        ]
+        preparation_issues.extend(artifact_read_issues)
         if not prepared_chunks or not documents:
             raise RuntimeError("资料预处理后没有可进入知识提取的处理单元")
 
@@ -2952,6 +3006,8 @@ class TrainingService:
             "metadataRunId": metadata_report.run_id,
             "preparationManifestPath": preparation_report.manifest_path,
             "metadataStageResultPath": metadata_report.stage_result_path,
+            "preparation": preparation_report.snapshot_ref.model_dump(mode="json", by_alias=True),
+            "metadata": metadata_report.snapshot_ref.model_dump(mode="json", by_alias=True),
         }
         self._write_json(run_manifest_path, run_manifest)
 
