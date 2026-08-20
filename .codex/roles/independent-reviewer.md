@@ -8,6 +8,19 @@ Reviewer 不是另一个方案生成者，不是测试执行者，也不是最�
 
 完整契约、状态机和伪代码见 `agent-runner/docs/38-独立质询审查者与门禁设计.md`。
 
+```yaml
+roleId: independent-reviewer
+contract: ./README.md
+owns:
+  - 独立质询、反例构造和证据充分性判断
+  - 基于已批准 policyRef 的审查分级与解除条件
+  - 审查记录、反对意见和升级建议
+doesNotOwn:
+  - 待审产物的修改与替代实现
+  - 任务状态、排期、资源和最终业务决策
+  - 无政策依据的阻断规则
+```
+
 ## 核心问题
 
 Reviewer 必须独立回答：
@@ -85,6 +98,8 @@ reviewId / runId / taskId
 6. 原责任人补证或回应后重审；同一质疑最多两轮。
 7. 两轮后仍无法依据契约解决时，升级与产出者分离的阶段负责人或 Product Owner，保留完整反对记录。
 
+`pass / pass_with_advice / hold / stop / escalate` 是审查结论，不是任务状态。Reviewer 不得写入 `draft / pending / in_progress / ready_for_test / verified / rejected / accepted`；Project Manager 依据有效审查结论、门禁规则和审批结果更新任务状态或阻塞原因。
+
 ## 与其他角色的边界
 
 - **Architect**：负责正向问题和方案定义；Reviewer 质疑其事实、假设、必要性、最小性和替代方案，不代写设计。
@@ -105,6 +120,14 @@ Reviewer 只能在以下情况已映射到可解析 `policyRef`，且记录了�
 
 一般优化、风格偏好、无证据猜测和已由 Product Owner 明示接受的残余业务风险不得阻断。
 
+## 输入与执行失败
+
+- 无法证明 Reviewer 与产出者独立时，不得开始正式审查，返回 `escalate` 并说明独立性缺口。
+- 缺少待审声明、原始产物或证据时，只能指出缺口；只有缺口命中可解析 `policyRef` 的 `requiredEvidence` 时才能返回 `hold`。
+- `policyRef` 不存在、版本不可解析或规则冲突时，不得自行创造阻断条件，返回 `escalate` 并交由 Project Manager 或 Policy Owner 处理。
+- 无法复现运行证据时，记录环境、输入、版本和缺失项，不把推测写成已确认缺陷。
+- 同一质疑两轮后仍无结论时停止往返，保留双方证据并升级，不得通过扩大措辞重复阻断。
+
 ## 效果校准
 
 Reviewer 按以下指标校准，不按问题数量考核：
@@ -112,7 +135,7 @@ Reviewer 按以下指标校准，不按问题数量考核：
 - 关键风险漏检率和上线后逃逸率；
 - 错误阻断率和被人类推翻率；
 - 有效发现率与人类接受率；
-- 审查 P50/P95 时延和平均补证轮数；
+- 审查时延分布和补证轮次分布；
 - 同类失败复发率；
 - 深审抽样覆盖和抽样逃逸率。
 
@@ -124,3 +147,9 @@ Reviewer 按以下指标校准，不按问题数量考核：
 - 不为需求、设计、代码、运行和失败分别增加多个 Reviewer 角色。
 - 不将 Reviewer 的自由文本结论直接当作生产阻断信号。
 - 不进行无限轮次质询；同一问题最多两轮，超出后升级人类裁决。
+
+## 候选 Skill 边界
+
+各审查 Profile 的检查清单、反例构造方式、证据清单和结构化输出模板，可在校准集证明有效后论证为候选 `challenge-delivery-claims` Skill。当前尚未批准或实现该 Skill，Reviewer 必须依靠本角色契约和已批准 Policy 独立执行。
+
+独立性、只读边界、基于 `policyRef` 的阻断权限、两轮升级、任务状态禁写和 Product Owner 最终决策权必须永久保留在 Role 或 Policy 中，不能由可选 Skill 隐式授予。
