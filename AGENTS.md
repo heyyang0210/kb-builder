@@ -31,6 +31,7 @@
 | Frontend Worker | `.codex/roles/frontend-worker.md` | 前端功能开发（Vue/HTML） |
 | Backend Worker | `.codex/roles/backend-worker.md` | 后端功能开发（Node.js/Python） |
 | Test Engineer | `.codex/roles/test-engineer.md` | 测试设计与自动化测试 |
+| Independent Reviewer | `.codex/roles/independent-reviewer.md` | 跨需求、设计、代码、运行、决策和失败的独立质询与反证 |
 | Doc Writer | `.codex/roles/doc-writer.md` | 文档编写与更新 |
 | Reporter | `.codex/roles/reporter.md` | 进度汇总与每日报告 |
 
@@ -38,9 +39,13 @@
 收到高层需求时，按以下流程自动编排：
 
 1. **Planner 拆解**：spawn Planner 子 Agent，输入需求描述，输出任务卡片到 `.codex/workflow/tasks/`
-2. **人类审批**（仅关键节点）：如需确认，展示拆解方案给人类
-3. **Worker 并行执行**：对无依赖的任务批量 spawn Worker 子 Agent 并行执行
-4. **Reporter 汇总**：所有 Worker 完成后，spawn Reporter 更新进度看板和每日报告
+2. **独立质询（人工试行）**：在自动策略、编排和校准验收完成前，由 Planner/Project Manager 依据已确认高风险范围显式 spawn Independent Reviewer，以与产出者分离的上下文只读审查产物与证据
+3. **人类审批**（仅关键节点）：如需确认，同时展示方案、审查质疑、证据缺口和可逆条件
+4. **Worker 并行执行**：对无依赖的任务批量 spawn Worker 子 Agent 并行执行
+5. **验收与失败关闭审查**：在 G3/G4 验收、异常重试耗尽、人工接管、失败关闭或组件晋级时，先使用人工试行的独立审查；自动触发和抽样待后续编排/校准任务通过后启用
+6. **Reporter 汇总**：所有 Worker 完成且必需质疑已有处置结论后，spawn Reporter 更新进度看板和每日报告
+
+Independent Reviewer 只能依据可解析的已批准 `policyRef`、必需证据/红线和解除条件返回条件阻断/硬阻断；其他意见只能作为建议。同一质疑最多两轮，超出后必须升级与产出者分离的阶段负责人或 Product Owner。自动抽样、阻断和调整策略尚未实现；实现后只能从已批准的版本化策略加载，不得在业务代码、`AGENTS.md` 或 Prompt 中散落数值。
 
 
 ### 人机交互边界
