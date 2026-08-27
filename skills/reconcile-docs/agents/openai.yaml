@@ -1,0 +1,4 @@
+interface:
+  display_name: "周期文档对账"
+  short_description: "基于快照、业务意图、实现与验证证据审计并修正文档漂移"
+  default_prompt: "Use $reconcile-docs to run a periodic documentation reconciliation audit for this repository."

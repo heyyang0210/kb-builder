@@ -1,0 +1,11 @@
+{
+  "schemaVersion": "doc-governance/v1",
+  "ruleVersion": "reconcile-docs/v1",
+  "contextRoot": ".codex/context/reconcile-docs",
+  "auditRoot": ".codex/workflow/audits/documentation",
+  "inventory": {"include": ["**/*"], "exclude": [".git/**"]},
+  "modules": {},
+  "publicContractGlobs": [],
+  "structuralInvalidators": [],
+  "requiredDocumentMetadata": ["documentType", "moduleId", "owner"]
+}

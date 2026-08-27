@@ -28,6 +28,10 @@ agent-runner/docs/
 |---|---|
 | [独立质询审查者与门禁设计](./38-独立质询审查者与门禁设计.md) | 需求、设计、计划、代码、运行、决策与失败关闭的独立反证和 G0–G4 门禁治理 |
 | [Role Contract v1 与角色治理设计](./39-Role-Contract-v1与角色治理设计.md) | 九个角色的公共契约、状态所有权、权限、证据、失败升级和演进边界 |
+| [Task Routing Contract v1 与最小执行路径](./40-Task-Routing-Contract-v1与最小角色路径设计.md) | 直接处理、标准开发、治理任务和按需上下文装载 |
+| [Approval Boundary v1 人工审批边界](./41-Approval-Boundary-v1人工审批边界.md) | 默认授权、必须审批、不确定项判断和最小审批记录的单一事实源 |
+
+服务基础设施设计见 [服务启动与重启设计](./overview/service-startup-and-restart-design.md)。
 
 ## 模块地图
 
@@ -37,7 +41,7 @@ agent-runner/docs/
 | `generation-workflow` | 文档生成工作流、步骤执行、Agent 与直接生成 | `lib/workflow-engine.js`、`lib/step-executor.js`、`lib/agents/`、`lib/direct-generate/` | `modules/generation-workflow/` |
 | `outline-management` | 大纲上传、解析、预检、评分和落库 | `routes/outline.js`、前端大纲交互、`outlines/` | [模块入口](./modules/outline-management/README.md) |
 | `knowledge-graph-governance` | 图谱质量概览、问题诊断、证据联动和版本运营 | PingCode 资料平台图谱前后端 | [模块入口](./modules/knowledge-graph-governance/README.md) |
-| `document-management` | 文档生成结果、预览、编辑、列表和元数据 | `routes/document.js`、`lib/document/`、`output/` | `modules/document-management/` |
+| `document-management` | 文档生成结果、预览、编辑、评论、列表和元数据 | `routes/document.js`、`lib/document/`、`output/`、`data/document-comments.json` | [模块入口](./modules/document-management/README.md) |
 | `material-processing` | 素材接入、转换、预处理、批次与产物快照 | `lib/preprocessing/`、素材平台相关前后端 | `modules/material-processing/` |
 | `knowledge-retrieval` | MCP、检索策略、上下文组装、索引与图谱评估 | `lib/tools/mcp-client.js`、`lib/retrieval/`、`lib/retrieval-strategy/` | `modules/knowledge-retrieval/` |
 | `workbench-shell` | 中文工作台、全局导航、跨模块交互和状态展示 | `frontend/`、`frontend-server.js` | `modules/workbench-shell/` |

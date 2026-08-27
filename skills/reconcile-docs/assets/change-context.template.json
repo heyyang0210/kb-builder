@@ -1,0 +1,11 @@
+{
+  "schemaVersion": "reconcile-change-context/v1",
+  "runId": "<timestamp>-<head>",
+  "mode": "incremental",
+  "baselineRef": "<last-successful-ref>",
+  "runStartHead": "<frozen-head>",
+  "committedChanges": [],
+  "preExisting": [],
+  "modules": {},
+  "questions": []
+}

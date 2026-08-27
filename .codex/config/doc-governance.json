@@ -1,0 +1,63 @@
+{
+  "schemaVersion": "doc-governance/v1",
+  "ruleVersion": "reconcile-docs/v1",
+  "contextRoot": ".codex/context/reconcile-docs",
+  "auditRoot": ".codex/workflow/audits/documentation",
+  "inventory": {
+    "include": ["AGENTS.md", "README.md", ".codex/**/*.md", "agent-runner/**/*.js", "agent-runner/**/*.json", "agent-runner/**/*.md", "scripts/**/*.py", "scripts/**/*.js", "scripts/**/*.vue", "scripts/**/*.md", "skills/**/*.md", "skills/**/*.py", "config/**/*.json"],
+    "exclude": [".git/**", "**/node_modules/**", "**/__pycache__/**", "**/dist/**", "**/coverage/**", "**/*.backup", "**/*.bak", "**/reports/**", ".codex/context/reconcile-docs/**", ".codex/workflow/audits/documentation/**"]
+  },
+  "modules": {
+    "platform-foundation": {
+      "codeGlobs": ["skills/**", ".codex/config/**", "AGENTS.md"],
+      "documentGlobs": ["agent-runner/docs/modules/platform-foundation/**", "agent-runner/docs/README.md", "README.md"],
+      "intentGlobs": [".codex/requirements/modules/platform-foundation/**", ".codex/workflow/modules/platform-foundation/**", ".codex/workflow/tasks/reconcile-docs/**"],
+      "verificationGlobs": ["skills/**/tests/**", "skills/**/scripts/**/*test*", ".codex/workflow/audits/documentation/**"]
+    },
+    "generation-workflow": {
+      "codeGlobs": ["agent-runner/services/**", "agent-runner/routes/generation*", "agent-runner/prompts/**"],
+      "documentGlobs": ["agent-runner/docs/**/*生成*", "agent-runner/docs/**/*工作流*"],
+      "intentGlobs": [".codex/requirements/modules/generation-workflow/**", ".codex/workflow/tasks/**/*generation*"],
+      "verificationGlobs": ["agent-runner/tests/**/*generation*", "agent-runner/tests/e2e/**"]
+    },
+    "outline-management": {
+      "codeGlobs": ["agent-runner/routes/outline*", "agent-runner/services/**/*outline*", "agent-runner/frontend/**/*outline*", "agent-runner/outlines/**"],
+      "documentGlobs": ["agent-runner/docs/modules/outline-management/**", "outlines/**"],
+      "intentGlobs": [".codex/requirements/modules/outline-management/**", ".codex/workflow/tasks/outline-management/**"],
+      "verificationGlobs": ["agent-runner/tests/**/*outline*", "agent-runner/tests/e2e/**"]
+    },
+    "knowledge-graph-governance": {
+      "codeGlobs": ["scripts/pingcode/web/backend/app/graph_*", "scripts/pingcode/web/frontend/src/**/*Graph*", "scripts/pingcode/web/frontend/src/**/*Quality*"],
+      "documentGlobs": ["agent-runner/docs/modules/knowledge-graph-governance/**", "docs/**/*知识图谱*"],
+      "intentGlobs": [".codex/requirements/modules/knowledge-graph-governance/**", ".codex/workflow/tasks/TASK-KGO-*"],
+      "verificationGlobs": ["scripts/pingcode/web/backend/tests/test_graph_*", "scripts/pingcode/web/frontend/tests/**/*graph*"]
+    },
+    "document-management": {
+      "codeGlobs": ["agent-runner/routes/document*", "agent-runner/services/**/*document*", "agent-runner/frontend/**/*document*"],
+      "documentGlobs": ["agent-runner/docs/**/*文档管理*", "agent-runner/docs/**/*文档生成*"],
+      "intentGlobs": [".codex/requirements/modules/document-management/**", ".codex/workflow/tasks/**/*DOC*"],
+      "verificationGlobs": ["agent-runner/tests/document*", "agent-runner/tests/e2e/**/*document*"]
+    },
+    "material-processing": {
+      "codeGlobs": ["scripts/pingcode/processing/**", "scripts/pingcode/web/backend/app/preparation_*", "scripts/pingcode/web/frontend/src/views/Preprocess*"],
+      "documentGlobs": ["docs/**/*预处理*", "docs/**/*资料加工*", "agent-runner/docs/**/*预处理*"],
+      "intentGlobs": [".codex/requirements/modules/material-processing/**", ".codex/workflow/tasks/**/*MATERIAL*"],
+      "verificationGlobs": ["scripts/pingcode/web/backend/tests/test_material_*", "scripts/pingcode/processing/**/tests/**"]
+    },
+    "knowledge-retrieval": {
+      "codeGlobs": ["scripts/pingcode/web/backend/app/**/*retriev*", "scripts/pingcode/web/backend/app/**/*search*", "scripts/pingcode/web/frontend/src/**/*Search*"],
+      "documentGlobs": ["docs/**/*检索*", "agent-runner/docs/**/*检索*"],
+      "intentGlobs": [".codex/requirements/modules/knowledge-retrieval/**", ".codex/workflow/tasks/**/*RETRIEVAL*"],
+      "verificationGlobs": ["scripts/pingcode/web/backend/tests/**/*retriev*", "scripts/pingcode/web/backend/tests/**/*search*"]
+    },
+    "workbench-shell": {
+      "codeGlobs": ["agent-runner/frontend/**", "scripts/pingcode/web/frontend/src/App*", "scripts/pingcode/web/frontend/src/router/**", "scripts/pingcode/web/frontend/src/material-ui.js"],
+      "documentGlobs": ["agent-runner/docs/**/*前端*", "docs/**/*frontend*", "docs/**/*交互*"],
+      "intentGlobs": [".codex/requirements/modules/workbench-shell/**", ".codex/workflow/tasks/**/*FE*", ".codex/workflow/tasks/**/*UX*"],
+      "verificationGlobs": ["agent-runner/tests/e2e/**", "scripts/pingcode/web/frontend/tests/**"]
+    }
+  },
+  "publicContractGlobs": ["**/routes/**", "**/api/**", "**/models.py", "**/schemas/**", "**/package.json", "**/requirements*.txt"],
+  "structuralInvalidators": ["AGENTS.md", ".codex/config/doc-governance.json", "**/package.json", "**/requirements*.txt", "**/config.py"],
+  "requiredDocumentMetadata": ["documentType", "moduleId", "owner"]
+}
