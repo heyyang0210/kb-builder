@@ -1,8 +1,8 @@
-# PingCode 知识加工六步骤流水线详细设计
+# PingCode 知识加工流水线详细设计
 
 > 版本：v1.1
 > 日期：2026-08-07
-> 状态：方案 C 核心代码与真实 API 链路已验证，大规模性能基线待固定环境复测
+> 状态：当前前端可见流水线已收敛为四阶段；历史六步骤中的按需语义补充未实现，后续需单独设计和验收
 > 上位设计：`docs/04-pingcode-processing-e2e-framework-design.md`
 
 专项设计：
@@ -16,25 +16,23 @@
 
 ## 一、设计目标
 
-本设计固定知识加工流水线的六个前端可见步骤，明确每一步的输入、输出、主要功能、执行方、失败处理和落盘产物。
+本设计固定知识加工流水线当前可执行的四个前端可见步骤，明确每一步的输入、输出、主要功能、执行方、失败处理和落盘产物。历史六步骤设计中的 `semantic_enrichment` 按需语义补充暂未实现，不作为当前前端阶段和后端执行路径。
 
 ```text
 1. 资料预处理
 2. 元数据构建
 3. 知识提取
-4. 按需语义补充
-5. 知识校验与合并
-6. 图谱与数据集生成
+4. 索引生成
 ```
 
 核心原则：
 
-1. 六步骤及步骤内的固定流程由代码执行；需要 Skill 和大模型参与时，由代码调用专用 Agent，由 Agent 组装提示词、Skill 和受控上下文后执行；
+1. 四阶段及阶段内的固定流程由代码调度；是否调用模型由具体任务模式和既有知识提取实现决定；
 2. 每一步只读取上一步已经落盘并通过 Schema 校验的产物；
 3. 原始资料永久保留，步骤之间传递结构化元数据、候选结果和必要证据片段；处理单元是原文的处理视图，不代表删除或覆盖原文；
-4. “不确定项识别”属于第 3 步内部代码路由，不作为独立前端步骤；
-5. 模型输出不能直接进入图谱，必须经过第 5 步代码校验；
-6. 第 6 步只读取 `final-results/knowledge.jsonl` 构建图谱；
+4. “不确定项识别”只能作为质量问题记录，不触发未实现的按需语义补充；
+5. 后续如引入模型输出，不能直接进入图谱，必须经过代码校验；
+6. 第 4 步只读取已落盘的候选、质量问题和索引输入构建图谱/数据集；
 7. 任何失败、跳过和降级都必须生成中文说明和可追溯事件。
 
 ## 二、总体数据流
@@ -56,23 +54,12 @@ MaterialBatch
   ▼
 知识提取
   ├─ extraction-results/knowledge-candidates.jsonl
-  ├─ uncertain-items/pending.jsonl
   └─ quality/extraction-issues.json
   │
   ▼
-按需语义补充
-  ├─ model-results/semantic-resolution.jsonl
-  ├─ uncertain-items/resolved.jsonl
-  └─ quality/semantic-issues.json
-  │
-  ▼
-知识校验与合并
+索引生成
   ├─ final-results/knowledge.jsonl
   ├─ final-results/rejected.jsonl
-  └─ quality/issues.json
-  │
-  ▼
-图谱与数据集生成
   ├─ graph/nodes.json
   ├─ graph/edges.json
   ├─ dataset/manifest.json
@@ -195,7 +182,7 @@ PipelineScheduler（代码）
 - 专用 Agent：针对一个明确任务组织提示词、Skill 和上下文，并把模型结果转换为约定结构；
 - Skill：提供 Agent 执行任务所需的方法、领域说明、工具使用方式和输出约束，不承担步骤调度；
 - 大模型：完成需要语义理解的提取、类型候选发现、指代消解和关系判断；
-- 前端：只展示一个知识加工任务及其六个稳定步骤，不展示独立资料预处理任务，也不展示 Agent 或 Skill 为额外流水线步骤；源文件检查和加工预览属于启动前检查，不生成第二条正式产物链。
+- 前端：只展示一个知识加工任务及其四个稳定阶段，不展示独立资料预处理任务，也不展示 Agent 或 Skill 为额外流水线步骤；源文件检查和加工预览属于启动前检查，不生成第二条正式产物链。
 
 ## 四、步骤一：资料预处理
 
@@ -382,9 +369,9 @@ knowledge_extraction
 
 ### 6.2 执行方
 
-步骤由代码驱动。代码先完成输入校验、明确锚点识别和上下文装配，再调用专用 `KnowledgeExtractionAgent`；Agent 根据代码给定的提示词、Skill 清单、知识 Schema 和处理单元调用大模型完成主要知识提取。此步骤内部包含“不确定项识别”，但前端仍只显示一个步骤。
+步骤由代码驱动。代码先完成输入校验、明确锚点识别、领域词典匹配和上下文装配；正式知识构建沿用既有 `KnowledgeExtractionAgent` / Workflow Agent 路径生成知识点候选，并由代码完成证据校验、失败分类和质量问题归类。本轮只收敛前端可见阶段边界，不改变正式知识提取执行策略。
 
-这里的 Skill 是 Agent 执行语义任务时使用的能力，不是流水线调度单元。Stage 的开始、结束、重试、落盘和失败处理仍由代码控制。
+规则、词典、Agent 和 Skill 都是知识提取阶段内部执行输入，不是额外流水线阶段。Stage 的开始、结束、重试、落盘和失败处理仍由代码控制。
 
 ### 6.3 输入
 
@@ -397,6 +384,51 @@ knowledge_extraction
 | 已发布的实体和关系类型 | 版本化知识 Schema |
 | Agent 提示词和 Skill 清单 | Prompt Registry、Skill Registry |
 | 模型配置和最近连接测试 | 文档生成器 Model Gateway |
+
+#### 6.3.1 关键词默认档进度与取消契约
+
+`keyword_analysis` 由代码按资源执行确定性规则，不调用模型。其提取规则、候选排序、预选 skip 语义和落盘格式保持不变，只补充内部进度与取消观测。
+
+```python
+def _keyword_analysis_progress_callback(
+    task_id: str,
+    total_chunks: int,
+) -> Callable[[int, int, int, int, int, bool], None]:
+    """参数为 processedResources/current/succeeded/failed/skipped/force。"""
+```
+
+计数口径：
+
+- `current`：已经完成提取、失败或明确跳过的处理单元数；
+- `succeeded`：完成确定性提取的处理单元数，不要求该单元一定产出关键词；
+- `failed`：当前资源提取异常时包含的处理单元数，记录进度后仍按既有语义抛出异常并终止阶段；
+- `skipped`：`preselectionState=skip` 的处理单元数；
+- 始终满足 `current = succeeded + failed + skipped <= total_chunks`。
+
+```text
+extract_keyword_analysis(task, chunks):
+  group chunks by resource without changing order or content
+  check_cancel before/after each document summary resource
+  current = succeeded = failed = skipped = 0
+  for each resource:
+    check_cancel()
+    if preselection == skip:
+      skipped += resource.chunkCount
+    else:
+      try deterministic_extract_with_existing_rules()
+      catch:
+        failed += resource.chunkCount
+        current += resource.chunkCount
+        emit_progress(force=true)
+        raise
+      succeeded += resource.chunkCount
+    current += resource.chunkCount
+    emit_progress when elapsed >= 1s or processedResources-last >= 50 or current == total
+    check_cancel()
+  persist exactly the existing artifacts
+```
+
+公开事件固定为 `knowledge_extraction.keyword_analysis.progress`，父任务 `progressDetail` 增加 `substage=keyword_analysis` 和累计计数。日志可以节流，资源前后的取消检查不得节流。该变更不修改 HTTP API、提取规则、模型调用边界、候选内容或产物 Schema。
 
 ### 6.4 知识 Schema 的发现与发布
 
@@ -415,7 +447,7 @@ knowledge_extraction
 
 约束：
 
-- 模型可以提出新类型，但不能直接写入正式 Schema；
+- 后续模型能力可以提出新类型，但不能直接写入正式 Schema；
 - 每个类型必须包含中文定义、允许属性、适用边界、正例和反例；
 - 运行中发现 Schema 外候选时，记录为 `schema_candidate` 或 `human_required`，不得自动扩展正式类型；
 - Schema 版本变化后，步骤三及后续产物必须失效并重新生成。
@@ -423,24 +455,23 @@ knowledge_extraction
 ### 6.5 主要功能
 
 1. 代码识别 `YAS-xxxxx`、`ORA-xxxxx`、版本号、参数名、配置项和 SQL 对象等明确锚点；
-2. 代码按单个处理单元装配标题路径、相邻摘要、明确锚点和已发布知识 Schema；
-3. 代码调用 `KnowledgeExtractionAgent`，由 Agent 加载专用提示词和实体提取、关系提取等 Skill；
-4. 大模型提取知识点、实体、关系、类型和对应原文证据；
-5. 代码校验 Agent 返回 JSON Schema、证据文本、偏移范围和候选类型；
-6. 代码去除同一处理单元内完全重复的候选；
-7. 代码识别需要进一步语义补充或人工处理的不确定项；
-8. 将候选路由到 `code_resolved`、`agent_resolved`、`needs_enrichment`、`schema_candidate` 或 `human_required`。
+2. 代码按单个处理单元读取标题路径、元数据上下文、领域词典、已发布规则和已确认关键词上下文；
+3. 正式知识构建沿用 Workflow Agent 生成知识点候选；
+4. 代码校验候选 Schema、证据文本、偏移范围和候选类型；
+5. 代码去除同一处理单元内完全重复的候选；
+6. 代码识别需要人工处理或后续语义补充能力处理的不确定项；
+7. 将候选路由到既有候选状态、`schema_candidate` 或 `human_required`。
 
 ### 6.6 不确定项识别规则
 
-以下情况进入 `needs_enrichment`：
+以下情况当前不触发独立的 `semantic_enrichment` 阶段，按既有知识提取失败分类或质量问题处理：
 
 - 同一名称对应多个候选实体类型；
 - 存在“该参数”“上述对象”“其配置”等指代；
 - 原文暗示关系，但关系类型不能通过固定句式确定；
 - 当前分块证据需要相邻分块摘要才能判断；
-- 代码锚点与 Agent 候选之间存在冲突；
-- 首次提取结果缺少解决问题所需的局部语义，但存在可补充的相邻上下文。
+- 代码锚点和知识候选之间存在冲突；
+- 首次知识提取结果缺少解决问题所需的局部语义，但存在可补充的相邻上下文。
 
 以下情况直接进入 `human_required`：
 
@@ -449,7 +480,7 @@ knowledge_extraction
 - 输入内容损坏或上下文元数据缺失；
 - 候选超出当前知识 Schema 且无法安全映射或登记为 Schema 候选。
 
-不允许仅以“置信度低于阈值”作为进入步骤四的唯一依据。步骤三已经通过专用 Agent 调用模型，步骤四只处理首次提取后仍然明确存在的局部语义问题。
+不允许仅以“置信度低于阈值”作为进入独立语义补充阶段的依据。当前版本没有按需语义补充执行阶段，相关问题必须先作为质量问题落盘，等待后续能力补齐。
 
 ### 6.7 输出
 
@@ -468,280 +499,71 @@ knowledge_extraction
   },
   "evidenceText": "YAS-00001 表示参数 p_size 无效。",
   "evidenceOffsets": {"start": 0, "end": 25},
-  "sourceMethod": "knowledge_extraction_agent",
-  "promptVersion": "knowledge-extraction:1.0.0",
-  "skillVersions": ["entity-extraction:1.0.0"],
+  "sourceMethod": "knowledge_extraction_workflow_agent",
+  "promptVersion": "knowledge-point-extraction:当前版本",
+  "skillVersions": ["knowledge-point-extraction"],
   "confidence": 0.96
-}
-```
-
-#### `uncertain-items/pending.jsonl`
-
-```json
-{
-  "uncertainItemId": "uncertain_xxx",
-  "state": "needs_enrichment",
-  "type": "ambiguous_reference",
-  "reason": "“该参数”存在多个可能指代对象",
-  "resourceId": "resource_xxx",
-  "chunkId": "resource_xxx:1",
-  "evidenceText": "该参数需要配合线程池设置。",
-  "candidateResults": ["max_connections", "thread_pool_size"]
 }
 ```
 
 #### `quality/extraction-issues.json`
 
-保存输入缺失、Agent 调用失败、证据缺失、Schema 外候选和无法安全处理的问题。
+```json
+{
+  "code": "KNOWLEDGE_EXTRACTION_FAILED",
+  "state": "human_required",
+  "message": "知识提取失败或需要人工处理，按需语义补充尚未实现",
+  "resourceId": "resource_xxx",
+  "chunkId": "resource_xxx:1",
+  "evidence": "该参数需要配合线程池设置。"
+}
+```
+
+保存输入缺失、证据缺失、Schema 外候选和无法安全处理的问题。
 
 ### 6.8 完成条件
 
-- 每个候选具有来源方法、Agent/Prompt/Skill 版本和原文证据；
+- 每个候选具有来源方法、Agent/Skill/Prompt 版本和原文证据；
 - 每个不确定项只对应一个明确问题；
 - 不确定项不得携带完整文档；
-- 相同 `uncertainItemId` 不得在无输入变化时重复调用模型；
 - Agent 输出必须经过代码校验后才能落盘为知识候选。
 
 ### 6.9 失败处理
 
-- 单处理单元 Agent 调用或校验失败：记录质量问题，继续处理其他单元；
-- Prompt、Skill、模型配置或知识 Schema 无法加载：步骤失败；
-- 模型服务整体不可用：步骤失败，不把未执行的语义提取伪装成成功；
-- 无不确定项：步骤四允许跳过。
+- 单处理单元提取或校验失败：记录质量问题，继续处理其他单元；
+- 规则、词典、Agent、模型配置或知识 Schema 无法加载：步骤失败；
+- 独立按需语义补充未实现：不生成 `semantic_enrichment` 阶段或相关执行产物；
+- 无不确定项：不生成语义补充产物。
 
-## 七、步骤四：按需语义补充
+## 七、步骤四：索引生成
 
 ### 7.1 步骤标识
 
 ```text
-semantic_enrichment
+index_generation
 ```
 
 ### 7.2 执行方
 
-步骤由代码驱动。代码读取步骤三产生的 `needs_enrichment` 项并调用专用 `SemanticEnrichmentAgent`；Agent 根据不确定项类型选择提示词和 Skill，通过大模型只解决指定的局部语义问题。
+仅代码执行，不调用大模型。
 
 ### 7.3 输入
 
 | 输入 | 来源 |
 |---|---|
-| `uncertain-items/pending.jsonl` | 步骤三 |
-| `metadata/documents.jsonl` | 步骤二 |
-| `metadata/chunk-contexts.jsonl` | 步骤二 |
-| 当前证据片段 | 步骤一分块 |
-| 代码锚点、Agent 候选和冲突 | 步骤三 |
-| 最近 10 分钟模型测试结果 | 文档生成器 Model Gateway |
-
-### 7.4 模型输入 `ContextEnvelope`
-
-```json
-{
-  "uncertainItemId": "uncertain_xxx",
-  "question": {
-    "type": "ambiguous_reference",
-    "reason": "需要判断“该参数”的指代对象"
-  },
-  "document": {
-    "title": "连接参数说明",
-    "summary": "本文说明连接数和线程池参数。",
-    "category": "配置参数",
-    "keywords": ["max_connections", "thread_pool_size"]
-  },
-  "currentChunk": {
-    "chunkId": "resource_xxx:1",
-    "headingPath": ["连接配置"],
-    "evidenceText": "该参数需要配合线程池设置。"
-  },
-  "adjacentChunkSummaries": [
-    {"chunkId": "resource_xxx:0", "summary": "上一块介绍 max_connections。"}
-  ],
-  "extractionCandidates": ["max_connections", "thread_pool_size"],
-  "constraints": {
-    "evidenceMustComeFromCurrentExcerpt": true,
-    "allowHumanRequired": true
-  }
-}
-```
-
-禁止字段：完整文档正文、完整 Prompt、认证信息和无关分块正文。
-
-### 7.5 主要功能
-
-1. 检查模型配置和最近真实连接测试；
-2. 代码按不确定项类型创建 `AgentTask`，指定 Agent、Prompt、Skill 和输入范围；
-3. `SemanticEnrichmentAgent` 每次只解决一个 `uncertainItemId`；
-4. Agent 只加载完成该问题所需的 Skill，不得自行扩大任务范围；
-5. 使用最大输出 800～1200 Token、30～45 秒超时和最多 1 次网络重试；
-6. 限制并发最多 3；
-7. 代码校验 Agent 返回 JSON Schema；
-8. 无法可靠判断时返回 `human_required`，不得猜测；
-9. 记录 Agent、模型、Prompt、Skill 版本、Token、耗时和脱敏错误摘要。
-
-### 7.6 输出
-
-#### `model-results/semantic-resolution.jsonl`
-
-```json
-{
-  "uncertainItemId": "uncertain_xxx",
-  "resourceId": "resource_xxx",
-  "chunkId": "resource_xxx:1",
-  "status": "resolved",
-  "agentId": "semantic-enrichment-agent",
-  "promptVersion": "reference-resolution:1.0.0",
-  "skillVersions": ["reference-resolution:1.0.0"],
-  "reason": "上一分块只介绍 max_connections",
-  "confidence": 0.86,
-  "knowledgePoints": [],
-  "entities": [],
-  "relations": [
-    {
-      "source": "max_connections",
-      "target": "thread_pool_size",
-      "type": "COORDINATES_WITH",
-      "evidenceText": "该参数需要配合线程池设置。",
-      "confidence": 0.86
-    }
-  ],
-  "usage": {
-    "promptTokens": 520,
-    "completionTokens": 120,
-    "durationMs": 2800
-  }
-}
-```
-
-#### `uncertain-items/resolved.jsonl`
-
-记录不确定项从 `needs_enrichment` 到 `resolved` 或 `human_required` 的状态变化。
-
-#### `quality/semantic-issues.json`
-
-保存超时、连接失败、Schema 错误和模型无法判断等问题。
-
-### 7.7 完成条件
-
-- 每次 Agent 调用关联唯一不确定项；
-- 模型输出通过 JSON Schema；
-- 调用失败不会阻止步骤三中已通过代码校验的结果继续进入步骤五；
-- 无不确定项时步骤状态为 `skipped`，中文原因明确。
-
-### 7.8 失败处理
-
-- 单项超时或返回错误：该项转为 `human_required`；
-- 模型服务整体不可用：所有待处理项转为质量问题，已完成的步骤三候选继续进入步骤五；
-- 模型测试未通过：不得发起正式调用；
-- 模型结果没有证据：保留原始审计记录，但不能进入最终知识。
-
-## 八、步骤五：知识校验与合并
-
-### 8.1 步骤标识
-
-```text
-knowledge_validation
-```
-
-### 8.2 执行方
-
-仅代码执行，不调用大模型。
-
-### 8.3 输入
-
-| 输入 | 来源 |
-|---|---|
-| `extraction-results/knowledge-candidates.jsonl` | 步骤三 |
-| `model-results/semantic-resolution.jsonl` | 步骤四 |
-| `metadata/chunks.jsonl` | 步骤一 |
-| `metadata/documents.jsonl` | 步骤二 |
-| 知识输出 Schema | 版本化 Schema |
-
-### 8.4 主要功能
-
-1. 校验步骤三候选和步骤四补充结果的字段 Schema；
-2. 校验证据文本确实存在于对应原文分块；
-3. 校正和校验证据偏移；
-4. 校验关系源实体和目标实体存在；
-5. 区分 `YAS-` 与 `ORA-` 错误码领域；
-6. 按类型、标准化名称和来源进行实体去重；
-7. 合并代码明确锚点、步骤三 Agent 候选和步骤四补充结果；
-8. 处理冲突：原文明示且由代码精确识别的事实优先，模型不能覆盖强证据事实；
-9. 将不通过结果写入拒绝记录和质量问题；
-10. 生成唯一的最终知识输入文件。
-
-### 8.5 输出
-
-#### `final-results/knowledge.jsonl`
-
-```json
-{
-  "knowledgeId": "knowledge_xxx",
-  "kind": "relation",
-  "sourceResourceId": "resource_xxx",
-  "chunkId": "resource_xxx:1",
-  "sourcePath": "docs/connection.md",
-  "value": {
-    "source": "max_connections",
-    "target": "thread_pool_size",
-    "type": "COORDINATES_WITH"
-  },
-  "evidenceText": "该参数需要配合线程池设置。",
-  "evidenceOffsets": {"start": 30, "end": 45},
-  "confidence": 0.86,
-  "sourceMethod": "model_resolved",
-  "validationState": "passed"
-}
-```
-
-#### `final-results/rejected.jsonl`
-
-记录被拒绝的候选、拒绝原因和原始候选标识，不保存完整 Prompt。
-
-#### `quality/issues.json`
-
-合并前五步产生的所有质量问题，并去重。
-
-### 8.6 完成条件
-
-- 最终知识全部通过 Schema 和证据校验；
-- 所有关系端点可解析；
-- 缺少置信度时不得默认为 `1.0`；
-- `final-results/knowledge.jsonl` 是步骤六唯一知识输入。
-
-### 8.7 失败处理
-
-- 单候选不通过：写入拒绝文件和质量问题；
-- 最终知识为空但存在可处理文档：步骤完成但标记高严重度质量问题；
-- 最终产物写入失败或 Schema 无法加载：步骤失败，禁止构图。
-
-## 九、步骤六：图谱与数据集生成
-
-### 9.1 步骤标识
-
-```text
-graph_dataset_generation
-```
-
-### 9.2 执行方
-
-仅代码执行，不调用大模型。
-
-### 9.3 输入
-
-| 输入 | 来源 |
-|---|---|
-| `final-results/knowledge.jsonl` | 步骤五 |
+| `final-results/knowledge.jsonl` | 步骤三内部校验输出 |
 | `metadata/documents.jsonl` | 步骤二 |
 | `metadata/chunks.jsonl` | 步骤一 |
-| `quality/issues.json` | 步骤五 |
+| `quality/issues.json` | 步骤三内部校验输出 |
 | 数据集版本信息 | 运行上下文 |
 
 禁止读取：
 
 - 未校验的模型原始输出；
-- `uncertain-items/pending.jsonl`；
-- `extraction-results/knowledge-candidates.jsonl` 中未通过步骤五的结果。
+- `semantic_enrichment` 相关产物；
+- `extraction-results/knowledge-candidates.jsonl` 中未通过代码校验的结果。
 
-### 9.4 主要功能
+### 7.4 主要功能
 
 1. 创建文档、分块和实体节点；
 2. 创建文档包含分块、分块提及实体和实体关系边；
@@ -752,7 +574,7 @@ graph_dataset_generation
 7. 生成运行报告和阶段耗时；
 8. 更新数据集为“候选”状态，不自动正式发布。
 
-### 9.5 输出
+### 7.5 输出
 
 #### `graph/nodes.json`
 
@@ -807,34 +629,36 @@ graph_dataset_generation
 
 #### `run-report.json`
 
-记录六步骤耗时、输入输出数量、模型调用统计、质量问题和产物相对路径。
+记录四阶段耗时、输入输出数量、模型调用统计、质量问题和产物相对路径。
 
-### 9.6 完成条件
+### 7.6 完成条件
 
 - 图谱只来自最终知识；
 - 每条实体关系具有来源和证据；
 - 数据集状态为 `candidate`；
-- 运行报告包含六步骤结果；
+- 运行报告包含四阶段结果；
 - 前端图谱统计与文件产物一致。
 
-### 9.7 失败处理
+### 7.7 失败处理
 
 - 单条知识无法构图：记录质量问题，不阻止其他知识构图；
 - 图谱文件或数据集 Manifest 写入失败：步骤失败；
 - 高严重度质量问题存在：候选数据集可以生成，但不得正式发布。
 
-## 十、六步骤输入输出总表
+## 八、当前四阶段输入输出总表
 
 | 步骤 | 主要输入 | 主要输出 | 是否调用模型 |
 |---|---|---|---|
 | 1. 资料预处理 | MaterialBatch、原始文件、结构化单元配置 | 原文映射、源文档记录、处理单元、准备问题 | 否 |
 | 2. 元数据构建 | 源文档记录、处理单元、领域词典 | 文档元数据、处理单元上下文 | 否 |
-| 3. 知识提取 | 处理单元、元数据、知识 Schema、Prompt、Skill | 知识候选、不确定项、提取问题 | 由代码调用知识提取 Agent |
-| 4. 按需语义补充 | 不确定项、ContextEnvelope、Prompt、Skill | 模型语义结果、已处理项、语义问题 | 由代码按不确定项调用语义 Agent |
-| 5. 知识校验与合并 | 提取候选、语义补充结果、原文处理单元、Schema | 最终知识、拒绝记录、统一质量问题 | 否 |
-| 6. 图谱与数据集生成 | 最终知识、元数据、质量问题 | 节点、边、候选数据集、运行报告 | 否 |
+| 3. 知识提取 | 处理单元、元数据、规则和 Schema | 知识候选、拒绝记录、统一质量问题 | 否 |
+| 4. 索引生成 | 最终知识、元数据、质量问题 | 节点、边、关键词倒排索引、候选数据集、运行报告 | 否 |
 
-## 十一、步骤接口设计
+## 九、后续未实现能力
+
+`semantic_enrichment` 按需语义补充当前未实现。后续补齐时必须重新定义触发条件、模型输入 `ContextEnvelope`、Schema 归一化、失败隔离、并发限制、成本预算和真实模型验收，不得直接恢复旧执行分支。
+
+## 十、步骤接口设计
 
 每个步骤实现统一接口，禁止在一个超长函数中完成全部流程。
 
@@ -893,7 +717,7 @@ AgentGateway.execute(
 
 一次知识加工执行使用 `taskId` 作为根标识；每个步骤执行生成唯一 `stageRunId`，每个 Agent 工作项生成唯一 `agentTaskId`，每次实际模型请求生成唯一 `modelCallId`，每条事件生成唯一 `eventId`。模型重试必须生成新的 `modelCallId`，并通过 `retryOf` 指向上一次调用。缓存命中保留新的 `agentTaskId`，但 `modelCallId` 为 `null` 且调用状态为 `reused`。
 
-所有事件必须包含 `eventId/taskId/stageRunId`；Agent 和模型事件按实际情况增加 `agentTaskId/modelCallId`。运行清单保存六个 `stageRunId`，中间产物保存产生该记录的追踪标识，使日志、处理单元、不确定项、模型结果、最终知识和质量问题可以相互反查。
+所有事件必须包含 `eventId/taskId/stageRunId`；Agent 和模型事件按实际情况增加 `agentTaskId/modelCallId`。运行清单保存四个 `stageRunId`，中间产物保存产生该记录的追踪标识，使日志、处理单元、模型结果、最终知识和质量问题可以相互反查。
 
 启动前预检使用独立 `preflightId`，快照保存输入哈希、处理单元数和标准配置。正式 `taskId` 在 `run-manifest.json` 中引用与当前输入匹配的 `preflightId`，以支持预检与正式产物的数量和哈希对账。
 
@@ -948,7 +772,7 @@ resourceId / chunkId / uncertainItemId / artifact / durationMs
 6. 实现步骤四，先验证超时和失败降级，再验证真实模型成功路径；
 7. 实现步骤五，验证无证据模型结果不能进入最终知识；
 8. 实现步骤六，验证图谱只读取最终知识；
-9. 最后接入前端实时进度和六步骤状态。
+9. 最后接入前端实时进度和四阶段状态。
 
 每完成一步，必须同步：
 
@@ -960,7 +784,7 @@ resourceId / chunkId / uncertainItemId / artifact / durationMs
 
 ## 十五、验收标准
 
-1. 前端只显示六个稳定步骤；
+1. 前端只显示四个稳定阶段；
 2. 不确定项识别不单独显示；
 3. 每一步输入输出文件均通过 Schema 校验；
 4. 原始文档完整保留，处理单元不会静默删除或覆盖原文；
@@ -971,7 +795,7 @@ resourceId / chunkId / uncertainItemId / artifact / durationMs
 9. 步骤四模型超时不会阻止步骤三已通过校验的结果生成候选数据集；
 10. 缺少证据的结果不能进入最终知识；
 11. 图谱只读取 `final-results/knowledge.jsonl`；
-12. 六步骤均展示处理数量、耗时、成功、失败或跳过中文说明；
+12. 四阶段均展示处理数量、耗时、成功、失败或跳过中文说明；
 13. 所有公开路径为相对路径；
 14. 使用真实后端 API 完成至少一条知识提取 Agent 成功任务和一条语义补充 Agent 调用或跳过任务。
 

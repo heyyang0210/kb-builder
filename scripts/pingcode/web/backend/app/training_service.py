@@ -27,27 +27,50 @@ from .gateways.model_gateway import (
     error_summary,
 )
 from .markdown_cleaning import clean_markdown
-from .models import DatasetVersion, PreprocessTaskCreate, TaskSnapshot, TrainingReviewDecision, TrainingTaskCreate
+from .keyword_issue_insight_service import KeywordIssueInsightService
+from .models import DatasetVersion, GovernanceStatus, PreprocessTaskCreate, ScanReport, TaskSnapshot, TrainingReviewDecision, TrainingTaskCreate
+from .governance_state import initial_gate_checks
 from .processing_units import build_processing_units
-from .repositories import ArtifactRepository, LocalArtifactRepository
+from .repositories import (
+    ArtifactRepository,
+    KeywordFilterRunImmutableSnapshotError,
+    KeywordFilterRunRepository,
+    LocalArtifactRepository,
+    LocalKeywordFilterRunRepository,
+)
 from .repositories.artifact_repository import ArtifactIntegrityError, ArtifactRecordDecodeError
 from .batch_operation_coordinator import BatchOperationCoordinator
+from .graph_exploration_service import GraphExplorationService
+from .graph_observability_service import GraphObservabilityService
+from .production_lineage import (
+    CommittedRebuildInputRef,
+    FORMAL_MODE,
+    GovernancePackageRepository,
+    KEYWORD_MODE,
+    KeywordRebuildInputFreezer,
+    KeywordRuleRebuild,
+    KeywordRuleSnapshot,
+    ProductionLineageAdapter,
+    ProductionLineageError,
+)
 
 TERMINAL_STATES = {"completed", "failed", "cancelled"}
 STAGES = [
     "material_preparation",
+    "metadata_construction",
     "knowledge_extraction",
     "index_generation",
 ]
 STAGE_NAMES = {
     "material_preparation": "资料预处理",
+    "metadata_construction": "元数据构建",
     "knowledge_extraction": "知识提取",
     "index_generation": "索引生成",
 }
 STAGE_ALIASES = {
-    "metadata_construction": "material_preparation",
-    "deterministic_extraction": "knowledge_extraction",
+    # 兼容历史运行日志和内部子步骤；新运行公开状态只写 STAGES 中的四个阶段。
     "semantic_enrichment": "knowledge_extraction",
+    "deterministic_extraction": "knowledge_extraction",
     "validation_graph": "knowledge_extraction",
     "dataset_generation": "index_generation",
 }
@@ -56,6 +79,13 @@ MAX_METADATA_GRAPH_KEYWORDS_PER_CHUNK = 12
 GRAPH_SCHEMA_VERSION = 4
 DISPLAY_NAME_PREFIX_PATTERN = re.compile(r"^[0-9a-fA-F]{8,24}-")
 TECHNICAL_KEYWORD_PREFIXES = ("dataset_", "file_", "chunk_", "resource_", "document_", "task_", "batch_", "run_", "node_", "edge_", "unit_")
+
+DETERMINISTIC_TECHNICAL_TERMS = (
+    "索引", "表空间", "数据字典", "事务", "死锁", "主备复制", "大对象",
+    "存储过程", "触发器", "游标", "视图", "序列", "分区", "集群",
+    "归档", "备份", "恢复", "优化器", "执行计划", "统计信息",
+    "权限", "角色", "用户", "模式", "约束", "函数", "包", "类型", "对象", "锁", "缓存",
+)
 
 # 关键词排除规则：工单号、人名等不应作为关键词
 EXCLUDED_KEYWORD_PATTERNS = [
@@ -105,6 +135,31 @@ class TrainingCancelledError(RuntimeError):
     pass
 
 
+class KeywordFilterIncompleteError(ValueError):
+    """过滤决策未覆盖全部候选关键词，禁止应用。"""
+
+
+class KeywordFilterSourceChangedError(ValueError):
+    """过滤运行的候选快照已与当前关键词图谱不一致。"""
+
+
+class KeywordFilterReviewInvalidError(ValueError):
+    """人工复核决策不满足动作、类别或备注不变量。"""
+
+
+class KeywordFilterReviewUnavailableError(ValueError):
+    """历史运行缺少可验证的冻结类别字典。"""
+
+
+class RebuildSourceError(ValueError):
+    """Synchronous API-A source dataset admission failure."""
+
+    def __init__(self, code: str, message: str, *, retryable: bool = False):
+        super().__init__(message)
+        self.code = code
+        self.retryable = retryable
+
+
 class ModelGatewayClient(HttpModelGatewayAdapter):
     """兼容旧测试补丁点；HTTP 实现由 HttpModelGatewayAdapter 提供。"""
 
@@ -126,6 +181,8 @@ class TrainingService:
         *,
         artifact_repository: ArtifactRepository | None = None,
         coordinator: BatchOperationCoordinator | None = None,
+        keyword_filter_run_repository: KeywordFilterRunRepository | None = None,
+        file_service: Any | None = None,
     ):
         self.store = store
         self.batches = batches
@@ -141,6 +198,15 @@ class TrainingService:
         )
         self.artifacts = artifact_repository or LocalArtifactRepository()
         self.coordinator = coordinator or BatchOperationCoordinator(settings.data_root, self.artifacts)
+        self.keyword_filter_runs = (
+            keyword_filter_run_repository
+            or LocalKeywordFilterRunRepository(settings.data_root)
+        )
+        self.keyword_issue_insights = KeywordIssueInsightService(settings.data_root)
+        self.graph_observability_service = GraphObservabilityService(
+            self, Path(__file__).resolve().parents[3] / "config" / "graph-observability-rules.json"
+        )
+        self.graph_exploration_service = GraphExplorationService(self, file_service)
         self._event_lock = threading.RLock()
         self._review_lock = threading.RLock()
         self._model_test_lock = threading.RLock()
@@ -150,9 +216,8 @@ class TrainingService:
         self._active_task_lock = threading.RLock()
         self._active_task_ids: set[str] = set()
         self._reconcile_lock = threading.RLock()
+        self._keyword_filter_run_lock = threading.RLock()
 
-
-        # 初始化 Workflow Agent
         default_skill_root = Path(__file__).resolve().parents[3] / "processing" / "skills"
         skill_root = getattr(settings, "processing_skill_root", default_skill_root)
         self.extraction_agent = KnowledgeExtractionWorkflowAgent({
@@ -160,6 +225,7 @@ class TrainingService:
             "gateway": self.gateway,
             "skill_root": str(skill_root),
         })
+
     def model_config(self) -> dict[str, Any]:
         status = self.gateway.status()
         keyword_prompt = self.prompts.get("keyword-extraction.system")
@@ -286,11 +352,11 @@ class TrainingService:
         if requires_model and not last_test:
             risks.append("当前模型尚未通过最近 10 分钟内的真实结构化连接测试")
         if requires_model:
-            risks.append(f"知识提取预计调用 {chunk_count} 次；初步识别到 {uncertain_count} 个按需语义补充项")
+            risks.append(f"正式知识提取预计调用模型 {chunk_count} 次；按需语义补充当前未实现")
         else:
             risks.append("当前阶段仅执行规则提取，不调用模型服务")
         if requires_model and last_test:
-            risks.append("预计耗时包含知识提取和按需语义补充；流水线调度、预处理、校验和构图由代码执行")
+            risks.append("预计耗时包含正式知识提取模型调用；流水线调度、预处理、校验和构图由代码执行")
         config = request.config.model_dump(mode="json", by_alias=True)
         input_hash = self._processing_unit_input_hash(config, unit_fingerprints)
         preflight_id = f"preflight_{uuid.uuid4().hex[:16]}"
@@ -460,11 +526,11 @@ class TrainingService:
         if conversion_failed:
             risks.append(f"{conversion_failed} 个文件转换失败，需查看源文件检查中的转换问题")
         if requires_model:
-            risks.append(f"知识提取预计调用 {chunk_count} 次；初步识别到 {uncertain_count} 个按需语义补充项")
+            risks.append(f"正式知识提取预计调用模型 {chunk_count} 次；按需语义补充当前未实现")
         else:
             risks.append("当前阶段仅执行规则提取，不调用模型服务")
         if requires_model and last_test:
-            risks.append("预计耗时包含资料转换、知识提取和按需语义补充；流水线调度、预处理、校验和构图由代码执行")
+            risks.append("预计耗时包含资料转换和正式知识提取模型调用；流水线调度、预处理、校验和构图由代码执行")
         config = request.config.model_dump(mode="json", by_alias=True)
         input_hash = self._processing_unit_input_hash(config, unit_fingerprints)
         result = {
@@ -531,10 +597,14 @@ class TrainingService:
 
     def start(self, request: TrainingTaskCreate) -> TaskSnapshot:
         self._reconcile_if_needed()
+        if self.batches.get(request.batch_id).state == "failed":
+            self._restore_material_state(request.batch_id)
         if request.mode == "formal_knowledge":
             self.require_model_test()
         with self.coordinator.admission(request.batch_id):
             batch = self._require_batch_ready(request.batch_id)
+            if request.mode == "keyword_analysis" and request.source_dataset_id:
+                self._validate_keyword_rebuild_source(request, batch)
             now = utcnow()
             task_id = f"training_{uuid.uuid4().hex[:16]}"
             task = TaskSnapshot(
@@ -587,6 +657,30 @@ class TrainingService:
             raise ValueError("当前资料加工任务仍有执行任务在运行，不能启动知识加工")
         return batch
 
+    def _validate_keyword_rebuild_source(self, request: TrainingTaskCreate, batch: Any) -> Any:
+        """Perform only cheap source admission checks before creating a task."""
+        try:
+            dataset = next(
+                item
+                # Resolve globally first so an existing dataset from another
+                # batch is classified as a mismatch rather than as missing.
+                for item in self.preprocess.list_datasets()
+                if item.id == request.source_dataset_id
+            )
+        except StopIteration as exc:
+            raise RebuildSourceError(
+                "REBUILD_SOURCE_NOT_FOUND", "指定的源数据集不存在"
+            ) from exc
+        if dataset.batch_id != batch.id:
+            raise RebuildSourceError(
+                "REBUILD_SOURCE_MISMATCH", "源数据集不属于当前资料批次"
+            )
+        if dataset.state != "candidate":
+            raise RebuildSourceError(
+                "REBUILD_SOURCE_STATE_INVALID", "源数据集不是可重建的 candidate 版本"
+            )
+        return dataset
+
     @staticmethod
     def _is_resumable_partial_download(task: TaskSnapshot) -> bool:
         """已下载部分资料的中断下载只保留告警，不阻断规则加工。"""
@@ -603,6 +697,7 @@ class TrainingService:
             raise ValueError("任务已经结束，无法取消")
         if task.state == "cancelling":
             return task
+
         if task.state not in {"queued", "running"}:
             raise ValueError("任务当前不可取消")
         updated = self.tasks._update(
@@ -627,6 +722,35 @@ class TrainingService:
         if child_task_id:
             self.preprocess.cancel(child_task_id)
         return updated
+
+    def _restore_material_state(self, batch_id: str):
+        """Training state must not permanently poison the material lifecycle."""
+        batch = self.batches.get(batch_id)
+        tasks = self.tasks.list(batch_id) if self.tasks is not None else []
+        active = [task.id for task in tasks if task.state in {"queued", "running", "cancelling"}]
+        downloads = [task for task in tasks if task.type == "download"]
+        partial = any(self._is_resumable_partial_download(task) for task in downloads)
+        completed = any(task.state == "completed" for task in downloads)
+        if active:
+            self.batches.update(batch_id, activeTaskIds=active)
+        elif partial:
+            self.batches.update(batch_id, state="downloading", activeTaskIds=[])
+        elif completed:
+            self.batches.update(batch_id, state="downloaded", activeTaskIds=[])
+        else:
+            self.batches.update(batch_id, activeTaskIds=[])
+
+    def admission(self, batch_id: str) -> dict[str, Any]:
+        self._reconcile_if_needed()
+        if self.batches.get(batch_id).state == "failed":
+            self._restore_material_state(batch_id)
+        batch = self._require_batch_ready(batch_id)
+        return {
+            "batchId": batch_id,
+            "canStart": True,
+            "admissionStatus": "partial_download" if batch.state == "downloading" else "ready",
+            "blockingReason": None,
+        }
 
     def _raise_if_cancelled(self, task_id: str) -> None:
         if self.tasks.get(task_id).state in {"cancelling", "cancelled"}:
@@ -877,6 +1001,21 @@ class TrainingService:
             "displayMode": "neighborhood",
         }
 
+    def graph_observability(self, dataset_id: str, filter_run_id: str | None = None, view: str = "after") -> dict[str, Any]:
+        return self.graph_observability_service.observability(dataset_id, filter_run_id, view)
+
+    def graph_bounded_neighborhood(self, dataset_id: str, node_id: str, limit: int = 80, depth: int = 1) -> dict[str, Any]:
+        return self.graph_observability_service.bounded_neighborhood(dataset_id, node_id, limit, depth)
+
+    def graph_search(self, dataset_id: str, **params) -> dict[str, Any]:
+        return self.graph_exploration_service.search(dataset_id, **params)
+
+    def graph_explore(self, dataset_id: str, **params) -> dict[str, Any]:
+        return self.graph_exploration_service.explore(dataset_id, **params)
+
+    def graph_evidence(self, dataset_id: str, **params) -> dict[str, Any]:
+        return self.graph_exploration_service.evidence(dataset_id, **params)
+
     def ensure_dataset_graph(self, dataset_id: str):
         dataset = self.preprocess.get_dataset(dataset_id)
         if self._needs_graph_backfill(dataset):
@@ -994,6 +1133,803 @@ class TrainingService:
         self.store.update_record("tasks", dataset.training_task_id, {"graphSummary": summary})
         return {"keywordId": node.get("keywordId") or node.get("id"), "approvalStatus": status, "keywordApprovalState": summary.get("keywordApprovalState", {})}
 
+    @staticmethod
+    def _keyword_filter_resource_paths() -> tuple[Path, Path]:
+        repo_root = Path(__file__).resolve().parents[5]
+        return (
+            repo_root / "skills" / "keyword-filter" / "SKILL.md",
+            repo_root / "config" / "filter-rules.json",
+        )
+
+    @staticmethod
+    def _read_keyword_filter_issue_categories(rules_path: Path) -> list[dict[str, str]]:
+        try:
+            payload = json.loads(rules_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise KeywordFilterReviewUnavailableError("过滤规则类别字典无法读取") from exc
+        categories = payload.get("issueCategories") if isinstance(payload, dict) else None
+        if not isinstance(categories, list):
+            raise KeywordFilterReviewUnavailableError("过滤规则缺少问题类别字典")
+        normalized = [
+            {"id": str(item.get("id")), "label": str(item.get("label") or item.get("id"))}
+            for item in categories
+            if isinstance(item, dict) and item.get("id")
+        ]
+        if not normalized or len({item["id"] for item in normalized}) != len(normalized):
+            raise KeywordFilterReviewUnavailableError("过滤规则问题类别字典无效")
+        return normalized
+
+    def _run_issue_categories(self, run: dict[str, Any]) -> list[dict[str, str]]:
+        frozen = run.get("issueCategories")
+        if isinstance(frozen, list) and frozen:
+            normalized = [
+                {"id": str(item.get("id")), "label": str(item.get("label") or item.get("id"))}
+                for item in frozen
+                if isinstance(item, dict) and item.get("id")
+            ]
+            if len(normalized) == len(frozen) and len({item["id"] for item in normalized}) == len(normalized):
+                return normalized
+            raise KeywordFilterReviewUnavailableError("运行冻结问题类别字典无效")
+        _, rules_path = self._keyword_filter_resource_paths()
+        if (
+            rules_path.is_file()
+            and run.get("rulesVersion") == self.keyword_filter_runs.fingerprint_file(rules_path)
+        ):
+            return self._read_keyword_filter_issue_categories(rules_path)
+        raise KeywordFilterReviewUnavailableError(
+            "历史运行未冻结问题类别，且其规则版本与当前配置不一致，无法安全复核"
+        )
+
+    def _keyword_filter_candidates(self, dataset_id: str) -> list[dict[str, Any]]:
+        dataset = self.ensure_dataset_graph(dataset_id)
+        nodes_path = self._run_dir(dataset.training_task_id) / "graph/nodes.json"
+        if not nodes_path.is_file():
+            nodes_path = settings.data_root / "datasets" / dataset.id / "graph/nodes.json"
+        if not nodes_path.is_file():
+            raise FileNotFoundError(dataset_id)
+        nodes = json.loads(nodes_path.read_text(encoding="utf-8"))
+        candidates: list[dict[str, Any]] = []
+        for node in nodes:
+            if node.get("type") != "Keyword":
+                continue
+            keyword_id = str(node.get("keywordId") or node.get("id") or "")
+            if not keyword_id:
+                continue
+            candidates.append({
+                "keywordId": keyword_id,
+                "keywordName": node.get("canonicalName") or node.get("name") or "",
+                "keywordRawName": node.get("name") or node.get("canonicalName") or "",
+                "aliases": list(node.get("aliases") or []),
+                "evidenceRefs": sorted({
+                    str(value)
+                    for field in ("evidenceRefs", "chunkIds", "resourceIds", "documentIds")
+                    for value in (node.get(field) or [])
+                    if value
+                }),
+                "currentStatus": self._read_admission_status(node),
+            })
+        candidates.sort(key=lambda item: item["keywordId"])
+        return candidates
+
+    @staticmethod
+    def _keyword_filter_model_context(gateway: ModelGateway | None) -> tuple[str | None, str | None]:
+        if gateway is None:
+            return None, None
+        try:
+            status = gateway.status()
+        except Exception:
+            return None, None
+        if not isinstance(status, dict):
+            return None, None
+        provider = status.get("provider")
+        model = status.get("model")
+        return (
+            str(provider) if provider else None,
+            str(model) if model else None,
+        )
+
+    @staticmethod
+    def _new_keyword_filter_run_id() -> str:
+        return "kfr_" + uuid.uuid4().hex
+
+    def create_keyword_filter_run(self, dataset_id: str) -> dict[str, Any]:
+        self.ensure_dataset_graph(dataset_id)
+        candidates = self._keyword_filter_candidates(dataset_id)
+        skill_path, rules_path = self._keyword_filter_resource_paths()
+        if not skill_path.is_file() or not rules_path.is_file():
+            raise FileNotFoundError("keyword-filter Skill 或过滤规则不存在")
+        issue_categories = self._read_keyword_filter_issue_categories(rules_path)
+        provider, model = self._keyword_filter_model_context(self.gateway)
+        filter_run_id = self._new_keyword_filter_run_id()
+        run = self.keyword_filter_runs.create_run(
+            dataset_id,
+            filter_run_id,
+            {
+                "filterRunId": filter_run_id,
+                "datasetId": dataset_id,
+                "status": "created",
+                "schemaVersion": "1.0",
+                "revision": 0,
+                "createdAt": utcnow().isoformat(),
+                "completedAt": None,
+                "appliedAt": None,
+                "candidateTotal": len(candidates),
+                "decisionTotal": 0,
+                "pendingTotal": len(candidates),
+                "suggestedKeep": 0,
+                "suggestedExclude": 0,
+                "finalKeep": None,
+                "finalExclude": None,
+                "skillVersion": self.keyword_filter_runs.fingerprint_file(skill_path),
+                "rulesVersion": self.keyword_filter_runs.fingerprint_file(rules_path),
+                "issueCategories": issue_categories,
+                "sourceGraphVersion": self.keyword_filter_runs.fingerprint_candidates(candidates),
+                "modelProvider": provider,
+                "modelName": model,
+                "failedBatches": [],
+            },
+            candidates,
+        )
+        return {"filterRunId": filter_run_id, "run": run}
+
+    def list_keyword_filter_runs(
+        self, dataset_id: str, *, offset: int = 0, limit: int = 20
+    ) -> dict[str, Any]:
+        self.ensure_dataset_graph(dataset_id)
+        return self.keyword_filter_runs.list_runs(dataset_id, offset=offset, limit=limit)
+
+    def get_keyword_filter_run(self, dataset_id: str, filter_run_id: str) -> dict[str, Any]:
+        run = self.keyword_filter_runs.read_run(dataset_id, filter_run_id)
+        candidates = self.keyword_filter_runs.read_candidate_snapshot(dataset_id, filter_run_id)
+        model_decisions = self.keyword_filter_runs.read_model_decisions(dataset_id, filter_run_id) or []
+        review_decisions = self.keyword_filter_runs.read_review_decisions(dataset_id, filter_run_id)
+        final_decisions = self.keyword_filter_runs.read_final_decisions(dataset_id, filter_run_id) or []
+        return {
+            "run": run,
+            **run,
+            "candidates": candidates,
+            "decisions": model_decisions,
+            "modelDecisions": model_decisions,
+            "reviewDecisions": review_decisions,
+            "finalDecisions": final_decisions,
+            "events": self.keyword_filter_runs.read_events(dataset_id, filter_run_id),
+        }
+
+    @staticmethod
+    def _model_snapshot_decision(
+        candidate: dict[str, Any], decision: dict[str, Any]
+    ) -> dict[str, Any]:
+        excluded = bool(decision.get("shouldExclude", False))
+        return {
+            "keywordId": candidate["keywordId"],
+            "keywordName": candidate.get("keywordName") or "",
+            "keywordRawName": candidate.get("keywordRawName") or "",
+            "aliases": list(candidate.get("aliases") or []),
+            "evidenceRefs": list(candidate.get("evidenceRefs") or []),
+            "modelAction": "exclude" if excluded else "keep",
+            "modelIssueCategory": decision.get("issueCategory") if excluded else None,
+            "modelIssueCategoryLabel": decision.get("issueCategoryLabel") if excluded else "无",
+            "modelReason": decision.get("reason") or "",
+            "finalAction": None,
+            "finalIssueCategory": None,
+            "userOverride": False,
+        }
+
+    @staticmethod
+    def _keyword_filter_decision_event(
+        decision: dict[str, Any], index: int, total: int, batch: int, batch_total: int
+    ) -> str:
+        excluded = decision.get("modelAction") == "exclude"
+        payload = {
+            "index": index,
+            "total": total,
+            "keywordId": decision.get("keywordId"),
+            "keywordName": decision.get("keywordName"),
+            "keywordRawName": decision.get("keywordRawName"),
+            "aliases": decision.get("aliases") or [],
+            "shouldExclude": excluded,
+            "issueCategory": decision.get("modelIssueCategory"),
+            "issueCategoryLabel": decision.get("modelIssueCategoryLabel"),
+            "reason": decision.get("modelReason"),
+            "batch": batch,
+            "batchTotal": batch_total,
+        }
+        return f"event: decision\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+    def stream_keyword_filter_run(self, dataset_id: str, filter_run_id: str):
+        """执行或重放运行。模型执行在生成器内持续到快照落盘，客户端可以后按 ID 恢复。"""
+        with self._keyword_filter_run_lock:
+            run = self.keyword_filter_runs.read_run(dataset_id, filter_run_id)
+            frozen = self.keyword_filter_runs.read_model_decisions(dataset_id, filter_run_id)
+            if frozen is not None:
+                batches = self._keyword_filter_batches(frozen)
+                for index, decision in enumerate(frozen, start=1):
+                    batch_index = (index - 1) // max(1, int(getattr(settings, "keyword_filter_batch_size", 50))) + 1
+                    yield self._keyword_filter_decision_event(
+                        decision, index, len(frozen), batch_index, max(1, len(batches))
+                    )
+                yield f"event: complete\ndata: {json.dumps({**run, 'replayed': True}, ensure_ascii=False)}\n\n"
+                return
+            if run["status"] != "created":
+                raise ValueError(f"运行状态 {run['status']} 不允许执行")
+            run = self.keyword_filter_runs.transition_run(
+                dataset_id, filter_run_id, "running", expected_revision=run["revision"]
+            )
+            candidates = self.keyword_filter_runs.read_candidate_snapshot(dataset_id, filter_run_id)
+            model_input = [
+                {
+                    "id": item["keywordId"],
+                    "name": item.get("keywordName"),
+                    "rawName": item.get("keywordRawName"),
+                    "aliases": item.get("aliases") or [],
+                    "currentStatus": item.get("currentStatus"),
+                }
+                for item in candidates
+            ]
+            system_prompt, prefix = self._keyword_filter_prompt()
+            batches = self._keyword_filter_batches(model_input)
+            decisions: list[dict[str, Any]] = []
+            failed_batches: list[dict[str, Any]] = []
+            yield f"event: stage\ndata: {json.dumps({'stage': 'calling_model', 'total': len(candidates), 'batchTotal': len(batches)}, ensure_ascii=False)}\n\n"
+            candidate_map = {item["keywordId"]: item for item in candidates}
+            for batch_index, batch in enumerate(batches, start=1):
+                try:
+                    batch_decisions = self._filter_batch_chat(batch, system_prompt, prefix)
+                    for raw in batch_decisions:
+                        candidate = candidate_map[str(raw.get("keywordId"))]
+                        snapshot = self._model_snapshot_decision(candidate, raw)
+                        decisions.append(snapshot)
+                        yield self._keyword_filter_decision_event(
+                            snapshot, len(decisions), len(candidates), batch_index, len(batches)
+                        )
+                except Exception as exc:
+                    failed_batches.append({
+                        "batch": batch_index,
+                        "count": len(batch),
+                        "error": str(exc),
+                    })
+            keep = sum(1 for item in decisions if item["modelAction"] == "keep")
+            exclude = len(decisions) - keep
+            updates = {
+                "decisionTotal": len(decisions),
+                "pendingTotal": len(candidates) - len(decisions),
+                "suggestedKeep": keep,
+                "suggestedExclude": exclude,
+                "failedBatches": failed_batches,
+            }
+            run = self.keyword_filter_runs.write_model_decisions(
+                dataset_id,
+                filter_run_id,
+                decisions,
+                expected_revision=run["revision"],
+                run_updates=updates,
+            )
+            complete = not failed_batches and len(decisions) == len(candidates)
+            run = self.keyword_filter_runs.transition_run(
+                dataset_id,
+                filter_run_id,
+                "reviewable" if complete else "incomplete",
+                expected_revision=run["revision"],
+                updates={"completedAt": utcnow().isoformat()},
+            )
+            yield f"event: complete\ndata: {json.dumps(run, ensure_ascii=False)}\n\n"
+
+    @staticmethod
+    def _effective_filter_decisions(
+        model_decisions: list[dict[str, Any]], review_decisions: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        review_map = {
+            str(item.get("keywordId")): item
+            for item in review_decisions
+            if isinstance(item, dict) and item.get("keywordId")
+        }
+        effective: list[dict[str, Any]] = []
+        for model in model_decisions:
+            review = review_map.get(str(model.get("keywordId")), {})
+            action = review.get("reviewAction") or model.get("modelAction")
+            category = (
+                review.get("reviewIssueCategory")
+                if review
+                else model.get("modelIssueCategory")
+            )
+            effective.append({
+                **model,
+                "action": action,
+                "issueCategory": category if action == "exclude" else None,
+                "reason": review.get("reviewNote") or model.get("modelReason") or "",
+                "reviewNote": review.get("reviewNote") or "",
+                "reviewedAt": review.get("reviewedAt"),
+                "reviewedBy": review.get("reviewedBy"),
+                "finalAction": action,
+                "finalIssueCategory": category if action == "exclude" else None,
+                "userOverride": bool(review) and (
+                    action != model.get("modelAction")
+                    or category != model.get("modelIssueCategory")
+                ),
+            })
+        return effective
+
+    @staticmethod
+    def _keyword_filter_review_summary(
+        model_decisions: list[dict[str, Any]],
+        review_decisions: list[dict[str, Any]],
+        valid_categories: set[str],
+    ) -> dict[str, Any]:
+        effective = TrainingService._effective_filter_decisions(model_decisions, review_decisions)
+        model_keep = sum(1 for item in model_decisions if item.get("modelAction") == "keep")
+        model_exclude = len(model_decisions) - model_keep
+        changed_to_keep = sum(
+            1 for item in effective
+            if item.get("modelAction") == "exclude" and item.get("action") == "keep"
+        )
+        changed_to_exclude = sum(
+            1 for item in effective
+            if item.get("modelAction") == "keep" and item.get("action") == "exclude"
+        )
+        category_changed = sum(
+            1 for item in effective
+            if item.get("action") == "exclude"
+            and item.get("modelAction") == "exclude"
+            and item.get("issueCategory") != item.get("modelIssueCategory")
+        )
+        invalid = [
+            item for item in effective
+            if item.get("action") not in {"keep", "exclude"}
+            or (item.get("action") == "keep" and item.get("issueCategory") is not None)
+            or (item.get("action") == "exclude" and item.get("issueCategory") not in valid_categories)
+        ]
+        final_keep = sum(1 for item in effective if item.get("action") == "keep")
+        final_exclude = sum(1 for item in effective if item.get("action") == "exclude")
+        excluded_by_category: dict[str, int] = {}
+        for item in effective:
+            if item.get("action") != "exclude" or item.get("issueCategory") not in valid_categories:
+                continue
+            category = str(item["issueCategory"])
+            excluded_by_category[category] = excluded_by_category.get(category, 0) + 1
+        unreviewed_other = sum(
+            1 for item in effective
+            if item.get("action") == "exclude"
+            and item.get("issueCategory") == "other"
+            and not str(item.get("reviewNote") or "").strip()
+        )
+        return {
+            "candidateTotal": len(model_decisions),
+            "modelKeep": model_keep,
+            "modelExclude": model_exclude,
+            "changedToKeep": changed_to_keep,
+            "changedToExclude": changed_to_exclude,
+            "categoryChanged": category_changed,
+            "finalKeep": final_keep,
+            "finalExclude": final_exclude,
+            "invalidDecisionCount": len(invalid),
+            "unreviewedOtherCount": unreviewed_other,
+            "excludedByCategory": excluded_by_category,
+        }
+
+    def get_keyword_filter_review_summary(
+        self, dataset_id: str, filter_run_id: str
+    ) -> dict[str, Any]:
+        run = self.keyword_filter_runs.read_run(dataset_id, filter_run_id)
+        categories = self._run_issue_categories(run)
+        model = self.keyword_filter_runs.read_model_decisions(dataset_id, filter_run_id) or []
+        review = self.keyword_filter_runs.read_review_decisions(dataset_id, filter_run_id)
+        summary = self._keyword_filter_review_summary(
+            model, review, {item["id"] for item in categories}
+        )
+        return {"filterRunId": filter_run_id, "revision": run["revision"], "summary": summary, **summary}
+
+    def _keyword_issue_decisions(
+        self, dataset_id: str, filter_run_id: str
+    ) -> tuple[dict[str, Any], list[dict[str, Any]], str, bool, Path]:
+        run = self.keyword_filter_runs.read_run(dataset_id, filter_run_id)
+        final = self.keyword_filter_runs.read_final_decisions(dataset_id, filter_run_id)
+        if final is not None:
+            decisions = final
+            basis = "final"
+        else:
+            model = self.keyword_filter_runs.read_model_decisions(dataset_id, filter_run_id)
+            if model is None:
+                raise KeywordFilterReviewUnavailableError("过滤运行尚未生成模型决策，无法查看问题洞察")
+            review = self.keyword_filter_runs.read_review_decisions(dataset_id, filter_run_id)
+            decisions = self._effective_filter_decisions(model, review)
+            basis = "review" if review else "model"
+        dataset = self.ensure_dataset_graph(dataset_id)
+        graph_root = self._run_dir(dataset.training_task_id)
+        current_candidates = self._keyword_filter_candidates(dataset_id)
+        source_available = (
+            self.keyword_filter_runs.fingerprint_candidates(current_candidates)
+            == run.get("sourceGraphVersion")
+        )
+        return run, decisions, basis, source_available, graph_root
+
+    def keyword_issue_overview(
+        self, dataset_id: str, filter_run_id: str, *, allow_cache_write: bool = True
+    ) -> dict[str, Any]:
+        run, decisions, basis, source_available, graph_root = self._keyword_issue_decisions(
+            dataset_id, filter_run_id
+        )
+        return self.keyword_issue_insights.build_overview(
+            dataset_id=dataset_id,
+            filter_run_id=filter_run_id,
+            decisions=decisions,
+            categories=self._run_issue_categories(run),
+            decision_basis=basis,
+            source_available=source_available,
+            allow_cache_write=allow_cache_write,
+            graph_root=graph_root,
+        )
+
+    def keyword_issue_evidence(
+        self,
+        dataset_id: str,
+        filter_run_id: str,
+        *,
+        category: str | None = None,
+        keyword_id: str | None = None,
+        resource_id: str | None = None,
+        query: str | None = None,
+        missing_evidence: bool = False,
+        page: int = 1,
+        page_size: int = 50,
+        allow_cache_write: bool = True,
+    ) -> dict[str, Any]:
+        run, decisions, basis, source_available, graph_root = self._keyword_issue_decisions(
+            dataset_id, filter_run_id
+        )
+        if category:
+            valid_categories = {item["id"] for item in self._run_issue_categories(run)}
+            if category not in valid_categories:
+                raise ValueError(f"未知问题类别：{category}")
+        return self.keyword_issue_insights.query_evidence(
+            dataset_id=dataset_id,
+            filter_run_id=filter_run_id,
+            decisions=decisions,
+            decision_basis=basis,
+            source_available=source_available,
+            category=category,
+            keyword_id=keyword_id,
+            resource_id=resource_id,
+            query=query,
+            missing_evidence=missing_evidence,
+            page=page,
+            page_size=page_size,
+            allow_cache_write=allow_cache_write,
+            graph_root=graph_root,
+        )
+
+    def save_keyword_filter_review_decisions(
+        self,
+        dataset_id: str,
+        filter_run_id: str,
+        *,
+        expected_revision: int,
+        changes: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        with self._keyword_filter_run_lock:
+            run = self.keyword_filter_runs.read_run(dataset_id, filter_run_id)
+            if run["status"] == "applied":
+                raise KeywordFilterRunImmutableSnapshotError("已应用运行不可复核")
+            if run["status"] != "reviewable":
+                raise KeywordFilterReviewInvalidError(f"运行状态 {run['status']} 不允许复核")
+            if not isinstance(changes, list) or not changes:
+                raise KeywordFilterReviewInvalidError("复核变更列表不能为空")
+            categories = self._run_issue_categories(run)
+            valid_categories = {item["id"] for item in categories}
+            model = self.keyword_filter_runs.read_model_decisions(dataset_id, filter_run_id) or []
+            model_map = {str(item.get("keywordId")): item for item in model}
+            current = self.keyword_filter_runs.read_review_decisions(dataset_id, filter_run_id)
+            current_map = {str(item.get("keywordId")): item for item in current if item.get("keywordId")}
+            normalized_changes: list[dict[str, Any]] = []
+            audit_changes: list[dict[str, Any]] = []
+            seen_keyword_ids: set[str] = set()
+            now = utcnow().isoformat()
+            for change in changes:
+                if not isinstance(change, dict):
+                    raise KeywordFilterReviewInvalidError("复核变更项必须为对象")
+                keyword_id = str(change.get("keywordId") or "")
+                if keyword_id in seen_keyword_ids:
+                    raise KeywordFilterReviewInvalidError(f"复核变更包含重复关键词：{keyword_id}")
+                seen_keyword_ids.add(keyword_id)
+                model_item = model_map.get(keyword_id)
+                if model_item is None:
+                    raise KeywordFilterReviewInvalidError(f"未知关键词：{keyword_id}")
+                action = str(change.get("action") or "")
+                if action not in {"keep", "exclude"}:
+                    raise KeywordFilterReviewInvalidError(f"关键词 {keyword_id} 动作必须为 keep 或 exclude")
+                category = None if action == "keep" else str(change.get("issueCategory") or "")
+                if action == "exclude" and category not in valid_categories:
+                    raise KeywordFilterReviewInvalidError(f"关键词 {keyword_id} 的排除类别无效")
+                raw_note = change.get("note", "")
+                if raw_note is not None and not isinstance(raw_note, str):
+                    raise KeywordFilterReviewInvalidError(f"关键词 {keyword_id} 的人工备注必须为字符串")
+                note = (raw_note or "").strip()
+                if len(note) > 500:
+                    raise KeywordFilterReviewInvalidError(f"关键词 {keyword_id} 的人工备注不能超过 500 字符")
+                if action == "exclude" and category == "other" and not note:
+                    raise KeywordFilterReviewInvalidError(f"关键词 {keyword_id} 选择其他/未分类时必须填写人工备注")
+                review_item = {
+                    "keywordId": keyword_id,
+                    "modelAction": model_item.get("modelAction"),
+                    "modelIssueCategory": model_item.get("modelIssueCategory"),
+                    "modelReason": model_item.get("modelReason") or "",
+                    "reviewAction": action,
+                    "reviewIssueCategory": category,
+                    "reviewNote": note,
+                    "reviewedAt": now,
+                    "reviewedBy": "anonymous",
+                    "userOverride": (
+                        action != model_item.get("modelAction")
+                        or category != model_item.get("modelIssueCategory")
+                    ),
+                }
+                before = current_map.get(keyword_id)
+                current_map[keyword_id] = review_item
+                normalized_changes.append(review_item)
+                audit_changes.append({"keywordId": keyword_id, "before": before, "after": review_item})
+            decisions = [current_map[key] for key in sorted(current_map)]
+            summary = self._keyword_filter_review_summary(model, decisions, valid_categories)
+            run = self.keyword_filter_runs.write_review_decisions(
+                dataset_id,
+                filter_run_id,
+                decisions,
+                expected_revision=expected_revision,
+                run_updates={"reviewSummary": summary},
+                event={
+                    "type": "review-decisions.saved",
+                    "actor": "anonymous",
+                    "changes": audit_changes,
+                },
+            )
+            return {
+                "filterRunId": filter_run_id,
+                "revision": run["revision"],
+                "changes": normalized_changes,
+                "reviewDecisions": decisions,
+                "summary": summary,
+            }
+
+    def compare_keyword_filter_runs(
+        self, dataset_id: str, left_run_id: str, right_run_id: str
+    ) -> dict[str, Any]:
+        left_run = self.keyword_filter_runs.read_run(dataset_id, left_run_id)
+        right_run = self.keyword_filter_runs.read_run(dataset_id, right_run_id)
+        allowed = {"reviewable", "applied", "incomplete"}
+        if left_run["status"] not in allowed or right_run["status"] not in allowed:
+            raise ValueError("只能对比已生成决策的过滤运行")
+        left = {
+            str(item.get("keywordId")): item
+            for item in (self.keyword_filter_runs.read_final_decisions(dataset_id, left_run_id)
+                          or self.keyword_filter_runs.read_model_decisions(dataset_id, left_run_id)
+                          or [])
+        }
+        right = {
+            str(item.get("keywordId")): item
+            for item in (self.keyword_filter_runs.read_final_decisions(dataset_id, right_run_id)
+                          or self.keyword_filter_runs.read_model_decisions(dataset_id, right_run_id)
+                          or [])
+        }
+        items: list[dict[str, Any]] = []
+        summary = {"added": 0, "removed": 0, "actionChanged": 0, "categoryChanged": 0, "unchanged": 0}
+        for keyword_id in sorted(set(left) | set(right)):
+            before = left.get(keyword_id)
+            after = right.get(keyword_id)
+            if before is None:
+                change = "added"
+            elif after is None:
+                change = "removed"
+            else:
+                before_action = before.get("finalAction") or before.get("modelAction")
+                after_action = after.get("finalAction") or after.get("modelAction")
+                before_category = before.get("finalIssueCategory") or before.get("modelIssueCategory")
+                after_category = after.get("finalIssueCategory") or after.get("modelIssueCategory")
+                if before_action != after_action:
+                    change = "actionChanged"
+                elif before_category != after_category:
+                    change = "categoryChanged"
+                else:
+                    change = "unchanged"
+            summary[change] += 1
+            if change != "unchanged":
+                items.append({"keywordId": keyword_id, "change": change, "left": before, "right": after})
+        return {"leftRunId": left_run_id, "rightRunId": right_run_id, "summary": summary, "items": items, "differences": items}
+
+    def apply_keyword_filter_run(
+        self, dataset_id: str, filter_run_id: str, *, expected_revision: int
+    ) -> dict[str, Any]:
+        with self._keyword_filter_run_lock:
+            run = self.keyword_filter_runs.read_run(dataset_id, filter_run_id)
+            if run["status"] != "reviewable":
+                raise ValueError(f"运行状态 {run['status']} 不允许应用")
+            if run["revision"] != expected_revision:
+                from .repositories import KeywordFilterRunRevisionConflictError
+                raise KeywordFilterRunRevisionConflictError(expected_revision, run["revision"])
+            current_candidates = self._keyword_filter_candidates(dataset_id)
+            current_version = self.keyword_filter_runs.fingerprint_candidates(current_candidates)
+            if current_version != run.get("sourceGraphVersion"):
+                raise KeywordFilterSourceChangedError("关键词图谱已变化，请重新执行过滤")
+            categories = self._run_issue_categories(run)
+            valid_categories = {item["id"] for item in categories}
+            model = self.keyword_filter_runs.read_model_decisions(dataset_id, filter_run_id) or []
+            review = self.keyword_filter_runs.read_review_decisions(dataset_id, filter_run_id)
+            final = self._effective_filter_decisions(model, review)
+            if len(final) != run["candidateTotal"]:
+                raise KeywordFilterIncompleteError("运行决策未覆盖全部候选关键词")
+            summary = self._keyword_filter_review_summary(model, review, valid_categories)
+            if summary["invalidDecisionCount"]:
+                raise KeywordFilterReviewInvalidError("存在动作与排除类别不一致的决策")
+            if summary["unreviewedOtherCount"]:
+                raise KeywordFilterReviewInvalidError("其他/未分类排除决策必须填写人工备注")
+            transaction_id = "kftx_" + uuid.uuid4().hex
+            transaction_path = (
+                settings.data_root
+                / "datasets"
+                / dataset_id
+                / "keyword-filter-runs"
+                / filter_run_id
+                / "apply-transaction.json"
+            )
+            transaction = {
+                "transactionId": transaction_id,
+                "filterRunId": filter_run_id,
+                "datasetId": dataset_id,
+                "expectedRevision": expected_revision,
+                "status": "prepared",
+                "preparedAt": utcnow().isoformat(),
+                "sourceGraphVersion": current_version,
+                "decisionFingerprint": self.keyword_filter_runs.fingerprint_json(final),
+            }
+            self._write_json(transaction_path, transaction)
+            try:
+                applied = self.apply_keywords_filter(dataset_id, final)
+                transaction.update({"status": "graph_applied", "graphAppliedAt": utcnow().isoformat()})
+                self._write_json(transaction_path, transaction)
+            except Exception as exc:
+                transaction.update({"status": "failed", "failedAt": utcnow().isoformat(), "error": str(exc)})
+                self._write_json(transaction_path, transaction)
+                raise
+            final_keep = sum(1 for item in final if item["action"] == "keep")
+            final_exclude = len(final) - final_keep
+            try:
+                run = self.keyword_filter_runs.write_final_decisions(
+                    dataset_id,
+                    filter_run_id,
+                    final,
+                    expected_revision=run["revision"],
+                    run_updates={
+                        "finalKeep": final_keep,
+                        "finalExclude": final_exclude,
+                        "applyTransactionId": transaction_id,
+                    },
+                )
+                run = self.keyword_filter_runs.transition_run(
+                    dataset_id,
+                    filter_run_id,
+                    "applied",
+                    expected_revision=run["revision"],
+                    updates={"appliedAt": utcnow().isoformat()},
+                )
+                transaction.update({"status": "committed", "committedAt": utcnow().isoformat(), "revision": run["revision"]})
+                self._write_json(transaction_path, transaction)
+            except Exception as exc:
+                transaction.update({
+                    "status": "recovery_required",
+                    "failedAt": utcnow().isoformat(),
+                    "error": str(exc),
+                    "recoveryAction": "freeze_final_snapshot_and_transition_applied",
+                })
+                self._write_json(transaction_path, transaction)
+                raise
+            return {"success": True, "run": run, "applied": applied.get("applied"), "summary": applied.get("summary")}
+
+    @staticmethod
+    def _keyword_filter_batches(keywords: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+        size = max(1, int(getattr(settings, "keyword_filter_batch_size", 50)))
+        return [keywords[i:i + size] for i in range(0, len(keywords), size)]
+
+    @staticmethod
+    def _keyword_filter_prompt() -> tuple[str, str]:
+        repo_root = Path(__file__).parent.parent.parent.parent.parent.parent
+        skill_path = repo_root / "skills" / "keyword-filter" / "SKILL.md"
+        if not skill_path.exists():
+            raise FileNotFoundError(f"keyword-filter SKILL.md not found at {skill_path}")
+        skill = skill_path.read_text(encoding="utf-8")
+        return (skill + "\n\n**重要约束：你必须且只能返回一个纯 JSON 对象，不得包含任何 markdown、表格、解释或代码块标记。直接输出 JSON，以 { 开头，以 } 结尾。**",
+                "请分析以下关键词列表，给出过滤建议。\n\n关键词列表：\n")
+
+    @staticmethod
+    def _keyword_filter_issue_categories() -> dict[str, str]:
+        """读取过滤规则中的问题类别字典，避免前后端分别维护文案。"""
+        repo_root = Path(__file__).resolve().parents[5]
+        rules_path = repo_root / "config" / "filter-rules.json"
+        try:
+            payload = json.loads(rules_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            payload = {}
+        categories = payload.get("issueCategories", []) if isinstance(payload, dict) else []
+        return {
+            str(item.get("id")): str(item.get("label") or item.get("id"))
+            for item in categories
+            if isinstance(item, dict) and item.get("id")
+        }
+
+    @classmethod
+    def _normalize_keyword_filter_decision(cls, decision: dict[str, Any], category_labels: dict[str, str]) -> dict[str, Any]:
+        """归一化类别字段；兼容历史缺失字段，非法类别降级为 other。"""
+        normalized = dict(decision)
+        excluded = bool(normalized.get("shouldExclude", False))
+        category = normalized.get("issueCategory")
+        if not excluded:
+            normalized["issueCategory"] = None
+            normalized["issueCategoryLabel"] = "无"
+            return normalized
+        category = str(category or "other")
+        if category not in category_labels:
+            category = "other" if "other" in category_labels else next(iter(category_labels), "other")
+        normalized["issueCategory"] = category
+        normalized["issueCategoryLabel"] = category_labels.get(category, "未分类")
+        return normalized
+
+    @classmethod
+    def _validate_keyword_filter_decisions(
+        cls,
+        batch: list[dict[str, Any]],
+        decisions: Any,
+        *,
+        require_issue_category: bool = False,
+    ) -> list[dict[str, Any]]:
+        if not isinstance(decisions, list):
+            raise ValueError("模型返回的 decisions 不是数组")
+        expected = {str(item["id"]) for item in batch}
+        actual = [str(item.get("keywordId")) for item in decisions if isinstance(item, dict)]
+        if len(actual) != len(set(actual)) or set(actual) != expected:
+            raise ValueError("模型返回的关键词决策不完整或包含重复/未知 ID")
+        category_labels = cls._keyword_filter_issue_categories()
+        if require_issue_category:
+            invalid = [
+                str(item.get("keywordId") or "")
+                for item in decisions
+                if isinstance(item, dict)
+                and bool(item.get("shouldExclude", False))
+                and str(item.get("issueCategory") or "") not in category_labels
+            ]
+            if invalid:
+                raise ValueError(f"模型返回的排除决策缺少 Skill 问题类别或类别非法：{', '.join(invalid[:5])}")
+        return [cls._normalize_keyword_filter_decision(item, category_labels)
+                for item in decisions if isinstance(item, dict)]
+
+    @staticmethod
+    def _excluded_by_category(decisions: list[dict[str, Any]]) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for decision in decisions:
+            if not bool(decision.get("shouldExclude", False)):
+                continue
+            category = str(decision.get("issueCategory") or "other")
+            counts[category] = counts.get(category, 0) + 1
+        return counts
+
+    def _filter_batch_chat(self, batch: list[dict[str, Any]], system_prompt: str, prefix: str) -> list[dict[str, Any]]:
+        if self.gateway is None:
+            raise ValueError("模型网关未配置")
+        options = {"temperature": 0.1, "max_tokens": min(8000, 200 + len(batch) * 100),
+                   "timeout_ms": min(300000, 60000 + (len(batch) // 10 + 1) * 30000),
+                   "max_retries": 0, "enable_thinking": False}
+        last_error = None
+        for _ in range(max(0, int(getattr(settings, "keyword_filter_max_retries", 1))) + 1):
+            try:
+                result = self.gateway.chat_json([
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prefix + json.dumps(batch, ensure_ascii=False, indent=2)},
+                ], options)
+                data = result.get("data", {})
+                return self._validate_keyword_filter_decisions(
+                    batch,
+                    data.get("decisions", []) if isinstance(data, dict) else [],
+                    require_issue_category=True,
+                )
+            except Exception as exc:
+                last_error = exc
+        raise ValueError(str(last_error) if last_error else "关键词过滤批次失败")
+
     def preview_keywords_filter_by_skill(self, dataset_id: str) -> dict[str, Any]:
         """直接使用 keyword-filter SKILL.md 作为系统提示词进行关键词过滤预览。
 
@@ -1022,6 +1958,7 @@ class TrainingService:
             keywords.append({
                 "id": node.get("keywordId") or node.get("id"),
                 "name": node.get("canonicalName") or node.get("name"),
+                "rawName": node.get("name") or node.get("canonicalName"),
                 "aliases": node.get("aliases", []),
                 "currentStatus": self._read_admission_status(node) or "none",
             })
@@ -1034,59 +1971,25 @@ class TrainingService:
                 "summary": {"total": 0, "suggested_keep": 0, "suggested_exclude": 0},
             }
 
-        # 读取 SKILL.md 作为 system prompt（直接使用，不二次包装）
-        # training_service.py → app → backend → web → pingcode → scripts → repo_root
-        _repo_root = Path(__file__).parent.parent.parent.parent.parent.parent
-        skill_path = _repo_root / "skills" / "keyword-filter" / "SKILL.md"
-        if not skill_path.exists():
-            raise FileNotFoundError(f"keyword-filter SKILL.md not found at {skill_path}")
-
-        skill_md = skill_path.read_text(encoding="utf-8")
-
-        # system prompt = SKILL.md 原文 + 强制纯 JSON 输出约束
-        system_prompt = skill_md + "\n\n**重要约束：你必须且只能返回一个纯 JSON 对象，不得包含任何 markdown、表格、解释或代码块标记。直接输出 JSON，以 { 开头，以 } 结尾。**"
-
-        # user message 只需提供关键词列表
-        user_message = f"请分析以下关键词列表，给出过滤建议。\n\n关键词列表：\n{json.dumps(keywords, ensure_ascii=False, indent=2)}"
-
-        # 动态计算参数
-        # 每个关键词决策约需 80 tokens（keywordId + shouldExclude + reason）
-        # 基础开销 200 tokens（JSON 结构）
-        estimated_max_tokens = min(8000, 200 + len(keywords) * 80)
-        # 超时：基础 60 秒 + 每 10 个关键词 30 秒，上限 300 秒
-        # qwen3.7-plus 处理 43 关键词实测约 160 秒，需留足余量
-        estimated_timeout_ms = min(300000, 60000 + (len(keywords) // 10 + 1) * 30000)
-
-        # 调用 LLM
         try:
-            if self.gateway is None:
-                raise ValueError("模型网关未配置")
-
-            result = self.gateway.chat_json(
-                [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_message},
-                ],
-                {
-                    "temperature": 0.1,
-                    "max_tokens": estimated_max_tokens,
-                    "timeout_ms": estimated_timeout_ms,
-                    "max_retries": 0,
-                    "enable_thinking": False,
-                },
-            )
-
-            data = result.get("data", {})
-            decisions = data.get("decisions", []) if isinstance(data, dict) else []
-
+            system_prompt, prefix = self._keyword_filter_prompt()
+            decisions = []
+            failures = []
+            for batch_index, batch in enumerate(self._keyword_filter_batches(keywords), start=1):
+                try:
+                    decisions.extend(self._filter_batch_chat(batch, system_prompt, prefix))
+                except Exception as exc:
+                    failures.append({"batch": batch_index, "error": str(exc), "count": len(batch)})
+            if failures:
+                return {"error": "部分关键词批次未完成", "preview": True, "skillMode": True, "suggestions": [],
+                        "summary": {"candidateTotal": len(keywords), "decisionTotal": len(decisions),
+                                     "pendingTotal": len(keywords) - len(decisions), "status": "incomplete",
+                                     "excludedByCategory": self._excluded_by_category(decisions),
+                                     "failedBatches": failures}}
         except Exception as exc:
-            return {
-                "error": str(exc),
-                "preview": True,
-                "skillMode": True,
-                "suggestions": [],
-                "summary": {"total": 0, "suggested_keep": 0, "suggested_exclude": 0},
-            }
+            return {"error": str(exc), "preview": True, "skillMode": True, "suggestions": [],
+                    "summary": {"candidateTotal": len(keywords), "decisionTotal": 0,
+                                 "pendingTotal": len(keywords), "status": "incomplete"}}
 
         # 构建建议列表（不修改数据）
         decision_map = {d.get("keywordId"): d for d in decisions if d.get("keywordId")}
@@ -1096,15 +1999,21 @@ class TrainingService:
 
         for kw in keywords:
             kw_id = kw["id"]
-            decision = decision_map.get(kw_id, {})
+            decision = decision_map.get(kw_id)
+            if decision is None:
+                continue
             action = "keep" if not decision.get("shouldExclude", False) else "exclude"
             reason = decision.get("reason", "")
 
             suggestions.append({
                 "keywordId": kw_id,
                 "keywordName": kw["name"],
+                "keywordRawName": kw.get("rawName"),
+                "aliases": kw.get("aliases", []),
                 "currentStatus": kw["currentStatus"],
                 "suggestedAction": action,
+                "issueCategory": decision.get("issueCategory"),
+                "issueCategoryLabel": decision.get("issueCategoryLabel", "未分类"),
                 "reason": reason,
             })
 
@@ -1117,11 +2026,16 @@ class TrainingService:
             "preview": True,
             "skillMode": True,
             "suggestions": suggestions,
-            "estimatedSeconds": round(estimated_timeout_ms / 1000),
+            "estimatedSeconds": round(min(300, 60 + len(self._keyword_filter_batches(keywords)) * 30)),
             "summary": {
                 "total": len(suggestions),
+                "candidateTotal": len(keywords),
+                "decisionTotal": len(suggestions),
+                "pendingTotal": len(keywords) - len(suggestions),
+                "status": "complete",
                 "suggested_keep": keep_count,
                 "suggested_exclude": exclude_count,
+                "excludedByCategory": self._excluded_by_category(decisions),
             },
         }
 
@@ -1160,125 +2074,67 @@ class TrainingService:
                     keywords.append({
                         "id": node.get("keywordId") or node.get("id"),
                         "name": node.get("canonicalName") or node.get("name"),
+                        "rawName": node.get("name") or node.get("canonicalName"),
                         "aliases": node.get("aliases", []),
                         "currentStatus": self._read_admission_status(node) or "none",
                     })
 
                 if not keywords:
-                    evt_queue.put(f"event: complete\ndata: {json.dumps({'total': 0, 'keep': 0, 'exclude': 0, 'elapsedSeconds': 0})}\n\n")
+                    evt_queue.put(f"event: complete\ndata: {json.dumps({'total': 0, 'candidateTotal': 0, 'decisionTotal': 0, 'pendingTotal': 0, 'keep': 0, 'exclude': 0, 'excludedByCategory': {}, 'status': 'complete', 'elapsedSeconds': 0})}\n\n")
                     return
 
                 evt_queue.put(f"event: stage\ndata: {json.dumps({'stage': 'preparing', 'message': '正在读取 Skill 指令...'}, ensure_ascii=False)}\n\n")
 
-                _repo_root = Path(__file__).parent.parent.parent.parent.parent.parent
-                skill_path = _repo_root / "skills" / "keyword-filter" / "SKILL.md"
-                if not skill_path.exists():
-                    evt_queue.put(f"event: error\ndata: {json.dumps({'error': 'keyword-filter SKILL.md 不存在'})}\n\n")
-                    return
-
-                skill_md = skill_path.read_text(encoding="utf-8")
-                system_prompt = skill_md + "\n\n**重要约束：你必须且只能返回一个纯 JSON 对象，不得包含任何 markdown、表格、解释或代码块标记。直接输出 JSON，以 { 开头，以 } 结尾。**"
+                system_prompt, prompt_prefix = self._keyword_filter_prompt()
 
                 evt_queue.put(f"event: stage\ndata: {json.dumps({'stage': 'keywords_loaded', 'total': len(keywords), 'message': f'已加载 {len(keywords)} 个关键词，开始模型分析...'}, ensure_ascii=False)}\n\n")
-
-                user_message = f"请分析以下关键词列表，给出过滤建议。\n\n关键词列表：\n{json.dumps(keywords, ensure_ascii=False, indent=2)}"
-
-                estimated_max_tokens = min(8000, 200 + len(keywords) * 80)
-                estimated_timeout_ms = min(300000, 60000 + (len(keywords) // 10 + 1) * 30000)
-
-                evt_queue.put(f"event: stage\ndata: {json.dumps({'stage': 'calling_model', 'estimatedSeconds': round(estimated_timeout_ms / 1000), 'message': '模型分析中，请耐心等待...'}, ensure_ascii=False)}\n\n")
+                batches = self._keyword_filter_batches(keywords)
+                evt_queue.put(f"event: stage\ndata: {json.dumps({'stage': 'calling_model', 'batchTotal': len(batches), 'estimatedSeconds': min(300, 60 + len(batches) * 30), 'message': '模型分批分析中，请耐心等待...'}, ensure_ascii=False)}\n\n")
 
                 if self.gateway is None:
                     evt_queue.put(f"event: error\ndata: {json.dumps({'error': '模型网关未配置'})}\n\n")
                     return
 
-                # Incremental JSON parser state
-                accumulated = ""
-                scan_pos = 0
                 emitted_decisions = 0
-                in_decisions_array = False
-                brace_depth = 0
-                current_obj_start = -1
                 keep_count = 0
                 exclude_count = 0
-
-                for chunk in self.gateway.stream_chat(
-                    [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_message},
-                    ],
-                    {
-                        "temperature": 0.1,
-                        "max_tokens": estimated_max_tokens,
-                        "timeout_ms": estimated_timeout_ms,
-                        "max_retries": 0,
-                        "enable_thinking": False,
-                    },
-                ):
-                    if chunk.get("error"):
-                        evt_queue.put(f"event: error\ndata: {json.dumps({'error': chunk['error']}, ensure_ascii=False)}\n\n")
-                        return
-
-                    delta = chunk.get("delta", "")
-                    if not delta:
-                        continue
-
-                    accumulated += delta
-
-                    i = scan_pos
-                    while i < len(accumulated):
-                        ch = accumulated[i]
-                        if not in_decisions_array:
-                            if ch == '[':
-                                before = accumulated[:i].strip()
-                                if '"decisions"' in before:
-                                    in_decisions_array = True
-                                    brace_depth = 0
-                                    i += 1
-                                    continue
-                        if in_decisions_array:
-                            if ch == '{':
-                                if brace_depth == 0:
-                                    current_obj_start = i
-                                brace_depth += 1
-                            elif ch == '}':
-                                brace_depth -= 1
-                                if brace_depth == 0 and current_obj_start >= 0:
-                                    obj_str = accumulated[current_obj_start:i + 1]
-                                    try:
-                                        obj = json.loads(obj_str)
-                                        emitted_decisions += 1
-                                        should_exclude = obj.get("shouldExclude", False)
-                                        if should_exclude:
-                                            exclude_count += 1
-                                        else:
-                                            keep_count += 1
-                                        evt = {
-                                            "index": emitted_decisions,
-                                            "total": len(keywords),
-                                            "keywordId": obj.get("keywordId", ""),
-                                            "keywordName": obj.get("keywordName", ""),
-                                            "shouldExclude": should_exclude,
-                                            "reason": obj.get("reason", ""),
-                                        }
-                                        evt_queue.put(f"event: decision\ndata: {json.dumps(evt, ensure_ascii=False)}\n\n")
-                                    except json.JSONDecodeError:
-                                        pass
-                                    current_obj_start = -1
-                            elif ch == ']':
-                                in_decisions_array = False
-                        i += 1
-                    scan_pos = i
-
-                    if len(accumulated) > 5000 and emitted_decisions > 0:
-                        last_complete = max(accumulated.rfind('}'), accumulated.rfind(']'))
-                        if last_complete > 2000:
-                            accumulated = accumulated[last_complete:]
-                            current_obj_start = -1
-                            scan_pos = 0
+                excluded_by_category: dict[str, int] = {}
+                failed_batches = []
+                for batch_index, batch in enumerate(batches, start=1):
+                    batch_error = None
+                    for _ in range(max(0, int(getattr(settings, "keyword_filter_max_retries", 1))) + 1):
+                        try:
+                            text = "".join(str(chunk.get("delta") or "") for chunk in self.gateway.stream_chat(
+                                [{"role": "system", "content": system_prompt},
+                                 {"role": "user", "content": prompt_prefix + json.dumps(batch, ensure_ascii=False, indent=2)}],
+                                {"temperature": 0.1, "max_tokens": min(8000, 200 + len(batch) * 100),
+                                 "timeout_ms": min(300000, 60000 + (len(batch) // 10 + 1) * 30000),
+                                 "max_retries": 0, "enable_thinking": False}))
+                            data = json.loads(text)
+                            decisions = self._validate_keyword_filter_decisions(
+                                batch,
+                                data.get("decisions", []),
+                                require_issue_category=True,
+                            )
+                            for decision in decisions:
+                                emitted_decisions += 1
+                                excluded = bool(decision.get("shouldExclude", False))
+                                exclude_count += int(excluded)
+                                keep_count += int(not excluded)
+                                if excluded:
+                                    category = str(decision.get("issueCategory") or "other")
+                                    excluded_by_category[category] = excluded_by_category.get(category, 0) + 1
+                                keyword = next((item for item in batch if str(item.get("id")) == str(decision.get("keywordId"))), {})
+                                evt_queue.put(f"event: decision\ndata: {json.dumps({'index': emitted_decisions, 'total': len(keywords), 'keywordId': decision.get('keywordId', ''), 'keywordName': decision.get('keywordName') or keyword.get('name', ''), 'keywordRawName': keyword.get('rawName'), 'aliases': keyword.get('aliases', []), 'shouldExclude': excluded, 'issueCategory': decision.get('issueCategory'), 'issueCategoryLabel': decision.get('issueCategoryLabel', '无' if not excluded else '未分类'), 'reason': decision.get('reason', ''), 'batch': batch_index, 'batchTotal': len(batches)}, ensure_ascii=False)}\n\n")
+                            batch_error = None
+                            break
+                        except Exception as exc:
+                            batch_error = str(exc)
+                    if batch_error:
+                        failed_batches.append({"batch": batch_index, "error": batch_error, "count": len(batch)})
 
                 elapsed = round(_time.time() - start_ts, 1)
-                evt_queue.put(f"event: complete\ndata: {json.dumps({'total': emitted_decisions, 'keep': keep_count, 'exclude': exclude_count, 'elapsedSeconds': elapsed}, ensure_ascii=False)}\n\n")
+                evt_queue.put(f"event: complete\ndata: {json.dumps({'total': emitted_decisions, 'candidateTotal': len(keywords), 'decisionTotal': emitted_decisions, 'pendingTotal': len(keywords) - emitted_decisions, 'keep': keep_count, 'exclude': exclude_count, 'excludedByCategory': excluded_by_category, 'status': 'complete' if not failed_batches and emitted_decisions == len(keywords) else 'incomplete', 'failedBatches': failed_batches, 'elapsedSeconds': elapsed}, ensure_ascii=False)}\n\n")
 
             except Exception as exc:
                 evt_queue.put(f"event: error\ndata: {json.dumps({'error': str(exc)}, ensure_ascii=False)}\n\n")
@@ -1320,6 +2176,17 @@ class TrainingService:
 
         # 构建决策映射
         decision_map = {d.get("keywordId"): d for d in decisions}
+        candidate_ids = {
+            str(node.get("keywordId") or node.get("id") or "")
+            for node in nodes if node.get("type") == "Keyword"
+        }
+        decision_ids = {str(key) for key in decision_map if key}
+        if decision_ids != candidate_ids or len(decision_ids) != len(decisions):
+            missing = len(candidate_ids - decision_ids)
+            unknown = len(decision_ids - candidate_ids)
+            raise KeywordFilterIncompleteError(
+                f"过滤决策不完整，候选 {len(candidate_ids)} 条，收到 {len(decision_ids)} 条，缺失 {missing} 条，未知 {unknown} 条"
+            )
 
         updated_keywords = []
 
@@ -1620,6 +2487,77 @@ class TrainingService:
         value = getattr(self.metadata_construction, "rule_set_hash", None)
         return str(value) if value else None
 
+    def _keyword_rule_descriptor(self, low_confidence_threshold: float) -> dict[str, Any]:
+        """Return the complete semantic rule facts used by deterministic extraction."""
+        rules = getattr(self.metadata_construction, "rules", {}) or {}
+
+        def plain(value: Any) -> Any:
+            if isinstance(value, dict):
+                return {str(key): plain(item) for key, item in sorted(value.items(), key=lambda item: str(item[0]))}
+            if isinstance(value, (set, frozenset, tuple)):
+                return sorted(plain(item) for item in value)
+            if isinstance(value, list):
+                return [plain(item) for item in value]
+            if value is None or isinstance(value, (str, int, float, bool)):
+                return value
+            return str(value)
+
+        def digest(value: Any) -> str:
+            payload = json.dumps(plain(value), ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
+            return "sha256:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+        title_rules = plain(rules.get("titleCleaning") or {})
+        semantic_rules = {
+            "metadataRules": plain(rules),
+            "titleRules": title_rules,
+            "lowConfidenceThreshold": float(low_confidence_threshold),
+        }
+        pattern_rules = {
+            "yasErrorCode": r"(YAS-\d{4,5})",
+            "oracleErrorCode": r"(ORA-\d{4,5})",
+            "excludedKeywordPatterns": [pattern.pattern for pattern in EXCLUDED_KEYWORD_PATTERNS],
+        }
+        term_rules = list(DETERMINISTIC_TECHNICAL_TERMS)
+        return {
+            "schemaVersion": "1.0",
+            "mode": "keyword_analysis",
+            "producerName": "deterministic_keyword",
+            "implementationVersion": "2.0.0",
+            "pipelineVersion": "2.0",
+            "candidateSchemaVersion": "2.0",
+            "ruleArtifacts": [
+                {
+                    "name": "metadata-rules",
+                    "version": self._metadata_rule_set_hash() or "unversioned",
+                    "contentHash": digest(semantic_rules),
+                },
+                {
+                    "name": "deterministic-patterns",
+                    "version": "2.0.0",
+                    "contentHash": digest(pattern_rules),
+                },
+                {
+                    "name": "technical-terms",
+                    "version": "2.0.0",
+                    "contentHash": digest(term_rules),
+                },
+            ],
+            "semanticConfiguration": {
+                "titleGlossaryConfidence": float(title_rules.get("titleGlossaryConfidence") or 0.82),
+                "titleTopicConfidence": float(title_rules.get("titleTopicConfidence") or 0.78),
+                "titleTopicMaxCharacters": int(title_rules.get("titleTopicMaxCharacters") or 40),
+                "patternConfidence": 0.75,
+                "chineseTermConfidence": 0.65,
+            },
+            "candidateContract": {
+                "evidenceRequired": True,
+                "sourceMethodPrefix": "deterministic_",
+                "model": None,
+                "modelStatus": "not_applicable",
+            },
+            "inputContractVersion": "normalized-chunk:v1",
+        }
+
     def _normalize_model_keyword(
         self,
         candidate: dict[str, Any],
@@ -1826,7 +2764,7 @@ class TrainingService:
             candidates.append({
                 "candidateId": stable_id("keyword-candidate", task_id, str(evidence_chunk.get("id") or evidence_chunk.get("chunkId") or ""), canonical, evidence),
                 "taskId": task_id,
-                "stageRunId": self._stage_run_id(task_id, "deterministic_extraction"),
+                "stageRunId": self._stage_run_id(task_id, "knowledge_extraction"),
                 "resourceId": str(document.get("resourceId") or ""),
                 "chunkId": str(evidence_chunk.get("id") or evidence_chunk.get("chunkId") or ""),
                 "sourcePath": evidence_chunk.get("sourcePath"),
@@ -1867,7 +2805,7 @@ class TrainingService:
             candidates.append({
                 "candidateId": stable_id("keyword-candidate", task_id, str(evidence_chunk.get("id") or evidence_chunk.get("chunkId") or ""), semantic_title, "title"),
                 "taskId": task_id,
-                "stageRunId": self._stage_run_id(task_id, "deterministic_extraction"),
+                "stageRunId": self._stage_run_id(task_id, "knowledge_extraction"),
                 "resourceId": str(document.get("resourceId") or ""),
                 "chunkId": str(evidence_chunk.get("id") or evidence_chunk.get("chunkId") or ""),
                 "sourcePath": evidence_chunk.get("sourcePath"),
@@ -1904,7 +2842,7 @@ class TrainingService:
             candidates.append({
                 "candidateId": stable_id("keyword-candidate", task_id, chunk_id, error_code, "error_code"),
                 "taskId": task_id,
-                "stageRunId": self._stage_run_id(task_id, "deterministic_extraction"),
+                "stageRunId": self._stage_run_id(task_id, "knowledge_extraction"),
                 "resourceId": str(document.get("resourceId") or ""),
                 "chunkId": chunk_id,
                 "sourcePath": evidence_chunk.get("sourcePath"),
@@ -1937,7 +2875,7 @@ class TrainingService:
             candidates.append({
                 "candidateId": stable_id("keyword-candidate", task_id, chunk_id, error_code, "oracle_error_code"),
                 "taskId": task_id,
-                "stageRunId": self._stage_run_id(task_id, "deterministic_extraction"),
+                "stageRunId": self._stage_run_id(task_id, "knowledge_extraction"),
                 "resourceId": str(document.get("resourceId") or ""),
                 "chunkId": chunk_id,
                 "sourcePath": evidence_chunk.get("sourcePath"),
@@ -1958,13 +2896,7 @@ class TrainingService:
 
         # 3d. 中文技术术语提取（高频出现的专业术语）
         chinese_term_confidence = 0.65
-        technical_terms = [
-            "索引", "表空间", "数据字典", "事务", "死锁", "主备复制", "大对象",
-            "存储过程", "触发器", "游标", "视图", "序列", "分区", "集群",
-            "归档", "备份", "恢复", "优化器", "执行计划", "统计信息",
-            "权限", "角色", "用户", "模式", "约束",
-            "函数", "包", "类型", "对象", "锁", "缓存",
-        ]
+        technical_terms = DETERMINISTIC_TECHNICAL_TERMS
         seen_chinese_terms: set[str] = set()
         for term in technical_terms:
             if term in seen_chinese_terms:
@@ -1990,7 +2922,7 @@ class TrainingService:
             candidates.append({
                 "candidateId": stable_id("keyword-candidate", task_id, chunk_id, canonical_name, "chinese_term"),
                 "taskId": task_id,
-                "stageRunId": self._stage_run_id(task_id, "deterministic_extraction"),
+                "stageRunId": self._stage_run_id(task_id, "knowledge_extraction"),
                 "resourceId": str(document.get("resourceId") or ""),
                 "chunkId": chunk_id,
                 "sourcePath": evidence_chunk.get("sourcePath"),
@@ -2230,7 +3162,7 @@ class TrainingService:
         return {
             "candidateId": stable_id("candidate", task_id, kind, chunk_id, evidence, json.dumps(value, ensure_ascii=False, sort_keys=True)),
             "taskId": task_id,
-            "stageRunId": self._stage_run_id(task_id, "deterministic_extraction"),
+            "stageRunId": self._stage_run_id(task_id, "knowledge_extraction"),
             "state": "agent_resolved",
             "kind": kind,
             "resourceId": chunk.get("resourceId"),
@@ -2624,6 +3556,7 @@ class TrainingService:
                 "total": total,
                 "unit": unit,
                 "message": message,
+                **(details or {}),
             },
             **changes,
         )
@@ -2754,7 +3687,10 @@ class TrainingService:
                 "quality",
             ):
                 (run_dir / relative).mkdir(parents=True, exist_ok=True)
-            preflight = self._latest_preflight(request.batch_id)
+            is_keyword_rebuild = bool(
+                request.mode == KEYWORD_MODE and request.source_dataset_id
+            )
+            preflight = None if is_keyword_rebuild else self._latest_preflight(request.batch_id)
             (run_dir / "run-manifest.json").write_text(
                 json.dumps({
                     "taskId": task_id,
@@ -2763,10 +3699,7 @@ class TrainingService:
                     "knowledgeBuildMode": request.mode,
                     "sourceDatasetId": request.source_dataset_id,
                     "keywordIds": request.keyword_ids,
-                    "stageRuns": {
-                        **{stage: self._stage_run_id(task_id, stage) for stage in STAGES},
-                        "metadata_construction": stable_id("stage-run", task_id, "metadata_construction"),
-                    },
+                    "stageRuns": {stage: self._stage_run_id(task_id, stage) for stage in STAGES},
                     "config": request.config.model_dump(mode="json", by_alias=True),
                     "configSource": "service_default",
                     "preflight": preflight,
@@ -2777,6 +3710,9 @@ class TrainingService:
 
             self.tasks._update(task_id, state="running", can_cancel=True)
             self._log(task_id, "info", "queued", "task.started", "知识加工任务开始执行")
+            if request.mode == "keyword_analysis" and request.source_dataset_id:
+                self._run_keyword_rebuild_from_dataset(task_id, request, run_dir, calls)
+                return
             dataset, chunks, documents = self._prepare_materials(task_id, request, run_dir)
             if request.mode == "keyword_analysis":
                 _, human_required, _ = self._extract_keyword_analysis(
@@ -2833,6 +3769,19 @@ class TrainingService:
                 return
             current_stage = self.tasks.get(task_id).stage or "failed"
             summary = self._failure_summary(exc)
+            failure_detail = {"stage": current_stage, "message": summary}
+            if isinstance(exc, ProductionLineageError):
+                failure_detail.update({
+                    "reasonCode": exc.code,
+                    "requestId": task_id,
+                    "retryable": exc.code not in {
+                        "DATASET_INPUT_INVALID",
+                        "DATASET_IDENTITY_MISMATCH",
+                        "DATASET_INPUT_DRIFT",
+                        "DATASET_PATH_INVALID",
+                        "RULE_ONLY_CONTRACT_VIOLATION",
+                    },
+                })
             if current_stage in STAGES:
                 self._set_stage(task_id, current_stage, "failed", detail_message=summary)
             self.tasks._update(
@@ -2843,7 +3792,7 @@ class TrainingService:
                 model_calls=dict(calls),
                 can_cancel=False,
                 can_retry=True,
-                progress_detail={"stage": current_stage, "message": summary},
+                progress_detail=failure_detail,
             )
             self._log(
                 task_id,
@@ -2854,9 +3803,216 @@ class TrainingService:
                 details={"technicalError": str(exc)},
             )
             self._write_incomplete_fix_report(task_id, request, run_dir, issues, "failed")
-            self.batches.update(request.batch_id, state="failed", activeTaskIds=[])
+            self._restore_material_state(request.batch_id)
         finally:
             self._mark_task_inactive(task_id)
+
+    def _run_keyword_rebuild_from_dataset(
+        self,
+        task_id: str,
+        request: TrainingTaskCreate,
+        run_dir: Path,
+        calls: dict[str, int],
+    ) -> None:
+        """Run API-A from a request-time freeze without creating a DatasetVersion."""
+        dataset = next(
+            item
+            for item in self.preprocess.list_datasets(request.batch_id)
+            if item.id == request.source_dataset_id
+        )
+        dataset_root = str(dataset.dataset_path or f"datasets/{dataset.id}")
+        dataset_ref = {
+            "datasetId": dataset.id,
+            "batchId": dataset.batch_id,
+            "taskId": dataset.training_task_id,
+            "rootPath": dataset_root,
+            "manifestPath": f"{dataset_root}/manifest.json",
+        }
+        request_context = {
+            "requestId": task_id,
+            "datasetId": dataset.id,
+            "batchId": dataset.batch_id,
+            "taskId": dataset.training_task_id,
+            "mode": request.mode,
+        }
+        self._set_stage(
+            task_id,
+            "material_preparation",
+            detail_message="正在冻结源数据集当前可读字节",
+        )
+        freezer = KeywordRebuildInputFreezer(
+            repository=self.artifacts,
+            store=self.store,
+            data_root=settings.data_root,
+        )
+        frozen = freezer.freeze(dataset_ref, request_context)
+        resource_count = sum(
+            1
+            for item in frozen.artifact_fingerprints
+            if item.get("resourceId")
+        )
+        self._set_stage(
+            task_id,
+            "material_preparation",
+            "completed",
+            current=resource_count,
+            total=resource_count,
+            unit="个资源",
+            detail_message="源数据集请求时冻结完成",
+        )
+        self._set_stage(
+            task_id,
+            "metadata_construction",
+            "skipped",
+            detail_message="重建复用冻结包中的元数据，不修改源数据集",
+        )
+
+        service = self
+
+        class RuleExecutor:
+            batch_size = 64
+
+            def execute_batch(self, records, context):
+                candidates: list[dict[str, Any]] = []
+                isolated: list[dict[str, Any]] = []
+                for record in records:
+                    document = dict(record.get("document") or {})
+                    resource_id = str(record.get("resourceId") or "")
+                    units = list(record.get("processingUnits") or [])
+                    if not document.get("title"):
+                        document["title"] = Path(
+                            str(document.get("sourcePath") or resource_id)
+                        ).stem
+                    document["resourceId"] = resource_id
+                    content = [str(item.get("content") or "") for item in units]
+                    document.update(service._document_profile(document, content))
+                    chunks = [
+                        {
+                            "id": str(item.get("chunkId") or ""),
+                            "chunkId": str(item.get("chunkId") or ""),
+                            "resourceId": resource_id,
+                            "content": str(item.get("content") or ""),
+                            "sourcePath": document.get("sourcePath"),
+                            "headingPath": item.get("headingPath") or [],
+                            "chunkIndex": item.get("chunkIndex", 0),
+                        }
+                        for item in units
+                    ]
+                    extracted = service._deterministic_keyword_candidates(
+                        task_id,
+                        document,
+                        chunks,
+                        request.config.low_confidence_threshold,
+                    )
+                    if not extracted:
+                        isolated.append(
+                            {
+                                "resourceId": resource_id,
+                                "chunkId": chunks[0]["chunkId"] if chunks else "",
+                                "reasonCode": "RULE_NO_DETERMINISTIC_CANDIDATE",
+                                "severity": "info",
+                            }
+                        )
+                    for ordinal, item in enumerate(extracted):
+                        candidate = dict(item)
+                        identity = json.dumps(
+                            {
+                                "resourceId": resource_id,
+                                "chunkId": candidate.get("chunkId"),
+                                "canonicalName": candidate.get("canonicalName"),
+                                "evidenceText": candidate.get("evidenceText"),
+                                "sourceMethod": candidate.get("sourceMethod"),
+                                "termId": candidate.get("termId"),
+                                "ordinal": ordinal,
+                            },
+                            ensure_ascii=False,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        ).encode("utf-8")
+                        candidate["candidateId"] = "keyword-candidate:v2:" + hashlib.sha256(identity).hexdigest()[:32]
+                        candidate["schemaVersion"] = "2.0"
+                        candidate["model"] = None
+                        candidate["modelStatus"] = "not_applicable"
+                        candidates.append(candidate)
+                return {
+                    "candidates": candidates,
+                    "isolated": isolated,
+                    "modelCallCount": 0,
+                    "modelStatus": "not_applicable",
+                }
+
+        self._set_stage(
+            task_id,
+            "knowledge_extraction",
+            detail_message="正在执行请求时冻结包的确定性关键词规则重建",
+        )
+        result = KeywordRuleRebuild.execute(
+            frozen,
+            self._keyword_rule_descriptor(request.config.low_confidence_threshold),
+            {
+                "datasetId": dataset.id,
+                "taskId": task_id,
+                "inputDigest": frozen.inputDigest,
+            },
+            RuleExecutor(),
+        )
+        (run_dir / "rebuild-result.json").write_text(
+            json.dumps(
+                {
+                    **result.to_dict(),
+                    "captureSemantics": frozen.captureSemantics,
+                    "sourceManifestPath": frozen.manifestPath,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        self._set_stage(
+            task_id,
+            "knowledge_extraction",
+            "completed",
+            current=result.candidate_count,
+            total=result.candidate_count + result.isolated_count,
+            unit="个关键词候选",
+            detail_message="确定性关键词规则重建完成",
+        )
+        self._set_stage(
+            task_id,
+            "index_generation",
+            "skipped",
+            detail_message="API-A 第一阶段只生成可追溯 candidate artifact，不创建或发布 DatasetVersion",
+        )
+        progress_detail = {
+            "stage": "completed",
+            "message": "请求时冻结规则重建完成",
+            "rebuildResult": {
+                **result.to_dict(),
+                "captureSemantics": frozen.captureSemantics,
+                "sourceManifestPath": frozen.manifestPath,
+            },
+        }
+        self.tasks._update(
+            task_id,
+            state="completed",
+            stage="completed",
+            completed=4,
+            total=4,
+            message="规则重建完成；结果暂不发布为 DatasetVersion",
+            model_calls=dict(calls),
+            can_cancel=False,
+            can_retry=False,
+            progress_detail=progress_detail,
+        )
+        self._log(
+            task_id,
+            "info",
+            "index_generation",
+            "rebuild.completed",
+            "请求时冻结规则重建完成，结果未发布",
+            details=progress_detail["rebuildResult"],
+        )
+        self.batches.update(dataset.batch_id, state="downloaded", activeTaskIds=[])
 
     @staticmethod
     def _failure_summary(exc: BaseException) -> str:
@@ -2866,6 +4022,8 @@ class TrainingService:
             return f"产物完整性校验失败：{exc}"
         if isinstance(exc, ArtifactRecordDecodeError):
             return f"产物记录解析失败：{exc}"
+        if isinstance(exc, ProductionLineageError):
+            return f"生产血缘校验失败（{exc.code}）：{exc}"
         if isinstance(exc, json.JSONDecodeError):
             return f"JSON 记录解析失败：第 {exc.lineno} 行第 {exc.colno} 列"
         if isinstance(exc, OSError):
@@ -2879,23 +4037,180 @@ class TrainingService:
             return self._prepare_materials_from_stage_outputs(task_id, request, run_dir)
         return self._prepare_materials_legacy(task_id, request, run_dir)
 
+    def _scan_for_material_preparation(self, task_id: str, batch_id: str) -> ScanReport:
+        started_at = time.monotonic()
+        self._log(
+            task_id,
+            "info",
+            "material_preparation",
+            "material_preparation.scan.started",
+            "正在获取源文件扫描结果",
+            details={"operation": "load_scan_report"},
+        )
+        scan_source = "latest_scan_report"
+        try:
+            report = self.preprocess.latest_scan_report(batch_id)
+            if report.batch_id != batch_id:
+                raise ValueError("扫描报告批次与当前任务不一致")
+        except FileNotFoundError:
+            report = None
+        except ValueError as exc:
+            report = None
+            self._log(
+                task_id,
+                "warning",
+                "material_preparation",
+                "material_preparation.scan.cache_invalid",
+                "源文件扫描缓存不可用，已切换为轻量扫描",
+                details={"errorClass": "scan_cache_invalid", "technicalError": str(exc)},
+            )
+
+        if report is None:
+            scan_source = "lightweight_scan"
+            last_emitted = 0
+            last_emitted_at = time.monotonic()
+
+            def update_progress(current: int, total: int, failed: int, warnings: int) -> None:
+                nonlocal last_emitted, last_emitted_at
+                self._raise_if_cancelled(task_id)
+                now = time.monotonic()
+                if current != total and current - last_emitted < 50 and now - last_emitted_at < 1:
+                    return
+                last_emitted = current
+                last_emitted_at = now
+                self._update_stage_progress(
+                    task_id,
+                    "material_preparation",
+                    current,
+                    total,
+                    "个源文件",
+                    f"正在轻量检查源文件：{current}/{total}",
+                    event="material_preparation.scan.progress",
+                    details={
+                        "source": scan_source,
+                        "failed": failed,
+                        "warnings": warnings,
+                    },
+                )
+
+            report = self.preprocess.scan(
+                batch_id,
+                lightweight=True,
+                progress=update_progress,
+                cancel_check=lambda: self._raise_if_cancelled(task_id),
+            )
+
+        self._raise_if_cancelled(task_id)
+        duration_ms = int((time.monotonic() - started_at) * 1000)
+        self._update_stage_progress(
+            task_id,
+            "material_preparation",
+            report.total_files,
+            report.total_files,
+            "个源文件",
+            f"源文件扫描结果可用：{report.processable_count} 个来源可加工",
+            event="material_preparation.scan.completed",
+            details={
+                "source": scan_source,
+                "durationMs": duration_ms,
+                "totalFiles": report.total_files,
+                "processableCount": report.processable_count,
+            },
+        )
+        return report
+
+    def _preparation_progress_callback(self, task_id: str):
+        last_emitted = 0
+        last_emitted_at = time.monotonic()
+
+        def update_progress(
+            current: int,
+            total: int,
+            succeeded: int,
+            failed: int,
+            skipped: int,
+        ) -> None:
+            nonlocal last_emitted, last_emitted_at
+            self._raise_if_cancelled(task_id)
+            now = time.monotonic()
+            if current not in {0, total} and current - last_emitted < 50 and now - last_emitted_at < 1:
+                return
+            last_emitted = current
+            last_emitted_at = now
+            self._update_stage_progress(
+                task_id,
+                "material_preparation",
+                current,
+                total,
+                "个资源",
+                f"正在生成资料预处理快照：{current}/{total}",
+                event="material_preparation.prepare.progress",
+                details={
+                    "substage": "prepare",
+                    "succeeded": succeeded,
+                    "failed": failed,
+                    "skipped": skipped,
+                },
+            )
+
+        return update_progress
+
     def _prepare_materials_from_stage_outputs(self, task_id: str, request: TrainingTaskCreate, run_dir: Path):
         self._raise_if_cancelled(task_id)
         self._set_stage(
             task_id,
             "material_preparation",
-            detail_message="正在执行正式资料预处理、C 代码清洗和元数据构建",
+            detail_message="正在执行正式资料预处理、C 代码清洗和处理单元生成",
         )
-        scan_report = self.preprocess.scan(request.batch_id)
+        scan_report = self._scan_for_material_preparation(task_id, request.batch_id)
         preparation_stage_run_id = self._stage_run_id(task_id, "material_preparation")
-        metadata_stage_run_id = stable_id("stage-run", task_id, "metadata_construction")
+        metadata_stage_run_id = self._stage_run_id(task_id, "metadata_construction")
+        preparation_started_at = time.monotonic()
+        self._log(
+            task_id,
+            "info",
+            "material_preparation",
+            "material_preparation.prepare.started",
+            "正在生成资料预处理快照",
+            details={"operation": "prepare_snapshot"},
+        )
         preparation_report = self.preparation.prepare(
             request.batch_id,
             request.config,
             parent_task_id=task_id,
             stage_run_id=preparation_stage_run_id,
+            progress=self._preparation_progress_callback(task_id),
+            cancel_check=lambda: self._raise_if_cancelled(task_id),
         )
         self._raise_if_cancelled(task_id)
+        self._log(
+            task_id,
+            "info",
+            "material_preparation",
+            "material_preparation.prepare.completed",
+            f"资料预处理快照已提交：{preparation_report.processable_resources} 个资源可加工",
+            current=preparation_report.total_resources,
+            total=preparation_report.total_resources,
+            details={
+                "durationMs": int((time.monotonic() - preparation_started_at) * 1000),
+                "runId": preparation_report.run_id,
+                "processableResources": preparation_report.processable_resources,
+            },
+        )
+        self._set_stage(
+            task_id,
+            "material_preparation",
+            "completed",
+            current=preparation_report.total_resources,
+            total=preparation_report.total_resources,
+            unit="个资源",
+            detail_message=f"资料预处理完成：{preparation_report.processable_resources} 个资源已生成结构化处理单元",
+        )
+        self._set_stage(
+            task_id,
+            "metadata_construction",
+            detail_message="正在构建文档元数据、主题初筛、embedding 缓存和聚类报告",
+        )
         metadata_report = self.metadata_construction.build(
             request.batch_id,
             preparation_snapshot=preparation_report.snapshot_ref,
@@ -3078,18 +4393,24 @@ class TrainingService:
                 "unsupportedFiles": scan_report.unsupported_files,
             },
             quality_passed=bool(documents and chunks and not any(item.get("severity") == "error" for item in preparation_issues)),
+            publishable=False,
+            governance=GovernanceStatus(
+                status="keyword",
+                reason_code="FORMAL_KNOWLEDGE_PENDING",
+                gate_checks=initial_gate_checks(),
+            ),
             created_at=utcnow(),
         )
         self.store.put_record("datasets", dataset.id, dataset.model_dump(mode="json", by_alias=True))
         self._set_stage(
             task_id,
-            "material_preparation",
+            "metadata_construction",
             "completed",
             current=len(chunks),
             total=len(chunks),
             unit="个处理单元",
             detail_message=(
-                f"资料预处理与元数据构建完成：{len(documents)} 篇文档、{len(chunks)} 个处理单元、"
+                f"元数据构建完成：{len(documents)} 篇文档、{len(chunks)} 个处理单元、"
                 f"排除 {dataset.quality_metrics['excludedCCodeBlocks']} 个 C/C++ 代码块"
             ),
         )
@@ -3152,7 +4473,58 @@ class TrainingService:
             unit="个处理单元",
             detail_message=f"资料预处理完成：{len(documents)} 篇文档、{len(chunks)} 个处理单元、{len(scan_report.issues)} 个扫描问题",
         )
+        self._set_stage(
+            task_id,
+            "metadata_construction",
+            "skipped",
+            current=0,
+            total=0,
+            unit="个处理单元",
+            detail_message="当前运行未配置独立元数据构建服务，沿用资料预处理产物中的基础元数据",
+        )
         return dataset, chunks, documents
+
+    def _keyword_analysis_progress_callback(self, task_id: str, total_chunks: int):
+        last_emitted_resources = 0
+        last_emitted_at = time.monotonic()
+
+        def update_progress(
+            processed_resources: int,
+            current: int,
+            succeeded: int,
+            failed: int,
+            skipped: int,
+            force: bool = False,
+        ) -> None:
+            nonlocal last_emitted_resources, last_emitted_at
+            now = time.monotonic()
+            if (
+                not force
+                and current != total_chunks
+                and processed_resources - last_emitted_resources < 50
+                and now - last_emitted_at < 1
+            ):
+                return
+            last_emitted_resources = processed_resources
+            last_emitted_at = now
+            self._update_stage_progress(
+                task_id,
+                "knowledge_extraction",
+                current,
+                total_chunks,
+                "个处理单元",
+                f"正在执行确定性关键词抽取：{current}/{total_chunks}",
+                event="knowledge_extraction.keyword_analysis.progress",
+                details={
+                    "substage": "keyword_analysis",
+                    "processedResources": processed_resources,
+                    "succeeded": succeeded,
+                    "failed": failed,
+                    "skipped": skipped,
+                },
+            )
+
+        return update_progress
 
     def _extract_keyword_analysis(
         self,
@@ -3171,7 +4543,7 @@ class TrainingService:
         self._raise_if_cancelled(task_id)
         self._set_stage(
             task_id,
-            "deterministic_extraction",
+            "knowledge_extraction",
             current=0,
             total=len(chunks),
             unit="个处理单元",
@@ -3190,6 +4562,7 @@ class TrainingService:
             grouped_content[resource_id] = [str(chunk.get("content") or "") for chunk in resource_chunks]
 
         for document in documents:
+            self._raise_if_cancelled(task_id)
             summary = self._rule_based_summary(
                 document.get("title", ""),
                 "\n\n".join(grouped_content.get(str(document.get("resourceId") or ""), [])),
@@ -3200,6 +4573,9 @@ class TrainingService:
                 "keywords": document.get("keywords") or summary["keywords"],
             })
             document.update(self._document_profile(document, grouped_content.get(str(document.get("resourceId") or ""), [])))
+            self._raise_if_cancelled(task_id)
+
+        rule_descriptor = self._keyword_rule_descriptor(low_confidence_threshold)
 
         profiles = [{
             "resourceId": document["resourceId"],
@@ -3231,33 +4607,110 @@ class TrainingService:
         known_keywords_by_resource: dict[str, list[str]] = {}
         deterministic_covered_resources: set[str] = set()
         preselection_by_resource = self._preselection_by_resource(run_dir)
+        report_progress = self._keyword_analysis_progress_callback(task_id, len(chunks))
+        processed_resources = 0
+        current = 0
+        succeeded = 0
+        failed = 0
+        skipped = 0
 
         # 对所有资源执行确定性提取
         for resource_id, resource_chunks in grouped.items():
+            self._raise_if_cancelled(task_id)
             document = document_lookup.get(resource_id, {})
             preselection = preselection_by_resource.get(resource_id)
+            resource_chunk_count = len(resource_chunks)
             
             # 只有 skip 才真正跳过
             if preselection and preselection.get("preselectionState") == "skip":
-                cache_summary["deterministicSkippedChunks"] += len(resource_chunks)
+                cache_summary["deterministicSkippedChunks"] += resource_chunk_count
                 known_keywords_by_resource[resource_id] = []
-                continue
-            
-            # 执行确定性提取
-            deterministic = self._deterministic_keyword_candidates(
-                task_id,
-                document,
-                sorted(resource_chunks, key=lambda item: int(item.get("chunkIndex", 0))),
-                low_confidence_threshold,
+                skipped += resource_chunk_count
+            else:
+                try:
+                    deterministic = self._deterministic_keyword_candidates(
+                        task_id,
+                        document,
+                        sorted(resource_chunks, key=lambda item: int(item.get("chunkIndex", 0))),
+                        low_confidence_threshold,
+                    )
+                except TrainingCancelledError:
+                    raise
+                except Exception:
+                    processed_resources += 1
+                    current += resource_chunk_count
+                    failed += resource_chunk_count
+                    report_progress(
+                        processed_resources, current, succeeded, failed, skipped, True
+                    )
+                    raise
+                keyword_candidates.extend(deterministic)
+                known_keywords_by_resource[resource_id] = self._merge_unique_values(
+                    [],
+                    [str(item.get("canonicalName") or "") for item in deterministic],
+                )
+                if deterministic:
+                    deterministic_covered_resources.add(resource_id)
+                cache_summary["deterministicSkippedChunks"] += resource_chunk_count
+                succeeded += resource_chunk_count
+
+            processed_resources += 1
+            current += resource_chunk_count
+            report_progress(
+                processed_resources,
+                current,
+                succeeded,
+                failed,
+                skipped,
+                current == len(chunks),
             )
-            keyword_candidates.extend(deterministic)
-            known_keywords_by_resource[resource_id] = self._merge_unique_values(
-                [],
-                [str(item.get("canonicalName") or "") for item in deterministic],
-            )
-            if deterministic:
-                deterministic_covered_resources.add(resource_id)
-            cache_summary["deterministicSkippedChunks"] += len(resource_chunks)
+            self._raise_if_cancelled(task_id)
+
+        # Commit the run-local semantic rule facts before any candidate is
+        # persisted.  Input fingerprints are traceability facts, not part of
+        # extractorVersion, so the same rules remain comparable across runs.
+        input_fingerprints: list[dict[str, Any]] = []
+        for resource_id, resource_chunks in sorted(grouped.items()):
+            document = document_lookup.get(resource_id, {})
+            content_hash = str(document.get("contentHash") or "").strip()
+            if content_hash.startswith("sha256:"):
+                digest = content_hash
+            else:
+                payload = json.dumps(
+                    [
+                        {
+                            "chunkId": str(chunk.get("id") or chunk.get("chunkId") or ""),
+                            "content": str(chunk.get("content") or ""),
+                            "headingPath": list(chunk.get("headingPath") or []),
+                        }
+                        for chunk in sorted(resource_chunks, key=lambda item: int(item.get("chunkIndex", 0)))
+                    ],
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+                digest = "sha256:" + hashlib.sha256(payload).hexdigest()
+            input_fingerprints.append({
+                "resourceId": resource_id,
+                "algorithm": "sha256-v1",
+                "digest": digest,
+                "chunkCount": len(resource_chunks),
+            })
+        snapshot_ref = KeywordRuleSnapshot.commit(
+            run_root=run_dir,
+            run_id=task_id,
+            descriptor=rule_descriptor,
+            input_snapshot_fingerprints=input_fingerprints,
+        )
+        extractor_version = snapshot_ref["extractorVersion"]
+        for candidate in keyword_candidates:
+            candidate.update({
+                "schemaVersion": "2.0",
+                "extractorVersion": extractor_version,
+                "extractorSnapshotRef": dict(snapshot_ref),
+                "model": None,
+                "modelStatus": "not_applicable",
+            })
 
         # 写入结果
         self._write_jsonl(run_dir / "extraction-results/keyword-candidates.jsonl", keyword_candidates)
@@ -3270,7 +4723,7 @@ class TrainingService:
 
         self._set_stage(
             task_id,
-            "deterministic_extraction",
+            "knowledge_extraction",
             "completed",
             current=len(chunks),
             total=len(chunks),
@@ -3306,28 +4759,25 @@ class TrainingService:
         keyword_context_by_chunk: dict[str, list[dict[str, Any]]] | None = None,
     ):
         """
-        使用 Workflow Agent 执行知识提取
-        
+        使用 Workflow Agent 执行知识提取。
+
         最小 Workflow Agent：每个工作项只提取一个 chunk 的知识点候选。
         """
         calls = calls if calls is not None else {"succeeded": 0, "failed": 0, "skipped": 0}
         self._raise_if_cancelled(task_id)
-        
         self._set_stage(
             task_id,
-            "deterministic_extraction",
+            "knowledge_extraction",
             current=0,
             total=len(chunks),
             unit="个处理单元",
             detail_message="正在使用 Workflow Agent 执行知识提取",
         )
-        
-        # 准备文档信息
+
         grouped_content: dict[str, list[str]] = {}
         for chunk in chunks:
             grouped_content.setdefault(chunk["resourceId"], []).append(chunk["content"])
-        
-        profiles = []
+
         for document in documents:
             summary = self._rule_based_summary(
                 document["title"], "\n\n".join(grouped_content.get(document["resourceId"], []))
@@ -3339,31 +4789,21 @@ class TrainingService:
             })
             profile = self._document_profile(document, grouped_content.get(document["resourceId"], []))
             document.update(profile)
-            profiles.append({
-                "resourceId": document["resourceId"],
-                **profile,
-                "ruleVersion": "document-profile-v1",
-                "inputHash": "sha256:" + document["contentHash"],
-            })
-        
-        # 检查模型网关
+
         try:
             status = self.gateway.status()
             if not status.get("configured") or not status.get("capabilities", {}).get("chat"):
                 raise ModelGatewayError("YashanDB 知识库文档生成器的对话模型尚未配置")
         except Exception as error:
             raise ModelGatewayError(f"知识提取 Agent 不可用：{error_summary(error)}") from error
-        
-        # 检查取消状态
+
         self._raise_if_cancelled(task_id)
-        
-        # 使用 Workflow Agent 执行知识提取
         self._log(
-            task_id, "info", "deterministic_extraction", "workflow_agent.started",
+            task_id, "info", "knowledge_extraction", "workflow_agent.started",
             f"开始 Workflow Agent 知识提取：{len(chunks)} 个处理单元",
             details={"taskId": task_id, "chunkCount": len(chunks), "documentCount": len(documents)},
         )
-        
+
         try:
             completed_agent_tasks: set[str] = set()
             progress_lock = threading.Lock()
@@ -3394,7 +4834,7 @@ class TrainingService:
                     )
                     self._set_stage(
                         task_id,
-                        "deterministic_extraction",
+                        "knowledge_extraction",
                         current=completed_chunks,
                         total=len(chunks),
                         unit="个处理单元",
@@ -3408,38 +4848,31 @@ class TrainingService:
                 self._log(
                     task_id,
                     level,
-                    "deterministic_extraction",
+                    "knowledge_extraction",
                     event,
                     message,
                     details=details,
                 )
 
-            # 创建 Agent 任务
             agent_task = AgentTask(
                 task_id=task_id,
                 input_data={
                     "chunks": chunks,
                     "documents": documents,
                     "task_id": task_id,
-                    "stage_run_id": self._stage_run_id(task_id, "deterministic_extraction"),
+                    "stage_run_id": self._stage_run_id(task_id, "knowledge_extraction"),
                     "cancel_check": lambda: self._raise_if_cancelled(task_id),
                     "progress_callback": formal_progress_callback,
                     "keyword_context_by_chunk": keyword_context_by_chunk or {},
                 },
             )
-            
-            # 执行 Agent
             agent_result = self.extraction_agent.execute(agent_task)
-            
-            # 提取结果
             aggregated = agent_result.output_data
             metadata = agent_result.metadata
             batch_audits = [
                 self._formal_batch_audit(task_id, audit)
                 for audit in aggregated.pop("_batchAudits", [])
             ]
-            
-            # 构建输出记录
             results = []
             candidates = []
             human_required = []
@@ -3465,8 +4898,7 @@ class TrainingService:
                         "durationMs": audit.get("durationMs"),
                     },
                 ))
-            
-            # 只处理知识点候选；实体、关系、关键词和语义补充由后续独立阶段负责。
+
             for kp in aggregated.get("knowledgePoints", []):
                 chunk_id = kp.get("chunkId", "")
                 chunk = next((c for c in chunks if c.get("id") == chunk_id), None)
@@ -3476,45 +4908,38 @@ class TrainingService:
                         keyword_context_by_chunk.get(chunk_id) if keyword_context_by_chunk else None,
                     ))
             pending = []
-            
-            # 构建结果记录
             results.append({
                 "taskId": task_id,
-                "stageRunId": self._stage_run_id(task_id, "deterministic_extraction"),
+                "stageRunId": self._stage_run_id(task_id, "knowledge_extraction"),
                 "status": "agent_resolved",
                 "result": aggregated,
                 "metadata": metadata,
             })
-            
             self._merge_model_calls(calls, metadata.get("model_calls"))
-            
             self._log(
-                task_id, "info", "deterministic_extraction", "workflow_agent.completed",
+                task_id, "info", "knowledge_extraction", "workflow_agent.completed",
                 f"Workflow Agent 知识点提取完成：{metadata.get('extraction_count', 0)} 个知识点",
                 details={**metadata},
             )
-            
         except Exception as error:
             self._log(
-                task_id, "error", "deterministic_extraction", "workflow_agent.failed",
+                task_id, "error", "knowledge_extraction", "workflow_agent.failed",
                 f"Workflow Agent 知识提取失败：{error_summary(error)}",
                 details={"technicalError": str(error)},
             )
             raise
-        
-        # 保存结果
+
         self._write_jsonl(run_dir / "extraction-results/knowledge-candidates.jsonl", candidates)
         self._write_jsonl(run_dir / "model-results/knowledge-extraction-batches.jsonl", batch_audits)
-        
+
         extraction_issues_path = run_dir / "quality/extraction-issues.json"
         extraction_issues_path.parent.mkdir(parents=True, exist_ok=True)
         extraction_issues_path.write_text(
             json.dumps(human_required, ensure_ascii=False, indent=2), encoding="utf-8"
         )
-        
         self._set_stage(
             task_id,
-            "deterministic_extraction",
+            "knowledge_extraction",
             "completed",
             current=len(chunks),
             total=len(chunks),
@@ -3524,13 +4949,13 @@ class TrainingService:
             ),
             model_calls=dict(calls),
         )
-        
+
         return results, pending, human_required
 
     def _formal_batch_audit(self, task_id: str, audit: dict[str, Any]) -> dict[str, Any]:
         item = dict(audit or {})
         item.setdefault("taskId", task_id)
-        item.setdefault("stageRunId", self._stage_run_id(task_id, "deterministic_extraction"))
+        item.setdefault("stageRunId", self._stage_run_id(task_id, "knowledge_extraction"))
         item.setdefault("agentTaskId", item.get("agent_task_id"))
         item.setdefault("chunkId", item.get("chunk_id"))
         item.setdefault("modelCallId", item.get("_modelCallId"))
@@ -3561,214 +4986,9 @@ class TrainingService:
         return "KNOWLEDGE_EXTRACTION_FAILED"
 
 
-    def _resolve_uncertain_items(self, task_id: str, pending, chunks, documents, run_dir: Path, calls, issues):
-        pending = [item for item in pending if item.get("state") == "needs_enrichment"]
-        semantic_issues: list[dict[str, Any]] = []
-        semantic_issues_path = run_dir / "quality/semantic-issues.json"
-        semantic_issues_path.parent.mkdir(parents=True, exist_ok=True)
-        if not pending:
-            calls["skipped"] += 1
-            self._set_stage(
-                task_id,
-                "semantic_enrichment",
-                "skipped",
-                current=0,
-                total=0,
-                unit="个不确定项",
-                detail_message="没有 needs_enrichment 项，按需语义补充已跳过",
-                model_calls=dict(calls),
-            )
-            self._write_jsonl(run_dir / "uncertain-items/resolved.jsonl", [])
-            self._write_jsonl(run_dir / "model-results/semantic-resolution.jsonl", [])
-            semantic_issues_path.write_text("[]", encoding="utf-8")
-            return []
-
-        self._set_stage(
-            task_id,
-            "semantic_enrichment",
-            current=0,
-            total=len(pending),
-            unit="个不确定项",
-            detail_message=f"准备按需判断 {len(pending)} 个语义不确定项",
-        )
-        chunk_lookup = {item["id"]: item for item in chunks}
-        document_lookup = {item["resourceId"]: item for item in documents}
-        results = []
-        resolved_items = []
-        try:
-            status = self.gateway.status()
-            if not status.get("configured") or not status.get("capabilities", {}).get("chat"):
-                raise ModelGatewayError("YashanDB 知识库文档生成器的对话模型尚未配置")
-            self._log(
-                task_id,
-                "info",
-                "semantic_enrichment",
-                "model_gateway.ready",
-                f"已继承文档生成器模型：{status.get('provider') or '未知提供商'} / {status.get('model') or '未知模型'}",
-                details={"provider": status.get("provider"), "model": status.get("model")},
-            )
-        except Exception as error:
-            summary = error_summary(error)
-            resolved_items = []
-            for item in pending:
-                issue = self._quality_issue(
-                    "SEMANTIC_ENRICHMENT_UNAVAILABLE",
-                    item.get("resourceId"),
-                    item.get("chunkId"),
-                    f"语义不确定项未处理：{summary}",
-                    source_path=item.get("sourcePath"),
-                    evidence=item.get("evidenceText"),
-                    details={"uncertainItemId": item["id"], "technicalError": str(error)},
-                )
-                issues.append(issue)
-                semantic_issues.append(issue)
-                resolved_items.append(self._resolved_uncertain_record(item, "human_required", summary, 0, error=str(error)))
-            calls["failed"] += len(pending)
-            self._write_jsonl(run_dir / "uncertain-items/resolved.jsonl", resolved_items)
-            self._write_jsonl(run_dir / "model-results/semantic-resolution.jsonl", [])
-            semantic_issues_path.write_text(json.dumps(semantic_issues, ensure_ascii=False, indent=2), encoding="utf-8")
-            self._set_stage(
-                task_id,
-                "semantic_enrichment",
-                "completed",
-                current=len(pending),
-                total=len(pending),
-                unit="个不确定项",
-                detail_message=f"语义补充未执行：{len(pending)} 项转为质量问题，原因：{summary}",
-                model_calls=dict(calls),
-            )
-            return []
-
-        def resolve_one(item):
-            chunk = chunk_lookup[item["chunkId"]]
-            envelope = self._semantic_context_envelope(task_id, item, chunk, chunks)
-            started_at = time.monotonic()
-            agent_task_id = f"agent_task_{uuid.uuid4().hex[:20]}"
-            trace = {
-                "taskId": task_id,
-                "stage": "semantic_enrichment",
-                "agentTaskId": agent_task_id,
-                "resourceId": item["resourceId"],
-                "chunkId": item["chunkId"],
-                "uncertainItemId": item["id"],
-            }
-            try:
-                self._log(
-                    task_id, "info", "semantic_enrichment", "agent_task.started",
-                    f"开始语义补充：{item['id']}",
-                    details={**trace, "skillId": "semantic-enrichment"},
-                )
-                response = self._invoke_skill_cached("semantic-enrichment", envelope, trace=trace)
-                model_call_id = response.get("_modelCallId")
-                data = response["data"]
-                if data.get("uncertainItemId") != item["id"]:
-                    raise ModelGatewayError("模型返回的 uncertainItemId 与请求不一致")
-                validation_issues = []
-                validated = self._validated_model_resolution(
-                    data, chunk, validation_issues, set(item.get("candidateValues", []))
-                )
-                if data["status"] == "resolved" and validation_issues:
-                    raise ModelGatewayError(validation_issues[0]["message"])
-                result = {
-                    "taskId": task_id,
-                    "stageRunId": self._stage_run_id(task_id, "semantic_enrichment"),
-                    "agentTaskId": agent_task_id,
-                    "modelCallId": model_call_id,
-                    "uncertainItemId": item["id"],
-                    "resourceId": item["resourceId"],
-                    "chunkId": item["chunkId"],
-                    "status": data["status"],
-                    "reason": data["reason"],
-                    "confidence": data["confidence"],
-                    **validated,
-                    "metadata": data["metadata"],
-                    "usage": response.get("usage", {}),
-                }
-                terminal = "resolved" if data["status"] == "resolved" else "human_required"
-                resolved = self._resolved_uncertain_record(
-                    item, terminal, data["reason"], 1, resolution=data,
-                    duration_ms=int((time.monotonic() - started_at) * 1000),
-                )
-                resolved.update({
-                    "taskId": task_id,
-                    "stageRunId": self._stage_run_id(task_id, "semantic_enrichment"),
-                    "agentTaskId": agent_task_id,
-                    "modelCallId": model_call_id,
-                })
-                issue = validation_issues[0] if validation_issues else None
-                return item, result, resolved, issue, response.pop("_modelCalls", None), response.pop("_cacheHit", False), trace, model_call_id
-            except Exception as error:
-                summary = error_summary(error)
-                model_call_id = getattr(error, "model_call_id", None)
-                issue = self._quality_issue(
-                    "SEMANTIC_ENRICHMENT_FAILED",
-                    item["resourceId"],
-                    item["chunkId"],
-                    f"语义不确定项处理失败：{summary}",
-                    source_path=item.get("sourcePath"),
-                    evidence=item.get("evidenceText"),
-                    details={**trace, "modelCallId": model_call_id, "technicalError": str(error)},
-                )
-                resolved = self._resolved_uncertain_record(
-                    item, "human_required", summary, 1, error=str(error),
-                    duration_ms=int((time.monotonic() - started_at) * 1000),
-                )
-                resolved.update({
-                    "taskId": task_id,
-                    "stageRunId": self._stage_run_id(task_id, "semantic_enrichment"),
-                    "agentTaskId": agent_task_id,
-                    "modelCallId": model_call_id,
-                })
-                return item, None, resolved, issue, getattr(error, "model_calls", None), False, trace, model_call_id
-
-        max_workers = self._skill_concurrency("semantic-enrichment", 3)
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = [executor.submit(resolve_one, item) for item in pending]
-            for index, future in enumerate(futures, 1):
-                self._raise_if_cancelled(task_id)
-                item, result, resolved, issue, model_calls, cache_hit, trace, model_call_id = future.result()
-                resolved_items.append(resolved)
-                if result is not None:
-                    results.append(result)
-                    if issue is not None:
-                        issues.append(issue)
-                        semantic_issues.append(issue)
-                    if cache_hit:
-                        calls["skipped"] += 1
-                    else:
-                        self._merge_model_calls(calls, model_calls, succeeded_default=1)
-                    level, event = "info", "agent_task.completed"
-                    message = f"语义补充完成：{item['id']}"
-                else:
-                    issues.append(issue)
-                    semantic_issues.append(issue)
-                    self._merge_model_calls(calls, model_calls, failed_default=1)
-                    level, event = "error", "agent_task.failed"
-                    message = f"语义补充失败：{item['id']} - {resolved['reason']}"
-                self._update_stage_progress(
-                    task_id, "semantic_enrichment", index, len(pending), "个不确定项", message,
-                    level=level, event=event,
-                    details={**trace, "modelCallId": model_call_id},
-                    model_calls=dict(calls),
-                )
-        self._write_jsonl(run_dir / "uncertain-items/resolved.jsonl", resolved_items)
-        self._write_jsonl(run_dir / "model-results/semantic-resolution.jsonl", results)
-        semantic_issues_path.write_text(json.dumps(semantic_issues, ensure_ascii=False, indent=2), encoding="utf-8")
-        self._set_stage(
-            task_id,
-            "semantic_enrichment",
-            "completed",
-            current=len(pending),
-            total=len(pending),
-            unit="个不确定项",
-            detail_message=f"按需语义补充完成：成功 {len(results)}，失败 {len(pending) - len(results)}",
-            model_calls=dict(calls),
-        )
-        return results
-
     def _validate_and_merge(self, task_id: str, chunks, rule_results, model_results, run_dir: Path, issues):  # model_results 参数保留但不再使用
         self._raise_if_cancelled(task_id)
-        self._set_stage(task_id, "validation_graph", detail_message="正在校验并合并最终知识")
+        self._set_stage(task_id, "knowledge_extraction", detail_message="正在校验并合并最终知识")
         candidates = self._read_jsonl(run_dir / "extraction-results/knowledge-candidates.jsonl")
         keyword_candidates = self._read_jsonl(run_dir / "extraction-results/keyword-candidates.jsonl")
         # 新工作流：不再读取 semantic_results，所有知识提取由 Workflow Agent 完成
@@ -3794,7 +5014,7 @@ class TrainingService:
                 },
             ))
             issues[:] = self._deduplicate_quality_issues(issues)
-        validation_stage_run_id = self._stage_run_id(task_id, "validation_graph")
+        validation_stage_run_id = self._stage_run_id(task_id, "knowledge_extraction")
         for item in final_results:
             item["sourceStageRunId"] = item.get("stageRunId")
             item["taskId"] = task_id
@@ -3814,14 +5034,14 @@ class TrainingService:
             self._log(
                 task_id,
                 "warning",
-                "validation_graph",
+                "knowledge_extraction",
                 "knowledge.rejected",
                 f"知识候选已拒绝：{item['reason']}",
                 details={"candidateId": item.get("candidateId"), "code": item.get("code")},
             )
         self._set_stage(
             task_id,
-            "validation_graph",
+            "knowledge_extraction",
             "completed",
             current=len(final_results),
             total=len(candidates),
@@ -3829,53 +5049,6 @@ class TrainingService:
             detail_message=f"知识校验与合并完成：通过 {len(final_results)} 条、拒绝 {len(rejected)} 条、质量问题 {len(issues)} 个",
         )
         return final_results
-
-    def _semantic_candidates(self, results, chunks):
-        chunk_lookup = {item["id"]: item for item in chunks}
-        records = []
-        for result in results:
-            if result.get("status") != "resolved" or result.get("chunkId") not in chunk_lookup:
-                continue
-            chunk = chunk_lookup[result["chunkId"]]
-            base_offset = int((chunk.get("documentOffsets") or {}).get("start", 0))
-            metadata = result.get("metadata") if isinstance(result.get("metadata"), dict) else {}
-            for collection, kind in (("knowledgePoints", "knowledge_point"), ("entities", "entity"), ("relations", "relation")):
-                for item in result.get(collection, []):
-                    if not isinstance(item, dict):
-                        continue
-                    evidence = self._evidence(item, "")
-                    local_offsets = self._offsets(chunk["content"], evidence)
-                    offsets = {
-                        "start": base_offset + local_offsets["start"] if local_offsets["start"] >= 0 else -1,
-                        "end": base_offset + local_offsets["end"] if local_offsets["end"] >= 0 else -1,
-                    }
-                    records.append({
-                        "taskId": result.get("taskId"),
-                        "stageRunId": result.get("stageRunId"),
-                        "agentTaskId": result.get("agentTaskId"),
-                        "modelCallId": result.get("modelCallId"),
-                        "candidateId": stable_id(
-                            "candidate", result.get("uncertainItemId", ""), kind,
-                            json.dumps(item, ensure_ascii=False, sort_keys=True),
-                        ),
-                        "state": "model_resolved",
-                        "kind": kind,
-                        "resourceId": result["resourceId"],
-                        "chunkId": result["chunkId"],
-                        "sourcePath": chunk.get("sourcePath"),
-                        "value": {key: value for key, value in item.items() if key not in {"evidenceText", "evidenceOffsets", "confidence"}},
-                        "evidenceText": evidence,
-                        "evidenceOffsets": offsets,
-                        "sourceMethod": "model_resolved",
-                        "agentId": metadata.get("agentId", "semantic-enrichment-agent"),
-                        "skillId": metadata.get("skillId", "semantic-enrichment"),
-                        "skillVersion": metadata.get("skillVersion", "1.0.1"),
-                        "promptVersion": metadata.get("promptVersion", "semantic-enrichment:1.0.1"),
-                        "schemaVersion": metadata.get("schemaVersion", "2.0.0"),
-                        "inputHash": stable_id("input", result.get("uncertainItemId", ""), result["chunkId"]),
-                        "confidence": item.get("confidence", result.get("confidence")),
-                    })
-        return records
 
     def _validate_knowledge_candidates(self, candidates, chunks):
         chunk_lookup = {item["id"]: item for item in chunks}
@@ -4035,9 +5208,69 @@ class TrainingService:
             result.setdefault(key, item)
         return list(result.values())
 
+    def _commit_production_governance(
+        self,
+        *,
+        dataset_id: str,
+        mode: str,
+        dataset_root: Path,
+        source_documents: list[dict[str, Any]],
+        processing_units: list[dict[str, Any]],
+        evidence_records: list[dict[str, Any]],
+        nodes: list[dict[str, Any]],
+        edges: list[dict[str, Any]],
+        keyword_chunk_index: Mapping[str, Any],
+        request,
+    ) -> dict[str, Any]:
+        """Build and atomically publish the dataset's verified governance package."""
+
+        # Some historical unit fixtures exercise dataset serialization with a
+        # deliberately minimal source record.  They are not production facts
+        # and must not be treated as a verified governance package.
+        if not all(
+            isinstance(item.get("sourcePath"), str)
+            and isinstance(item.get("normalizedHash"), str)
+            for item in source_documents
+        ):
+            return {}
+
+        if mode == KEYWORD_MODE:
+            rule = self._keyword_rule_descriptor(request.config.low_confidence_threshold)
+        else:
+            rule = {
+                "mode": mode,
+                "pipelineVersion": "2.0",
+                "schemaVersion": "2.0.0",
+                "metadataRuleSetHash": self._metadata_rule_set_hash(),
+            }
+        result = ProductionLineageAdapter.build(
+            dataset_id=dataset_id,
+            version_id=dataset_id,
+            dataset_root=dataset_root,
+            source_documents=source_documents,
+            prepared_chunks=processing_units,
+            evidence_records=evidence_records,
+            mode=mode,
+            graph={
+                "nodes": nodes,
+                "edges": edges,
+                "schemaVersion": GRAPH_SCHEMA_VERSION,
+                "graphSource": "final_knowledge" if mode == FORMAL_MODE else "keyword_analysis",
+            },
+            index={
+                "processingUnitIds": sorted(str(item.get("chunkId") or item.get("id") or "") for item in processing_units),
+                "keywordChunkIndex": keyword_chunk_index,
+            },
+            rule=rule,
+            created_at=utcnow().isoformat(),
+            model=None,
+            embedding=None,
+        )
+        return GovernancePackageRepository.commit(dataset_root, result).to_dict()
+
     def _generate_dataset(self, task_id: str, request, dataset, final_results, chunks, run_dir: Path, calls, issues):
         self._raise_if_cancelled(task_id)
-        self._set_stage(task_id, "dataset_generation", detail_message="正在生成图谱与三层数据集目录")
+        self._set_stage(task_id, "index_generation", detail_message="正在生成图谱与三层数据集目录")
         final_results = self._read_jsonl(run_dir / "final-results/knowledge.jsonl")
         documents = self._read_jsonl(run_dir / "metadata/documents.jsonl")
         chunk_contexts = self._read_jsonl(run_dir / "metadata/chunk-contexts.jsonl")
@@ -4114,6 +5347,27 @@ class TrainingService:
         self._write_json(dataset_root / "graph/edges.json", edges)
         self._write_json(dataset_root / "keyword-chunk-index.json", keyword_chunk_index)
         self._write_json(dataset_root / "quality-issues.json", issues)
+        entity_relation_ready = bool(entities and relations)
+        evidence_ready = entity_relation_ready and all(bool(item.get("evidenceText")) for item in relations)
+        governance_checks = {
+            "entity_relation": entity_relation_ready,
+            "evidence": evidence_ready,
+            "acl": False,
+            "quality": not high_issues,
+            "evaluation": False,
+            "manifest": False,
+        }
+        governance = GovernanceStatus(
+            status="index" if entity_relation_ready and evidence_ready and not high_issues else "keyword",
+            status_version=2 if entity_relation_ready and evidence_ready and not high_issues else 0,
+            publishable=False,
+            reason_code=(
+                "ACL_EVALUATION_PENDING"
+                if entity_relation_ready and evidence_ready and not high_issues
+                else "ENTITY_RELATION_OR_EVIDENCE_REQUIRED"
+            ),
+            gate_checks=governance_checks,
+        )
         self.store.update_record("datasets", dataset.id, {
             "trainingTaskId": task_id,
             "graphAvailable": True,
@@ -4126,10 +5380,11 @@ class TrainingService:
             },
             "qualityPassed": not high_issues,
             "qualityState": quality_state,
-            "publishable": not high_issues,
+            "publishable": False,
             "qualityLabels": quality_labels,
             "qualityNotice": quality_notice,
             "datasetPath": f"datasets/{dataset.id}",
+            "governance": governance.model_dump(mode="json", by_alias=True),
         })
         report = {
             "taskId": task_id,
@@ -4190,6 +5445,26 @@ class TrainingService:
             "createdAt": utcnow().isoformat(),
         }
         self._write_json(dataset_root / "manifest.json", manifest)
+        governance_refs = self._commit_production_governance(
+            dataset_id=dataset.id,
+            mode=request.mode,
+            dataset_root=dataset_root,
+            source_documents=source_documents,
+            processing_units=processing_units,
+            evidence_records=final_results,
+            nodes=nodes,
+            edges=edges,
+            keyword_chunk_index=keyword_chunk_index,
+            request=request,
+        )
+        if governance_refs:
+            manifest["governance"] = governance_refs
+            self._write_json(dataset_root / "manifest.json", manifest)
+            governance_checks["manifest"] = True
+            self.store.update_record("datasets", dataset.id, {
+                "graphSummary": {**summary, "governance": governance_refs["lineage"]},
+                "governance": governance.model_copy(update={"gate_checks": governance_checks}).model_dump(mode="json", by_alias=True),
+            })
         self._write_fix_report(
             task_id,
             request,
@@ -4199,15 +5474,15 @@ class TrainingService:
             issues,
         )
         for node in nodes:
-            self._log(task_id, "info", "dataset_generation", "graph.node_created", "图谱节点已生成", details={"nodeId": node["id"], "nodeType": node["type"]})
+            self._log(task_id, "info", "index_generation", "graph.node_created", "图谱节点已生成", details={"nodeId": node["id"], "nodeType": node["type"]})
         for edge in edges:
-            self._log(task_id, "info", "dataset_generation", "graph.edge_created", "图谱关系已生成", details={"edgeId": edge["id"], "edgeType": edge["type"]})
-        self._log(task_id, "info", "dataset_generation", "dataset.candidate_created", "候选数据集已生成", details={"datasetId": dataset.id})
+            self._log(task_id, "info", "index_generation", "graph.edge_created", "图谱关系已生成", details={"edgeId": edge["id"], "edgeType": edge["type"]})
+        self._log(task_id, "info", "index_generation", "dataset.candidate_created", "候选数据集已生成", details={"datasetId": dataset.id})
         if high_issues:
-            self._log(task_id, "warning", "dataset_generation", "dataset.quality_blocked", quality_notice, details={"datasetId": dataset.id, "qualityLabels": quality_labels})
+            self._log(task_id, "warning", "index_generation", "dataset.quality_blocked", quality_notice, details={"datasetId": dataset.id, "qualityLabels": quality_labels})
         self._set_stage(
             task_id,
-            "dataset_generation",
+            "index_generation",
             "completed",
             current=len(final_results),
             total=len(final_results),
@@ -4239,7 +5514,7 @@ class TrainingService:
 
     def _generate_keyword_dataset(self, task_id: str, request, dataset, chunks, run_dir: Path, calls, issues):
         self._raise_if_cancelled(task_id)
-        self._set_stage(task_id, "dataset_generation", detail_message="正在生成质量分析关键词图谱")
+        self._set_stage(task_id, "index_generation", detail_message="正在生成质量分析关键词图谱")
         documents = self._read_jsonl(run_dir / "metadata/documents.jsonl")
         chunk_contexts = self._read_jsonl(run_dir / "metadata/chunk-contexts.jsonl")
         keyword_candidates = self._read_jsonl(run_dir / "extraction-results/keyword-candidates.jsonl")
@@ -4309,6 +5584,20 @@ class TrainingService:
         self._write_json(dataset_root / "graph/edges.json", edges)
         self._write_json(dataset_root / "keyword-chunk-index.json", keyword_chunk_index)
         self._write_json(dataset_root / "quality-issues.json", issues)
+        governance = GovernanceStatus(
+            status="keyword",
+            status_version=0,
+            publishable=False,
+            reason_code="FORMAL_KNOWLEDGE_PENDING",
+            gate_checks={
+                "entity_relation": False,
+                "evidence": False,
+                "acl": False,
+                "quality": not high_issues,
+                "evaluation": False,
+                "manifest": False,
+            },
+        )
         self.store.update_record("datasets", dataset.id, {
             "trainingTaskId": task_id,
             "graphAvailable": True,
@@ -4325,10 +5614,11 @@ class TrainingService:
             },
             "qualityPassed": not high_issues,
             "qualityState": quality_state,
-            "publishable": not high_issues,
+            "publishable": False,
             "qualityLabels": quality_labels,
             "qualityNotice": quality_notice,
             "datasetPath": f"datasets/{dataset.id}",
+            "governance": governance.model_dump(mode="json", by_alias=True),
         })
         report = {
             "taskId": task_id,
@@ -4358,7 +5648,7 @@ class TrainingService:
         }
         self._write_json(run_dir / "run-report.json", report)
         self._write_json(dataset_root / "run-report.json", report)
-        self._write_json(dataset_root / "manifest.json", {
+        manifest = {
             "datasetId": dataset.id,
             "taskId": task_id,
             "batchId": request.batch_id,
@@ -4385,11 +5675,32 @@ class TrainingService:
             "qualityIssueCount": len(issues),
             "sourceResourceIds": sorted({str(item.get("resourceId")) for item in source_documents}),
             "createdAt": utcnow().isoformat(),
-        })
+        }
+        self._write_json(dataset_root / "manifest.json", manifest)
+        governance_refs = self._commit_production_governance(
+            dataset_id=dataset.id,
+            mode=KEYWORD_MODE,
+            dataset_root=dataset_root,
+            source_documents=source_documents,
+            processing_units=processing_units,
+            evidence_records=keyword_candidates,
+            nodes=nodes,
+            edges=edges,
+            keyword_chunk_index=keyword_chunk_index,
+            request=request,
+        )
+        if governance_refs:
+            manifest["governance"] = governance_refs
+            self._write_json(dataset_root / "manifest.json", manifest)
+            governance.gate_checks["manifest"] = True
+            self.store.update_record("datasets", dataset.id, {
+                "graphSummary": {**summary, "governance": governance_refs["lineage"]},
+                "governance": governance.model_dump(mode="json", by_alias=True),
+            })
         self._write_fix_report(task_id, request, run_dir, documents, processing_units, issues)
         self._set_stage(
             task_id,
-            "dataset_generation",
+            "index_generation",
             "completed",
             current=summary.get("keywordCount", 0),
             total=summary.get("keywordCount", 0),
@@ -4460,10 +5771,6 @@ class TrainingService:
         comparison = manifest.get("preflightComparison") or {}
         events = self._read_jsonl(run_dir / "events.jsonl")
         max_characters = max((len(str(item.get("content") or "")) for item in processing_units), default=0)
-        schema_error = next((
-            item for item in issues
-            if "Additional properties are not allowed ('chunkId' was unexpected)" in str(item)
-        ), None)
         semantic_reached = any(item.get("stage") == "semantic_enrichment" for item in events)
         event_trace_complete = bool(events) and all(
             item.get("eventId") and item.get("taskId") and item.get("stageRunId") for item in events
@@ -4481,18 +5788,14 @@ class TrainingService:
                 "symptom": "页面和日志与设计语义不一致",
                 "rootCause": "历史文案沿用 chunk 直译",
                 "fix": "用户可见文案统一为“处理单元”",
-                "verification": "当前六步骤任务日志和产物统计使用处理单元语义",
+                "verification": "当前四阶段任务日志和产物统计使用处理单元语义",
             },
             {
-                "problem": "语义补充拒绝 chunkId",
-                "symptom": "Schema 报 Additional properties are not allowed",
-                "rootCause": "模型回显追踪字段后直接校验",
-                "fix": "首次和纠正调用均先别名转换、白名单归一化，再校验 Schema",
-                "verification": (
-                    "仍出现 chunkId 结构错误" if schema_error is not None
-                    else "未出现 chunkId 结构错误" if semantic_reached
-                    else "本次运行未进入语义补充，已由自动化测试验证归一化逻辑"
-                ),
+                "problem": "按需语义补充未实现",
+                "symptom": "旧代码和文档曾暴露 semantic_enrichment 阶段，容易误判为当前可执行能力",
+                "rootCause": "六阶段设计与当前四阶段规则化实现未同步收敛",
+                "fix": "当前流水线只保留资料预处理、元数据构建、知识提取、索引生成四个阶段；按需语义补充进入后续任务",
+                "verification": "异常：本次运行仍出现 semantic_enrichment 事件" if semantic_reached else "本次运行未出现 semantic_enrichment 事件",
             },
             {
                 "problem": "任务难以定位",
@@ -4611,6 +5914,7 @@ class TrainingService:
                 knowledge_points.append({
                     "title": sentence[:80],
                     "statement": sentence[:500],
+                    "knowledgeType": "fact",
                     "evidenceText": sentence[:500],
                     "confidence": 1.0,
                     "source": "rule",
@@ -4752,58 +6056,6 @@ class TrainingService:
             add(match.group(2), "SqlObject")
         return anchors[:50]
 
-    def _extraction_context_envelope(self, task_id, chunk, chunks, document):
-        content = str(chunk.get("content") or "")
-        anchors = self._explicit_anchors(content)
-        adjacent = self._adjacent_summaries(chunk, chunks)
-        skill = self.prompts.skills.get("knowledge-extraction", "2.0.0")
-        output_limits = skill.manifest.get("defaults", {}).get("outputLimits", {})
-        profile = str(document["extractionProfile"])
-        profile_prompt = skill.root / "prompts" / "profiles" / f"{profile}.md"
-        if not profile_prompt.is_file():
-            raise ModelGatewayError(f"知识提取 Profile 提示词不存在：{profile}")
-        profile_guidance = profile_prompt.read_text(encoding="utf-8")
-        domain_hits = [f"{item['candidateType']}:{item['value']}" for item in anchors]
-        return {
-            "taskId": task_id,
-            "resourceId": chunk["resourceId"],
-            "chunkId": chunk["id"],
-            "documentType": document["documentType"],
-            "extractionProfile": profile,
-            "domain": "yashandb",
-            "domainContextVersion": "yashandb-domain:1.0.0",
-            "domainContextHits": domain_hits,
-            "profileGuidance": profile_guidance[:4000],
-            "domainContext": {
-                "matchedAnchors": anchors,
-                "constraints": [
-                    "YAS 与 ORA 错误码分域",
-                    "SQL 关键字不能无条件作为实体",
-                    "关系端点必须是当前单元中有证据的实体",
-                ],
-            },
-            "document": {
-                "title": document.get("title"),
-                "category": document.get("category", "未分类"),
-                "summary": document.get("summary", ""),
-                "keywords": document.get("keywords", []),
-            },
-            "currentChunk": {
-                "headingPath": chunk.get("headingPath", []),
-                "content": content,
-                "normalizedOffsets": chunk.get("documentOffsets", {"start": 0, "end": len(content)}),
-            },
-            "adjacentChunkSummaries": adjacent,
-            "explicitAnchors": anchors,
-            "schemaVersion": "2.0.0",
-            "constraints": {
-                "evidenceRequired": True,
-                "allowSchemaCandidate": True,
-                "allowNeedsEnrichment": True,
-                "outputLimits": output_limits,
-            },
-        }
-
     def _validated_extraction(self, data, chunk):
         content = str(chunk.get("content") or "")
         validated = {"knowledgePoints": [], "entities": [], "relations": []}
@@ -4861,7 +6113,7 @@ class TrainingService:
                 }
                 records.append({
                     "candidateId": stable_id("candidate", chunk["id"], kind, json.dumps(item, ensure_ascii=False, sort_keys=True)),
-                    "state": "agent_resolved",
+                    "state": metadata.get("state", "agent_resolved"),
                     "kind": kind,
                     "resourceId": chunk["resourceId"],
                     "chunkId": chunk["id"],
@@ -4873,9 +6125,9 @@ class TrainingService:
                     "value": {key: value for key, value in item.items() if key not in {"evidenceText", "evidenceOffsets", "confidence"}},
                     "evidenceText": item["evidenceText"],
                     "evidenceOffsets": offsets,
-                    "sourceMethod": "knowledge_extraction_agent",
+                    "sourceMethod": metadata.get("sourceMethod", "knowledge_extraction_agent"),
                     "agentId": metadata.get("agentId", "knowledge-extraction-agent"),
-                    "skillId": "knowledge-extraction",
+                    "skillId": metadata.get("skillId", "knowledge-extraction"),
                     "skillVersion": metadata.get("skillVersion", "2.0.0"),
                     "promptVersion": metadata.get("promptVersion", "knowledge-extraction:2.0.0"),
                     "profileVersion": document["profileVersion"],
@@ -4884,165 +6136,6 @@ class TrainingService:
                     "confidence": item.get("confidence"),
                 })
         return records
-
-    @staticmethod
-    def _agent_uncertain_item(chunk, uncertain, envelope):
-        item_type = str(uncertain.get("type") or "human_required")
-        state = str(uncertain.get("state") or "human_required")
-        supported = {
-            "ambiguous_reference", "entity_type_conflict", "relation_type_conflict",
-            "cross_unit_dependency", "version_scope_unclear", "assertion_status_unclear",
-        }
-        if state == "needs_enrichment" and item_type not in supported:
-            state = "human_required"
-        evidence = str(uncertain.get("evidenceText") or "")[:800]
-        return {
-            "id": stable_id("uncertain", chunk["id"], item_type, evidence, str(uncertain.get("reason") or "")),
-            "state": state,
-            "type": item_type,
-            "reason": str(uncertain.get("reason") or "语义问题无法自动解决"),
-            "resourceId": chunk["resourceId"],
-            "chunkId": chunk["id"],
-            "sourcePath": chunk.get("sourcePath"),
-            "evidenceText": evidence,
-            "candidateValues": uncertain.get("candidateValues", []),
-            "inputHash": "sha256:" + hashlib.sha256(json.dumps(envelope, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest(),
-        }
-
-    def _adjacent_summaries(self, chunk, chunks):
-        siblings = sorted(
-            [candidate for candidate in chunks if candidate["resourceId"] == chunk["resourceId"]],
-            key=lambda candidate: int(candidate.get("chunkIndex", 0)),
-        )
-        position = next(index for index, candidate in enumerate(siblings) if candidate["id"] == chunk["id"])
-        adjacent = []
-        for candidate in siblings[max(0, position - 1):position] + siblings[position + 1:position + 2]:
-            adjacent.append({
-                "chunkId": candidate["id"],
-                "summary": self._rule_based_summary("相邻处理单元", candidate["content"])["summary"][:240],
-            })
-        return adjacent
-
-    def _semantic_context_envelope(self, task_id, item, chunk, chunks):
-        return {
-            "taskId": task_id,
-            "uncertainItemId": item["id"],
-            "resourceId": item["resourceId"],
-            "chunkId": item["chunkId"],
-            "question": {"type": item["type"], "reason": item["reason"]},
-            "headingPath": chunk.get("headingPath", []),
-            "currentEvidence": item["evidenceText"],
-            "adjacentChunkSummaries": self._adjacent_summaries(chunk, chunks),
-            "candidateValues": item.get("candidateValues", []),
-            "schemaVersion": "2.0.0",
-            "constraints": {
-                "evidenceMustComeFromCurrentExcerpt": True,
-                "allowHumanRequired": True,
-            },
-        }
-
-    @staticmethod
-    def _resolved_uncertain_record(item, state, reason, attempts, *, resolution=None, error=None, duration_ms=0):
-        return {
-            **item,
-            "previousState": item.get("state"),
-            "state": state,
-            "reason": reason,
-            "attempts": attempts,
-            "durationMs": duration_ms,
-            "resolution": resolution,
-            "failureReason": error,
-            "entersValidation": state == "resolved",
-            "resolvedAt": utcnow().isoformat(),
-        }
-
-    def _skill_concurrency(self, skill_id: str, maximum: int) -> int:
-        skill = self.prompts.skills.get(skill_id)
-        configured = int(skill.manifest.get("defaults", {}).get("concurrency", 1))
-        return max(1, min(maximum, configured))
-
-    def _context_envelope(self, item, chunk, chunks, document):
-        siblings = sorted(
-            [candidate for candidate in chunks if candidate["resourceId"] == chunk["resourceId"]],
-            key=lambda candidate: int(candidate.get("chunkIndex", 0)),
-        )
-        position = next(index for index, candidate in enumerate(siblings) if candidate["id"] == chunk["id"])
-        adjacent = []
-        for candidate in siblings[max(0, position - 1):position] + siblings[position + 1:position + 2]:
-            adjacent.append({
-                "chunkId": candidate["id"],
-                "summary": self._rule_based_summary("相邻处理单元", candidate["content"])["summary"][:240],
-            })
-        return {
-            "question": {"type": item["type"], "reason": item["reason"]},
-            "document": {
-                "resourceId": document["resourceId"],
-                "sourcePath": document["sourcePath"],
-                "title": document["title"],
-                "summary": document.get("summary", ""),
-                "category": document.get("category", "未分类"),
-                "keywords": document.get("keywords", []),
-            },
-            "currentChunk": {
-                "chunkId": chunk["id"],
-                "headingPath": chunk.get("headingPath", []),
-                "evidenceText": item["evidenceText"],
-            },
-            "adjacentChunkSummaries": adjacent,
-            "ruleCandidates": item.get("candidates", {}),
-            "constraints": {
-                "evidenceMustComeFromCurrentExcerpt": True,
-                "doNotInferUnrelatedKnowledge": True,
-            },
-        }
-
-    def _validated_model_resolution(self, data, chunk, issues, endpoint_names=None):
-        if data.get("status") != "resolved":
-            issues.append(self._quality_issue(
-                "MODEL_UNRESOLVED",
-                chunk["resourceId"],
-                chunk["id"],
-                str(data.get("reason") or "模型未能可靠解决语义不确定项"),
-                source_path=chunk.get("sourcePath"),
-            ))
-            return {"knowledgePoints": [], "entities": [], "relations": []}
-        validated = {"knowledgePoints": [], "entities": [], "relations": []}
-        for collection in ("knowledgePoints", "entities"):
-            for item in data.get(collection, []):
-                if not isinstance(item, dict):
-                    continue
-                evidence = self._evidence(item, "")
-                if not evidence or evidence not in chunk["content"]:
-                    issues.append(self._quality_issue(
-                        "MODEL_EVIDENCE_INVALID",
-                        chunk["resourceId"],
-                        chunk["id"],
-                        "模型结果的证据不在当前原文处理单元中，已阻止进入最终知识",
-                        source_path=chunk.get("sourcePath"),
-                        evidence=evidence,
-                    ))
-                    continue
-                validated[collection].append({**item, "evidenceText": evidence, "source": "model"})
-        entity_names = {str(item.get("name") or "") for item in validated["entities"]}
-        entity_names.update(endpoint_names or set())
-        for item in data.get("relations", []):
-            if not isinstance(item, dict):
-                continue
-            evidence = self._evidence(item, "")
-            source = str(item.get("source") or "")
-            target = str(item.get("target") or "")
-            if not evidence or evidence not in chunk["content"] or source not in entity_names or target not in entity_names:
-                issues.append(self._quality_issue(
-                    "MODEL_RELATION_INVALID",
-                    chunk["resourceId"],
-                    chunk["id"],
-                    "模型关系的证据或端点无法在当前处理单元中解析，已阻止进入最终知识",
-                    source_path=chunk.get("sourcePath"),
-                    evidence=evidence,
-                ))
-                continue
-            validated["relations"].append({**item, "evidenceText": evidence, "source": "model"})
-        return validated
 
     @staticmethod
     def _quality_issue(code, resource_id, chunk_id, message, *, source_path=None, evidence=None, details=None):
@@ -5063,7 +6156,7 @@ class TrainingService:
     def _issue_to_review(task_id: str, issue: dict[str, Any]):
         return {
             "id": issue.get("id") or stable_id("quality", task_id, issue.get("code", "UNKNOWN")),
-            "stage": "validation_graph",
+            "stage": "knowledge_extraction",
             "code": issue.get("code", "QUALITY_ISSUE"),
             "message": issue.get("message", "存在需要人工复核的质量问题"),
             "resourceId": issue.get("resourceId"),
@@ -5074,676 +6167,6 @@ class TrainingService:
             "state": "human_required",
             "createdAt": issue.get("createdAt", utcnow().isoformat()),
         }
-
-    def _run_legacy(self, task_id: str, request: TrainingTaskCreate) -> None:
-        run_dir = self._run_dir(task_id)
-        try:
-            for relative in ("normalized", "model-results", "graph", "quality"):
-                (run_dir / relative).mkdir(parents=True, exist_ok=True)
-            (run_dir / "run-manifest.json").write_text(
-                json.dumps({
-                    "taskId": task_id,
-                    "batchId": request.batch_id,
-                    "config": request.config.model_dump(mode="json", by_alias=True),
-                    "createdAt": utcnow().isoformat(),
-                }, ensure_ascii=False, indent=2), encoding="utf-8"
-            )
-
-            self._raise_if_cancelled(task_id)
-            self.tasks._update(task_id, state="running", can_cancel=True)
-            self._log(task_id, "info", "queued", "task.started", "训练任务开始执行")
-            self._raise_if_cancelled(task_id)
-            self._set_stage(task_id, "source_scan", detail_message="正在检查批次资源清单")
-            scan_report = self.preprocess.scan(request.batch_id)
-            self._raise_if_cancelled(task_id)
-            self._set_stage(
-                task_id,
-                "source_scan",
-                "completed",
-                current=scan_report.total_files,
-                total=scan_report.total_files,
-                unit="个文件",
-                detail_message=f"扫描完成：{scan_report.total_files} 个文件，{len(scan_report.issues)} 个问题",
-            )
-
-            self._set_stage(task_id, "normalize", detail_message="正在统一文本编码和换行")
-            self._set_stage(task_id, "normalize", "completed", detail_message="文本规范化完成")
-            self._set_stage(task_id, "clean", detail_message="正在执行规则清洗")
-            preprocess_task = self.preprocess.start(PreprocessTaskCreate(
-                batch_id=request.batch_id,
-                config=request.config,
-            ))
-            with self._child_task_lock:
-                self._child_tasks[task_id] = preprocess_task.id
-            try:
-                while True:
-                    self._raise_if_cancelled(task_id)
-                    current = self.tasks.get(preprocess_task.id)
-                    if current.state in TERMINAL_STATES:
-                        break
-                    time.sleep(0.1)
-            finally:
-                with self._child_task_lock:
-                    self._child_tasks.pop(task_id, None)
-            if current.state != "completed":
-                raise RuntimeError(current.message or "规则预处理失败")
-            self._raise_if_cancelled(task_id)
-            dataset = next(
-                item for item in self.preprocess.list_datasets(request.batch_id)
-                if item.preprocess_task_id == preprocess_task.id
-            )
-            self._set_stage(
-                task_id,
-                "clean",
-                "completed",
-                current=dataset.total_documents,
-                total=dataset.total_documents,
-                unit="篇文档",
-                detail_message=f"规则清洗完成：{dataset.total_documents} 篇文档",
-            )
-            self._set_stage(task_id, "semantic_chunk", detail_message="正在读取语义处理单元产物")
-            chunks_path = settings.data_root / "datasets" / dataset.id / "chunks.json"
-            chunks = json.loads(chunks_path.read_text(encoding="utf-8"))
-            (run_dir / "chunks.jsonl").write_text(
-                "".join(json.dumps(item, ensure_ascii=False) + "\n" for item in chunks),
-                encoding="utf-8",
-            )
-            self._set_stage(
-                task_id,
-                "semantic_chunk",
-                "completed",
-                current=len(chunks),
-                total=len(chunks),
-                unit="个处理单元",
-                detail_message=f"语义处理单元生成完成：{len(chunks)} 个处理单元",
-            )
-
-            status = self.gateway.status()
-            self._raise_if_cancelled(task_id)
-            if not status.get("configured") or not status.get("capabilities", {}).get("chat"):
-                raise ModelGatewayError("agent-runner Chat 模型尚未配置")
-            self._log(
-                task_id,
-                "info",
-                "document_enrichment",
-                "model_gateway.ready",
-                f"模型网关可用：{status.get('provider') or '未知提供商'} / {status.get('model') or '未知模型'}",
-                details={"provider": status.get("provider"), "model": status.get("model")},
-            )
-            grouped: dict[str, list[dict[str, Any]]] = {}
-            for chunk in chunks:
-                grouped.setdefault(chunk["resourceId"], []).append(chunk)
-            calls = {"succeeded": 0, "failed": 0, "skipped": 0}
-            issues: list[dict[str, Any]] = []
-            review_items: list[dict[str, Any]] = []
-
-            self._set_stage(
-                task_id,
-                "document_enrichment",
-                current=0,
-                total=len(grouped),
-                unit="篇文档",
-                detail_message=f"准备处理 {len(grouped)} 篇文档",
-            )
-            enrichments = []
-            fallback_count = 0
-            enrichment_prompt = self.prompts.get("document-enrichment.system")
-            enrichment_skill = self.prompts.skills.get("document-enrichment", enrichment_prompt.skill_version)
-            concurrency = max(1, int(enrichment_skill.manifest.get("defaults", {}).get("concurrency", 1)))
-            self._log(
-                task_id,
-                "info",
-                "document_enrichment",
-                "stage.concurrency",
-                f"文档摘要与分类使用 {concurrency} 路有界并行",
-                details={"concurrency": concurrency},
-            )
-            executor = ThreadPoolExecutor(max_workers=concurrency, thread_name_prefix="document-enrichment")
-            futures = {
-                executor.submit(self._process_document_enrichment, task_id, resource_id, document_chunks): resource_id
-                for resource_id, document_chunks in grouped.items()
-            }
-            pending = set(futures)
-            index = 0
-            try:
-                while pending:
-                    self._raise_if_cancelled(task_id)
-                    completed_futures, pending = wait(pending, timeout=0.2, return_when=FIRST_COMPLETED)
-                    for future in completed_futures:
-                        self._raise_if_cancelled(task_id)
-                        index += 1
-                        processed = future.result()
-                        enrichments.append(processed["enrichment"])
-                        self._merge_model_calls(calls, processed.get("modelCalls"), succeeded_default=1)
-                        if not processed["success"]:
-                            fallback_count += 1
-                            issues.append(self._issue("DOCUMENT_ENRICHMENT_FAILED", processed["resourceId"], None, processed["summary"]))
-                            review_item = self._review_item(
-                                task_id,
-                                "document_enrichment",
-                                "DOCUMENT_ENRICHMENT_FAILED",
-                                f"文档摘要与分类已使用规则结果：{processed['summary']}",
-                                resource_id=processed["resourceId"],
-                                source_path=processed["sourcePath"],
-                                evidence=processed["enrichment"]["result"].get("summary", ""),
-                                details={"fallback": "规则摘要", "technicalError": processed["technicalError"]},
-                            )
-                            review_items.append(review_item)
-                            self._write_review_items(task_id, review_items)
-                            self._log(
-                                task_id,
-                                "warning",
-                                "document_enrichment",
-                                "review.created",
-                                review_item["message"],
-                                details={"reviewItemId": review_item["id"], "resourceId": processed["resourceId"]},
-                            )
-                        self._update_stage_progress(
-                            task_id,
-                            "document_enrichment",
-                            index,
-                            len(grouped),
-                            "篇文档",
-                            processed["message"],
-                            level=processed["level"],
-                            event=processed["event"],
-                            details={
-                                "resourceId": processed["resourceId"],
-                                "sourcePath": processed["sourcePath"],
-                                "durationMs": processed["durationMs"],
-                                **({"technicalError": processed["technicalError"], "fallback": "规则摘要"} if not processed["success"] else {}),
-                            },
-                            model_calls=dict(calls),
-                        )
-            finally:
-                cancelling = self.tasks.get(task_id).state in {"cancelling", "cancelled"}
-                executor.shutdown(wait=not cancelling, cancel_futures=cancelling)
-            self._raise_if_cancelled(task_id)
-            self._write_jsonl(run_dir / "model-results/document-enrichment.jsonl", enrichments)
-            self._set_stage(
-                task_id,
-                "document_enrichment",
-                "completed",
-                current=len(grouped),
-                total=len(grouped),
-                unit="篇文档",
-                detail_message=f"文档增强完成：模型成功 {len(grouped) - fallback_count}，规则降级 {fallback_count}",
-                model_calls=dict(calls),
-            )
-
-            self._set_stage(task_id, "image_caption", "skipped", detail_message="当前未启用图片说明能力，因此跳过此步骤")
-            calls["skipped"] += 1
-            self.tasks._update(task_id, model_calls=dict(calls))
-
-            self._set_stage(
-                task_id,
-                "knowledge_extraction",
-                current=0,
-                total=len(chunks),
-                unit="个处理单元",
-                detail_message=f"准备处理 {len(chunks)} 个处理单元",
-            )
-            extractions = []
-            low_confidence = []
-            for index, chunk in enumerate(chunks, 1):
-                self._raise_if_cancelled(task_id)
-                technical_error = None
-                try:
-                    result = self._invoke_skill("knowledge-extraction", {
-                        "source_path": chunk["sourcePath"],
-                        "chunk_id": chunk["id"],
-                        "content": chunk["content"],
-                    })
-                    data = result["data"]
-                    item = {"resourceId": chunk["resourceId"], "chunkId": chunk["id"], "result": data, "usage": result.get("usage", {})}
-                    extractions.append(item)
-                    confidence = self._confidence(data)
-                    if confidence < request.config.low_confidence_threshold:
-                        low_confidence.append((chunk, data, confidence))
-                        review_item = self._review_item(
-                            task_id,
-                            "knowledge_extraction",
-                            "LOW_CONFIDENCE_EXTRACTION",
-                            f"知识提取置信度 {confidence:.2f}，低于阈值 {request.config.low_confidence_threshold:.2f}",
-                            resource_id=chunk["resourceId"],
-                            chunk_id=chunk["id"],
-                            confidence=confidence,
-                            source_path=chunk["sourcePath"],
-                            evidence=data,
-                            details={"threshold": request.config.low_confidence_threshold},
-                        )
-                        review_items.append(review_item)
-                        self._write_review_items(task_id, review_items)
-                        self._log(
-                            task_id,
-                            "warning",
-                            "knowledge_extraction",
-                            "review.created",
-                            review_item["message"],
-                            details={"reviewItemId": review_item["id"], "resourceId": chunk["resourceId"], "chunkId": chunk["id"]},
-                        )
-                    self._merge_model_calls(calls, result.pop("_modelCalls", None), succeeded_default=1)
-                    level = "warning" if confidence < request.config.low_confidence_threshold else "info"
-                    event = "model_call.review_required" if level == "warning" else "model_call.completed"
-                    message = f"知识提取完成：{Path(chunk['sourcePath']).name} / {chunk['id']}"
-                except Exception as error:
-                    technical_error = str(error)
-                    self._merge_model_calls(calls, getattr(error, "model_calls", None), failed_default=1)
-                    summary = error_summary(error)
-                    issues.append(self._issue("KNOWLEDGE_EXTRACTION_FAILED", chunk["resourceId"], chunk["id"], summary))
-                    review_item = self._review_item(
-                        task_id,
-                        "knowledge_extraction",
-                        "KNOWLEDGE_EXTRACTION_FAILED",
-                        f"该文本处理单元未生成知识结果：{summary}",
-                        resource_id=chunk["resourceId"],
-                        chunk_id=chunk["id"],
-                        source_path=chunk["sourcePath"],
-                        evidence=chunk["content"][:500],
-                        details={"technicalError": technical_error},
-                    )
-                    review_items.append(review_item)
-                    self._write_review_items(task_id, review_items)
-                    self._log(
-                        task_id,
-                        "warning",
-                        "knowledge_extraction",
-                        "review.created",
-                        review_item["message"],
-                        details={"reviewItemId": review_item["id"], "resourceId": chunk["resourceId"], "chunkId": chunk["id"]},
-                    )
-                    level = "error"
-                    event = "model_call.failed"
-                    message = f"知识提取失败：{Path(chunk['sourcePath']).name} / {chunk['id']} - {summary}"
-                self._update_stage_progress(
-                    task_id,
-                    "knowledge_extraction",
-                    index,
-                    len(chunks),
-                    "个处理单元",
-                    message,
-                    level=level,
-                    event=event,
-                    details={
-                        "resourceId": chunk["resourceId"],
-                        "chunkId": chunk["id"],
-                        "sourcePath": chunk["sourcePath"],
-                        **({"technicalError": technical_error} if technical_error else {}),
-                    },
-                    model_calls=dict(calls),
-                )
-            self._write_jsonl(run_dir / "model-results/knowledge-extraction.jsonl", extractions)
-            self._set_stage(
-                task_id,
-                "knowledge_extraction",
-                "completed",
-                current=len(chunks),
-                total=len(chunks),
-                unit="个处理单元",
-                detail_message=f"知识提取完成：成功 {len(extractions)}，失败 {len(chunks) - len(extractions)}",
-                model_calls=dict(calls),
-            )
-
-            reviews = []
-            if request.config.review_low_confidence and low_confidence:
-                self._set_stage(
-                    task_id,
-                    "semantic_quality_review",
-                    current=0,
-                    total=len(low_confidence),
-                    unit="个低置信度项",
-                    detail_message=f"准备复核 {len(low_confidence)} 个低置信度项",
-                )
-                for index, (chunk, data, confidence) in enumerate(low_confidence, 1):
-                    self._raise_if_cancelled(task_id)
-                    technical_error = None
-                    try:
-                        result = self._invoke_skill("semantic-quality-review", {
-                            "rule_result": json.dumps({"confidence": confidence, "extraction": data}, ensure_ascii=False),
-                            "source_path": chunk["sourcePath"],
-                            "content": chunk["content"],
-                        })
-                        reviews.append({"chunkId": chunk["id"], "result": result["data"], "usage": result.get("usage", {})})
-                        self._merge_model_calls(calls, result.pop("_modelCalls", None), succeeded_default=1)
-                        level = "info"
-                        event = "model_call.completed"
-                        message = f"语义复核完成：{Path(chunk['sourcePath']).name} / {chunk['id']}"
-                    except Exception as error:
-                        technical_error = str(error)
-                        self._merge_model_calls(calls, getattr(error, "model_calls", None), failed_default=1)
-                        summary = error_summary(error)
-                        issues.append(self._issue("SEMANTIC_REVIEW_FAILED", chunk["resourceId"], chunk["id"], summary))
-                        level = "error"
-                        event = "model_call.failed"
-                        message = f"语义复核失败：{Path(chunk['sourcePath']).name} / {chunk['id']} - {summary}"
-                    self._update_stage_progress(
-                        task_id,
-                        "semantic_quality_review",
-                        index,
-                        len(low_confidence),
-                        "个低置信度项",
-                        message,
-                        level=level,
-                        event=event,
-                        details={
-                            "resourceId": chunk["resourceId"],
-                            "chunkId": chunk["id"],
-                            "sourcePath": chunk["sourcePath"],
-                            "confidence": confidence,
-                            **({"technicalError": technical_error} if technical_error else {}),
-                        },
-                        model_calls=dict(calls),
-                    )
-                self._write_jsonl(run_dir / "model-results/semantic-quality-review.jsonl", reviews)
-                self._set_stage(
-                    task_id,
-                    "semantic_quality_review",
-                    "completed",
-                    current=len(low_confidence),
-                    total=len(low_confidence),
-                    unit="个低置信度项",
-                    detail_message=f"语义复核完成：{len(reviews)}/{len(low_confidence)} 成功",
-                    model_calls=dict(calls),
-                )
-            else:
-                self._set_stage(task_id, "semantic_quality_review", "skipped", detail_message="没有低置信度结果需要复核，因此跳过此步骤")
-
-            self._set_stage(task_id, "graph_build", detail_message="正在合并文档、处理单元、实体和证据关系")
-            self._raise_if_cancelled(task_id)
-            nodes, edges = self._build_graph(chunks, extractions, issues)
-            (run_dir / "graph/nodes.json").write_text(json.dumps(nodes, ensure_ascii=False, indent=2), encoding="utf-8")
-            (run_dir / "graph/edges.json").write_text(json.dumps(edges, ensure_ascii=False, indent=2), encoding="utf-8")
-            self._set_stage(
-                task_id,
-                "graph_build",
-                "completed",
-                current=len(nodes) + len(edges),
-                total=len(nodes) + len(edges),
-                unit="个图谱对象",
-                detail_message=f"图谱构建完成：{len(nodes)} 个节点，{len(edges)} 条证据关系",
-            )
-
-            self._set_stage(task_id, "framework_quality_check", detail_message="正在检查来源、证据和图谱结构")
-            self._raise_if_cancelled(task_id)
-            summary = self._graph_summary(nodes, edges, issues)
-            (run_dir / "quality/issues.json").write_text(json.dumps(issues, ensure_ascii=False, indent=2), encoding="utf-8")
-            existing_review_keys = {(item.get("code"), item.get("resourceId"), item.get("chunkId")) for item in review_items}
-            for issue in issues:
-                key = (issue.get("code"), issue.get("resourceId"), issue.get("chunkId"))
-                if key in existing_review_keys:
-                    continue
-                review_items.append(self._review_item(
-                    task_id,
-                    "framework_quality_check",
-                    issue["code"],
-                    issue["message"],
-                    resource_id=issue.get("resourceId"),
-                    chunk_id=issue.get("chunkId"),
-                ))
-            self._write_review_items(task_id, review_items)
-            self._set_stage(
-                task_id,
-                "framework_quality_check",
-                "completed",
-                current=len(issues),
-                total=len(issues),
-                unit="个质量问题",
-                detail_message=f"框架质量检查完成：{len(issues)} 个问题，{len(review_items)} 项待确认",
-                graph_summary=summary,
-            )
-
-            self._set_stage(task_id, "publish_candidate", detail_message="正在登记候选数据集和运行报告")
-            self.store.update_record("datasets", dataset.id, {
-                "trainingTaskId": task_id,
-                "graphAvailable": True,
-                "graphSummary": summary,
-            })
-            report = {
-                "taskId": task_id,
-                "datasetId": dataset.id,
-                "batchId": request.batch_id,
-                "state": "completed",
-                "modelCalls": calls,
-                "graph": summary,
-                "qualityIssueCount": len(issues),
-                "completedAt": utcnow().isoformat(),
-            }
-            (run_dir / "run-report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-            self._set_stage(task_id, "publish_candidate", "completed", detail_message="候选数据集登记完成", graph_summary=summary)
-            self._raise_if_cancelled(task_id)
-            self.tasks._update(
-                task_id,
-                state="completed",
-                stage="completed",
-                message=None,
-                model_calls=dict(calls),
-                graph_summary=summary,
-                can_cancel=False,
-                progress_detail={"stage": "completed", "message": "端到端加工完成"},
-            )
-            self._log(
-                task_id,
-                "info",
-                "completed",
-                "task.completed",
-                f"端到端加工完成：模型成功 {calls['succeeded']}，失败 {calls['failed']}，待确认 {len(review_items)}",
-                details={"modelCalls": calls, "graphSummary": summary, "reviewItemCount": len(review_items)},
-            )
-            self.batches.update(request.batch_id, state="downloaded", activeTaskIds=[])
-        except TrainingCancelledError:
-            self._complete_cancellation(task_id, request.batch_id)
-        except Exception as exc:
-            if self.tasks.get(task_id).state == "cancelling":
-                self._complete_cancellation(task_id, request.batch_id)
-                return
-            current_stage = self.tasks.get(task_id).stage or "failed"
-            summary = error_summary(exc)
-            if current_stage in STAGES:
-                self._set_stage(task_id, current_stage, "failed", detail_message=summary)
-            self.tasks._update(
-                task_id,
-                state="failed",
-                stage="failed",
-                message=summary,
-                can_cancel=False,
-                can_retry=True,
-                progress_detail={"stage": current_stage, "message": summary},
-            )
-            self._log(
-                task_id,
-                "error",
-                current_stage,
-                "task.failed",
-                f"训练任务失败：{summary}",
-                details={"technicalError": str(exc)},
-            )
-            self.batches.update(request.batch_id, state="failed", activeTaskIds=[])
-
-    def _process_document_enrichment(
-        self,
-        task_id: str,
-        resource_id: str,
-        document_chunks: list[dict[str, Any]],
-    ) -> dict[str, Any]:
-        started_at = time.monotonic()
-        first = document_chunks[0]
-        source_path = first["sourcePath"]
-        content = "\n\n".join(item["content"] for item in document_chunks)
-        try:
-            self._raise_if_cancelled(task_id)
-            result = self._enrich_document(first, document_chunks)
-            self._raise_if_cancelled(task_id)
-            return {
-                "success": True,
-                "resourceId": resource_id,
-                "sourcePath": source_path,
-                "enrichment": {"resourceId": resource_id, "result": result["data"], "usage": result.get("usage", {})},
-                "modelCalls": result.pop("_modelCalls", None),
-                "summary": "",
-                "technicalError": "",
-                "level": "info",
-                "event": "model_call.completed",
-                "message": f"文档增强成功：{Path(source_path).name}",
-                "durationMs": int((time.monotonic() - started_at) * 1000),
-            }
-        except TrainingCancelledError:
-            raise
-        except Exception as error:
-            summary = error_summary(error)
-            return {
-                "success": False,
-                "resourceId": resource_id,
-                "sourcePath": source_path,
-                "enrichment": {
-                    "resourceId": resource_id,
-                    "result": self._rule_based_summary(Path(source_path).name, content),
-                    "usage": {},
-                    "fallback": "rule_based_summary",
-                },
-                "modelCalls": getattr(error, "model_calls", None),
-                "summary": summary,
-                "technicalError": str(error),
-                "level": "error",
-                "event": "model_call.failed",
-                "message": f"文档增强已降级：{Path(source_path).name} - {summary}",
-                "durationMs": int((time.monotonic() - started_at) * 1000),
-            }
-
-    def _invoke_skill(
-        self,
-        skill_id: str,
-        variables: dict[str, str],
-        trace: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        system_prompt = self.prompts.get(f"{skill_id}.system")
-        user_prompt = self.prompts.get(f"{skill_id}.user", system_prompt.skill_version)
-        skill = self.prompts.skills.get(skill_id, system_prompt.skill_version)
-        system = system_prompt.content
-        user = user_prompt.content
-        for name, value in variables.items():
-            user = user.replace("{{" + name + "}}", value)
-        defaults = skill.manifest.get("defaults", {})
-        if "context_envelope" in variables:
-            try:
-                input_schema = json.loads((skill.root / skill.manifest["inputSchema"]).read_text(encoding="utf-8"))
-                input_value = {"contextEnvelope": json.loads(variables["context_envelope"])}
-                validate(instance=input_value, schema=input_schema)
-            except (json.JSONDecodeError, ValidationError) as error:
-                detail = error.message if isinstance(error, ValidationError) else str(error)
-                raise ModelGatewayError(f"Skill 输入不符合结构：{detail}") from error
-        options = {"temperature": 0.1}
-        if "maxTokens" in defaults:
-            options["max_tokens"] = int(defaults["maxTokens"])
-        if "timeoutMs" in defaults:
-            options["timeout_ms"] = int(defaults["timeoutMs"])
-        if "enableThinking" in defaults:
-            options["enable_thinking"] = bool(defaults["enableThinking"])
-        if "chatTemplateKwargs" in defaults:
-            options["chat_template_kwargs"] = defaults["chatTemplateKwargs"]
-        if "jsonRepair" in defaults:
-            options["json_repair"] = bool(defaults["jsonRepair"])
-        network_retries = int(defaults.get("maxRetries", 0))
-        options["max_retries"] = 0
-        schema = json.loads((skill.root / skill.manifest["outputSchema"]).read_text(encoding="utf-8"))
-        messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
-        model_calls = {"succeeded": 0, "failed": 0}
-        model_call_ids: list[str] = []
-
-        def call_model(call_messages: list[dict[str, str]], retry_of: str | None = None):
-            model_call_id = f"model_call_{uuid.uuid4().hex[:20]}"
-            model_call_ids.append(model_call_id)
-            details = {
-                **(trace or {}),
-                "modelCallId": model_call_id,
-                "retryOf": retry_of,
-                "skillId": skill_id,
-            }
-            if trace and trace.get("taskId"):
-                self._log(
-                    trace["taskId"], "info", trace["stage"], "model_call.started",
-                    f"模型调用开始：{skill_id}", details=details,
-                )
-            started_at = time.monotonic()
-            try:
-                response = self.gateway.chat_json(call_messages, options)
-            except Exception as error:
-                model_calls["failed"] += 1
-                error.model_call_ids = list(model_call_ids)
-                error.model_call_id = model_call_id
-                if trace and trace.get("taskId"):
-                    self._log(
-                        trace["taskId"], "error", trace["stage"], "model_call.failed",
-                        f"模型调用失败：{skill_id} - {error_summary(error)}",
-                        details={**details, "durationMs": int((time.monotonic() - started_at) * 1000), "technicalError": str(error)},
-                    )
-                raise
-            if trace and trace.get("taskId"):
-                self._log(
-                    trace["taskId"], "info", trace["stage"], "model_call.completed",
-                    f"模型调用完成：{skill_id}",
-                    details={**details, "durationMs": int((time.monotonic() - started_at) * 1000), "attempts": response.get("attempts", 1)},
-                )
-            return response, model_call_id
-
-        def call_with_network_retry(
-            call_messages: list[dict[str, str]],
-            retry_of: str | None = None,
-        ):
-            current_retry_of = retry_of
-            for attempt in range(network_retries + 1):
-                try:
-                    return call_model(call_messages, retry_of=current_retry_of)
-                except Exception:
-                    if attempt >= network_retries:
-                        raise
-                    current_retry_of = model_call_ids[-1]
-            raise AssertionError("网络重试流程未返回结果")
-
-        try:
-            result, first_model_call_id = call_with_network_retry(messages)
-            attempts = max(1, int(result.get("attempts", 1)))
-            model_calls["failed"] += attempts - 1
-            result["data"] = self._normalize_skill_output(skill_id, result.get("data"), variables, skill.version)
-            validate(instance=result.get("data"), schema=schema)
-            model_calls["succeeded"] += 1
-        except ValidationError as error:
-            model_calls["failed"] += 1
-            correction = (
-                "上一次结果不符合输出 Schema。请根据原始输入上下文重新生成，只返回符合 Schema 的 JSON 对象。"
-                f"\n校验错误：{error.message}"
-            )
-            try:
-                result, _ = call_with_network_retry(
-                    messages + [{"role": "user", "content": correction}],
-                    retry_of=first_model_call_id,
-                )
-                attempts = max(1, int(result.get("attempts", 1)))
-                model_calls["failed"] += attempts - 1
-                result["data"] = self._normalize_skill_output(skill_id, result.get("data"), variables, skill.version)
-                validate(instance=result.get("data"), schema=schema)
-                model_calls["succeeded"] += 1
-            except Exception as retry_error:
-                if isinstance(retry_error, ValidationError):
-                    model_calls["failed"] += 1
-                    schema_error = ModelGatewayError(f"模型返回结果不符合输出结构：{retry_error.message}")
-                    schema_error.model_calls = model_calls
-                    schema_error.model_call_ids = list(model_call_ids)
-                    schema_error.model_call_id = model_call_ids[-1] if model_call_ids else None
-                    raise schema_error from retry_error
-                retry_error.model_calls = model_calls
-                retry_error.model_call_ids = list(model_call_ids)
-                retry_error.model_call_id = model_call_ids[-1] if model_call_ids else None
-                raise
-        except Exception as error:
-            error.model_calls = model_calls
-            error.model_call_ids = list(model_call_ids)
-            error.model_call_id = model_call_ids[-1] if model_call_ids else None
-            raise
-        result["_modelCalls"] = model_calls
-        result["_modelCallIds"] = model_call_ids
-        result["_modelCallId"] = model_call_ids[-1] if model_call_ids else None
-        result["_agentTaskId"] = (trace or {}).get("agentTaskId")
-        return result
 
     @staticmethod
     def _normalize_skill_output(skill_id: str, data: Any, variables: dict[str, str], skill_version: str) -> Any:
@@ -5788,20 +6211,6 @@ class TrainingService:
                 "schemaVersion": envelope.get("schemaVersion", "2.0.0"),
             })
             normalized["metadata"] = metadata
-        elif skill_id == "semantic-enrichment":
-            for collection in ("knowledgePoints", "entities", "relations"):
-                normalized.setdefault(collection, [])
-            normalized["uncertainItemId"] = envelope.get(
-                "uncertainItemId", normalized.get("uncertainItemId")
-            )
-            metadata = normalized.get("metadata") if isinstance(normalized.get("metadata"), dict) else {}
-            normalized["metadata"] = {
-                "skillId": "semantic-enrichment",
-                "skillVersion": skill_version,
-                "agentId": "semantic-enrichment-agent",
-                "promptVersion": f"semantic-enrichment:{skill_version}",
-                "schemaVersion": envelope.get("schemaVersion", "2.0.0"),
-            }
 
         normalized["knowledgePoints"] = TrainingService._normalize_knowledge_points(
             normalized.get("knowledgePoints", [])
@@ -5812,12 +6221,6 @@ class TrainingService:
             normalized["uncertainItems"] = TrainingService._normalize_uncertain_items(
                 normalized.get("uncertainItems", [])
             )
-        if skill_id == "semantic-enrichment":
-            allowed = {
-                "uncertainItemId", "status", "reason", "confidence",
-                "knowledgePoints", "entities", "relations", "metadata",
-            }
-            normalized = {key: normalized[key] for key in allowed if key in normalized}
         return normalized
 
     @staticmethod
@@ -5884,119 +6287,6 @@ class TrainingService:
             {key: value[key] for key in allowed if key in value} if isinstance(value, dict) else value
             for value in values
         ]
-
-    def _invoke_skill_cached(
-        self,
-        skill_id: str,
-        envelope: dict[str, Any],
-        trace: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        system_prompt = self.prompts.get(f"{skill_id}.system")
-        user_prompt = self.prompts.get(f"{skill_id}.user", system_prompt.skill_version)
-        skill = self.prompts.skills.get(skill_id, system_prompt.skill_version)
-        schema_path = skill.root / skill.manifest["outputSchema"]
-        normalized_envelope = json.loads(json.dumps(envelope, ensure_ascii=False))
-        normalized_envelope.pop("taskId", None)
-        status = self.gateway.status()
-        cache_key = stable_id("agent-cache", json.dumps({
-            "skillId": skill_id,
-            "skillVersion": skill.version,
-            "systemPromptHash": system_prompt.content_hash,
-            "userPromptHash": user_prompt.content_hash,
-            "outputSchemaHash": hashlib.sha256(schema_path.read_bytes()).hexdigest(),
-            "modelFingerprint": self._model_fingerprint(status),
-            "envelope": normalized_envelope,
-        }, ensure_ascii=False, sort_keys=True, separators=(",", ":"))).split(":", 1)[1]
-        cache_path = settings.data_root / "processing" / "agent-cache" / skill_id / f"{cache_key}.json"
-        if cache_path.is_file():
-            try:
-                cached = json.loads(cache_path.read_text(encoding="utf-8"))
-                schema = json.loads(schema_path.read_text(encoding="utf-8"))
-                validate(instance=cached.get("data"), schema=schema)
-                return {
-                    "data": cached["data"],
-                    "usage": cached.get("usage", {}),
-                    "_modelCalls": {"succeeded": 0, "failed": 0},
-                    "_modelCallIds": [],
-                    "_modelCallId": None,
-                    "_agentTaskId": (trace or {}).get("agentTaskId"),
-                    "_cacheHit": True,
-                }
-            except (OSError, json.JSONDecodeError, ValidationError, TypeError):
-                pass
-        result = self._invoke_skill(skill_id, {
-            "context_envelope": json.dumps(envelope, ensure_ascii=False),
-        }, trace=trace)
-        cache_path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = cache_path.with_suffix(".tmp")
-        temporary.write_text(json.dumps({
-            "data": result["data"],
-            "usage": result.get("usage", {}),
-            "createdAt": utcnow().isoformat(),
-        }, ensure_ascii=False, indent=2), encoding="utf-8")
-        temporary.replace(cache_path)
-        result["_cacheHit"] = False
-        return result
-
-    def _enrich_document(self, first: dict[str, Any], document_chunks: list[dict[str, Any]]) -> dict[str, Any]:
-        skill_prompt = self.prompts.get("document-enrichment.system")
-        skill = self.prompts.skills.get("document-enrichment", skill_prompt.skill_version)
-        defaults = skill.manifest.get("defaults", {})
-        limit = int(defaults.get("maxDirectCharacters", DEFAULT_MAX_DIRECT_CHARACTERS))
-        content = "\n\n".join(item["content"] for item in document_chunks)
-        variables = {
-            "document_title": Path(first["sourcePath"]).name,
-            "source_path": first["sourcePath"],
-            "content": content,
-        }
-        if len(content) <= limit:
-            return self._invoke_skill("document-enrichment", variables)
-
-        sections = self._group_document_sections(document_chunks, limit)
-        partials = []
-        model_calls = {"succeeded": 0, "failed": 0}
-        usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
-        try:
-            for index, section in enumerate(sections, 1):
-                result = self._invoke_skill("document-enrichment", {
-                    **variables,
-                    "document_title": f"{variables['document_title']}（第 {index}/{len(sections)} 部分）",
-                    "content": section,
-                })
-                self._merge_model_calls(model_calls, result.pop("_modelCalls", None), succeeded_default=1)
-                self._merge_usage(usage, result.get("usage", {}))
-                partials.append(result["data"])
-            aggregate = self._invoke_skill("document-enrichment", {
-                **variables,
-                "content": "以下是同一文档各部分的结构化摘要，请合并去重为文档级结果：\n" + json.dumps(partials, ensure_ascii=False),
-            })
-            self._merge_model_calls(model_calls, aggregate.pop("_modelCalls", None), succeeded_default=1)
-            self._merge_usage(usage, aggregate.get("usage", {}))
-            aggregate["usage"] = usage
-            aggregate["_modelCalls"] = model_calls
-            return aggregate
-        except Exception as error:
-            self._merge_model_calls(model_calls, getattr(error, "model_calls", None), failed_default=1)
-            error.model_calls = model_calls
-            raise
-
-    @staticmethod
-    def _group_document_sections(document_chunks: list[dict[str, Any]], limit: int) -> list[str]:
-        sections: list[str] = []
-        current: list[str] = []
-        current_length = 0
-        for chunk in document_chunks:
-            content = chunk["content"]
-            additional = len(content) + (2 if current else 0)
-            if current and current_length + additional > limit:
-                sections.append("\n\n".join(current))
-                current = []
-                current_length = 0
-            current.append(content)
-            current_length += len(content) + (2 if current_length else 0)
-        if current:
-            sections.append("\n\n".join(current))
-        return sections
 
     @staticmethod
     def _rule_based_summary(title: str, content: str) -> dict[str, Any]:

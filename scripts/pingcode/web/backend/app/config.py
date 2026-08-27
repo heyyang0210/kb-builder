@@ -30,6 +30,8 @@ class Settings:
     preparation_max_archive_bytes: int
     preparation_max_archive_depth: int
     preparation_max_expansion_ratio: float
+    keyword_filter_batch_size: int
+    keyword_filter_max_retries: int
 
 
 def load_settings() -> Settings:
@@ -89,6 +91,8 @@ def load_settings() -> Settings:
         preparation_max_archive_bytes=int(os.getenv("MATERIAL_PREP_MAX_ARCHIVE_BYTES", str(20 * 1024 * 1024 * 1024))),
         preparation_max_archive_depth=int(os.getenv("MATERIAL_PREP_MAX_ARCHIVE_DEPTH", "3")),
         preparation_max_expansion_ratio=float(os.getenv("MATERIAL_PREP_MAX_EXPANSION_RATIO", "100")),
+        keyword_filter_batch_size=max(1, int(os.getenv("KEYWORD_FILTER_BATCH_SIZE", "50"))),
+        keyword_filter_max_retries=max(0, int(os.getenv("KEYWORD_FILTER_MAX_RETRIES", "1"))),
     )
 
 

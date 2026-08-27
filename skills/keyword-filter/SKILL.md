@@ -23,7 +23,7 @@ description: >
 
 1. 读取用户选定的规则约束（可单选或组合）
 2. 逐条评估关键词列表，按判断标准打分
-3. 输出 JSON 决策（每条含 keywordId / shouldExclude / reason）
+3. 输出 JSON 决策（每条含 keywordId / shouldExclude / reason；排除时必须给出 issueCategory）
 
 ### 输出格式
 
@@ -33,11 +33,44 @@ description: >
     {
       "keywordId": "kw_001",
       "shouldExclude": true,
+      "issueCategory": "generic_term",
       "reason": "\"处理\"过于宽泛，与 YashanDB 核心功能无直接关联，属于通用动词"
     }
   ]
 }
 ```
+
+### 排除问题类别
+
+`issueCategory` 必须使用当前仓库 `config/filter-rules.json` 的 `issueCategories` 配置中的 ID。可选类别包括：
+
+- `generic_term`：通用词/过于宽泛
+- `duplicate_alias`：同义重复
+- `language_variant`：语言版本
+- `error_code_alias`：错误码别名
+- `internal_implementation`：内部实现词
+- `insufficient_evidence`：证据不足
+- `irrelevant_term`：业务无关
+- `other`：其他/未分类
+
+`shouldExclude: true` 时必须提供 `issueCategory`；无法确定时使用 `other` 并在 `reason` 中提示人工复核。保留项的 `issueCategory` 应为 `null`（历史结果缺失该字段时由后端兼容归一化）。`issueCategoryLabel` 由后端根据配置补充，模型不需要输出该字段。
+
+### 规则与类别映射
+
+排除关键词时，必须根据实际命中的首要过滤规则选择类别，不得为了省略判断而统一输出 `other`：
+
+| 命中的过滤规则 | `issueCategory` |
+| --- | --- |
+| 排除通用词 | `generic_term` |
+| 同一语言下同义或别名重复 | `duplicate_alias` |
+| 统一语言（优先中文） | `language_variant` |
+| 统一错误码格式 | `error_code_alias` |
+| 保留功能词规则排除内部类名、函数名或实现细节 | `internal_implementation` |
+| 证据不足过滤 | `insufficient_evidence` |
+| 与 YashanDB 业务无关 | `irrelevant_term` |
+| 没有任何规则能够归类且确需排除 | `other` |
+
+例如，英文词因存在对应中文关键词而被排除时使用 `language_variant`；错误码因应降级为别名而被排除时使用 `error_code_alias`；不得仅在 `reason` 中描述规则却省略 `issueCategory`。
 
 ## 规则冲突处理
 

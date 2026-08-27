@@ -81,3 +81,21 @@ class JsonStore:
             record.update(changes)
             self._write(data)
             return record
+
+    def compare_and_update_record(
+        self,
+        collection: str,
+        record_id: str,
+        expected: dict[str, Any],
+        changes: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Atomically update a record only when all expected top-level fields match."""
+
+        with self._locked():
+            data = self._read()
+            record = data.setdefault(collection, {}).get(record_id)
+            if record is None or any(record.get(key) != value for key, value in expected.items()):
+                return None
+            record.update(changes)
+            self._write(data)
+            return record

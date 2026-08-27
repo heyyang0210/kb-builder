@@ -578,6 +578,90 @@ prepare(context):
 - 失败策略：provider 不可用、超时、维度不一致和缓存损坏均降级为 warning，不阻断 `keyword_analysis`。
 - 边界：cluster 不进入关键词图谱，不直接生成关键词，也不接入正式知识构建调度。
 
+### 13.2 大规模 embedding 聚类性能设计
+
+现场任务 `training_ca4bde5bb7ae453e` 已生成 13,015 条 embedding。当前 `cosine_threshold_connected_components` 对全部向量执行两两余弦，需要比较 `13,015 * 13,014 / 2 = 84,688,605` 对，时间复杂度为 `O(N^2 * D)`；单线程计算期间没有取消检查和公开进度。
+
+#### 方案比较
+
+| 方案 | 准确性 | 时间复杂度 | 额外内存 | 兼容性与业务语义 | 结论 |
+| --- | --- | --- | --- | --- | --- |
+| A. 超过阈值跳过聚类 | 不产生错误簇，但大样本没有任何聚类结果 | `O(N * D)` 读取 | `O(N * D)` 向量 | 无依赖、改动最小；大批次 `clusterCount=0`，明显改变“生成聚类报告”的业务语义 | 只可作为显式降级开关，不推荐作为默认修复 |
+| B. 小样本精确 + 标准库确定性 LSH 候选 + 候选内精确余弦 | 小样本与现实现完全一致；大样本候选内无假阳性，但 LSH 未召回的真实近邻会形成假阴性，可能拆分簇 | `O(N*T*B*D + N*T*log N + N*k*D)`，固定参数下近似 `O(N log N + N*k)` | 向量外增加 `O(N*T + k)`；不保存全局候选对 | 无新依赖、公共 API 不变；大样本从精确连通分量变为确定性近似连通分量，报告必须声明策略和候选统计 | 推荐，等待人工确认语义变化 |
+| C. 引入成熟近邻/聚类依赖 | 取决于库与索引；可获得成熟 ANN、调参和性能实现 | 通常近似 `O(N log N)` 构建与查询 | 取决于索引，通常高于 B | 需要新增 Python/原生依赖、镜像和安全审查；`sklearn` 当前未安装，且其通用余弦近邻不保证避免高维退化 | 本轮不采用，必须单独审批 |
+
+推荐方案 B。小样本阈值 `exactMaxEmbeddings` 以下继续执行全量精确比较，保证既有测试和小批次成员结果完全一致；大样本使用确定性随机超平面 LSH 只生成有界候选，再用现有 `_cosine` 做阈值判定。候选阶段只决定“比较谁”，不能直接建立聚类边，因此不会产生低于阈值的错误连边。
+
+建议规则全部进入 `embedding-rules.yaml`，不在代码硬编码：
+
+```yaml
+cluster:
+  exactMaxEmbeddings: 2000
+  candidateStrategy: deterministic_lsh
+  lshTables: 8
+  lshBits: 12
+  maxCandidatesPerEmbedding: 64
+  lshSeed: yashandb-cluster-v1
+```
+
+13,015 条向量在 `k=64` 时最多执行 `832,960` 次候选余弦；即使允许双向重复，也受 `N*k` 上界约束，相比 84,688,605 次全量比较减少约 99%。随机超平面由 `lshSeed/table/bit/dimensionIndex` 的 SHA-256 确定性生成，输入先按 `embeddingId` 排序，因此不依赖进程随机种子或输入顺序。
+
+#### 内部接口
+
+```python
+def EmbeddingClusterService.build(
+    self,
+    run_root: Path,
+    embedding_index: list[dict[str, Any]],
+    documents: list[dict[str, Any]],
+    *,
+    cancel_check: Callable[[], None] | None = None,
+    progress: Callable[[str, int, int, dict[str, Any]], None] | None = None,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]: ...
+
+def MetadataConstructionService.build(
+    ...,
+    cancel_check: Callable[[], None] | None = None,
+    progress: Callable[[str, int, int, dict[str, Any]], None] | None = None,
+) -> MetadataConstructionReport: ...
+```
+
+两个参数均为可选内部关键字参数，不改变 HTTP API。进度阶段固定为 `load_vectors/candidate_generation/candidate_comparison/finalize`；每个向量、每个 LSH 表桶和每批候选余弦比较之间检查取消。TrainingService 后续把它映射为 `metadata_construction.cluster.progress`，并按 1 秒或固定工作量节流。
+
+#### 伪代码
+
+```text
+build(vectors):
+  ids = sort(embeddingIds)
+  normalize vectors once
+  if N <= exactMaxEmbeddings:
+    for each exact pair:
+      check_cancel(); exact_cosine_and_union()
+    strategy = exact_all_pairs
+  else:
+    hyperplanes = deterministic_hyperplanes(seed, tables, bits, dimension)
+    buckets = build signatures for every table and vector
+    for each id in stable order:
+      check_cancel()
+      candidates = bounded neighbors from its buckets
+      rank by sharedBucketCount desc, candidateId asc
+      for candidate in first k:
+        check_cancel_per_batch()
+        if exact_cosine >= threshold: union()
+    strategy = deterministic_lsh_bounded
+  build connected components and persist atomically
+```
+
+桶内不得枚举所有组合。每个桶成员按 `sha256(table, embeddingId)` 排序，每个向量只查看固定环形窗口；跨表按共同命中次数合并并截断到 `k`。候选在当前向量处理完后即可释放，不保留最多 80 万个 Python tuple，从而将候选额外内存保持在 `O(N*T + k)`。
+
+报告兼容保留现有 `algorithm/threshold/clusters` 字段，新增 `candidateStrategy/exactMode/candidateComparisonCount/candidateLimit/lshParameters` 作为审计信息。相同输入、配置和规则版本必须得到相同成员与 `clusterId`；大样本配置变化必须进入规则哈希并生成新 metadata 快照。
+
+#### 人工确认点
+
+- [ ] 确认采用方案 B，并接受大样本可能因候选漏召回而拆分簇的语义变化。
+- [ ] 确认建议默认值 `exactMaxEmbeddings=2000`、`k=64`、8 表、每表 12 bit；参数需用基准测试校准后才能标记完成。
+- [ ] 若不能接受近似结果，应选择方案 A 显式跳过，或单独批准方案 C 的新依赖评审；不得继续无界 `O(N^2)`。
+
 - Office/PDF 转换器的细粒度段落、表格、页码来源映射；
 - PDF 文本块到页码的具体解析库和映射算法；
 - Office 段落、表格单元格到 Markdown 范围的映射算法；
@@ -686,3 +770,403 @@ staging -> validating -> committed -> latest | superseded
 ### 14.5 锁与性能边界
 
 步骤一只在 single-flight 登记/完成以及 latest CAS 时持对应短锁；扫描、Office/PDF 转换、规范化、分块、JSONL 写入、hash/count 和完整性校验全部锁外执行。相同 `executionHash` 只有一个 owner；不同输入使用不同 staging 和运行目录，可在 Worker 容量范围内并行。
+
+## 十五、正式加工运行可观测性与扫描复用
+
+### 15.1 问题与目标
+
+`training_f1d9f8e63a184098` 的现场证据确认，`TrainingService._prepare_materials_from_stage_outputs` 在调用 `PreparationService.prepare` 前同步执行了默认参数的 `preprocess.scan(batchId)`。默认扫描不是轻量扫描，会对可转换文档执行预览转换；目标批次包含 1,694 个可转换文档，因此任务长时间停留在资料预处理且 `current=0,total=null`，并重复启动 LibreOffice 子进程。扫描结果在该方法中只用于汇总 `unsupportedFiles`，不是后续产物的正确性输入，因此这次完整扫描属于重复的非轻量工作。
+
+该调用还没有父任务取消检查。任务进入 `cancelling` 后，扫描仍会继续启动新的转换子进程，直到完整扫描返回后才有机会进入 `cancelled`。修复必须同时解决重复扫描和取消传播，不能只增加前端进度文案。
+
+正式知识加工进入 `material_preparation` 后，不能只记录阶段开始和阶段完成。对于万级资源批次，必须能区分以下状态：
+
+- 正在读取已有扫描报告；
+- 正在执行回退扫描；
+- 正在生成资料预处理快照；
+- 正在构建元数据；
+- 正在装载并校验已提交产物。
+
+正式加工优先复用已持久化的 `scan-report/latest.json`。只有扫描报告不存在或不可解析时，才执行轻量扫描。回退扫描不做 Office/PDF 预览转换，只负责格式、文件哈希和可加工性统计；正式转换由 `PreparationService.prepare` 负责。
+
+扫描报告是进度和统计缓存，不是正式产物输入。资料预处理产物是否可复用，继续由 `PreparationService.prepare` 使用 `pipelineVersion + inputManifestHash + config` 计算的 `executionHash` 和 single-flight 已提交结果决定。训练编排不得把共享 `preparation/latest.json` 直接当作运行中输入；拿到 `PreparationReport.snapshotRef` 后，后续步骤固定使用该不可变引用。
+
+### 15.2 接口
+
+```python
+def _scan_for_material_preparation(
+    task_id: str,
+    batch_id: str,
+) -> ScanReport:
+    """优先读取扫描快照，必要时执行可取消的轻量扫描。"""
+
+def scan(
+    batch_id: str,
+    *,
+    lightweight: bool = False,
+    progress: Callable[[int, int, int, int], None] | None = None,
+    cancel_check: Callable[[], None] | None = None,
+) -> ScanReport:
+    """内部可选取消回调；不改变 HTTP API。"""
+
+def prepare(
+    batch_id: str,
+    config: PreprocessConfig | None = None,
+    parent_task_id: str | None = None,
+    stage_run_id: str | None = None,
+    *,
+    progress: Callable[[int, int, int, int, int], None] | None = None,
+    cancel_check: Callable[[], None] | None = None,
+) -> PreparationReport:
+    """按顶层资源报告 current/total/succeeded/failed/skipped。"""
+```
+
+`cancel_check` 是内部兼容扩展，默认 `None`，现有调用方行为不变。训练回退扫描必须传入父任务取消检查；扫描在每个资源开始前、完成后和任何外部转换启动前检查取消。轻量扫描禁止进入预览转换，因此正常情况下不会创建 LibreOffice 子进程。
+
+Preparation 的两个新增参数同样默认兼容。它在每个顶层资源开始前、完成后以及 PDF/Office 耗时转换前后检查取消；进度总数固定为归一化后的顶层输入数，归档展开不改变 `total`。TrainingService 按“至少间隔 1 秒、或新增 50 个资源、或到达终点”发布父任务进度，取消检查不参与节流。
+
+缓存与快照复用条件：
+
+| 对象 | 可复用条件 | 不满足时行为 |
+| --- | --- | --- |
+| `scan-report/latest.json` | 文件存在、JSON/Schema 可验证、`batchId` 一致；报告只用于阶段统计 | 记录 `scan_cache_invalid` 警告并执行可取消的轻量扫描 |
+| preparation single-flight 结果 | `executionHash` 完全一致，已提交 `snapshotRef` 通过 commit、manifest、哈希和必需产物校验 | 成为新 owner，在独立 staging 中重新生成 |
+| `PreparationReport.snapshotRef` | 本次 `prepare` 明确返回，且 batch/stage/run/hash 引用一致 | 阶段失败，不允许运行中回退读取 `latest.json` |
+
+扫描报告即使较旧也不能影响正式处理结果；当前资源、配置或流水线版本变化时，`PreparationService.prepare` 的 `executionHash` 必须变化并阻止旧 preparation 快照复用。后续若要让预检显式固定 preparation `snapshotRef`，需单独设计预检契约；本修复不新增请求或响应字段。
+
+任务事件使用以下事件名：
+
+| 事件 | 说明 | 关键 details |
+| --- | --- | --- |
+| `material_preparation.scan.started` | 开始获取源文件扫描结果 | `operation` |
+| `material_preparation.scan.progress` | 回退扫描进度 | `source=lightweight_scan`、`current`、`total` |
+| `material_preparation.scan.completed` | 扫描结果可用 | `source`、`durationMs`、`totalFiles`、`processableCount` |
+| `material_preparation.prepare.started` | 开始生成资料预处理快照 | `operation` |
+| `material_preparation.prepare.progress` | 冷 preparation 资源进度 | `current`、`total`、`succeeded`、`failed`、`skipped` |
+| `material_preparation.prepare.completed` | 资料预处理快照已提交 | `durationMs`、`runId`、`processableResources` |
+| `metadata_construction.started` | 开始构建元数据 | `operation` |
+| `metadata_construction.completed` | 元数据快照已提交 | `durationMs`、`runId`、`documentsCount`、`chunksCount` |
+| `material_preparation.artifacts.started` | 开始装载和校验已提交产物 | `operation` |
+| `material_preparation.artifacts.completed` | 产物装载完成 | `durationMs`、各类记录数 |
+
+### 15.3 伪代码
+
+```text
+run_material_preparation(task):
+  log scan.started
+  try:
+    scanReport = latest_scan_report(batchId)
+    scanSource = latest_scan_report
+  except report_missing_or_invalid:
+    scanReport = scan(
+      batchId,
+      lightweight=true,
+      cancel_check=check_cancelled,
+      progress=throttled_progress(
+        check_cancelled()
+        update task progress
+        log scan.progress
+      )
+    )
+    scanSource = lightweight_scan
+  log scan.completed(scanSource, duration, counts)
+
+  check_cancelled()
+  log prepare.started
+  preparationReport = preparation.prepare(
+    ...,
+    cancel_check=check_cancelled,
+    progress=lambda current,total,succeeded,failed,skipped:
+      if elapsed >= 1s or current-lastCurrent >= 50 or current == total:
+        update task progress(substage=prepare, current, total, succeeded, failed, skipped)
+        log prepare.progress(current, total, succeeded, failed, skipped)
+  )
+  log prepare.completed(duration, runId, counts)
+
+  check_cancelled()
+  log metadata.started
+  metadataReport = metadata.build(preparationReport.snapshotRef, ...)
+  log metadata.completed(duration, runId, counts)
+
+  check_cancelled()
+  log artifacts.started
+  load_and_validate_committed_artifacts()
+  log artifacts.completed(duration, recordCounts)
+```
+
+### 15.4 取消与性能要求
+
+- 回退扫描每个资源开始前和完成后检查取消状态；进度事件可按 50 个资源或不超过 1 秒的时间窗口节流，但取消检查不得随日志一起节流；
+- preparation 每个顶层资源开始前和完成后检查取消，PDF/Office 转换启动前及返回后再次检查；冷 preparation 最长 1 秒或 50 个资源必须发布一次父任务进度；
+- `cancel` 返回 `cancelling` 后 3 秒内停止启动新资源处理和新外部转换，并进入 `cancelled`；轻量扫描本身不得启动 LibreOffice；
+- 读取已有扫描报告时不得重新遍历全部文件；
+- preparation 缓存命中时不得重新执行 Office/PDF 转换；目标 8,053 文档批次在热缓存条件下 5 秒内离开资料预处理；
+- `material_preparation` 不调用模型，新增日志不得使用模型错误分类；
+- 日志只记录路径类别、runId、记录数和耗时，不写入文档正文或密钥；
+- 任一同步子步骤超过预期时，最后一条 `*.started` 日志必须能够标明阻塞边界。
+
+错误分类固定如下：扫描缓存缺失属于正常回退；缓存 JSON/Schema 无效归类为 `scan_cache_invalid` 并降级到轻量扫描；取消归类为 `TrainingCancelledError` 并进入取消终态；文件读取失败归类为 `file_io`；快照完整性失败归类为 `artifact_integrity`；Schema 失败归类为 `schema_validation`；未知错误归类为 `internal`。只有 `ModelGatewayError` 可以使用模型错误摘要，本阶段不得生成“模型服务返回错误”。
+
+本修复不改变 `formal_knowledge` 的模型参与边界。正式知识提取仍沿用既有 Workflow Agent/模型网关路径；这里只修复其上游资料预处理编排。
+
+### 15.5 验收标准
+
+1. 存在扫描报告时，正式加工不调用 `preprocess.scan`；
+2. 扫描报告缺失时，执行 `lightweight=True` 的回退扫描并输出进度事件；
+3. 资料预处理、元数据构建和产物装载均输出 started/completed 成对事件；
+4. 回退扫描期间发起取消，3 秒内进入 `cancelled`，取消后不再处理新资源且不创建新 LibreOffice 子进程；
+5. preparation 缓存命中时不发生 Office/PDF 转换，目标批次热缓存下 5 秒内离开资料预处理；
+6. 单元测试验证事件顺序、扫描报告复用、回退扫描参数、取消传播和错误分类；
+7. 重启真实后端后，通过训练任务 API 和日志 API 验证新增事件可见，再进入前端启动验证。
+8. 冷 preparation 事件包含 `current/total/succeeded/failed/skipped`，与 scan 子阶段明确区分，且计数单调不超过顶层输入总数。
+
+### 15.6 Preparation 预哈希观测与快速身份缓存设计
+
+#### 现场证据与精确边界
+
+真实 API 任务 `training_aecc6fae273a42ab` 在新进程中于 11:51:21 写出 `material_preparation.prepare.started`。超过 30 秒后公开状态仍为上一子阶段 `scan 10873/10873`，日志没有 `prepare.progress`，工作线程单核约 94%。现有日志只能证明该同步区间超过 30 秒，不能给出各子步骤精确毫秒数。
+
+代码调用顺序已经把耗时边界收敛为：
+
+```text
+files.records
+  -> _normalize_source_records
+       -> 对重复 ID 文件执行 SHA-256
+  -> _input_snapshot
+       -> 对所有规范化记录执行完整文件 SHA-256
+  -> calculate inputManifestHash/executionHash
+  -> reserve_flight
+  -> begin_snapshot/run_started
+  -> progress(0, total)
+```
+
+因此已有快照即使可以复用，也必须先完成全部文件正文哈希才能得到 `executionHash`；当前 progress、run event log 和 single-flight 判断都位于该耗时之后。这正是“缓存已有但仍长时间满核且只看到 prepare.started”的原因。
+
+后续实现必须增加以下结构化计时，才能得到精确耗时而不是继续推测：
+
+| 事件 | 指标 |
+| --- | --- |
+| `material_preparation.prepare.identity.started/completed` | 记录数、`durationMs`、`inputIdentityHash` 前缀 |
+| `material_preparation.prepare.cache_lookup.completed` | `hit/miss/reason/durationMs`、候选 runId |
+| `material_preparation.prepare.fingerprint.started/progress/completed` | `current/total/durationMs/bytesHashed` |
+| `material_preparation.prepare.reserve.completed` | owner/follower/completed、`durationMs` |
+| `material_preparation.prepare.process.progress` | 既有 succeeded/failed/skipped |
+
+日志不得记录文件正文、完整路径或完整哈希。预哈希每个资源和每个 1 MiB 块继续检查取消；公开日志按 1 秒或 50 个资源节流。
+
+#### 方案比较
+
+| 方案 | 热命中性能 | 正确性 | 改动范围 | 结论 |
+| --- | --- | --- | --- | --- |
+| A. 只给预哈希增加进度/取消 | 仍需读取所有文件正文，无法保证 P95 小于 5 秒 | 与当前深哈希完全一致 | 最小 | 只能解决“看不见”，不能解决热缓存失效 |
+| B. 快速输入身份匹配已提交 latest；miss 后再深哈希 | 命中只读取资源清单和快照控制文件，目标 P95 小于 5 秒 | 依赖“同一资源身份下正文不可原地变更”约束；miss 路径仍由深哈希保证 | Preparation 内部最小改动，不改公共 API | 推荐，等待性能/正确性确认 |
+| C. 下载/上传入口持久化每资源内容哈希，Preparation 直接复用 | 热命中和冷执行都可避免重复正文哈希 | 最强；内容哈希成为正式资源契约 | 涉及下载、上传、历史回填和资源 Schema | 长期方案，超出本次最小修复 |
+
+推荐 B，同时把 C 作为后续资源契约升级。A 必须作为 B 的一部分实施，用于历史快照首次运行、身份 miss 和快照损坏回退时的可观测性。
+
+#### 快速输入身份
+
+`inputIdentityHash` 只使用已经读取的资源清单，不打开文件正文：
+
+```text
+hash(
+  pipelineVersion,
+  preprocessConfigHash,
+  ordered normalized records[
+    id, batchId, kind, pageId, logicalPath, size,
+    sourceType, processingStage
+  ],
+  normalization issue fingerprints
+)
+```
+
+实现不得把 `inputIdentityHash` 当成现有深内容 `inputManifestHash` 或最终 `executionHash`。它只用于查找候选快照；候选快照必须是过去通过深内容哈希、完整处理和原子提交得到的不可变快照。
+
+快速命中条件全部成立才可返回：
+
+1. `preparation/latest.json` 可解析并指向 committed snapshot；
+2. snapshot manifest/commit 与 ref 的 batch、stage、runId、manifestHash 一致；
+3. manifest 的 `pipelineVersion/configHash/inputIdentityHash` 与当前一致；
+4. manifest 包含全部必需产物描述符；后续消费者仍按现有 ArtifactRepository 校验具体产物哈希；
+5. 当前资源发布契约保证同一身份记录不会原地替换正文；内容变化必须生成新的资源记录、大小、版本或原子资源清单。
+
+历史 snapshot 没有 `inputIdentityHash/configHash` 时视为 cache miss，进入一次深哈希并把新字段写入新 snapshot；不能猜测命中。latest 在读取后被并发更新不影响已取得的不可变 snapshot ref，Preparation 不直接读取 latest 目录中的业务产物。
+
+#### 内部接口与伪代码
+
+```python
+def prepare(
+    ...,
+    progress: Callable[[int, int, int, int, int], None] | None = None,
+    phase_progress: Callable[[str, int, int, dict[str, Any]], None] | None = None,
+    cancel_check: Callable[[], None] | None = None,
+) -> PreparationReport: ...
+```
+
+保留现有 `progress` 的正式处理五计数接口；新增可选 `phase_progress`，避免预哈希计数与正式处理计数共用 `current` 后发生倒退。两个回调均为内部接口，默认 `None`，不改变 HTTP API。
+
+```text
+prepare(batchId):
+  records = files.records(batchId)
+  phase_progress(identity, 0, total)
+  normalized, issues = normalize_identity_without_file_body(records)
+  inputIdentityHash = hash(identity, config, pipeline)
+  phase_progress(identity, total, total)
+
+  candidate = read_and_validate_committed_latest_control_files()
+  if candidate matches inputIdentityHash/configHash/pipelineVersion:
+    phase_progress(cache_hit, 1, 1, runId)
+    return report(candidate.snapshotRef)
+
+  phase_progress(content_fingerprint, 0, normalizedTotal)
+  deepSnapshot = hash_files_by_1MiB_blocks(
+    cancel_check_every_block,
+    phase_progress_every_1s_or_50_resources
+  )
+  executionHash = hash(deepSnapshot, config, pipeline)
+  flight = reserve_flight(executionHash)
+  if completed/follower: return validated report
+  process resources with existing progress callback
+  commit manifest including inputIdentityHash/configHash/deep inputManifestHash
+```
+
+不使用 `inputIdentityHash` 提前登记现有 exact single-flight，避免身份相同但正文契约被破坏时把两个不同内容错误合并。身份 miss 的并发调用仍可能重复深哈希，后续可单独增加 identity-flight 优化。
+
+#### 验收与人工确认
+
+- [ ] 用户确认采用 B，并接受快速命中依赖资源不可原地变更的正确性前提；若该前提不能保证，应先实施 C。
+- [ ] 热命中测试断言 `_hash_file`、Office/PDF 转换均为 0 次，10,873 记录连续至少 20 次运行 P95 小于 5 秒。
+- [ ] 历史快照、identity miss、配置变化、pipeline 变化和损坏 latest 均回退深哈希，不错误复用。
+- [ ] 深哈希阶段在 1 秒或 50 个资源内持续输出 `content_fingerprint` 进度，取消后 3 秒内停止读取新块。
+- [ ] 快照 manifest 新增字段进入 manifest hash；后续 Metadata 固定使用返回的 snapshotRef。
+- [ ] 本节是性能与缓存语义变更，未获人工确认前不得修改功能代码。
+
+## 十六、下载资源主键幂等与历史重复清单修复
+
+### 16.1 现场证据与根因
+
+真实任务 `training_ae4e8832ee134652` 复用 `prep_bf1cd53923434667` 后，在 metadata 输入校验阶段因重复 `resourceId` 失败。输入和输出统计如下：
+
+| 位置 | 总记录 | 唯一 ID | 重复 ID | 多余记录 |
+| --- | ---: | ---: | ---: | ---: |
+| `resources.json` | 23,262 | 22,345 | 759 | 917 |
+| `source-documents.jsonl` | 10,533 | 10,100 | 363 | 433 |
+
+所有 363 个 preparation 输出重复 ID 都继承自输入，输出侧没有新增重复。进一步核对下载状态：
+
+- 同一下载任务的 `pages.jsonl` 有 8,494 条完成记录、8,053 个唯一页面，357 个页面 ID 重复、共 441 条额外记录；
+- 选择快照的 `selectedPageIds` 为 8,053 条且全部唯一；
+- `pages_for_batch` 当前只使用集合过滤原始页面列表，没有对返回列表按页面 ID 归一化，因此缓存/API 页面列表中的重复项会被同一任务重复处理；
+- 资源重复中，556 个 ID 来自重复页面；另有 203 个 `page_asset` ID 所属页面只执行一次，说明同页重复图片引用也被 `_download_page` 重复追加；
+- `_rewrite_resources_from_state` 将 append-only `items.jsonl` 的所有完成记录原样写入 `resources.json`；`FileService.records` 和 `PreparationService.prepare` 都没有唯一性防御，最终由 metadata 的严格校验暴露。
+
+因此根因不是 metadata 过严，而是下载入口缺少页面/资源幂等归一化，加上 preparation 对历史重复清单缺少防御。
+
+### 16.2 方案比较
+
+| 层级 | 方案 | 优点 | 缺点 | 结论 |
+| --- | --- | --- | --- | --- |
+| 下载入口 | 页面按 `pageId`、页面资源按稳定 `resourceId` 幂等归一化 | 从源头阻止重复下载和清单膨胀 | 不能自动修复已经存在的 `resources.json` | 必须实施 |
+| Preparation | 正式处理前按 ID 分类完全相同重复与冲突重复 | 可修复历史批次；保证下游快照主键唯一 | 仍需读取历史清单；必须严谨判断冲突 | 必须实施 |
+| Metadata | 读取时直接去重 | 改动局部 | 会掩盖非法 preparation 快照，且无法把质量问题写回上游快照 | 不采用；继续严格失败 |
+
+最小且完整的方案是“入口幂等 + preparation 防御”两层组合。只改入口无法修复现有批次；只改 preparation 会让后续下载继续生成膨胀清单。metadata 继续验证 `resourceId/chunkId` 唯一和引用完整性，不承担静默修复。
+
+### 16.3 内部接口
+
+```python
+@dataclass(frozen=True)
+class UniqueRecordResult:
+    records: list[dict]
+    duplicate_issues: list[dict]
+    conflict_issues: list[dict]
+
+def normalize_unique_records(
+    records: list[dict],
+    *,
+    key_field: str,
+    identity_fields: tuple[str, ...],
+    content_fingerprint: Callable[[dict], str | None],
+) -> UniqueRecordResult: ...
+
+def normalize_pages_for_download(pages: list[dict]) -> UniqueRecordResult: ...
+
+def normalize_preparation_inputs(raw_records: list[dict]) -> UniqueRecordResult: ...
+```
+
+这些接口只在服务内部使用，不改变 HTTP API。归一化必须保持首次出现顺序，保证 execution hash 和产物顺序稳定。
+
+判定规则：
+
+1. 主键为空：隔离并记录 `SOURCE_RESOURCE_ID_MISSING`；
+2. 主键首次出现：保留；
+3. 同 ID 的身份字段、逻辑路径、大小和实际内容哈希完全一致：只保留一条，记录 `DUPLICATE_SOURCE_RESOURCE_COLLAPSED`、出现次数和输入位置；
+4. 同 ID 但任一身份字段或内容指纹不同：该 ID 的所有记录都不进入正式处理，记录 `SOURCE_RESOURCE_ID_CONFLICT`，保留冲突摘要供人工处理；
+5. append-only `download-state/items.jsonl` 保留全部历史审计记录；只有派生的当前视图 `resources.json` 和正式 preparation 输入要求唯一。
+
+身份字段至少包括 `id/batchId/kind/pageId/logicalPath/size`。内容指纹优先使用已持久化 hash；没有 hash 时只对重复 ID 对应的文件计算 SHA-256，避免对全部资源增加一次额外 I/O。
+
+### 16.4 伪代码
+
+```text
+pages_for_batch(spaceKey, selectedIds):
+  rawPages = load_cached_or_remote_pages(spaceKey)
+  selected = filter(rawPages, page.id in selectedIds)
+  normalized = normalize_unique_records(selected, key=page._id, identity=page_identity)
+  if normalized.conflicts:
+    fail download admission with PAGE_ID_CONFLICT
+  return normalized.records
+
+download_page(page):
+  resources = fetch_page_body_images_and_attachments(page)
+  normalized = normalize_unique_records(
+    resources, key=id, identity=resource_identity,
+    content_fingerprint=hash_only_duplicate_paths
+  )
+  append normalized.records to items.jsonl
+  append duplicate/conflict audit to download-state/resource-issues.jsonl
+  if conflict exists: mark page failed, do not publish ambiguous resources
+
+rewrite_resources_from_state():
+  completed = read append-only items.jsonl
+  normalized = normalize_unique_records(completed, key=id, ...)
+  if conflicts: keep conflicts out of resources.json and persist issues
+  atomically write normalized.records to resources.json
+
+prepare(batchId):
+  raw = files.records(batchId)
+  normalized = normalize_preparation_inputs(raw)
+  add normalized issues to preparation quality issues
+  inputSnapshot = hash(normalized.records + conflict_issue_fingerprints)
+  for record in normalized.records:
+    process record once
+  assert source-resources/resourceIds unique
+  assert source-documents/resourceIds unique
+  assert chunks/chunkIds unique
+  commit immutable snapshot
+
+metadata(snapshotRef):
+  validate uniqueness and references
+  # 不在此处静默去重；非法 preparation 快照仍然失败
+```
+
+### 16.5 数据保留与兼容边界
+
+- 完全相同的重复记录指向同一稳定 ID、同一路径和同一内容，只折叠重复引用，不删除任何唯一文件或正文；
+- 冲突记录不选择“第一条”或“最后一条”，避免因顺序造成数据丢失；冲突组整体隔离，其他资源继续处理；
+- 历史 `items.jsonl` 和旧 preparation 快照保持只读，不原地修改；修复后生成新的 `resources.json` 当前视图和新的 preparation 快照；
+- `inputManifestHash/executionHash` 必须包含归一化结果及冲突问题指纹，防止错误复用旧的重复快照；
+- 不改变四阶段、`formal_knowledge` 模型边界、公共请求/响应或外部依赖。
+
+### 16.6 测试与验收
+
+1. 页面列表含完全相同的重复 `pageId` 时只下载一次，并记录折叠计数；
+2. 同 `pageId` 元数据冲突时停止该下载输入，不静默覆盖；
+3. 同页重复图片引用只生成一个 resource 记录，正文中的多处图片引用仍指向同一资产；
+4. `items.jsonl` 可保留重试历史，但 `resources.json` 中 `id` 唯一；
+5. preparation 对完全相同重复保留一条并写 warning，对冲突组隔离并写 error，其他资源继续；
+6. preparation 的 `source-resources/source-documents/chunks` 主键全部唯一，引用完整；
+7. metadata 对人工构造的非法重复快照继续失败，对归一化后的新快照通过；
+8. 使用目标批次生成新 preparation 快照，363 个输出重复 ID 清零且唯一文档数不低于 10,100，随后真实任务通过 metadata；
+9. `git diff --check`、定向单测、资料预处理回归和真实后端 API 验收通过。

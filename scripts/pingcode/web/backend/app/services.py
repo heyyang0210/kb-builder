@@ -20,6 +20,7 @@ from .config import settings
 from .models import (
     BatchCreate,
     DatasetVersion,
+    GovernanceStatus,
     FilePreview,
     FileResource,
     MaterialBatch,
@@ -34,12 +35,14 @@ from .models import (
     MaterialSourceRecord,
     TaskSnapshot,
 )
+from .governance_state import GovernanceSnapshot, GovernanceStateError, initial_gate_checks, transition
 from .office_conversion import OfficeConversionResult, convert_office_to_markdown
 from .office_text_stats import collect_ooxml_text_stats
 from .pingcode_service import PingCodeService
 from .store import JsonStore
 from .markdown_cleaning import clean_markdown, html_to_markdown
 from .processing_units import build_processing_units
+from .production_lineage import GovernancePackageRepository, ProductionLineageError
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -843,7 +846,16 @@ class TaskService:
         page_warnings: int,
     ) -> None:
         updated_at = utcnow().isoformat()
-        for resource in resources:
+        normal_resources = [item for item in resources if item.get("kind") != "error"]
+        error_resources = [item for item in resources if item.get("kind") == "error"]
+        normalized, issues = self._normalize_resource_records(normal_resources)
+        for issue in issues:
+            self._append_jsonl(state_dir / "resource-issues.jsonl", issue)
+        blocking = [issue for issue in issues if issue.get("severity") == "error"]
+        if blocking:
+            codes = ", ".join(sorted({str(issue["code"]) for issue in blocking}))
+            raise ValueError(f"页面资源主键校验失败：{codes}")
+        for resource in [*normalized, *error_resources]:
             state = "warning" if resource.get("kind") == "error" else "completed"
             record = {
                 **resource,
@@ -855,12 +867,61 @@ class TaskService:
             self._append_jsonl(state_dir / "items.jsonl", record)
 
     def _rewrite_resources_from_state(self, batch_dir: Path, state_dir: Path) -> None:
-        resources = [
+        completed = [
             item
             for item in self._read_jsonl(state_dir / "items.jsonl")
             if item.get("kind") != "error" and item.get("state") == "completed"
         ]
+        resources, issues = self._normalize_resource_records(completed)
         self._write_json_atomic(batch_dir / "resources.json", resources)
+        self._write_json_atomic(state_dir / "resource-view-issues.json", issues)
+
+    @staticmethod
+    def _normalize_resource_records(
+        records: list[dict[str, Any]],
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        identity_fields = ("id", "batchId", "kind", "pageId", "logicalPath", "size")
+        grouped: dict[str, list[tuple[int, dict[str, Any]]]] = {}
+        missing: list[tuple[int, dict[str, Any]]] = []
+        for position, record in enumerate(records, 1):
+            resource_id = str(record.get("id") or "")
+            if resource_id:
+                grouped.setdefault(resource_id, []).append((position, record))
+            else:
+                missing.append((position, record))
+
+        normalized: list[dict[str, Any]] = []
+        issues: list[dict[str, Any]] = []
+        for position, record in missing:
+            issues.append({
+                "code": "SOURCE_RESOURCE_ID_MISSING",
+                "severity": "error",
+                "resourceId": None,
+                "message": f"下载资源记录缺少 ID，已隔离；输入位置：{position}",
+            })
+        for resource_id, occurrences in grouped.items():
+            identities = {
+                tuple(record.get(field) for field in identity_fields)
+                for _, record in occurrences
+            }
+            positions = [position for position, _ in occurrences]
+            if len(identities) > 1:
+                issues.append({
+                    "code": "SOURCE_RESOURCE_ID_CONFLICT",
+                    "severity": "error",
+                    "resourceId": resource_id,
+                    "message": f"同一资源 ID 对应不同身份记录，冲突组已隔离；输入位置：{positions}",
+                })
+                continue
+            normalized.append(occurrences[0][1])
+            if len(occurrences) > 1:
+                issues.append({
+                    "code": "DUPLICATE_SOURCE_RESOURCE_COLLAPSED",
+                    "severity": "warning",
+                    "resourceId": resource_id,
+                    "message": f"完全相同的资源身份记录已折叠为一条；出现 {len(occurrences)} 次，输入位置：{positions}",
+                })
+        return normalized, issues
 
     @staticmethod
     def _read_page_state(path: Path) -> dict[str, dict[str, Any]]:
@@ -1579,12 +1640,23 @@ class PreprocessService:
         temporary.write_text(report.model_dump_json(by_alias=True, indent=2), encoding="utf-8")
         temporary.replace(path)
 
+    @staticmethod
+    def _scan_file_hash(path: Path, cancel_check: Callable[[], None] | None) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            while block := handle.read(1024 * 1024):
+                if cancel_check is not None:
+                    cancel_check()
+                digest.update(block)
+        return digest.hexdigest()
+
     def scan(
         self,
         batch_id: str,
         *,
         lightweight: bool = False,
         progress: Callable[[int, int, int, int], None] | None = None,
+        cancel_check: Callable[[], None] | None = None,
     ) -> ScanReport:
         self.batches.get(batch_id)
         resources = self.files.list(batch_id)
@@ -1604,6 +1676,8 @@ class PreprocessService:
         issue_summary = {"info": 0, "warning": 0, "error": 0}
 
         for index, resource in enumerate(resources, start=1):
+            if cancel_check is not None:
+                cancel_check()
             path = self.files.resolve(resource.logical_path)
             inspect = self.files._resource_metadata(
                 resource.model_dump(mode="json", by_alias=True),
@@ -1620,8 +1694,7 @@ class PreprocessService:
             if path.stat().st_size == 0:
                 empty += 1
                 self._append_scan_issue(issues, issue_summary, "EMPTY_FILE", "error", resource.id, resource.name, "文件内容为空")
-            with path.open("rb") as handle:
-                digest = hashlib.file_digest(handle, "sha256").hexdigest()
+            digest = self._scan_file_hash(path, cancel_check)
             hashes.setdefault(digest, []).append(resource)
             if inspect["processingStatus"] == "direct_text":
                 direct_text_count += 1
@@ -1629,7 +1702,11 @@ class PreprocessService:
                 if lightweight:
                     estimated_processing_unit_count += max(1, (resource.size + 5999) // 6000)
                 else:
+                    if cancel_check is not None:
+                        cancel_check()
                     text = self._read_preview_source(path, inspect["formatFamily"])
+                    if cancel_check is not None:
+                        cancel_check()
                     if "\ufffd" in text:
                         encoding_warnings += 1
                         self._append_scan_issue(issues, issue_summary, "ENCODING_REPLACEMENT", "warning", resource.id, resource.name, "文本包含无法解码的替换字符")
@@ -1640,7 +1717,11 @@ class PreprocessService:
                     estimated_processing_unit_count += max(1, (resource.size + 5999) // 6000)
                 else:
                     try:
+                        if cancel_check is not None:
+                            cancel_check()
                         conversion = OfficeConversionResult.from_legacy(self._convert_resource_to_markdown(path, inspect["formatFamily"], preview=True))
+                        if cancel_check is not None:
+                            cancel_check()
                         estimated_processing_unit_count += self._estimate_units(conversion.markdown, PreprocessConfig())
                     except ValueError as exc:
                         conversion_failed_count += 1
@@ -1652,6 +1733,8 @@ class PreprocessService:
                 unsupported += 1
                 if inspect["processingStatus"] not in {"asset", "archive"}:
                     self._append_scan_issue(issues, issue_summary, "UNSUPPORTED_FORMAT", "warning", resource.id, resource.name, "当前格式暂不支持进入知识加工")
+            if cancel_check is not None:
+                cancel_check()
             if progress is not None:
                 progress(index, len(resources), issue_summary["error"], issue_summary["warning"])
 
@@ -1986,13 +2069,59 @@ class PreprocessService:
             raise KeyError(dataset_id)
         return DatasetVersion.model_validate(record)
 
-    def publish(self, dataset_id: str, force: bool = False) -> DatasetVersion:
+    def publish(
+        self,
+        dataset_id: str,
+        force: bool = False,
+        expected_status_version: int | None = None,
+    ) -> DatasetVersion:
         dataset = self.get_dataset(dataset_id)
         if dataset.state == "deleted":
             raise ValueError("已删除的数据集不能发布")
-        if (not dataset.publishable or not dataset.quality_passed) and not force:
-            raise ValueError("数据集存在高严重度质量问题，禁止发布")
-        record = self.store.update_record("datasets", dataset_id, {"state": "published"})
+        if dataset.governance is None:
+            if (not dataset.publishable or not dataset.quality_passed) and not force:
+                raise ValueError("数据集存在高严重度质量问题，禁止发布")
+            record = self.store.update_record("datasets", dataset_id, {"state": "published"})
+        else:
+            governance = dataset.governance
+            gate_checks = self._live_publish_gate_checks(dataset)
+            snapshot = GovernanceSnapshot(
+                version_id=dataset.id,
+                status=governance.status,
+                status_version=governance.status_version,
+                publishable=governance.publishable,
+                reason_code=governance.reason_code,
+            )
+            next_state = transition(
+                snapshot,
+                "published",
+                expected_status_version=(
+                    governance.status_version
+                    if expected_status_version is None
+                    else expected_status_version
+                ),
+                checks=gate_checks,
+                reason_code="PUBLISHED",
+            )
+            next_governance = GovernanceStatus(
+                status=next_state.status,
+                status_version=next_state.status_version,
+                publishable=next_state.publishable,
+                reason_code=next_state.reason_code,
+                gate_checks=gate_checks,
+            )
+            record = self.store.compare_and_update_record(
+                "datasets",
+                dataset_id,
+                {"governance": governance.model_dump(mode="json", by_alias=True)},
+                {
+                    "state": "published",
+                    "publishable": True,
+                    "governance": next_governance.model_dump(mode="json", by_alias=True),
+                },
+            )
+            if record is None:
+                raise GovernanceStateError("STATE_VERSION_CONFLICT", "治理状态版本已变化")
         published = DatasetVersion.model_validate(record)
         self._update_dataset_manifest(published, {"state": "published", "publishedAt": utcnow().isoformat()})
         self.batches.update(
@@ -2002,6 +2131,43 @@ class PreprocessService:
             activeTaskIds=[],
         )
         return published
+
+    def _live_publish_gate_checks(self, dataset: DatasetVersion) -> dict[str, bool]:
+        checks = dict(dataset.governance.gate_checks if dataset.governance else {})
+        if not dataset.dataset_path:
+            return checks
+        checks["manifest"] = False
+        try:
+            dataset_root = self._dataset_root(dataset)
+            verified = GovernancePackageRepository.verify_committed(
+                dataset_root,
+                data_root=settings.data_root,
+            ).to_dict()
+            business_manifest = json.loads(
+                (dataset_root / "manifest.json").read_text(encoding="utf-8")
+            )
+            declared = business_manifest.get("governance")
+            if not isinstance(declared, dict):
+                return checks
+            lineage = declared.get("lineage")
+            versions = declared.get("versionFingerprint")
+            if (
+                isinstance(lineage, dict)
+                and isinstance(versions, dict)
+                and lineage.get("manifestPath") == verified["lineage"]["manifestPath"]
+                and lineage.get("manifestFingerprint") == verified["lineage"]["manifestFingerprint"]
+                and versions.get("path") == verified["versionFingerprint"]["path"]
+                and versions.get("fingerprint") == verified["versionFingerprint"]["fingerprint"]
+            ):
+                checks["manifest"] = True
+        except (
+            OSError,
+            UnicodeDecodeError,
+            json.JSONDecodeError,
+            ProductionLineageError,
+        ):
+            checks["manifest"] = False
+        return checks
 
     def delete_dataset(self, dataset_id: str, operator: str, reason: str) -> DatasetVersion:
         dataset = self.get_dataset(dataset_id)
@@ -2140,6 +2306,12 @@ class PreprocessService:
                 total_chunks=len(chunks),
                 quality_metrics=metrics,
                 quality_passed=quality_passed,
+                publishable=False,
+                governance=GovernanceStatus(
+                    status="keyword",
+                    reason_code="FORMAL_KNOWLEDGE_PENDING",
+                    gate_checks=initial_gate_checks(),
+                ),
                 created_at=utcnow(),
             )
             self.store.put_record("datasets", dataset.id, dataset.model_dump(mode="json", by_alias=True))

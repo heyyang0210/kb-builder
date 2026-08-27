@@ -346,6 +346,20 @@ scripts/pingcode/runtime/web/training-runs/training_f2bf3ef8e5cd4af3/events.json
 - 安全检查：产物和缓存不得包含 API Key。
 - 真实链路：创建 `keyword_analysis` 任务后，确认 embedding/cluster 产物存在；如外部 embedding 不可用，任务仍能完成并生成关键词图谱。
 
+大规模聚类性能修复实施前测试方案：
+
+| 用例 | 验收断言 |
+| --- | --- |
+| 小样本精确兼容 | `N <= exactMaxEmbeddings` 时与旧全量算法的成员集合、`clusterId`、相似度结果一致 |
+| 输入顺序确定性 | embedding/document 顺序反转或随机重排，候选、成员、报告审计字段一致（时间戳除外） |
+| 大样本有界候选 | 候选余弦调用次数不超过 `N * k`，不得出现桶内全组合枚举 |
+| 阈值安全 | 每条实际 union 边均经过精确余弦且达到 threshold，不允许 LSH 签名直接连边 |
+| 召回质量 | 固定合成数据与抽样真实向量对比全量基线，记录 pair recall、component recall 和拆分簇数；未达到评审阈值不得上线 |
+| 取消传播 | load、签名、桶处理、候选比较和 finalize 阶段均可取消，取消后不发布 cluster report |
+| 公开进度 | `metadata_construction.cluster.progress` 阶段和计数单调，最长 1 秒或固定工作量有更新 |
+| 性能基准 | 13,015 x 64 维等价数据候选比较不超过 832,960，峰值额外内存符合 `O(N*T+k)`，墙钟时间记录到任务卡 |
+| 降级与兼容 | 禁用配置、无向量和向量损坏保持既有 warning；无新依赖；公共 API 不变 |
+
 本地验证记录（2026-07-31）：
 
 - `PYTHONPATH=scripts/pingcode/web/backend python3 -m unittest scripts/pingcode/web/backend/tests/test_embedding_services.py -v`：4 个用例通过，覆盖缓存命中、profile version 失效、provider 不可用 warning 降级和稳定 `clusterId`。
@@ -371,6 +385,9 @@ scripts/pingcode/runtime/web/training-runs/training_f2bf3ef8e5cd4af3/events.json
 | TC-P1-02-01 | 标题噪声审计 | documents 和 chunk contexts 包含 `titleNoiseRemoved/topicCandidates`，噪声来源来自 `title-cleaning.yaml` |
 | TC-P1-03-01 | 初筛四态 | `preselection-report.json` 仅使用 `deterministic_ready/model_required/human_review/skip` |
 | TC-P1-06-01 | 关键词默认档读取初筛报告 | `deterministic_ready/human_review/skip` 不调用模型，只有 `model_required` 进入关键词模型 |
+| TC-P1-06-02 | 大批关键词默认档进度 | `current` 按 chunk 单调增长且等于 `succeeded+failed+skipped`；每 1 秒或 50 个资源更新，终点强制发布 |
+| TC-P1-06-03 | 关键词默认档取消 | 第一条资源完成后取消，下一条资源不进入确定性提取，任务按取消语义终态化 |
+| TC-P1-06-04 | 观测增强结果回归 | 同一输入在增加进度与取消检查前后，候选 JSONL、缓存摘要和质量问题内容一致 |
 
 验收阈值：
 

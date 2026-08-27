@@ -1,7 +1,8 @@
 """
 Workflow Agent 模块
 
-提供批量知识提取能力，支持批量处理、上下文复用、语义补充和跨 chunk 关系识别。
+提供批量知识提取能力，支持批量处理、上下文复用和单处理单元知识点提取。
+按需语义补充尚未作为当前知识加工流水线能力接入。
 """
 
 from .base_agent import BaseAgent, AgentState, AgentTask, AgentResult, ToolRegistry

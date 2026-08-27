@@ -166,6 +166,144 @@ class MaterialPreparationTests(unittest.TestCase):
             self.assertEqual(ingestion_report["processingUnitCount"], len(chunks))
             self.assertTrue((run_root / "stage-result.json").exists())
 
+    def test_identical_duplicate_resource_is_collapsed_with_warning(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "batches" / self.batch_id / "original/files/guide.md"
+            source.parent.mkdir(parents=True)
+            source.write_text("# 唯一正文\n\n重复清单不应重复加工。", encoding="utf-8")
+            self._register_archive(root, source)
+            resources_path = source.parents[2] / "resources.json"
+            resources = json.loads(resources_path.read_text(encoding="utf-8"))
+            resources_path.write_text(json.dumps([resources[0], dict(resources[0])]), encoding="utf-8")
+
+            report = self._prepare(root)
+            run_root = (root / report.manifest_path).parent
+            source_resources = [json.loads(line) for line in (run_root / "metadata/source-resources.jsonl").read_text(encoding="utf-8").splitlines()]
+            source_documents = [json.loads(line) for line in (run_root / "metadata/source-documents.jsonl").read_text(encoding="utf-8").splitlines()]
+            chunks = [json.loads(line) for line in (run_root / "metadata/chunks.jsonl").read_text(encoding="utf-8").splitlines()]
+
+            self.assertEqual(len({item["resourceId"] for item in source_resources}), len(source_resources))
+            self.assertEqual(len(source_documents), 1)
+            self.assertEqual(len({item["chunkId"] for item in chunks}), len(chunks))
+            issue = next(item for item in report.issues if item.code == "DUPLICATE_SOURCE_RESOURCE_COLLAPSED")
+            self.assertEqual(issue.severity, "warning")
+
+    def test_conflicting_resource_id_is_isolated_without_blocking_valid_resource(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            batch_root = root / "batches" / self.batch_id
+            first = batch_root / "original/files/first.md"
+            second = batch_root / "original/files/second.md"
+            valid = batch_root / "original/files/valid.md"
+            first.parent.mkdir(parents=True)
+            first.write_text("# 冲突甲", encoding="utf-8")
+            second.write_text("# 冲突乙", encoding="utf-8")
+            valid.write_text("# 正常资源", encoding="utf-8")
+            records = [
+                {"id": "conflict", "batchId": self.batch_id, "name": first.name, "logicalPath": first.relative_to(root).as_posix(), "kind": "attachment", "sourceType": "upload", "size": first.stat().st_size},
+                {"id": "conflict", "batchId": self.batch_id, "name": second.name, "logicalPath": second.relative_to(root).as_posix(), "kind": "attachment", "sourceType": "upload", "size": second.stat().st_size},
+                {"id": "valid", "batchId": self.batch_id, "name": valid.name, "logicalPath": valid.relative_to(root).as_posix(), "kind": "attachment", "sourceType": "upload", "size": valid.stat().st_size},
+            ]
+            (batch_root / "resources.json").write_text(json.dumps(records), encoding="utf-8")
+
+            report = self._prepare(root)
+            run_root = (root / report.manifest_path).parent
+            source_documents = [json.loads(line) for line in (run_root / "metadata/source-documents.jsonl").read_text(encoding="utf-8").splitlines()]
+
+            self.assertEqual([item["resourceId"] for item in source_documents], ["valid"])
+            issue = next(item for item in report.issues if item.code == "SOURCE_RESOURCE_ID_CONFLICT")
+            self.assertEqual(issue.severity, "error")
+
+    def test_prepare_reports_cumulative_top_level_resource_counts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            batch_root = root / "batches" / self.batch_id
+            text = batch_root / "original/files/guide.md"
+            image = batch_root / "original/files/image.png"
+            missing = batch_root / "original/files/missing.md"
+            text.parent.mkdir(parents=True)
+            text.write_text("# 正常正文", encoding="utf-8")
+            image.write_bytes(b"not-a-real-image")
+            records = [
+                {"id": "text", "batchId": self.batch_id, "name": text.name, "logicalPath": text.relative_to(root).as_posix(), "kind": "attachment", "size": text.stat().st_size},
+                {"id": "image", "batchId": self.batch_id, "name": image.name, "logicalPath": image.relative_to(root).as_posix(), "kind": "page_asset", "size": image.stat().st_size},
+                {"id": "missing", "batchId": self.batch_id, "name": missing.name, "logicalPath": missing.relative_to(root).as_posix(), "kind": "attachment", "size": 0},
+            ]
+            (batch_root / "resources.json").write_text(json.dumps(records), encoding="utf-8")
+            updates = []
+
+            self._prepare(root, progress=lambda *values: updates.append(values))
+
+            self.assertEqual(updates, [
+                (0, 3, 0, 0, 0),
+                (1, 3, 1, 0, 0),
+                (2, 3, 1, 0, 1),
+                (3, 3, 1, 1, 1),
+            ])
+
+    def test_prepare_cancel_after_progress_stops_before_next_resource(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            batch_root = root / "batches" / self.batch_id
+            files = [batch_root / f"original/files/{name}.md" for name in ("first", "second")]
+            files[0].parent.mkdir(parents=True)
+            for path in files:
+                path.write_text(f"# {path.stem}", encoding="utf-8")
+            records = [
+                {"id": path.stem, "batchId": self.batch_id, "name": path.name, "logicalPath": path.relative_to(root).as_posix(), "kind": "attachment", "size": path.stat().st_size}
+                for path in files
+            ]
+            (batch_root / "resources.json").write_text(json.dumps(records), encoding="utf-8")
+            cancelled = False
+            updates = []
+
+            def progress(*values):
+                nonlocal cancelled
+                updates.append(values)
+                if values[0] == 1:
+                    cancelled = True
+
+            def cancel_check():
+                if cancelled:
+                    raise RuntimeError("cancelled")
+
+            with self.assertRaisesRegex(RuntimeError, "cancelled"):
+                self._prepare(root, progress=progress, cancel_check=cancel_check)
+
+            self.assertEqual(updates, [(0, 2, 0, 0, 0), (1, 2, 1, 0, 0)])
+
+    def test_prepare_checks_cancel_before_and_after_office_conversion(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            batch_root = root / "batches" / self.batch_id
+            source = batch_root / "original/files/guide.docx"
+            source.parent.mkdir(parents=True)
+            source.write_bytes(b"office")
+            self._register_archive(root, source)
+            conversion_state = {"active": False, "completed": False}
+            checks = []
+
+            def cancel_check():
+                checks.append(dict(conversion_state))
+
+            def convert(*_args):
+                conversion_state["active"] = True
+                conversion_state["completed"] = True
+                return SimpleNamespace(
+                    markdown="# Office 正文",
+                    converter_id="test-office",
+                    conversion_profile="test",
+                    image_count=0,
+                    preserved_image_count=0,
+                    asset_paths=[],
+                )
+
+            self._prepare(root, cancel_check=cancel_check, convert_office=convert)
+
+            self.assertTrue(any(not item["active"] for item in checks))
+            self.assertTrue(any(item["completed"] for item in checks))
+
     def test_c_code_is_excluded_from_processing_view_but_original_is_preserved(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -491,7 +629,15 @@ class MaterialPreparationTests(unittest.TestCase):
             self.assertEqual(unresolved["severity"], "info")
             self.assertIn("不影响知识提取", unresolved["message"])
 
-    def _prepare(self, root, limits=None):
+    def _prepare(
+        self,
+        root,
+        limits=None,
+        *,
+        progress=None,
+        cancel_check=None,
+        convert_office=None,
+    ):
         test_settings = replace(settings, data_root=root)
         effective_limits = limits or ArchiveLimits(
             max_files=20,
@@ -508,7 +654,13 @@ class MaterialPreparationTests(unittest.TestCase):
                 FileService(),
                 limits=effective_limits,
             )
-            return service.prepare(self.batch_id)
+            if convert_office is not None:
+                service._convert_office = convert_office
+            return service.prepare(
+                self.batch_id,
+                progress=progress,
+                cancel_check=cancel_check,
+            )
 
     def test_concurrent_same_input_reuses_one_committed_snapshot(self):
         with tempfile.TemporaryDirectory() as directory:

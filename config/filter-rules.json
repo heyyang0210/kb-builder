@@ -1,4 +1,14 @@
 {
+  "issueCategories": [
+    {"id": "generic_term", "label": "通用词/过于宽泛"},
+    {"id": "duplicate_alias", "label": "同义重复"},
+    {"id": "language_variant", "label": "语言版本"},
+    {"id": "error_code_alias", "label": "错误码别名"},
+    {"id": "internal_implementation", "label": "内部实现词"},
+    {"id": "insufficient_evidence", "label": "证据不足"},
+    {"id": "irrelevant_term", "label": "业务无关"},
+    {"id": "other", "label": "其他/未分类"}
+  ],
   "rules": [
     {
       "id": "exclude-generic",

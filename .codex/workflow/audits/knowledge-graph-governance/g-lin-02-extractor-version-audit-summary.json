@@ -1,0 +1,136 @@
+{
+  "schemaVersion": "1.0",
+  "auditId": "g-lin-02-extractor-version-audit-2026-08-18",
+  "auditDate": "2026-08-18",
+  "mode": "read_only",
+  "scope": {
+    "trainingRunId": "training_c56bf44e9e6f4fc4",
+    "datasetId": "dataset_1d7438983dc34062",
+    "stageRunId": "stage-run:f3f645761f4a0ea1a41d"
+  },
+  "decision": {
+    "id": "G-LIN-02",
+    "selected": [
+      "2A",
+      "2C"
+    ],
+    "confirmedByUser": true,
+    "confirmedOn": "2026-08-18",
+    "futureRecommendedDefaultMustBeRecorded": true,
+    "doesNotOverrideMandatoryApprovalGates": true
+  },
+  "inputs": [
+    {
+      "role": "run_candidates",
+      "path": "scripts/pingcode/runtime/web/training-runs/training_c56bf44e9e6f4fc4/extraction-results/keyword-candidates.jsonl",
+      "sizeBytes": 46458586,
+      "sha256": "b23f0a8b73b9e72648a848c9b4ac4423c033adbc248725d1c6826ef1e79f3e92"
+    },
+    {
+      "role": "dataset_candidates",
+      "path": "scripts/pingcode/runtime/web/datasets/dataset_1d7438983dc34062/keyword-candidates.jsonl",
+      "sizeBytes": 46458586,
+      "sha256": "b23f0a8b73b9e72648a848c9b4ac4423c033adbc248725d1c6826ef1e79f3e92"
+    },
+    {
+      "role": "run_manifest",
+      "path": "scripts/pingcode/runtime/web/training-runs/training_c56bf44e9e6f4fc4/run-manifest.json",
+      "sizeBytes": 3882,
+      "sha256": "6b27c060a9b6020336669ff7a8d20a34c0cf0b83195baace21cefe53bfd9c984"
+    },
+    {
+      "role": "dataset_manifest",
+      "path": "scripts/pingcode/runtime/web/datasets/dataset_1d7438983dc34062/manifest.json",
+      "sizeBytes": 324555,
+      "sha256": "bdfb4c5049a355d5a858f7938f5541df83299c74342b012671cd31bcb1f4884b"
+    },
+    {
+      "role": "run_report",
+      "path": "scripts/pingcode/runtime/web/training-runs/training_c56bf44e9e6f4fc4/run-report.json",
+      "sizeBytes": 4250,
+      "sha256": "1a6678167cef8c834c94cf4a3936ee11fe6a3bb33e0f6a5c1163eebad9a39d1a"
+    },
+    {
+      "role": "dataset_run_report",
+      "path": "scripts/pingcode/runtime/web/datasets/dataset_1d7438983dc34062/run-report.json",
+      "sizeBytes": 4250,
+      "sha256": "1a6678167cef8c834c94cf4a3936ee11fe6a3bb33e0f6a5c1163eebad9a39d1a"
+    }
+  ],
+  "filterSnapshots": {
+    "count": 3,
+    "recordsPerSnapshot": 643,
+    "files": [
+      {
+        "path": "scripts/pingcode/runtime/web/datasets/dataset_1d7438983dc34062/keyword-filter-runs/kfr_113cd2383e0f47cc8b61c93e255cbb78/candidate-snapshot.json",
+        "sizeBytes": 2159225,
+        "sha256": "a4466a2bd8724dbdd2cdd2fc00317cb27eafac452530d5af4baf901a8bfaed58"
+      },
+      {
+        "path": "scripts/pingcode/runtime/web/datasets/dataset_1d7438983dc34062/keyword-filter-runs/kfr_608d5aa4f47e43efbe955c882f259528/candidate-snapshot.json",
+        "sizeBytes": 2159225,
+        "sha256": "a4466a2bd8724dbdd2cdd2fc00317cb27eafac452530d5af4baf901a8bfaed58"
+      },
+      {
+        "path": "scripts/pingcode/runtime/web/datasets/dataset_1d7438983dc34062/keyword-filter-runs/kfr_65f657db9ca5455bba7b087db336735e/candidate-snapshot.json",
+        "sizeBytes": 2159225,
+        "sha256": "a4466a2bd8724dbdd2cdd2fc00317cb27eafac452530d5af4baf901a8bfaed58"
+      }
+    ],
+    "classification": "post_extraction_filter_evidence_not_extractor_version_evidence"
+  },
+  "candidateIntegrity": {
+    "total": 55324,
+    "validJsonObjects": 55324,
+    "blankLines": 0,
+    "invalidLines": 0,
+    "candidateIdPresent": 55324,
+    "candidateIdUnique": 55324,
+    "candidateIdDuplicates": 0,
+    "schemaVersionMissing": 55324,
+    "extractorVersionMissing": 55324,
+    "taskIdMatchesRun": 55324,
+    "stageRunIdMatchesManifest": 55324,
+    "runDatasetByteIdentical": true,
+    "cmpExitCode": 0,
+    "auxiliaryMultisetDigestSha256": "2adf42f7f04a787678a97c07ac314275d4af503971fbf7b84a3d37213c7b4cf9",
+    "auxiliaryDigestIsPublishGate": false
+  },
+  "sourceMethodCounts": {
+    "deterministic_pattern_chinese_term": 43730,
+    "deterministic_content_glossary": 9872,
+    "deterministic_pattern_error_code": 715,
+    "deterministic_title_glossary": 644,
+    "deterministic_pattern_oracle_error": 352,
+    "deterministic_title_fallback": 11
+  },
+  "versionEvidence": {
+    "pipelineVersion": "2.0",
+    "extractorVersionPresent": false,
+    "committedSameRunRuleSnapshotPresent": false,
+    "manifestBoundRuleArtifactHashPresent": false,
+    "metadataRuleSetTrustedForKeywordExtractor": false,
+    "filterSnapshotTrustedForKeywordExtractor": false,
+    "currentConfigTrustedAsHistoricalFact": false,
+    "gitStateTrustedAsRuntimeHistoricalFact": false
+  },
+  "classification": {
+    "recoverable": 0,
+    "isolate": 55324,
+    "reasonCode": "LEGACY_EXTRACTOR_VERSION_UNPROVEN",
+    "conservationSatisfied": true
+  },
+  "privacy": {
+    "containsCandidateBody": false,
+    "containsDocumentBody": false,
+    "containsStack": false,
+    "containsCredentials": false,
+    "containsSensitivePayload": false
+  },
+  "evidenceLimits": [
+    "Results apply only to the identified frozen files at audit time.",
+    "No trustworthy same-run extractor snapshot was found in the audited paths; external backups were not exhaustively disproved.",
+    "The audit does not prove producer implementation, 2C rerun, real API wiring, or publish verification.",
+    "An ordered canonical digest without an independently reproducible algorithm was intentionally excluded."
+  ]
+}

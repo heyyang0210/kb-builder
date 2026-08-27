@@ -5,7 +5,7 @@ documentType: design-contract
 moduleId: knowledge-graph-governance
 relatedRequirement: REQ-KGO-33
 relatedTask: RG-08
-status: review
+status: implemented-rg16
 decisionGate: G2
 ```
 
@@ -43,24 +43,29 @@ decisionGate: G2
 
 ## 4. API 响应契约
 
-所有治理 API 响应至少包含：
+RG-16 采用方案 A：保留既有 `DatasetVersion.state`，通过可选嵌套字段增量返回治理状态。历史记录没有 `governance` 时继续使用旧发布逻辑；新加工记录必须带该字段。
 
 ```json
 {
-  "resourceId": "...",
-  "datasetId": "...",
-  "versionId": "...",
-  "status": "index",
-  "statusVersion": 3,
-  "publishable": false,
-  "qualityState": "warning|blocked|passed",
-  "reasonCode": "INDEX_BUILDING",
-  "updatedAt": "2026-08-19T00:00:00Z",
-  "requestId": "..."
+  "id": "dataset-id",
+  "state": "candidate",
+  "governance": {
+    "status": "index",
+    "statusVersion": 2,
+    "publishable": false,
+    "reasonCode": "ACL_EVALUATION_PENDING",
+    "gateChecks": {
+      "entity_relation": true,
+      "evidence": true,
+      "acl": false,
+      "quality": true,
+      "evaluation": false
+    }
+  }
 }
 ```
 
-旧客户端仅读取既有状态字段；服务端以 `statusVersion` 做乐观并发控制。提交迁移时必须带 `expectedStatusVersion` 和幂等键 `idempotencyKey`。
+旧客户端仅读取既有状态字段。发布接口可带 `expectedStatusVersion` 做乐观并发控制；治理模式下 `force=true` 不能绕过任何 P0 门禁，历史模式继续兼容原有 force 语义。
 
 ## 5. 稳定错误分类
 
@@ -114,6 +119,5 @@ transition(resource, target, expectedVersion, request):
 
 ## 8. 未决项
 
-- 现有训练状态到上述治理状态的兼容别名及映射需 G2 确认。
-- 公共 API 是否允许直接增加字段，或通过版本化响应包装，需 API 负责人确认。
+- G2-01 已于 2026-08-18 确认方案 A：旧字段继续可读，新增可选 `governance` 嵌套字段，不新增 v2 路由。
 - `published` 指针是否允许在异步图投影未完成时发布：按当前基线允许，但需 G2 固化图投影延迟告警阈值。

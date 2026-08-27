@@ -55,6 +55,10 @@ class FakeTasks:
         self.events.publish_event(task_id, "task.progress", self.task.model_dump(mode="json", by_alias=True))
         return self.task
 
+    def _save(self, task):
+        self.task = task
+        self.events.publish_event(task.id, "task.progress", task.model_dump(mode="json", by_alias=True))
+
 
 class FakeBatches:
     def __init__(self, batch=None):
@@ -575,6 +579,234 @@ class TrainingPreflightTests(unittest.TestCase):
 
     def test_missing_confidence_is_not_treated_as_certain(self):
         self.assertEqual(self.service._confidence({"entities": [{"name": "参数A"}]}), 0.0)
+
+
+class TrainingMaterialScanTests(unittest.TestCase):
+    @staticmethod
+    def _report(batch_id="batch_test"):
+        return ScanReport(
+            batchId=batch_id,
+            totalFiles=100,
+            textFiles=80,
+            unsupportedFiles=20,
+            emptyFiles=0,
+            encodingWarningFiles=0,
+            duplicateGroups=0,
+            traceableFiles=100,
+            processableCount=80,
+        )
+
+    def _service(self, preprocess):
+        task = TaskSnapshot(
+            id="training_scan_test",
+            batchId="batch_test",
+            type="graph",
+            state="running",
+            stage="material_preparation",
+            total=4,
+            stages=[{"id": stage, "state": "pending"} for stage in STAGES],
+            createdAt=utcnow(),
+            updatedAt=utcnow(),
+        )
+        tasks = FakeTasks(task)
+        return TrainingService(
+            FakeStore(), FakeBatches(SimpleNamespace(id="batch_test", state="downloaded", active_task_ids=[])),
+            tasks, preprocess, None, gateway=None,
+        ), tasks
+
+    def test_material_scan_reuses_latest_report_without_running_scan(self):
+        report = self._report()
+
+        class CachedPreprocess:
+            @staticmethod
+            def latest_scan_report(batch_id):
+                return report
+
+            @staticmethod
+            def scan(*args, **kwargs):
+                raise AssertionError("已有扫描报告时不应再次扫描")
+
+        service, tasks = self._service(CachedPreprocess())
+        with TemporaryDirectory() as directory, patch(
+            "app.training_service.settings", SimpleNamespace(data_root=Path(directory))
+        ):
+            result = service._scan_for_material_preparation(tasks.task.id, "batch_test")
+
+        self.assertIs(result, report)
+        completed = [
+            item[2] for item in tasks.events.items
+            if item[1] == "training.log" and item[2]["event"] == "material_preparation.scan.completed"
+        ]
+        self.assertEqual(completed[0]["details"]["source"], "latest_scan_report")
+
+    def test_material_scan_falls_back_to_lightweight_scan_with_progress(self):
+        calls = []
+        report = self._report()
+
+        class MissingCachePreprocess:
+            @staticmethod
+            def latest_scan_report(batch_id):
+                raise FileNotFoundError(batch_id)
+
+            @staticmethod
+            def scan(batch_id, **kwargs):
+                calls.append((batch_id, kwargs))
+                kwargs["cancel_check"]()
+                kwargs["progress"](50, 100, 1, 2)
+                kwargs["progress"](100, 100, 1, 2)
+                return report
+
+        service, tasks = self._service(MissingCachePreprocess())
+        with TemporaryDirectory() as directory, patch(
+            "app.training_service.settings", SimpleNamespace(data_root=Path(directory))
+        ):
+            result = service._scan_for_material_preparation(tasks.task.id, "batch_test")
+
+        self.assertIs(result, report)
+        self.assertTrue(calls[0][1]["lightweight"])
+        progress_events = [
+            item[2] for item in tasks.events.items
+            if item[1] == "training.log" and item[2]["event"] == "material_preparation.scan.progress"
+        ]
+        self.assertEqual([item["current"] for item in progress_events], [50, 100])
+        self.assertEqual(tasks.task.progress_detail["total"], 100)
+
+    def test_preparation_progress_emits_at_fifty_resources_and_completion(self):
+        service, tasks = self._service(SimpleNamespace())
+        callback = service._preparation_progress_callback(tasks.task.id)
+
+        callback(0, 100, 0, 0, 0)
+        callback(1, 100, 1, 0, 0)
+        callback(49, 100, 47, 1, 1)
+        callback(50, 100, 48, 1, 1)
+        callback(51, 100, 49, 1, 1)
+        callback(100, 100, 95, 2, 3)
+
+        events = [
+            item[2] for item in tasks.events.items
+            if item[1] == "training.log"
+            and item[2]["event"] == "material_preparation.prepare.progress"
+        ]
+        self.assertEqual([item["current"] for item in events], [0, 50, 100])
+        self.assertEqual(events[-1]["details"], {
+            "substage": "prepare",
+            "succeeded": 95,
+            "failed": 2,
+            "skipped": 3,
+        })
+        self.assertEqual(tasks.task.progress_detail["substage"], "prepare")
+        self.assertEqual(tasks.task.progress_detail["succeeded"], 95)
+
+    def test_preparation_progress_emits_after_one_second(self):
+        service, tasks = self._service(SimpleNamespace())
+        with patch("app.training_service.time.monotonic", side_effect=[0.0, 1.1]):
+            callback = service._preparation_progress_callback(tasks.task.id)
+            callback(1, 100, 1, 0, 0)
+
+        event = next(
+            item[2] for item in tasks.events.items
+            if item[1] == "training.log"
+            and item[2]["event"] == "material_preparation.prepare.progress"
+        )
+        self.assertEqual(event["current"], 1)
+        self.assertEqual(event["total"], 100)
+
+    def test_stage_output_flow_passes_preparation_progress_and_cancel_callbacks(self):
+        service, tasks = self._service(SimpleNamespace())
+        captured = {}
+
+        class StopAfterCallback(RuntimeError):
+            pass
+
+        class Preparation:
+            @staticmethod
+            def prepare(batch_id, config, **kwargs):
+                captured.update(kwargs)
+                kwargs["cancel_check"]()
+                kwargs["progress"](0, 2, 0, 0, 0)
+                raise StopAfterCallback("stop after callback")
+
+        service.preparation = Preparation()
+        service.metadata_construction = SimpleNamespace()
+        service._scan_for_material_preparation = lambda *_args: self._report()
+
+        with TemporaryDirectory() as directory, self.assertRaises(StopAfterCallback):
+            service._prepare_materials_from_stage_outputs(
+                tasks.task.id,
+                TrainingTaskCreate(batchId="batch_test"),
+                Path(directory),
+            )
+
+        self.assertIn("progress", captured)
+        self.assertIn("cancel_check", captured)
+        event_names = [
+            item[2]["event"] for item in tasks.events.items
+            if item[1] == "training.log"
+        ]
+        self.assertIn("material_preparation.prepare.started", event_names)
+        self.assertIn("material_preparation.prepare.progress", event_names)
+
+    def test_invalid_scan_cache_logs_warning_and_falls_back(self):
+        report = self._report()
+
+        class InvalidCachePreprocess:
+            @staticmethod
+            def latest_scan_report(batch_id):
+                raise ValueError("invalid json")
+
+            @staticmethod
+            def scan(batch_id, **kwargs):
+                return report
+
+        service, tasks = self._service(InvalidCachePreprocess())
+        with TemporaryDirectory() as directory, patch(
+            "app.training_service.settings", SimpleNamespace(data_root=Path(directory))
+        ):
+            service._scan_for_material_preparation(tasks.task.id, "batch_test")
+
+        warning = next(
+            item[2] for item in tasks.events.items
+            if item[1] == "training.log" and item[2]["event"] == "material_preparation.scan.cache_invalid"
+        )
+        self.assertEqual(warning["details"]["errorClass"], "scan_cache_invalid")
+        self.assertNotIn("模型服务", warning["message"])
+
+    def test_scan_hash_honors_cancel_check_between_blocks(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "large.md"
+            source.write_bytes(b"x" * (2 * 1024 * 1024 + 1))
+            resource = SimpleNamespace(
+                id="resource-1",
+                name="large.md",
+                logical_path="large.md",
+                batch_id="batch_test",
+                size=source.stat().st_size,
+                model_dump=lambda **kwargs: {"id": "resource-1", "logicalPath": "large.md"},
+            )
+            files = SimpleNamespace(
+                list=lambda batch_id: [resource],
+                resolve=lambda logical_path: source,
+                _resource_metadata=lambda record, path, inspect_pdf: {
+                    "formatFamily": "text",
+                    "processingStatus": "direct_text",
+                    "previewableAfterConversion": False,
+                    "conversionReadiness": "ready",
+                },
+            )
+            service = PreprocessService(None, SimpleNamespace(get=lambda batch_id: None), None, files)
+            checks = 0
+
+            def cancel_check():
+                nonlocal checks
+                checks += 1
+                if checks == 3:
+                    raise TrainingCancelledError("用户取消了知识加工任务")
+
+            with self.assertRaises(TrainingCancelledError):
+                service.scan("batch_test", lightweight=True, cancel_check=cancel_check)
+
+        self.assertEqual(checks, 3)
 
 
 class KnowledgeValidationAndDatasetTests(unittest.TestCase):
@@ -1373,9 +1605,10 @@ class DeterministicPipelineTests(unittest.TestCase):
     def setUp(self):
         self.service = TrainingService(None, None, None, None, None, gateway=None)
 
-    def test_public_pipeline_has_three_stable_stages(self):
+    def test_public_pipeline_has_four_stable_stages(self):
         self.assertEqual(STAGES, [
             "material_preparation",
+            "metadata_construction",
             "knowledge_extraction",
             "index_generation",
         ])
@@ -1473,32 +1706,6 @@ class DeterministicPipelineTests(unittest.TestCase):
         self.assertTrue(all(item["state"] == "needs_model" for item in uncertain))
         self.assertIn("ambiguous_reference", {item["type"] for item in uncertain})
 
-    def test_context_envelope_uses_metadata_and_evidence_not_full_document(self):
-        chunks = [
-            {"id": "r:0", "resourceId": "r", "sourcePath": "docs/a.md", "chunkIndex": 0, "content": "前一块内容。"},
-            {"id": "r:1", "resourceId": "r", "sourcePath": "docs/a.md", "chunkIndex": 1, "content": "该参数影响连接。"},
-        ]
-        item = self.service._uncertain_item(chunks[1], "ambiguous_reference", "指代不明", "该参数", {})
-        envelope = self.service._context_envelope(item, chunks[1], chunks, {
-            "resourceId": "r", "sourcePath": "docs/a.md", "title": "a.md",
-            "summary": "文档摘要", "category": "配置", "keywords": ["连接"],
-        })
-        serialized = json.dumps(envelope, ensure_ascii=False)
-        self.assertIn("文档摘要", serialized)
-        self.assertIn("该参数", serialized)
-        self.assertNotIn("前一块内容。", serialized)
-
-    def test_model_result_without_source_evidence_is_rejected(self):
-        issues = []
-        result = self.service._validated_model_resolution({
-            "status": "resolved",
-            "knowledgePoints": [],
-            "entities": [{"name": "线程池", "type": "Component", "evidenceText": "原文不存在", "confidence": 0.9}],
-            "relations": [],
-        }, {"id": "r:0", "resourceId": "r", "sourcePath": "docs/a.md", "content": "连接参数说明。"}, issues)
-        self.assertEqual(result["entities"], [])
-        self.assertEqual(issues[0]["code"], "MODEL_EVIDENCE_INVALID")
-
     def test_document_profile_selection_is_deterministic(self):
         profile = self.service._document_profile(
             {"title": "优化器问题分析", "sourcePath": "docs/optimizer.md"},
@@ -1521,20 +1728,8 @@ class DeterministicPipelineTests(unittest.TestCase):
         self.assertEqual(validated["relations"], [])
         self.assertEqual({item["code"] for item in issues}, {"EXTRACTION_EVIDENCE_INVALID", "EXTRACTION_RELATION_INVALID"})
 
-    def test_only_supported_needs_enrichment_is_routed_to_stage_four(self):
-        chunk = {"id": "r:0", "resourceId": "r", "sourcePath": "docs/a.md"}
-        envelope = {"chunk": "hash-input"}
-        routed = self.service._agent_uncertain_item(chunk, {
-            "type": "ambiguous_reference", "reason": "该参数指代不明", "evidenceText": "该参数", "state": "needs_enrichment", "candidateValues": ["p_size"]
-        }, envelope)
-        rejected = self.service._agent_uncertain_item(chunk, {
-            "type": "missing_evidence", "reason": "缺少证据", "evidenceText": "", "state": "needs_enrichment"
-        }, envelope)
-        self.assertEqual(routed["state"], "needs_enrichment")
-        self.assertEqual(rejected["state"], "human_required")
-
-
-# SemanticEnrichmentPipelineTests 已移除（semantic_enrichment 步骤已移除）
+# Semantic enrichment tests are intentionally absent: the current pipeline records
+# unresolved semantic items as quality issues and does not execute a model stage.
 
 # KnowledgeExtractionPipelineTests 已移除（旧架构测试不再适用）
 
@@ -1676,6 +1871,7 @@ class TrainingCancellationTests(unittest.TestCase):
             service.start(TrainingTaskCreate(batchId="batch-test", mode="formal_knowledge"))
         self.assertEqual(batches.batch.state, "downloaded")
         self.assertEqual(batches.batch.active_task_ids, [])
+        self.assertTrue(any(update.get("activeTaskIds") == [] for _, update in batches.updates))
 
 
 # TrainingSkillInvocationTests 已移除（旧 skill 架构测试不再适用）
@@ -1860,6 +2056,7 @@ class KeywordFilterCompatibilityTests(unittest.TestCase):
                     "keywordId": "keyword:function",
                     "keywordName": "函数",
                     "shouldExclude": True,
+                    "issueCategory": "generic_term",
                     "reason": "过于宽泛",
                 },
             ]}}])
@@ -1869,8 +2066,20 @@ class KeywordFilterCompatibilityTests(unittest.TestCase):
                 with patch.object(service, "_write_json", side_effect=AssertionError("预览不得写入产物")):
                     result = service.preview_keywords_filter_by_skill("dataset-1")
 
-            self.assertEqual(result["summary"], {"total": 2, "suggested_keep": 1, "suggested_exclude": 1})
+            self.assertEqual(result["summary"], {
+                "total": 2,
+                "candidateTotal": 2,
+                "decisionTotal": 2,
+                "pendingTotal": 0,
+                "status": "complete",
+                "suggested_keep": 1,
+                "suggested_exclude": 1,
+                "excludedByCategory": {"generic_term": 1},
+            })
             self.assertEqual([item["suggestedAction"] for item in result["suggestions"]], ["keep", "exclude"])
+            self.assertIsNone(result["suggestions"][0]["issueCategory"])
+            self.assertEqual(result["suggestions"][1]["issueCategory"], "generic_term")
+            self.assertEqual(result["suggestions"][1]["issueCategoryLabel"], "通用词/过于宽泛")
             self.assertEqual((run_graph / "nodes.json").read_bytes(), nodes_before)
             self.assertEqual(index_path.read_bytes(), index_before)
             self.assertEqual(len(gateway.calls), 1)
@@ -1890,6 +2099,7 @@ class KeywordFilterCompatibilityTests(unittest.TestCase):
                     "keywordId": "keyword:function",
                     "keywordName": "函数",
                     "shouldExclude": True,
+                    "issueCategory": "generic_term",
                     "reason": "过于宽泛",
                 },
             ]}, ensure_ascii=False)}])
@@ -1907,6 +2117,48 @@ class KeywordFilterCompatibilityTests(unittest.TestCase):
             self.assertEqual(complete["total"], 2)
             self.assertEqual(complete["keep"], 1)
             self.assertEqual(complete["exclude"], 1)
+            self.assertEqual(complete["excludedByCategory"], {"generic_term": 1})
+
+    def test_filter_decision_category_is_normalized_for_legacy_and_invalid_values(self):
+        decisions = TrainingService._validate_keyword_filter_decisions(
+            [{"id": "keyword-1"}, {"id": "keyword-2"}, {"id": "keyword-3"}],
+            [
+                {"keywordId": "keyword-1", "shouldExclude": False, "reason": "保留"},
+                {"keywordId": "keyword-2", "shouldExclude": True, "reason": "历史结果"},
+                {"keywordId": "keyword-3", "shouldExclude": True, "issueCategory": "not-configured", "reason": "非法类别"},
+            ],
+        )
+        self.assertEqual(decisions[0]["issueCategory"], None)
+        self.assertEqual(decisions[1]["issueCategory"], "other")
+        self.assertEqual(decisions[2]["issueCategory"], "other")
+
+    def test_new_filter_decisions_require_skill_issue_category(self):
+        batch = [{"id": "keyword-1"}]
+        for decision in (
+            {"keywordId": "keyword-1", "shouldExclude": True, "reason": "缺少类别"},
+            {"keywordId": "keyword-1", "shouldExclude": True, "issueCategory": "not-configured", "reason": "非法类别"},
+        ):
+            with self.subTest(decision=decision):
+                with self.assertRaisesRegex(ValueError, "缺少 Skill 问题类别或类别非法"):
+                    TrainingService._validate_keyword_filter_decisions(
+                        batch,
+                        [decision],
+                        require_issue_category=True,
+                    )
+
+    def test_new_filter_decisions_use_skill_rule_category(self):
+        decisions = TrainingService._validate_keyword_filter_decisions(
+            [{"id": "keyword-1"}, {"id": "keyword-2"}],
+            [
+                {"keywordId": "keyword-1", "shouldExclude": True, "issueCategory": "language_variant", "reason": "优先中文"},
+                {"keywordId": "keyword-2", "shouldExclude": True, "issueCategory": "error_code_alias", "reason": "错误码作为别名"},
+            ],
+            require_issue_category=True,
+        )
+        self.assertEqual(
+            [(item["issueCategory"], item["issueCategoryLabel"]) for item in decisions],
+            [("language_variant", "语言版本"), ("error_code_alias", "错误码别名")],
+        )
 
     def test_filter_stream_and_preview_use_the_same_model_selection(self):
         decisions = {"decisions": [{
@@ -1967,6 +2219,7 @@ class KeywordFilterCompatibilityTests(unittest.TestCase):
             self.assertEqual(result["summary"]["afterTotal"], result["summary"]["retained"])
             self.assertEqual(len(updates), 2)
             self.assertEqual(updates[0][0:2], ("datasets", "dataset-1"))
+
             self.assertEqual(set(updates[0][2]), {"graphSummary"})
             self.assertEqual(updates[1][0:2], ("tasks", "training-1"))
 
@@ -1984,6 +2237,17 @@ class KeywordFilterCompatibilityTests(unittest.TestCase):
             }])
             self.assertTrue(all(edge["source"] in visible_ids and edge["target"] in visible_ids for edge in visible_edges))
             self.assertEqual(visible_summary["keywordFilterState"], expected_state)
+
+    def test_apply_filter_rejects_incomplete_decisions(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_graph_fixture(root)
+            service = self._service(FakeGateway([]))
+            with patch("app.training_service.settings", SimpleNamespace(data_root=root)):
+                with self.assertRaises(ValueError):
+                    service.apply_keywords_filter("dataset-1", [{
+                        "keywordId": "keyword:transaction", "action": "keep",
+                    }])
 
 
 class KeywordExtractionPerformanceTests(unittest.TestCase):
@@ -2045,6 +2309,142 @@ class KeywordExtractionPerformanceTests(unittest.TestCase):
             metadata_construction=metadata,
             gateway=gateway or FakeGateway([]),
         )
+
+    @staticmethod
+    def _keyword_resource(resource_id: str, chunk_count: int = 1):
+        chunks = [{
+            "id": f"{resource_id}:{index}",
+            "chunkId": f"{resource_id}:{index}",
+            "resourceId": resource_id,
+            "chunkIndex": index,
+            "sourcePath": f"{resource_id}.md",
+            "headingPath": [resource_id],
+            "content": f"{resource_id} content {index}",
+        } for index in range(chunk_count)]
+        document = {
+            "resourceId": resource_id,
+            "title": resource_id,
+            "semanticTitle": resource_id,
+            "contentHash": resource_id,
+            "domainTerms": [],
+        }
+        return chunks, document
+
+    def test_keyword_analysis_progress_uses_chunk_counts_and_preserves_candidates(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            service = self._service(metadata=SimpleNamespace(rules={"stopwords": set(), "glossaries": {}}))
+            chunks = []
+            documents = []
+            for index in range(51):
+                resource_chunks, document = self._keyword_resource(
+                    f"resource-{index}", 2 if index == 0 else 1
+                )
+                chunks.extend(resource_chunks)
+                documents.append(document)
+            run_dir = root / "run"
+            service._write_json(run_dir / "metadata/preselection-report.json", {
+                "items": [{"resourceId": "resource-50", "preselectionState": "skip"}],
+            })
+
+            def deterministic(_task_id, document, _chunks, _threshold):
+                return [{
+                    "canonicalName": document["resourceId"],
+                    "sourceMethod": "test_rule",
+                }]
+
+            service._deterministic_keyword_candidates = deterministic
+            with patch("app.training_service.time.monotonic", return_value=0):
+                candidates, issues, calls = service._extract_keyword_analysis(
+                    service.tasks.task.id,
+                    chunks,
+                    documents,
+                    run_dir,
+                    {"succeeded": 0, "failed": 0, "skipped": 0},
+                )
+
+            events = [
+                item[2] for item in service.tasks.events.items
+                if item[1] == "training.log"
+                and item[2]["event"] == "knowledge_extraction.keyword_analysis.progress"
+            ]
+            persisted = service._read_jsonl(run_dir / "extraction-results/keyword-candidates.jsonl")
+
+        self.assertEqual([item["current"] for item in events], [51, 52])
+        self.assertEqual(events[-1]["details"]["succeeded"], 51)
+        self.assertEqual(events[-1]["details"]["failed"], 0)
+        self.assertEqual(events[-1]["details"]["skipped"], 1)
+        self.assertEqual(events[-1]["current"], sum(events[-1]["details"][key] for key in ("succeeded", "failed", "skipped")))
+        self.assertEqual(persisted, candidates)
+        self.assertEqual(len(candidates), 50)
+        self.assertEqual(issues, [])
+        self.assertEqual(calls, {"succeeded": 0, "failed": 0, "skipped": 0})
+
+    def test_keyword_analysis_cancel_after_resource_stops_next_resource(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            service = self._service(metadata=SimpleNamespace(rules={"stopwords": set(), "glossaries": {}}))
+            chunks = []
+            documents = []
+            for resource_id in ("first", "second"):
+                resource_chunks, document = self._keyword_resource(resource_id)
+                chunks.extend(resource_chunks)
+                documents.append(document)
+            processed = []
+
+            def deterministic(_task_id, document, _chunks, _threshold):
+                processed.append(document["resourceId"])
+                if document["resourceId"] == "first":
+                    service.tasks.task = service.tasks.task.model_copy(update={"state": "cancelling"})
+                return []
+
+            service._deterministic_keyword_candidates = deterministic
+            with self.assertRaises(TrainingCancelledError):
+                service._extract_keyword_analysis(
+                    service.tasks.task.id, chunks, documents, root / "run"
+                )
+
+        self.assertEqual(processed, ["first"])
+
+    def test_keyword_analysis_failure_reports_failed_chunks_before_reraising(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            service = self._service(metadata=SimpleNamespace(rules={"stopwords": set(), "glossaries": {}}))
+            chunks, document = self._keyword_resource("failed-resource", 2)
+            service._deterministic_keyword_candidates = lambda *_args: (_ for _ in ()).throw(ValueError("rule failed"))
+
+            with self.assertRaisesRegex(ValueError, "rule failed"):
+                service._extract_keyword_analysis(
+                    service.tasks.task.id, chunks, [document], root / "run"
+                )
+
+            event = next(
+                item[2] for item in service.tasks.events.items
+                if item[1] == "training.log"
+                and item[2]["event"] == "knowledge_extraction.keyword_analysis.progress"
+            )
+
+        self.assertEqual(event["current"], 2)
+        self.assertEqual(event["details"]["failed"], 2)
+        self.assertEqual(event["details"]["succeeded"], 0)
+        self.assertEqual(event["details"]["skipped"], 0)
+
+    def test_keyword_analysis_progress_emits_after_one_second(self):
+        service = self._service()
+        with patch("app.training_service.time.monotonic", side_effect=[0.0, 1.1]):
+            report = service._keyword_analysis_progress_callback(
+                service.tasks.task.id, 100
+            )
+            report(1, 2, 2, 0, 0)
+
+        event = next(
+            item[2] for item in service.tasks.events.items
+            if item[1] == "training.log"
+            and item[2]["event"] == "knowledge_extraction.keyword_analysis.progress"
+        )
+        self.assertEqual(event["current"], 2)
+        self.assertEqual(event["total"], 100)
+        self.assertEqual(event["details"]["processedResources"], 1)
 
     def test_clear_semantic_title_and_glossary_skip_model(self):
         with TemporaryDirectory() as directory:
@@ -2599,6 +2999,35 @@ class TrainingFailureClassificationTests(unittest.TestCase):
         summary = TrainingService._failure_summary(ModelGatewayError("HTTP 502"))
 
         self.assertEqual(summary, "模型服务暂时不可用（HTTP 502）")
+
+    def test_keyword_rebuild_does_not_read_preflight_latest_pointer(self):
+        now = utcnow()
+        task = TaskSnapshot(
+            id="training-rebuild-no-latest",
+            batchId="batch-test",
+            type="graph",
+            state="queued",
+            stage="queued",
+            total=len(STAGES),
+            stages=[{"id": stage, "state": "pending"} for stage in STAGES],
+            createdAt=now,
+            updatedAt=now,
+        )
+        service = TrainingService(
+            FakeStore(), FakeBatches(), FakeTasks(task), None, None, gateway=None
+        )
+        service._latest_preflight = lambda _batch_id: self.fail("API-A 不得读取 latest 指针")
+        service._run_keyword_rebuild_from_dataset = lambda *_args, **_kwargs: None
+        request = TrainingTaskCreate(
+            batchId="batch-test",
+            mode="keyword_analysis",
+            sourceDatasetId="dataset-source",
+        )
+        with TemporaryDirectory() as directory, patch(
+            "app.training_service.settings",
+            SimpleNamespace(data_root=Path(directory)),
+        ):
+            service._run(task.id, request)
 
 
 if __name__ == "__main__":

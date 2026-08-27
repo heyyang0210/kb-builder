@@ -6,7 +6,7 @@
 >
 > 计划基线：`TASK-RAG-KG-ROADMAP-01`
 >
-> 当前状态：`in_progress_g1`（G0 决策已确认；ACL 缺口仍是实现前 P0，等待 G1/G2 设计与修复）
+> 当前状态：`blocked_m2`（G-LIN-01、G-LIN-02/2A+2C、请求时冻结、API-A、生产出口治理包 helper 和发布重验已完成；API-A 7/7、发布重验 5/5；1k/8k 有界批执行已实现但内存门禁仍有元数据增长证据；真实训练出口/回放、G-LIN-04 和 ACL 接入尚未完成；RG-20/23 等待可信网关外部参数与隔离身份，G2.5 未通过）
 >
 > 更新规则：只有有验收证据时才可将任务标记为 `completed`；设计任务必须有设计文档、接口、伪代码和测试矩阵；实现任务必须有真实后端 API 或对应的自动化验收。
 
@@ -28,7 +28,7 @@
 |---|---|---:|---|---|
 | M0 事实与决策 | RG-00—RG-07 | 2026-08-18 | `completed` | 七项 G0 决策有书面记录，厂商/部署等实施项保留到 G1/G4 |
 | M1 契约与测试设计 | RG-08—RG-15 | 2026-08-21 | `review` | 设计、接口、伪代码、验收矩阵已齐，等待 Product/Architect/Test G2 签核 |
-| M2 安全可发布基础 | RG-16—RG-25 | 2026-08-28 | `pending` | 状态不可越级、ACL 默认拒绝、证据可回放 |
+| M2 安全可发布基础 | RG-16—RG-25 | 2026-08-28 | `blocked` | 状态不可越级、ACL 默认拒绝、证据可回放 |
 | M3 语义与检索闭环 | RG-26—RG-36 | 2026-09-08 | `pending` | 20 条垂直样例全部可追溯或结构化拒答 |
 | M4/M5 评测与发布 | RG-37A—RG-44 | 2026-09-18 | `pending` | 100 条评测集、发布门禁、隔离发布和回滚完成 |
 | M6 P1 硬化 | RG-45—RG-54 | 2026-10-02 | `pending` | 消歧、时效、增量、完整性和 S/M/L 性能验收完成 |
@@ -73,6 +73,55 @@
 | M6 P1 硬化 | RG-45—RG-54 | Backend、Test、Architect | P1 回归和 S/M/L 报告完成 |
 | M7 P2 验证 | RG-55—RG-60 | Product、Architect、Test | G5 决定是否建立新需求 |
 | M8 图数据库与平台基础 | RG-61—RG-72 | Architect、Backend、Test、Project Manager | 图数据库适配、回填、查询、故障和 docs/09 前置能力通过 G4；未批准保持 disabled |
+
+### M2 当前执行状态
+
+| ID | 任务 | 状态 | 证据 | 阻塞 |
+|---|---|---|---|---|
+| RG-16 | 治理状态机与公共 API 接入 | `completed` | [TASK-RAG-KG-RG16](../../tasks/TASK-RAG-KG-RG16-state-machine-implementation.md)；合并回归 100/100 | RG-20 前治理 ACL 默认拒绝 |
+| RG-17 | Lineage Manifest 指纹与稳定引用 | `completed` | [RG-17 任务卡](../../tasks/TASK-RAG-KG-RG17-lineage-manifest.md)；manifest/回放自动化及生产出口 helper 通过 | 真实训练批次回放仍待 INT-04 |
+| RG-18 | 发布前置检查与结构化阻断 | `completed` | [RG-18 任务卡](../../tasks/TASK-RAG-KG-RG18-publish-gate.md)；P0/CAS/越级真实 API 契约通过 | 真实授权结果依赖 RG-20 |
+| RG-19 | 图与索引版本指纹 | `completed` | [RG-19 任务卡](../../tasks/TASK-RAG-KG-RG19-version-fingerprint.md)；确定性、漂移和发布重验通过 | 真实训练批次回放仍待 INT-04 |
+| RG-20 | ACL 过滤与安全审计接入 | `blocked` | [RG-20 任务卡](../../tasks/TASK-RAG-KG-RG20-acl-enforcement.md) | 待确认可信身份源、ACL 粒度/冲突规则、审计留存与脱敏 |
+| RG-21 | 治理状态与发布阻断前端 | `completed` | [RG-21 任务卡](../../tasks/TASK-RAG-KG-RG21-governance-ui.md)；Node helper 契约和 Vite build 通过 | 无；真实授权交互归 RG-20/23 |
+| RG-22 | 状态、发布与前后端契约回归 | `completed` | [RG-22 任务卡](../../tasks/TASK-RAG-KG-RG22-contract-regression.md)；M2 合并回归 51/51 | 真实 ACL 路径不在本任务完成范围 |
+| RG-23 | ACL 越权回归 | `blocked` | [RG-23 任务卡](../../tasks/TASK-RAG-KG-RG23-security-regression.md) | 依赖 RG-20 及隔离测试身份/数据集 |
+| RG-24 | Lineage 重建与证据回放回归 | `completed` | [RG-24 任务卡](../../tasks/TASK-RAG-KG-RG24-lineage-replay-regression.md)；注入式回放及图版本 API 1/1 | 未完成生产 citation/ACL 端到端接线 |
+| RG-25 | M2 G2.5 验收与证据汇总 | `blocked` | [M2 部分验收记录](../../../../agent-runner/docs/modules/knowledge-graph-governance/testing/02-m2-partial-acceptance.md) | RG-20/23 未完成，G2.5 未通过 |
+| M2-LIN-REWORK | 生产 Lineage 接线修订 | `in_progress` | [修订任务卡](../../tasks/TASK-RAG-KG-M2-LINEAGE-REWORK-01.md)；[生产出口接线](../../tasks/TASK-RAG-KG-M2-LINEAGE-INT-02.md)；[发布重验](../../tasks/TASK-RAG-KG-M2-LINEAGE-INT-03.md)；[API-A 验收](../../tasks/TASK-RAG-KG-M2-LIN-2C-API-ACC-01.md)；API 7/7、治理包 fixture 1/1、发布重验 5/5 通过 | 性能内存门禁、真实训练出口/回放、G-LIN-04、错误信封隔离和 C/D 组仍阻塞；ACL 外部参数未提供，未迁移物理路径 |
+
+### M8 GraphStore 本地前置阶段
+
+M8 整体仍为 `deferred/blocked`，以下状态仅表示本地兼容层与异步投影内核的阶段性进展，不表示 GraphRAG、公共 API 或外部图数据库已完成。
+
+| ID | 任务 | 状态 | 验收证据/阻塞 |
+|---|---|---|---|
+| GS-DES-01 | GraphStore 架构、接口、伪代码与测试矩阵 | `completed` | 架构与详细设计文档已完成 |
+| GS-TST-01 | GraphStore/Local 契约测试 | `completed` | 契约与 Local 联合验证 12 passed |
+| GS-CONTRACT-BE-01 | 存储无关规范模型与接口 | `completed` | 原环境限制已由 `uv` 联合验证覆盖 |
+| GS-LOCAL-BE-01 | LocalGraphStore | `completed` | 契约、幂等、版本隔离和失效语义通过 |
+| GS-WRITE-TST-01 | 投影状态与故障契约测试 | `completed` | 投影 worker 新增验证 16 passed |
+| GS-WRITE-BE-01 | write-run/outbox 与投影执行器 | `completed` | 持久化状态和异步投影内核已完成 |
+| GS-API-TST-01 | 真实 API 红灯矩阵 | `blocked` | 依赖 RG-20/23、G2.5、可信身份参数和隔离测试身份 |
+| GS-API-BE-01 | 正式版本查询/投影 API 接线 | `blocked` | 依赖 GS-API-TST-01；未修改公共 API |
+| GS-ACC-01 | 真实 FastAPI 与隔离 formal 验收 | `blocked` | 缺隔离 formal 数据集及写入许可 |
+| GS-RPT-01 | 整体验收证据与下阶段汇总 | `blocked` | 依赖 GS-ACC-01；本次仅做阶段性 Reporter 同步 |
+
+本地前置阶段共 6/10 项完成、4/10 项阻塞。最终联合回归 42/42 通过，覆盖 contract、LocalGraphStore、projection、integration 和 GraphVersion API；独立验收曾发现 5 个 P0，修复后通过 9 项组合测试，`py_compile` 与 scoped diff-check 均通过。外部 Adapter、驱动、部署、凭据、容量、备份和生产写权限仍需 G1/G4 审批。
+
+### M2 当前决策门
+
+| 决策 | 已选方案 | 项目经理动作 |
+|---|---|---|
+| 默认方案治理 | **已确认常设授权（2026-08-19）**：后续存在待确认候选方案时，默认采用有证据支持的推荐方案 | 每次实施前记录候选、推荐依据、最终选择、日期、风险、回滚条件和适用边界；不得虚构 issuer、地址、凭据、容量等外部事实，也不得把方案选择等同于生产写入、发布或删除授权 |
+| G-LIN-01 Source identity | **已确认 1A，组件实现完成**：新写使用规范三元组哈希 Source ID，Schema `2.0` 新写、`1.0` 仅读/回放；歧义 v1 保持发布阻断 | PL-B01—B06 已通过；不得将组件绿色解释为生产接线完成，不得顺带迁移物理存储路径 |
+| G-LIN-02 历史 extractor 版本 | **已确认 `2A+2C`；2A 与 2C 内核已实现**：新产物显式持久化已提交规则快照和版本引用；legacy 仅从同 run 可证明快照恢复，无法证明则隔离；2C 内核从冻结 dataset 创建独立新 run，并以 `rebuildKey`/CAS 合并并发 | 目标历史数据基线为 `0` 恢复/`55,324` 隔离；公共 API 和真实批次验收前不宣称业务数据已恢复 |
+| G-LIN-02-API 2C 公共触发 | **已按常设授权选择 API-A**：保持字段不变，将 `keyword_analysis + sourceDatasetId` 定义为从指定 dataset 冻结输入重建 | 接入前同步公共契约和兼容测试；不读共享 `latest`，不回写旧产物，兼容异常时关闭该触发语义 |
+| G-LIN-03 治理包权威目录 | **已按常设授权选择 3A**：dataset `governance/` 为唯一发布权威，training run 为可重建审计镜像 | 不执行两次 rename 伪装成跨目录事务；按 fingerprint 幂等恢复并补充崩溃恢复测试 |
+| G-LIN-04 模式与偏移 | **已按常设授权选择 4A**：强制 keyword/formal 不变量，`offsetUnit=unicode_code_point` | 不接受任意 model/graphSource 或未声明偏移单位的产物；补充非 BMP 字符和跨端回放测试 |
+| G2-03 身份与 ACL | **已按常设授权选择推荐架构**：可信网关 JWT、本地验签、dataset ACL、deny 优先和脱敏审计 | issuer、audience、JWKS URI、claims 和隔离身份属于待提供外部事实；参数不齐时 RG-20/23 保持 fail-closed，不安装未批准依赖 |
+
+G-LIN-01、G-LIN-02/2A+2C、请求时冻结、API-A、生产出口 helper 和发布重验已完成；API-A 7/7、治理包 fixture 1/1、发布重验 5/5 通过。性能内存门禁、真实训练出口/回放、G-LIN-04 和错误信封隔离仍未完成，物理路径也未迁移。G2-03 推荐架构已按常设授权落定；JWT 外部事实、依赖安装及真实隔离写入许可仍按各自边界处理。任何组件测试绿色都不能替代生产快照回放和越权成功数为零的证据。
 
 ## 6. 门禁与项目经理动作
 

@@ -353,7 +353,32 @@ def preflight(request):
 
 ## 七、加工任务详细交互
 
+### 7.0 启动准入与任务事件展示
+
+加工页的启动资格以 `POST /api/training/preflight` 返回的 `canStart` 为准；前端不自行计算或改写关键词 `admissionStatus`，仅展示后端返回的 `admitted` / `excluded` 结果。规则提取阶段的确认文案明确为“不调用模型服务”，任务级错误优先使用后端 `errorCode` 和中文 `message`，产物完整性等错误不得归类为模型服务错误。
+
+任务 SSE 统一处理 `task.failed`、`task.completed`、`task.cancelled`、`task.interrupted` 和 `task.progress`，分别展示“知识加工失败：{中文分类}”“知识加工完成”“知识加工已取消”“知识加工因服务重启中断，可重新启动”。断线轮询按任务序号合并，SSE `lastEventId` 或事件序号重复时不重复追加日志；训练失败、取消和中断只结束任务，不改变批次稳定状态、既有数据集/图谱或准入结果。
+
 专项详细设计见 `docs/05-pingcode-processing-llm-control-design.md`。页面不得将配置文件中声明但尚未安装的阶段显示为可执行能力；能力状态由后端 Pipeline Registry 返回。
+
+加工流水线固定展示资料预处理、元数据构建、知识提取、索引生成四个已实现阶段。标题和完成阶段分母必须由同一份阶段注册表动态生成，不得硬编码“三步”或固定分母。
+
+阶段成功、失败数量按以下兼容规则计算：
+
+1. `material_preparation.prepare.progress` 和 `knowledge_extraction.keyword_analysis.progress` 的 `details.succeeded`、`details.failed`、`details.skipped` 是当前子阶段的累计快照；前端取匹配阶段中序号最新的一条快照，不得累加多条快照；
+2. 存在累计快照时，阶段成功、失败数直接使用该快照，避免同时统计逐项事件或任务失败事件造成重复计数；`skipped` 保留在日志详情中；
+3. 历史任务没有累计快照时，回退统计 `model_call.completed`、`work_item.completed` 以及错误级别日志；如果阶段已经完成且没有任何逐项成功事件，再使用阶段快照的 `current`（无有效值时使用 `total`）作为成功数，兼容早期只保存阶段汇总的任务。
+
+```text
+stageResultCounts(stage):
+    progress = latest matching cumulative progress event by sequence
+    if progress exists:
+        return progress.details.succeeded, progress.details.failed
+    succeeded, failed = counts from legacy item events and error logs
+    if stage completed and succeeded == 0:
+        succeeded = positive stage.current or positive stage.total
+    return succeeded, failed
+```
 
 ### 7.1 分阶段工作流
 

@@ -38,7 +38,7 @@ decisionGate: G2
 
 | 编号 | 决策 | 默认建议 | 确认门禁 |
 |---|---|---|---|
-| G2-01 | 旧训练状态与治理状态兼容及 API 字段扩展 | 只增字段、旧字段继续可读 | Product/Architect |
+| G2-01 | 旧训练状态与治理状态兼容及 API 字段扩展 | 已确认方案 A：嵌套增量字段、历史兼容、治理 P0 不可 force | `confirmed 2026-08-18` |
 | G2-02 | 哈希、快照保留和 Office/PDF 定位 | SHA-256、保留期配置化、定位能力分阶段 | Architect/Domain |
 | G2-03 | 身份来源、ACL 粒度和审计保留 | 复用现有身份；dataset→resource 继承；审计脱敏 | Security |
 | G2-04 | 首版 Ontology 领域类型和版本格式 | 采用设计文档基线，领域确认后冻结 | Domain |

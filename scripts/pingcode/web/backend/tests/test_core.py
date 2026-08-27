@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -69,6 +70,26 @@ class SelectionTests(unittest.TestCase):
         )
         self.assertEqual(set(self.service.resolve_selection(pages, selection)), {"root", "child"})
         self.assertEqual(self.service._estimate_states(pages, selection), ("upper_bound", "unknown"))
+
+    def test_pages_for_batch_collapses_identical_duplicate_pages(self):
+        page = {"_id": "page-1", "name": "同一页面", "parent_id": None}
+        self.service._space_cache["TEST"] = ({}, [page, dict(page)], {})
+        with patch.object(self.service, "_get_space_tree_sync"):
+            result = self.service._pages_for_batch_sync("TEST", ["page-1"])
+
+        self.assertEqual(result, [page])
+
+    def test_pages_for_batch_rejects_conflicting_page_id(self):
+        pages = [
+            {"_id": "page-1", "name": "页面甲", "parent_id": None},
+            {"_id": "page-1", "name": "页面乙", "parent_id": None},
+        ]
+        self.service._space_cache["TEST"] = ({}, pages, {})
+        with (
+            patch.object(self.service, "_get_space_tree_sync"),
+            self.assertRaisesRegex(ValueError, "页面 ID 冲突.*page-1"),
+        ):
+            self.service._pages_for_batch_sync("TEST", ["page-1"])
 
 
 class PingCodeClientLoginTests(unittest.TestCase):
@@ -356,6 +377,110 @@ class DownloadResumeTests(unittest.TestCase):
         )
         self.assertEqual(summary["completed"], 2)
         self.assertEqual(summary["progressDetail"]["pendingPages"], 3)
+
+    def test_rewrite_resources_collapses_identical_history(self):
+        batch_dir = self.data_root / "spaces/yasdoc/batches" / self.batch.id
+        state_dir = batch_dir / "download-state"
+        resource = {
+            "id": "resource-1",
+            "batchId": self.batch.id,
+            "kind": "page",
+            "pageId": "page-1",
+            "logicalPath": "spaces/yasdoc/page-1.md",
+            "size": 12,
+            "state": "completed",
+            "taskId": "task-download",
+        }
+        (state_dir / "items.jsonl").write_text(
+            "\n".join(json.dumps(item) for item in [resource, dict(resource)]),
+            encoding="utf-8",
+        )
+
+        self.tasks._rewrite_resources_from_state(batch_dir, state_dir)
+
+        resources = json.loads((batch_dir / "resources.json").read_text(encoding="utf-8"))
+        issues = json.loads((state_dir / "resource-view-issues.json").read_text(encoding="utf-8"))
+        self.assertEqual([item["id"] for item in resources], ["resource-1"])
+        self.assertEqual(issues[0]["code"], "DUPLICATE_SOURCE_RESOURCE_COLLAPSED")
+        self.assertEqual(issues[0]["severity"], "warning")
+
+    def test_append_download_items_collapses_duplicate_page_resource(self):
+        state_dir = self.data_root / "append-state"
+        resource = {
+            "id": "asset-1",
+            "batchId": self.batch.id,
+            "kind": "page_asset",
+            "pageId": "page-1",
+            "logicalPath": "spaces/yasdoc/assets/image.png",
+            "size": 24,
+        }
+
+        self.tasks._append_download_items(
+            state_dir,
+            [resource, dict(resource)],
+            "task-download",
+            0,
+        )
+
+        items = self.tasks._read_jsonl(state_dir / "items.jsonl")
+        matching = [item for item in items if item.get("id") == "asset-1"]
+        issues = self.tasks._read_jsonl(state_dir / "resource-issues.jsonl")
+        self.assertEqual(len(matching), 1)
+        self.assertEqual(issues[-1]["code"], "DUPLICATE_SOURCE_RESOURCE_COLLAPSED")
+
+    def test_append_download_items_rejects_conflicting_page_resource(self):
+        state_dir = self.data_root / "append-conflict-state"
+        common = {
+            "id": "asset-1",
+            "batchId": self.batch.id,
+            "kind": "page_asset",
+            "pageId": "page-1",
+            "size": 24,
+        }
+
+        with self.assertRaisesRegex(ValueError, "SOURCE_RESOURCE_ID_CONFLICT"):
+            self.tasks._append_download_items(
+                state_dir,
+                [
+                    {**common, "logicalPath": "spaces/yasdoc/assets/first.png"},
+                    {**common, "logicalPath": "spaces/yasdoc/assets/second.png"},
+                ],
+                "task-download",
+                0,
+            )
+
+        self.assertEqual(self.tasks._read_jsonl(state_dir / "items.jsonl"), [])
+        issues = self.tasks._read_jsonl(state_dir / "resource-issues.jsonl")
+        self.assertEqual(issues[-1]["severity"], "error")
+
+    def test_rewrite_resources_isolates_conflicting_id(self):
+        batch_dir = self.data_root / "spaces/yasdoc/batches" / self.batch.id
+        state_dir = batch_dir / "download-state"
+        common = {
+            "id": "resource-1",
+            "batchId": self.batch.id,
+            "kind": "page",
+            "pageId": "page-1",
+            "size": 12,
+            "state": "completed",
+        }
+        records = [
+            {**common, "logicalPath": "spaces/yasdoc/page-1.md"},
+            {**common, "logicalPath": "spaces/yasdoc/conflict.md"},
+            {**common, "id": "resource-2", "logicalPath": "spaces/yasdoc/page-2.md"},
+        ]
+        (state_dir / "items.jsonl").write_text(
+            "\n".join(json.dumps(item) for item in records),
+            encoding="utf-8",
+        )
+
+        self.tasks._rewrite_resources_from_state(batch_dir, state_dir)
+
+        resources = json.loads((batch_dir / "resources.json").read_text(encoding="utf-8"))
+        issues = json.loads((state_dir / "resource-view-issues.json").read_text(encoding="utf-8"))
+        self.assertEqual([item["id"] for item in resources], ["resource-2"])
+        self.assertEqual(issues[0]["code"], "SOURCE_RESOURCE_ID_CONFLICT")
+        self.assertEqual(issues[0]["severity"], "error")
 
     def test_retry_with_pending_pages_finishes_as_interrupted(self):
         class FakeApi:

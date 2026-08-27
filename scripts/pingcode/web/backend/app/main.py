@@ -1,4 +1,5 @@
 import json
+import queue
 import re
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -11,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.responses import RedirectResponse
 
 from .config import PINGCODE_DIR, settings
+from .governance_state import GovernanceStateError
 from .ingestion import build_default_framework
 from .models import (
     BatchCreate,
@@ -71,11 +73,35 @@ from .services import (
 )
 from .store import JsonStore
 from .upload_service import UploadAuthorizationError, UploadService, UploadServiceError
-from .training_service import error_summary, ModelGatewayError, ModelTestRequiredError, TrainingService
+from .graph_observability_service import GraphNodeNotFoundError
+from .graph_quality_check_service import GraphQualityCheckService
+from .graph_version_diff_service import GraphVersionDiffService
+from .graph_version_service import GraphVersionService
+from .training_service import (
+    error_summary,
+    KeywordFilterIncompleteError,
+    KeywordFilterReviewInvalidError,
+    KeywordFilterReviewUnavailableError,
+    KeywordFilterSourceChangedError,
+    ModelGatewayError,
+    ModelTestRequiredError,
+    RebuildSourceError,
+    TrainingService,
+)
 from .workbench_service import WorkbenchService
 from .index_service import IndexService
 from .batch_operation_coordinator import BatchOperationCoordinator
-from .repositories import LocalArtifactRepository
+from .repositories import (
+    GraphVersionIntegrityError,
+    GraphVersionNotFoundError,
+    GraphVersionRepository,
+    KeywordFilterRunImmutableSnapshotError,
+    KeywordFilterRunIntegrityError,
+    KeywordFilterRunNotFoundError,
+    KeywordFilterRunRevisionConflictError,
+    KeywordFilterRunStateError,
+    LocalArtifactRepository,
+)
 
 
 store = JsonStore(settings.data_root / "state.json")
@@ -111,7 +137,19 @@ training = TrainingService(
     metadata_construction=metadata_construction,
     artifact_repository=artifacts,
     coordinator=coordinator,
+    file_service=files,
 )
+graph_version_repository = GraphVersionRepository(settings.data_root)
+graph_quality_checks = GraphQualityCheckService(
+    PINGCODE_DIR / "config" / "graph-observability-rules.json"
+)
+graph_versions = GraphVersionService(
+    settings.data_root,
+    graph_version_repository,
+    graph_quality_checks,
+    training,
+)
+graph_version_diffs = GraphVersionDiffService(graph_version_repository)
 workbench = WorkbenchService(batches, tasks, preprocess, training)
 index_service = IndexService(settings.data_root)
 
@@ -922,12 +960,29 @@ def get_dataset(dataset_id: str):
 def start_training(request: TrainingTaskCreate):
     try:
         return training.start(request)
+    except RebuildSourceError as exc:
+        error(exc.code, str(exc), 404 if exc.code == "REBUILD_SOURCE_NOT_FOUND" else 409, retryable=exc.retryable)
     except KeyError:
         error("BATCH_NOT_FOUND", "资料加工任务不存在", 404)
     except ValueError as exc:
         error("BATCH_NOT_READY", str(exc), 409, retryable=True)
     except ModelTestRequiredError as exc:
         error("MODEL_TEST_REQUIRED", str(exc), 409, retryable=True)
+
+
+@app.get("/api/training/admission/{batch_id}")
+def training_admission(batch_id: str):
+    try:
+        return training.admission(batch_id)
+    except KeyError:
+        error("BATCH_NOT_FOUND", "资料加工任务不存在", 404)
+    except ValueError as exc:
+        return {
+            "batchId": batch_id,
+            "canStart": False,
+            "admissionStatus": "blocked",
+            "blockingReason": str(exc),
+        }
 
 
 @app.get("/api/training/model-config")
@@ -1043,12 +1098,232 @@ def training_task_events(task_id: str, last_event_id: int = Query(default=0, ali
     )
 
 
+def _graph_version_error(exc: Exception):
+    if isinstance(exc, GraphVersionNotFoundError):
+        error("GRAPH_VERSION_NOT_FOUND", str(exc), 404)
+    if isinstance(exc, GraphVersionIntegrityError):
+        error(
+            "GRAPH_VERSION_CORRUPTED",
+            str(exc),
+            409,
+            graphVersionId=exc.graph_version_id,
+        )
+    raise exc
+
+
+@app.get("/api/graph/versions")
+def list_graph_versions(
+    dataset_id: str | None = Query(default=None, alias="datasetId"),
+    page: int = Query(default=1, ge=1),
+    page_size: int | None = Query(default=None, alias="pageSize", ge=1),
+):
+    rules = graph_versions.governance_rules()
+    actual_page_size = page_size or int(rules["defaultPageSize"])
+    if actual_page_size > int(rules["maxPageSize"]):
+        error("GRAPH_VERSION_QUERY_INVALID", "pageSize 超过版本治理规则上限", 422)
+    return graph_versions.list_versions(dataset_id, page, actual_page_size)
+
+
+@app.get("/api/graph/versions/trends")
+def graph_version_trends(
+    dataset_id: str = Query(alias="datasetId"),
+    limit: int | None = Query(default=None, ge=1),
+):
+    rules = graph_versions.governance_rules()
+    actual_limit = limit or int(rules["trendLimit"])
+    if actual_limit > int(rules["maxTrendLimit"]):
+        error("GRAPH_VERSION_QUERY_INVALID", "limit 超过版本治理规则上限", 422)
+    return graph_versions.trends(dataset_id, actual_limit)
+
+
+@app.get("/api/graph/versions/{graph_version_id}")
+def graph_version_detail(graph_version_id: str):
+    try:
+        return graph_versions.detail(graph_version_id)
+    except (GraphVersionNotFoundError, GraphVersionIntegrityError) as exc:
+        _graph_version_error(exc)
+
+
+@app.get("/api/graph/versions/{graph_version_id}/explore")
+def graph_version_explore(
+    graph_version_id: str,
+    focus_node_id: str = Query(alias="focusNodeId"),
+    depth: int = Query(default=1, ge=1),
+):
+    try:
+        return graph_versions.explore(graph_version_id, focus_node_id, depth)
+    except (GraphVersionNotFoundError, GraphVersionIntegrityError) as exc:
+        _graph_version_error(exc)
+    except KeyError:
+        error("GRAPH_VERSION_NODE_NOT_FOUND", "焦点节点不存在于该正式版本", 404)
+    except ValueError as exc:
+        error("GRAPH_VERSION_QUERY_INVALID", str(exc), 422)
+
+
+@app.get("/api/graph/versions/{graph_version_id}/checks")
+def graph_version_checks(graph_version_id: str):
+    try:
+        return graph_versions.checks(graph_version_id)
+    except (GraphVersionNotFoundError, GraphVersionIntegrityError) as exc:
+        _graph_version_error(exc)
+
+
+@app.get("/api/graph/versions/{left_version_id}/diff/{right_version_id}")
+def graph_version_diff(
+    left_version_id: str,
+    right_version_id: str,
+    change_type: str = Query(default="all", alias="changeType"),
+    query: str | None = None,
+    page: int = Query(default=1, ge=1),
+    page_size: int | None = Query(default=None, alias="pageSize", ge=1),
+):
+    if change_type not in {"all", "added", "removed", "changed"}:
+        error("GRAPH_VERSION_QUERY_INVALID", "changeType 只允许 all、added、removed 或 changed", 422)
+    rules = graph_versions.governance_rules()
+    actual_page_size = page_size or int(rules["defaultDiffPageSize"])
+    if actual_page_size > int(rules["maxPageSize"]):
+        error("GRAPH_VERSION_QUERY_INVALID", "pageSize 超过版本治理规则上限", 422)
+    try:
+        return graph_version_diffs.diff(
+            left_version_id,
+            right_version_id,
+            change_type=change_type,
+            query=query,
+            page=page,
+            page_size=actual_page_size,
+        )
+    except (GraphVersionNotFoundError, GraphVersionIntegrityError) as exc:
+        _graph_version_error(exc)
+
+
 @app.get("/api/datasets/{dataset_id}/graph/summary")
 def graph_summary(dataset_id: str):
     try:
         return training.graph(dataset_id, "summary")
     except KeyError:
         error("DATASET_NOT_FOUND", "数据集版本不存在", 404)
+    except FileNotFoundError:
+        error("GRAPH_NOT_AVAILABLE", "该数据集尚无知识图谱产物", 404)
+
+
+@app.get("/api/datasets/{dataset_id}/graph/observability")
+def graph_observability(
+    dataset_id: str,
+    filter_run_id: str | None = Query(default=None, alias="filterRunId"),
+    view: str = Query(default="after"),
+):
+    if view not in {"before", "after", "changed"}:
+        error("GRAPH_QUERY_INVALID", "view 只允许 before、after 或 changed", 422)
+    try:
+        return training.graph_observability(dataset_id, filter_run_id, view)
+    except KeywordFilterRunNotFoundError:
+        error("FILTER_RUN_NOT_FOUND", "过滤运行不存在或不属于该数据集", 404)
+    except KeyError:
+        error("DATASET_NOT_FOUND", "数据集版本不存在", 404)
+    except FileNotFoundError:
+        error("GRAPH_NOT_AVAILABLE", "该数据集尚无知识图谱产物", 404)
+
+
+@app.get("/api/datasets/{dataset_id}/graph/search")
+def graph_search(
+    dataset_id: str,
+    filter_run_id: str | None = Query(default=None, alias="filterRunId"),
+    view: str = Query(default="after"),
+    query: str | None = None,
+    node_type: str | None = Query(default=None, alias="nodeType"),
+    issue_category: str | None = Query(default=None, alias="issueCategory"),
+    resource_id: str | None = Query(default=None, alias="resourceId"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, alias="pageSize", ge=1, le=100),
+):
+    if view not in {"before", "after", "changed"}:
+        error("GRAPH_QUERY_INVALID", "view 只允许 before、after 或 changed", 422)
+    try:
+        return training.graph_search(
+            dataset_id,
+            filter_run_id=filter_run_id,
+            view=view,
+            query=query,
+            node_type=node_type,
+            issue_category=issue_category,
+            resource_id=resource_id,
+            page=page,
+            page_size=page_size,
+        )
+    except KeywordFilterRunNotFoundError:
+        error("FILTER_RUN_NOT_FOUND", "过滤运行不存在或不属于该数据集", 404)
+    except KeyError:
+        error("DATASET_NOT_FOUND", "数据集版本不存在", 404)
+    except FileNotFoundError:
+        error("GRAPH_NOT_AVAILABLE", "该数据集尚无知识图谱产物", 404)
+
+
+@app.get("/api/datasets/{dataset_id}/graph/explore")
+def graph_explore(
+    dataset_id: str,
+    focus_node_id: str = Query(alias="focusNodeId"),
+    filter_run_id: str | None = Query(default=None, alias="filterRunId"),
+    view: str = Query(default="after"),
+    depth: int = Query(default=1, ge=1, le=2),
+    node_type: str | None = Query(default=None, alias="nodeType"),
+    issue_category: str | None = Query(default=None, alias="issueCategory"),
+    resource_id: str | None = Query(default=None, alias="resourceId"),
+):
+    if view not in {"before", "after", "changed"}:
+        error("GRAPH_QUERY_INVALID", "view 只允许 before、after 或 changed", 422)
+    try:
+        return training.graph_explore(
+            dataset_id,
+            filter_run_id=filter_run_id,
+            view=view,
+            focus_node_id=focus_node_id,
+            depth=depth,
+            node_type=node_type,
+            issue_category=issue_category,
+            resource_id=resource_id,
+        )
+    except KeywordFilterRunNotFoundError:
+        error("FILTER_RUN_NOT_FOUND", "过滤运行不存在或不属于该数据集", 404)
+    except KeyError as exc:
+        if str(exc).strip("'") == focus_node_id:
+            error("GRAPH_NODE_NOT_FOUND", "焦点节点不存在或不属于当前投影", 404)
+        error("DATASET_NOT_FOUND", "数据集版本不存在", 404)
+    except FileNotFoundError:
+        error("GRAPH_NOT_AVAILABLE", "该数据集尚无知识图谱产物", 404)
+
+
+@app.get("/api/datasets/{dataset_id}/graph/evidence")
+def graph_evidence(
+    dataset_id: str,
+    filter_run_id: str | None = Query(default=None, alias="filterRunId"),
+    view: str = Query(default="after"),
+    node_id: str | None = Query(default=None, alias="nodeId"),
+    edge_id: str | None = Query(default=None, alias="edgeId"),
+    resource_id: str | None = Query(default=None, alias="resourceId"),
+    missing_evidence: bool = Query(default=False, alias="missingEvidence"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, alias="pageSize", ge=1, le=100),
+):
+    if view not in {"before", "after", "changed"}:
+        error("GRAPH_QUERY_INVALID", "view 只允许 before、after 或 changed", 422)
+    if not node_id and not edge_id:
+        error("GRAPH_EVIDENCE_TARGET_REQUIRED", "nodeId、edgeId 至少提供一个", 422)
+    try:
+        return training.graph_evidence(
+            dataset_id,
+            filter_run_id=filter_run_id,
+            view=view,
+            node_id=node_id,
+            edge_id=edge_id,
+            resource_id=resource_id,
+            missing_evidence=missing_evidence,
+            page=page,
+            page_size=page_size,
+        )
+    except KeywordFilterRunNotFoundError:
+        error("FILTER_RUN_NOT_FOUND", "过滤运行不存在或不属于该数据集", 404)
+    except KeyError:
+        error("GRAPH_EVIDENCE_TARGET_NOT_FOUND", "节点或关系不存在或不属于当前投影", 404)
     except FileNotFoundError:
         error("GRAPH_NOT_AVAILABLE", "该数据集尚无知识图谱产物", 404)
 
@@ -1073,6 +1348,195 @@ def update_keyword_status(dataset_id: str, keyword_id: str, request: KeywordStat
         error("GRAPH_NOT_AVAILABLE", "该数据集尚无关键词图谱产物", 404)
     except ValueError as exc:
         error("KEYWORD_STATUS_INVALID", str(exc), 409)
+
+
+def _keyword_filter_run_error(exc: Exception):
+    if isinstance(exc, KeywordFilterRunNotFoundError):
+        error("KEYWORD_FILTER_RUN_NOT_FOUND", str(exc), 404)
+    if isinstance(exc, KeywordFilterRunRevisionConflictError):
+        error(
+            "KEYWORD_FILTER_RUN_REVISION_CONFLICT",
+            str(exc),
+            409,
+            expectedRevision=exc.expected_revision,
+            actualRevision=exc.actual_revision,
+        )
+    if isinstance(exc, KeywordFilterSourceChangedError):
+        error("KEYWORD_FILTER_SOURCE_CHANGED", str(exc), 409)
+    if isinstance(exc, KeywordFilterIncompleteError):
+        error("KEYWORD_FILTER_INCOMPLETE", str(exc), 409)
+    if isinstance(exc, KeywordFilterReviewInvalidError):
+        error("KEYWORD_FILTER_REVIEW_INVALID", str(exc), 422)
+    if isinstance(exc, KeywordFilterReviewUnavailableError):
+        error("KEYWORD_FILTER_REVIEW_UNAVAILABLE", str(exc), 409)
+    if isinstance(exc, KeywordFilterRunImmutableSnapshotError):
+        error("KEYWORD_FILTER_RUN_IMMUTABLE", str(exc), 409)
+    if isinstance(exc, (KeywordFilterRunStateError, ValueError)):
+        error("KEYWORD_FILTER_RUN_STATE_INVALID", str(exc), 409)
+    if isinstance(exc, KeywordFilterRunIntegrityError):
+        error("KEYWORD_FILTER_RUN_INTEGRITY_ERROR", str(exc), 500)
+    if isinstance(exc, (FileNotFoundError, KeyError)):
+        error("DATASET_NOT_FOUND", "数据集不存在或图谱未生成", 404)
+    error("KEYWORD_FILTER_RUN_FAILED", str(exc), 500)
+
+
+@app.post("/api/datasets/{dataset_id}/keyword-filter-runs", status_code=201)
+def create_keyword_filter_run(dataset_id: str):
+    try:
+        return training.create_keyword_filter_run(dataset_id)
+    except Exception as exc:
+        _keyword_filter_run_error(exc)
+
+
+@app.get("/api/datasets/{dataset_id}/keyword-filter-runs")
+def list_keyword_filter_runs(
+    dataset_id: str,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=20, ge=1, le=100),
+):
+    try:
+        return training.list_keyword_filter_runs(dataset_id, offset=offset, limit=limit)
+    except Exception as exc:
+        _keyword_filter_run_error(exc)
+
+
+@app.get("/api/datasets/{dataset_id}/keyword-filter-runs/{filter_run_id}")
+def get_keyword_filter_run(dataset_id: str, filter_run_id: str):
+    try:
+        return training.get_keyword_filter_run(dataset_id, filter_run_id)
+    except Exception as exc:
+        _keyword_filter_run_error(exc)
+
+
+@app.get("/api/datasets/{dataset_id}/keyword-filter-runs/{filter_run_id}/stream")
+async def stream_keyword_filter_run(dataset_id: str, filter_run_id: str):
+    import asyncio
+
+    async def event_generator():
+        loop = asyncio.get_event_loop()
+        event_queue = queue.Queue()
+        done = object()
+
+        def run_sync():
+            try:
+                for event in training.stream_keyword_filter_run(dataset_id, filter_run_id):
+                    event_queue.put(event)
+            except Exception as exc:
+                event_queue.put(
+                    f"event: error\ndata: {json.dumps({'error': str(exc)}, ensure_ascii=False)}\n\n"
+                )
+            finally:
+                event_queue.put(done)
+
+        loop.run_in_executor(None, run_sync)
+        while True:
+            try:
+                event = event_queue.get_nowait()
+            except queue.Empty:
+                await asyncio.sleep(0.1)
+                continue
+            if event is done:
+                break
+            yield event
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.patch("/api/datasets/{dataset_id}/keyword-filter-runs/{filter_run_id}/review-decisions")
+def save_keyword_filter_review_decisions(dataset_id: str, filter_run_id: str, request: dict):
+    try:
+        revision = request.get("expectedRevision")
+        if not isinstance(revision, int):
+            error(
+                "KEYWORD_FILTER_RUN_REVISION_REQUIRED",
+                "保存复核决策必须提供 expectedRevision",
+                400,
+            )
+        return training.save_keyword_filter_review_decisions(
+            dataset_id,
+            filter_run_id,
+            expected_revision=revision,
+            changes=request.get("changes"),
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        _keyword_filter_run_error(exc)
+
+
+@app.get("/api/datasets/{dataset_id}/keyword-filter-runs/{filter_run_id}/review-summary")
+def get_keyword_filter_review_summary(dataset_id: str, filter_run_id: str):
+    try:
+        return training.get_keyword_filter_review_summary(dataset_id, filter_run_id)
+    except Exception as exc:
+        _keyword_filter_run_error(exc)
+
+
+@app.get("/api/datasets/{dataset_id}/keyword-filter-runs/{filter_run_id}/issue-overview")
+def get_keyword_issue_overview(dataset_id: str, filter_run_id: str):
+    try:
+        return training.keyword_issue_overview(dataset_id, filter_run_id)
+    except Exception as exc:
+        _keyword_filter_run_error(exc)
+
+
+@app.get("/api/datasets/{dataset_id}/keyword-filter-runs/{filter_run_id}/issue-evidence")
+def get_keyword_issue_evidence(
+    dataset_id: str,
+    filter_run_id: str,
+    category: str | None = None,
+    keyword_id: str | None = Query(default=None, alias="keywordId"),
+    resource_id: str | None = Query(default=None, alias="resourceId"),
+    query: str | None = None,
+    missing_evidence: bool = Query(default=False, alias="missingEvidence"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, alias="pageSize", ge=1, le=100),
+):
+    try:
+        return training.keyword_issue_evidence(
+            dataset_id,
+            filter_run_id,
+            category=category,
+            keyword_id=keyword_id,
+            resource_id=resource_id,
+            query=query,
+            missing_evidence=missing_evidence,
+            page=page,
+            page_size=page_size,
+        )
+    except Exception as exc:
+        _keyword_filter_run_error(exc)
+
+
+@app.get("/api/datasets/{dataset_id}/keyword-filter-runs/{left_run_id}/diff/{right_run_id}")
+def compare_keyword_filter_runs(dataset_id: str, left_run_id: str, right_run_id: str):
+    try:
+        return training.compare_keyword_filter_runs(dataset_id, left_run_id, right_run_id)
+    except Exception as exc:
+        _keyword_filter_run_error(exc)
+
+
+@app.post("/api/datasets/{dataset_id}/keyword-filter-runs/{filter_run_id}/apply")
+def apply_keyword_filter_run(dataset_id: str, filter_run_id: str, request: dict):
+    try:
+        revision = request.get("revision", request.get("expectedRevision"))
+        if not isinstance(revision, int):
+            error(
+                "KEYWORD_FILTER_RUN_REVISION_REQUIRED",
+                "应用过滤运行必须提供 revision",
+                400,
+            )
+        return training.apply_keyword_filter_run(
+            dataset_id, filter_run_id, expected_revision=revision
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        _keyword_filter_run_error(exc)
 
 
 
@@ -1142,6 +1606,8 @@ def apply_keywords_filter(dataset_id: str, request: dict):
         return training.apply_keywords_filter(dataset_id, decisions)
     except (FileNotFoundError, KeyError):
         error("DATASET_NOT_FOUND", "数据集不存在或图谱未生成", 404)
+    except KeywordFilterIncompleteError as exc:
+        error("KEYWORD_FILTER_INCOMPLETE", str(exc), 409)
     except Exception as exc:
         error("KEYWORD_FILTER_APPLY_FAILED", str(exc), 500)
 
@@ -1234,21 +1700,36 @@ def graph_edges(dataset_id: str, offset: int = 0, limit: int = Query(default=100
 
 
 @app.get("/api/datasets/{dataset_id}/graph/neighborhood")
-def graph_neighborhood(dataset_id: str, node_id: str = Query(alias="nodeId"), limit: int = Query(default=50, ge=1, le=200)):
+def graph_neighborhood(dataset_id: str, node_id: str = Query(alias="nodeId"), limit: int = Query(default=50, ge=1, le=200), depth: int = Query(default=1, ge=1, le=2)):
     try:
-        return training.graph_neighborhood(dataset_id, node_id, limit)
+        return training.graph_bounded_neighborhood(dataset_id, node_id, limit, depth)
+    except GraphNodeNotFoundError:
+        error("GRAPH_NODE_NOT_FOUND", "焦点节点不存在或在当前视图中不可见", 404)
     except KeyError:
-        error("DATASET_NOT_FOUND", "数据集版本不存在或节点不存在", 404)
+        error("DATASET_NOT_FOUND", "数据集版本不存在", 404)
     except FileNotFoundError:
         error("GRAPH_NOT_AVAILABLE", "该数据集尚无知识图谱产物", 404)
 
 
 @app.post("/api/datasets/{dataset_id}/publish", response_model=DatasetVersion)
-def publish_dataset(dataset_id: str, force: bool = False):
+def publish_dataset(
+    dataset_id: str,
+    force: bool = False,
+    expected_status_version: int | None = Query(default=None, alias="expectedStatusVersion", ge=0),
+):
     try:
-        return preprocess.publish(dataset_id, force)
+        published = (
+            preprocess.publish(dataset_id, force)
+            if expected_status_version is None
+            else preprocess.publish(dataset_id, force, expected_status_version)
+        )
+        return published.model_copy(
+            update={"graph_version": graph_versions.after_publish(published)}
+        )
     except KeyError:
         error("DATASET_NOT_FOUND", "数据集版本不存在", 404)
+    except GovernanceStateError as exc:
+        error(exc.code, str(exc), 409, **exc.details)
     except ValueError as exc:
         error("QUALITY_GATE_FAILED", str(exc), 409)
 

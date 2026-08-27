@@ -273,7 +273,21 @@ class PingCodeService:
         self._get_space_tree_sync(space_key)
         pages = self._space_cache[space_key][1]
         selected = set(page_ids)
-        return [page for page in pages if page.get("_id") in selected]
+        normalized: list[dict[str, Any]] = []
+        by_id: dict[str, dict[str, Any]] = {}
+        for page in pages:
+            page_id = str(page.get("_id") or "")
+            if not page_id or page_id not in selected:
+                continue
+            previous = by_id.get(page_id)
+            if previous is None:
+                by_id[page_id] = page
+                normalized.append(page)
+                continue
+            if previous != page:
+                raise ValueError(f"页面 ID 冲突，无法确定下载内容：{page_id}")
+            logger.warning("折叠重复页面记录: space=%s pageId=%s", space_key, page_id)
+        return normalized
 
     def _index_path(self, space_key: str) -> Path:
         safe_key = "".join(char for char in space_key if char.isalnum() or char in "-_")

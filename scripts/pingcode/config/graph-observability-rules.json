@@ -1,0 +1,40 @@
+{
+  "rulesVersion": "graph-observability-v1",
+  "renderLimits": {
+    "defaultNodes": 80,
+    "maxNodes": 80,
+    "defaultEdges": 160,
+    "maxEdges": 160,
+    "defaultDepth": 1,
+    "allowedDepths": [1, 2]
+  },
+  "nodeSizing": {
+    "min": 18,
+    "max": 52,
+    "scale": "log1p"
+  },
+  "labels": {
+    "defaultDensity": "focus",
+    "allowedDensities": ["focus", "important", "all"]
+  },
+  "evidenceResolution": {
+    "maxSnippetCharacters": 500,
+    "maxLocationScanCharacters": 2000000
+  },
+  "healthThresholds": {
+    "relationCoverageWarningBelow": 0.8,
+    "evidenceCompletenessWarningBelow": 0.9,
+    "isolatedKnowledgeWarningAbove": 0.2,
+    "whyMissingWarningAbove": 0.5
+  },
+  "versionGovernance": {
+    "schemaVersion": "graph-version-v1",
+    "defaultPageSize": 20,
+    "defaultDiffPageSize": 50,
+    "maxPageSize": 100,
+    "trendLimit": 20,
+    "maxTrendLimit": 100,
+    "nodeChangeWarningRatioAbove": 0.5,
+    "edgeChangeWarningRatioAbove": 0.5
+  }
+}

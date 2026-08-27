@@ -402,6 +402,14 @@ class ScanReport(ApiModel):
     issue_summary: dict[str, int] = Field(default_factory=dict)
 
 
+class GovernanceStatus(ApiModel):
+    status: Literal["keyword", "formal", "index", "evaluated", "published", "failed", "cancelled"]
+    status_version: int = 0
+    publishable: bool = False
+    reason_code: str = ""
+    gate_checks: dict[str, bool] = Field(default_factory=dict)
+
+
 class DatasetVersion(ApiModel):
     id: str
     batch_id: str
@@ -415,6 +423,8 @@ class DatasetVersion(ApiModel):
     training_task_id: str | None = None
     graph_available: bool = False
     graph_summary: dict[str, Any] = Field(default_factory=dict)
+    graph_version: dict[str, Any] | None = None
+    governance: GovernanceStatus | None = None
     quality_state: Literal["passed", "blocked"] = "passed"
     publishable: bool = True
     quality_labels: list[str] = Field(default_factory=list)

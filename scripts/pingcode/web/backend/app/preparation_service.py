@@ -15,7 +15,7 @@ import zipfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import Any, BinaryIO
+from typing import Any, BinaryIO, Callable
 
 from .config import settings
 from .ingestion.contracts import FormatDetection, FormatDetector
@@ -225,6 +225,9 @@ class MaterialPreparationService:
         config: Any | None = None,
         parent_task_id: str | None = None,
         stage_run_id: str | None = None,
+        *,
+        progress: Callable[[int, int, int, int, int], None] | None = None,
+        cancel_check: Callable[[], None] | None = None,
     ) -> PreparationReport:
         from .models import PreprocessConfig
         config = config or PreprocessConfig()
@@ -238,7 +241,14 @@ class MaterialPreparationService:
             and item.get("logicalPath")
             and item.get("processingStage") != "p4"
         ]
-        input_snapshot = self._input_snapshot(raw_records)
+        self._check_cancel(cancel_check)
+        normalized_records, normalization_issues = self._normalize_source_records(
+            raw_records, cancel_check=cancel_check
+        )
+        input_snapshot = {
+            "records": self._input_snapshot(normalized_records, cancel_check=cancel_check),
+            "normalizationIssues": normalization_issues,
+        }
         input_manifest_hash = self._hash_json(input_snapshot)
         execution_hash = "sha256:" + self._hash_json({
             "pipelineVersion": self.PIPELINE_VERSION,
@@ -269,8 +279,39 @@ class MaterialPreparationService:
         )
         self._emit(run, "run_started", inputManifestHash=input_manifest_hash)
 
-        for item in raw_records:
-            self._process_original(run, item, config)
+        for issue in normalization_issues:
+            self._issue(
+                run,
+                issue["code"],
+                issue["severity"],
+                resource_id=issue.get("resourceId"),
+                file_name=issue.get("fileName"),
+                message=issue["message"],
+            )
+
+        total = len(normalized_records)
+        succeeded = 0
+        failed = 0
+        skipped = 0
+        if progress is not None:
+            progress(0, total, succeeded, failed, skipped)
+        for current, item in enumerate(normalized_records, 1):
+            self._check_cancel(cancel_check)
+            documents_before = len(run.source_documents)
+            issues_before = len(run.issues)
+            self._process_original(run, item, config, cancel_check=cancel_check)
+            if any(
+                issue.get("severity") == "error"
+                for issue in run.issues[issues_before:]
+            ):
+                failed += 1
+            elif len(run.source_documents) > documents_before:
+                succeeded += 1
+            else:
+                skipped += 1
+            if progress is not None:
+                progress(current, total, succeeded, failed, skipped)
+            self._check_cancel(cancel_check)
 
         state = "completed_with_warnings" if run.issues else "completed"
         manifest = {
@@ -306,6 +347,9 @@ class MaterialPreparationService:
         manifest_path = run_root / "manifest.json"
         source_resources = self._source_resource_records(run)
         source_assets = self._source_asset_records(run)
+        self._assert_unique(source_resources, "resourceId", "source-resources")
+        self._assert_unique(run.source_documents, "resourceId", "source-documents")
+        self._assert_unique(run.chunks, "chunkId", "chunks")
         ingestion_report = self._ingestion_report(run, source_resources, source_assets, input_manifest_hash, state)
         self._write_jsonl(run_root / "metadata" / "source-resources.jsonl", source_resources)
         self._write_jsonl(run_root / "metadata" / "source-assets.jsonl", source_assets)
@@ -524,7 +568,14 @@ class MaterialPreparationService:
             ],
         }
 
-    def _process_original(self, run: _PreparationRun, item: dict[str, Any], config: Any) -> None:
+    def _process_original(
+        self,
+        run: _PreparationRun,
+        item: dict[str, Any],
+        config: Any,
+        *,
+        cancel_check: Callable[[], None] | None = None,
+    ) -> None:
         resource_id = str(item.get("id") or self._stable_id(run.batch_id, item["logicalPath"], ""))
         try:
             path = self._resolve_resource(item["logicalPath"])
@@ -549,6 +600,7 @@ class MaterialPreparationService:
             source_record=item,
             is_extracted=False,
             config=config,
+            cancel_check=cancel_check,
         )
 
     def _process_file(
@@ -564,7 +616,9 @@ class MaterialPreparationService:
         source_record: dict[str, Any] | None,
         is_extracted: bool,
         config: Any | None = None,
+        cancel_check: Callable[[], None] | None = None,
     ) -> dict[str, Any] | None:
+        self._check_cancel(cancel_check)
         if not path.exists() or not path.is_file():
             self._issue(
                 run,
@@ -587,7 +641,7 @@ class MaterialPreparationService:
             return None
 
         try:
-            digest = self._hash_file(path)
+            digest = self._hash_file(path, cancel_check=cancel_check)
         except OSError as exc:
             self._issue(
                 run,
@@ -623,12 +677,14 @@ class MaterialPreparationService:
                     "归档递归深度超过限制",
                 )
                 return artifact
-            self._extract_archive(run, path, artifact, depth, config)
+            self._extract_archive(
+                run, path, artifact, depth, config, cancel_check=cancel_check
+            )
         elif detection.format_family == "image":
             run.image_resources += 1
         elif detection.processing_status == "processable":
             run.processable_resources += 1
-            self._prepare_document(run, path, artifact, config)
+            self._prepare_document(run, path, artifact, config, cancel_check=cancel_check)
         elif detection.processing_status == "conversion_pending":
             run.conversion_pending_resources += 1
         elif detection.processing_status == "quarantined":
@@ -643,7 +699,15 @@ class MaterialPreparationService:
             )
         return artifact
 
-    def _prepare_document(self, run: _PreparationRun, path: Path, artifact: dict[str, Any], config: Any) -> None:
+    def _prepare_document(
+        self,
+        run: _PreparationRun,
+        path: Path,
+        artifact: dict[str, Any],
+        config: Any,
+        *,
+        cancel_check: Callable[[], None] | None = None,
+    ) -> None:
         try:
             if artifact["formatFamily"] == "text":
                 text = path.read_text(encoding="utf-8", errors="strict")
@@ -652,14 +716,18 @@ class MaterialPreparationService:
                 text = html_to_markdown(path.read_text(encoding="utf-8", errors="replace"))
                 converter = "html-parser"
             elif artifact["formatFamily"] == "pdf":
+                self._check_cancel(cancel_check)
                 text, converter = self._convert_pdf(path)
+                self._check_cancel(cancel_check)
             elif artifact["formatFamily"] == "office":
+                self._check_cancel(cancel_check)
                 conversion = self._convert_office(
                     path,
                     run.root / "conversion-tmp",
                     artifact["id"],
                     self._artifact_relative(run, run.root / "assets" / artifact["id"]),
                 )
+                self._check_cancel(cancel_check)
                 text = conversion.markdown
                 converter = conversion.converter_id
             else:
@@ -764,13 +832,21 @@ class MaterialPreparationService:
         archive_artifact: dict[str, Any],
         depth: int,
         config: Any | None = None,
+        *,
+        cancel_check: Callable[[], None] | None = None,
     ) -> None:
         output_root = run.root / "extracted" / archive_artifact["id"]
         try:
             if zipfile.is_zipfile(path):
-                self._extract_zip(run, path, archive_artifact, output_root, depth, config)
+                self._extract_zip(
+                    run, path, archive_artifact, output_root, depth, config,
+                    cancel_check=cancel_check,
+                )
             elif tarfile.is_tarfile(path):
-                self._extract_tar(run, path, archive_artifact, output_root, depth, config)
+                self._extract_tar(
+                    run, path, archive_artifact, output_root, depth, config,
+                    cancel_check=cancel_check,
+                )
             else:
                 self._quarantine(
                     run,
@@ -792,6 +868,8 @@ class MaterialPreparationService:
         output_root: Path,
         depth: int,
         config: Any | None = None,
+        *,
+        cancel_check: Callable[[], None] | None = None,
     ) -> None:
         with zipfile.ZipFile(path) as archive:
             entries = [item for item in archive.infolist() if not item.is_dir()]
@@ -810,6 +888,7 @@ class MaterialPreparationService:
                 return
             output_root.mkdir(parents=True, exist_ok=True)
             for entry in entries:
+                self._check_cancel(cancel_check)
                 member_path = self._safe_member_path(entry.filename)
                 target = self._target_path(output_root, member_path)
                 with archive.open(entry, "r") as source:
@@ -821,6 +900,7 @@ class MaterialPreparationService:
                         depth,
                         member_path,
                         config,
+                        cancel_check=cancel_check,
                     )
                 if archive_artifact["processingStatus"] == "quarantined":
                     return
@@ -833,6 +913,8 @@ class MaterialPreparationService:
         output_root: Path,
         depth: int,
         config: Any | None = None,
+        *,
+        cancel_check: Callable[[], None] | None = None,
     ) -> None:
         with tarfile.open(path, mode="r:*") as archive:
             entries = [item for item in archive.getmembers() if not item.isdir()]
@@ -864,6 +946,7 @@ class MaterialPreparationService:
                 return
             output_root.mkdir(parents=True, exist_ok=True)
             for entry in entries:
+                self._check_cancel(cancel_check)
                 source = archive.extractfile(entry)
                 if source is None:
                     self._quarantine(run, archive_artifact, "ARCHIVE_READ_FAILED", "归档成员无法读取")
@@ -878,6 +961,7 @@ class MaterialPreparationService:
                         depth,
                         member_path,
                         config,
+                        cancel_check=cancel_check,
                     )
                 if archive_artifact["processingStatus"] == "quarantined":
                     return
@@ -891,7 +975,10 @@ class MaterialPreparationService:
         depth: int,
         member_path: str,
         config: Any | None = None,
+        *,
+        cancel_check: Callable[[], None] | None = None,
     ) -> None:
+        self._check_cancel(cancel_check)
         if run.extracted_resources >= self.limits.max_files:
             self._quarantine(run, archive_artifact, "ARCHIVE_MAX_FILES", "批次解压文件数量超过限制")
             return
@@ -905,6 +992,7 @@ class MaterialPreparationService:
                     block = source.read(1024 * 1024)
                     if not block:
                         break
+                    self._check_cancel(cancel_check)
                     total += len(block)
                     if run.extracted_bytes + total > self.limits.max_bytes:
                         raise _ArchiveLimitError("批次解压总大小超过限制")
@@ -934,6 +1022,7 @@ class MaterialPreparationService:
             source_record=None,
             is_extracted=True,
             config=config,
+            cancel_check=cancel_check,
         )
         if child is not None:
             child["archiveMemberPath"] = member_path
@@ -1026,12 +1115,18 @@ class MaterialPreparationService:
             run.security_issue_count += 1
         self._emit(run, "issue_detected", **issue)
 
-    def _input_snapshot(self, records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _input_snapshot(
+        self,
+        records: list[dict[str, Any]],
+        *,
+        cancel_check: Callable[[], None] | None = None,
+    ) -> list[dict[str, Any]]:
         snapshot = []
         for item in records:
+            self._check_cancel(cancel_check)
             try:
                 path = self._resolve_resource(item["logicalPath"])
-                digest = self._hash_file(path) if path.is_file() and not path.is_symlink() else None
+                digest = self._hash_file(path, cancel_check=cancel_check) if path.is_file() and not path.is_symlink() else None
             except (FileNotFoundError, OSError):
                 digest = None
             snapshot.append(
@@ -1043,6 +1138,72 @@ class MaterialPreparationService:
                 }
             )
         return snapshot
+
+    def _normalize_source_records(
+        self,
+        records: list[dict[str, Any]],
+        *,
+        cancel_check: Callable[[], None] | None = None,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        identity_fields = ("id", "batchId", "kind", "pageId", "logicalPath", "size")
+        grouped: dict[str, list[tuple[int, dict[str, Any]]]] = {}
+        issues: list[dict[str, Any]] = []
+        for position, record in enumerate(records, 1):
+            self._check_cancel(cancel_check)
+            resource_id = str(record.get("id") or "")
+            if not resource_id:
+                issues.append({
+                    "code": "SOURCE_RESOURCE_ID_MISSING",
+                    "severity": "error",
+                    "resourceId": None,
+                    "fileName": str(record.get("name") or record.get("logicalPath") or ""),
+                    "message": f"源资源记录缺少 ID，已隔离；输入位置：{position}",
+                })
+                continue
+            grouped.setdefault(resource_id, []).append((position, record))
+
+        normalized: list[dict[str, Any]] = []
+        for resource_id, occurrences in grouped.items():
+            positions = [position for position, _ in occurrences]
+            identities = {
+                tuple(record.get(field) for field in identity_fields)
+                for _, record in occurrences
+            }
+            digests: set[str | None] = set()
+            if len(occurrences) > 1 and len(identities) == 1:
+                for _, record in occurrences:
+                    self._check_cancel(cancel_check)
+                    try:
+                        path = self._resolve_resource(str(record["logicalPath"]))
+                        digest = self._hash_file(path, cancel_check=cancel_check) if path.is_file() and not path.is_symlink() else None
+                    except (FileNotFoundError, OSError):
+                        digest = None
+                    digests.add(digest)
+            if len(identities) > 1 or len(digests) > 1 or (len(occurrences) > 1 and None in digests):
+                issues.append({
+                    "code": "SOURCE_RESOURCE_ID_CONFLICT",
+                    "severity": "error",
+                    "resourceId": resource_id,
+                    "fileName": str(occurrences[0][1].get("name") or ""),
+                    "message": f"同一资源 ID 的身份或内容无法确认为一致，冲突组已隔离；输入位置：{positions}",
+                })
+                continue
+            normalized.append(occurrences[0][1])
+            if len(occurrences) > 1:
+                issues.append({
+                    "code": "DUPLICATE_SOURCE_RESOURCE_COLLAPSED",
+                    "severity": "warning",
+                    "resourceId": resource_id,
+                    "fileName": str(occurrences[0][1].get("name") or ""),
+                    "message": f"身份及内容相同的源资源记录已折叠为一条；出现 {len(occurrences)} 次，输入位置：{positions}",
+                })
+        return normalized, issues
+
+    @staticmethod
+    def _assert_unique(records: list[dict[str, Any]], key: str, artifact: str) -> None:
+        values = [str(item.get(key) or "") for item in records]
+        if any(not value for value in values) or len(values) != len(set(values)):
+            raise PreparationServiceError(f"{artifact} 主键 {key} 缺失或重复，拒绝提交快照")
 
     @staticmethod
     def _validate_zip_entries(
@@ -1088,10 +1249,20 @@ class MaterialPreparationService:
         return target
 
     @staticmethod
-    def _hash_file(path: Path) -> str:
+    def _check_cancel(cancel_check: Callable[[], None] | None) -> None:
+        if cancel_check is not None:
+            cancel_check()
+
+    @staticmethod
+    def _hash_file(
+        path: Path,
+        *,
+        cancel_check: Callable[[], None] | None = None,
+    ) -> str:
         digest = hashlib.sha256()
         with path.open("rb") as source:
             for block in iter(lambda: source.read(1024 * 1024), b""):
+                MaterialPreparationService._check_cancel(cancel_check)
                 digest.update(block)
         return digest.hexdigest()
 

@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { Activity, AlertTriangle, ChevronDown, ChevronRight, Clock3, FileText, RefreshCw, X } from 'lucide-vue-next'
 import { useRoute } from 'vue-router'
-import { request, taskEventUrl } from '../api'
+import { datasetGovernanceView, governancePublishErrorMessage, request, taskEventUrl } from '../api'
 import BatchStepNav from '../components/BatchStepNav.vue'
 import MarkdownWorkbench from '../components/MarkdownWorkbench.vue'
 import PaginationControls from '../components/PaginationControls.vue'
@@ -37,6 +37,7 @@ const pendingTotal = ref(0)
 const sourceFilter = ref('all')
 const sourceQuery = ref('')
 const streamState = ref('idle')
+const admission = ref(null)
 const stageExpansion = ref({})
 const activityExpanded = ref(false)
 const failureDrawer = ref(null)
@@ -48,8 +49,9 @@ let trainingEvents = null
 let trainingPoll = null
 let scanPoll = null
 let clockTimer = null
+const seenTrainingEvents = new Set()
 
-const terminalStates = ['completed', 'failed', 'cancelled']
+const terminalStates = ['completed', 'failed', 'cancelled', 'interrupted']
 const activeTrainingStates = ['queued', 'running', 'cancelling']
 const activeScanStates = ['queued', 'running']
 const hasResumableInterruptedDownload = computed(() => downloadTask.value?.state === 'interrupted' && downloadTask.value?.canResume === true)
@@ -60,30 +62,35 @@ const batchReadyForTraining = computed(() => canProcessInterruptedDownload.value
   ['uploaded', 'downloaded', 'ready'].includes(batch.value?.state) && !batch.value?.activeTaskIds?.length && !blockingDownloadTask.value
 ))
 const processableTotal = computed(() => report.value?.processableCount ?? textTotal.value)
-const canStartTraining = computed(() => Boolean(processableTotal.value && batchReadyForTraining.value && !activeScanStates.includes(scanTask.value?.state) && !activeTrainingStates.includes(trainingTask.value?.state)))
+const canStartTraining = computed(() => Boolean(processableTotal.value && (admission.value?.canStart ?? batchReadyForTraining.value) && !activeScanStates.includes(scanTask.value?.state) && !activeTrainingStates.includes(trainingTask.value?.state)))
 const canCancelTraining = computed(() => activeTrainingStates.includes(trainingTask.value?.state))
 const scanPercent = computed(() => scanTask.value?.total ? Math.min(100, Math.round((scanTask.value.completed || 0) / scanTask.value.total * 100)) : 0)
 const stageNames = {
   material_preparation: '资料预处理',
+  metadata_construction: '元数据构建',
   knowledge_extraction: '知识提取',
   index_generation: '索引生成',
-  metadata_construction: '资料预处理',
   deterministic_extraction: '知识提取',
-  semantic_enrichment: '知识提取',
   validation_graph: '知识提取',
   dataset_generation: '索引生成',
   queued: '排队等待', completed: '加工完成', failed: '加工失败',
 }
 const stageDescriptions = {
-  material_preparation: '扫描、规范化、清洗、结构解析、处理单元生成和元数据整理',
-  knowledge_extraction: '批量抽取知识点、校验证据、合并实体和跨处理单元关系',
-  index_generation: '构建层次目录、倒排索引、知识图谱和候选数据集',
+  material_preparation: '扫描、规范化、清洗、结构解析和处理单元生成',
+  metadata_construction: '构建文档元数据、处理单元上下文、embedding 索引和聚类报告',
+  knowledge_extraction: '按规则抽取知识点、实体和关系，并校验证据',
+  index_generation: '构建目录索引、倒排索引、知识图谱和候选数据集',
 }
 const stageOrder = [
   'material_preparation',
+  'metadata_construction',
   'knowledge_extraction',
   'index_generation',
 ]
+const cumulativeProgressEvents = new Set([
+  'material_preparation.prepare.progress',
+  'knowledge_extraction.keyword_analysis.progress',
+])
 const stateNames = {
   pending: '等待中', queued: '排队中', running: '执行中', completed: '已完成', failed: '失败',
   skipped: '已跳过', cancelling: '正在取消', cancelled: '已取消', paused: '已暂停',
@@ -171,8 +178,7 @@ const displayCompleted = computed(() => displayStages.value.filter(stage => ['co
 const trainingPercent = computed(() => trainingTask.value ? Math.round(displayCompleted.value / stageOrder.length * 100) : 0)
 const displayCurrentStage = computed(() => {
   const current = trainingTask.value?.stage
-  if (['metadata_construction'].includes(current)) return 'material_preparation'
-  if (['deterministic_extraction', 'semantic_enrichment', 'validation_graph'].includes(current)) return 'knowledge_extraction'
+  if (['deterministic_extraction', 'validation_graph'].includes(current)) return 'knowledge_extraction'
   if (current === 'dataset_generation') return 'index_generation'
   return current
 })
@@ -268,6 +274,7 @@ function visibleDatasets(items = []) {
 
 async function load() {
   try {
+    admission.value = await request(`/api/training/admission/${encodeURIComponent(route.params.batchId)}`)
     batch.value = await request(`/api/material-batches/${route.params.batchId}`)
     const downloadTasks = await request(`/api/download/tasks?batchId=${encodeURIComponent(route.params.batchId)}`)
     downloadTask.value = downloadTasks.items?.find(item => item.type === 'download') || null
@@ -422,7 +429,8 @@ async function startTraining() {
       method: 'POST',
       body: JSON.stringify(trainingRequestPayload()),
     })
-    preflightDialog.value = preflight.estimate || preflight.estimates || preflight
+    const estimate = preflight.estimate || preflight.estimates
+    preflightDialog.value = estimate ? { ...preflight, ...estimate } : preflight
   } catch (reason) {
     error.value = reason.message
   } finally {
@@ -675,6 +683,10 @@ function trainingRequestPayload() {
 
 async function confirmStartTraining() {
   if (!preflightDialog.value || trainingStartLoading.value) return
+  if (preflightDialog.value.canStart === false) {
+    error.value = preflightDialog.value.message || '当前批次尚未满足知识加工条件'
+    return
+  }
   trainingStartLoading.value = true
   error.value = ''
   try {
@@ -709,17 +721,26 @@ async function cancelTraining() {
 
 function subscribeTraining(taskId) {
   stopTrainingStream()
+  seenTrainingEvents.clear()
   streamState.value = 'connecting'
   trainingEvents = new EventSource(taskEventUrl(taskId))
   trainingEvents.onopen = () => { streamState.value = 'connected' }
-  trainingEvents.addEventListener('task.progress', async event => {
-    trainingTask.value = JSON.parse(event.data)
+  const handleTaskEvent = async event => {
+    let payload
+    try { payload = JSON.parse(event.data) } catch { return }
+    if (payload.taskId && payload.taskId !== taskId) return
+    const eventKey = event.lastEventId || `${payload.sequence || ''}:${payload.event || event.type}:${payload.state || ''}`
+    if (seenTrainingEvents.has(eventKey)) return
+    seenTrainingEvents.add(eventKey)
+    trainingTask.value = { ...(trainingTask.value || {}), ...payload }
+    if (payload.message) appendLog({ ...payload, event: payload.event || event.type, timestamp: payload.timestamp || new Date().toISOString(), details: payload.details || {} })
     if (terminalStates.includes(trainingTask.value.state)) {
       stopTrainingStream()
       streamState.value = 'completed'
       await Promise.all([load(), loadTrainingLogs(true), loadReviewItems()])
     }
-  })
+  }
+  ;['task.progress', 'task.failed', 'task.completed', 'task.cancelled', 'task.interrupted'].forEach(name => trainingEvents.addEventListener(name, handleTaskEvent))
   trainingEvents.addEventListener('training.log', event => {
     appendLog(JSON.parse(event.data))
   })
@@ -740,7 +761,9 @@ function startTrainingPolling(taskId) {
   clearInterval(trainingPoll)
   trainingPoll = setInterval(async () => {
     try {
-      trainingTask.value = await request(`/api/training/tasks/${taskId}`)
+      const nextTask = await request(`/api/training/tasks/${taskId}`)
+      if (nextTask.sequence !== undefined && trainingTask.value?.sequence !== undefined && nextTask.sequence < trainingTask.value.sequence) return
+      trainingTask.value = { ...(trainingTask.value || {}), ...nextTask }
       await loadTrainingLogs()
       if (terminalStates.includes(trainingTask.value.state)) {
         clearInterval(trainingPoll)
@@ -803,14 +826,36 @@ function isStageExpanded(stage) {
   return ['running', 'failed'].includes(stage.state)
 }
 
-function stageFailures(stage) {
+function stageResultCounts(stage) {
   const stageIds = stage.logStageIds || [stage.id]
-  return trainingLogs.value.filter(log => stageIds.includes(log.stage) && log.level === 'error').length
+  const progress = [...trainingLogs.value].reverse().find(log =>
+    stageIds.includes(log.stage)
+      && cumulativeProgressEvents.has(log.event)
+      && Number.isFinite(Number(log.details?.succeeded))
+      && Number.isFinite(Number(log.details?.failed))
+  )
+  if (progress) {
+    return {
+      succeeded: Number(progress.details.succeeded),
+      failed: Number(progress.details.failed),
+    }
+  }
+  const legacySucceeded = trainingLogs.value.filter(log => stageIds.includes(log.stage) && ['model_call.completed', 'work_item.completed'].includes(log.event)).length
+  const current = Number(stage.current)
+  const total = Number(stage.total)
+  const completedFallback = current > 0 ? current : (total > 0 ? total : 0)
+  return {
+    succeeded: legacySucceeded || (stage.state === 'completed' ? completedFallback : 0),
+    failed: trainingLogs.value.filter(log => stageIds.includes(log.stage) && log.level === 'error').length,
+  }
+}
+
+function stageFailures(stage) {
+  return stageResultCounts(stage).failed
 }
 
 function stageSuccesses(stage) {
-  const stageIds = stage.logStageIds || [stage.id]
-  return trainingLogs.value.filter(log => stageIds.includes(log.stage) && ['model_call.completed', 'work_item.completed'].includes(log.event)).length
+  return stageResultCounts(stage).succeeded
 }
 
 function openFailureDrawer(stage, log = null) {
@@ -820,16 +865,16 @@ function openFailureDrawer(stage, log = null) {
 }
 
 function displayStageId(stageId) {
-  if (stageId === 'metadata_construction') return 'material_preparation'
-  if (['deterministic_extraction', 'semantic_enrichment', 'validation_graph'].includes(stageId)) return 'knowledge_extraction'
+  if (['deterministic_extraction', 'validation_graph'].includes(stageId)) return 'knowledge_extraction'
   if (stageId === 'dataset_generation') return 'index_generation'
   return stageId
 }
 
 function stageLogStageIds(stageId) {
   return {
-    material_preparation: ['material_preparation', 'metadata_construction'],
-    knowledge_extraction: ['knowledge_extraction', 'deterministic_extraction', 'semantic_enrichment', 'validation_graph'],
+    material_preparation: ['material_preparation'],
+    metadata_construction: ['metadata_construction'],
+    knowledge_extraction: ['knowledge_extraction', 'deterministic_extraction', 'validation_graph'],
     index_generation: ['index_generation', 'dataset_generation'],
   }[stageId] || [stageId]
 }
@@ -848,10 +893,26 @@ function summarizeTechnicalError(value) {
   return '模型服务返回错误'
 }
 
+function backendFailureMessage(log) {
+  const code = String(log.errorCode || log.details?.errorCode || '').toUpperCase()
+  const messages = {
+    ARTIFACT_INTEGRITY_FAILED: '输入产物完整性校验失败',
+    INPUT_ARTIFACT_INVALID: '输入产物无效',
+    BATCH_NOT_READY: '批次尚未满足知识加工条件',
+    TASK_CANCELLED: '知识加工已取消',
+    TASK_INTERRUPTED: '知识加工因服务重启中断，可重新启动',
+  }
+  return messages[code] || log.message || '任务执行失败'
+}
+
 function displayLogMessage(log) {
   const technicalError = log.details?.technicalError
   if (technicalError && log.message?.includes(technicalError)) return log.message.replace(technicalError, summarizeTechnicalError(technicalError))
   if (!['model_call.failed', 'task.failed'].includes(log.event)) return log.message
+  if (log.event === 'task.failed') {
+    const message = backendFailureMessage(log)
+    return message.startsWith('知识加工失败：') ? message : `知识加工失败：${message}`
+  }
   const summary = summarizeTechnicalError(log.message)
   const separator = log.message?.indexOf(' - ') ?? -1
   if (separator >= 0) return `${log.message.slice(0, separator)} - ${summary}`
@@ -910,18 +971,23 @@ function formatTime(value) {
 
 function streamLabel() {
   return {
-    connected: '实时连接', connecting: '正在连接', polling: '轮询恢复', disconnected: '连接中断', completed: '任务已结束', idle: '尚未连接',
+    connected: '实时进度已连接', connecting: '正在连接实时进度', polling: '已切换轮询', disconnected: '进度获取中断', completed: '任务已结束', idle: '等待启动',
   }[streamState.value]
 }
 
-async function publish(dataset, force = false) {
-  const needsForce = force || !dataset.qualityPassed || dataset.publishable === false
-  if (needsForce && !window.confirm(`数据集 ${dataset.id} 当前显示质量未通过。\n\n确认仍要发布该数据集版本吗？`)) return
+async function publish(dataset) {
+  const governance = datasetGovernanceView(dataset)
+  if (governance.governed && !governance.canPublish) return
+  if (governance.requiresForce && !window.confirm(`数据集 ${dataset.id} 是历史数据，且未通过旧版质量检查。\n\n确认使用历史兼容方式发布吗？`)) return
+  const query = governance.governed
+    ? `expectedStatusVersion=${encodeURIComponent(dataset.governance.statusVersion)}`
+    : `force=${governance.requiresForce}`
   try {
-    await request(`/api/datasets/${dataset.id}/publish?force=${needsForce}`, { method: 'POST' })
+    await request(`/api/datasets/${encodeURIComponent(dataset.id)}/publish?${query}`, { method: 'POST' })
     await load()
   } catch (reason) {
-    error.value = reason.message
+    if (reason.code === 'STATE_VERSION_CONFLICT') await load()
+    error.value = governancePublishErrorMessage(reason)
   }
 }
 
@@ -999,7 +1065,7 @@ onBeforeUnmount(() => {
             <PaginationControls v-if="pendingTotal" :page="pendingPage" :page-size="pendingPageSize" :total="pendingTotal" @change="changePendingPage" />
           </template>
         </details>
-        <p class="muted execution-note">正式资料预处理将在启动知识加工后，作为六步骤流水线第一步统一执行。</p>
+        <p class="muted execution-note">正式资料预处理将在启动知识加工后，作为四阶段流水线第一步统一执行。</p>
       </section>
 
     </div>
@@ -1009,7 +1075,8 @@ onBeforeUnmount(() => {
           <div>
             <div class="title-line"><h2>知识加工流水线</h2><span v-if="trainingTask" :class="['badge', trainingTask.state]">{{ stateNames[trainingTask.state] || trainingTask.state }}</span></div>
             <p v-if="hasResumableInterruptedDownload" class="warning inline-warning">
-              资料下载已中断，请先到“下载文件”继续下载。<span v-if="canProcessInterruptedDownload">本次将基于已下载资料加工。</span>
+              <span v-if="canProcessInterruptedDownload">资料下载已中断，本次将基于已完成资料加工；仍可到“下载文件”继续下载。</span>
+              <span v-else>资料下载已中断，请先到“下载文件”继续下载。</span>
             </p>
             <p v-else-if="!batchReadyForTraining" class="warning inline-warning">
               资料下载尚未完成，知识加工流水线将在下载结束后可启动。
@@ -1057,7 +1124,7 @@ onBeforeUnmount(() => {
           </section>
 
           <section class="pipeline-pane">
-            <div class="pane-heading"><Activity :size="16" /><strong>三步知识加工流水线</strong><span>{{ displayCompleted }}/3</span></div>
+            <div class="pane-heading"><Activity :size="16" /><strong>四阶段知识加工流水线</strong><span>{{ displayCompleted }}/{{ stageOrder.length }}</span></div>
             <ol class="stage-list">
               <li v-for="(stage, index) in displayStages" :key="stage.id" :class="stage.state">
                 <button class="stage-summary" @click="toggleStage(stage)">
@@ -1249,11 +1316,26 @@ onBeforeUnmount(() => {
       <div v-if="!datasets.length" class="empty compact">预处理完成后生成候选版本。</div>
       <div class="dataset-list">
         <div v-for="dataset in datasets" :key="dataset.id" class="dataset-row">
-          <div><strong>{{ dataset.id }}</strong><p class="muted">{{ dataset.totalDocuments }} 文档 · {{ dataset.totalChunks }} 个处理单元</p></div>
+          <div class="dataset-identity">
+            <strong>{{ dataset.id }}</strong>
+            <p class="muted">{{ dataset.totalDocuments }} 文档 · {{ dataset.totalChunks }} 个处理单元</p>
+            <div class="governance-summary">
+              <strong>{{ datasetGovernanceView(dataset).statusLabel }}</strong>
+              <span>{{ datasetGovernanceView(dataset).reasonLabel }}</span>
+              <span v-if="datasetGovernanceView(dataset).blockedChecks.length">未通过：{{ datasetGovernanceView(dataset).blockedChecks.map(item => item.label).join('、') }}</span>
+              <span>下一步：{{ datasetGovernanceView(dataset).nextAction }}</span>
+            </div>
+          </div>
           <span v-if="dataset.graphAvailable">{{ dataset.graphSummary?.keywordCount ?? dataset.graphSummary?.nodeCount ?? 0 }} 知识点/关键词 · {{ dataset.graphSummary?.contextEdgeCount ?? dataset.graphSummary?.edgeCount ?? 0 }} 上下文关联</span>
           <span :class="dataset.qualityPassed ? 'badge completed' : 'badge failed'">{{ dataset.qualityPassed ? '质量通过' : '质量未通过' }}</span>
-          <button v-if="dataset.state !== 'published'" :class="['button', 'small', (!dataset.qualityPassed || dataset.publishable === false) ? 'warning-button' : '']" @click="publish(dataset)">
-            {{ (!dataset.qualityPassed || dataset.publishable === false) ? '强制发布' : '发布' }}
+          <button
+            v-if="dataset.state !== 'published'"
+            :class="['button', 'small', datasetGovernanceView(dataset).requiresForce ? 'warning-button' : '']"
+            :disabled="!datasetGovernanceView(dataset).canPublish"
+            :title="datasetGovernanceView(dataset).canPublish ? datasetGovernanceView(dataset).nextAction : `暂不可发布：${datasetGovernanceView(dataset).nextAction}`"
+            @click="publish(dataset)"
+          >
+            {{ datasetGovernanceView(dataset).requiresForce ? '历史兼容发布' : '发布' }}
           </button>
           <span v-else class="badge completed">已发布</span>
           <button class="button small danger-button" @click="deleteDataset(dataset)">删除</button>
@@ -1274,14 +1356,16 @@ onBeforeUnmount(() => {
         <div class="preflight-principle">
           <strong>执行原则</strong>
           <p>知识提取仅按已配置的规则执行，不调用模型服务。</p>
+          <p v-if="preflightDialog.canStart === false" class="warning">{{ preflightDialog.message || '后端判定当前批次暂不可启动' }}</p>
+          <p v-if="preflightDialog.admissionStatus" class="muted">关键词准入状态由后端判定：{{ preflightDialog.admissionStatus === 'admitted' ? '允许进入后续知识构建' : '暂不进入后续知识构建' }}。</p>
         </div>
         <ul v-if="preflightDialog.risks?.length" class="preflight-risks">
           <li v-for="risk in preflightDialog.risks" :key="risk">{{ risk }}</li>
         </ul>
         <footer>
           <button class="button secondary" :disabled="trainingStartLoading" @click="preflightDialog = null">返回检查</button>
-          <button class="button" :disabled="trainingStartLoading" @click="confirmStartTraining">
-            {{ trainingStartLoading ? '正在启动' : '确认启动六步骤加工' }}
+          <button class="button" :disabled="trainingStartLoading || preflightDialog.canStart === false" @click="confirmStartTraining">
+            {{ trainingStartLoading ? '正在启动' : '确认启动四阶段加工' }}
           </button>
         </footer>
       </section>
@@ -1548,6 +1632,9 @@ onBeforeUnmount(() => {
 .chunk-summary { margin-top: 10px; }
 .dataset-list { display: grid; }
 .dataset-row { display: grid; grid-template-columns: minmax(280px, 1fr) auto auto auto auto; align-items: center; gap: 14px; padding: 10px 0; border-bottom: 1px solid #e5eaf1; font-size: 12px; }
+.dataset-identity { min-width: 0; }
+.governance-summary { display: grid; gap: 2px; margin-top: 7px; color: #66758a; font-size: 10px; line-height: 1.45; }
+.governance-summary strong { color: #34445b; font-size: 11px; }
 .dialog-backdrop { position: fixed; z-index: 40; inset: 0; display: grid; place-items: center; padding: 24px; background: rgba(23, 32, 51, .38); }
 .preflight-dialog { width: min(680px, 92vw); overflow: hidden; border-radius: 10px; background: white; box-shadow: 0 24px 70px rgba(16, 36, 64, .28); }
 .preflight-dialog header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 20px 22px 16px; border-bottom: 1px solid #dde4ee; }

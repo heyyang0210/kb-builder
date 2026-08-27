@@ -4,32 +4,41 @@
 > 日期：2026-07-30  
 > 上位设计：`docs/00-概要设计.md`  
 > 关联设计：`docs/08-pingcode-processing-six-step-pipeline-design.md`、`docs/12-PingCode知识提取步骤详细设计.md`、`docs/15-PingCode图谱与数据集生成步骤详细设计.md`、`docs/18-PingCode知识提取与构建测试设计.md`
+> 关联需求：`REQ-KGO-33`（成熟 RAG 治理）、`REQ-KGO-34`（图数据库知识库存储与 GraphRAG 扩展）
 
 ## 一、平台定位
 
-当前平台定位为 **YashanDB 资料加工与知识图谱生成平台**。
+当前平台定位为 **YashanDB 资料加工与知识图谱生成平台**。截至 2026-08-07，知识加工流水线当前前端可见阶段收敛为四阶段，不把按需语义补充作为已实现步骤对外展示。
 
 本阶段聚焦：
 
 1. 资料接入、清洗、结构化处理；
-2. embedding 聚类、清洗和低成本初筛；
-3. 关键词质量分析图谱；
-4. 基于已确认关键词的正式知识抽取；
-5. 知识校验、融合、消歧；
-6. 可追溯知识图谱生成和质量分析。
+2. 元数据构建、embedding 聚类、清洗和低成本初筛；
+3. 知识提取和质量问题归类；
+4. 索引生成、关键词质量分析图谱和可追溯数据集产物。
 
-本阶段不把完整 GraphRAG 问答、体系化文档生成和新文档反哺闭环作为开发范围。后续如果要扩展问答和体系化生成，应以本阶段产出的正式知识图谱、向量索引和质量报告为基础。
+本阶段不把完整 GraphRAG 问答、体系化文档生成、新文档反哺闭环和按需语义补充作为已完成能力。后续如果要扩展问答、体系化生成和语义补充，应以本阶段产出的正式知识图谱、向量索引和质量报告为基础。
 
 ## 二、主链路
 
 ```text
 资料接入
-  -> 资源预处理
-  -> 关键词质量分析图谱
-  -> 正式知识抽取
-  -> 知识校验融合
-  -> 知识图谱生成
+  -> 资料预处理
+  -> 元数据构建
+  -> 知识提取
+  -> 索引生成
 ```
+
+当前四个前端可见阶段的实现边界：
+
+| 阶段 ID | 中文名称 | 当前实现边界 | 大模型参与 |
+|---|---|---|---|
+| `material_preparation` | 资料预处理 | 源文件扫描、规范化、清洗、结构解析、处理单元生成 | 否 |
+| `metadata_construction` | 元数据构建 | 文档元数据、主题初筛、embedding 缓存和聚类报告 | 否 |
+| `knowledge_extraction` | 知识提取 | 质量分析和正式知识构建沿用既有实现，本轮只收敛阶段边界、进度和产物归属 | 按任务模式和既有实现 |
+| `index_generation` | 索引生成 | 候选数据集、图谱 JSON、`keyword-chunk-index.json` 和报告生成 | 否 |
+
+未实现步骤：`semantic_enrichment` 按需语义补充。该能力后续必须作为独立任务重新设计、实现和验收，当前不能在前端流水线中展示为可执行阶段。
 
 其中，资源预处理阶段必须包含：
 
@@ -77,12 +86,12 @@
 | 05 | `docs/05-pingcode-processing-llm-control-design.md` | 模型调用控制 | EPIC-02、EPIC-04 | Provider、模型调用、审计、成本控制 |
 | 06 | `docs/06-pingcode-processing-prompt-management-design.md` | Prompt 管理 | EPIC-04 | Prompt 草稿、发布、审计 |
 | 07 | `docs/07-pingcode-processing-prompt-registry-design.md` | Prompt/Skill Registry | EPIC-04 | Skill、Prompt 版本和渲染管理 |
-| 08 | `docs/08-pingcode-processing-six-step-pipeline-design.md` | 六步骤流水线 | 全局 | 当前主链路设计基线 |
+| 08 | `docs/08-pingcode-processing-six-step-pipeline-design.md` | 流水线设计 | 全局 | 历史六步骤设计与当前四阶段前端可见阶段的收敛基线 |
 | 09 | `docs/09-pingcode-processing-unfinished-items.md` | 未完成项跟踪 | 全局 | 历史未完成项和依赖顺序 |
 | 10 | `docs/10-设计文档预处理-专业提示词.md` | 设计文档预处理 Prompt | EPIC-02 | 设计类资料预处理提示词参考 |
 | 11 | `docs/11-PingCode元数据构建步骤详细设计.md` | 元数据构建设计 | EPIC-02 | 文档标题、分类、领域术语、上下文 |
 | 12 | `docs/12-PingCode知识提取步骤详细设计.md` | 知识提取设计 | EPIC-03、EPIC-04 | 关键词默认档和正式知识构建 |
-| 13 | `docs/13-PingCode按需语义补充步骤详细设计.md` | 按需语义补充 | EPIC-04、EPIC-05 | 不确定项补充和失败归因 |
+| 13 | `docs/13-PingCode按需语义补充步骤详细设计.md` | 按需语义补充 | 后续阶段 | 当前未实现，只作为后续设计输入 |
 | 14 | `docs/14-PingCode知识校验与合并步骤详细设计.md` | 校验与合并 | EPIC-05 | Schema、证据、拒绝、最终知识 |
 | 15 | `docs/15-PingCode图谱与数据集生成步骤详细设计.md` | 图谱与数据集 | EPIC-03、EPIC-06 | 关键词图谱、正式图谱、数据集契约 |
 | 16 | `docs/16-FastGPT集成改造方案.md` | FastGPT 集成 | 后续阶段 | 当前不作为资料加工主链路范围 |
@@ -105,6 +114,8 @@
 | TASK-P0-01 | P0 | EPIC-04 | 正式知识构建任务超时与取消边界修复 | 代码完成待验证 | `docs/12`、`docs/18` | `modelCallId` 事件、`knowledge-extraction-batches.jsonl`、`quality/extraction-issues.json` | 真实取消、模型调用可追溯、Skill timeout/defaults 透传和 batch 解锁已通过；代码层已补齐失败分类、顶层 `agentTaskId/chunkId/modelCallId`、批次审计和质量问题追溯字段；真实 timeout/局部失败落盘仍待验证 | 定向单测覆盖 schema/empty/timeout/cancel 和 audit 字段；历史真实取消任务约 348ms/242ms；待新 formal task 验证 |
 | TASK-P0-02 | P0 | EPIC-04 | Workflow Agent 最小化改造 | 代码完成待验证 | `docs/12`、`docs/13`、`docs/18` | `knowledge-candidates.jsonl`、模型批次审计、`extraction-issues.json` | 已收敛为单 chunk 知识点候选提取；实体、关系、关键词和语义补充不属于本版本 | 定向单测已覆盖单 chunk、局部失败和追溯字段；待真实 `formal_knowledge` API 验收 |
 | TASK-P0-03 | P0 | EPIC-01、EPIC-04 | batch activeTask 状态恢复 | 代码完成待验证 | `docs/04`、`docs/18` | 批次状态修复记录、任务终态事件 | 后端启动、训练任务查询和创建任务前均会恢复僵尸 activeTask；当前进程内活跃任务不会被误判中断 | 单测覆盖查询恢复、创建前 orphan activeTask 恢复和当前进程活跃任务保护；待真实进程中断场景验证 |
+| TASK-P0-04 | P0 | 全局 | 知识加工流水线四阶段收敛 | 代码完成待验证 | `docs/08`、`docs/19` | 四阶段 `STAGES`、前端阶段展示、运行事件、`fix-report` | 当前可执行流水线收敛为资料预处理、元数据构建、知识提取、索引生成；`semantic_enrichment` 按需语义补充不再作为当前可执行阶段；历史日志兼容映射保留 | 已补后端/前端阶段契约和单测期望；待真实 API 启动任务验证四阶段进度、事件和产物一致 |
+| TASK-P0-05 | P0 | EPIC-04、EPIC-05 | 按需语义补充能力补齐 | 待设计 | `docs/13`、`docs/14`、`docs/18` | `semantic-resolution.jsonl`、`semantic-issues.json`、语义补充 Agent 验收报告 | 当前未实现，不能被主流水线标记为已完成；后续需重新明确触发条件、模型边界、Schema 归一化、失败隔离和性能预算 | 待 Planner 拆解、设计评审、代码实现、真实模型验收 |
 | TASK-P1-01 | P1 | EPIC-01 | 资源清单和原始资料追溯模型 | 已验证 | `docs/01`、`docs/08` | `source-resources.jsonl`、`source-assets.jsonl`、`ingestion-report.json` | 已在资料预处理运行目录补资源级清单、素材清单和接入汇总，不破坏既有 documents/chunks/structure-blocks | `training_41fed7125a9e465a` 真实验证通过：source-resources 14 条、source-assets 54 条、ingestion-report 统计一致 |
 | TASK-P1-02 | P1 | EPIC-02 | 标题清洗与语义标题生成 | 已验证 | `docs/11`、`docs/12` | `semanticTitle`、`titleNoiseRemoved`、`topicCandidates` | documents 和 chunk contexts 已补标题噪声审计与主题候选字段，规则继续读取 `title-cleaning.yaml` | `dataset_5165fe5ba9f24052` 图谱无完整文件名、无 `YashanDB/DSI/内幕文档` 噪声关键词 |
 | TASK-P1-03 | P1 | EPIC-02 | 低成本主题初筛 | 已验证 | `docs/11`、`docs/12`、`docs/18` | `preselection-report.json` | 元数据阶段已生成独立初筛报告，状态枚举固定为 `deterministic_ready/model_required/human_review/skip` | 真实批次 14 条均为 `deterministic_ready` 且证据完整；`model_required/human_review/skip` 由单测覆盖，待混合真实批次补充分布验证 |
@@ -114,11 +125,15 @@
 | TASK-P1-07 | P1 | EPIC-03 | 关键词 canonical 归并与别名命中回归 | 已验证 | `docs/15`、`docs/18` | canonical `Keyword`、别名、上下文边 | `Index/索引/index` 与 `Sequence/SEQUENCE/序列` 别名命中已验证 | `dataset_4091451d25294cdf` 图谱验证通过 |
 | TASK-P1-08 | P1 | EPIC-03、EPIC-04 | 关键词审批与正式构建输入联动 | 已验证 | `docs/12`、`docs/15`、`docs/18` | 审批状态、正式构建输入 chunk 集合、`formal-knowledge-input.json` | 已补正式构建输入计划；`rejected` 不进入调度；同一 chunk 多已确认关键词只调度一次，`keywordContext` 去重排序 | TDD 绿灯：`test_training_service.py` 60/60 通过；真实任务 `training_cdea23de446345c6` 验证 `dataset_43759133d8a442bd` 仅调度 1 个已确认关键词、过滤 11 个 rejected 关键词、去重后 1 个 chunk |
 | TASK-P2-00 | P2 | EPIC-03、EPIC-04 | 正式构建前业务语义过滤 | 代码完成待前端真实页面验证 | `docs/12`、`docs/15`、`docs/18`、`docs/19` | `keyword-business-review.json`、业务准入状态、正式构建关键词集合、过滤前后图谱对比 | 已补 `business-keyword-rules.yaml`、业务过滤接口、节点 `businessStatus`、图谱 summary 统计、正式构建双门控；质量分析页已增加过滤执行反馈、过滤前/后/变化项/业务注入/待业务确认视图、节点业务状态透出和人工确认批注面板；`training_c7c7e7c29baf4716` 需用真实页面完成交互验收 | TDD 绿灯：`test_training_service.py` 64/64 通过；待前端构建、`8001/3500` API 和页面交互验证 |
-| TASK-P2-01 | P2 | EPIC-04 | 正式知识 Schema 最小闭环 | ✅ 已通过真实模型验证 | `docs/12`、`docs/14`、`docs/18` | `knowledge-candidates.jsonl` | 候选已补 `state=agent_resolved`、去重排序 `keywordIds/keywordContext`；第一版 formal 只写 `knowledge_point` | TDD 绿灯：`test_training_service.py` 60/60 通过；真实任务 `training_cdea23de446345c6` 因模型网关 60s 超时未产出 `knowledge-candidates.jsonl`，已取消且任务终态为 `cancelled` |
+| TASK-P2-01 | P2 | EPIC-04 | 正式知识 Schema 最小闭环 | 代码完成待验证 | `docs/12`、`docs/14`、`docs/18` | `knowledge-candidates.jsonl` | 正式知识候选沿用既有 Workflow Agent 路径，补齐 `keywordIds/keywordContext`；本轮不改变正式知识提取执行策略 | 待真实任务重新验证 |
 | TASK-P2-02 | P2 | EPIC-04、EPIC-05 | 实体与关系抽取拆分 | 概要设计与状态骨架完成 | `docs/12`、`docs/14`、`docs/18` | `entity-relation-stage-status.json`、后续 `entities.jsonl`、`relations.jsonl` | 已明确实体/关系为 P2-01 后的显式阶段，不改变当前 formal 第一版只生成 `knowledge_point` 的边界；质量报告和前端可展示实体/关系阶段状态 | 单测覆盖 `entityRelationStage` 进入质量报告；真实实体/关系抽取任务接口与模型调用暂缓 |
 | TASK-P2-03 | P2 | EPIC-05 | 知识校验与拒绝原因落盘 | 暂缓 | `docs/14`、`docs/18` | `final-results/knowledge.jsonl`、`rejected.jsonl`、`quality/issues.json` | 校验设计已明确，正式知识链路未稳定导致真实结果不足 | 待正式知识候选产出后回归 |
 | TASK-P2-04 | P2 | EPIC-06 | 正式知识图谱与关键词图谱分视图 | 暂缓 | `docs/15`、`docs/18` | 关键词图谱视图、正式知识图谱视图、`graph/summary.json` | 关键词默认图谱已验证；正式知识图谱待正式构建完成后验证 | 待 formal dataset 验证 |
 | TASK-P2-05 | P2 | EPIC-06 | 图数据库适配预留 | 待设计 | `docs/00`、`docs/15` | 图数据库写入接口设计、JSON 审计图谱 | 当前仍以 JSON 图谱为审计产物，Neo4j/NebulaGraph 接口未设计 | 待接口设计评审 |
+| TASK-P2-06 | P2 | EPIC-06 | 图数据库写入、幂等与失败隔离 | 待设计 | `docs/00`、`docs/15`、`REQ-KGO-34` | Graph Store Adapter、写入批次、`graph-write-issues.jsonl` | 依赖 P2-05 的厂商无关接口；图数据库不可用不能破坏 JSON 审计产物 | 待设计评审和隔离数据集验收 |
+| TASK-P2-07 | P2 | EPIC-06 | 图谱版本回填、校验与失效传播 | 待设计 | `docs/15`、`REQ-KGO-34` | `graphVersionId` 回填记录、校验报告、失效记录 | 旧版本不可变，文档修改/删除必须产生新版本并可审计 | 待 P2-06 验证 |
+| TASK-P2-08 | P2 | EPIC-06 | 有界图查询与 GraphRAG 检索适配 | 暂缓 | `docs/15`、`REQ-KGO-33`、`REQ-KGO-34` | 图查询 API、证据引用、GraphRAG 检索候选 | 必须在正式知识、混合检索、ACL 和发布门禁完成后实施 | 待 P0 检索闭环和 P2-07 |
+| TASK-P2-09 | P2 | EPIC-06 | 图数据库容量、性能与故障验收 | 待设计 | `docs/18`、`REQ-KGO-34` | S/M/L 性能报告、重启/限流/恢复报告 | 需要明确图规模、并发、P95、备份和部署资源 | 待 P2-06 和性能资源确认 |
 
 ## 五、P0 任务：正式知识构建可靠性
 
@@ -668,6 +683,97 @@ candidate
 - 后续 GraphRAG 查询可以基于该接口扩展。
 
 **依赖**：TASK-P2-04。
+
+### TASK-P2-06 图数据库写入、幂等与失败隔离
+
+**目标**：在 JSON/JSONL 审计图谱成功生成后，异步将正式图谱投影到经批准的图数据库；图数据库故障不影响本地候选数据集和审计产物。
+
+**输入**：
+
+- `graphVersionId` 和不可变数据集快照；
+- canonical 节点、证据边、最终知识、实体和关系；
+- TASK-P2-05 定义的 Graph Store Adapter。
+
+**输出**：
+
+- 图数据库写入批次和 `writeRunId`；
+- `graph-write-issues.jsonl`；
+- `graphWriteState` 和写入统计。
+
+**验收标准**：
+
+- 节点和关系以 `graphVersionId + nodeId/edgeId` 幂等写入；重试不产生重复数据；
+- 每个节点、关系和证据引用符合 Schema，悬空端点和无证据关系拒绝写入；
+- 图数据库超时、限流、认证失败和部分失败逐条记录，不能被统计成“无知识”；
+- JSON/JSONL 审计产物在图数据库不可用时仍完整生成；
+- 只在全量校验通过后将状态置为 `graph_write_succeeded`。
+
+**依赖**：TASK-P2-05、REQ-KGO-34 G2；不得在未完成人类选型审批前引入驱动或外部服务。
+
+### TASK-P2-07 图谱版本回填、校验与失效传播
+
+**目标**：支持从历史 JSON 审计图谱回填图数据库，并保证版本不可变、删除可传播、失败可回滚。
+
+**输入**：
+
+- 一个或多个不可变 `graphVersionId`；
+- source/chunk/evidence lineage；
+- 文档新增、修改或删除影响范围。
+
+**输出**：
+
+- 回填和校验报告；
+- 新版本失效记录和差异记录；
+- 回滚或重新投影任务。
+
+**验收标准**：
+
+- 旧图版本只读，新版本使用新 `graphVersionId`，禁止覆盖历史节点；
+- 文档修改或删除能够生成失效/替换关系，且可追溯到 source snapshot；
+- 节点数、边数、端点、证据、版本指纹和抽样结果校验一致；
+- 回填中断后可从最后成功批次恢复，不重复写入；
+- 回滚只切换可用版本指针，不删除 JSON 审计产物。
+
+**依赖**：TASK-P2-06、TASK-P2-03、TASK-P2-04。
+
+### TASK-P2-08 有界图查询与 GraphRAG 检索适配
+
+**目标**：为后续 GraphRAG 提供有界、带权限和证据的图候选查询，不让图数据库直接生成答案。
+
+**输入**：
+
+- 已通过发布门禁的图数据库版本；
+- 查询实体、关系类型、产品版本和有效期；
+- datasetId、ACL 和证据过滤条件。
+
+**输出**：
+
+- 一至二跳邻域或关系路径候选；
+- 稳定节点/边 ID、`graphVersionId` 和证据引用；
+- `GRAPH_STORE_UNAVAILABLE` 等结构化错误。
+
+**验收标准**：
+
+- 所有查询强制带 datasetId、graphVersionId 和 ACL 过滤；
+- 默认有界查询，不支持无限深度和跨租户混查；
+- 图候选与 sparse/dense 检索合并后仍执行去重、版本和证据校验；
+- 图数据库不可用时不静默读取其他版本；
+- 无足够证据时由 RAG 层返回结构化拒答。
+
+**依赖**：TASK-P2-07、REQ-KGO-33 P0 检索闭环、权限契约和发布门禁。
+
+### TASK-P2-09 图数据库容量、性能与故障验收
+
+**目标**：验证图数据库在小、中、大规模资料下的查询、写入、恢复和资源边界。
+
+**验收标准**：
+
+- 明确 S/M/L 节点数、边数、写入批量、并发、P95、内存和存储预算；
+- 覆盖批量写入、邻域查询、版本切换、重启、连接超时、限流和恢复；
+- 记录图数据库、API 和本地 JSON 产物的资源消耗；
+- 性能未达标或故障恢复失败时阻断生产启用，不降低功能验收标准。
+
+**依赖**：TASK-P2-06、性能资源和部署方案审批。
 
 ## 九、验收与回归
 

@@ -32,7 +32,6 @@ export const STAGE_LABELS = {
   knowledge_extraction: '知识提取',
   index_generation: '索引生成',
   deterministic_extraction: '确定知识提取',
-  semantic_enrichment: '按需语义补充',
   knowledge_validation: '知识校验与合并',
   validation_graph: '知识校验与合并',
   graph_dataset_generation: '图谱与数据集生成',
