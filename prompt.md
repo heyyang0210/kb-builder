@@ -1360,3 +1360,12 @@ Role 定义“谁有权负责”，Route 决定“本次是否需要他负责”
 - 纠偏：Playwright 发现文档生成页既有 `copyToast` 浮层拦截提示按钮，补充 `pointer-events: none`，恢复真实点击链路。
 - 验证：Python 前端 `npm run build`；Playwright Chromium 兼容测试 3/3，旧入口 URL、迁移链接和 PingCode API 代理均通过。
 - 边界：Socket.IO、SSE、完整旧 API 和四视口兼容在 TASK-KPG-10 继续验证；历史领域文案不作为运行时硬编码缺陷机械清理。
+
+#### 补充记录：TASK-KPG-10 通用化端到端验收与响应式检查
+
+- 时间：2026-08-27 21:02:00
+- 验证：Node Jest 31/31，Python unittest 11/11，资料加工前端 npm run build；隔离 Node 14110/Python 18010/3500 13510 双端 API 与聚合真实返回 200、指纹一致、状态 ok。
+- 浏览器：Playwright Chromium 统一入口四视口、单模块降级、旧入口深链和 API 代理 8/8；页面无横向溢出或控制台错误。
+- 安全：源码、HTML/JS 和聚合响应未发现令牌、密码、secret 引用或服务器绝对路径；异常上下文、HTTP 错误、无效 JSON、超时和响应大小限制均有测试。
+- 环境边界：4100/8001/3500 由用户旧进程占用，未强制重启；真实 PingCode/MCP、外部模型完整产出、生产黄金样例及旧 Socket.IO/SSE 全量基线仍未验证。
+- 风险：Vite 大 chunk 警告和 Python 8000/8001 端口漂移记录为非阻塞后续事项。

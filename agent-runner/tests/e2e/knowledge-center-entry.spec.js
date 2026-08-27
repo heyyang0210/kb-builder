@@ -1,4 +1,5 @@
 const { test, expect } = require('@playwright/test');
+const baseUrl = process.env.KPG_BASE_URL || 'http://127.0.0.1:13502';
 
 const viewports = [
   { name: 'desktop', width: 1440, height: 900 },
@@ -10,7 +11,7 @@ const viewports = [
 for (const viewport of viewports) {
   test(`${viewport.name} 入口无溢出且工作区可达`, async ({ page }) => {
     await page.setViewportSize(viewport);
-    await page.goto('http://127.0.0.1:13502/knowledge-center/');
+    await page.goto(`${baseUrl}/knowledge-center/`);
     await expect(page.getByRole('heading', { name: '选择当前工作区' })).toBeVisible();
     await expect(page.getByText('平台运行正常')).toBeVisible();
     await expect(page.getByRole('link', { name: /进入资料加工/ })).toHaveAttribute('href', '/pingcode-materials/');
@@ -38,7 +39,7 @@ test('单模块故障时禁用对应入口且保留恢复动作', async ({ page 
       }
     })
   }));
-  await page.goto('http://127.0.0.1:13502/knowledge-center/');
+  await page.goto(`${baseUrl}/knowledge-center/`);
   await expect(page.getByText('部分服务降级')).toBeVisible();
   await expect(page.locator('[data-module="materialProcessing"] .workspace-link')).toHaveAttribute('aria-disabled', 'true');
   await expect(page.getByRole('button', { name: '刷新状态' })).toBeVisible();

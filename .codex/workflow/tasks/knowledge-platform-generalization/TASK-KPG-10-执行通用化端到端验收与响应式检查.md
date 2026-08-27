@@ -4,7 +4,7 @@
 
 - 任务编号：TASK-KPG-10
 - 标题：执行通用化端到端验收与响应式检查
-- 状态：待开始
+- 状态：已完成
 - 分配：Test Engineer / UX Reviewer
 - 依赖：TASK-KPG-09
 - 需人类确认：否，真实外部写入或生产数据测试仍需另行授权
@@ -33,4 +33,14 @@
 
 ## 执行日志
 
-待执行时补充环境、命令、结果计数、截图和缺陷清单。
+### 2026-08-27 执行记录
+
+- Node 聚焦回归：`npx jest tests/enterprise-profile-contract.test.js tests/platform-profile-loader.test.js tests/document-generation-profile.test.js tests/platform-context-gateway.test.js --runInBand`，31/31 通过。
+- Python 聚焦回归：`python3 -m unittest tests.test_enterprise_profile_contract tests.test_platform_profile_loader tests.test_material_processing_profile`，11/11 通过。
+- 资料加工前端：`npm run build` 通过；Vite 报告既有大 chunk 警告（PreprocessPage 约 3.3 MB），不影响本轮功能验收。
+- 隔离真实服务：Node 14110、Python 18010、3500 13510；双端 `/api/platform/context` 返回 200，配置指纹一致；聚合返回 200/ok；旧文档生成页、资料加工页均返回 200。
+- Playwright Chromium：统一入口四视口、单模块降级、旧入口深链和 PingCode API 代理共 8/8 通过；无页面级横向溢出和测试控制台错误，截图输出仅保存在运行目录/临时目录。
+- 安全检查：运行源码、统一入口 HTML/JS、聚合响应未发现 token、password、secret 引用或服务器绝对路径；聚合层拒绝畸形上下文、HTTP 错误、无效 JSON、超时和超大响应。
+- 默认 4100/8001/3500 已存在用户旧进程，未强制重启；使用隔离端口完成验收，避免影响现有服务。
+
+残余问题：真实 PingCode/MCP 连接、外部模型完整生成和生产数据黄金样例未验证；Python 默认 8000 与部署 8001 端口漂移、旧 API/Socket.IO/SSE 全量基线仍需后续运维环境确认。
