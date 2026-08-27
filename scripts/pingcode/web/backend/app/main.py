@@ -233,6 +233,11 @@ def health():
     return {"status": "ok", "version": app.version}
 
 
+@app.get("/api/platform/context")
+def platform_context():
+    return dict(runtime_profile.context)
+
+
 @app.get("/api/system/runtime-config")
 def runtime_config():
     return {

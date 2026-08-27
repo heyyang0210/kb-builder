@@ -152,6 +152,8 @@ Python 资料加工链通过只读 `RuntimeProfile` 读取领域 ID/版本、企
 
 接口路径固定为双端 `GET /api/platform/context` 和 3500 的 `GET /knowledge-center/api/platform/context`。单模块故障时聚合响应保持 HTTP 200 并返回 `status: degraded`；双模块故障或无法形成平台投影时返回 HTTP 503。该规则只适用于运行期模块故障，启动期能力包错误必须让对应进程非零退出。
 
+TASK-KPG-07 的 HTTP 实现沿用已通过双语言指纹对账的公开投影字段，不单独追加领域版本、模块列表或 `loadedAt`。模块可用性由 3500 聚合外壳表达；领域版本若需成为公共 HTTP 字段，必须先修订共享契约并同步两端黄金向量。聚合层对缺少 `schemaVersion`、`profileId`、`enterpriseId` 或 `configFingerprint` 的成功响应按 `MODULE_UNAVAILABLE` 处理，不将畸形投影用于平台展示。
+
 ## 7. 错误语义
 
 | 错误码 | 场景 | 是否可重试 |

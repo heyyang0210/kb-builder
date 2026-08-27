@@ -4,7 +4,7 @@
 
 - 任务编号：TASK-KPG-07
 - 标题：增加平台运行上下文接口并接入统一网关
-- 状态：待开始
+- 状态：已完成
 - 分配：Node Backend / Python Backend / Gateway Worker / Test Engineer
 - 依赖：TASK-KPG-05、TASK-KPG-06
 - 需人类确认：否，新增只读接口已在计划中确认
@@ -32,4 +32,11 @@
 
 ## 执行日志
 
-待执行时补充接口、HTTP 状态、响应摘要和安全测试。
+### 2026-08-27 执行记录
+
+- Node/Python 均新增 `GET /api/platform/context`，返回启动时冻结的脱敏上下文。
+- 3500 新增 `GET /knowledge-center/api/platform/context`，实现并行请求、固定超时、单模块降级、双模块 503 和指纹不一致判定。
+- Node 网关聚焦测试 9/9、Python profile unittest 4/4 通过。
+- 隔离 HTTP：Node 14100 与 Python 18001 指纹一致；网关 13500 返回 200/ok；停止 Python 后 13501 返回 200/degraded/MODULE_UNAVAILABLE。
+
+残余问题：公共上下文沿用已冻结 DTO，不额外拼接领域版本、模块列表或 `loadedAt`；Python 8000/部署 8001 端口漂移及旧 API 全量回归留待 TASK-KPG-10。

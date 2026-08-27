@@ -1,8 +1,9 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const { loadPlatformContext } = require('./lib/platform-context-gateway');
 
-const PORT = 3500;
+const PORT = Number(process.env.PORT || 3500);
 const HOST = '0.0.0.0';
 const PUBLIC_HOST = '192.168.130.180';
 const ROOT = path.join(__dirname, 'frontend');
@@ -12,6 +13,9 @@ const PINGCODE_API_PREFIX = '/pingcode-api';
 const PINGCODE_APP_ROUTES = ['/workbench', '/upload', '/spaces', '/batches', '/knowledge'];
 const PINGCODE_API_HOST = process.env.PINGCODE_API_HOST || '127.0.0.1';
 const PINGCODE_API_PORT = Number(process.env.PINGCODE_API_PORT || 8001);
+const DOCUMENT_API_HOST = process.env.DOCUMENT_API_HOST || '127.0.0.1';
+const DOCUMENT_API_PORT = Number(process.env.DOCUMENT_API_PORT || 4100);
+const PLATFORM_CONTEXT_TIMEOUT_MS = Number(process.env.PLATFORM_CONTEXT_TIMEOUT_MS || 2000);
 
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -78,8 +82,30 @@ function pingcodeFilePath(requestUrl) {
   return path.extname(candidate) ? candidate : path.join(PINGCODE_ROOT, 'index.html');
 }
 
+async function servePlatformContext(res) {
+  const result = await loadPlatformContext({
+    timeoutMs: PLATFORM_CONTEXT_TIMEOUT_MS,
+    documentGeneration: {
+      hostname: DOCUMENT_API_HOST,
+      port: DOCUMENT_API_PORT,
+      path: '/api/platform/context'
+    },
+    materialProcessing: {
+      hostname: PINGCODE_API_HOST,
+      port: PINGCODE_API_PORT,
+      path: '/api/platform/context'
+    }
+  });
+  res.writeHead(result.statusCode, { 'Content-Type': 'application/json; charset=utf-8' });
+  res.end(JSON.stringify(result.body));
+}
+
 const server = http.createServer((req, res) => {
   const pathname = new URL(req.url, 'http://localhost').pathname;
+  if (req.method === 'GET' && pathname === '/knowledge-center/api/platform/context') {
+    servePlatformContext(res);
+    return;
+  }
   if (req.url === PINGCODE_API_PREFIX || req.url.startsWith(`${PINGCODE_API_PREFIX}/`)) {
     proxyPingcodeApi(req, res);
     return;

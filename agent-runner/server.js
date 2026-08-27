@@ -105,6 +105,10 @@ app.use('/api/workflow', workflowRoutes);
 app.use('/api/document', documentRoutes);
 app.use('/api/model-provider', modelProviderRoutes);
 
+app.get('/api/platform/context', (req, res) => {
+  res.json(global.__KNOWLEDGE_PLATFORM_CONTEXT__);
+});
+
 // 健康检查（无限流）
 app.get('/api/health', (req, res) => {
   res.json({

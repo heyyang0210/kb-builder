@@ -30,6 +30,15 @@ class MaterialProcessingProfileTest(unittest.TestCase):
         self.assertNotIn(str(settings.data_root), serialized)
         self.assertNotIn("secret:", serialized)
 
+    def test_platform_context_matches_redacted_profile_projection(self):
+        response = TestClient(app).get("/api/platform/context")
+        self.assertEqual(200, response.status_code)
+        self.assertEqual(dict(runtime_profile.context), response.json())
+        serialized = response.text
+        self.assertNotIn(str(settings.data_root), serialized)
+        self.assertNotIn("secret:", serialized)
+        self.assertNotIn("token", serialized.lower())
+
 
 if __name__ == "__main__":
     unittest.main()
