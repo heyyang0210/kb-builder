@@ -7,6 +7,8 @@ from app.agents import AgentTask, KnowledgeExtractionWorkflowAgent
 from app.agents.tools.extraction_tool import ExtractionTool
 from app.agents.tools.validation_tool import ValidationTool
 from app.config import settings
+from app.config import runtime_profile
+from app.training_service import TrainingService
 
 
 class FakePrompts:
@@ -78,6 +80,56 @@ class KnowledgeExtractionToolTests(unittest.TestCase):
         self.assertTrue(result["success"])
         self.assertIn('"semanticTitle": "Replication"', gateway.messages[1]["content"])
         self.assertNotIn("{{", gateway.messages[1]["content"])
+
+    def test_agent_envelope_uses_enterprise_profile_domain_and_trace(self):
+        agent = KnowledgeExtractionWorkflowAgent({
+            "prompts": FakePrompts(),
+            "gateway": FakeGateway({"results": []}),
+            "skill_root": str(settings.processing_skill_root),
+        })
+
+        envelope = agent._build_extraction_envelope({
+            "chunks": [{"chunkId": "chunk-1", "content": "YAS-00001"}],
+            "document": {"title": "错误码"},
+        })
+
+        self.assertEqual(runtime_profile.domain_id, envelope["domain"])
+        self.assertEqual(runtime_profile.domain_version, envelope["domainContextVersion"])
+        self.assertEqual(runtime_profile.profile_id, envelope["enterpriseProfileId"])
+        self.assertEqual(runtime_profile.profile_version, envelope["enterpriseProfileVersion"])
+        self.assertEqual(runtime_profile.config_fingerprint, envelope["configFingerprint"])
+        self.assertIn("errorCode:YAS-00001", envelope["domainContextHits"])
+
+    def test_profile_migration_preserves_historical_error_code_types(self):
+        anchors = TrainingService._explicit_anchors("YAS-00001 与 ORA-00001")
+
+        self.assertIn(
+            {"value": "YAS-00001", "candidateType": "YashanDBErrorCode"},
+            anchors,
+        )
+        self.assertIn(
+            {"value": "ORA-00001", "candidateType": "OracleErrorCode"},
+            anchors,
+        )
+
+    def test_normalized_output_records_enterprise_profile_trace(self):
+        normalized = TrainingService._normalize_skill_output(
+            "knowledge-extraction",
+            {"knowledgePoints": [], "entities": [], "relations": []},
+            {"context_envelope": json.dumps({
+                "domain": runtime_profile.domain_id,
+                "domainContextVersion": runtime_profile.domain_version,
+                "enterpriseProfileId": runtime_profile.profile_id,
+                "enterpriseProfileVersion": runtime_profile.profile_version,
+                "configFingerprint": runtime_profile.config_fingerprint,
+            })},
+            "2.0.0",
+        )
+
+        metadata = normalized["metadata"]
+        self.assertEqual(runtime_profile.profile_id, metadata["enterpriseProfileId"])
+        self.assertEqual(runtime_profile.profile_version, metadata["enterpriseProfileVersion"])
+        self.assertEqual(runtime_profile.config_fingerprint, metadata["configFingerprint"])
 
     def test_empty_model_result_is_an_explicit_failure(self):
         tool, _ = self._tool({

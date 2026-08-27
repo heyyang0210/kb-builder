@@ -2,13 +2,14 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from .platform_profile import load_profile
+from .platform_profile import RuntimeProfile, load_profile
 
 
 APP_DIR = Path(__file__).resolve().parent
 PINGCODE_DIR = APP_DIR.parents[2]
 PLATFORM_PROFILE = load_profile()
 platform_context = PLATFORM_PROFILE["context"]
+runtime_profile = RuntimeProfile(PLATFORM_PROFILE)
 
 
 @dataclass(frozen=True)
@@ -57,12 +58,8 @@ def load_settings() -> Settings:
         "PINGCODE_WEB_CORS_ORIGIN_REGEX",
         r"https?://(localhost|127\.0\.0\.1)(:\d+)?",
     ).strip() or None
-    skill_root = Path(
-        os.getenv(
-            "PINGCODE_PROCESSING_SKILL_ROOT",
-            str(PINGCODE_DIR / "processing" / "skills"),
-        )
-    ).expanduser().resolve()
+    registered_skill_root = runtime_profile.resource("skills", "knowledge-point-extraction").parent.parent
+    skill_root = Path(os.getenv("PINGCODE_PROCESSING_SKILL_ROOT", str(registered_skill_root))).expanduser().resolve()
     prompt_draft_root = Path(
         os.getenv(
             "PINGCODE_PROCESSING_PROMPT_DRAFT_ROOT",

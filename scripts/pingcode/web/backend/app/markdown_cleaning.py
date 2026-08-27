@@ -6,6 +6,8 @@ import re
 from dataclasses import dataclass
 from html.parser import HTMLParser
 
+from .config import runtime_profile
+
 
 EXCLUDED_PLACEHOLDER_PREFIX = "<!-- processing-excluded:"
 _FENCE_OPEN = re.compile(r"^[ \t]{0,3}([`~]{3,})([^\r\n]*)")
@@ -185,7 +187,7 @@ def _remove_source_code_references(text: str) -> tuple[str, list[dict[str, objec
             removed_section_lines += 1
             events.append({
                 "event": "source_reference_section_removed",
-                "reason": "源码路径清单不进入 YashanDB 知识加工视图",
+                "reason": f"源码路径清单不进入 {runtime_profile.brand['enterpriseName']} 知识加工视图",
                 "originalOffsets": {"start": start, "end": cursor},
             })
             continue
@@ -193,7 +195,7 @@ def _remove_source_code_references(text: str) -> tuple[str, list[dict[str, objec
             removed_path_lines += 1
             events.append({
                 "event": "source_reference_line_removed",
-                "reason": "源码路径标记不进入 YashanDB 知识加工视图",
+                "reason": f"源码路径标记不进入 {runtime_profile.brand['enterpriseName']} 知识加工视图",
                 "originalOffsets": {"start": start, "end": cursor},
             })
             continue
@@ -266,7 +268,7 @@ def _exclude_c_fences(text: str) -> tuple[str, list[dict[str, object]]]:
             "detectionMethod": detection_method,
             "originalOffsets": {"start": start, "end": start + len(block)},
             "contentHash": f"sha256:{block_hash}",
-            "reason": "C/C++ 代码块不进入 YashanDB 知识加工视图",
+            "reason": f"C/C++ 代码块不进入 {runtime_profile.brand['enterpriseName']} 知识加工视图",
             "closedFence": close_index is not None,
             "placeholder": placeholder,
         })

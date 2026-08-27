@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 from app.platform_profile.loader import ProfileError, load_profile
+from app.platform_profile.runtime import RuntimeProfile
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[5]
@@ -24,6 +25,18 @@ class PlatformProfileLoaderTest(unittest.TestCase):
             {"configured": False, "enabled": True, "id": "mcp", "type": "mcp"},
         ], context["connectors"])
         self.assertNotIn(str(REPOSITORY_ROOT), json.dumps(context, ensure_ascii=False))
+
+    def test_runtime_profile_exposes_domain_brand_and_trace_without_secrets(self):
+        runtime = RuntimeProfile(load_profile(repository_root=REPOSITORY_ROOT, env={}))
+
+        self.assertEqual("yashandb", runtime.domain_id)
+        self.assertEqual("yashandb-domain:1.0.0", runtime.domain_version)
+        self.assertEqual("YashanDB 知识中心", runtime.brand["productName"])
+        self.assertEqual("yashandb", runtime.profile_id)
+        self.assertEqual("1.0.0", runtime.profile_version)
+        self.assertRegex(runtime.config_fingerprint, r"^sha256:[0-9a-f]{64}$")
+        self.assertEqual(runtime.profile_version, runtime.trace["profileVersion"])
+        self.assertNotIn("token", json.dumps(dict(runtime.trace), ensure_ascii=False).lower())
 
     def test_explicit_invalid_selection_does_not_fallback(self):
         for profile_id in ("", "unknown", "../outside"):

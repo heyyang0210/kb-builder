@@ -1,5 +1,12 @@
+export function materialTerms(brand = {}) {
+  return {
+    ...TERMS,
+    platform: `${brand.enterpriseName || '当前企业'} 资料加工`,
+  }
+}
+
 export const TERMS = {
-  platform: 'YashanDB 资料加工平台',
+  platform: '资料加工',
   workbench: '工作台',
   materialTask: '资料加工任务',
   taskName: '任务名称',

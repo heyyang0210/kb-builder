@@ -44,6 +44,10 @@ export async function initRuntimeConfig() {
   }
 }
 
+export function runtimeBrand() {
+  return runtime.brand || {}
+}
+
 export function baseUrl() {
   return (runtime.apiBaseUrl || '').replace(/\/$/, '')
 }

@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Str
 from fastapi.staticfiles import StaticFiles
 from starlette.responses import RedirectResponse
 
-from .config import PINGCODE_DIR, settings
+from .config import PINGCODE_DIR, runtime_profile, settings
 from .governance_state import GovernanceStateError
 from .ingestion import build_default_framework
 from .models import (
@@ -240,6 +240,7 @@ def runtime_config():
         "eventBaseUrl": "",
         "appBasePath": "/pingcode-materials/",
         "features": {"localOpenDirectory": False, "graphAnalysis": True},
+        "brand": dict(runtime_profile.brand),
     }
 
 
@@ -997,7 +998,7 @@ def training_model_config():
 def update_training_model_config(request: TrainingModelConfigUpdate):
     error(
         "MODEL_CONFIG_READ_ONLY",
-        "素材平台只继承 YashanDB 知识库文档生成器的模型配置，请在文档生成器中修改",
+        f"资料加工只继承 {runtime_profile.brand['productName']}的文档生成器模型配置，请在文档生成器中修改",
         405,
     )
 

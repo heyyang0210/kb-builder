@@ -19,7 +19,7 @@ from urllib.request import urlopen
 from jsonschema import ValidationError, validate
 
 from .agents import KnowledgeExtractionWorkflowAgent, AgentTask
-from .config import settings
+from .config import runtime_profile, settings
 from .gateways.model_gateway import (
     HttpModelGatewayAdapter,
     ModelGateway,
@@ -2954,7 +2954,7 @@ class TrainingService:
         return {
             "documentType": first_document.get("documentType", "general_technical"),
             "extractionProfile": first_document.get("extractionProfile", "general-technical"),
-            "domain": "yashandb",
+            "domain": runtime_profile.domain_id,
             "maxCandidatesPerChunk": max_candidates_per_chunk,
             "document": {
                 "title": first_document.get("title"),
@@ -4793,7 +4793,7 @@ class TrainingService:
         try:
             status = self.gateway.status()
             if not status.get("configured") or not status.get("capabilities", {}).get("chat"):
-                raise ModelGatewayError("YashanDB 知识库文档生成器的对话模型尚未配置")
+                raise ModelGatewayError(f"{runtime_profile.brand['productName']}的对话模型尚未配置")
         except Exception as error:
             raise ModelGatewayError(f"知识提取 Agent 不可用：{error_summary(error)}") from error
 
@@ -6120,8 +6120,11 @@ class TrainingService:
                     "sourcePath": chunk.get("sourcePath"),
                     "documentType": document["documentType"],
                     "extractionProfile": document["extractionProfile"],
-                    "domain": "yashandb",
+                    "domain": runtime_profile.domain_id,
                     "domainContextVersion": envelope["domainContextVersion"],
+                    "enterpriseProfileId": runtime_profile.profile_id,
+                    "enterpriseProfileVersion": runtime_profile.profile_version,
+                    "configFingerprint": runtime_profile.config_fingerprint,
                     "value": {key: value for key, value in item.items() if key not in {"evidenceText", "evidenceOffsets", "confidence"}},
                     "evidenceText": item["evidenceText"],
                     "evidenceOffsets": offsets,
@@ -6197,13 +6200,17 @@ class TrainingService:
             metadata = normalized.get("metadata") if isinstance(normalized.get("metadata"), dict) else {}
             metadata = {key: metadata[key] for key in (
                 "documentType", "extractionProfile", "domain", "domainContextVersion",
+                "enterpriseProfileId", "enterpriseProfileVersion", "configFingerprint",
                 "skillId", "skillVersion", "promptVersion", "agentId", "schemaVersion",
             ) if key in metadata}
             metadata.update({
                 "documentType": envelope.get("documentType", metadata.get("documentType", "general_technical")),
                 "extractionProfile": envelope.get("extractionProfile", metadata.get("extractionProfile", "general-technical")),
-                "domain": envelope.get("domain", "yashandb"),
-                "domainContextVersion": envelope.get("domainContextVersion", "yashandb-domain:1.0.0"),
+                "domain": envelope.get("domain", runtime_profile.domain_id),
+                "domainContextVersion": envelope.get("domainContextVersion", runtime_profile.domain_version),
+                "enterpriseProfileId": envelope.get("enterpriseProfileId", runtime_profile.profile_id),
+                "enterpriseProfileVersion": envelope.get("enterpriseProfileVersion", runtime_profile.profile_version),
+                "configFingerprint": envelope.get("configFingerprint", runtime_profile.config_fingerprint),
                 "skillId": "knowledge-extraction",
                 "skillVersion": skill_version,
                 "promptVersion": f"knowledge-extraction:{skill_version}",

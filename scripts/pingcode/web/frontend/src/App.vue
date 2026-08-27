@@ -1,7 +1,9 @@
 <script setup>
 import { onMounted, ref } from 'vue'
-import { request } from './api'
-import { TERMS } from './material-ui'
+import { request, runtimeBrand } from './api'
+import { materialTerms } from './material-ui'
+
+const TERMS = materialTerms(runtimeBrand())
 
 const status = ref({ pingcode: { session: 'not_checked' }, activeTasks: 0 })
 const statusError = ref('')

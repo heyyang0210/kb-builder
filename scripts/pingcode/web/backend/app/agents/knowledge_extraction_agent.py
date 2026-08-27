@@ -21,6 +21,7 @@ from .base_agent import BaseAgent, AgentTask, AgentResult
 from .workflow_engine import WorkflowEngine, WorkflowStep
 from .tools.extraction_tool import ExtractionTool
 from .tools.validation_tool import ValidationTool
+from ..config import runtime_profile
 
 logger = logging.getLogger(__name__)
 
@@ -418,8 +419,11 @@ class KnowledgeExtractionWorkflowAgent(BaseAgent):
         return {
             "documentType": task.get("document_type", "general_technical"),
             "extractionProfile": profile,
-            "domain": "yashandb",
-            "domainContextVersion": "yashandb-domain:1.0.0",
+            "domain": runtime_profile.domain_id,
+            "domainContextVersion": runtime_profile.domain_version,
+            "enterpriseProfileId": runtime_profile.profile_id,
+            "enterpriseProfileVersion": runtime_profile.profile_version,
+            "configFingerprint": runtime_profile.config_fingerprint,
             "domainContextHits": [f"{item['candidateType']}:{item['value']}" for item in anchors],
             "profileGuidance": profile_guidance[:4000],
             "domainContext": {"matchedAnchors": anchors},

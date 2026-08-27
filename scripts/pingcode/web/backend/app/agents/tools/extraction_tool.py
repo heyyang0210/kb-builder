@@ -16,6 +16,7 @@ from typing import Any, Dict, List
 from pathlib import Path
 
 from jsonschema import ValidationError, validate
+from ...config import runtime_profile
 
 logger = logging.getLogger(__name__)
 
@@ -241,7 +242,7 @@ class ExtractionTool:
         normalized = dict(envelope or {})
         normalized.setdefault("documentType", "general_technical")
         normalized.setdefault("extractionProfile", "general-technical")
-        normalized.setdefault("domain", "yashandb")
+        normalized.setdefault("domain", runtime_profile.domain_id)
         normalized.setdefault("schemaVersion", "3.0.0")
         normalized_chunks = []
         for raw_chunk in normalized.get("chunks") or []:
@@ -393,7 +394,7 @@ class ExtractionTool:
         envelope = {
             "documentType": document.get("documentType", "general_technical"),
             "extractionProfile": profile,
-            "domain": "yashandb",
+            "domain": runtime_profile.domain_id,
             "chunks": [chunk],
             "schemaVersion": "3.0.0"
         }

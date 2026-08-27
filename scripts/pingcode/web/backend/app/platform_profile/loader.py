@@ -126,12 +126,13 @@ def resolve_resources(profile, repository_root):
             fail("PROFILE_PATH_FORBIDDEN", "资源真实路径越过仓库边界", "SYMLINK_ESCAPE", config_path)
         if not real.is_file():
             fail("PROFILE_VALIDATION_FAILED", "资源引用必须指向普通文件", "RESOURCE_NOT_FILE", config_path)
-        resources.append({"reference": reference, "digest": hashlib.sha256(real.read_bytes()).hexdigest()})
+        resources.append({"reference": reference, "digest": hashlib.sha256(real.read_bytes()).hexdigest(), "path": real})
     return resources
 
 
 def build_context(profile, resources, env, secret_resolver=None):
-    digest = hashlib.sha256(canonical_json({"profile": profile, "resources": resources}).encode("utf-8")).hexdigest()
+    fingerprint_resources = [{"reference": item["reference"], "digest": item["digest"]} for item in resources]
+    digest = hashlib.sha256(canonical_json({"profile": profile, "resources": fingerprint_resources}).encode("utf-8")).hexdigest()
     connectors = []
     for connector in profile["connectors"]:
         configured = all(
