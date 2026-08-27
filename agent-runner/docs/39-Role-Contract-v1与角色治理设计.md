@@ -1,7 +1,7 @@
 # Role Contract v1 与角色治理设计
 
 > 版本：V1.0
-> 日期：2026-08-20
+> 日期：2026-08-21
 > 状态：G1 设计试行；本轮不使用多角色编排，运行时强制尚未实现
 
 ## 1. 目标与非目标
@@ -9,6 +9,8 @@
 本设计先将 `.codex/roles/` 从长短不一的自然语言提示词，收敛为稳定且可独立执行的 Role Contract。Role 回答凭什么开始、只能做什么、交付什么证据、由谁宣布完成；重复的工作方法仅作为 Skill 候选，经过任务样本论证和人工批准后才考虑实现与装载。
 
 本阶段不实现 JSON Schema、编排器强制、Policy 配置或历史任务迁移，也不改变现有 Workflow 引擎的运行状态。
+
+Role Contract 只约束角色被启用后的权限和证据，不要求每个任务实例化全部角色。任务先按 [Task Routing Contract v1](./40-Task-Routing-Contract-v1与最小角色路径设计.md) 选择直接处理、标准开发或治理任务；下述完整接口和状态机仅适用于治理任务。
 
 ## 2. 设计原则
 
@@ -40,6 +42,7 @@ doesNotOwn: [architecture-approval, verification, acceptance]
 ```yaml
 taskId: TASK-...
 runId: run-...
+routeDecisionId: route-...
 roleId: backend-worker
 roleVersion: 1.0.0
 contextId: context-...
@@ -47,6 +50,7 @@ policyVersion: role-policy@...
 inputArtifactIds: []
 allowedFiles: []
 approvalRefs: []
+responsibilityBindingRef: binding-...
 ```
 
 必需输入缺失时返回 `blocked`，不得自行补造产品、架构或审批事实。
@@ -56,6 +60,7 @@ approvalRefs: []
 ```yaml
 taskId: TASK-...
 runId: run-...
+routeDecisionId: route-...
 roleId: backend-worker
 roleVersion: 1.0.0
 policyVersion: role-policy@...
@@ -68,11 +73,16 @@ commands:
 knownRisks: []
 unresolvedItems: []
 escalationTarget: null
+supersedes: null
 ```
 
 `requestedTransition` 是请求，不是角色对任务事实状态的直接覆写。
 
-## 4. 文档治理状态机
+治理任务的角色结果必须关联有效的 `routeDecisionId` 和责任绑定引用。标准开发只报告实际产物和验证证据，不调用本结果信封，也不能将执行者自检表述为独立验证。
+
+## 4. 治理任务状态机
+
+普通标准开发不使用本状态机，只执行“设计检查 -> 实施 -> 验证”。
 
 ```text
 draft -> pending -> in_progress -> ready_for_test
@@ -115,8 +125,8 @@ Independent Reviewer 的 `hold/stop/escalate` 是审查状态，不等同于任�
 
 ## 6. 测试证据分层
 
-- 单元测试允许受控替身以隔离外部依赖，但不得作为 G3 真实后端验收证据。
-- 后端 G3 验收必须调用真实启动的后端 API，记录请求、响应、环境和证据 ID。
+- 单元测试允许受控替身以隔离外部依赖，但不得作为治理任务的正式后端验收证据。
+- 治理任务的正式后端验收必须调用真实启动的后端 API，记录请求、响应、环境和证据 ID。
 - 外部第三方服务可在开发测试中使用契约沙箱，但必须存在独立的真实联通验证。
 - 覆盖率、时延、性能和重试阈值由当期 `policyVersion` 给出；策略缺失时不伪造默认数值。
 
@@ -124,6 +134,8 @@ Independent Reviewer 的 `hold/stop/escalate` 是审查状态，不等同于任�
 
 ```text
 function executeRole(context, contract, policy):
+    if not isActiveRouteDecision(context.routeDecisionId, context.responsibilityBindingRef):
+        return blocked("stale-or-unbound-route", "router-or-project-manager")
     if not validateRequiredInputs(context, contract):
         return blocked("missing-required-input", contract.escalationTarget)
     if not isApprovedPolicy(policy, context.policyVersion):

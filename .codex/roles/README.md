@@ -2,7 +2,19 @@
 
 `.codex/roles/` 定义整个项目开发团队的稳定职责、权限、状态和证据边界。具体工作方法在未来经评估后可下沉为 `.codex/plugins/` 中的 Skill，但未批准 Skill 不是当前 Role 的运行依赖。
 
-详细接口、状态机和 Skill 候选论证见 [Role Contract v1 与角色治理设计](../../agent-runner/docs/39-Role-Contract-v1与角色治理设计.md)。
+详细接口、状态机和 Skill 候选论证见 [Role Contract v1 与角色治理设计](../../agent-runner/docs/39-Role-Contract-v1与角色治理设计.md)。是否实例化角色及其最小组合由 [Task Routing Contract v1](../../agent-runner/docs/40-Task-Routing-Contract-v1与最小角色路径设计.md) 决定；人工审批判断只依据 [Approval Boundary v1](../../agent-runner/docs/41-Approval-Boundary-v1人工审批边界.md)。
+
+## 路由优先
+
+- 团队目标是人类治理下的边界自治；Role 和 Skill 都不能授予业务决策权或残余风险接受权。
+- 九个角色是完整团队的职责目录，不是每个任务的固定运行实例。
+- 直接处理不实例化角色；标准开发只加载完成设计、实施或验证所需的角色。
+- Project Manager、Independent Reviewer 和完整治理状态只用于治理任务、项目级推进或用户明确要求。
+- 每增加一个角色必须带来独立设计、验证、反证、协调或治理价值。
+
+## 上下文装载
+
+角色文档是按需参考，不是每次任务的固定 Prompt。直接处理通常只读取任务目标、相关文件和最小验收信息；标准开发按需加载相关 Role；审批和治理角色只在治理任务中加载。
 
 ## 角色地图
 
@@ -20,11 +32,11 @@
 
 ## 公共输入与结果
 
-角色开始前至少确认 `taskId`、`runId`、`roleId/roleVersion`、`policyVersion`、输入产物、`allowedFiles` 和审批引用。必需事实缺失时返回 `blocked` 或 `needs_decision`，不得自行补造。
+角色开始前确认与本次责任相关的最小输入：任务目标、输入产物、允许文件和路由结论；若任务触及审批边界，再补充 `approvalRequired`、`approvalReason` 和 `approvalRefs`。影响事实不完整时补充 `approvalAssessment`；不需要的字段不要求模型重复生成。
 
-结果至少包含 outcome、请求的状态迁移、变更产物、证据 ID、命令与退出码、已知风险、未解决项和升级目标。角色只能请求它有权的迁移。
+标准开发结果只需包含实际产物、验证证据、已知限制和需要升级的事项。治理任务再增加任务 ID、审批引用、审查结论和状态迁移；Role、Skill 和模型判断都不能创建或扩大人工授权。
 
-## 状态所有权
+## 治理任务状态所有权
 
 ```text
 draft -> pending -> in_progress -> ready_for_test
@@ -33,11 +45,13 @@ verified -> accepted
 ```
 
 - Planner 创建 `draft`。
-- Project Manager 执行准入、阻塞管理和最终接受。
+- Project Manager 执行准入、阻塞管理和流程状态迁移；是否接受产品结果或残余风险仍按任务实际边界由有权人决定，不因角色名称自动获得批准权。
 - Worker 只请求 `in_progress` 和 `ready_for_test`。
 - Test Engineer 输出 `verified/rejected`。
 - Reporter 只投影已存在事实。
 - 历史 `completed` 暂作为 `accepted` 的兼容别名；本轮不改写历史数据或运行时。
+
+上述状态机只适用于治理任务。普通标准开发只走“设计检查 -> 实施 -> 验证”，不创建这些状态。
 
 ## Skill 候选边界
 

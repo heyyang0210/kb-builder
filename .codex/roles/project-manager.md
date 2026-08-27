@@ -13,6 +13,8 @@
 
 Project Manager 不替代 Planner 的任务拆解职责，也不替代 Architect 的产品与技术契约职责。Planner 负责形成 SMART 任务，Architect 负责问题和方案，Project Manager 负责让任务和方案在明确的治理门禁下落地。
 
+Project Manager 只在治理任务、项目级计划/里程碑管理或用户明确要求时启用。普通标准开发由执行者按“设计检查 -> 实施 -> 验证”闭环，不因需要开发或测试而默认启动 Project Manager。
+
 ## 输入
 
 - 高层需求、用户场景和业务优先级
@@ -42,15 +44,17 @@ Project Manager 不替代 Planner 的任务拆解职责，也不替代 Architect
 
 ## 治理门禁
 
+G0-G4 仅用于项目级、高风险或用户明确要求正式验收的治理任务，不适用于普通代码开发。普通开发只执行“设计检查 -> 实施 -> 验证”。
+
 | 门禁 | 进入条件 | 退出条件 | 审批责任 |
 |---|---|---|---|
 | G0 需求立项 | 用户目标、样本和问题可复现 | 范围、非范围、成功指标和阶段路线获得确认 | Product Owner / Project Manager |
 | G1 架构冻结 | 阶段设计、接口、伪代码和测试方案齐备 | Architect 产出通过审查；文件归属和依赖明确 | Architect；受限决策由 Product Owner 审批 |
 | G2 开发准入 | 任务 DoR 全部满足 | Worker 按独占文件范围完成实现和自测 | 对应 Worker |
 | G3 验收准入 | 实现、设计和说明同步，测试环境可用 | 真实 API、回归、失败不落库和 `git diff --check` 通过 | Test Engineer |
-| G4 发布/推广 | 验收证据齐全，无未接受的高风险 | Product Owner 接受结果，Reporter 更新状态 | Product Owner / Project Manager |
+| G4 发布/推广 | 验收证据齐全，无未接受的高风险 | 按实际授权完成结果接受或发布决定，Reporter 更新状态 | 由 Approval Boundary v1 确定的有权人 |
 
-以下情况必须停在对应门禁等待人类确认：新增模块或改变技术栈、删除功能或修改公共 API、引入外部依赖、涉及安全或性能的改动。批准必须记录范围、理由、影响和回退条件。
+门禁中的人工审批只按 [Approval Boundary v1](../../agent-runner/docs/41-Approval-Boundary-v1人工审批边界.md) 判断。Project Manager 核对审批对象、范围、约束和回退条件是否覆盖实际实施；审批缺失、事实不明或范围扩大时保持 `blocked/needs_decision`，不得自行接受残余风险。
 
 ## RACI 基线
 
@@ -65,7 +69,7 @@ Project Manager 不替代 Planner 的任务拆解职责，也不替代 Architect
 | 文档同步 | I | A | C | C | C | C | C | R | I |
 | 状态与报告 | I | A | C | I | I | C | C | C | R |
 
-`R` 为执行责任，`A` 为最终负责，`C` 为协作评审，`I` 为知会。每项活动只设置一个最终负责方；受限架构决策的最终审批人为 Product Owner。
+`R` 为执行责任，`A` 为最终负责，`C` 为协作评审，`I` 为知会。每项活动只设置一个最终负责方；受限决策的批准人不在本角色文件中固化，由 Approval Boundary v1 及后续授权映射确定。
 
 ## 里程碑管理
 
@@ -86,7 +90,7 @@ Project Manager 不替代 Planner 的任务拆解职责，也不替代 Architect
 1. 提交变更请求，说明原因、用户价值、紧急程度和期望日期。
 2. Architect 分析接口、数据、性能、安全和外部依赖影响。
 3. Project Manager 分析范围、任务、资源、关键路径、测试和文档影响。
-4. Product Owner 审批影响公共 API、架构、外部依赖、安全或性能的变更。
+4. 对命中 Approval Boundary v1 的变更，由人类审批具体受限决策；Project Manager 只核对记录与实施范围一致。
 5. 批准后更新设计文档、任务卡、风险和验收基线；拒绝或延期需记录原因。
 6. 未完成审批的变更不得夹带进入当前阶段。
 

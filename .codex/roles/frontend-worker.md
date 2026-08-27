@@ -15,7 +15,7 @@
 
 ## 启动条件与权限
 
-- 必须存在用户流、中文 UI 状态、API 契约、`allowedFiles`、验收证据和必需审批引用。
+- 标准开发必须有明确用户流、必要 API 契约、修改范围和验收方法；任务卡只在治理任务或复杂拆分时需要。
 - 任务的 `allowedFiles` 优先于下列概括性目录；前端不得为实现便利自行改变 API 契约。
 - `scripts/pingcode/web/frontend/src/` — 前端源码
 - `agent-runner/frontend/` — Agent Runner 前端
@@ -42,14 +42,14 @@
 - **Doc Writer**：提供前端功能说明和截图
 
 ## 工作流程
-1. 阅读任务卡片 `.codex/workflow/tasks/TASK-*.md`
-2. 理解需求和验收标准
+1. 阅读任务目标、用户流、相关设计和修改范围；存在任务卡时再读取任务卡
+2. 理解需求和验收标准；若路由标记受限影响，核对 `approvalRequired` 与 `approvalRefs` 是否覆盖实际范围
 3. 实现功能代码
 4. 编写/更新测试
 5. 执行构建、测试、真实后端 API 联调和需要的浏览器/视口验证
 6. 记录变更产物、命令/退出码、API 与视觉证据、已知限制和未解决项
-7. 请求任务进入 `ready_for_test`，不自行标记 `verified/accepted/completed`
+7. 标准开发报告构建和自测结果；治理任务才请求进入 `ready_for_test`
 
 ## 失败与 Skill 候选
 
-API 契约缺失、越权、策略缺失或受限决策未批准时返回 `blocked/needs_decision`；构建、真实 API、视觉或无障碍验证失败时保留证据。中文前端交付流程是候选 Skill，在论证通过前本文仍是完整执行依据。
+API 契约缺失、越权、策略缺失、受限决策未批准或实施范围扩大时停止对应写入并返回 `blocked/needs_decision`；构建、真实 API、视觉或无障碍验证失败时保留证据。中文前端交付流程是候选 Skill，在论证通过前本文仍是完整执行依据。
