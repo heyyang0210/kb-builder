@@ -37,7 +37,7 @@ agent-runner/docs/
 
 | moduleId | 业务职责 | 主要代码边界 | 设计文档入口 |
 |---|---|---|---|
-| `platform-foundation` | 服务入口、API 基础设施、配置、持久化和文档治理 | `server.js`、`routes/` 公共层、`lib/config-*`、`lib/process-store.js`、`skills/reconcile-docs/` | [模块入口](./modules/platform-foundation/README.md) |
+| `platform-foundation` | 服务入口、API 基础设施、企业能力包配置、持久化和文档治理 | `server.js`、`frontend-server.js`、`routes/` 公共层、`lib/config-*`、`lib/process-store.js`、`skills/reconcile-docs/` | [模块入口](./modules/platform-foundation/README.md) |
 | `generation-workflow` | 文档生成工作流、步骤执行、Agent 与直接生成 | `lib/workflow-engine.js`、`lib/step-executor.js`、`lib/agents/`、`lib/direct-generate/` | `modules/generation-workflow/` |
 | `outline-management` | 大纲上传、解析、预检、评分和落库 | `routes/outline.js`、前端大纲交互、`outlines/` | [模块入口](./modules/outline-management/README.md) |
 | `knowledge-graph-governance` | 图谱质量概览、问题诊断、证据联动和版本运营 | PingCode 资料平台图谱前后端 | [模块入口](./modules/knowledge-graph-governance/README.md) |
