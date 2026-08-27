@@ -7,6 +7,7 @@ const TERMS = materialTerms(runtimeBrand())
 
 const status = ref({ pingcode: { session: 'not_checked' }, activeTasks: 0 })
 const statusError = ref('')
+const showMigrationNotice = ref(true)
 
 async function loadStatus() {
   try {
@@ -36,6 +37,10 @@ onMounted(loadStatus)
         <button class="button ghost small" @click="loadStatus">刷新</button>
       </div>
     </header>
+    <div v-if="showMigrationNotice" class="legacy-migration-notice" role="status">
+      <span>这是资料加工专业工作区。可从 <a href="/knowledge-center/">知识中心建设平台</a> 查看统一工作入口；当前批次和页面路径保持不变。</span>
+      <button class="button ghost small" type="button" @click="showMigrationNotice = false">知道了</button>
+    </div>
     <aside class="sidebar">
       <router-link to="/workbench">工作台</router-link>
       <router-link to="/knowledge">知识点索引</router-link>

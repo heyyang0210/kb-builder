@@ -26,7 +26,12 @@
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; background: var(--bg); color: var(--text); height: 100vh; overflow: hidden; }
-.app { display: grid; grid-template-columns: 300px 1fr; grid-template-rows: 56px 40px 1fr; height: 100vh; }
+.app { display: grid; grid-template-columns: 300px 1fr; grid-template-rows: 56px auto 40px minmax(0, 1fr); height: 100vh; }
+.legacy-migration-notice { grid-column: 1 / -1; grid-row: 2; display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 40px; padding: 6px 16px; color: #15433e; background: #e7f1ef; border-bottom: 1px solid #b9d5d0; font-size: 12px; }
+.legacy-migration-notice[hidden] { display: none; }
+.legacy-migration-notice p { margin: 0; }
+.legacy-migration-notice a { color: #075048; font-weight: 600; }
+.legacy-migration-notice button { min-height: 30px; padding: 3px 10px; border: 1px solid #8ebbb4; border-radius: 6px; color: #15433e; background: transparent; cursor: pointer; }
 .header { grid-column: 1 / -1; grid-row: 1; background: var(--primary); color: #fff; display: flex; align-items: center; justify-content: space-between; padding: 0 20px; }
 .header h1 { font-size: 18px; font-weight: 600; }
 .header-actions { display: flex; gap: 12px; align-items: center; }
@@ -322,7 +327,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sa
 .output-edit-hint { font-size: 11px; color: var(--success); margin-top: 6px; display: none; }
 .output-edit-hint.show { display: block; }
 
-.copy-toast { position: fixed; top: 70px; right: 20px; background: var(--success); color: #fff; padding: 10px 20px; border-radius: var(--radius); font-size: 13px; opacity: 0; transition: opacity .3s; z-index: 999; }
+.copy-toast { position: fixed; top: 70px; right: 20px; background: var(--success); color: #fff; padding: 10px 20px; border-radius: var(--radius); font-size: 13px; opacity: 0; transition: opacity .3s; z-index: 999; pointer-events: none; }
 .copy-toast.show { opacity: 1; }
 .batch-panel { background: var(--warning-light); border: 1px solid var(--warning); border-radius: var(--radius); padding: 16px; margin-bottom: 16px; }
 .batch-panel h3 { font-size: 14px; margin-bottom: 8px; color: var(--warning); }
@@ -965,7 +970,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sa
 /* Tab Bar */
 .tab-bar {
   grid-column: 1 / -1;
-  grid-row: 2;
+  grid-row: 3;
   display: flex;
   align-items: center;
   padding: 0 20px;
@@ -1017,13 +1022,13 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sa
 /* Sidebar 位置调整 */
 .sidebar {
   grid-column: 1;
-  grid-row: 3;
+  grid-row: 4;
 }
 
 /* Main 位置调整 */
 .main {
   grid-column: 2;
-  grid-row: 3;
+  grid-row: 4;
 }
 
 /* Tab 切换动画 */
@@ -1287,6 +1292,11 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sa
       <button onclick="toggleBatchMode()" id="batchToggle">📦 批量模式</button>
       <button onclick="toggleTheme()">🌓 主题</button>
     </div>
+  </div>
+
+  <div class="legacy-migration-notice" id="legacyMigrationNotice" role="status">
+    <p>这是文档生成专业工作区。可从 <a href="/knowledge-center/">知识中心建设平台</a> 查看统一工作入口；当前页面和任务路径保持不变。</p>
+    <button type="button" onclick="dismissLegacyMigrationNotice()">知道了</button>
   </div>
 
   <!-- Tab Bar -->
@@ -8760,6 +8770,8 @@ function toggleSidebar() {
 
 // 页面加载时恢复 Sidebar 状态
 document.addEventListener('DOMContentLoaded', () => {
+  const migrationNotice = document.getElementById('legacyMigrationNotice');
+  if (migrationNotice && localStorage.getItem('knowledgeCenterMigrationNoticeDismissed') === 'true') migrationNotice.hidden = true;
   const saved = localStorage.getItem('sidebarCollapsed');
   if (saved === 'true') {
     const sidebar = document.getElementById('sidebar');
@@ -8772,6 +8784,12 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   syncDocumentLayoutControls();
 });
+
+function dismissLegacyMigrationNotice() {
+  const notice = document.getElementById('legacyMigrationNotice');
+  if (notice) notice.hidden = true;
+  localStorage.setItem('knowledgeCenterMigrationNoticeDismissed', 'true');
+}
 
 // 文档管理面板 - Document Management Panel (v2)
 // ============================================

@@ -22,9 +22,11 @@ body { margin: 0; min-width: 1024px; }
 button, input, select { font: inherit; }
 button { cursor: pointer; }
 
-.app-shell { display: grid; grid-template-columns: 220px 1fr; grid-template-rows: 58px calc(100vh - 58px); }
+.app-shell { display: grid; grid-template-columns: 220px 1fr; grid-template-rows: 58px auto minmax(0, 1fr); min-height: 100vh; }
 .topbar { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; padding: 0 22px; color: white; background: #183b66; }
 .subtitle { margin-left: 12px; font-size: 13px; color: #c8d8ec; }
+.legacy-migration-notice { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 40px; padding: 6px 14px; color: #15433e; background: #e7f1ef; border-bottom: 1px solid #b9d5d0; font-size: 12px; }
+.legacy-migration-notice a { color: #075048; font-weight: 600; }
 .status-row { display: flex; align-items: center; gap: 9px; font-size: 13px; }
 .status-dot { width: 8px; height: 8px; border-radius: 50%; }
 .status-dot.success { background: #53d68a; }

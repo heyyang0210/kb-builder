@@ -1352,3 +1352,11 @@ Role 定义“谁有权负责”，Route 决定“本次是否需要他负责”
 - 实现：新增 `/knowledge-center/` 静态外壳，读取聚合运行上下文，展示企业能力包和两个独立工作区；单模块故障禁用对应入口，保留另一入口与刷新动作。
 - 验证：隔离网关静态路由 200；Playwright Chromium 桌面、1024、平板、375px 及单模块降级共 5/5，无页面级横向溢出。
 - 风险：旧入口迁移提示和完整兼容回归尚未实现，分别进入 TASK-KPG-09/10；Playwright 报告和截图不写入仓库。
+
+#### 补充记录：TASK-KPG-09 旧入口迁移提示与兼容
+
+- 时间：2026-08-27 20:41:00
+- 实现：文档生成和资料加工旧入口均增加可关闭、非阻断的 `/knowledge-center/` 迁移提示；保留查询参数、深链和既有 API，不执行重定向。
+- 纠偏：Playwright 发现文档生成页既有 `copyToast` 浮层拦截提示按钮，补充 `pointer-events: none`，恢复真实点击链路。
+- 验证：Python 前端 `npm run build`；Playwright Chromium 兼容测试 3/3，旧入口 URL、迁移链接和 PingCode API 代理均通过。
+- 边界：Socket.IO、SSE、完整旧 API 和四视口兼容在 TASK-KPG-10 继续验证；历史领域文案不作为运行时硬编码缺陷机械清理。
