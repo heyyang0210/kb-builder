@@ -30,6 +30,11 @@ class BaseAgent {
     };
   }
 
+  getEnterpriseName() {
+    const { getBrand } = require('../platform-profile/runtime-profile');
+    return getBrand().enterpriseName || 'YashanDB';
+  }
+
   async execute(input, stepConfig = {}) {
     const startTime = Date.now();
 
@@ -125,7 +130,8 @@ class BaseAgent {
         duration,
         tokens: response.usage,
         model: response.model,
-        provider: response.provider
+        provider: response.provider,
+        profile: require('../platform-profile/runtime-profile').getTrace()
       }
     };
   }
@@ -171,18 +177,27 @@ class BaseAgent {
   }
 
   loadPromptTemplate(templateName) {
-    const fs = require('fs');
-    const path = require('path');
-    const templatePath = path.join(__dirname, '..', '..', '..', 'prompts', templateName);
-
     try {
-      const content = fs.readFileSync(templatePath, 'utf-8');
-      logger.info(`[${this.name}] Loaded prompt template: ${templateName}`);
-      return content;
+      const { readResource } = require('../platform-profile/runtime-profile');
+      const resource = readResource('prompts', this.name);
+      logger.info(`[${this.name}] Loaded registered prompt resource`, {
+        resource: resource.reference,
+        version: resource.version
+      });
+      return resource.content;
     } catch (err) {
-      logger.warn(`[${this.name}] Prompt template not found: ${templateName}, using inline prompt`);
-      return null;
+      // Unit-level consumers can construct agents without the production server bootstrap.
+      if (!global.__KNOWLEDGE_PLATFORM_PROFILE_RUNTIME__) {
+        return null;
+      }
+      logger.error(`[${this.name}] Registered prompt resource unavailable: ${err.message}`);
+      throw err;
     }
+  }
+
+  getAgentResource() {
+    if (!global.__KNOWLEDGE_PLATFORM_PROFILE_RUNTIME__) return null;
+    return require('../platform-profile/runtime-profile').getResource('agents', this.name);
   }
 }
 

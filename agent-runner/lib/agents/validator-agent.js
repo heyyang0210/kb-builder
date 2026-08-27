@@ -40,7 +40,7 @@ class ValidatorAgent extends BaseAgent {
     const systemPrompt = template || '请验证文档质量并生成验证报告 JSON。';
 
     return [
-      { role: 'system', content: '你是 YashanDB 知识库文档质量审核专家，负责验证文档是否符合质量标准。' },
+      { role: 'system', content: `你是 ${this.getEnterpriseName()} 知识库文档质量审核专家，负责验证文档是否符合质量标准。` },
       { role: 'user', content: `${systemPrompt}\n\n${criteriaInfo}\n## 待验证文档\n\n${input.document}` }
     ];
   }

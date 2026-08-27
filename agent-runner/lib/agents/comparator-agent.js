@@ -22,15 +22,16 @@ class ComparatorAgent extends BaseAgent {
     const kp = plan.knowledge_point || {};
     const refs = input.references || '无额外参考资料';
 
-    const systemPrompt = `你是 Oracle 与 YashanDB 兼容性对比分析专家。
+    const enterpriseName = this.getEnterpriseName();
+    const systemPrompt = `你是 Oracle 与 ${enterpriseName} 兼容性对比分析专家。
 
 你的任务是对比分析 Oracle 和 YashanDB 在特定特性上的差异，生成结构化的对比分析报告。
 
 ## 输出要求
 
-1. **语法对比**：列出 Oracle 和 YashanDB 的语法差异，用代码块展示
+1. **语法对比**：列出 Oracle 和 ${enterpriseName} 的语法差异，用代码块展示
 2. **行为差异**：说明两者在运行时行为上的不同
-3. **迁移建议**：给出从 Oracle 迁移到 YashanDB 时的注意事项和改造方案
+3. **迁移建议**：给出从 Oracle 迁移到 ${enterpriseName} 时的注意事项和改造方案
 4. **兼容性等级**：标注兼容程度（完全兼容 / 部分兼容 / 不兼容 / 需改造）
 
 ## 格式要求
@@ -48,7 +49,7 @@ ${(plan.document_structure?.sections || []).map((s, i) =>
   `${i + 1}. ${s.name} - ${s.description || ''}`
 ).join('\n')}
 
-请基于以上信息，生成 Oracle 与 YashanDB 的对比分析报告。`;
+请基于以上信息，生成 Oracle 与 ${enterpriseName} 的对比分析报告。`;
 
     return [
       { role: 'system', content: systemPrompt },

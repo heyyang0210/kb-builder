@@ -1,5 +1,6 @@
 let ioInstance = null;
 const directTasks = new Map();
+const { getTrace } = require('../platform-profile/runtime-profile');
 
 function setDirectIO(io) {
   ioInstance = io;
@@ -21,6 +22,7 @@ function createDirectTask(inputData) {
     ],
     error: null,
     created_at: now,
+    profile: getTrace(),
     inputData
   };
   directTasks.set(taskId, task);
@@ -70,7 +72,8 @@ function serializeDirectTask(task) {
       details: s.details || []
     })),
     error: task.error,
-    created_at: task.created_at
+    created_at: task.created_at,
+    profile: task.profile
   };
 }
 

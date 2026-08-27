@@ -12,6 +12,7 @@ const contextAssembler = require('../retrieval/context-assembler');
 const ProcessStore = require('../process-store');
 const RetrievalStrategy = require('../retrieval-strategy');
 const { writeDirectExecutionLog } = require('./execution-log');
+const { getBrand, getResourceByReference, getTrace } = require('../platform-profile/runtime-profile');
 const {
   setDirectStep,
   addDirectDetail,
@@ -85,7 +86,8 @@ async function executeDirectGenerate(req, task) {
     mode: req.body.mode,
     debug: debugMode,
     output_path,
-    filename: docFilename
+    filename: docFilename,
+    profile: getTrace()
   });
 
   try {
@@ -330,7 +332,8 @@ async function executeDirectGenerate(req, task) {
     let templateContent = '';
     if (templatePath) {
       try {
-        templateContent = await fs.readFile(path.join(basePath, templatePath), 'utf-8');
+        const reference = templatePath.replace(/^(?:\.\.\/)+/, '');
+        templateContent = await fs.readFile(getResourceByReference(reference).path, 'utf-8');
       } catch (err) {
         logger.warn(`[direct_generate] Failed to read template: ${templatePath}`);
       }
@@ -341,7 +344,8 @@ async function executeDirectGenerate(req, task) {
     logger.info(`[direct_generate] skillPath: ${skillPath}`);
     if (skillPath) {
       try {
-        skillContent = await fs.readFile(path.join(basePath, skillPath), 'utf-8');
+        const reference = skillPath.replace(/^(?:\.\.\/)+/, '');
+        skillContent = await fs.readFile(getResourceByReference(reference).path, 'utf-8');
         logger.info(`[direct_generate] Skill file loaded, length: ${skillContent.length}`);
       } catch (err) {
         logger.warn(`[direct_generate] Failed to read skill: ${skillPath}, error: ${err.message}`);
@@ -355,7 +359,8 @@ async function executeDirectGenerate(req, task) {
 
     const llm = new LLMClient(modelConfig);
     const currentDate = new Date().toISOString().split('T')[0];
-    const systemPrompt = `你是 YashanDB 知识库文档撰写专家。当前使用直写模式，必须像 Codex 本地执行一样严格遵守原始提示词和模板全文。
+    const enterpriseName = getBrand().enterpriseName || 'YashanDB';
+    const systemPrompt = `你是 ${enterpriseName} 知识库文档撰写专家。当前使用直写模式，必须像 Codex 本地执行一样严格遵守原始提示词和模板全文。
 
 硬性要求：
 1. 原始提示词优先级高于中间摘要，不得遗漏用户明确要求。

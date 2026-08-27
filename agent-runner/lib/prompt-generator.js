@@ -30,7 +30,13 @@ function getSkillFile(type) {
     "SQL/开发参考": "../skills/05-SQL开发参考-skill.md",
     "兼容性差异": "../skills/06-兼容性差异-skill.md"
   };
-  return map[type] || map["通用基础"];
+  const reference = map[type] || map["通用基础"];
+  const runtime = global.__KNOWLEDGE_PLATFORM_PROFILE_RUNTIME__;
+  if (runtime) {
+    const { getResourceByReference } = require('./platform-profile/runtime-profile');
+    getResourceByReference(`skills/${reference.split('/').pop()}`);
+  }
+  return reference;
 }
 
 function getTemplateFile(type) {
@@ -43,7 +49,13 @@ function getTemplateFile(type) {
     "SQL/开发参考": "../templates/06-SQL开发参考类模板.md",
     "兼容性差异": "../templates/07-兼容性差异类模板.md"
   };
-  return map[type] || map["通用基础"];
+  const reference = map[type] || map["通用基础"];
+  const runtime = global.__KNOWLEDGE_PLATFORM_PROFILE_RUNTIME__;
+  if (runtime) {
+    const { getResourceByReference } = require('./platform-profile/runtime-profile');
+    getResourceByReference(`templates/${reference.split('/').pop()}`);
+  }
+  return reference;
 }
 
 function getOutputPath(data) {
@@ -108,13 +120,18 @@ function getOutputPath(data) {
 }
 
 function assemblePrompt(data) {
+  const context = global.__KNOWLEDGE_PLATFORM_CONTEXT__ || {};
+  const enterpriseName = context.brand?.enterpriseName || 'YashanDB';
+  const productName = context.brand?.productName || `${enterpriseName} 知识中心`;
   const json = {
     name: data.name,
     part: data.part,
     chapter: data.chapter,
     description: data.desc,
     type: data.type,
-    target_db: data.targetDb || undefined,
+    target_db: data.targetDb || enterpriseName,
+    enterprise_profile_id: context.profileId || undefined,
+    config_fingerprint: context.configFingerprint || undefined,
     references: {},
     output_path: getOutputPath(data)
   };
@@ -129,7 +146,7 @@ function assemblePrompt(data) {
   const skillFile = getSkillFile(data.type);
   const templateFile = getTemplateFile(data.type);
 
-  const prompt = `# YashanDB 知识文档生成任务
+  const prompt = `# ${productName} 知识文档生成任务
 
 ## 前置检查
 在开始生成前，请先运行：

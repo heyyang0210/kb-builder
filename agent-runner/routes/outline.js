@@ -341,7 +341,7 @@ router.post('/generate-prompts', (req, res) => {
         chapter: kp.chapter,
         desc: kp.desc,
         type: promptGenerator.detectType(kp.name, kp.desc),
-        targetDb: options.target_db || 'YashanDB',
+        targetDb: options.target_db || global.__KNOWLEDGE_PLATFORM_CONTEXT__?.brand?.enterpriseName || 'YashanDB',
         refMcp: '',
         refDesign: '',
         refOracle: '',

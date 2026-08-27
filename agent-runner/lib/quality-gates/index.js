@@ -30,7 +30,10 @@ const DEFAULT_QUALITY_CONFIG = {
 
 function loadQualityConfig() {
   try {
-    const configPath = path.join(__dirname, '..', '..', 'config', 'quality-config.json');
+    const runtime = global.__KNOWLEDGE_PLATFORM_PROFILE_RUNTIME__;
+    const configPath = runtime
+      ? require('../platform-profile/runtime-profile').getResource('qualityRules', 'generation-quality').path
+      : path.join(__dirname, '..', '..', 'config', 'quality-config.json');
     const configText = fs.readFileSync(configPath, 'utf-8');
     return JSON.parse(configText);
   } catch {

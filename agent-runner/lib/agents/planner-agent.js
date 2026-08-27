@@ -98,7 +98,7 @@ ${input.prompt}
 \`\`\``;
 
       return [
-        { role: 'system', content: '你是 YashanDB 知识库文档规划专家，负责同时生成文档结构和检索计划。' },
+      { role: 'system', content: `你是 ${this.getEnterpriseName()} 知识库文档规划专家，负责同时生成文档结构和检索计划。` },
         { role: 'user', content: userPrompt }
       ];
     }
@@ -108,7 +108,7 @@ ${input.prompt}
     const userPrompt = `${systemPrompt}\n\n${kpInfo}${templateInfo}${promptContext}`;
 
     return [
-      { role: 'system', content: '你是 YashanDB 知识库文档规划专家，负责生成结构化的执行计划。' },
+      { role: 'system', content: `你是 ${this.getEnterpriseName()} 知识库文档规划专家，负责生成结构化的执行计划。` },
       { role: 'user', content: userPrompt }
     ];
   }

@@ -115,7 +115,7 @@ function resolveResources(profile, repositoryRoot) {
     const relative = path.relative(rootReal, real);
     if (relative.startsWith('..') || path.isAbsolute(relative)) fail('PROFILE_PATH_FORBIDDEN', '资源真实路径越过仓库边界', 'SYMLINK_ESCAPE', configPath);
     if (!fs.statSync(real).isFile()) fail('PROFILE_VALIDATION_FAILED', '资源引用必须指向普通文件', 'RESOURCE_NOT_FILE', configPath);
-    return { reference, digest: sha256(fs.readFileSync(real)) };
+    return { reference, digest: sha256(fs.readFileSync(real)), path: real };
   });
 }
 
@@ -129,6 +129,12 @@ function normalize(value) {
     }, {});
   }
   return value;
+}
+
+function deepFreeze(value) {
+  if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
+  Object.values(value).forEach(deepFreeze);
+  return Object.freeze(value);
 }
 
 function canonicalJson(value) {
@@ -145,14 +151,15 @@ function isSecretResolved(reference, env, secretResolver) {
 }
 
 function buildContext(profile, resources, env, secretResolver) {
-  const fingerprint = `sha256:${sha256(Buffer.from(canonicalJson({ profile, resources }), 'utf8'))}`;
+  const fingerprintResources = resources.map(({ reference, digest }) => ({ reference, digest }));
+  const fingerprint = `sha256:${sha256(Buffer.from(canonicalJson({ profile, resources: fingerprintResources }), 'utf8'))}`;
   const configured = profile.connectors.map(connector => ({
     id: connector.id,
     type: connector.type,
     enabled: connector.enabled,
     configured: connector.secretRefs.every(reference => isSecretResolved(reference, env, secretResolver))
   }));
-  return Object.freeze({
+  return deepFreeze({
     schemaVersion: profile.apiVersion,
     profileId: profile.metadata.id,
     enterpriseId: profile.metadata.enterpriseId,
@@ -205,4 +212,4 @@ function loadProfile(options = {}) {
   return { profile: normalize(profile), context: buildContext(profile, resources, env, options.secretResolver), resources };
 }
 
-module.exports = { DEFAULT_PROFILE_ID, ProfileError, canonicalJson, loadProfile, normalize, validateProfile };
+module.exports = { DEFAULT_PROFILE_ID, ProfileError, canonicalJson, deepFreeze, loadProfile, normalize, validateProfile };

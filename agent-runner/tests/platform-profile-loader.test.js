@@ -20,7 +20,7 @@ describe('Node 企业能力包加载器', () => {
     const pythonContext = JSON.parse(python);
     expect(pythonContext).toEqual(nodeResult.context);
     expect(nodeResult.context.configFingerprint).toMatch(/^sha256:[0-9a-f]{64}$/);
-    expect(nodeResult.resources).toHaveLength(21);
+    expect(nodeResult.resources).toHaveLength(29);
     expect(nodeResult.context.connectors).toEqual([
       { configured: true, enabled: true, id: 'local-upload', type: 'local-upload' },
       { configured: false, enabled: true, id: 'pingcode', type: 'pingcode' },

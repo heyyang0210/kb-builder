@@ -2,6 +2,7 @@ const { EventEmitter } = require('events');
 const AgentManager = require('./agent-manager');
 const { buildWorkflowGraph } = require('./langgraph-workflow');
 const logger = require('./logger');
+const { getTrace } = require('./platform-profile/runtime-profile');
 
 class WorkflowEngine extends EventEmitter {
   constructor(config = {}) {
@@ -45,6 +46,7 @@ class WorkflowEngine extends EventEmitter {
       createdAt: new Date().toISOString(),
       startTime: null,
       finalState: null,
+      profile: getTrace(),
     };
 
     this.workflows.set(taskId, workflow);
@@ -159,6 +161,7 @@ class WorkflowEngine extends EventEmitter {
       })),
       error: workflow.error,
       created_at: workflow.createdAt,
+      profile: workflow.profile,
     };
   }
 
@@ -189,6 +192,7 @@ class WorkflowEngine extends EventEmitter {
       template: input.template,
       prompt: input.prompt,
       inputData: input,
+      profile: workflow.profile,
       executionPlan: null,
       references: null,
       comparison: null,

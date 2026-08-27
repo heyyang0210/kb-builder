@@ -21,6 +21,9 @@ class AgentManager {
   }
 
   registerAgent(name, agent) {
+    if (global.__KNOWLEDGE_PLATFORM_PROFILE_RUNTIME__) {
+      agent.getAgentResource();
+    }
     this.agents.set(name, agent);
     logger.debug(`Agent registered: ${name}`);
   }

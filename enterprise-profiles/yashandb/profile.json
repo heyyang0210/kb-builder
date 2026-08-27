@@ -31,9 +31,17 @@
     { "id": "planner", "version": "1.0.0", "manifestRef": "agent-runner/lib/agents/planner-agent.js" },
     { "id": "retriever", "version": "1.0.0", "manifestRef": "agent-runner/lib/agents/retriever-agent.js" },
     { "id": "generator", "version": "1.0.0", "manifestRef": "agent-runner/lib/agents/generator-agent.js" },
-    { "id": "validator", "version": "1.0.0", "manifestRef": "agent-runner/lib/agents/validator-agent.js" }
+    { "id": "validator", "version": "1.0.0", "manifestRef": "agent-runner/lib/agents/validator-agent.js" },
+    { "id": "comparator", "version": "1.0.0", "manifestRef": "agent-runner/lib/agents/comparator-agent.js" }
   ],
   "skills": [
+    { "id": "document-general", "version": "1.0.0", "manifestRef": "skills/00-通用生成-skill.md" },
+    { "id": "document-principle", "version": "1.0.0", "manifestRef": "skills/01-理论机制-skill.md" },
+    { "id": "document-tuning", "version": "1.0.0", "manifestRef": "skills/02-实战调优-skill.md" },
+    { "id": "document-comparison", "version": "1.0.0", "manifestRef": "skills/03-架构对比-skill.md" },
+    { "id": "document-operations", "version": "1.0.0", "manifestRef": "skills/04-运维SOP-skill.md" },
+    { "id": "document-sql-reference", "version": "1.0.0", "manifestRef": "skills/05-SQL开发参考-skill.md" },
+    { "id": "document-compatibility", "version": "1.0.0", "manifestRef": "skills/06-兼容性差异-skill.md" },
     { "id": "keyword-extraction", "version": "1.1.0", "manifestRef": "scripts/pingcode/processing/skills/keyword-extraction/skill.yaml" },
     { "id": "knowledge-point-extraction", "version": "2.0.0", "manifestRef": "scripts/pingcode/processing/skills/knowledge-point-extraction/skill.yaml" }
   ],

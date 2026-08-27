@@ -146,6 +146,8 @@ loadedAt
 
 Node 与 Python 分别暴露相同语义的脱敏上下文；3500 只代理或汇聚健康结果，不重新解释企业契约。字段命名在公共 HTTP 契约中统一使用 camelCase，语言内部对象可按本地惯例实现但必须通过契约映射测试。
 
+Node 文档生成链额外维护不公开的深度只读资源注册表，按集合、资源 ID 和规范仓库相对引用索引启动时已经校验的文件。Agent Prompt、生成 Skill、模板和质量规则只能通过该注册表读取；注册表中的真实路径只用于进程内文件访问，不进入 HTTP、Socket.IO、日志摘要或配置指纹。普通 Workflow、直写任务及直写过程元数据冻结同一组 `profileId`、`enterpriseId` 和 `configFingerprint`，追加字段不得改变旧任务状态字段。
+
 接口路径固定为双端 `GET /api/platform/context` 和 3500 的 `GET /knowledge-center/api/platform/context`。单模块故障时聚合响应保持 HTTP 200 并返回 `status: degraded`；双模块故障或无法形成平台投影时返回 HTTP 503。该规则只适用于运行期模块故障，启动期能力包错误必须让对应进程非零退出。
 
 ## 7. 错误语义

@@ -17,7 +17,7 @@ class PlatformProfileLoaderTest(unittest.TestCase):
         context = dict(result["context"])
         self.assertEqual("yashandb", context["profileId"])
         self.assertRegex(context["configFingerprint"], r"^sha256:[0-9a-f]{64}$")
-        self.assertEqual(21, len(result["resources"]))
+        self.assertEqual(29, len(result["resources"]))
         self.assertEqual([
             {"configured": True, "enabled": True, "id": "local-upload", "type": "local-upload"},
             {"configured": False, "enabled": True, "id": "pingcode", "type": "pingcode"},

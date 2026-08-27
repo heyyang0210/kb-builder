@@ -42,7 +42,7 @@ class RetrieverAgent extends BaseAgent {
     const systemPrompt = template || '请根据执行计划整理参考资料文档。';
 
     return [
-      { role: 'system', content: '你是 YashanDB 知识库资料检索专家，负责整理和汇总参考资料。' },
+      { role: 'system', content: `你是 ${this.getEnterpriseName()} 知识库资料检索专家，负责整理和汇总参考资料。` },
       { role: 'user', content: `${systemPrompt}\n\n${planInfo}${retrievedContent}` }
     ];
   }

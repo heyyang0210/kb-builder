@@ -1,6 +1,6 @@
 require('dotenv').config();
 
-const { loadProfile } = require('./lib/platform-profile/profile-loader');
+const { loadProfile, deepFreeze } = require('./lib/platform-profile/profile-loader');
 const platformProfile = loadProfile();
 
 const express = require('express');
@@ -37,6 +37,15 @@ const HOST = process.env.HOST || '0.0.0.0';
 // 业务模块只读取启动时冻结的脱敏上下文，不自行读取能力包文件。
 Object.defineProperty(global, '__KNOWLEDGE_PLATFORM_CONTEXT__', {
   value: platformProfile.context,
+  writable: false,
+  configurable: false
+});
+Object.defineProperty(global, '__KNOWLEDGE_PLATFORM_PROFILE_RUNTIME__', {
+  value: deepFreeze({
+    context: platformProfile.context,
+    profile: platformProfile.profile,
+    resources: platformProfile.resources
+  }),
   writable: false,
   configurable: false
 });

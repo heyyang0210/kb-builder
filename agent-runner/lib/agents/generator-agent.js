@@ -55,7 +55,7 @@ ${(plan.document_structure?.sections || []).map((s, i) =>
       : '';
 
     return [
-      { role: 'system', content: '你是 YashanDB 知识库文档撰写专家，负责生成高质量的技术文档。' },
+      { role: 'system', content: `你是 ${this.getEnterpriseName()} 知识库文档撰写专家，负责生成高质量的技术文档。` },
       { role: 'user', content: `${systemPrompt}${retryHint}\n\n${planInfo}${comparisonSection}\n## 参考资料\n\n${refs}${feedbackSection}` }
     ];
   }
