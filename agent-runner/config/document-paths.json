@@ -13,6 +13,13 @@
       "path": "/data/docs/ai 体系认知",
       "writable": false,
       "description": "AI 体系认知知识文档"
+    },
+    {
+      "id": "knowledge-center",
+      "name": "知识中心建设平台",
+      "path": "/data/docs/AI高效应用示例/06-YashanDB知识库Skill仓库/.codex/知识中心建设平台",
+      "writable": true,
+      "description": "知识中心建设平台文档"
     }
   ]
 }

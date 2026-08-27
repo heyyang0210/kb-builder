@@ -90,6 +90,10 @@ Health check: http://localhost:4100/api/health
 
 测试服务器启动后，访问 `http://192.168.130.180:3500/prompt-generator.html`。PingCode 素材平台生产构建通过同一网关访问：`http://192.168.130.180:3500/pingcode-materials/`，其 API 由 `/pingcode-api/` 转发到本机 `127.0.0.1:8001`。前端固定连接 `http://192.168.130.180:4100` 后端。前后端进程均监听 `0.0.0.0`，需确保 Windows 宿主机已将 TCP 3500 和 4100 转发至当前运行环境，并在防火墙中放行这两个端口。
 
+文档管理预览按扩展名分流：Markdown/文本继续在宿主页面使用 Markdown 渲染；HTML/HTM 使用 sandbox iframe 加载后端 raw URL，因此能保留原文档的 CSS、脚本生命周期和相对链接。HTML 原文件必须位于 `config/document-paths.json` 已注册的根目录内。
+
+文档阅读页支持文档级评论：评论正文必填，可手工附加引用文本，并可新增或删除。评论默认持久化到 `data/document-comments.json`；当前平台尚无身份与权限系统，因此此阶段不区分评论所有者。
+
 `restart-services.sh` 对 `4100` 和 `8001` 最多等待 30 秒健康检查，避免依赖加载超过固定 2 秒时误判启动失败。
 
 1. 点击右上角 **⚙️ 配置** 按钮
@@ -284,6 +288,18 @@ GET /api/health
 | GET | `/api/agent/status/:taskId` | 查询任务状态 |
 | POST | `/api/agent/cancel/:taskId` | 取消任务 |
 | POST | `/api/agent/force-continue/:taskId` | 强制继续 |
+
+### 文档管理与原生 HTML 预览
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/document/:id/content` | 获取内容；HTML 文档额外返回 `ext` 和服务端生成的 `raw_url` |
+| GET | `/api/document/raw/:rootId/*relativePath` | 在已注册根目录内原样响应 HTML、CSS、JS、图片等资源 |
+| GET | `/api/document/:id/comments` | 获取文档评论 |
+| POST | `/api/document/:id/comments` | 新增文档评论，可附带引用文本 |
+| DELETE | `/api/document/:id/comments/:commentId` | 删除属于该文档的评论 |
+
+原文件接口只允许读取注册根目录内的普通文件，并同时校验规范化路径和真实路径，拒绝路径穿越、目录访问及根外符号链接。HTML 响应使用 `Content-Disposition: inline` 和 `X-Content-Type-Options: nosniff`；前端 iframe 不授予 `allow-same-origin`。
 
 ### WebSocket
 

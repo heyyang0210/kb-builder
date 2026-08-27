@@ -272,6 +272,39 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sa
 
 /* 任务列表 */
 .markdown-preview input[type="checkbox"] { margin-right: 8px; }
+.markdown-preview .relationship-explorer {
+  margin: 24px 0; padding: 18px; border: 1px solid var(--border);
+  border-radius: 8px; background: var(--card-bg, #fff);
+}
+.relationship-explorer-header {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
+  margin-bottom: 14px;
+}
+.relationship-explorer-title { margin: 0; font-size: 16px; color: var(--text); }
+.relationship-explorer-summary { margin: 4px 0 0; font-size: 12px; color: var(--text-secondary); }
+.relationship-explorer-groups {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(245px, 1fr)); gap: 12px;
+}
+.relationship-group {
+  min-width: 0; padding: 12px; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--bg);
+}
+.relationship-group h4 { margin: 0 0 9px; font-size: 13px; color: var(--primary); }
+.relationship-list { display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; }
+.relationship-item {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center; gap: 6px; font-size: 12px; line-height: 1.45;
+}
+.relationship-entity {
+  min-width: 0; padding: 4px 6px; border-radius: 4px; background: var(--card-bg, #fff);
+  color: var(--text); overflow-wrap: anywhere;
+}
+.relationship-arrow { color: var(--text-secondary); white-space: nowrap; font-size: 11px; }
+.relationship-details {
+  margin-top: 14px; border-top: 1px solid var(--border); padding-top: 10px;
+}
+.relationship-details summary { cursor: pointer; color: var(--text-secondary); font-size: 12px; }
+.relationship-details pre { max-height: 260px; margin: 10px 0 0; white-space: pre-wrap; }
 
 /* 可编辑状态 */
 .markdown-preview[contenteditable="true"] {
@@ -798,25 +831,107 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sa
 
 /* 工具栏 */
 .doc-viewer-toolbar {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 10px 20px; border-bottom: 1px solid var(--border); background: var(--card-bg);
-  flex-shrink: 0;
+  display: grid; grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center; gap: 20px; min-height: 68px;
+  padding: 10px 20px; border-bottom: 1px solid var(--border);
+  background: var(--card-bg); flex-shrink: 0;
 }
-.doc-viewer-title { font-size: 16px; font-weight: 600; color: var(--text); }
-.doc-viewer-actions { display: flex; gap: 6px; align-items: center; }
+.doc-viewer-heading { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.doc-viewer-breadcrumb {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--text-secondary); font-size: 11px;
+}
+.doc-viewer-title-row { min-width: 0; display: flex; align-items: center; gap: 8px; }
+.doc-viewer-title {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 18px; font-weight: 650; color: var(--text);
+}
+.doc-viewer-format {
+  flex: 0 0 auto; padding: 2px 6px; border: 1px solid var(--border);
+  border-radius: 4px; color: var(--text-secondary); font-size: 10px;
+  text-transform: uppercase; letter-spacing: .04em;
+}
+.doc-viewer-actions {
+  display: flex; gap: 6px; align-items: center; justify-content: flex-end;
+  flex-wrap: wrap;
+}
+.doc-tool-btn {
+  padding: 6px 10px; border: 1px solid var(--border); border-radius: var(--radius);
+  background: transparent; color: var(--text-secondary); cursor: pointer;
+  font-size: 12px; white-space: nowrap; transition: all .15s;
+}
+.doc-tool-btn:hover, .doc-tool-btn.active {
+  color: var(--primary); border-color: var(--primary); background: var(--primary-light);
+}
 
 /* 元数据栏 */
 .doc-viewer-meta {
-  padding: 6px 20px; font-size: 11px; color: var(--text-secondary);
-  border-bottom: 1px solid var(--border); display: flex; gap: 16px; flex-wrap: wrap;
-  background: var(--bg); flex-shrink: 0;
+  min-height: 30px; padding: 5px 20px; font-size: 11px; color: var(--text-secondary);
+  border-bottom: 1px solid var(--border); display: flex; gap: 8px 16px;
+  align-items: center; flex-wrap: wrap; background: var(--bg); flex-shrink: 0;
 }
+.doc-meta-item { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.doc-meta-item strong { color: var(--text); font-weight: 500; }
 
 /* 内容区域 — 沉浸式无边框 */
-.doc-viewer-content { flex: 1; overflow-y: auto; padding: 0; min-height: 0; }
+.doc-viewer-body { flex: 1; display: flex; min-height: 0; overflow: hidden; }
+.doc-viewer-content { flex: 1; min-width: 0; overflow-y: auto; padding: 0; min-height: 0; }
 .doc-viewer-content .doc-preview-pane {
   height: 100%; border: none; border-radius: 0; padding: 24px 28px;
   background: transparent;
+}
+.doc-html-preview-frame {
+  display: block; width: 100%; height: 100%; min-height: 0;
+  border: 0; background: #fff;
+}
+.doc-html-preview-frame[hidden] { display: none; }
+.doc-html-preview-error {
+  padding: 32px; color: var(--text-secondary); text-align: center;
+}
+
+/* 文档评论 */
+.doc-comments-panel {
+  width: 340px; flex: 0 0 340px; min-height: 0; display: none;
+  flex-direction: column; border-left: 1px solid var(--border); background: var(--card-bg);
+}
+.doc-comments-panel.open { display: flex; }
+.doc-comments-header {
+  min-height: 44px; padding: 10px 14px; display: flex; align-items: center;
+  justify-content: space-between; border-bottom: 1px solid var(--border);
+}
+.doc-comments-title { font-size: 14px; font-weight: 600; color: var(--text); }
+.doc-comments-close, .doc-comment-delete {
+  border: 0; background: transparent; color: var(--text-secondary); cursor: pointer;
+}
+.doc-comments-close { width: 28px; height: 28px; font-size: 20px; }
+.doc-comments-close:hover, .doc-comment-delete:hover { color: var(--warning); }
+.doc-comment-form { padding: 12px 14px; border-bottom: 1px solid var(--border); }
+.doc-comment-form label {
+  display: block; margin-bottom: 4px; font-size: 11px; color: var(--text-secondary);
+}
+.doc-comment-form textarea {
+  display: block; width: 100%; min-height: 64px; margin-bottom: 10px; padding: 8px 10px;
+  resize: vertical; border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--bg); color: var(--text); font: inherit; line-height: 1.5;
+}
+.doc-comment-form textarea:focus { outline: 2px solid var(--primary-light); border-color: var(--primary); }
+.doc-comment-form-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.doc-comment-form-status { min-height: 18px; font-size: 11px; color: var(--text-secondary); }
+.doc-comment-form-status.error { color: var(--warning); }
+.doc-comments-list { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 14px 14px; }
+.doc-comments-empty { padding: 28px 8px; text-align: center; font-size: 12px; color: var(--text-secondary); }
+.doc-comment-item { padding: 12px 0; border-bottom: 1px solid var(--border); }
+.doc-comment-item-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.doc-comment-time { font-size: 11px; color: var(--text-secondary); }
+.doc-comment-delete { width: 26px; height: 26px; font-size: 18px; flex: 0 0 26px; }
+.doc-comment-quote {
+  margin: 8px 0; padding: 7px 9px; border-left: 3px solid var(--primary);
+  background: var(--bg); color: var(--text-secondary); font-size: 12px;
+  line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.doc-comment-content {
+  margin-top: 7px; color: var(--text); font-size: 13px; line-height: 1.6;
+  white-space: pre-wrap; overflow-wrap: anywhere;
 }
 
 /* 编辑区域 — 带行号 */
@@ -916,6 +1031,20 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sa
   animation: fadeIn 0.2s ease-in;
 }
 
+/* 文档管理需要把标题栏以下的剩余视口完整交给查看器。 */
+#mainContent.document-management-active {
+  overflow: hidden;
+}
+#main-doc-mgmt {
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+#main-doc-mgmt .doc-mgmt-viewer {
+  min-height: 0;
+}
+
 @keyframes fadeIn {
   from {
     opacity: 0;
@@ -969,6 +1098,18 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sa
   left: 0px;
 }
 
+.app.document-reading-mode {
+  grid-template-columns: 0px 1fr;
+  grid-template-rows: 0px 0px 1fr;
+}
+.app.document-reading-mode .header,
+.app.document-reading-mode .tab-bar {
+  visibility: hidden; pointer-events: none; height: 0; min-height: 0;
+  padding: 0; border: 0; overflow: hidden;
+}
+.app.document-reading-mode .sidebar { width: 0; overflow: hidden; border-right: 0; }
+.app.document-reading-mode .sidebar-toggle { top: 12px; left: 12px; }
+
 .sidebar-toggle:hover {
   background: var(--primary);
   color: white;
@@ -996,6 +1137,25 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sa
   .app {
     grid-template-columns: 1fr;
   }
+}
+
+@media (max-width: 900px) {
+  .doc-viewer-toolbar { grid-template-columns: 1fr; gap: 8px; align-items: start; }
+  .doc-viewer-actions { justify-content: flex-start; }
+  .doc-viewer-body { flex-direction: column; overflow-y: auto; }
+  .doc-viewer-content { min-height: 50%; overflow: visible; }
+  .doc-comments-panel {
+    width: 100%; flex: 0 0 auto; max-height: 420px;
+    border-left: 0; border-top: 1px solid var(--border);
+  }
+  .doc-comments-list { min-height: 160px; }
+}
+
+@media (max-width: 600px) {
+  .doc-viewer-toolbar { padding: 10px 12px; }
+  .doc-viewer-meta { padding-left: 12px; padding-right: 12px; }
+  .doc-viewer-title { font-size: 16px; }
+  .doc-tool-btn { padding: 6px 8px; }
 }
 
 /* 统计分析占位符样式 */
@@ -1361,24 +1521,65 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sa
       </div>
       <div class="doc-mgmt-viewer" id="docViewerPanel" style="display:none">
         <div class="doc-viewer-toolbar">
-          <div class="doc-viewer-title" id="docViewerTitle">文档标题</div>
+          <div class="doc-viewer-heading">
+            <div class="doc-viewer-breadcrumb" id="docViewerBreadcrumb">文档管理</div>
+            <div class="doc-viewer-title-row">
+              <div class="doc-viewer-title" id="docViewerTitle">文档标题</div>
+              <span class="doc-viewer-format" id="docViewerFormat">HTML</span>
+            </div>
+          </div>
           <div class="doc-viewer-actions">
+            <button class="doc-tool-btn" id="docSidebarBtn" onclick="toggleSidebar()" aria-pressed="true">☰ 目录</button>
+            <button class="doc-tool-btn" id="docReadingModeBtn" onclick="toggleDocumentReadingMode()" aria-pressed="false">⛶ 沉浸阅读</button>
+            <button class="doc-tool-btn" id="docCommentsBtn" onclick="toggleDocumentComments()" aria-pressed="false">评论 <span id="docCommentsCount">0</span></button>
             <button class="btn btn-primary btn-sm" onclick="generateDocFromPrompt()" id="genDocBtn" style="display:none">🚀 生成文档</button>
             <button class="btn btn-outline btn-sm" onclick="refreshDocList()">🔄 刷新</button>
             <button class="output-mode-btn active" id="docViewBtn" onclick="switchDocMode('preview')">📄 预览</button>
             <button class="output-mode-btn" id="docEditBtn" onclick="switchDocMode('edit')">✏️ 编辑</button>
             <button class="btn btn-outline btn-sm" onclick="saveDocContent()" id="docSaveBtn" style="display:none">💾 保存</button>
+            <button class="btn btn-outline btn-sm" onclick="openCurrentDocInNewWindow()" id="docOpenWindowBtn" style="display:none">↗ 新窗口</button>
             <button class="btn btn-outline btn-sm" onclick="downloadCurrentDoc()">📥 下载</button>
             <button class="btn btn-outline btn-sm" onclick="deleteCurrentDoc()" style="color:var(--warning)">🗑️</button>
           </div>
         </div>
         <div class="doc-viewer-meta" id="docViewerMeta"></div>
-        <div class="doc-viewer-content">
-          <div class="markdown-preview doc-preview-pane" id="docPreviewContent"></div>
-          <div class="doc-edit-pane" id="docEditPane" style="display:none">
-            <div class="doc-edit-line-numbers" id="docLineNumbers"></div>
-            <textarea class="doc-edit-textarea" id="docEditTextarea" oninput="handleDocEditInput()" onscroll="syncLineNumbers()"></textarea>
+        <div class="doc-viewer-body">
+          <div class="doc-viewer-content">
+            <iframe
+              class="doc-html-preview-frame"
+              id="docHtmlPreviewFrame"
+              title="HTML 文档预览"
+              sandbox="allow-scripts allow-forms allow-popups allow-downloads"
+              allow="clipboard-write"
+              hidden></iframe>
+            <div class="doc-html-preview-error" id="docHtmlPreviewError" hidden>
+              HTML 文档加载失败，请使用“下载”或“新窗口打开”查看。
+            </div>
+            <div class="markdown-preview doc-preview-pane" id="docPreviewContent"></div>
+            <div class="doc-edit-pane" id="docEditPane" style="display:none">
+              <div class="doc-edit-line-numbers" id="docLineNumbers"></div>
+              <textarea class="doc-edit-textarea" id="docEditTextarea" oninput="handleDocEditInput()" onscroll="syncLineNumbers()"></textarea>
+            </div>
           </div>
+          <aside class="doc-comments-panel" id="docCommentsPanel" aria-label="文档评论">
+            <div class="doc-comments-header">
+              <div class="doc-comments-title">评论</div>
+              <button class="doc-comments-close" type="button" onclick="toggleDocumentComments(false)" title="关闭评论">×</button>
+            </div>
+            <div class="doc-comment-form">
+              <label for="docCommentQuote">引用文本（可选）</label>
+              <textarea id="docCommentQuote" placeholder="粘贴需要引用的原文"></textarea>
+              <label for="docCommentContent">评论内容</label>
+              <textarea id="docCommentContent" placeholder="输入评论内容"></textarea>
+              <div class="doc-comment-form-actions">
+                <span class="doc-comment-form-status" id="docCommentStatus"></span>
+                <button class="btn btn-primary btn-sm" id="docCommentSubmitBtn" type="button" onclick="submitDocumentComment()">发表评论</button>
+              </div>
+            </div>
+            <div class="doc-comments-list" id="docCommentsList">
+              <div class="doc-comments-empty">暂无评论</div>
+            </div>
+          </aside>
         </div>
         <div class="doc-save-status" id="docSaveStatus"></div>
       </div>
@@ -8398,6 +8599,10 @@ const tabState = {
 function switchTab(tabName) {
   // 保存当前 Tab 状态
   saveTabState(currentTab);
+
+  if (tabName !== 'doc-mgmt' && documentReadingMode) {
+    setDocumentReadingMode(false);
+  }
   
   // 隐藏所有 Sidebar 和 Main 内容
   document.querySelectorAll('.sidebar-content').forEach(el => {
@@ -8410,10 +8615,15 @@ function switchTab(tabName) {
   // 显示目标 Tab 的内容
   const sidebarEl = document.getElementById(`sidebar-${tabName}`);
   const mainEl = document.getElementById(`main-${tabName}`);
+  const mainContentEl = document.getElementById('mainContent');
+  const isDocumentManagement = tabName === 'doc-mgmt';
+  if (mainContentEl) {
+    mainContentEl.classList.toggle('document-management-active', isDocumentManagement);
+  }
   
   if (sidebarEl) sidebarEl.style.display = 'block';
   if (mainEl) {
-    mainEl.style.display = 'block';
+    mainEl.style.display = isDocumentManagement ? 'flex' : 'block';
     // 重新触发动画
     mainEl.classList.add('switching');
     requestAnimationFrame(() => {
@@ -8493,11 +8703,45 @@ document.addEventListener('keydown', (e) => {
 
 // Sidebar 折叠功能
 let sidebarCollapsed = false;
+let documentReadingMode = false;
+
+function syncDocumentLayoutControls() {
+  const sidebarBtn = document.getElementById('docSidebarBtn');
+  const readingBtn = document.getElementById('docReadingModeBtn');
+  const app = document.querySelector('.app');
+  if (sidebarBtn) {
+    sidebarBtn.textContent = documentReadingMode
+      ? '☰ 显示目录'
+      : (sidebarCollapsed ? '☰ 展开目录' : '☰ 收起目录');
+    sidebarBtn.classList.toggle('active', !sidebarCollapsed && !documentReadingMode);
+    sidebarBtn.setAttribute('aria-pressed', String(!sidebarCollapsed && !documentReadingMode));
+  }
+  if (readingBtn) {
+    readingBtn.textContent = documentReadingMode ? '⛶ 退出沉浸' : '⛶ 沉浸阅读';
+    readingBtn.classList.toggle('active', documentReadingMode);
+    readingBtn.setAttribute('aria-pressed', String(documentReadingMode));
+  }
+  if (app) app.classList.toggle('document-reading-mode', documentReadingMode);
+}
+
+function setDocumentReadingMode(enabled) {
+  documentReadingMode = Boolean(enabled);
+  syncDocumentLayoutControls();
+}
+
+function toggleDocumentReadingMode() {
+  setDocumentReadingMode(!documentReadingMode);
+}
 
 function toggleSidebar() {
   const sidebar = document.getElementById('sidebar');
   const app = document.querySelector('.app');
   if (!sidebar || !app) return;
+
+  if (documentReadingMode) {
+    setDocumentReadingMode(false);
+    return;
+  }
   
   sidebarCollapsed = !sidebarCollapsed;
   
@@ -8511,6 +8755,7 @@ function toggleSidebar() {
   
   // 保存状态到 localStorage
   localStorage.setItem('sidebarCollapsed', sidebarCollapsed);
+  syncDocumentLayoutControls();
 }
 
 // 页面加载时恢复 Sidebar 状态
@@ -8525,6 +8770,7 @@ document.addEventListener('DOMContentLoaded', () => {
       sidebarCollapsed = true;
     }
   }
+  syncDocumentLayoutControls();
 });
 
 // 文档管理面板 - Document Management Panel (v2)
@@ -8537,7 +8783,10 @@ let _docManager = {
   currentMode: 'preview',
   viewMode: 'tree',  // 'tree' | 'list'
   searchTimer: null,
-  originalContent: ''
+  originalContent: '',
+  comments: [],
+  commentsVisible: false,
+  commentsRequestId: 0
 };
 
 function openDocumentViewer() {
@@ -8862,6 +9111,19 @@ function switchDocViewMode(mode) {
 
 // ---- 文档查看 ----
 
+function formatDocumentBreadcrumb(documentData) {
+  const rootName = documentData.root_name || '文档';
+  const filePath = String(documentData.file_path || '').replace(/^[^:]+:/, '');
+  const separatorIndex = filePath.lastIndexOf('/');
+  const directory = separatorIndex >= 0 ? filePath.slice(0, separatorIndex) : '';
+  return directory ? rootName + ' / ' + directory : rootName;
+}
+
+function formatDocumentType(ext) {
+  const normalized = String(ext || '').replace('.', '').toUpperCase();
+  return normalized || '文档';
+}
+
 async function viewDocument(docId, updateUrl = true) {
   try {
     const resp = await fetch(BACKEND + '/api/document/' + encodeURIComponent(docId) + '/content');
@@ -8871,17 +9133,22 @@ async function viewDocument(docId, updateUrl = true) {
     _docManager.currentDoc = result.data;
     _docManager.originalContent = result.data.content;
     _docManager.currentMode = 'preview';
+    _docManager.comments = [];
     
     document.getElementById('docViewerEmpty').style.display = 'none';
     document.getElementById('docViewerPanel').style.display = 'flex';
     document.getElementById('docViewerTitle').textContent = result.data.title;
+    document.getElementById('docViewerBreadcrumb').textContent = formatDocumentBreadcrumb(result.data);
+    document.getElementById('docViewerFormat').textContent = formatDocumentType(result.data.ext);
     document.getElementById('docViewerMeta').innerHTML = 
-      '<span>📁 ' + escapeHtml((result.data.root_name || '') + ' / ' + result.data.file_path) + '</span>' +
-      '<span>📦 ' + formatFileSize(result.data.file_size) + '</span>' +
-      '<span>📝 v' + (result.data.version || 1) + '</span>' +
-      '<span>🕐 ' + new Date(result.data.updated_at).toLocaleString('zh-CN') + '</span>';
+      '<span class="doc-meta-item"><strong>格式</strong> ' + escapeHtml(formatDocumentType(result.data.ext)) + '</span>' +
+      '<span class="doc-meta-item"><strong>大小</strong> ' + formatFileSize(result.data.file_size) + '</span>' +
+      '<span class="doc-meta-item"><strong>版本</strong> v' + (result.data.version || 1) + '</span>' +
+      '<span class="doc-meta-item"><strong>更新</strong> ' + new Date(result.data.updated_at).toLocaleString('zh-CN') + '</span>';
     
-    renderDocContent(result.data.content, 'preview');
+    renderDocContent(result.data, 'preview');
+    renderDocumentComments();
+    loadDocumentComments(docId);
     
     // 更新按钮状态（只读文档隐藏编辑/删除）
     const isWritable = result.data.writable !== false;
@@ -8889,6 +9156,10 @@ async function viewDocument(docId, updateUrl = true) {
     document.getElementById('docEditBtn').classList.remove('active');
     document.getElementById('docEditBtn').style.display = isWritable ? '' : 'none';
     document.getElementById('docSaveBtn').style.display = 'none';
+    const openWindowBtn = document.getElementById('docOpenWindowBtn');
+    if (openWindowBtn) {
+      openWindowBtn.style.display = isHtmlDocument(result.data.ext) && result.data.raw_url ? '' : 'none';
+    }
     document.getElementById('docSaveStatus').textContent = '';
     // 删除按钮
     const delBtn = document.querySelector('#docViewerPanel .doc-viewer-actions button[onclick*="deleteCurrentDoc"]');
@@ -8925,17 +9196,169 @@ function updateSidebarActive(docId) {
   if (listItem) listItem.classList.add('active');
 }
 
+// ---- 文档评论 ----
+
+function toggleDocumentComments(forceOpen) {
+  const nextVisible = typeof forceOpen === 'boolean' ? forceOpen : !_docManager.commentsVisible;
+  _docManager.commentsVisible = nextVisible;
+  const panel = document.getElementById('docCommentsPanel');
+  const button = document.getElementById('docCommentsBtn');
+  if (panel) panel.classList.toggle('open', nextVisible);
+  if (button) {
+    button.classList.toggle('active', nextVisible);
+    button.setAttribute('aria-pressed', String(nextVisible));
+  }
+  if (nextVisible) document.getElementById('docCommentContent')?.focus();
+}
+
+function setDocumentCommentStatus(message, isError = false) {
+  const status = document.getElementById('docCommentStatus');
+  if (!status) return;
+  status.textContent = message || '';
+  status.classList.toggle('error', isError);
+}
+
+function renderDocumentComments(stateMessage = '') {
+  const list = document.getElementById('docCommentsList');
+  const count = document.getElementById('docCommentsCount');
+  if (count) count.textContent = String(_docManager.comments.length);
+  if (!list) return;
+  if (stateMessage) {
+    list.innerHTML = '<div class="doc-comments-empty">' + escapeHtml(stateMessage) + '</div>';
+    return;
+  }
+  if (_docManager.comments.length === 0) {
+    list.innerHTML = '<div class="doc-comments-empty">暂无评论</div>';
+    return;
+  }
+  list.innerHTML = _docManager.comments.map(comment => {
+    const createdAt = new Date(comment.createdAt);
+    const timeText = Number.isNaN(createdAt.getTime()) ? '' : createdAt.toLocaleString('zh-CN');
+    const quote = comment.quote
+      ? '<div class="doc-comment-quote">' + escapeHtml(comment.quote) + '</div>'
+      : '';
+    return '<article class="doc-comment-item">' +
+      '<div class="doc-comment-item-header">' +
+        '<time class="doc-comment-time">' + escapeHtml(timeText) + '</time>' +
+        '<button class="doc-comment-delete" type="button" data-comment-id="' + escapeHtml(comment.id) + '" onclick="deleteDocumentComment(this.dataset.commentId)" title="删除评论">×</button>' +
+      '</div>' + quote +
+      '<div class="doc-comment-content">' + escapeHtml(comment.content) + '</div>' +
+    '</article>';
+  }).join('');
+}
+
+async function loadDocumentComments(docId) {
+  const requestId = ++_docManager.commentsRequestId;
+  renderDocumentComments('评论加载中...');
+  try {
+    const resp = await fetch(BACKEND + '/api/document/' + encodeURIComponent(docId) + '/comments');
+    const result = await resp.json();
+    if (!resp.ok || !result.success) throw new Error(result.message || '评论加载失败');
+    if (requestId !== _docManager.commentsRequestId || _docManager.currentDoc?.id !== docId) return;
+    _docManager.comments = result.data;
+    renderDocumentComments();
+  } catch (err) {
+    if (requestId !== _docManager.commentsRequestId || _docManager.currentDoc?.id !== docId) return;
+    _docManager.comments = [];
+    renderDocumentComments('评论加载失败，请稍后重试');
+  }
+}
+
+async function submitDocumentComment() {
+  if (!_docManager.currentDoc) return;
+  const docId = _docManager.currentDoc.id;
+  const contentInput = document.getElementById('docCommentContent');
+  const quoteInput = document.getElementById('docCommentQuote');
+  const submitButton = document.getElementById('docCommentSubmitBtn');
+  const content = contentInput.value.trim();
+  if (!content) {
+    setDocumentCommentStatus('请输入评论内容', true);
+    contentInput.focus();
+    return;
+  }
+
+  submitButton.disabled = true;
+  setDocumentCommentStatus('正在发表...');
+  try {
+    const resp = await fetch(BACKEND + '/api/document/' + encodeURIComponent(docId) + '/comments', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content, quote: quoteInput.value })
+    });
+    const result = await resp.json();
+    if (!resp.ok || !result.success) throw new Error(result.message || '发表评论失败');
+    contentInput.value = '';
+    quoteInput.value = '';
+    setDocumentCommentStatus('已发表');
+    await loadDocumentComments(docId);
+  } catch (err) {
+    setDocumentCommentStatus(err.message, true);
+  } finally {
+    submitButton.disabled = false;
+  }
+}
+
+async function deleteDocumentComment(commentId) {
+  if (!_docManager.currentDoc || !confirm('确定要删除这条评论吗？')) return;
+  const docId = _docManager.currentDoc.id;
+  setDocumentCommentStatus('正在删除...');
+  try {
+    const resp = await fetch(
+      BACKEND + '/api/document/' + encodeURIComponent(docId) + '/comments/' + encodeURIComponent(commentId),
+      { method: 'DELETE' }
+    );
+    const result = await resp.json();
+    if (!resp.ok || !result.success) throw new Error(result.message || '删除评论失败');
+    setDocumentCommentStatus('已删除');
+    await loadDocumentComments(docId);
+  } catch (err) {
+    setDocumentCommentStatus(err.message, true);
+  }
+}
+
 // ---- 内容渲染 (双模式) ----
 
-function renderDocContent(content, mode) {
+function isHtmlDocument(ext) {
+  return ['.html', '.htm'].includes(String(ext || '').toLowerCase());
+}
+
+function clearHtmlPreview() {
+  const frame = document.getElementById('docHtmlPreviewFrame');
+  const error = document.getElementById('docHtmlPreviewError');
+  if (frame) {
+    frame.hidden = true;
+    frame.src = 'about:blank';
+  }
+  if (error) error.hidden = true;
+}
+
+function renderDocContent(documentData, mode) {
   const previewEl = document.getElementById('docPreviewContent');
   const editPane = document.getElementById('docEditPane');
+  const frame = document.getElementById('docHtmlPreviewFrame');
+  const error = document.getElementById('docHtmlPreviewError');
+  const doc = typeof documentData === 'string'
+    ? { content: documentData, ext: '.md' }
+    : (documentData || {});
+
+  clearHtmlPreview();
   
   if (mode === 'preview') {
+    if (isHtmlDocument(doc.ext)) {
+      previewEl.style.display = 'none';
+      editPane.style.display = 'none';
+      if (!doc.raw_url || !frame) {
+        if (error) error.hidden = false;
+        return;
+      }
+      frame.src = new URL(doc.raw_url, BACKEND).href;
+      frame.hidden = false;
+      return;
+    }
     previewEl.style.display = 'block';
     editPane.style.display = 'none';
     
-    let processedContent = content || '';
+    let processedContent = doc.content || '';
     
     // Strip YAML front matter if present (wrapped in ```yaml code block)
     const yamlFrontMatterRegex = /^```yaml\s*\n---[\s\S]*?---\s*\n```\s*\n?/;
@@ -8957,7 +9380,7 @@ function renderDocContent(content, mode) {
     previewEl.style.display = 'none';
     editPane.style.display = 'flex';
     const textarea = document.getElementById('docEditTextarea');
-    textarea.value = content || '';
+    textarea.value = doc.content || '';
     updateLineNumbers();
   }
 }
@@ -8985,18 +9408,30 @@ function autoRenderCodeBlocks(container) {
       const elements = container.querySelectorAll(selector);
       elements.forEach((el, index) => {
         const code = el.textContent;
+        if (/^\s*erDiagram\b/.test(code)) {
+          el.parentElement.outerHTML = renderRelationshipExplorer(code);
+          return;
+        }
         const id = 'mermaid-' + Date.now() + '-' + index;
         el.parentElement.outerHTML = '<div class="mermaid" id="' + id + '">' + code + '</div>';
       });
     });
     
     // Render all mermaid diagrams
-    mermaid.run({
-      querySelector: '.mermaid',
-      postRenderCallback: (id) => {
-        console.log('Mermaid rendered:', id);
-      }
-    });
+    const diagrams = container.querySelectorAll('.mermaid');
+    if (diagrams.length > 0) {
+      mermaid.run({
+        nodes: diagrams,
+        postRenderCallback: (id) => console.log('Mermaid rendered:', id)
+      }).catch(error => {
+        console.warn('Mermaid diagram skipped:', error);
+        diagrams.forEach(diagram => {
+          if (!diagram.querySelector('svg')) {
+            diagram.innerHTML = '<div class="doc-html-preview-error">关系图暂时无法渲染，请展开原始图代码查看。</div>';
+          }
+        });
+      });
+    }
   }
   
   // PlantUML diagrams (if plantuml-encoder is available)
@@ -9016,15 +9451,64 @@ function autoRenderCodeBlocks(container) {
   }
 }
 
+function renderRelationshipExplorer(source) {
+  const lines = source.split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(line => line && !/^erDiagram$/.test(line));
+  const relations = lines.map(line => {
+    const match = line.match(/^(.+?)\s+([|}o{]+)--([|}o{]+)\s+(.+?)\s*:\s*(.+)$/);
+    if (!match) return null;
+    return { left: match[1].trim(), right: match[4].trim(), label: match[5].trim(), cardinality: match[2] + '--' + match[3] };
+  }).filter(Boolean);
+  const groups = [
+    { name: '集成与运营', keywords: ['连接器', '集成', '同步', '事件订阅', '报表'] },
+    { name: '版本、审核与发布', keywords: ['文档版本', '审核', '评论', '发布'] },
+    { name: '大纲与生产编排', keywords: ['大纲', '编排', '导入变更', '章节', '草稿', '来源快照', '生产项目', '模板版本', '用户'] },
+    { name: '组织与知识空间', keywords: ['企业', '部门', '知识空间', '知识资产目录项', '模板', '文档'] }
+  ].map(group => ({
+    ...group,
+    test: relation => group.keywords.some(keyword =>
+      relation.left.includes(keyword) || relation.right.includes(keyword) || relation.label.includes(keyword)
+    )
+  }));
+  const buckets = groups.map(group => ({ ...group, relations: [] }));
+  relations.forEach(relation => {
+    const bucket = buckets.find(group => group.test(relation)) || buckets.find(group => group.name === '组织与知识空间');
+    bucket.relations.push(relation);
+  });
+  const displayOrder = ['组织与知识空间', '大纲与生产编排', '版本、审核与发布', '集成与运营'];
+  const groupsHtml = buckets.filter(bucket => bucket.relations.length)
+    .sort((left, right) => displayOrder.indexOf(left.name) - displayOrder.indexOf(right.name))
+    .map(bucket =>
+    '<section class="relationship-group"><h4>' + escapeHtml(bucket.name) + '</h4><ul class="relationship-list">' +
+    bucket.relations.map(relation =>
+      '<li class="relationship-item"><span class="relationship-entity">' + escapeHtml(relation.left) + '</span>' +
+      '<span class="relationship-arrow" title="' + escapeHtml(relation.cardinality) + '">→</span>' +
+      '<span class="relationship-entity">' + escapeHtml(relation.right) + '<small> · ' + escapeHtml(relation.label) + '</small></span></li>'
+    ).join('') + '</ul></section>'
+    ).join('');
+  return '<section class="relationship-explorer" aria-label="核心对象关系阅读器">' +
+    '<div class="relationship-explorer-header"><div><h3 class="relationship-explorer-title">核心对象关系总览</h3>' +
+    '<p class="relationship-explorer-summary">按业务域拆分 ' + relations.length + ' 条关系，先看对象职责，再查看技术图代码。</p></div></div>' +
+    '<div class="relationship-explorer-groups">' + groupsHtml + '</div>' +
+    '<details class="relationship-details"><summary>查看原始 Mermaid 关系图代码</summary><pre><code>' + escapeHtml(source) + '</code></pre></details>' +
+    '</section>';
+}
+
 function switchDocMode(mode) {
   _docManager.currentMode = mode;
   document.getElementById('docViewBtn').classList.toggle('active', mode === 'preview');
   document.getElementById('docEditBtn').classList.toggle('active', mode === 'edit');
   
   if (_docManager.currentDoc) {
-    renderDocContent(_docManager.currentDoc.content, mode);
+    renderDocContent(_docManager.currentDoc, mode);
   }
   document.getElementById('docSaveBtn').style.display = mode === 'edit' ? 'inline-flex' : 'none';
+  const openWindowBtn = document.getElementById('docOpenWindowBtn');
+  if (openWindowBtn && _docManager.currentDoc) {
+    openWindowBtn.style.display = mode === 'preview' &&
+      isHtmlDocument(_docManager.currentDoc.ext) && _docManager.currentDoc.raw_url ? '' : 'none';
+  }
 }
 
 // ---- 行号编辑器 ----
@@ -9098,6 +9582,15 @@ async function downloadCurrentDoc() {
   window.open(BACKEND + '/api/document/' + encodeURIComponent(_docManager.currentDoc.id) + '/download', '_blank');
 }
 
+function openCurrentDocInNewWindow() {
+  if (!_docManager.currentDoc) return;
+  const doc = _docManager.currentDoc;
+  const url = isHtmlDocument(doc.ext) && doc.raw_url
+    ? new URL(doc.raw_url, BACKEND).href
+    : BACKEND + '/api/document/' + encodeURIComponent(doc.id) + '/download';
+  window.open(url, '_blank', 'noopener,noreferrer');
+}
+
 async function deleteCurrentDoc() {
   if (!_docManager.currentDoc) return;
   if (!confirm('确定要删除文档 "' + _docManager.currentDoc.title + '" 吗？')) return;
@@ -9108,6 +9601,10 @@ async function deleteCurrentDoc() {
     if (result.success) {
       showToast('🗑️ 文档已删除');
       _docManager.currentDoc = null;
+      _docManager.comments = [];
+      _docManager.commentsRequestId += 1;
+      renderDocumentComments();
+      toggleDocumentComments(false);
       document.getElementById('docViewerEmpty').style.display = 'flex';
       document.getElementById('docViewerPanel').style.display = 'none';
       

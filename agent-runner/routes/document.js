@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const multer = require('multer');
 const logger = require('../lib/logger');
 
@@ -84,6 +85,51 @@ function encodeDocId(rootId, relativePath) {
   return Buffer.from(encoded).toString('base64');
 }
 
+function encodePathSegments(relativePath) {
+  return relativePath
+    .split(path.sep)
+    .filter(Boolean)
+    .map(segment => encodeURIComponent(segment))
+    .join('/');
+}
+
+function buildRawUrl(rootId, relativePath) {
+  return '/api/document/raw/' + encodeURIComponent(rootId) + '/' + encodePathSegments(relativePath);
+}
+
+function resolveRawFile(rootId, requestPath) {
+  const root = resolveRoots().find(item => item.id === rootId);
+  if (!root || typeof requestPath !== 'string' || requestPath.length === 0) return null;
+
+  let relativePath = requestPath;
+  try {
+    // Express decodes route parameters once. Decode bounded additional layers so
+    // encoded traversal variants cannot bypass the lexical boundary check.
+    for (let i = 0; i < 2; i += 1) {
+      const decoded = decodeURIComponent(relativePath);
+      if (decoded === relativePath) break;
+      relativePath = decoded;
+    }
+  } catch (err) {
+    return null;
+  }
+  if (relativePath.includes('\0')) return null;
+
+  const lexicalRoot = path.resolve(root.absPath);
+  const lexicalTarget = path.resolve(lexicalRoot, relativePath);
+  if (!isPathUnder(lexicalTarget, lexicalRoot)) return null;
+
+  try {
+    if (!fs.statSync(lexicalTarget).isFile()) return null;
+    const realRoot = fs.realpathSync(lexicalRoot);
+    const realTarget = fs.realpathSync(lexicalTarget);
+    if (!isPathUnder(realTarget, realRoot)) return null;
+    return { root, realTarget };
+  } catch (err) {
+    return null;
+  }
+}
+
 // ============================================
 // 并发保护 - 文件锁
 // ============================================
@@ -113,6 +159,47 @@ function acquireLock(key, timeout = 5000) {
 
 function releaseLock(key) {
   fileLocks.delete(key);
+}
+
+// ============================================
+// 文档评论持久化
+// ============================================
+const COMMENTS_STORE_PATH = process.env.DOCUMENT_COMMENTS_PATH
+  ? path.resolve(process.env.DOCUMENT_COMMENTS_PATH)
+  : path.join(__dirname, '..', 'data', 'document-comments.json');
+const COMMENTS_LOCK_KEY = 'document-comments';
+
+function readCommentsStore() {
+  if (!fs.existsSync(COMMENTS_STORE_PATH)) {
+    return { version: 1, comments: [] };
+  }
+  const store = JSON.parse(fs.readFileSync(COMMENTS_STORE_PATH, 'utf-8'));
+  if (!store || store.version !== 1 || !Array.isArray(store.comments)) {
+    throw new Error('评论数据格式无效');
+  }
+  return store;
+}
+
+function writeCommentsStore(store) {
+  const directory = path.dirname(COMMENTS_STORE_PATH);
+  fs.mkdirSync(directory, { recursive: true });
+  const temporaryPath = `${COMMENTS_STORE_PATH}.${process.pid}.${crypto.randomUUID()}.tmp`;
+  try {
+    fs.writeFileSync(temporaryPath, JSON.stringify(store, null, 2), 'utf-8');
+    fs.renameSync(temporaryPath, COMMENTS_STORE_PATH);
+  } finally {
+    if (fs.existsSync(temporaryPath)) fs.unlinkSync(temporaryPath);
+  }
+}
+
+function resolveExistingDocument(docId) {
+  const decoded = decodeDocId(docId);
+  if (!decoded) return null;
+  try {
+    return fs.statSync(decoded.absPath).isFile() ? decoded : null;
+  } catch (err) {
+    return null;
+  }
 }
 
 // ============================================
@@ -786,6 +873,116 @@ router.delete('/preprocess/:id', async (req, res) => {
   }
 });
 
+// GET /api/document/raw/:rootId/* - 在注册根目录内原样预览文件
+router.get('/raw/:rootId/*', (req, res) => {
+  const resolved = resolveRawFile(req.params.rootId, req.params[0]);
+  if (!resolved) {
+    return res.status(404).json({ success: false, message: '资源不存在或路径无效' });
+  }
+
+  const ext = path.extname(resolved.realTarget).toLowerCase();
+  if (ext === '.html' || ext === '.htm') {
+    res.type('html');
+  } else {
+    res.type(ext || 'application/octet-stream');
+  }
+  res.set('Content-Disposition', 'inline');
+  res.set('X-Content-Type-Options', 'nosniff');
+  // The configured root may itself contain a dot-prefixed directory (for example
+  // the registered `.codex` knowledge-center root). The path has already passed
+  // lexical and realpath boundary checks above, so allow that specific file only;
+  // do not expose the root as an unrestricted static directory.
+  return res.sendFile(resolved.realTarget, { dotfiles: 'allow' });
+});
+
+// GET /api/document/:id/comments - 获取文档评论
+router.get('/:id/comments', async (req, res) => {
+  if (!resolveExistingDocument(req.params.id)) {
+    return res.status(404).json({ success: false, message: '文档不存在或路径无效' });
+  }
+
+  let lockAcquired = false;
+  try {
+    await acquireLock(COMMENTS_LOCK_KEY);
+    lockAcquired = true;
+    const comments = readCommentsStore().comments
+      .filter(comment => comment.documentId === req.params.id)
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+    return res.json({ success: true, data: comments, count: comments.length });
+  } catch (err) {
+    logger.error('Document comments load failed:', err.message);
+    return res.status(500).json({ success: false, message: '评论读取失败' });
+  } finally {
+    if (lockAcquired) releaseLock(COMMENTS_LOCK_KEY);
+  }
+});
+
+// POST /api/document/:id/comments - 新增文档评论
+router.post('/:id/comments', async (req, res) => {
+  if (!resolveExistingDocument(req.params.id)) {
+    return res.status(404).json({ success: false, message: '文档不存在或路径无效' });
+  }
+
+  const { content, quote = '' } = req.body || {};
+  if (typeof content !== 'string' || !content.trim()) {
+    return res.status(400).json({ success: false, message: '评论内容不能为空' });
+  }
+  if (typeof quote !== 'string') {
+    return res.status(400).json({ success: false, message: '引用文本格式无效' });
+  }
+
+  const comment = {
+    id: `comment_${crypto.randomUUID()}`,
+    documentId: req.params.id,
+    content: content.trim(),
+    quote: quote.trim(),
+    createdAt: new Date().toISOString()
+  };
+
+  let lockAcquired = false;
+  try {
+    await acquireLock(COMMENTS_LOCK_KEY);
+    lockAcquired = true;
+    const store = readCommentsStore();
+    store.comments.push(comment);
+    writeCommentsStore(store);
+    return res.status(201).json({ success: true, data: comment });
+  } catch (err) {
+    logger.error('Document comment create failed:', err.message);
+    return res.status(500).json({ success: false, message: '评论保存失败' });
+  } finally {
+    if (lockAcquired) releaseLock(COMMENTS_LOCK_KEY);
+  }
+});
+
+// DELETE /api/document/:id/comments/:commentId - 删除文档评论
+router.delete('/:id/comments/:commentId', async (req, res) => {
+  if (!resolveExistingDocument(req.params.id)) {
+    return res.status(404).json({ success: false, message: '文档不存在或路径无效' });
+  }
+
+  let lockAcquired = false;
+  try {
+    await acquireLock(COMMENTS_LOCK_KEY);
+    lockAcquired = true;
+    const store = readCommentsStore();
+    const commentIndex = store.comments.findIndex(comment =>
+      comment.id === req.params.commentId && comment.documentId === req.params.id
+    );
+    if (commentIndex === -1) {
+      return res.status(404).json({ success: false, message: '评论不存在' });
+    }
+    store.comments.splice(commentIndex, 1);
+    writeCommentsStore(store);
+    return res.json({ success: true, message: '评论已删除' });
+  } catch (err) {
+    logger.error('Document comment delete failed:', err.message);
+    return res.status(500).json({ success: false, message: '评论删除失败' });
+  } finally {
+    if (lockAcquired) releaseLock(COMMENTS_LOCK_KEY);
+  }
+});
+
 // ============================================
 // 参数路径路由 — 放在最后
 // ============================================
@@ -818,7 +1015,8 @@ router.get('/:id', async (req, res) => {
         created_by: meta?.created_by || 'unknown',
         status: meta?.status || 'completed',
         root_id: decoded.rootId, root_name: decoded.root.name,
-        writable: decoded.writable, ext
+        writable: decoded.writable, ext,
+        raw_url: buildRawUrl(decoded.rootId, decoded.relativePath)
       }
     });
   } catch (err) {
@@ -853,7 +1051,8 @@ router.get('/:id/content', async (req, res) => {
         created_at: meta?.created_at || stat.birthtime.toISOString(),
         updated_at: meta?.updated_at || stat.mtime.toISOString(),
         root_id: decoded.rootId, root_name: decoded.root.name,
-        writable: decoded.writable, ext
+        writable: decoded.writable, ext,
+        raw_url: buildRawUrl(decoded.rootId, decoded.relativePath)
       }
     });
   } catch (err) {
