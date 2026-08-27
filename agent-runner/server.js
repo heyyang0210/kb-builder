@@ -130,16 +130,18 @@ if (fs.existsSync(outputDir)) {
 io.on('connection', (socket) => {
   logger.info(`WebSocket client connected: ${socket.id}`);
 
-  socket.on('subscribe', (data) => {
+  socket.on('subscribe', (data, acknowledge) => {
     if (data.task_id) {
       socket.join(`task:${data.task_id}`);
       logger.debug(`Socket ${socket.id} subscribed to task ${data.task_id}`);
+      if (typeof acknowledge === 'function') acknowledge({ status: 'subscribed', task_id: data.task_id });
     }
   });
 
-  socket.on('unsubscribe', (data) => {
+  socket.on('unsubscribe', (data, acknowledge) => {
     if (data.task_id) {
       socket.leave(`task:${data.task_id}`);
+      if (typeof acknowledge === 'function') acknowledge({ status: 'unsubscribed', task_id: data.task_id });
     }
   });
 

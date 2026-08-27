@@ -34,7 +34,7 @@ describe('知识中心通用化兼容基线', () => {
   });
 
   test('清单明确区分实现契约与真实流验证', () => {
-    expect(baseline.socketIo.verification).toBe('implementation-contract-only');
+    expect(baseline.socketIo.verification).toBe('real-client-connect-subscribe-unsubscribe');
     expect(baseline.sse.every(item => item.verification === 'implementation-contract-only')).toBe(true);
   });
 });

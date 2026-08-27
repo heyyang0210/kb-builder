@@ -15,7 +15,7 @@
     "clientEvents": ["subscribe", "unsubscribe"],
     "serverEvents": ["progress", "step_failed", "step_detail"],
     "roomKey": "task:{task_id}",
-    "verification": "implementation-contract-only"
+    "verification": "real-client-connect-subscribe-unsubscribe"
   },
   "sse": [
     { "path": "/api/tasks/{task_id}/events", "mediaType": "text/event-stream", "verification": "implementation-contract-only" },
