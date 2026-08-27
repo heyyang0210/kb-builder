@@ -1,0 +1,5 @@
+{
+  "id": "yashandb",
+  "version": "1.0.0",
+  "description": "契约测试使用的最小 YashanDB 领域资源占位，不替代领域事实源。"
+}

@@ -1,0 +1,6 @@
+{
+  "extends": "../valid/minimal-yashandb.json",
+  "mutation": { "path": "/domain/manifestRef", "value": "../../outside.json" },
+  "expectedCode": "PROFILE_PATH_FORBIDDEN",
+  "expectedIssueCode": "PATH_OUT_OF_ROOT"
+}

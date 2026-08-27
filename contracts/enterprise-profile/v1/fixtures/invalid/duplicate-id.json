@@ -1,0 +1,6 @@
+{
+  "extends": "../valid/minimal-yashandb.json",
+  "mutation": { "path": "/capabilities", "value": [{ "id": "read-source", "enabled": true }, { "id": "read-source", "enabled": false }] },
+  "expectedCode": "PROFILE_VALIDATION_FAILED",
+  "expectedIssueCode": "REFERENCE_DUPLICATE"
+}

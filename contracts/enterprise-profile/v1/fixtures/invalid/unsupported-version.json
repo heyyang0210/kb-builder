@@ -1,0 +1,6 @@
+{
+  "extends": "../valid/minimal-yashandb.json",
+  "mutation": { "path": "/apiVersion", "value": "enterprise-profile/v2" },
+  "expectedCode": "PROFILE_VERSION_UNSUPPORTED",
+  "expectedIssueCode": "SCHEMA_INVALID"
+}

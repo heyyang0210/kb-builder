@@ -2,13 +2,13 @@
 
 > 文档类型：开发设计
 > 设计编号：KPG-PROFILE-001
-> 状态：TASK-KPG-02 冻结前的架构基线
-> 版本：0.1.0
+> 状态：已冻结
+> 版本：1.0.0
 > 更新日期：2026-08-27
 
 ## 1. 目的与边界
 
-本文定义 `enterprise-profile/v1` 的逻辑结构、加载时序、配置指纹、脱敏投影和错误语义，作为 TASK-KPG-02 Schema 与 TASK-KPG-03 双端加载器的输入。本文不替代可执行 JSON Schema，也不定义凭证存储实现。
+本文定义 `enterprise-profile/v1` 的逻辑结构、加载时序、配置指纹、脱敏投影和错误语义。机器契约以仓库根目录 `contracts/enterprise-profile/v1/enterprise-profile.schema.json` 为事实源，本文作为 TASK-KPG-03 双端加载器的开发输入，不定义凭证存储实现。
 
 能力包描述“这个企业部署启用什么业务能力和资源”，部署配置描述“服务在哪里运行以及如何访问密钥”。端口、主机、数据根目录、CORS、内部令牌和上传限额属于部署配置，不允许被能力包覆盖。
 
@@ -155,15 +155,15 @@ Node 与 Python 分别暴露相同语义的脱敏上下文；3500 只代理或�
 | `PROFILE_NOT_FOUND` | 显式选择的能力包不存在 | 否 |
 | `PROFILE_PARSE_FAILED` | JSON/YAML 无法解析 | 否 |
 | `PROFILE_VERSION_UNSUPPORTED` | `apiVersion` 或 `kind` 不支持 | 否 |
-| `PROFILE_VALIDATION_FAILED` | Schema、ID 或引用关系非法 | 否 |
-| `PROFILE_PATH_FORBIDDEN` | 绝对路径、越界或符号链接逃逸 | 否 |
-| `PROFILE_SECRET_EXPOSED` | 检出禁止的敏感字段或值 | 否 |
+| `PROFILE_VALIDATION_FAILED` | Schema、ID 或引用关系非法；通过 `issueCode` 区分具体原因 | 否 |
+| `PROFILE_PATH_FORBIDDEN` | 绝对路径、越界或符号链接逃逸；通过 `issueCode` 定位 | 否 |
+| `PROFILE_SECRET_EXPOSED` | 检出禁止的敏感字段或值；`issueCode` 为 `SECRET_FIELD` 等 | 否 |
 | `PROFILE_RESOURCE_NOT_FOUND` | 被引用资源不存在 | 否 |
 | `PROFILE_FINGERPRINT_MISMATCH` | 双端运行上下文指纹不一致 | 重启或部署修复后可恢复 |
 | `MODULE_UNAVAILABLE` | 运行期单个模块不可用 | 是 |
 | `MODULE_TIMEOUT` | 聚合读取模块上下文超时 | 是 |
 
-错误响应使用统一外壳；启动日志可以记录 profile ID、版本、错误码和请求/启动关联 ID，不得记录能力包全文、绝对路径或密钥值。
+错误响应使用统一外壳；配置错误额外提供稳定 `issueCode` 和 JSON Pointer `path`。启动日志可以记录 profile ID、版本、错误码、问题码和请求/启动关联 ID，不得记录能力包全文、绝对路径或密钥值。
 
 ## 8. 契约测试输入
 
@@ -178,13 +178,11 @@ TASK-KPG-02/03 至少提供：
 - 默认选择、显式合法选择和显式非法选择。
 - Node/Python 公开投影的字段、值类型和脱敏一致性。
 
-## 9. 未决输入
+## 9. 已冻结的契约细节
 
-以下内容由 TASK-KPG-02 冻结后将本文状态提升为正式开发设计：
-
-- ID 格式、版本格式和公开字段长度限制。
-- 允许资源根目录和 Profile 相对路径基准。
-- `secretRefs` 的两种引用形式及格式。
-- 历史实体类型别名映射结构。
-- `configured` 的确定性判定规则。
-- JSON 与 YAML 是否同时作为正式输入格式；若无必要，优先只支持 JSON 以减少双语言解析差异。
+- 能力包只支持 JSON；ID 使用 2 至 64 位小写 kebab-case，版本使用三段语义版本，语言固定为 `zh-CN`。
+- Profile 由受控注册 ID 选择，文件引用以仓库根目录为基准。允许根包括能力包契约、领域、Skill 和已登记 Prompt 资源，不允许笼统引用含密钥或部署路径的 `agent-runner/config/`；Schema 拒绝 URI、绝对路径、反斜杠、重复分隔符、控制字符、`.` 和 `..`，TASK-KPG-03 继续做存在性、普通文件和符号链接检查。
+- `secretRefs` 只接受 `env:ENV_NAME` 或 `secret:logical/key`。
+- 历史实体别名由 `compatibility.entityTypeAliases` 按“历史实体类型 -> 当前规范类型”表达，只影响兼容读取，不改写历史数据。
+- `configured` 是运行时派生值：最低字段完整且所有密钥引用可解析时为真，不包含连通性探测。
+- Node 当前契约测试使用依赖树中已有的 `@cfworker/json-schema`，但它不是直接依赖；TASK-KPG-03 实现生产加载器前必须选择并声明稳定校验实现，不能依赖传递依赖偶然存在。

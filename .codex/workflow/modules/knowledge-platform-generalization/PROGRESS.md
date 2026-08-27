@@ -4,7 +4,7 @@
 > moduleId: knowledge-platform-generalization
 > owner: Project Manager / Reporter
 > 更新日期：2026-08-27
-> 总体状态：阶段 A 已完成，准备进入企业能力包配置契约
+> 总体状态：阶段 A 已完成，阶段 B 配置契约已完成，准备实现双端加载器
 > 状态单一入口：本文
 
 ## 1. 当前基线
@@ -29,8 +29,8 @@
 |---|---|---|---|
 | TASK-KPG-00 | 创建通用化分支并审计未提交修改 | 已完成 | 已创建目标分支；切换前后三组指纹一致；13 项已跟踪变化、3,202 个未跟踪文件、暂存区为空 |
 | TASK-KPG-01 | 编写通用平台总体架构与迁移设计 | 已完成 | 三服务边界、能力包职责、上下文接口、兼容、迁移和回退已冻结；三角色独立审查完成 |
-| TASK-KPG-02 | 定义企业能力包配置契约与校验规则 | 待开始 | TASK-KPG-01 已完成，可开始 |
-| TASK-KPG-03 | 实现企业能力包加载器与运行上下文 | 待开始 | 等待 TASK-KPG-02 |
+| TASK-KPG-02 | 定义企业能力包配置契约与校验规则 | 已完成 | Draft 2020-12 Schema、YashanDB 有效 fixture、11 个单故障 fixture 和双语言契约测试通过 |
+| TASK-KPG-03 | 实现企业能力包加载器与运行上下文 | 待开始 | TASK-KPG-02 已完成，可开始 |
 | TASK-KPG-04 | 整理 YashanDB 企业能力包配置 | 待开始 | 等待 TASK-KPG-03 |
 | TASK-KPG-05 | 将文档生成器改为企业配置驱动 | 待开始 | 等待 TASK-KPG-04 |
 | TASK-KPG-06 | 将资料清洗与知识加工改为企业配置驱动 | 待开始 | 等待 TASK-KPG-04 |
@@ -72,6 +72,7 @@
 - Python 设置默认端口为 8000，而启动脚本和 3500 代理实际使用 8001；本轮以 8001 为部署基线，TASK-KPG-10 真实启动核验。
 - 现有文档路径配置包含服务器绝对路径，运行上下文和前端投影必须拒绝此类字段。
 - 现有配置管理的固定盐和兼容默认密钥是安全债务，新加载器不得复制，是否单独整改尚未决定。
+- Node 契约测试当前借用依赖树中的 `@cfworker/json-schema`，不是直接依赖；生产加载器不得依赖该偶然关系，TASK-KPG-03 必须采用仓库自有确定性校验器或经批准的直接依赖。
 
 ### 5.1 工作区归属审计
 
@@ -113,7 +114,7 @@
 
 ## 6. 下一步
 
-仅执行 TASK-KPG-02：定义企业能力包配置契约与校验规则。Schema 和失败 fixture 通过双语言契约验证前，不实现加载器。
+仅执行 TASK-KPG-03：实现企业能力包加载器与运行上下文。加载器通过同一黄金向量、真实路径安全和跨语言指纹检查前，不组合正式 YashanDB 能力包。
 
 ### 6.1 TASK-KPG-01 验收证据
 
@@ -122,6 +123,15 @@
 - 独立审查：Architect、Backend Worker、Test Engineer 均完成只读审查。
 - 真实探测：4100/8001 健康接口和 3500 两个旧入口及代理均返回 200；`/knowledge-center/` 返回 404，与尚未实施状态一致。
 - 后续冻结输入：公共上下文接口、受控 profile ID、引用内容参与指纹、单模块降级语义和精确兼容快照。
+
+### 6.2 TASK-KPG-02 验收证据
+
+- 机器契约：`contracts/enterprise-profile/v1/enterprise-profile.schema.json`。
+- 说明与 fixture：`contracts/enterprise-profile/v1/README.md` 和 `fixtures/`。
+- Node：`npx jest tests/enterprise-profile-contract.test.js --runInBand`，12/12 通过。
+- Python：`python3 -m unittest tests.test_enterprise_profile_contract`，2 组测试通过，其中无效样例包含 11 个子场景。
+- JSON：Schema、有效/无效样例及资源占位全部通过 `python3 -m json.tool`。
+- 已冻结：只支持 JSON、受控 ID、仓库相对引用、资源允许根、密钥引用格式、公共错误码与问题码分层。
 
 ## 7. 更新规则
 

@@ -1,0 +1,6 @@
+{
+  "extends": "../valid/minimal-yashandb.json",
+  "mutation": { "path": "/brand/password", "value": "contract-test-sentinel" },
+  "expectedCode": "PROFILE_SECRET_EXPOSED",
+  "expectedIssueCode": "SECRET_FIELD"
+}

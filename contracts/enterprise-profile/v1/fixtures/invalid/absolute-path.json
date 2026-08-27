@@ -1,0 +1,6 @@
+{
+  "extends": "../valid/minimal-yashandb.json",
+  "mutation": { "path": "/domain/manifestRef", "value": "/etc/passwd" },
+  "expectedCode": "PROFILE_PATH_FORBIDDEN",
+  "expectedIssueCode": "ABSOLUTE_PATH"
+}

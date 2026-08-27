@@ -1,0 +1,6 @@
+{
+  "apiVersion": "enterprise-profile/v1",
+  "kind": "EnterpriseProfile",
+  "expectedCode": "PROFILE_VALIDATION_FAILED",
+  "expectedIssueCode": "SCHEMA_INVALID"
+}

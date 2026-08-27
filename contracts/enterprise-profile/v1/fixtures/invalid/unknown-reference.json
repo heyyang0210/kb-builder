@@ -1,0 +1,6 @@
+{
+  "extends": "../valid/minimal-yashandb.json",
+  "mutation": { "path": "/modules", "value": [{ "id": "document-generation", "enabled": true, "workspaceRef": "missing-workspace" }] },
+  "expectedCode": "PROFILE_VALIDATION_FAILED",
+  "expectedIssueCode": "REFERENCE_UNKNOWN"
+}

@@ -1,0 +1,6 @@
+{
+  "extends": "../valid/minimal-yashandb.json",
+  "mutation": { "path": "/domain/manifestRef", "value": "\\\\server\\share\\domain.json" },
+  "expectedCode": "PROFILE_PATH_FORBIDDEN",
+  "expectedIssueCode": "ABSOLUTE_PATH"
+}
