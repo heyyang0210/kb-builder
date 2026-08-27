@@ -9,6 +9,8 @@ const PUBLIC_HOST = '192.168.130.180';
 const ROOT = path.join(__dirname, 'frontend');
 const PINGCODE_ROOT = path.join(__dirname, '..', 'scripts', 'pingcode', 'web', 'frontend', 'dist');
 const PINGCODE_PREFIX = '/pingcode-materials';
+const KNOWLEDGE_CENTER_PREFIX = '/knowledge-center';
+const KNOWLEDGE_CENTER_ROOT = path.join(ROOT, 'knowledge-center');
 const PINGCODE_API_PREFIX = '/pingcode-api';
 const PINGCODE_APP_ROUTES = ['/workbench', '/upload', '/spaces', '/batches', '/knowledge'];
 const PINGCODE_API_HOST = process.env.PINGCODE_API_HOST || '127.0.0.1';
@@ -82,6 +84,15 @@ function pingcodeFilePath(requestUrl) {
   return path.extname(candidate) ? candidate : path.join(PINGCODE_ROOT, 'index.html');
 }
 
+function knowledgeCenterFilePath(requestUrl) {
+  const pathname = new URL(requestUrl, 'http://localhost').pathname;
+  const relativePath = decodeURIComponent(pathname.slice(KNOWLEDGE_CENTER_PREFIX.length)).replace(/^\/+/, '');
+  const requested = relativePath || 'index.html';
+  const candidate = path.resolve(KNOWLEDGE_CENTER_ROOT, requested);
+  if (!candidate.startsWith(`${path.resolve(KNOWLEDGE_CENTER_ROOT)}${path.sep}`) && candidate !== path.resolve(KNOWLEDGE_CENTER_ROOT)) return null;
+  return path.extname(candidate) ? candidate : path.join(KNOWLEDGE_CENTER_ROOT, 'index.html');
+}
+
 async function servePlatformContext(res) {
   const result = await loadPlatformContext({
     timeoutMs: PLATFORM_CONTEXT_TIMEOUT_MS,
@@ -104,6 +115,12 @@ const server = http.createServer((req, res) => {
   const pathname = new URL(req.url, 'http://localhost').pathname;
   if (req.method === 'GET' && pathname === '/knowledge-center/api/platform/context') {
     servePlatformContext(res);
+    return;
+  }
+  if (pathname === KNOWLEDGE_CENTER_PREFIX || pathname.startsWith(`${KNOWLEDGE_CENTER_PREFIX}/`)) {
+    const filePath = knowledgeCenterFilePath(req.url);
+    if (!filePath) { res.writeHead(400); res.end('Bad Request'); return; }
+    sendFile(filePath, res);
     return;
   }
   if (req.url === PINGCODE_API_PREFIX || req.url.startsWith(`${PINGCODE_API_PREFIX}/`)) {

@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>知识中心建设平台</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">跳到主要内容</a>
+  <header class="topbar">
+    <div class="brand-mark" aria-hidden="true">知</div>
+    <div class="brand-copy">
+      <strong id="platform-name">知识中心建设平台</strong>
+      <span id="enterprise-name">正在读取企业配置</span>
+    </div>
+    <button id="refresh" class="button button-secondary" type="button">刷新状态</button>
+  </header>
+
+  <main id="main" class="shell" tabindex="-1">
+    <section class="page-head" aria-labelledby="page-title">
+      <div>
+        <p class="eyebrow">统一工作入口</p>
+        <h1 id="page-title">选择当前工作区</h1>
+        <p class="intro">资料加工负责把原始材料变成可用知识，文档生成负责基于知识与规则生产内容。两者保持独立任务和审核边界。</p>
+      </div>
+      <div id="overall-status" class="status-summary" role="status" aria-live="polite">
+        <span class="status-dot status-loading" aria-hidden="true"></span>
+        <div><strong>正在检查服务</strong><span>请稍候</span></div>
+      </div>
+    </section>
+
+    <section id="error-panel" class="notice notice-error" hidden>
+      <div><strong>暂时无法读取平台状态</strong><p id="error-message">请检查服务后重试。</p></div>
+      <button id="retry" class="button button-secondary" type="button">重新检查</button>
+    </section>
+
+    <section id="workspace-grid" class="workspace-grid" aria-label="专业工作区">
+      <article class="workspace workspace-loading" data-module="materialProcessing" aria-busy="true">
+        <div class="workspace-index">01</div>
+        <div class="workspace-body">
+          <p class="workspace-type">资料加工</p>
+          <h2>整理并构建可信素材</h2>
+          <p>接入资料，完成清洗、知识提取、索引、图谱与质量治理，为后续生成提供可追溯来源。</p>
+          <ul class="capability-list"><li>资料接入与批次管理</li><li>清洗、提取与质量治理</li><li>知识索引与图谱</li></ul>
+        </div>
+        <footer><span class="module-state">检查中</span><a class="workspace-link" href="/pingcode-materials/">进入资料加工 <span aria-hidden="true">→</span></a></footer>
+      </article>
+
+      <article class="workspace workspace-loading" data-module="documentGeneration" aria-busy="true">
+        <div class="workspace-index">02</div>
+        <div class="workspace-body">
+          <p class="workspace-type">文档生成</p>
+          <h2>使用 Agent 与 Skill 生产文档</h2>
+          <p>选择大纲、来源、模板与生成规则，编排 Agent 工作流，执行生成、验证和文档管理。</p>
+          <ul class="capability-list"><li>大纲与来源选择</li><li>Agent、Skill 与模板编排</li><li>生成、验证与文档管理</li></ul>
+        </div>
+        <footer><span class="module-state">检查中</span><a class="workspace-link" href="/prompt-generator.html">进入文档生成 <span aria-hidden="true">→</span></a></footer>
+      </article>
+    </section>
+
+    <section class="context-band" aria-labelledby="context-title">
+      <div><p class="eyebrow">当前运行上下文</p><h2 id="context-title">企业能力与连接状态</h2></div>
+      <dl class="context-list">
+        <div><dt>企业能力包</dt><dd id="profile-name">--</dd></div>
+        <div><dt>配置一致性</dt><dd id="fingerprint-status">待检查</dd></div>
+        <div><dt>已启用能力</dt><dd id="capability-count">--</dd></div>
+        <div><dt>连接器</dt><dd id="connector-summary">--</dd></div>
+      </dl>
+      <details><summary>查看配置标识</summary><code id="fingerprint">--</code></details>
+    </section>
+  </main>
+  <script src="./app.js"></script>
+</body>
+</html>
