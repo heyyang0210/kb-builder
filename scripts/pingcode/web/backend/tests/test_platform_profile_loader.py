@@ -17,6 +17,12 @@ class PlatformProfileLoaderTest(unittest.TestCase):
         context = dict(result["context"])
         self.assertEqual("yashandb", context["profileId"])
         self.assertRegex(context["configFingerprint"], r"^sha256:[0-9a-f]{64}$")
+        self.assertEqual(21, len(result["resources"]))
+        self.assertEqual([
+            {"configured": True, "enabled": True, "id": "local-upload", "type": "local-upload"},
+            {"configured": False, "enabled": True, "id": "pingcode", "type": "pingcode"},
+            {"configured": False, "enabled": True, "id": "mcp", "type": "mcp"},
+        ], context["connectors"])
         self.assertNotIn(str(REPOSITORY_ROOT), json.dumps(context, ensure_ascii=False))
 
     def test_explicit_invalid_selection_does_not_fallback(self):
@@ -57,7 +63,7 @@ class PlatformProfileLoaderTest(unittest.TestCase):
             manifest.parent.mkdir(parents=True)
             manifest.write_bytes((REPOSITORY_ROOT / VALID_MANIFEST).read_bytes())
             with self.assertRaises(ProfileError) as raised:
-                load_profile(repository_root=root, env={})
+                load_profile(repository_root=root, registry={"yashandb": str(VALID_MANIFEST)}, env={})
             self.assertEqual("SYMLINK_ESCAPE", raised.exception.issue_code)
 
 

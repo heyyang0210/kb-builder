@@ -1,0 +1,6 @@
+{
+  "defaultProfileId": "yashandb",
+  "profiles": {
+    "yashandb": "enterprise-profiles/yashandb/profile.json"
+  }
+}

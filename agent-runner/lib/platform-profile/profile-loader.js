@@ -12,8 +12,19 @@ const ALLOWED_RESOURCE_PREFIXES = [
   'contracts/enterprise-profile/',
   'domain/',
   'skills/',
-  'agent-runner/lib/agents/prompts/'
+  'agent-runner/lib/agents/',
+  'scripts/pingcode/processing/skills/',
+  'scripts/pingcode/processing/metadata-rules/',
+  'profiles/',
+  'prompts/',
+  'templates/'
 ];
+const ALLOWED_RESOURCE_FILES = new Set(['agent-runner/config/quality-config.json']);
+const CONNECTOR_REQUIRED_SECRETS = {
+  'local-upload': [],
+  pingcode: ['secret:connectors/pingcode'],
+  mcp: ['secret:connectors/mcp']
+};
 const COLLECTIONS = ['modules', 'workspaces', 'connectors', 'agents', 'skills', 'prompts', 'templates', 'qualityRules', 'logicalDirectories', 'capabilities'];
 const SENSITIVE_KEY = /^(password|token|apiKey|cookie|casTicket|secret)$/i;
 
@@ -70,6 +81,10 @@ function validateProfile(profile) {
     connector.secretRefs.forEach((reference, referenceIndex) => {
       if (!SECRET_REF_PATTERN.test(reference)) fail('PROFILE_VALIDATION_FAILED', '密钥引用格式不正确', 'SCHEMA_INVALID', `/connectors/${connectorIndex}/secretRefs/${referenceIndex}`);
     });
+    const required = CONNECTOR_REQUIRED_SECRETS[connector.type];
+    if (!required || required.some(reference => !connector.secretRefs.includes(reference))) {
+      fail('PROFILE_VALIDATION_FAILED', '连接器缺少最低密钥引用', 'CONNECTOR_SECRET_REQUIRED', `/connectors/${connectorIndex}/secretRefs`);
+    }
   });
 }
 
@@ -87,7 +102,7 @@ function collectResourceRefs(profile) {
 function resolveResources(profile, repositoryRoot) {
   const rootReal = fs.realpathSync(repositoryRoot);
   return collectResourceRefs(profile).sort((left, right) => left.reference.localeCompare(right.reference)).map(({ reference, path: configPath }) => {
-    if (!RESOURCE_REF_PATTERN.test(reference) || !ALLOWED_RESOURCE_PREFIXES.some(prefix => reference.startsWith(prefix))) {
+    if (!RESOURCE_REF_PATTERN.test(reference) || (!ALLOWED_RESOURCE_FILES.has(reference) && !ALLOWED_RESOURCE_PREFIXES.some(prefix => reference.startsWith(prefix)))) {
       fail('PROFILE_PATH_FORBIDDEN', '资源引用不在允许范围内', reference.startsWith('/') || /^[A-Za-z]:[\\/]/.test(reference) || reference.startsWith('\\\\') ? 'ABSOLUTE_PATH' : 'PATH_OUT_OF_ROOT', configPath);
     }
     const candidate = path.resolve(repositoryRoot, reference);
@@ -124,13 +139,18 @@ function sha256(value) {
   return crypto.createHash('sha256').update(value).digest('hex');
 }
 
-function buildContext(profile, resources, env) {
+function isSecretResolved(reference, env, secretResolver) {
+  if (reference.startsWith('env:')) return Boolean(env[reference.slice(4)]);
+  return Boolean(secretResolver && secretResolver(reference.slice(7)));
+}
+
+function buildContext(profile, resources, env, secretResolver) {
   const fingerprint = `sha256:${sha256(Buffer.from(canonicalJson({ profile, resources }), 'utf8'))}`;
   const configured = profile.connectors.map(connector => ({
     id: connector.id,
     type: connector.type,
     enabled: connector.enabled,
-    configured: connector.secretRefs.every(reference => reference.startsWith('env:') ? Boolean(env[reference.slice(4)]) : false)
+    configured: connector.secretRefs.every(reference => isSecretResolved(reference, env, secretResolver))
   }));
   return Object.freeze({
     schemaVersion: profile.apiVersion,
@@ -147,7 +167,7 @@ function buildContext(profile, resources, env) {
 
 function loadProfile(options = {}) {
   const repositoryRoot = path.resolve(options.repositoryRoot || path.join(__dirname, '../../..'));
-  const registry = options.registry || { yashandb: 'contracts/enterprise-profile/v1/fixtures/valid/minimal-yashandb.json' };
+  const registry = options.registry || { yashandb: 'enterprise-profiles/yashandb/profile.json' };
   const env = options.env || process.env;
   const explicitlySet = Object.prototype.hasOwnProperty.call(env, 'KNOWLEDGE_PLATFORM_PROFILE');
   const profileId = options.profileId !== undefined ? options.profileId : (explicitlySet ? env.KNOWLEDGE_PLATFORM_PROFILE : DEFAULT_PROFILE_ID);
@@ -182,7 +202,7 @@ function loadProfile(options = {}) {
   }
   validateProfile(profile);
   const resources = resolveResources(profile, repositoryRoot);
-  return { profile: normalize(profile), context: buildContext(profile, resources, env), resources };
+  return { profile: normalize(profile), context: buildContext(profile, resources, env, options.secretResolver), resources };
 }
 
 module.exports = { DEFAULT_PROFILE_ID, ProfileError, canonicalJson, loadProfile, normalize, validateProfile };

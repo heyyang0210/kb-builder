@@ -27,10 +27,10 @@ v1/
 - `metadata.id` 和 `enterpriseId` 使用小写 kebab-case，2 至 64 个字符，部署期间保持稳定并允许进入脱敏投影。
 - 版本只接受无前导零的 `MAJOR.MINOR.PATCH`，本版本不支持 prerelease 或 build metadata；语言固定为 `zh-CN`。
 - `KNOWLEDGE_PLATFORM_PROFILE` 只接受注册 profile ID，不接受文件路径。
-- 文件引用以仓库根目录为基准，使用 `/` 分隔的相对路径；允许根只包括 `contracts/enterprise-profile/`、`domain/`、`skills/`、`agent-runner/lib/agents/prompts/` 和后续经设计登记的非敏感资源目录。禁止引用整个 `agent-runner/config/`，并拒绝 URI、`~`、控制字符、POSIX/Windows/UNC 绝对路径、反斜杠、重复 `/`、`.` 和 `..` 路径段。
+- 文件引用以仓库根目录为基准，使用 `/` 分隔的相对路径；当前允许根包括 `contracts/enterprise-profile/`、`domain/`、`skills/`、`agent-runner/lib/agents/`、`scripts/pingcode/processing/skills/`、`scripts/pingcode/processing/metadata-rules/`、`profiles/`、`prompts/` 和 `templates/`。质量配置只精确放行 `agent-runner/config/quality-config.json`，不得由此推导整个配置目录可引用。禁止引用 PingCode 凭证配置、模型配置、运行产物和备份，并拒绝 URI、`~`、控制字符、POSIX/Windows/UNC 绝对路径、反斜杠、重复 `/`、`.` 和 `..` 路径段。
 - `secretRefs` 只接受 `env:ENV_NAME` 或 `secret:logical/key`，不保存值。
 - `logicalDirectories.pathRef` 只接受 `deployment:<logical-id>`，由服务部署配置解析。
-- `connectors[].configured` 不属于能力包输入；运行时仅在最低字段完整且所有 `secretRefs` 可解析时派生为 `true`，不执行连通性探测。
+- `connectors[].configured` 不属于能力包输入；`local-upload` 无密钥依赖，`pingcode` 必须声明 `secret:connectors/pingcode`，`mcp` 必须声明 `secret:connectors/mcp`。运行时仅在最低引用完整且所有 `secretRefs` 可解析时派生为 `true`，不执行连通性探测。
 - `entityTypeAliases` 的方向固定为“历史实体类型 -> 当前规范类型”；该映射只用于兼容读取，不触发历史数据重写。
 
 ## 测试

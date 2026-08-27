@@ -15,8 +15,16 @@ PROFILE_ID_PATTERN = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
 SECRET_REF_PATTERN = re.compile(r"^(?:env:[A-Z][A-Z0-9_]{1,126}|secret:[a-z][a-z0-9]*(?:[./-][a-z0-9]+)*)$")
 SENSITIVE_KEY = re.compile(r"^(password|token|apiKey|cookie|casTicket|secret)$", re.IGNORECASE)
 ALLOWED_RESOURCE_PREFIXES = (
-    "contracts/enterprise-profile/", "domain/", "skills/", "agent-runner/lib/agents/prompts/",
+    "contracts/enterprise-profile/", "domain/", "skills/", "agent-runner/lib/agents/",
+    "scripts/pingcode/processing/skills/", "scripts/pingcode/processing/metadata-rules/",
+    "profiles/", "prompts/", "templates/",
 )
+ALLOWED_RESOURCE_FILES = {"agent-runner/config/quality-config.json"}
+CONNECTOR_REQUIRED_SECRETS = {
+    "local-upload": (),
+    "pingcode": ("secret:connectors/pingcode",),
+    "mcp": ("secret:connectors/mcp",),
+}
 COLLECTIONS = (
     "modules", "workspaces", "connectors", "agents", "skills", "prompts",
     "templates", "qualityRules", "logicalDirectories", "capabilities",
@@ -87,6 +95,9 @@ def validate_semantics(profile):
         for ref_index, reference in enumerate(connector["secretRefs"]):
             if not SECRET_REF_PATTERN.match(reference):
                 fail("PROFILE_VALIDATION_FAILED", "密钥引用格式不正确", "SCHEMA_INVALID", f"/connectors/{connector_index}/secretRefs/{ref_index}")
+        required = CONNECTOR_REQUIRED_SECRETS.get(connector["type"])
+        if required is None or any(reference not in connector["secretRefs"] for reference in required):
+            fail("PROFILE_VALIDATION_FAILED", "连接器缺少最低密钥引用", "CONNECTOR_SECRET_REQUIRED", f"/connectors/{connector_index}/secretRefs")
 
 
 def collect_resource_refs(profile):
@@ -104,7 +115,7 @@ def resolve_resources(profile, repository_root):
         parts = reference.split("/")
         if windows.is_absolute() or reference.startswith(("/", "\\\\", "~")):
             fail("PROFILE_PATH_FORBIDDEN", "资源引用不在允许范围内", "ABSOLUTE_PATH", config_path)
-        if "\\" in reference or "" in parts or "." in parts or ".." in parts or not reference.startswith(ALLOWED_RESOURCE_PREFIXES):
+        if "\\" in reference or "" in parts or "." in parts or ".." in parts or (reference not in ALLOWED_RESOURCE_FILES and not reference.startswith(ALLOWED_RESOURCE_PREFIXES)):
             fail("PROFILE_PATH_FORBIDDEN", "资源引用不在允许范围内", "PATH_OUT_OF_ROOT", config_path)
         candidate = repository_root / reference
         try:
@@ -119,11 +130,15 @@ def resolve_resources(profile, repository_root):
     return resources
 
 
-def build_context(profile, resources, env):
+def build_context(profile, resources, env, secret_resolver=None):
     digest = hashlib.sha256(canonical_json({"profile": profile, "resources": resources}).encode("utf-8")).hexdigest()
     connectors = []
     for connector in profile["connectors"]:
-        configured = all(reference.startswith("env:") and bool(env.get(reference[4:])) for reference in connector["secretRefs"])
+        configured = all(
+            bool(env.get(reference[4:])) if reference.startswith("env:")
+            else bool(secret_resolver and secret_resolver(reference[7:]))
+            for reference in connector["secretRefs"]
+        )
         connectors.append({"id": connector["id"], "type": connector["type"], "enabled": connector["enabled"], "configured": configured})
     context = {
         "schemaVersion": profile["apiVersion"], "profileId": profile["metadata"]["id"],
@@ -135,9 +150,9 @@ def build_context(profile, resources, env):
     return MappingProxyType(normalize(context))
 
 
-def load_profile(repository_root=None, registry=None, env=None, profile_id=None):
+def load_profile(repository_root=None, registry=None, env=None, profile_id=None, secret_resolver=None):
     repository_root = Path(repository_root or Path(__file__).resolve().parents[6]).resolve()
-    registry = registry or {"yashandb": "contracts/enterprise-profile/v1/fixtures/valid/minimal-yashandb.json"}
+    registry = registry or {"yashandb": "enterprise-profiles/yashandb/profile.json"}
     env = os.environ if env is None else env
     explicitly_set = "KNOWLEDGE_PLATFORM_PROFILE" in env
     selected = profile_id if profile_id is not None else (env.get("KNOWLEDGE_PLATFORM_PROFILE") if explicitly_set else DEFAULT_PROFILE_ID)
@@ -164,4 +179,4 @@ def load_profile(repository_root=None, registry=None, env=None, profile_id=None)
         fail(code, "企业能力包结构校验失败", "SCHEMA_INVALID", config_path)
     validate_semantics(profile)
     resources = resolve_resources(profile, repository_root)
-    return {"profile": normalize(profile), "context": build_context(profile, resources, env), "resources": resources}
+    return {"profile": normalize(profile), "context": build_context(profile, resources, env, secret_resolver), "resources": resources}

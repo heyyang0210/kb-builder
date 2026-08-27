@@ -4,7 +4,7 @@
 
 - 任务编号：TASK-KPG-04
 - 标题：整理 YashanDB 企业能力包配置
-- 状态：待开始
+- 状态：已完成
 - 分配：Architect / Config Owner / Doc Writer
 - 依赖：TASK-KPG-03
 - 需人类确认：否，发现冲突业务规则时需要
@@ -25,11 +25,18 @@
 
 ## 验收标准
 
-- [ ] 能力包通过 Schema 和双端加载器测试。
-- [ ] 不含令牌、密码、私有密钥、CAS 票据和服务器绝对路径。
-- [ ] `domain/yashandb/` 等现有事实源通过引用复用，无第二份可编辑副本。
-- [ ] 配置指纹稳定，能力声明与当前实际实现一致。
+- [x] 能力包通过 Schema 和双端加载器测试。
+- [x] 不含令牌、密码、私有密钥、CAS 票据和服务器绝对路径。
+- [x] `domain/yashandb/` 等现有事实源通过引用复用，无第二份可编辑副本。
+- [x] 配置指纹稳定，能力声明与当前实际实现一致。
 
 ## 执行日志
 
-待执行时补充配置内容摘要、迁移矩阵和安全扫描证据。
+2026-08-27 完成：
+
+- 新增 `enterprise-profiles/registry.json` 和 YashanDB 企业能力包，登记文档生成、资料加工两个工作区。
+- 组合现有领域入口、4 个 Agent、2 个加工 Skill、5 个生成 Prompt、7 个模板和质量/元数据规则入口；不复制事实源正文。
+- 冻结 `local-upload`、`pingcode`、`mcp` 三类连接器及最低密钥引用规则；连接器健康与 `configured` 仍分开表达。
+- 加入质量配置单文件白名单，明确排除 `agent-runner/config/document-paths.json`、`model-config.json` 和本地 PingCode 配置。
+- 验证：Node 19/19、Python 6/6 加载器与契约测试通过；完整包资源数量 21，默认双端指纹一致；JSON、语法、差异空白和敏感信息/绝对路径扫描通过。
+- 迁移矩阵已更新：品牌、领域、Agent/Skill/Prompt/模板、连接器和质量规则均有能力包入口；底层硬编码迁移留给 TASK-KPG-05/06。

@@ -1,0 +1,81 @@
+{
+  "apiVersion": "enterprise-profile/v1",
+  "kind": "EnterpriseProfile",
+  "metadata": {
+    "id": "yashandb",
+    "enterpriseId": "yashandb",
+    "version": "1.0.0",
+    "displayName": "YashanDB 企业能力包",
+    "language": "zh-CN"
+  },
+  "brand": {
+    "platformName": "知识中心建设平台",
+    "enterpriseName": "YashanDB",
+    "productName": "YashanDB 知识中心"
+  },
+  "modules": [
+    { "id": "document-generation", "enabled": true, "workspaceRef": "document-generation" },
+    { "id": "material-processing", "enabled": true, "workspaceRef": "material-processing" }
+  ],
+  "workspaces": [
+    { "id": "document-generation", "displayName": "文档生成", "basePath": "/prompt-generator.html", "backend": "node" },
+    { "id": "material-processing", "displayName": "资料加工", "basePath": "/pingcode-materials/", "backend": "python" }
+  ],
+  "domain": { "id": "yashandb", "version": "1.0.0", "manifestRef": "domain/yashandb/domain.yaml" },
+  "connectors": [
+    { "id": "local-upload", "type": "local-upload", "enabled": true, "capabilityRefs": ["upload-source"], "secretRefs": [] },
+    { "id": "pingcode", "type": "pingcode", "enabled": true, "capabilityRefs": ["read-source"], "secretRefs": ["secret:connectors/pingcode"] },
+    { "id": "mcp", "type": "mcp", "enabled": true, "capabilityRefs": ["retrieve-knowledge"], "secretRefs": ["secret:connectors/mcp"] }
+  ],
+  "agents": [
+    { "id": "planner", "version": "1.0.0", "manifestRef": "agent-runner/lib/agents/planner-agent.js" },
+    { "id": "retriever", "version": "1.0.0", "manifestRef": "agent-runner/lib/agents/retriever-agent.js" },
+    { "id": "generator", "version": "1.0.0", "manifestRef": "agent-runner/lib/agents/generator-agent.js" },
+    { "id": "validator", "version": "1.0.0", "manifestRef": "agent-runner/lib/agents/validator-agent.js" }
+  ],
+  "skills": [
+    { "id": "keyword-extraction", "version": "1.1.0", "manifestRef": "scripts/pingcode/processing/skills/keyword-extraction/skill.yaml" },
+    { "id": "knowledge-point-extraction", "version": "2.0.0", "manifestRef": "scripts/pingcode/processing/skills/knowledge-point-extraction/skill.yaml" }
+  ],
+  "prompts": [
+    { "id": "planner", "version": "1.0.0", "resourceRef": "agent-runner/lib/agents/prompts/planner.md" },
+    { "id": "retriever", "version": "1.0.0", "resourceRef": "agent-runner/lib/agents/prompts/retriever.md" },
+    { "id": "generator", "version": "1.0.0", "resourceRef": "agent-runner/lib/agents/prompts/generator.md" },
+    { "id": "validator", "version": "1.0.0", "resourceRef": "agent-runner/lib/agents/prompts/validator.md" },
+    { "id": "batch-generation", "version": "1.0.0", "resourceRef": "prompts/01-第一部分-批量生成提示词.md" }
+  ],
+  "templates": [
+    { "id": "general", "version": "1.0.0", "resourceRef": "templates/01-通用基础模板.md" },
+    { "id": "principle", "version": "1.0.0", "resourceRef": "templates/02-理论机制类模板.md" },
+    { "id": "tuning", "version": "1.0.0", "resourceRef": "templates/03-实战调优类模板.md" },
+    { "id": "comparison", "version": "1.0.0", "resourceRef": "templates/04-架构对比类模板.md" },
+    { "id": "operations", "version": "1.0.0", "resourceRef": "templates/05-运维SOP类模板.md" },
+    { "id": "sql-reference", "version": "1.0.0", "resourceRef": "templates/06-SQL开发参考类模板.md" },
+    { "id": "compatibility", "version": "1.0.0", "resourceRef": "templates/07-兼容性差异类模板.md" }
+  ],
+  "qualityRules": [
+    { "id": "generation-quality", "version": "1.0.0", "resourceRef": "agent-runner/config/quality-config.json" },
+    { "id": "metadata-rules", "version": "1.4.0", "resourceRef": "scripts/pingcode/processing/metadata-rules/manifest.yaml" }
+  ],
+  "logicalDirectories": [
+    { "id": "documents", "displayName": "文档产物", "pathRef": "deployment:documents", "writable": true },
+    { "id": "material-data", "displayName": "资料加工数据", "pathRef": "deployment:material-data", "writable": true }
+  ],
+  "capabilities": [
+    { "id": "upload-source", "enabled": true },
+    { "id": "read-source", "enabled": true },
+    { "id": "retrieve-knowledge", "enabled": true },
+    { "id": "generate-document", "enabled": true },
+    { "id": "process-material", "enabled": true }
+  ],
+  "compatibility": {
+    "defaultProfile": true,
+    "legacyEntrypoints": ["/prompt-generator.html", "/pingcode-materials/", "/pingcode-api/"],
+    "legacyApiPreserved": true,
+    "entityTypeAliases": {}
+  },
+  "runtimeProjection": {
+    "exposedBrandFields": ["platformName", "enterpriseName", "productName"],
+    "exposedCapabilityFields": ["id", "enabled"]
+  }
+}
