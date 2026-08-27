@@ -180,9 +180,9 @@ TASK-KPG-02/03 至少提供：
 
 ## 9. 已冻结的契约细节
 
-- 能力包只支持 JSON；ID 使用 2 至 64 位小写 kebab-case，版本使用三段语义版本，语言固定为 `zh-CN`。
+- 能力包只支持 JSON；ID 使用 2 至 64 位小写 kebab-case，版本只接受无前导零的 `MAJOR.MINOR.PATCH`，不支持 prerelease/build metadata，语言固定为 `zh-CN`。
 - Profile 由受控注册 ID 选择，文件引用以仓库根目录为基准。允许根包括能力包契约、领域、Skill 和已登记 Prompt 资源，不允许笼统引用含密钥或部署路径的 `agent-runner/config/`；Schema 拒绝 URI、绝对路径、反斜杠、重复分隔符、控制字符、`.` 和 `..`，TASK-KPG-03 继续做存在性、普通文件和符号链接检查。
 - `secretRefs` 只接受 `env:ENV_NAME` 或 `secret:logical/key`。
 - 历史实体别名由 `compatibility.entityTypeAliases` 按“历史实体类型 -> 当前规范类型”表达，只影响兼容读取，不改写历史数据。
 - `configured` 是运行时派生值：最低字段完整且所有密钥引用可解析时为真，不包含连通性探测。
-- Node 当前契约测试使用依赖树中已有的 `@cfworker/json-schema`，但它不是直接依赖；TASK-KPG-03 实现生产加载器前必须选择并声明稳定校验实现，不能依赖传递依赖偶然存在。
+- Node 使用仓库自有确定性校验器，只实现本 Schema 使用的关键字，并通过同一 fixture 与 Python `jsonschema` 对账；不再依赖传递依赖偶然存在。

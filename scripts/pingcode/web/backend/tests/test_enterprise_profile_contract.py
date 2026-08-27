@@ -96,7 +96,7 @@ def validate_semantics(profile):
             return {"code": "PROFILE_VALIDATION_FAILED", "issueCode": "REFERENCE_UNKNOWN", "path": f"/modules/{index}/workspaceRef"}
     capability_ids = {item["id"] for item in profile.get("capabilities", [])}
     for connector_index, connector in enumerate(profile.get("connectors", [])):
-        for ref_index, reference in enumerate(connector["capabilityRefs"]):
+        for ref_index, reference in enumerate(connector.get("capabilityRefs", [])):
             if reference not in capability_ids:
                 return {
                     "code": "PROFILE_VALIDATION_FAILED",
@@ -141,6 +141,7 @@ class EnterpriseProfileContractTest(unittest.TestCase):
             "invalid/windows-path.json",
             "invalid/unc-path.json",
             "invalid/illegal-secret-reference.json",
+            "invalid/malformed-connector.json",
         )
         for fixture in fixtures:
             with self.subTest(fixture=fixture):

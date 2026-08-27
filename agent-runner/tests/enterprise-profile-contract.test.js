@@ -1,10 +1,9 @@
 const fs = require('fs');
 const path = require('path');
-const { Validator } = require('@cfworker/json-schema');
+const { validateSchema } = require('../lib/platform-profile/schema-validator');
 
 const contractRoot = path.resolve(__dirname, '../../contracts/enterprise-profile/v1');
 const schema = JSON.parse(fs.readFileSync(path.join(contractRoot, 'enterprise-profile.schema.json'), 'utf8'));
-const validator = new Validator(schema, '2020-12', false);
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -96,7 +95,7 @@ function validateSemantics(profile) {
   const capabilityIds = new Set((profile.capabilities || []).map(item => item.id));
   for (let connectorIndex = 0; connectorIndex < (profile.connectors || []).length; connectorIndex += 1) {
     const connector = profile.connectors[connectorIndex];
-    for (let refIndex = 0; refIndex < connector.capabilityRefs.length; refIndex += 1) {
+    for (let refIndex = 0; refIndex < (connector.capabilityRefs || []).length; refIndex += 1) {
       if (!capabilityIds.has(connector.capabilityRefs[refIndex])) {
         return { code: 'PROFILE_VALIDATION_FAILED', issueCode: 'REFERENCE_UNKNOWN', path: `/connectors/${connectorIndex}/capabilityRefs/${refIndex}` };
       }
@@ -108,15 +107,15 @@ function validateSemantics(profile) {
 function validateProfile(profile) {
   const semanticError = validateSemantics(profile);
   if (semanticError) return semanticError;
-  const result = validator.validate(profile);
-  if (!result.valid) {
-    const first = result.errors[0];
+  const errors = validateSchema(profile, schema);
+  if (errors.length) {
+    const first = errors[0];
     return {
       code: profile.apiVersion && profile.apiVersion !== 'enterprise-profile/v1'
         ? 'PROFILE_VERSION_UNSUPPORTED'
         : 'PROFILE_VALIDATION_FAILED',
-      issueCode: 'SCHEMA_INVALID',
-      path: first.instanceLocation && first.instanceLocation !== '#' ? first.instanceLocation : '/'
+      issueCode: first.issueCode === 'REQUIRED_FIELD_MISSING' ? 'SCHEMA_INVALID' : first.issueCode,
+      path: first.path || '/'
     };
   }
   return null;
@@ -138,7 +137,8 @@ describe('enterprise-profile/v1 Node 契约', () => {
     'invalid/unknown-field.json',
     'invalid/windows-path.json',
     'invalid/unc-path.json',
-    'invalid/illegal-secret-reference.json'
+    'invalid/illegal-secret-reference.json',
+    'invalid/malformed-connector.json'
   ])('%s 返回稳定错误码和配置路径', fixture => {
     const expected = fixtureExpectation(fixture);
     const error = validateProfile(loadFixture(fixture));

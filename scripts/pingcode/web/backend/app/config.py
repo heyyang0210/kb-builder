@@ -2,9 +2,13 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from .platform_profile import load_profile
+
 
 APP_DIR = Path(__file__).resolve().parent
 PINGCODE_DIR = APP_DIR.parents[2]
+PLATFORM_PROFILE = load_profile()
+platform_context = PLATFORM_PROFILE["context"]
 
 
 @dataclass(frozen=True)

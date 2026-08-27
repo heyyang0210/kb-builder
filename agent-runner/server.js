@@ -1,5 +1,8 @@
 require('dotenv').config();
 
+const { loadProfile } = require('./lib/platform-profile/profile-loader');
+const platformProfile = loadProfile();
+
 const express = require('express');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
@@ -30,6 +33,13 @@ process.on('unhandledRejection', (reason, promise) => {
 
 const PORT = process.env.PORT || 4100;
 const HOST = process.env.HOST || '0.0.0.0';
+
+// 业务模块只读取启动时冻结的脱敏上下文，不自行读取能力包文件。
+Object.defineProperty(global, '__KNOWLEDGE_PLATFORM_CONTEXT__', {
+  value: platformProfile.context,
+  writable: false,
+  configurable: false
+});
 
 // 确保必要目录存在
 ['config', 'logs', 'tmp'].forEach(dir => {

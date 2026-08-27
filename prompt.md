@@ -1299,3 +1299,12 @@ Role 定义“谁有权负责”，Route 决定“本次是否需要他负责”
 - 错误决策：公共 `code` 保持架构级稳定，使用 `issueCode` 表达 Schema、重复引用、未知引用、绝对路径、越界和敏感字段等具体原因，同时返回 JSON Pointer `path`。
 - 执行证据：新增 Draft 2020-12 Schema、一个最小 YashanDB 有效样例和 11 个单故障无效样例；Node 12 项 Jest 与 Python 双组 unittest 全部通过。
 - 风险复盘：Node 的 Schema 库来自传递依赖，不能直接成为生产加载器基础；TASK-KPG-03 必须消除这一隐式依赖。Fixture 的 mutation 描述必须先展开，不能被误当成可直接交给 Schema 的企业能力包。
+
+#### 补充记录：TASK-KPG-03 双端加载器与运行上下文
+
+- 时间：2026-08-27 18:37:06
+- 实现决策：Node 使用仓库自有的契约关键字校验器，Python 使用锁定的 `jsonschema`；两端按 Schema、安全、引用语义、资源解析、规范化和指纹顺序加载。
+- 执行证据：Node 19 项、Python 6 项测试通过；两端默认包上下文和 `sha256:d676cbe5dd461814571825b1e9a6cf6c7679f13d8b4f9113359dc01b387fedac` 指纹一致。
+- 真实验证：Node 4199、Python 8091 在隔离环境启动且健康接口返回 200；显式空 profile 两端均非零退出。
+- 审查修正：Schema 先于引用语义；畸形连接器不再产生语言运行时异常；资源错误返回具体 JSON Pointer；Node 校验器不宣称通用 Draft 2020-12 实现。
+- 后续输入：TASK-KPG-04 按真实资源类型冻结允许根及连接器最低密钥注册表，不能整体放开可能含凭证的配置目录。

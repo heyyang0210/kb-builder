@@ -25,7 +25,7 @@ v1/
 ## 冻结规则
 
 - `metadata.id` 和 `enterpriseId` 使用小写 kebab-case，2 至 64 个字符，部署期间保持稳定并允许进入脱敏投影。
-- 版本使用三段语义版本；语言固定为 `zh-CN`。
+- 版本只接受无前导零的 `MAJOR.MINOR.PATCH`，本版本不支持 prerelease 或 build metadata；语言固定为 `zh-CN`。
 - `KNOWLEDGE_PLATFORM_PROFILE` 只接受注册 profile ID，不接受文件路径。
 - 文件引用以仓库根目录为基准，使用 `/` 分隔的相对路径；允许根只包括 `contracts/enterprise-profile/`、`domain/`、`skills/`、`agent-runner/lib/agents/prompts/` 和后续经设计登记的非敏感资源目录。禁止引用整个 `agent-runner/config/`，并拒绝 URI、`~`、控制字符、POSIX/Windows/UNC 绝对路径、反斜杠、重复 `/`、`.` 和 `..` 路径段。
 - `secretRefs` 只接受 `env:ENV_NAME` 或 `secret:logical/key`，不保存值。
@@ -44,3 +44,5 @@ python3 -m unittest tests.test_enterprise_profile_contract
 ```
 
 有效 fixture 仅提供 YashanDB，不创建虚构企业。无效 fixture 以最小有效包为基线，每个文件只引入一个主错误。
+
+Node 生产侧的 `schema-validator.js` 只实现本 Schema 实际使用的关键字，不宣称是通用 Draft 2020-12 实现；其判定必须持续与 Python `jsonschema` 对同一 fixture 对账。

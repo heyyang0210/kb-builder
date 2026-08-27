@@ -4,7 +4,7 @@
 > moduleId: knowledge-platform-generalization
 > owner: Project Manager / Reporter
 > 更新日期：2026-08-27
-> 总体状态：阶段 A 已完成，阶段 B 配置契约已完成，准备实现双端加载器
+> 总体状态：阶段 A 已完成，阶段 B 的契约和双端加载器已完成，准备组合 YashanDB 能力包
 > 状态单一入口：本文
 
 ## 1. 当前基线
@@ -30,8 +30,8 @@
 | TASK-KPG-00 | 创建通用化分支并审计未提交修改 | 已完成 | 已创建目标分支；切换前后三组指纹一致；13 项已跟踪变化、3,202 个未跟踪文件、暂存区为空 |
 | TASK-KPG-01 | 编写通用平台总体架构与迁移设计 | 已完成 | 三服务边界、能力包职责、上下文接口、兼容、迁移和回退已冻结；三角色独立审查完成 |
 | TASK-KPG-02 | 定义企业能力包配置契约与校验规则 | 已完成 | Draft 2020-12 Schema、YashanDB 有效 fixture、11 个单故障 fixture 和双语言契约测试通过 |
-| TASK-KPG-03 | 实现企业能力包加载器与运行上下文 | 待开始 | TASK-KPG-02 已完成，可开始 |
-| TASK-KPG-04 | 整理 YashanDB 企业能力包配置 | 待开始 | 等待 TASK-KPG-03 |
+| TASK-KPG-03 | 实现企业能力包加载器与运行上下文 | 已完成 | 双端默认加载、fail-fast、真实路径安全、脱敏上下文和一致指纹通过，真实服务健康调用成功 |
+| TASK-KPG-04 | 整理 YashanDB 企业能力包配置 | 待开始 | TASK-KPG-03 已完成，可开始 |
 | TASK-KPG-05 | 将文档生成器改为企业配置驱动 | 待开始 | 等待 TASK-KPG-04 |
 | TASK-KPG-06 | 将资料清洗与知识加工改为企业配置驱动 | 待开始 | 等待 TASK-KPG-04 |
 | TASK-KPG-07 | 增加平台运行上下文接口并接入统一网关 | 待开始 | 等待 TASK-KPG-05、06 |
@@ -72,7 +72,9 @@
 - Python 设置默认端口为 8000，而启动脚本和 3500 代理实际使用 8001；本轮以 8001 为部署基线，TASK-KPG-10 真实启动核验。
 - 现有文档路径配置包含服务器绝对路径，运行上下文和前端投影必须拒绝此类字段。
 - 现有配置管理的固定盐和兼容默认密钥是安全债务，新加载器不得复制，是否单独整改尚未决定。
-- Node 契约测试当前借用依赖树中的 `@cfworker/json-schema`，不是直接依赖；生产加载器不得依赖该偶然关系，TASK-KPG-03 必须采用仓库自有确定性校验器或经批准的直接依赖。
+- Node 已采用仓库自有确定性校验器并与 Python 对账，不再依赖传递 Schema 包；该校验器只覆盖当前契约关键字，Schema 扩展时必须同步增加差分 fixture。
+- 当前最小包只使用契约资源目录。TASK-KPG-04 需按领域、Skill、Prompt、模板和质量规则的真实路径冻结精确允许根，禁止整体开放含凭证的配置目录。
+- `connectors[].configured` 的最终口径依赖连接器类型最低密钥注册表；当前空密钥引用派生为已配置，仅适用于最小测试包，TASK-KPG-04 必须冻结 PingCode、本地上传和 MCP 的确定性规则。
 
 ### 5.1 工作区归属审计
 
@@ -114,7 +116,7 @@
 
 ## 6. 下一步
 
-仅执行 TASK-KPG-03：实现企业能力包加载器与运行上下文。加载器通过同一黄金向量、真实路径安全和跨语言指纹检查前，不组合正式 YashanDB 能力包。
+仅执行 TASK-KPG-04：整理 YashanDB 企业能力包配置。完整包必须引用真实非敏感资源并通过双端加载、安全扫描和固定指纹，不能复制领域事实或凭证。
 
 ### 6.1 TASK-KPG-01 验收证据
 
@@ -132,6 +134,15 @@
 - Python：`python3 -m unittest tests.test_enterprise_profile_contract`，2 组测试通过，其中无效样例包含 11 个子场景。
 - JSON：Schema、有效/无效样例及资源占位全部通过 `python3 -m json.tool`。
 - 已冻结：只支持 JSON、受控 ID、仓库相对引用、资源允许根、密钥引用格式、公共错误码与问题码分层。
+
+### 6.3 TASK-KPG-03 验收证据
+
+- Node：`npx jest tests/platform-profile-loader.test.js tests/enterprise-profile-contract.test.js --runInBand`，19/19 通过。
+- Python：`python3 -m unittest tests.test_platform_profile_loader tests.test_enterprise_profile_contract`，6/6 通过。
+- 跨语言：默认包脱敏上下文结构一致，配置指纹逐字节相同。
+- Fail-fast：两端显式空 profile 均返回非零退出，未创建兼容回退。
+- 真实服务：Node 4199 和 Python 8091 隔离启动后 `/api/health` 均返回 200。
+- 安全：资源缺失、绝对/越界路径、符号链接逃逸、敏感字段和非法密钥引用均有确定性错误；公开上下文不含仓库绝对路径。
 
 ## 7. 更新规则
 
