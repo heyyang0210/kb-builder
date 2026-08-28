@@ -42,8 +42,13 @@ function getResourceByReference(reference) {
 
 function getGenerationPolicy(documentType, generationMode = 'incremental', policyId) {
   const policies = runtimeState()?.profile?.generationPolicies || [];
+  const normalizeType = value => String(value).replace(/[\\/\\s_-]/g, '').toLowerCase();
+  const wantedType = normalizeType(documentType);
   const matches = policies.filter(policy => policy.enabled && (!policyId || policy.id === policyId)
-    && policy.documentTypes.includes(documentType) && policy.generationModes.includes(generationMode));
+    && (policy.documentTypes.includes(documentType)
+      || (policy.documentTypeNames || []).some(name => normalizeType(name) === wantedType)
+      || normalizeType(policy.displayName).includes(wantedType))
+    && policy.generationModes.includes(generationMode));
   if (matches.length === 0) {
     const error = new Error(`未找到文档生成策略：${documentType}/${generationMode}`);
     error.code = 'GENERATION_POLICY_NOT_FOUND';

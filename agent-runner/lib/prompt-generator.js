@@ -13,21 +13,11 @@ const TYPE_RULES = [
 ];
 const crypto = require('crypto');
 
-const TYPE_POLICY_IDS = {
-  "通用基础": "general",
-  "理论机制": "principle",
-  "实战调优": "tuning",
-  "架构对比": "comparison",
-  "运维SOP": "operations",
-  "SQL/开发参考": "sql-reference",
-  "兼容性差异": "compatibility"
-};
-
 function resolveGenerationPolicy(type, mode = 'incremental', requestedPolicyId) {
   const runtime = global.__KNOWLEDGE_PLATFORM_PROFILE_RUNTIME__;
   if (!runtime || !runtime.profile.generationPolicies) return null;
   const { getGenerationPolicy } = require('./platform-profile/runtime-profile');
-  return getGenerationPolicy(TYPE_POLICY_IDS[type] || 'general', mode, requestedPolicyId);
+  return getGenerationPolicy(type, mode, requestedPolicyId);
 }
 
 function detectType(name, desc) {

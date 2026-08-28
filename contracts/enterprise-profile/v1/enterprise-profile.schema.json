@@ -155,6 +155,7 @@
         "displayName": { "$ref": "#/$defs/displayName" },
         "enabled": { "type": "boolean" },
         "documentTypes": { "type": "array", "items": { "$ref": "#/$defs/idRef" }, "minItems": 1, "uniqueItems": true },
+        "documentTypeNames": { "type": "array", "items": { "$ref": "#/$defs/displayName" }, "minItems": 1, "uniqueItems": true },
         "generationModes": { "type": "array", "items": { "enum": ["full", "incremental", "outline-extraction"] }, "minItems": 1, "uniqueItems": true },
         "agentRefs": { "type": "array", "items": { "$ref": "#/$defs/idRef" }, "minItems": 1, "uniqueItems": true },
         "skillRefs": { "type": "array", "items": { "$ref": "#/$defs/idRef" }, "minItems": 1, "uniqueItems": true },
