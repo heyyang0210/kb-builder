@@ -27,6 +27,16 @@ describe('文档生成企业能力包接入', () => {
     expect(result.json.enterprise_profile_id).toBe('yashandb');
     expect(result.json.config_fingerprint).toMatch(/^sha256:[0-9a-f]{64}$/);
     expect(result.prompt).toContain('YashanDB 知识中心');
+    expect(result.policyTrace).toMatchObject({ id: 'generate-general', version: '1.0.0' });
+    expect(result.policyTrace.fingerprint).toMatch(/^sha256:[0-9a-f]{64}$/);
+  });
+
+  test('不同文档类型使用不同的版本化生产策略', () => {
+    const generator = require('../lib/prompt-generator');
+    const result = generator.assemblePrompt({ name: 'SQL函数', desc: '函数语法示例', type: 'SQL/开发参考', generationMode: 'full' });
+    expect(result.policyTrace.id).toBe('generate-sql-reference');
+    expect(result.templateFile).toBe('../templates/06-SQL开发参考类模板.md');
+    expect(result.json.source_policy.mode).toBe('manual');
   });
 
   test('能力包运行资源可读取且不暴露绝对路径到生成 Prompt', () => {

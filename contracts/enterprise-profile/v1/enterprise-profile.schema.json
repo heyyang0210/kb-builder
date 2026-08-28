@@ -19,6 +19,7 @@
     "prompts": { "type": "array", "items": { "$ref": "#/$defs/fileResource" } },
     "templates": { "type": "array", "items": { "$ref": "#/$defs/fileResource" } },
     "qualityRules": { "type": "array", "items": { "$ref": "#/$defs/fileResource" } },
+    "generationPolicies": { "type": "array", "items": { "$ref": "#/$defs/generationPolicy" }, "uniqueItems": true },
     "logicalDirectories": { "type": "array", "items": { "$ref": "#/$defs/logicalDirectory" } },
     "capabilities": { "type": "array", "items": { "$ref": "#/$defs/capability" } },
     "compatibility": { "$ref": "#/$defs/compatibility" },
@@ -142,6 +143,55 @@
         "id": { "$ref": "#/$defs/id" },
         "version": { "$ref": "#/$defs/version" },
         "resourceRef": { "$ref": "#/$defs/resourceRef" }
+      }
+    },
+    "generationPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version", "displayName", "enabled", "documentTypes", "generationModes", "agentRefs", "skillRefs", "promptRefs", "templateRef", "qualityRuleRefs", "sourcePolicy", "outputPolicy", "reviewPolicy"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "version": { "$ref": "#/$defs/version" },
+        "displayName": { "$ref": "#/$defs/displayName" },
+        "enabled": { "type": "boolean" },
+        "documentTypes": { "type": "array", "items": { "$ref": "#/$defs/idRef" }, "minItems": 1, "uniqueItems": true },
+        "generationModes": { "type": "array", "items": { "enum": ["full", "incremental", "outline-extraction"] }, "minItems": 1, "uniqueItems": true },
+        "agentRefs": { "type": "array", "items": { "$ref": "#/$defs/idRef" }, "minItems": 1, "uniqueItems": true },
+        "skillRefs": { "type": "array", "items": { "$ref": "#/$defs/idRef" }, "minItems": 1, "uniqueItems": true },
+        "promptRefs": { "type": "array", "items": { "$ref": "#/$defs/idRef" }, "minItems": 1, "uniqueItems": true },
+        "templateRef": { "$ref": "#/$defs/idRef" },
+        "qualityRuleRefs": { "type": "array", "items": { "$ref": "#/$defs/idRef" }, "minItems": 1, "uniqueItems": true },
+        "sourcePolicy": { "$ref": "#/$defs/sourcePolicy" },
+        "outputPolicy": { "$ref": "#/$defs/outputPolicy" },
+        "reviewPolicy": { "$ref": "#/$defs/reviewPolicy" }
+      }
+    },
+    "sourcePolicy": {
+      "type": "object", "additionalProperties": false,
+      "required": ["mode", "allowedConnectorRefs", "requiredConfirmation", "maxSources", "allowKnowledgeBaseFallback"],
+      "properties": {
+        "mode": { "enum": ["manual", "preset-review", "none"] },
+        "allowedConnectorRefs": { "type": "array", "items": { "$ref": "#/$defs/idRef" }, "uniqueItems": true },
+        "requiredConfirmation": { "type": "boolean" },
+        "maxSources": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "allowKnowledgeBaseFallback": { "type": "boolean" }
+      }
+    },
+    "outputPolicy": {
+      "type": "object", "additionalProperties": false,
+      "required": ["logicalDirectoryRef", "pathTemplate", "overwrite"],
+      "properties": {
+        "logicalDirectoryRef": { "$ref": "#/$defs/idRef" },
+        "pathTemplate": { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[A-Za-z0-9._{}\\-/]+$" },
+        "overwrite": { "enum": ["never", "versioned"] }
+      }
+    },
+    "reviewPolicy": {
+      "type": "object", "additionalProperties": false,
+      "required": ["requiredValidator", "requiredHumanReview"],
+      "properties": {
+        "requiredValidator": { "type": "boolean" },
+        "requiredHumanReview": { "type": "boolean" }
       }
     },
     "logicalDirectory": {

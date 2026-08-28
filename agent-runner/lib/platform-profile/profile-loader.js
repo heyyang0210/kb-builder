@@ -46,6 +46,9 @@ function validateProfile(profile) {
   for (const collection of COLLECTIONS) {
     if (!Array.isArray(profile[collection])) fail('PROFILE_VALIDATION_FAILED', `字段必须为数组：${collection}`, 'SCHEMA_INVALID', `/${collection}`);
   }
+  if (profile.generationPolicies !== undefined && !Array.isArray(profile.generationPolicies)) {
+    fail('PROFILE_VALIDATION_FAILED', '字段必须为数组：generationPolicies', 'SCHEMA_INVALID', '/generationPolicies');
+  }
 
   const walk = (value, pointer = '') => {
     if (!value || typeof value !== 'object') return;
@@ -85,6 +88,29 @@ function validateProfile(profile) {
     if (!required || required.some(reference => !connector.secretRefs.includes(reference))) {
       fail('PROFILE_VALIDATION_FAILED', '连接器缺少最低密钥引用', 'CONNECTOR_SECRET_REQUIRED', `/connectors/${connectorIndex}/secretRefs`);
     }
+  });
+
+  const policies = profile.generationPolicies || [];
+  const ids = collection => new Set(profile[collection].map(item => item.id));
+  const agentIds = ids('agents'); const skillIds = ids('skills'); const promptIds = ids('prompts');
+  const templateIds = ids('templates'); const qualityRuleIds = ids('qualityRules'); const directoryIds = ids('logicalDirectories');
+  const connectorIds = ids('connectors');
+  const mappings = new Set();
+  policies.forEach((policy, index) => {
+    const checkRefs = (refs, allowed, field) => (refs || []).forEach((ref, refIndex) => {
+      if (!allowed.has(ref)) fail('PROFILE_VALIDATION_FAILED', '文档生成策略引用不存在', 'REFERENCE_UNKNOWN', `/generationPolicies/${index}/${field}/${refIndex}`);
+    });
+    checkRefs(policy.agentRefs, agentIds, 'agentRefs'); checkRefs(policy.skillRefs, skillIds, 'skillRefs');
+    checkRefs(policy.promptRefs, promptIds, 'promptRefs'); checkRefs(policy.qualityRuleRefs, qualityRuleIds, 'qualityRuleRefs');
+    checkRefs(policy.sourcePolicy.allowedConnectorRefs, connectorIds, 'sourcePolicy/allowedConnectorRefs');
+    if (!templateIds.has(policy.templateRef)) fail('PROFILE_VALIDATION_FAILED', '文档生成策略模板引用不存在', 'REFERENCE_UNKNOWN', `/generationPolicies/${index}/templateRef`);
+    if (!directoryIds.has(policy.outputPolicy.logicalDirectoryRef)) fail('PROFILE_VALIDATION_FAILED', '文档生成策略输出目录引用不存在', 'REFERENCE_UNKNOWN', `/generationPolicies/${index}/outputPolicy/logicalDirectoryRef`);
+    if (policy.sourcePolicy.mode === 'manual' && !policy.sourcePolicy.requiredConfirmation) fail('PROFILE_VALIDATION_FAILED', '人工选源策略必须要求确认', 'SOURCE_CONFIRMATION_REQUIRED', `/generationPolicies/${index}/sourcePolicy`);
+    if (policy.enabled) policy.documentTypes.forEach(type => policy.generationModes.forEach(mode => {
+      const key = `${type}:${mode}`;
+      if (mappings.has(key)) fail('PROFILE_VALIDATION_FAILED', '文档生成策略匹配存在歧义', 'GENERATION_POLICY_AMBIGUOUS', `/generationPolicies/${index}`);
+      mappings.add(key);
+    }));
   });
 }
 
@@ -168,6 +194,7 @@ function buildContext(profile, resources, env, secretResolver) {
     capabilities: normalize(profile.capabilities),
     workspaces: normalize(profile.workspaces.map(({ id, displayName, basePath }) => ({ id, displayName, basePath }))),
     connectors: normalize(configured),
+    generationPolicies: normalize((profile.generationPolicies || []).filter(policy => policy.enabled).map(({ id, version, displayName, documentTypes, generationModes }) => ({ id, version, displayName, documentTypes, generationModes }))),
     configFingerprint: fingerprint
   });
 }

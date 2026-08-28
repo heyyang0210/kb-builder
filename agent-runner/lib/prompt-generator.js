@@ -11,6 +11,24 @@ const TYPE_RULES = [
   { type: "SQL/开发参考", keywords: ["sql", "函数", "存储过程", "触发器", "游标", "pl/sql", "语法", "包", "动态sql", "开发"] },
   { type: "理论机制", keywords: ["原理", "机制", "实现", "内部", "结构", "算法", "模型", "设计"] },
 ];
+const crypto = require('crypto');
+
+const TYPE_POLICY_IDS = {
+  "通用基础": "general",
+  "理论机制": "principle",
+  "实战调优": "tuning",
+  "架构对比": "comparison",
+  "运维SOP": "operations",
+  "SQL/开发参考": "sql-reference",
+  "兼容性差异": "compatibility"
+};
+
+function resolveGenerationPolicy(type, mode = 'incremental', requestedPolicyId) {
+  const runtime = global.__KNOWLEDGE_PLATFORM_PROFILE_RUNTIME__;
+  if (!runtime || !runtime.profile.generationPolicies) return null;
+  const { getGenerationPolicy } = require('./platform-profile/runtime-profile');
+  return getGenerationPolicy(TYPE_POLICY_IDS[type] || 'general', mode, requestedPolicyId);
+}
 
 function detectType(name, desc) {
   const text = (name + " " + desc).toLowerCase();
@@ -123,6 +141,7 @@ function assemblePrompt(data) {
   const context = global.__KNOWLEDGE_PLATFORM_CONTEXT__ || {};
   const enterpriseName = context.brand?.enterpriseName || 'YashanDB';
   const productName = context.brand?.productName || `${enterpriseName} 知识中心`;
+  const policy = resolveGenerationPolicy(data.type, data.generationMode || 'incremental', data.generationPolicyId);
   const json = {
     name: data.name,
     part: data.part,
@@ -136,6 +155,14 @@ function assemblePrompt(data) {
     output_path: getOutputPath(data)
   };
 
+  if (policy) {
+    json.generation_policy_id = policy.id;
+    json.generation_policy_version = policy.version;
+    json.generation_mode = data.generationMode || 'incremental';
+    json.source_policy = policy.sourcePolicy;
+    json.review_policy = policy.reviewPolicy;
+  }
+
   if (data.refMcp) json.references.mcp_query = data.refMcp;
   if (data.refDesign) json.references.design_doc = data.refDesign;
   if (data.refOracle) json.references.oracle_ref = data.refOracle;
@@ -143,8 +170,8 @@ function assemblePrompt(data) {
   if (Object.keys(json.references).length === 0) delete json.references;
   Object.keys(json).forEach(k => json[k] === undefined && delete json[k]);
 
-  const skillFile = getSkillFile(data.type);
-  const templateFile = getTemplateFile(data.type);
+  const skillFile = policy ? `../${require('./platform-profile/runtime-profile').getResource('skills', policy.skillRefs[0]).reference}` : getSkillFile(data.type);
+  const templateFile = policy ? `../${require('./platform-profile/runtime-profile').getResource('templates', policy.templateRef).reference}` : getTemplateFile(data.type);
 
   const prompt = `# ${productName} 知识文档生成任务
 
@@ -186,7 +213,13 @@ ${JSON.stringify(json, null, 2)}
 - 包含填写检查清单
 - 不出现客户名称和特定业务表名`;
 
-  return { prompt, skillFile, templateFile, json };
+  const policyTrace = policy ? {
+    id: policy.id,
+    version: policy.version,
+    fingerprint: `sha256:${crypto.createHash('sha256').update(JSON.stringify(policy)).digest('hex')}`
+  } : null;
+  if (policy) json.generation_policy_fingerprint = policyTrace.fingerprint;
+  return { prompt, skillFile, templateFile, json, policyTrace };
 }
 
 module.exports = {

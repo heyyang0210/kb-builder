@@ -147,6 +147,7 @@ def build_context(profile, resources, env, secret_resolver=None):
         "brand": profile["brand"], "capabilities": profile["capabilities"],
         "workspaces": [{key: item[key] for key in ("id", "displayName", "basePath")} for item in profile["workspaces"]],
         "connectors": connectors, "configFingerprint": f"sha256:{digest}",
+        "generationPolicies": [{key: item[key] for key in ("id", "version", "displayName", "documentTypes", "generationModes")} for item in profile.get("generationPolicies", []) if item.get("enabled")],
     }
     return MappingProxyType(normalize(context))
 

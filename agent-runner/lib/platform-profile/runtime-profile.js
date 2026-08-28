@@ -40,9 +40,26 @@ function getResourceByReference(reference) {
   return Object.freeze({ reference, path: resource.path });
 }
 
+function getGenerationPolicy(documentType, generationMode = 'incremental', policyId) {
+  const policies = runtimeState()?.profile?.generationPolicies || [];
+  const matches = policies.filter(policy => policy.enabled && (!policyId || policy.id === policyId)
+    && policy.documentTypes.includes(documentType) && policy.generationModes.includes(generationMode));
+  if (matches.length === 0) {
+    const error = new Error(`未找到文档生成策略：${documentType}/${generationMode}`);
+    error.code = 'GENERATION_POLICY_NOT_FOUND';
+    throw error;
+  }
+  if (matches.length > 1) {
+    const error = new Error(`文档生成策略存在歧义：${documentType}/${generationMode}`);
+    error.code = 'GENERATION_POLICY_AMBIGUOUS';
+    throw error;
+  }
+  return Object.freeze(matches[0]);
+}
+
 function readResource(collection, id) {
   const resource = getResource(collection, id);
   return { ...resource, content: fs.readFileSync(resource.path, 'utf8') };
 }
 
-module.exports = { getBrand, getPublicContext, getResource, getResourceByReference, getTrace, readResource };
+module.exports = { getBrand, getPublicContext, getResource, getResourceByReference, getGenerationPolicy, getTrace, readResource };
