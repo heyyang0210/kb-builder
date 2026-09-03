@@ -14,10 +14,17 @@ class FakePage:
     def __init__(self, results):
         self.results = list(results)
         self.urls = []
+        self.request = self
 
-    def evaluate(self, _script, url):
+    def get(self, url):
         self.urls.append(url)
-        return self.results.pop(0)
+        result = self.results.pop(0)
+        return SimpleNamespace(
+            ok=result["ok"],
+            status=result["status"],
+            headers={"content-type": result.get("contentType", "")},
+            body=lambda: bytes(result.get("data", [])),
+        )
 
 
 class ContentParserImageTests(unittest.TestCase):
@@ -98,6 +105,19 @@ class PublicImageDownloadTests(unittest.TestCase):
         self.assertEqual(data, bytes([137]))
         self.assertEqual(token.call_count, 2)
         self.assertIn("token=new", page.urls[1])
+
+
+class AttachmentDownloadTests(unittest.TestCase):
+    def test_download_reads_binary_body_from_request_context(self):
+        page = FakePage(
+            [{"ok": True, "status": 200, "contentType": "application/pdf", "data": [37, 80, 68, 70]}]
+        )
+        client = PingCodeAPIClient(page, "https://pingcode.example")
+
+        data = client.download_attachment({"token": "attachment-token"})
+
+        self.assertEqual(data, b"%PDF")
+        self.assertIn("token=attachment-token", page.urls[0])
 
 
 class FilePreviewTests(unittest.TestCase):

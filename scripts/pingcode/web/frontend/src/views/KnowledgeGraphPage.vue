@@ -1,12 +1,13 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { AlertTriangle, CheckCircle2, Database, Network, RefreshCw, Search } from 'lucide-vue-next'
 import { request } from '../api'
 import GraphQualityTrend from '../components/GraphQualityTrend.vue'
 import GraphVersionDiff from '../components/GraphVersionDiff.vue'
 import GraphVersionHistory from '../components/GraphVersionHistory.vue'
-import KnowledgeGraph from '../components/KnowledgeGraph.vue'
+
+const KnowledgeGraph = defineAsyncComponent(() => import('../components/KnowledgeGraph.vue'))
 
 const route = useRoute()
 const router = useRouter()

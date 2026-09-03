@@ -159,6 +159,24 @@ class PingCodeServiceLifecycleTests(unittest.TestCase):
         finally:
             service.close()
 
+    def test_submit_invalidates_client_after_browser_transport_failure(self):
+        service = PingCodeService()
+        service._client = Mock()
+        service._api = Mock()
+        service._login_space_key = "TEST"
+        try:
+            with self.assertRaisesRegex(RuntimeError, "handler is closed"):
+                service._submit(
+                    lambda: (_ for _ in ()).throw(
+                        RuntimeError("WriteUnixTransport closed; the handler is closed")
+                    )
+                )
+            self.assertIsNone(service._client)
+            self.assertIsNone(service._api)
+            self.assertIsNone(service._login_space_key)
+        finally:
+            service.close()
+
 
 class JsonStoreTests(unittest.TestCase):
     def test_round_trip_and_update(self):

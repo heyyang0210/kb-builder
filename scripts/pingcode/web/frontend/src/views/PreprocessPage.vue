@@ -1,11 +1,12 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref } from 'vue'
 import { Activity, AlertTriangle, ChevronDown, ChevronRight, Clock3, FileText, RefreshCw, X } from 'lucide-vue-next'
 import { useRoute } from 'vue-router'
 import { datasetGovernanceView, governancePublishErrorMessage, request, taskEventUrl } from '../api'
 import BatchStepNav from '../components/BatchStepNav.vue'
-import MarkdownWorkbench from '../components/MarkdownWorkbench.vue'
 import PaginationControls from '../components/PaginationControls.vue'
+
+const MarkdownWorkbench = defineAsyncComponent(() => import('../components/MarkdownWorkbench.vue'))
 
 const route = useRoute()
 const batch = ref(null)

@@ -103,25 +103,10 @@ class PingCodeAPIClient:
         
         download_url = f'{self.base_url}/atlas/file/download-url?action=download&token={token}'
         
-        result = self.page.evaluate(f"""
-            async () => {{
-                const resp = await fetch('{download_url}');
-                if (!resp.ok) return {{ error: resp.status }};
-                const blob = await resp.blob();
-                const buffer = await blob.arrayBuffer();
-                return {{
-                    ok: true,
-                    data: Array.from(new Uint8Array(buffer)),
-                    contentType: resp.headers.get('content-type'),
-                    contentDisposition: resp.headers.get('content-disposition')
-                }};
-            }}
-        """)
-        
-        if result.get('error'):
-            raise RuntimeError(f"下载失败：HTTP {result['error']}")
-        
-        return bytes(result['data'])
+        response = self.page.request.get(download_url)
+        if not response.ok:
+            raise RuntimeError(f"下载失败：HTTP {response.status}")
+        return response.body()
 
     def get_public_image_token(self, refresh: bool = False) -> str:
         """获取页面公共图片使用的短期访问令牌。"""
@@ -157,29 +142,15 @@ class PingCodeAPIClient:
             query = dict(parse_qsl(parsed.query, keep_blank_values=True))
             query['token'] = self.get_public_image_token(refresh=attempt > 0)
             download_url = urlunparse(parsed._replace(query=urlencode(query)))
-            result = self.page.evaluate(
-                """
-                async (url) => {
-                    const response = await fetch(url);
-                    const buffer = await response.arrayBuffer();
-                    return {
-                        ok: response.ok,
-                        status: response.status,
-                        data: Array.from(new Uint8Array(buffer)),
-                        contentType: response.headers.get('content-type') || ''
-                    };
-                }
-                """,
-                download_url,
-            )
-            content_type = result.get('contentType', '').split(';', 1)[0].lower()
-            data = bytes(result.get('data', []))
+            response = self.page.request.get(download_url)
+            content_type = response.headers.get('content-type', '').split(';', 1)[0].lower()
+            data = response.body()
             detected_type = self._detect_image_content_type(data)
-            if result.get('ok') and data and (content_type.startswith('image/') or detected_type):
+            if response.ok and data and (content_type.startswith('image/') or detected_type):
                 return data, detected_type or content_type
 
-        if not result.get('ok'):
-            raise RuntimeError(f"图片下载失败：HTTP {result.get('status')}")
+        if not response.ok:
+            raise RuntimeError(f"图片下载失败：HTTP {response.status}")
         if not content_type.startswith('image/') and not self._detect_image_content_type(data):
             raise RuntimeError(f"图片下载返回了非图片内容：{content_type or 'unknown'}")
         raise RuntimeError('图片下载结果为空')

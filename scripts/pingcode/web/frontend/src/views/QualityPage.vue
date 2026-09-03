@@ -1,14 +1,15 @@
 <script setup>
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, defineAsyncComponent, onMounted, onUnmounted, ref } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import BatchStepNav from '../components/BatchStepNav.vue'
-import GraphDiagnosisWorkbench from '../components/GraphDiagnosisWorkbench.vue'
 import GraphObservabilitySummary from '../components/GraphObservabilitySummary.vue'
 import KeywordFilterHistory from '../components/KeywordFilterHistory.vue'
 import KeywordReviewDecision from '../components/KeywordReviewDecision.vue'
 import KeywordIssueOverview from '../components/KeywordIssueOverview.vue'
 import KeywordEvidenceDrawer from '../components/KeywordEvidenceDrawer.vue'
 import { baseUrl, datasetGovernanceView, governancePublishErrorMessage, request } from '../api'
+
+const GraphDiagnosisWorkbench = defineAsyncComponent(() => import('../components/GraphDiagnosisWorkbench.vue'))
 
 const route = useRoute()
 const router = useRouter()

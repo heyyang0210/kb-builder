@@ -59,7 +59,36 @@ class PingCodeService:
                 self._executor = self._new_executor()
                 self._closed = False
             executor = self._executor
-        return executor.submit(self._isolate_asyncio, callback, *args).result()
+
+        def invoke():
+            try:
+                return self._isolate_asyncio(callback, *args)
+            except Exception as exc:
+                if self._is_browser_transport_failure(exc):
+                    self._invalidate_client()
+                raise
+
+        return executor.submit(invoke).result()
+
+    @staticmethod
+    def _is_browser_transport_failure(exc: Exception) -> bool:
+        message = str(exc).lower()
+        return any(
+            marker in message
+            for marker in (
+                "handler is closed",
+                "writeunixtransport closed",
+                "connection closed while reading from the driver",
+                "playwright connection closed",
+            )
+        )
+
+    def _invalidate_client(self) -> None:
+        """驱动通道已关闭时不再调用失效对象的 close，下次请求重建会话。"""
+        with self._lock:
+            self._client = None
+            self._api = None
+            self._login_space_key = None
 
     def close(self) -> None:
         executor = self._executor
