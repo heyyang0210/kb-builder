@@ -1,6 +1,7 @@
 node_modules/
 logs/
 tmp/
+.runtime/knowledge-center-isolated/
 coverage/
 test-results/
 .env

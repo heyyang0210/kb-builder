@@ -1,5 +1,5 @@
 {
-  "server_url": "https://knowledgebase.yashandb.com/api/mcp",
+  "server_url": "http://localhost:8080",
   "timeout": 30000,
   "retry_count": 3,
   "cache": {
