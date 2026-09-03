@@ -10,6 +10,7 @@ const { createServer } = require('http');
 const { Server: SocketServer } = require('socket.io');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 
 const logger = require('./lib/logger');
 const { errorHandler, notFoundHandler } = require('./middleware/error-handler');
@@ -87,6 +88,23 @@ app.use(cors({
 
 app.use(express.json({ limit: '10mb' }));
 
+const outlineInternalToken = process.env.KNOWLEDGE_CENTER_OUTLINE_INTERNAL_TOKEN || '';
+function secureEqual(left, right) {
+  const leftBuffer = Buffer.from(String(left || ''));
+  const rightBuffer = Buffer.from(String(right || ''));
+  return leftBuffer.length === rightBuffer.length && crypto.timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function requireOutlineMutationGateway(req, res, next) {
+  const protectedMutation = (req.method === 'POST' && (req.path === '/import' || req.path === '/handbooks')) || req.method === 'DELETE';
+  if (!protectedMutation) return next();
+  if (!outlineInternalToken) return res.status(503).json({ success: false, error: { code: 'OUTLINE_AUTH_NOT_CONFIGURED', message: '大纲写入鉴权尚未配置' } });
+  if (!secureEqual(req.get('x-knowledge-center-internal-token'), outlineInternalToken)) {
+    return res.status(403).json({ success: false, error: { code: 'OUTLINE_GATEWAY_REQUIRED', message: '大纲新增和删除必须通过知识中心权限网关' } });
+  }
+  return next();
+}
+
 // 频率限制
 const executeLimiter = rateLimit({
   windowMs: 60 * 1000,
@@ -100,7 +118,7 @@ const executeLimiter = rateLimit({
 // 路由
 app.use('/api/config', configRoutes);
 app.use('/api/agent', agentRoutes);
-app.use('/api/outline', outlineRoutes);
+app.use('/api/outline', requireOutlineMutationGateway, outlineRoutes);
 app.use('/api/workflow', workflowRoutes);
 app.use('/api/document', documentRoutes);
 app.use('/api/model-provider', modelProviderRoutes);

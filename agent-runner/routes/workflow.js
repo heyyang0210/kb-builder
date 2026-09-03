@@ -2,8 +2,14 @@ const express = require('express');
 const router = express.Router();
 const path = require('path');
 const fs = require('fs');
+const { createAggregateStore } = require('../lib/aggregate-store');
 
 const WORKFLOWS_DIR = path.join(__dirname, '..', 'workflows');
+const workflowStores = new Map();
+function workflowStore(id) {
+  if (!workflowStores.has(id)) workflowStores.set(id, createAggregateStore({ namespace: 'workflows', key: id, filePath: path.join(WORKFLOWS_DIR, `${id}.json`), emptyValue: null }));
+  return workflowStores.get(id);
+}
 
 // Ensure workflows directory exists
 if (!fs.existsSync(WORKFLOWS_DIR)) {
@@ -59,9 +65,9 @@ function initDefaultWorkflows() {
   
   defaultWorkflows.forEach(wf => {
     const filePath = path.join(WORKFLOWS_DIR, `${wf.id}.json`);
-    if (!fs.existsSync(filePath)) {
-      fs.writeFileSync(filePath, JSON.stringify(wf, null, 2));
-    }
+    if (process.env.KNOWLEDGE_STORAGE_MODE === 'database') {
+      try { if (!workflowStore(wf.id).read()) workflowStore(wf.id).write(wf); } catch (_) { workflowStore(wf.id).write(wf); }
+    } else if (!fs.existsSync(filePath)) fs.writeFileSync(filePath, JSON.stringify(wf, null, 2));
   });
 }
 
@@ -71,11 +77,12 @@ initDefaultWorkflows();
 // GET /api/workflow/list - List all workflows
 router.get('/list', (req, res) => {
   try {
-    const files = fs.readdirSync(WORKFLOWS_DIR).filter(f => f.endsWith('.json'));
-    const workflows = files.map(file => {
-      const content = fs.readFileSync(path.join(WORKFLOWS_DIR, file), 'utf-8');
-      return JSON.parse(content);
-    });
+    const files = process.env.KNOWLEDGE_STORAGE_MODE === 'database'
+      ? String(process.env.YASDB_WORKFLOW_IDS || 'default,fast,high_quality').split(',').map(id => `${id.trim()}.json`).filter(Boolean)
+      : fs.readdirSync(WORKFLOWS_DIR).filter(f => f.endsWith('.json'));
+    const workflows = files.map(file => (process.env.KNOWLEDGE_STORAGE_MODE === 'database'
+      ? workflowStore(path.basename(file, '.json')).read()
+      : JSON.parse(fs.readFileSync(path.join(WORKFLOWS_DIR, file), 'utf-8')))).filter(Boolean);
     
     res.json({ success: true, data: workflows });
   } catch (err) {
@@ -88,12 +95,12 @@ router.get('/:id', (req, res) => {
   try {
     const filePath = path.join(WORKFLOWS_DIR, `${req.params.id}.json`);
     
-    if (!fs.existsSync(filePath)) {
+    if (!fs.existsSync(filePath) && process.env.KNOWLEDGE_STORAGE_MODE !== 'database') {
       return res.status(404).json({ success: false, message: '工作流不存在' });
     }
     
-    const content = fs.readFileSync(filePath, 'utf-8');
-    const workflow = JSON.parse(content);
+    const workflow = process.env.KNOWLEDGE_STORAGE_MODE === 'database' ? workflowStore(req.params.id).read() : JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+    if (!workflow) return res.status(404).json({ success: false, message: '工作流不存在' });
     
     res.json({ success: true, data: workflow });
   } catch (err) {
@@ -115,7 +122,7 @@ router.post('/', (req, res) => {
     
     const filePath = path.join(WORKFLOWS_DIR, `${workflow.id}.json`);
     
-    if (fs.existsSync(filePath)) {
+    if (fs.existsSync(filePath) || (process.env.KNOWLEDGE_STORAGE_MODE === 'database' && workflowStore(workflow.id).read())) {
       return res.status(400).json({ 
         success: false, 
         message: '工作流 ID 已存在' 
@@ -126,7 +133,7 @@ router.post('/', (req, res) => {
     workflow.updated_at = new Date().toISOString();
     workflow.is_default = workflow.is_default || false;
     
-    fs.writeFileSync(filePath, JSON.stringify(workflow, null, 2));
+    workflowStore(workflow.id).write(workflow);
     
     res.json({ 
       success: true, 
@@ -143,7 +150,7 @@ router.put('/:id', (req, res) => {
   try {
     const filePath = path.join(WORKFLOWS_DIR, `${req.params.id}.json`);
     
-    if (!fs.existsSync(filePath)) {
+    if (!fs.existsSync(filePath) && process.env.KNOWLEDGE_STORAGE_MODE !== 'database') {
       return res.status(404).json({ success: false, message: '工作流不存在' });
     }
     
@@ -151,7 +158,8 @@ router.put('/:id', (req, res) => {
     workflow.id = req.params.id;
     workflow.updated_at = new Date().toISOString();
     
-    fs.writeFileSync(filePath, JSON.stringify(workflow, null, 2));
+    if (process.env.KNOWLEDGE_STORAGE_MODE === 'database') workflowStore(req.params.id).write(workflow);
+    else fs.writeFileSync(filePath, JSON.stringify(workflow, null, 2));
     
     res.json({ 
       success: true, 
@@ -168,11 +176,14 @@ router.delete('/:id', (req, res) => {
   try {
     const filePath = path.join(WORKFLOWS_DIR, `${req.params.id}.json`);
     
-    if (!fs.existsSync(filePath)) {
+    if (!fs.existsSync(filePath) && process.env.KNOWLEDGE_STORAGE_MODE !== 'database') {
       return res.status(404).json({ success: false, message: '工作流不存在' });
     }
     
-    fs.unlinkSync(filePath);
+    if (process.env.KNOWLEDGE_STORAGE_MODE === 'database') {
+      const current = workflowStore(req.params.id).read();
+      if (current) workflowStore(req.params.id).write({ ...current, deleted: true, deleted_at: new Date().toISOString() });
+    } else fs.unlinkSync(filePath);
     
     res.json({ success: true, message: '工作流已删除' });
   } catch (err) {

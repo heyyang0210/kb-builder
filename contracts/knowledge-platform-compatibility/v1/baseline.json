@@ -8,7 +8,8 @@
     { "method": "GET", "path": "/pingcode-materials/workbench?space=ops", "expectedStatus": 200, "behavior": "spa-deep-link-preserves-query" },
     { "method": "GET", "path": "/pingcode-api/api/health", "expectedStatus": 200, "behavior": "python-api-proxy" },
     { "method": "GET", "path": "/knowledge-center/", "expectedStatus": 200, "behavior": "unified-entry" },
-    { "method": "GET", "path": "/knowledge-center/api/platform/context", "expectedStatus": 200, "behavior": "aggregated-redacted-context" }
+    { "method": "GET", "path": "/knowledge-center/api/platform/context", "expectedStatus": 200, "behavior": "aggregated-redacted-context" },
+    { "method": "GET", "path": "/knowledge-center/api/platform/overview", "expectedStatus": 200, "behavior": "aggregated-read-only-fact-projection" }
   ],
   "socketIo": {
     "path": "/socket.io/",

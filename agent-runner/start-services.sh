@@ -23,7 +23,7 @@ echo ""
 # 启动后端
 echo "1. 启动后端服务 (端口 4100)..."
 cd "$SCRIPT_DIR"
-setsid node server.js > "$LOG_DIR/backend.log" 2>&1 &
+setsid env PORT=4100 node server.js > "$LOG_DIR/backend.log" 2>&1 &
 BACKEND_PID=$!
 echo "   PID: $BACKEND_PID"
 sleep 2
@@ -67,7 +67,7 @@ fi
 echo ""
 echo "4. 启动统一前端网关 (端口 3500)..."
 cd "$SCRIPT_DIR"
-setsid node frontend-server.js > "$LOG_DIR/frontend.log" 2>&1 &
+setsid env PORT=3500 KNOWLEDGE_CENTER_AUTH_PORT="${KNOWLEDGE_CENTER_AUTH_PORT:-4200}" node frontend-server.js > "$LOG_DIR/frontend.log" 2>&1 &
 FRONTEND_PID=$!
 echo "   PID: $FRONTEND_PID"
 sleep 2

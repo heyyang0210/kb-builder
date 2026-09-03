@@ -1,7 +1,7 @@
 const { test, expect, openPage } = require('./helpers');
 
 const overviewDocId = Buffer.from(
-  'knowledge-center:02-概要设计/知识中心建设平台总体概要设计.md'
+  'knowledge-center:02-概要设计/知识中心-平台-总体架构-概要设计文档.md'
 ).toString('base64url');
 
 async function openOverview(page) {

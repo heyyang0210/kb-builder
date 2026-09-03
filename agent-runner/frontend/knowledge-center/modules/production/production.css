@@ -1,0 +1,104 @@
+.production-heading { align-items: center; }
+.incremental-workspace { display: grid; grid-template-columns: minmax(260px, 320px) minmax(0, 1fr); gap: 14px; align-items: start; }
+.incremental-sidebar, .incremental-main { min-width: 0; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); }
+.incremental-sidebar { position: sticky; top: 20px; overflow: hidden; }
+.incremental-sidebar > header { display: flex; align-items: center; justify-content: space-between; padding: 14px; border-bottom: 1px solid var(--color-border); }
+.incremental-sidebar h2 { margin: 0; font-size: 16px; }
+.incremental-sidebar header span { color: var(--color-text-secondary); font-size: 12px; }
+.incremental-task-list { display: grid; }
+.incremental-task-item { width: 100%; display: grid; gap: 3px; padding: 13px 14px; border: 0; border-bottom: 1px solid var(--color-border); background: transparent; color: var(--color-text); text-align: left; cursor: pointer; }
+.incremental-task-item:last-child { border-bottom: 0; }
+.incremental-task-item:hover, .incremental-task-item:focus-visible { background: var(--color-surface-subtle); }
+.incremental-task-item.selected { background: var(--color-brand-subtle); box-shadow: inset 3px 0 var(--color-brand); }
+.incremental-task-item strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.incremental-task-item span { color: var(--color-brand); font-size: 12px; }
+.incremental-task-item small { color: var(--color-text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.incremental-list-state { display: grid; gap: 8px; padding: 18px 14px; color: var(--color-text-secondary); }
+.incremental-list-state.error { color: #8f2e26; }
+.incremental-welcome { padding: 32px; }
+.incremental-detail { padding: 18px; }
+.incremental-detail-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; padding-bottom: 16px; border-bottom: 1px solid var(--color-border); }
+.incremental-detail-header h2 { margin: 3px 0; font-size: 22px; }
+.incremental-detail-header span, .incremental-detail-header p { margin: 0; color: var(--color-text-secondary); font-size: 12px; }
+.incremental-steps { display: grid; grid-template-columns: repeat(7, minmax(72px, 1fr)); margin: 18px 0; padding: 0; overflow-x: auto; list-style: none; }
+.incremental-steps li { position: relative; display: grid; justify-items: center; gap: 5px; min-width: 78px; color: var(--color-text-tertiary); font-size: 11px; text-align: center; }
+.incremental-steps li::before { content: ''; position: absolute; z-index: 0; top: 13px; right: 50%; left: -50%; height: 1px; background: var(--color-border-strong); }
+.incremental-steps li:first-child::before { display: none; }
+.incremental-steps li > span { position: relative; z-index: 1; width: 27px; height: 27px; display: grid; place-items: center; border: 1px solid var(--color-border-strong); border-radius: 50%; background: var(--color-surface); }
+.incremental-steps li.done, .incremental-steps li.current { color: var(--color-brand); }
+.incremental-steps li.done::before { background: var(--color-brand); }
+.incremental-steps li.done > span, .incremental-steps li.current > span { border-color: var(--color-brand); background: var(--color-brand); color: #fff; }
+.incremental-section { padding: 17px 0; border-top: 1px solid var(--color-border); }
+.incremental-section > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 12px; }
+.incremental-section h3 { margin: 0; font-size: 16px; }
+.incremental-section header p { margin: 3px 0 0; color: var(--color-text-secondary); font-size: 12px; }
+.incremental-section header > span { flex: none; color: var(--color-text-secondary); font-size: 12px; }
+.incremental-empty, .incremental-lock-note, .incremental-form-warning { margin: 8px 0; padding: 12px; background: var(--color-surface-subtle); color: var(--color-text-secondary); font-size: 13px; }
+.incremental-form-warning { color: #8f2e26; }
+.incremental-baseline-picker { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: end; }
+.incremental-baseline-picker label { display: grid; gap: 5px; color: var(--color-text-secondary); font-size: 13px; }
+.incremental-baseline-picker select { width: 100%; min-height: 40px; padding: 7px 9px; border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm); background: var(--color-surface); color: inherit; }
+.incremental-baseline-status, .incremental-evidence-note { margin: 0; color: var(--color-text-secondary); font-size: 12px; }
+.incremental-evidence-note { margin-top: 12px; padding: 10px 12px; border-left: 3px solid #d09b39; background: var(--color-warning-subtle); }
+.incremental-inline-form { display: grid; grid-template-columns: repeat(3, minmax(140px, 1fr)) auto; gap: 10px; align-items: end; margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--color-border); }
+.incremental-inline-form.source { grid-template-columns: repeat(3, minmax(140px, 1fr)); }
+.incremental-inline-form .wide { grid-column: 1 / -1; }
+.incremental-inline-form.source > .button { justify-self: start; }
+.incremental-inline-form.evidence { grid-template-columns: repeat(3, minmax(130px, 1fr)); }
+.incremental-inline-form label, .incremental-form-actions label, .incremental-draft-field { display: grid; gap: 5px; color: var(--color-text-secondary); font-size: 12px; }
+.incremental-inline-form input, .incremental-inline-form select, .incremental-inline-form textarea, .incremental-form-actions select, .incremental-draft-field textarea { width: 100%; min-height: 40px; padding: 8px 10px; border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); font: inherit; }
+.incremental-inline-form textarea, .incremental-draft-field textarea { resize: vertical; }
+.incremental-form-status { align-self: center; color: var(--color-text-secondary); font-size: 12px; }
+.incremental-form-status.error { color: #a03127; }
+.incremental-form-actions { display: flex; align-items: end; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+.incremental-operation-fields { display: grid; grid-template-columns: repeat(3, minmax(150px, 1fr)); gap: 10px; margin-top: 12px; }
+.incremental-operation-fields label { display: grid; align-content: start; gap: 5px; color: var(--color-text-secondary); font-size: 12px; }
+.incremental-operation-fields input, .incremental-operation-fields select, .incremental-operation-fields textarea { width: 100%; min-height: 40px; padding: 8px 10px; border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); font: inherit; }
+.incremental-target-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.incremental-target-list label { display: flex; align-items: flex-start; gap: 9px; padding: 10px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); cursor: pointer; }
+.incremental-target-list strong, .incremental-target-list small { display: block; }
+.incremental-target-list small { color: var(--color-text-secondary); }
+.incremental-draft-field textarea { min-height: 260px; line-height: 1.65; }
+.incremental-fact-list, .incremental-issue-list, .incremental-evidence-list { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
+.incremental-fact-list li, .incremental-evidence-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--color-border); }
+.incremental-fact-list strong, .incremental-fact-list small { display: block; }
+.incremental-fact-list small, .incremental-evidence-list span { color: var(--color-text-secondary); }
+.incremental-fact-list a, .incremental-evidence-list a { color: var(--color-brand); }
+.incremental-review-actions { display: flex; gap: 6px; }
+.incremental-review-record { min-width: 0; flex: 1; }
+.incremental-review-record p { margin: 7px 0 0; color: var(--color-text-secondary); font-size: 12px; }
+.incremental-comment-form { display: grid; grid-template-columns: minmax(160px, 1fr) auto; gap: 7px; margin-top: 8px; }
+.incremental-comment-form input { min-height: 36px; padding: 6px 8px; border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm); }
+.incremental-diff-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid var(--color-border); }
+.incremental-diff-summary div { padding: 10px 12px; border-right: 1px solid var(--color-border); }
+.incremental-diff-summary div:last-child { border-right: 0; }
+.incremental-diff-summary span, .incremental-diff-summary strong { display: block; }
+.incremental-diff-summary span { color: var(--color-text-secondary); font-size: 11px; }
+.incremental-diff-summary strong { margin-top: 2px; font-size: 20px; }
+.incremental-issue-list li { display: grid; gap: 2px; padding: 9px 10px; border-bottom: 1px solid var(--color-border); }
+.incremental-issue-list li.blocking { border-left: 3px solid #c04b3f; background: var(--color-danger-subtle); }
+.incremental-issue-list span { color: var(--color-text-secondary); font-size: 12px; }
+.incremental-published { display: grid; gap: 3px; margin-top: 12px; padding: 12px; border-left: 3px solid var(--color-brand); background: var(--color-brand-subtle); }
+.incremental-published span { color: var(--color-text-secondary); font-size: 12px; }
+
+@media (max-width: 1100px) {
+  .incremental-workspace { grid-template-columns: 260px minmax(0, 1fr); }
+  .incremental-inline-form, .incremental-inline-form.source, .incremental-inline-form.evidence { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 800px) {
+  .incremental-workspace { grid-template-columns: 1fr; }
+  .incremental-sidebar { position: static; }
+  .incremental-task-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .incremental-task-item { border-right: 1px solid var(--color-border); }
+  .incremental-target-list { grid-template-columns: 1fr; }
+  .incremental-operation-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 560px) {
+  .incremental-detail { padding: 14px; }
+  .incremental-detail-header, .incremental-section > header { flex-direction: column; }
+  .incremental-task-list, .incremental-inline-form, .incremental-inline-form.source, .incremental-inline-form.evidence, .incremental-diff-summary { grid-template-columns: 1fr; }
+  .incremental-diff-summary div { border-right: 0; border-bottom: 1px solid var(--color-border); }
+  .incremental-form-actions .button { width: 100%; }
+  .incremental-operation-fields { grid-template-columns: 1fr; }
+  .incremental-baseline-picker, .incremental-comment-form { grid-template-columns: 1fr; }
+}

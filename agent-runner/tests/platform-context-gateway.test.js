@@ -1,5 +1,5 @@
 const http = require('http');
-const { aggregateContexts, fetchJson, isContext, loadPlatformContext } = require('../lib/platform-context-gateway');
+const { aggregateContexts, fetchJson, isContext, loadPlatformContext, loadPlatformProjection } = require('../lib/platform-context-gateway');
 
 const fingerprint = suffix => `sha256:${suffix.repeat(64).slice(0, 64)}`;
 const context = value => ({
@@ -94,5 +94,46 @@ describe('平台运行上下文网关', () => {
     const result = await fetchJson({ hostname: '127.0.0.1', port: server.address().port, path: '/' }, 20);
     server.close();
     expect(result.error.code).toBe('MODULE_TIMEOUT');
+  });
+
+  test('平台只读投影聚合事实摘要并标记降级分区', async () => {
+    const values = {
+      documents: { ok: true, value: { success: true, data: { total_documents: 12, root_count: 2 } } },
+      workbench: { ok: true, value: { counts: { all: 9, running: 2, failed: 1 } } },
+      materialBatches: { ok: false, error: { code: 'MODULE_TIMEOUT', message: '超时', retryable: true } },
+      datasets: { ok: true, value: { items: [{ id: 'dataset-1' }], total: 1 } },
+      knowledgeIndex: { ok: true, value: { knowledgePoints: 33, indexed: 30 } },
+      outlines: { ok: true, value: { success: true, data: [{ id: 'outline-1', name: '数据库手册', productId: 'yashandb', businessVersionTags: ['23.4.5.100'], outlineStructureVersion: 'outline-v12', state: 'published', nodeCount: 9, knowledgePointCount: 4 }] } }
+    };
+    const result = await loadPlatformProjection({
+      fetcher: async target => values[target.name],
+      targets: Object.fromEntries(Object.keys(values).map(name => [name, { name }]))
+    });
+    expect(result.statusCode).toBe(200);
+    expect(result.body.status).toBe('degraded');
+    expect(result.body.source).toBe('read-only-projection');
+    expect(result.body.sections.documents.data.total).toBe(12);
+    expect(result.body.sections.outlines.data.items[0]).toMatchObject({ id: 'outline-1', productId: 'yashandb', outlineStructureVersion: 'outline-v12' });
+    expect(result.body.sections.materialBatches.error.code).toBe('MODULE_TIMEOUT');
+    expect(result.body.asOf).toEqual(expect.any(String));
+  });
+
+  test('全部事实投影不可用时返回 503', async () => {
+    const result = await loadPlatformProjection({
+      fetcher: async () => ({ ok: false, error: { code: 'MODULE_UNAVAILABLE', message: '不可用' } }),
+      targets: { documents: {}, workbench: {} }
+    });
+    expect(result.statusCode).toBe(503);
+    expect(result.body.status).toBe('unavailable');
+  });
+
+  test('上游未提供统计字段时不将缺失值改写为零', async () => {
+    const result = await loadPlatformProjection({
+      fetcher: async target => ({ ok: true, value: target.name === 'documents' ? { data: {} } : {} }),
+      targets: { documents: { name: 'documents' }, workbench: { name: 'workbench' }, knowledgeIndex: { name: 'knowledgeIndex' } }
+    });
+    expect(result.body.sections.documents.data).toEqual({});
+    expect(result.body.sections.workbench.data.counts).toEqual({});
+    expect(result.body.sections.knowledgeIndex.data).toEqual({});
   });
 });

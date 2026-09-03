@@ -5,6 +5,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
+    "start:auth": "node auth-server.js",
     "dev": "nodemon server.js",
     "init-config": "node scripts/init-config.js",
     "test": "jest --coverage"
@@ -17,6 +18,7 @@
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
     "express-rate-limit": "^7.1.5",
+    "lucide": "^0.468.0",
     "mammoth": "^1.12.0",
     "multer": "^2.2.0",
     "openai": "^4.20.0",

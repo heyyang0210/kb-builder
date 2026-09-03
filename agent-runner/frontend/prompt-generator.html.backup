@@ -25,8 +25,8 @@
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; background: var(--bg); color: var(--text); height: 100vh; overflow: hidden; }
-.app { display: grid; grid-template-columns: 300px 1fr; grid-template-rows: 56px 1fr; height: 100vh; }
-.header { grid-column: 1 / -1; background: var(--primary); color: #fff; display: flex; align-items: center; justify-content: space-between; padding: 0 20px; }
+.app { display: grid; grid-template-columns: 300px 1fr; grid-template-rows: 56px 40px 1fr; height: 100vh; }
+.header { grid-column: 1 / -1; grid-row: 1; background: var(--primary); color: #fff; display: flex; align-items: center; justify-content: space-between; padding: 0 20px; }
 .header h1 { font-size: 18px; font-weight: 600; }
 .header-actions { display: flex; gap: 12px; align-items: center; }
 .header-actions button { background: rgba(255,255,255,.15); border: none; color: #fff; padding: 6px 14px; border-radius: var(--radius); cursor: pointer; font-size: 13px; }
@@ -107,6 +107,32 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sa
 .form-group input:focus, .form-group select:focus, .form-group textarea:focus {
   outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(37,99,235,.1);
 }
+/* 知识点描述列表编辑器 */
+.kp-desc-list { display: flex; flex-direction: column; gap: 6px; min-height: 40px; }
+.kp-desc-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px; background: var(--bg); border: 1px solid var(--border);
+  border-radius: var(--radius); font-size: 13px; transition: border-color .2s;
+}
+.kp-desc-item:hover { border-color: var(--primary); }
+.kp-desc-item input {
+  flex: 1; border: none; background: transparent;
+  font-size: 13px; color: var(--text); outline: none; padding: 2px 0;
+}
+.kp-desc-item .btn-remove-desc {
+  background: none; border: none; color: var(--text-secondary);
+  cursor: pointer; font-size: 16px; padding: 0 4px; line-height: 1;
+  transition: color .2s;
+}
+.kp-desc-item .btn-remove-desc:hover { color: #ef4444; }
+.kp-desc-actions { display: flex; align-items: center; gap: 12px; margin-top: 6px; }
+.btn-add-desc {
+  background: var(--primary-light); color: var(--primary); border: none;
+  padding: 4px 12px; border-radius: var(--radius); cursor: pointer;
+  font-size: 12px; transition: background .2s;
+}
+.btn-add-desc:hover { background: var(--primary); color: #fff; }
+.desc-hint { font-size: 11px; color: var(--text-secondary); }
 .btn { padding: 10px 20px; border: none; border-radius: var(--radius); font-size: 14px; font-weight: 500; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
 .btn-primary { background: var(--primary); color: #fff; }
 .btn-primary:hover { background: var(--primary-dark); }
@@ -321,7 +347,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sa
 .progress-step.skipped { border-left-color: var(--text-secondary); opacity: .6; }
 .step-icon { width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 10px; flex-shrink: 0; }
 .step-icon.pending { background: var(--bg); border: 1px solid var(--border); }
-.step-icon.running { background: var(--primary-light); border: 1px solid var(--primary); color: var(--primary); animation: pulse 1.5s infinite; }
+.step-icon.running { background: var(--primary-light); border: 1px solid var(--primary); color: var(--primary); }
 .step-icon.completed { background: var(--success-light); color: var(--success); }
 .step-icon.failed { background: var(--warning-light); color: var(--warning); }
 @keyframes pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.1); } }
@@ -333,12 +359,15 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sa
 .step-preview.expanded { display: block; animation: slideDown .2s ease; }
 
 /* 步骤详情样式 */
-.step-details-panel { margin-top: 8px; padding: 12px; background: var(--bg); border-radius: 6px; border-left: 3px solid var(--primary); }
-.step-detail-item { padding: 8px; margin: 6px 0; background: var(--card-bg); border-radius: 4px; font-size: 12px; }
+.step-details-panel { margin: 4px 0 8px 33px; padding: 6px 8px; background: var(--bg); border-radius: 6px; border-left: 3px solid var(--primary); }
+.step-detail-toggle { font-size: 11px; color: var(--primary); cursor: pointer; margin: 2px 0 4px 33px; display: inline-flex; align-items: center; gap: 6px; }
+.step-detail-toggle:hover { text-decoration: underline; }
+.step-detail-count { color: var(--text-secondary); font-size: 11px; }
+.step-detail-item { padding: 6px 8px; margin: 4px 0; background: var(--card-bg); border-radius: 4px; font-size: 12px; }
 .step-detail-item.success { border-left: 3px solid var(--success); }
 .step-detail-item.failed { border-left: 3px solid var(--warning); }
-.step-detail-item.running { border-left: 3px solid var(--primary); animation: pulse 1.5s infinite; }
-.step-detail-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.step-detail-item.running { border-left: 3px solid var(--primary); }
+.step-detail-header { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; min-height: 20px; }
 .step-detail-icon { font-size: 14px; }
 .step-detail-name { font-weight: 500; color: var(--text); flex: 1; }
 .step-detail-duration { font-size: 11px; color: var(--text-secondary); }
@@ -348,6 +377,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sa
 .step-info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-top: 4px; font-size: 11px; }
 .step-info-label { color: var(--text-secondary); }
 .step-info-value { color: var(--text); font-weight: 500; }
+.step-compact-meta { color: var(--text-secondary); font-size: 11px; margin-left: 6px; font-weight: 400; }
+.step-detail-message { font-size: 11px; color: var(--text-secondary); margin-left: 22px; line-height: 1.35; }
 .cancel-btn { padding: 6px 14px; border: 1px solid var(--warning); border-radius: var(--radius); background: none; color: var(--warning); font-size: 12px; cursor: pointer; transition: all .2s; }
 .cancel-btn:hover { background: var(--warning-light); }
 
@@ -760,10 +791,257 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sa
 }
 .doc-save-status.saving { color: var(--warning); }
 .doc-save-status.error { color: var(--warning); }
+
+/* Tab Bar */
+.tab-bar {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  background: var(--card-bg);
+  border-bottom: 1px solid var(--border);
+  gap: 4px;
+}
+
+.tab-btn {
+  padding: 8px 16px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: 6px 6px 0 0;
+  transition: all 0.2s;
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tab-btn:hover {
+  background: var(--bg);
+  color: var(--text);
+}
+
+.tab-btn.active {
+  background: var(--primary-light);
+  color: var(--primary);
+}
+
+.tab-btn.active::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--primary);
+}
+
+.tab-icon {
+  font-size: 16px;
+}
+
+/* Sidebar 位置调整 */
+.sidebar {
+  grid-column: 1;
+  grid-row: 3;
+}
+
+/* Main 位置调整 */
+.main {
+  grid-column: 2;
+  grid-row: 3;
+}
+
+/* Tab 切换动画 */
+.main-content {
+  animation: fadeIn 0.2s ease-in;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.main-content.switching {
+  animation: none;
+}
+
+/* Sidebar 折叠功能 */
+.sidebar {
+  position: relative;
+  transition: width 0.3s ease;
+}
+
+.sidebar.collapsed {
+  width: 0;
+  overflow: hidden;
+}
+
+.app.sidebar-collapsed {
+  grid-template-columns: 0px 1fr;
+}
+
+.sidebar-toggle {
+  position: fixed;
+  top: 110px;
+  left: 288px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: left 0.3s ease;
+  font-size: 12px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+}
+
+.app.sidebar-collapsed .sidebar-toggle {
+  left: 0px;
+}
+
+.sidebar-toggle:hover {
+  background: var(--primary);
+  color: white;
+}
+
+.sidebar-toggle .toggle-icon {
+  transition: transform 0.3s ease;
+}
+
+.app.sidebar-collapsed .sidebar-toggle .toggle-icon {
+  transform: rotate(180deg);
+}
+
+/* 响应式断点 */
+@media (max-width: 1024px) {
+  .sidebar {
+    width: 0;
+    overflow: hidden;
+  }
+  
+  .sidebar.expanded {
+    width: 300px;
+  }
+  
+  .app {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* 统计分析占位符样式 */
+.analytics-placeholder {
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--text-secondary);
+}
+
+.analytics-placeholder .placeholder-icon {
+  font-size: 64px;
+  margin-bottom: 16px;
+  opacity: 0.3;
+}
+
+.analytics-placeholder h3 {
+  font-size: 18px;
+  margin-bottom: 12px;
+  color: var(--text);
+}
+
+.analytics-placeholder ul {
+  list-style: none;
+  padding: 0;
+  margin-top: 20px;
+}
+
+.analytics-placeholder li {
+  padding: 8px 0;
+  font-size: 14px;
+}
+
+.analytics-placeholder-main {
+  padding: 60px 40px;
+  text-align: center;
+}
+
+.analytics-placeholder-main .placeholder-icon {
+  font-size: 80px;
+  margin-bottom: 20px;
+  opacity: 0.3;
+}
+
+.analytics-placeholder-main h2 {
+  font-size: 24px;
+  margin-bottom: 16px;
+  color: var(--text);
+}
+
+.analytics-placeholder-main p {
+  font-size: 16px;
+  color: var(--text-secondary);
+  margin-bottom: 40px;
+}
+
+.feature-list {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  max-width: 600px;
+  margin: 0 auto;
+}
+
+.feature-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 20px;
+  background: var(--bg);
+  border-radius: 8px;
+  text-align: left;
+}
+
+.feature-icon {
+  font-size: 32px;
+  flex-shrink: 0;
+}
+
+.feature-item h4 {
+  font-size: 16px;
+  margin-bottom: 4px;
+  color: var(--text);
+}
+
+.feature-item p {
+  font-size: 14px;
+  color: var(--text-secondary);
+  margin: 0;
+}
+/* 进度面板增强样式 */
+.retry-badge { display: inline-block; font-size: 10px; background: #fff3cd; color: #856404; padding: 1px 6px; border-radius: 8px; margin-left: 6px; vertical-align: middle; }
+.thinking-panel, .tool-panel { font-size: 11px; line-height: 1.5; }
+.thinking-toggle, .tool-toggle { user-select: none; }
+.thinking-toggle:hover, .tool-toggle:hover { opacity: 0.8; }
+.step-detail-tokens { font-size: 10px; color: #6c757d; margin-left: 4px; }
 </style>
 <script src="https://cdn.socket.io/4.6.1/socket.io.min.js"></script>
 <!-- Markdown Rendering -->
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<!-- Mermaid Diagram Rendering -->
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/turndown/dist/turndown.min.js"></script>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github.min.css">
 <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
@@ -790,13 +1068,34 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sa
     <h1> YashanDB 知识库文档生成器</h1>
     <div class="header-actions">
       <div class="connection-indicator" id="connectionIndicator" onclick="checkBackendConnection()" title="点击检查连接"><span class="connection-dot checking" id="connectionDot"></span><span id="connectionText">检查中...</span></div>
-      <button class="btn-config" onclick="openDocumentViewer()">📄 文档</button>
       <button class="btn-config" onclick="openConfigModal()">⚙️ 配置</button>
       <button onclick="toggleBatchMode()" id="batchToggle">📦 批量模式</button>
       <button onclick="toggleTheme()">🌓 主题</button>
     </div>
   </div>
-  <div class="sidebar">
+
+  <!-- Tab Bar -->
+  <div class="tab-bar">
+    <button class="tab-btn active" data-tab="doc-gen" onclick="switchTab('doc-gen')">
+      <span class="tab-icon">📝</span>
+      <span class="tab-text">文档生成</span>
+    </button>
+    <button class="tab-btn" data-tab="doc-mgmt" onclick="switchTab('doc-mgmt')">
+      <span class="tab-icon">📄</span>
+      <span class="tab-text">文档管理</span>
+    </button>
+    <button class="tab-btn" data-tab="analytics" onclick="switchTab('analytics')">
+      <span class="tab-icon">📊</span>
+      <span class="tab-text">统计分析</span>
+    </button>
+  </div>
+  <button class="sidebar-toggle" onclick="toggleSidebar()" title="折叠侧边栏">
+    <span class="toggle-icon">◀</span>
+  </button>
+  <div class="sidebar" id="sidebar">
+    
+    <!-- 文档生成 Tab 的 Sidebar -->
+    <div class="sidebar-content" id="sidebar-doc-gen">
     <div class="sidebar-search">
       <input type="text" placeholder="搜索知识点..." oninput="filterTree(this.value)" id="searchInput">
       <div class="outline-upload-section">
@@ -813,9 +1112,48 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sa
         <p style="font-size: 12px; color: var(--text-secondary); text-align: center; padding: 12px;">暂无上传的文档</p>
       </div>
     </div>
+    
+    </div>
+    
+    <!-- 文档管理 Tab 的 Sidebar -->
+    <div class="sidebar-content" id="sidebar-doc-mgmt" style="display:none">
+      <div class="doc-mgmt-search">
+        <input type="text" id="docSearchInput" placeholder="搜索文档..." oninput="handleDocSearch(this.value)">
+        <div class="doc-search-scope">
+          <label><input type="radio" name="searchScope" value="all" checked onchange="handleDocSearch(document.getElementById('docSearchInput').value)"> 标题和内容</label>
+          <label><input type="radio" name="searchScope" value="title" onchange="handleDocSearch(document.getElementById('docSearchInput').value)"> 仅标题</label>
+        </div>
+      </div>
+      <div class="doc-view-toggle">
+        <button class="doc-view-toggle-btn active" id="treeViewBtn" onclick="switchDocViewMode('tree')">📁 目录</button>
+        <button class="doc-view-toggle-btn" id="listViewBtn" onclick="switchDocViewMode('list')">📋 列表</button>
+      </div>
+      <div class="doc-mgmt-stats" id="docStats"></div>
+      <div class="doc-tree-view" id="docTreeView">
+        <div class="doc-empty">加载中...</div>
+      </div>
+      <div class="doc-list-view" id="docListView" style="display:none">
+        <div class="doc-empty">加载中...</div>
+      </div>
+    </div>
+    
+    <!-- 统计分析 Tab 的 Sidebar -->
+    <div class="sidebar-content" id="sidebar-analytics" style="display:none">
+      <div class="analytics-placeholder">
+        <div class="placeholder-icon">📊</div>
+        <h3>统计分析</h3>
+        <p>功能开发中...</p>
+        <ul>
+          <li>📈 文档生成统计</li>
+          <li>🔤 Token 消耗分析</li>
+          <li>📊 使用趋势图表</li>
+        </ul>
+      </div>
+    </div>
   </div>
 
   <div class="main" id="mainContent">
+    <div class="main-content" id="main-doc-gen">
     <div id="batchPanel" style="display:none"></div>
     <div class="card">
       <div class="card-title">① 知识点信息 <span class="badge badge-required">必填</span></div>
@@ -847,7 +1185,12 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sa
         </div>
         <div class="form-group full">
           <label>知识点描述</label>
-          <textarea id="kpDesc" placeholder="简要描述本知识点要覆盖的内容..."></textarea>
+          <div id="kpDescList" class="kp-desc-list"></div>
+          <div class="kp-desc-actions">
+            <button type="button" onclick="addDescItem()" class="btn-add-desc">+ 添加描述</button>
+            <span class="desc-hint">每条描述为提示词中的一个要点</span>
+          </div>
+          <textarea id="kpDesc" style="display:none"></textarea>
         </div>
         <div class="form-group">
           <label>目标对比数据库（兼容性类必填）</label>
@@ -871,6 +1214,20 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sa
     <div class="card">
       <div class="card-title">② 执行方案选择</div>
       <div id="workflowSelectorContainer"></div>
+      <label style="display:flex; align-items:flex-start; gap:8px; margin-top:12px; font-size:13px; line-height:1.5; color:var(--text);">
+        <input type="checkbox" id="directGenerateMode" checked style="margin-top:3px;">
+        <span>
+          <strong>高保真直写模式</strong>
+          <span style="display:block; color:var(--text-secondary); font-size:12px;">直接使用完整提示词、模板全文、MCP结果和Oracle文件生成，输出更接近 Codex 窗口效果。</span>
+        </span>
+      </label>
+      <label style="display:flex; align-items:flex-start; gap:8px; margin-top:8px; font-size:13px; line-height:1.5; color:var(--text);">
+        <input type="checkbox" id="debugMode" style="margin-top:3px;">
+        <span>
+          <strong>调试模式</strong>
+          <span style="display:block; color:var(--text-secondary); font-size:12px;">启用后：质量门禁生效、中间文件全部存储到 logs/intermediate/、失败时暂停等待人工介入。</span>
+        </span>
+      </label>
     </div>
     <div class="card">
       <div class="card-title">③ 参考资料配置 <span class="badge badge-optional">可选</span></div>
@@ -928,6 +1285,69 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sa
       </div>
     </div>
   </div>
+
+    <!-- 文档管理 Tab 的 Main -->
+    <div class="main-content" id="main-doc-mgmt" style="display:none">
+      <div class="doc-mgmt-empty" id="docViewerEmpty">
+        <div class="doc-empty-icon">📄</div>
+        <p>选择一个文档查看或生成新文档</p>
+      </div>
+      <div class="doc-mgmt-viewer" id="docViewerPanel" style="display:none">
+        <div class="doc-viewer-toolbar">
+          <div class="doc-viewer-title" id="docViewerTitle">文档标题</div>
+          <div class="doc-viewer-actions">
+            <button class="btn btn-primary btn-sm" onclick="generateDocFromPrompt()" id="genDocBtn" style="display:none">🚀 生成文档</button>
+            <button class="btn btn-outline btn-sm" onclick="refreshDocList()">🔄 刷新</button>
+            <button class="output-mode-btn active" id="docViewBtn" onclick="switchDocMode('preview')">📄 预览</button>
+            <button class="output-mode-btn" id="docEditBtn" onclick="switchDocMode('edit')">✏️ 编辑</button>
+            <button class="btn btn-outline btn-sm" onclick="saveDocContent()" id="docSaveBtn" style="display:none">💾 保存</button>
+            <button class="btn btn-outline btn-sm" onclick="downloadCurrentDoc()">📥 下载</button>
+            <button class="btn btn-outline btn-sm" onclick="deleteCurrentDoc()" style="color:var(--warning)">🗑️</button>
+          </div>
+        </div>
+        <div class="doc-viewer-meta" id="docViewerMeta"></div>
+        <div class="doc-viewer-content">
+          <div class="markdown-preview doc-preview-pane" id="docPreviewContent"></div>
+          <div class="doc-edit-pane" id="docEditPane" style="display:none">
+            <div class="doc-edit-line-numbers" id="docLineNumbers"></div>
+            <textarea class="doc-edit-textarea" id="docEditTextarea" oninput="handleDocEditInput()" onscroll="syncLineNumbers()"></textarea>
+          </div>
+        </div>
+        <div class="doc-save-status" id="docSaveStatus"></div>
+      </div>
+    </div>
+    
+    <!-- 统计分析 Tab 的 Main -->
+    <div class="main-content" id="main-analytics" style="display:none">
+      <div class="analytics-placeholder-main">
+        <div class="placeholder-icon">🚧</div>
+        <h2>统计分析功能开发中</h2>
+        <p>即将推出以下功能：</p>
+        <div class="feature-list">
+          <div class="feature-item">
+            <span class="feature-icon">📈</span>
+            <div>
+              <h4>文档生成统计</h4>
+              <p>查看文档生成数量、频率、成功率等统计数据</p>
+            </div>
+          </div>
+          <div class="feature-item">
+            <span class="feature-icon">🔤</span>
+            <div>
+              <h4>Token 消耗分析</h4>
+              <p>追踪 API 调用和 Token 使用情况</p>
+            </div>
+          </div>
+          <div class="feature-item">
+            <span class="feature-icon">📊</span>
+            <div>
+              <h4>使用趋势图表</h4>
+              <p>可视化展示使用趋势和模式</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
 </div>
 <div class="copy-toast" id="copyToast">✅ 已复制到剪贴板</div>
 
@@ -951,8 +1371,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sa
         <div class="config-group">
           <label>选择 Provider</label>
           <div class="provider-cards">
-            <div class="provider-card active" onclick="selectProvider('openai')" data-provider="openai">OpenAI</div>
-            <div class="provider-card" onclick="selectProvider('alibaba')" data-provider="alibaba">阿里云百炼</div>
+            <div class="provider-card" onclick="selectProvider('openai')" data-provider="openai">OpenAI</div>
+            <div class="provider-card active" onclick="selectProvider('alibaba')" data-provider="alibaba">阿里云百炼</div>
             <div class="provider-card" onclick="selectProvider('zhipu')" data-provider="zhipu">智谱 AI</div>
             <div class="provider-card" onclick="selectProvider('custom')" data-provider="custom">自定义</div>
           </div>
@@ -967,13 +1387,13 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sa
         <div class="config-group">
           <label>Base URL</label>
           <div class="config-input-wrap">
-            <input type="text" id="cfgBaseUrl" placeholder="https://api.openai.com/v1">
+            <input type="text" id="cfgBaseUrl" placeholder="https://api.openai.com/v1" value="https://ai-green.yasdb.com/compatible-mode/v1">
           </div>
         </div>
         <div class="config-group">
           <label>Model</label>
           <div class="config-input-wrap">
-            <input type="text" id="cfgModel" placeholder="gpt-4">
+            <input type="text" id="cfgModel" placeholder="gpt-4" value="qwen3.7-plus">
           </div>
         </div>
         <div style="display:flex;gap:12px">
@@ -983,7 +1403,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sa
           </div>
           <div class="config-group" style="flex:1">
             <label>Max Tokens</label>
-            <input type="number" id="cfgMaxTokens" class="config-select" min="100" max="128000" value="4000">
+            <input type="number" id="cfgMaxTokens" class="config-select" min="100" max="128000" value="60000">
           </div>
         </div>
         <button class="test-btn" onclick="testModelConnection()" id="testModelBtn">🔗 测试连接</button>
@@ -993,7 +1413,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sa
         <div class="config-group">
           <label>MCP Server URL</label>
           <div class="config-input-wrap">
-            <input type="text" id="cfgMcpUrl" placeholder="http://localhost:8080">
+            <input type="text" id="cfgMcpUrl" placeholder="http://localhost:8080" value="https://knowledgebase.yashandb.com/api/mcp">
           </div>
         </div>
         <div class="config-group">
@@ -5675,7 +6095,7 @@ function initTree() {
       const domainId = 'up-' + oi;
       html += '<div class="tree-part" data-part="up-' + oi + '">';
       html += '<div class="tree-part-title" onclick="togglePart(\'up-' + oi + '\')">';
-      html += '<span class="arrow" id="arrow-p-up-' + oi + '">▶</span> ' + (outline.title || outline.name || '大纲 ' + (oi+1)) + '</div>';
+      html += '<span class="arrow" id="arrow-p-up-' + oi + '">▶</span> ' + (outline.name || outline.title || '大纲 ' + (oi+1)) + '</div>';
       html += '<div class="tree-chapter" id="chapters-up-' + oi + '">';
       
       const parts = outline.parts || outline.chapters || [];
@@ -5864,7 +6284,7 @@ function selectKp(kpId) {
     document.getElementById('kpPart').value = part.part;
     document.getElementById('kpLevel').value = part.level || '⭐';
     document.getElementById('kpName').value = kp.name;
-    document.getElementById('kpDesc').value = kp.desc || '';
+    renderDescItems((kp.desc || '').split(/[；;]/).map(function(s){ return s.trim(); }).filter(Boolean));
     
     // 填充章节下拉框
     const chSelect = document.getElementById('kpChapter');
@@ -5888,7 +6308,7 @@ function selectKp(kpId) {
   // 通用填充（db 和 biz 也需要）
   if (domain === 'db' || domain === 'biz') {
     document.getElementById('kpName').value = kp.name;
-    document.getElementById('kpDesc').value = kp.desc;
+    renderDescItems((kp.desc || '').split(/[；;]/).map(function(s){ return s.trim(); }).filter(Boolean));
     
     const detected = detectType(kp.name, kp.desc);
     document.getElementById('kpType').value = detected;
@@ -5957,6 +6377,52 @@ function filterTree(query) {
       el.classList.add('open');
     });
   }
+}
+
+// ---- 知识点描述列表编辑器 ----
+function escapeHtml(str) {
+  var div = document.createElement("div"); div.textContent = str; return div.innerHTML;
+}
+
+function renderDescItems(items) {
+  const container = document.getElementById("kpDescList");
+  if (!items || items.length === 0) {
+    container.innerHTML = "<div style=\"color:var(--text-secondary);font-size:12px;padding:8px 0\">暂无描述，点击「+ 添加描述」添加</div>";
+    syncDescToHidden();
+    return;
+  }
+  container.innerHTML = items.map(function(item, i) {
+    return "<div class=\"kp-desc-item\">" +
+      "<input type=\"text\" value=\"" + escapeHtml(item) + "\" oninput=\"syncDescToHidden()\" placeholder=\"输入描述要点...\">" +
+      "<button class=\"btn-remove-desc\" onclick=\"removeDescItem(" + i + ")\" title=\"删除\">×</button>" +
+      "</div>";
+  }).join("");
+  syncDescToHidden();
+}
+
+function addDescItem() {
+  const items = getDescItems();
+  items.push("");
+  renderDescItems(items);
+  const inputs = document.querySelectorAll("#kpDescList .kp-desc-item input");
+  if (inputs.length > 0) inputs[inputs.length - 1].focus();
+}
+
+function removeDescItem(index) {
+  const items = getDescItems();
+  items.splice(index, 1);
+  renderDescItems(items);
+}
+
+function getDescItems() {
+  const inputs = document.querySelectorAll("#kpDescList .kp-desc-item input");
+  if (inputs.length === 0) return [];
+  return Array.from(inputs).map(function(el) { return el.value; });
+}
+
+function syncDescToHidden() {
+  const items = getDescItems().filter(function(v) { return v.trim(); });
+  document.getElementById("kpDesc").value = items.join("；");
 }
 
 function generatePrompt() {
@@ -6045,6 +6511,7 @@ function resetForm() {
   ['kpName','kpDesc','refMcp','refDesign','refOracle','refTest'].forEach(function(id) {
     document.getElementById(id).value = '';
   });
+  renderDescItems([]);
   document.getElementById('kpType').value = '';
   document.getElementById('kpTargetDb').value = '';
   // Reset edit mode if active
@@ -6297,6 +6764,7 @@ async function handleOutlineUpload(event) {
         const parsed = result.data.parsedOutline;
         parsed.name = file.name;
         parsed.isOutline = true;
+        parsed.id = result.data.id;
         uploadedOutlines.push(parsed);
         initTree();
         
@@ -6312,7 +6780,7 @@ async function handleOutlineUpload(event) {
       const formData = new FormData();
       formData.append('file', file);
       
-      const resp = await fetch('http://localhost:4100/api/document/preprocess', {
+      const resp = await fetch(BACKEND + '/api/document/preprocess', {
         method: 'POST',
         body: formData
       });
@@ -6366,7 +6834,12 @@ function detectOutlineFormat(content) {
 }
 
 // ========== 后端连接状态检查 ==========
-const BACKEND_URL = 'http://localhost:4100';
+function getBackendBaseUrl() {
+  return 'http://172.22.69.74:4100';
+}
+
+const BACKEND_URL = getBackendBaseUrl();
+const BACKEND = BACKEND_URL;
 
 async function checkBackendConnection() {
   const dot = document.getElementById('connectionDot');
@@ -6404,7 +6877,7 @@ function toggleTheme() {
 // Load previously uploaded outlines from backend
 async function loadUploadedOutlines() {
   try {
-    const resp = await fetch('http://localhost:4100/api/outline/list');
+    const resp = await fetch(BACKEND + '/api/outline/list');
     if (!resp.ok) return;
     const result = await resp.json();
     if (!result.success || !result.data || result.data.length === 0) return;
@@ -6413,6 +6886,7 @@ async function loadUploadedOutlines() {
       if (outline.content) {
         outline.content.name = outline.name;
         if (!outline.content.title) outline.content.title = outline.name;
+        outline.content.id = outline.id;
         uploadedOutlines.push(outline.content);
       }
     }
@@ -6442,17 +6916,42 @@ if (typeof WorkflowSelector !== 'undefined') {
 
 
 // ========== Agent Runner 前端集成 ==========
-const BACKEND = 'http://localhost:4100';
 let currentTaskId = null;
 let socket = null;
-let currentProvider = 'openai';
+let currentProvider = 'alibaba';
+const expandedStepDetails = new Set();
+const expandedThinkingPanels = new Set();
 
 const PROVIDER_DEFAULTS = {
   openai: { url: 'https://api.openai.com/v1', model: 'gpt-4' },
-  alibaba: { url: 'https://dashscope.aliyuncs.com/api/v1', model: 'qwen-max' },
+  alibaba: { url: 'https://ai-green.yasdb.com/compatible-mode/v1', model: 'qwen3.7-plus' },
   zhipu: { url: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4' },
   custom: { url: '', model: '' }
 };
+
+function sanitizeFilenameBase(value) {
+  return String(value || 'document')
+    .replace(/\.(md|markdown)$/i, '')
+    .replace(/[\/\\:*?"<>|`]/g, '_')
+    .replace(/\s+/g, ' ')
+    .trim() || 'document';
+}
+
+function extractYamlTitle(promptText) {
+  const yamlMatch = String(promptText || '').match(/```ya?ml\s*([\s\S]*?)```/i);
+  if (!yamlMatch) return '';
+  const titleMatch = yamlMatch[1].match(/^\s*(?:title|标题)\s*[:：]\s*(.+?)\s*$/mi);
+  if (!titleMatch) return '';
+  return titleMatch[1]
+    .replace(/^['"]|['"]$/g, '')
+    .replace(/\s+#.*$/, '')
+    .trim();
+}
+
+function resolvePromptFilename(promptText, fallbackName) {
+  const yamlTitle = extractYamlTitle(promptText);
+  return sanitizeFilenameBase(yamlTitle || fallbackName || 'document') + '.md';
+}
 
 // --- 配置 Modal ---
 function openConfigModal() {
@@ -6756,8 +7255,11 @@ async function executeAgent() {
     return;
   }
 
+  const outputFilename = resolvePromptFilename(promptText, kpName);
   const data = {
     prompt: promptText,  // F1 修复：发送完整提示词
+    mode: document.getElementById('directGenerateMode')?.checked ? 'direct_generate' : 'workflow',
+    debug: document.getElementById('debugMode')?.checked || false,
     knowledge_point: {
       name: kpName,
       type: document.getElementById('kpType').value || '通用基础',
@@ -6771,7 +7273,9 @@ async function executeAgent() {
       part: document.getElementById('kpPart').value,
       chapter: document.getElementById('kpChapter').value
     }) : 'output/',
-    filename: kpName + '.md',
+    filename: outputFilename,
+    template: getTemplateFile(document.getElementById('kpType').value || '通用基础'),
+    skill: getSkillFile(document.getElementById('kpType').value || '通用基础'),
     workflow_config: (typeof workflowSelector !== "undefined" && workflowSelector) ? workflowSelector.getSelectedConfig() : null
   };
 
@@ -6796,6 +7300,7 @@ async function executeAgent() {
       currentTaskId = result.task_id;
       showProgressPanel(promptText);  // F4 修复：传递提示词
       connectWebSocket(result.task_id);
+      pollProgress(result.task_id);
     } else {
       showToast('❌ ' + (result.error?.message || '执行失败'));
       btn.disabled = false;
@@ -6815,11 +7320,14 @@ function showProgressPanel(promptText) {
   document.getElementById('progressSteps').innerHTML = '';
   document.getElementById('progressTitle').textContent = '执行中...';
   document.getElementById('progressSpinner').style.display = 'block';
+  expandedStepDetails.clear();
+  expandedThinkingPanels.clear();
+  document.getElementById('promptSection')?.remove();
   
   // F4 修复：添加提示词展示区
   if (promptText) {
     const promptSection = `
-      <div class="prompt-section" style="margin-bottom: 16px; padding: 12px; background: var(--bg); border-radius: var(--radius);">
+      <div class="prompt-section" id="promptSection" style="margin-bottom: 16px; padding: 12px; background: var(--bg); border-radius: var(--radius);">
         <div style="display: flex; justify-content: space-between; align-items: center; cursor: pointer;" onclick="togglePromptView()">
           <span style="font-size: 13px; font-weight: 500;">📝 输入提示词</span>
           <span style="font-size: 12px; color: var(--text-secondary);" id="promptToggleText">[展开查看 ▶]</span>
@@ -6890,61 +7398,14 @@ function connectWebSocket(taskId) {
 
 // 更新步骤详情
 async function updateStepDetail(data) {
-  const step = data.step;
-  const detail = data.detail;
-  
-  // 获取当前进度面板
-  const progressSteps = document.getElementById('progressSteps');
-  if (!progressSteps) return;
-  
-  // 找到对应的步骤元素
-  const stepElements = progressSteps.querySelectorAll('.progress-step');
-  let targetStep = null;
-  
-  stepElements.forEach(el => {
-    const stepName = el.querySelector('.step-name');
-    if (stepName && stepName.textContent.includes(step)) {
-      targetStep = el;
-    }
-  });
-  
-  if (!targetStep) return;
-  
-  // 检查是否已有详情面板
-  let detailsPanel = targetStep.querySelector('.step-details-panel');
-  if (!detailsPanel) {
-    detailsPanel = document.createElement('div');
-    detailsPanel.className = 'step-details-panel';
-    targetStep.appendChild(detailsPanel);
+  if (!data?.task_id) return;
+  try {
+    const resp = await fetch(BACKEND + '/api/agent/status/' + data.task_id);
+    const status = await resp.json();
+    updateProgressUI(status);
+  } catch (err) {
+    console.warn('刷新步骤详情失败:', err);
   }
-  
-  // 添加新的详情项
-  const statusIcon = detail.status === 'success' ? '✅' : detail.status === 'failed' ? '❌' : '⏳';
-  const statusClass = detail.status || 'running';
-  const duration = detail.duration ? (detail.duration / 1000).toFixed(1) + 's' : '';
-  const tokens = detail.tokens || '';
-  
-  let detailHtml = `<div class="step-detail-item ${statusClass}">`;
-  detailHtml += `<div class="step-detail-header">`;
-  detailHtml += `<span class="step-detail-icon">${statusIcon}</span>`;
-  detailHtml += `<span class="step-detail-name">${escapeHtml(detail.name)}</span>`;
-  if (duration) detailHtml += `<span class="step-detail-duration">${duration}</span>`;
-  if (tokens) detailHtml += `<span class="step-detail-tokens">${tokens} tokens</span>`;
-  detailHtml += `</div>`;
-  
-  if (detail.type === 'llm_call') {
-    detailHtml += `<div class="step-info-grid">`;
-    detailHtml += `<span class="step-info-label">模型:</span><span class="step-info-value">${detail.model || 'N/A'}</span>`;
-    detailHtml += `<span class="step-info-label">提供商:</span><span class="step-info-value">${detail.provider || 'N/A'}</span>`;
-    detailHtml += `</div>`;
-  }
-  
-  detailHtml += `</div>`;
-  
-  detailsPanel.insertAdjacentHTML('beforeend', detailHtml);
-  
-  // 自动滚动到最新详情
-  detailsPanel.scrollTop = detailsPanel.scrollHeight;
 }
 
 function pollProgress(taskId) {
@@ -6969,99 +7430,48 @@ function pollProgress(taskId) {
 
 function updateProgressUI(data) {
   document.getElementById('progressFill').style.width = data.progress + '%';
+  const runningStep = (data.steps || []).find(s => s.status === 'running');
+  const latestDetail = runningStep?.details?.[runningStep.details.length - 1];
+  if (data.status === 'running' && latestDetail?.message) {
+    document.getElementById('progressTitle').textContent = latestDetail.message;
+  } else if (data.status === 'running' && runningStep) {
+    document.getElementById('progressTitle').textContent = '正在执行：' + runningStep.name;
+  }
 
   const stepsHtml = data.steps.map((s, i) => {
     const icons = { pending: '○', running: '◉', completed: '✓', failed: '✗', skipped: '—' };
     const durations = s.duration ? (s.duration / 1000).toFixed(1) + 's' : '';
     
+    // 构建重试徽章
+    let retryBadge = '';
+    if (s.attempt > 1) {
+      const retryReason = (s.details || []).flatMap(d => d.warnings || d.suggestions || []).join('; ') || '未通过验证';
+      retryBadge = `<span class="retry-badge" title="${escapeHtml(retryReason)}">🔄 重试 ${s.attempt}</span>`;
+    }
+
     // 构建详细信息面板
     let detailHtml = renderStepDetails(s);
+
+    const detailStats = formatDetailStats(s);
+    const detailLine = escapeHtml(s.error || latestStepMessage(s) || durations || s.status);
+    const detailMeta = detailStats ? '<span class="step-compact-meta">' + escapeHtml(detailStats) + '</span>' : '';
 
     return '<div class="progress-step ' + s.status + '">' +
       '<div class="step-icon ' + s.status + '">' + (icons[s.status] || '?') + '</div>' +
       '<div class="step-info">' +
-        '<div class="step-name">' + s.name + (s.attempt > 1 ? ' (重试 ' + s.attempt + ')' : '') + '</div>' +
-        '<div class="step-detail">' + (s.error || durations || s.status) + '</div>' +
+        '<div class="step-name">' + s.name + retryBadge + '</div>' +
+        '<div class="step-detail">' + detailLine + detailMeta + '</div>' +
       '</div>' +
     '</div>' + detailHtml;
   }).join('');
 
   document.getElementById('progressSteps').innerHTML = stepsHtml;
 
-// 渲染步骤详细信息
-function renderStepDetails(step) {
-  if (!step.details || step.details.length === 0) {
-    // 如果没有详细信息但有输出预览，显示输出预览
-    if (step.output_preview) {
-      return `
-        <div class="step-detail-toggle" onclick="event.stopPropagation(); toggleStepDetail('${step.name}')" 
-             style="font-size: 11px; color: var(--primary); cursor: pointer; margin-top: 4px; padding-left: 30px;">
-          [展开查看详情 ▶]
-        </div>
-        <div class="step-detail-content" id="detail-${step.name}" style="display: none; margin: 8px 0 8px 30px; padding: 8px; background: var(--bg); border-radius: 4px; max-height: 200px; overflow-y: auto;">
-          <pre style="font-size: 11px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; margin: 0;">${escapeHtml(step.output_preview)}</pre>
-        </div>
-      `;
-    }
-    return '';
-  }
-
-  let detailsHtml = '<div class="step-details-panel">';
-  
-  step.details.forEach((detail, idx) => {
-    const statusIcon = detail.status === 'success' ? '✅' : detail.status === 'failed' ? '❌' : '⏳';
-    const statusClass = detail.status || 'running';
-    const duration = detail.duration ? (detail.duration / 1000).toFixed(1) + 's' : '';
-    const tokens = detail.tokens || '';
-    
-    detailsHtml += `<div class="step-detail-item ${statusClass}">`;
-    detailsHtml += `<div class="step-detail-header">`;
-    detailsHtml += `<span class="step-detail-icon">${statusIcon}</span>`;
-    detailsHtml += `<span class="step-detail-name">${escapeHtml(detail.name)}</span>`;
-    if (duration) detailsHtml += `<span class="step-detail-duration">${duration}</span>`;
-    if (tokens) detailsHtml += `<span class="step-detail-tokens">${tokens} tokens</span>`;
-    detailsHtml += `</div>`;
-    
-    // 显示详细信息
-    if (detail.type === 'llm_call') {
-      detailsHtml += `<div class="step-info-grid">`;
-      detailsHtml += `<span class="step-info-label">模型:</span><span class="step-info-value">${detail.model || 'N/A'}</span>`;
-      detailsHtml += `<span class="step-info-label">提供商:</span><span class="step-info-value">${detail.provider || 'N/A'}</span>`;
-      if (detail.input) {
-        detailsHtml += `<span class="step-info-label">输入长度:</span><span class="step-info-value">${(detail.input.system_prompt_length || 0) + (detail.input.user_prompt_length || 0)} chars</span>`;
-      }
-      if (detail.output) {
-        detailsHtml += `<span class="step-info-label">输出长度:</span><span class="step-info-value">${detail.output.content_length || 0} chars</span>`;
-      }
-      detailsHtml += `</div>`;
-    } else if (detail.type === 'tool_call') {
-      if (detail.input) {
-        const inputStr = typeof detail.input === 'string' ? detail.input : JSON.stringify(detail.input, null, 2);
-        if (inputStr.length < 200) {
-          detailsHtml += `<div class="step-detail-content"><strong>输入:</strong> <pre>${escapeHtml(inputStr)}</pre></div>`;
-        }
-      }
-      if (detail.output) {
-        if (detail.output.error) {
-          detailsHtml += `<div class="step-detail-content" style="color: var(--warning);"><strong>错误:</strong> ${escapeHtml(detail.output.error)}</div>`;
-        } else if (detail.output.content_length) {
-          detailsHtml += `<div class="step-detail-content"><strong>输出:</strong> ${detail.output.content_length} chars</div>`;
-        }
-      }
-    }
-    
-    detailsHtml += `</div>`;
-  });
-  
-  detailsHtml += '</div>';
-  return detailsHtml;
-}
-
   if (data.status === 'completed') {
     document.getElementById('progressTitle').textContent = '✅ 执行完成';
     document.getElementById('progressSpinner').style.display = 'none';
     document.getElementById('executeBtn').disabled = false;
-    document.getElementById('executeBtn').textContent = '🚀 执行 Agent';
+    document.getElementById('executeBtn').textContent = ' 执行 Agent';
     showToast('✅ 文档生成完成');
     if (socket) socket.disconnect();
   } else if (data.status === 'failed' || data.status === 'cancelled') {
@@ -7073,15 +7483,182 @@ function renderStepDetails(step) {
   }
 }
 
+function latestStepMessage(step) {
+  const details = step.details || [];
+  for (let i = details.length - 1; i >= 0; i--) {
+    if (details[i].message) return details[i].message;
+    if (details[i].name) return details[i].name;
+  }
+  return '';
+}
+
+function summarizeValue(value, maxLength = 360) {
+  if (!value) return '';
+  const text = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+  return text.length > maxLength ? text.substring(0, maxLength) + '...' : text;
+}
+
+function renderSummaryBlock(label, value) {
+  const summary = summarizeValue(value);
+  if (!summary) return '';
+  return `<div style="margin-top: 4px;"><strong style="font-size: 10px; color: #666;">${label}:</strong><pre style="font-size: 10px; line-height: 1.4; white-space: pre-wrap; margin: 2px 0 0 0; color: #555;">${escapeHtml(summary)}</pre></div>`;
+}
+
+function stableDomId(value) {
+  const text = String(value || 'id');
+  let hash = 0;
+  for (let i = 0; i < text.length; i++) {
+    hash = ((hash << 5) - hash + text.charCodeAt(i)) | 0;
+  }
+  return 'id-' + Math.abs(hash).toString(36);
+}
+
+function stepDetailKey(stepName) {
+  return stableDomId(stepName || 'step');
+}
+
+function formatDetailStats(step) {
+  const details = step.details || [];
+  if (!details.length) return '';
+  const toolCount = details.filter(d => d.type === 'tool_call').length;
+  const llmCount = details.filter(d => d.type === 'llm_call').length;
+  const fileCount = details.filter(d => d.type === 'file_write').length;
+  const failedCount = details.filter(d => d.status === 'failed' || d.error).length;
+  const parts = [];
+  if (toolCount) parts.push(`工具 ${toolCount}`);
+  if (llmCount) parts.push(`模型 ${llmCount}`);
+  if (fileCount) parts.push(`写入 ${fileCount}`);
+  if (failedCount) parts.push(`失败 ${failedCount}`);
+  return parts.length ? parts.join(' · ') : `${details.length} 条记录`;
+}
+
+function renderDetailSummary(detail) {
+  const duration = detail.duration ? (detail.duration / 1000).toFixed(1) + 's' : '';
+  const tokens = detail.tokens ? `${detail.tokens} tokens` : '';
+  return [duration, tokens].filter(Boolean).join(' · ');
+}
+
+function renderCompactDetailItem(detail, detailId) {
+  const statusIcon = detail.status === 'success' ? '✓' : detail.status === 'failed' ? '✗' : '●';
+  const statusClass = detail.status || 'running';
+  const meta = renderDetailSummary(detail);
+  const inputSummary = detail.input_summary || detail.input;
+  const outputSummary = detail.output_summary || detail.output;
+
+  let html = `<div class="step-detail-item ${statusClass}">`;
+  html += `<div class="step-detail-header">`;
+  html += `<span class="step-detail-icon">${statusIcon}</span>`;
+  html += `<span class="step-detail-name">${escapeHtml(detail.name || detail.message || '执行记录')}</span>`;
+  if (meta) html += `<span class="step-detail-duration">${escapeHtml(meta)}</span>`;
+  html += `</div>`;
+
+  if (detail.message) {
+    html += `<div class="step-detail-message">${escapeHtml(detail.message)}</div>`;
+  }
+
+  if (detail.type === 'llm_call') {
+    html += `<div class="step-info-grid">`;
+    html += `<span class="step-info-label">模型:</span><span class="step-info-value">${escapeHtml(detail.model || 'N/A')}</span>`;
+    html += `<span class="step-info-label">提供商:</span><span class="step-info-value">${escapeHtml(detail.provider || 'N/A')}</span>`;
+    if (outputSummary?.content_length) {
+      html += `<span class="step-info-label">输出:</span><span class="step-info-value">${outputSummary.content_length} chars</span>`;
+    }
+    html += `</div>`;
+  }
+
+  if (detail.error) {
+    html += `<div class="step-detail-content" style="color: var(--warning);"><strong>错误:</strong> ${escapeHtml(detail.error)}</div>`;
+  }
+
+  if (inputSummary || outputSummary) {
+    const expanded = expandedThinkingPanels.has(detailId);
+    html += `<div class="tool-toggle" onclick="event.stopPropagation(); toggleThinkingPanel('${detailId}')" 
+       style="font-size: 11px; color: var(--primary); cursor: pointer; margin-top: 4px; padding-left: 22px;">
+      处理摘要 ${expanded ? '[折叠 ▼]' : '[展开 ▶]'}
+    </div>`;
+    html += `<div class="tool-panel" id="thinking-${detailId}" style="display: ${expanded ? 'block' : 'none'}; margin: 4px 0 4px 22px; padding: 6px; background: var(--bg-subtle, #f8f9fa); border-radius: 4px; border-left: 3px solid var(--primary, #4a90d9); max-height: 220px; overflow-y: auto;">`;
+    html += renderSummaryBlock('输入摘要', inputSummary);
+    html += renderSummaryBlock('输出摘要', outputSummary);
+    html += `</div>`;
+  }
+
+  html += `</div>`;
+  return html;
+}
+
+// 渲染步骤详细信息（紧凑时间线：默认缩略，展开后只展示摘要）
+function renderStepDetails(step) {
+  if (!step.details || step.details.length === 0) {
+    if (step.output_preview) {
+      const key = stepDetailKey(step.name);
+      const expanded = expandedStepDetails.has(step.name);
+      return `
+        <div class="step-detail-toggle" onclick="event.stopPropagation(); toggleStepDetail('${step.name}')">
+          ${expanded ? '收起输出预览 ▼' : '展开输出预览 ▶'}
+        </div>
+        <div class="step-detail-content" id="detail-${key}" style="display: ${expanded ? 'block' : 'none'}; margin: 8px 0 8px 33px; padding: 8px; background: var(--bg); border-radius: 4px; max-height: 200px; overflow-y: auto;">
+          <pre style="font-size: 11px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; margin: 0;">${escapeHtml(step.output_preview)}</pre>
+        </div>
+      `;
+    }
+    return '';
+  }
+
+  const key = stepDetailKey(step.name);
+  const expanded = step.status === 'failed' || expandedStepDetails.has(step.name);
+  const latest = step.details[step.details.length - 1];
+  const latestText = latest?.message || latest?.name || '';
+  let detailsHtml = `
+    <div class="step-detail-toggle" onclick="event.stopPropagation(); toggleStepDetail('${step.name}')">
+      ${expanded ? '收起执行记录 ▼' : '展开执行记录 ▶'}
+      <span class="step-detail-count">${step.details.length} 条 · ${escapeHtml(formatDetailStats(step))}${latestText ? ' · 最新：' + escapeHtml(latestText) : ''}</span>
+    </div>
+  `;
+  detailsHtml += `<div class="step-details-panel" id="detail-${key}" style="display: ${expanded ? 'block' : 'none'};">`;
+
+  step.details.forEach((detail, idx) => {
+    detailsHtml += renderCompactDetailItem(detail, `detail-${key}-${idx}`);
+  });
+  
+  detailsHtml += '</div>';
+  return detailsHtml;
+}
+
+function toggleThinkingPanel(panelId) {
+  const el = document.getElementById('thinking-' + panelId);
+  if (el) {
+    const nextVisible = el.style.display === 'none';
+    if (nextVisible) {
+      expandedThinkingPanels.add(panelId);
+    } else {
+      expandedThinkingPanels.delete(panelId);
+    }
+    el.style.display = nextVisible ? 'block' : 'none';
+    // 更新切换按钮文字
+    const toggle = el.previousElementSibling;
+    if (toggle && toggle.classList && (toggle.classList.contains('thinking-toggle') || toggle.classList.contains('tool-toggle'))) {
+      toggle.innerHTML = nextVisible
+        ? toggle.innerHTML.replace('[展开 ▶]', '[折叠 ▼]')
+        : toggle.innerHTML.replace('[折叠 ▼]', '[展开 ▶]');
+    }
+  }
+}
+
+
 function toggleStepPreview(stepName) {
   const el = document.getElementById('preview-' + stepName);
   if (el) el.classList.toggle('expanded');
 }
 
 function toggleStepDetail(stepName) {
-  const el = document.getElementById('detail-' + stepName);
+  if (expandedStepDetails.has(stepName)) {
+    expandedStepDetails.delete(stepName);
+  } else {
+    expandedStepDetails.add(stepName);
+  }
+  const el = document.getElementById('detail-' + stepDetailKey(stepName));
   if (el) {
-    el.style.display = el.style.display === 'none' ? 'block' : 'none';
+    el.style.display = expandedStepDetails.has(stepName) ? 'block' : 'none';
   }
 }
 
@@ -7141,79 +7718,6 @@ function showToast(msg) {
   }
 }
 </script>
-
-<!-- Document Management Panel -->
-<div id="documentViewerModal" class="modal-overlay">
-  <div class="modal-content doc-mgmt-modal">
-    <div class="modal-header">
-      <h2>📄 文档管理</h2>
-      <div style="display:flex;gap:8px;align-items:center;">
-        <button class="btn btn-primary btn-sm" onclick="generateDocFromPrompt()" id="genDocBtn" style="display:none">🚀 生成文档</button>
-        <button class="btn btn-outline btn-sm" onclick="refreshDocList()">🔄 刷新</button>
-        <button class="modal-close" onclick="closeDocumentViewer()">✕</button>
-      </div>
-    </div>
-    <div class="doc-mgmt-body">
-      <!-- 左侧边栏 -->
-      <div class="doc-mgmt-sidebar">
-        <!-- 搜索框 -->
-        <div class="doc-mgmt-search">
-          <input type="text" id="docSearchInput" placeholder="搜索文档..." oninput="handleDocSearch(this.value)">
-          <div class="doc-search-scope">
-            <label><input type="radio" name="searchScope" value="all" checked onchange="handleDocSearch(document.getElementById('docSearchInput').value)"> 标题和内容</label>
-            <label><input type="radio" name="searchScope" value="title" onchange="handleDocSearch(document.getElementById('docSearchInput').value)"> 仅标题</label>
-          </div>
-        </div>
-        <!-- 模式切换 -->
-        <div class="doc-view-toggle">
-          <button class="doc-view-toggle-btn active" id="treeViewBtn" onclick="switchDocViewMode('tree')">📁 目录</button>
-          <button class="doc-view-toggle-btn" id="listViewBtn" onclick="switchDocViewMode('list')">📋 列表</button>
-        </div>
-        <!-- 统计信息 -->
-        <div class="doc-mgmt-stats" id="docStats"></div>
-        <!-- 目录树视图 -->
-        <div class="doc-tree-view" id="docTreeView">
-          <div class="doc-empty">加载中...</div>
-        </div>
-        <!-- 列表视图 -->
-        <div class="doc-list-view" id="docListView" style="display:none">
-          <div class="doc-empty">加载中...</div>
-        </div>
-      </div>
-      <!-- 右侧主区域 -->
-      <div class="doc-mgmt-main">
-        <div class="doc-mgmt-empty" id="docViewerEmpty">
-          <div class="doc-empty-icon">📄</div>
-          <p>选择一个文档查看或生成新文档</p>
-        </div>
-        <div class="doc-mgmt-viewer" id="docViewerPanel" style="display:none">
-          <!-- 工具栏 -->
-          <div class="doc-viewer-toolbar">
-            <div class="doc-viewer-title" id="docViewerTitle">文档标题</div>
-            <div class="doc-viewer-actions">
-              <button class="output-mode-btn active" id="docViewBtn" onclick="switchDocMode('preview')">📄 预览</button>
-              <button class="output-mode-btn" id="docEditBtn" onclick="switchDocMode('edit')">✏️ 编辑</button>
-              <button class="btn btn-outline btn-sm" onclick="saveDocContent()" id="docSaveBtn" style="display:none">💾 保存</button>
-              <button class="btn btn-outline btn-sm" onclick="downloadCurrentDoc()">📥 下载</button>
-              <button class="btn btn-outline btn-sm" onclick="deleteCurrentDoc()" style="color:var(--warning)">🗑️</button>
-            </div>
-          </div>
-          <!-- 元数据栏 -->
-          <div class="doc-viewer-meta" id="docViewerMeta"></div>
-          <!-- 内容区域 (沉浸式) -->
-          <div class="doc-viewer-content">
-            <div class="markdown-preview doc-preview-pane" id="docPreviewContent"></div>
-            <div class="doc-edit-pane" id="docEditPane" style="display:none">
-              <div class="doc-edit-line-numbers" id="docLineNumbers"></div>
-              <textarea class="doc-edit-textarea" id="docEditTextarea" oninput="handleDocEditInput()" onscroll="syncLineNumbers()"></textarea>
-            </div>
-          </div>
-          <div class="doc-save-status" id="docSaveStatus"></div>
-        </div>
-      </div>
-    </div>
-  </div>
-</div>
 
 <!-- Generate Prompt Dialog -->
 <div class="modal-overlay" id="generatePromptDialog">
@@ -7352,7 +7856,7 @@ function deleteUploadedItem(idx) {
   
   // 如果是大纲，调用后端删除 API
   if (isOutline && item.id) {
-    fetch('http://localhost:4100/api/outline/' + item.id, { method: 'DELETE' })
+    fetch(BACKEND + '/api/outline/' + item.id, { method: 'DELETE' })
       .then(resp => resp.json())
       .then(result => {
         if (result.success) {
@@ -7366,7 +7870,7 @@ function deleteUploadedItem(idx) {
       });
   } else if (!isOutline && item.docId) {
     // 普通文档调用文档删除 API
-    fetch('http://localhost:4100/api/document/preprocess/' + item.docId, { method: 'DELETE' })
+    fetch(BACKEND + '/api/document/preprocess/' + item.docId, { method: 'DELETE' })
       .then(resp => resp.json())
       .then(result => {
         if (result.success) {
@@ -7420,7 +7924,7 @@ async function deleteOutline(outlineId) {
   if (!confirm('确定要删除这个大纲吗？此操作不可恢复。')) return;
   
   try {
-    const resp = await fetch('http://localhost:4100/api/outline/' + outlineId, {
+    const resp = await fetch(BACKEND + '/api/outline/' + outlineId, {
       method: 'DELETE'
     });
     const result = await resp.json();
@@ -7444,7 +7948,7 @@ function openGeneratePromptDialog(outlineId) {
   const dialog = document.getElementById('generatePromptDialog');
   if (!dialog) return;
   
-  fetch('http://localhost:4100/api/outline/' + outlineId)
+  fetch(BACKEND + '/api/outline/' + outlineId)
     .then(resp => resp.json())
     .then(result => {
       if (!result.success || !result.data) {
@@ -7558,7 +8062,7 @@ async function submitGeneratePrompts() {
   try {
     showToast('正在生成提示词...', 'info');
     
-    const resp = await fetch('http://localhost:4100/api/outline/generate-prompts', {
+    const resp = await fetch(BACKEND + '/api/outline/generate-prompts', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -7707,7 +8211,7 @@ async function handleDocPreprocess(event) {
     const formData = new FormData();
     formData.append('file', file);
     
-    const resp = await fetch('http://localhost:4100/api/document/preprocess', {
+    const resp = await fetch(BACKEND + '/api/document/preprocess', {
       method: 'POST',
       body: formData
     });
@@ -7732,7 +8236,7 @@ async function loadPreprocessedDocs() {
   if (!container) return;
   
   try {
-    const resp = await fetch('http://localhost:4100/api/document/preprocess');
+    const resp = await fetch(BACKEND + '/api/document/preprocess');
     const result = await resp.json();
     
     if (!result.success || !result.data || result.data.length === 0) {
@@ -7757,7 +8261,7 @@ async function deletePreprocessedDoc(docId) {
   if (!confirm('确定要删除这个文档吗？')) return;
   
   try {
-    const resp = await fetch('http://localhost:4100/api/document/preprocess/' + docId, {
+    const resp = await fetch(BACKEND + '/api/document/preprocess/' + docId, {
       method: 'DELETE'
     });
     const result = await resp.json();
@@ -7780,6 +8284,165 @@ setTimeout(() => {
 }, 1000);
 
 // ============================================
+
+// ============================================
+// Tab 切换逻辑
+// ============================================
+
+let currentTab = 'doc-gen';
+let docMgmtLoaded = false;
+
+const tabState = {
+  'doc-gen': {
+    sidebarScroll: 0,
+    mainScroll: 0,
+    promptContent: ''
+  },
+  'doc-mgmt': {
+    sidebarScroll: 0,
+    mainScroll: 0,
+    selectedDoc: null,
+    viewMode: 'tree',
+    searchKeyword: ''
+  },
+  'analytics': {}
+};
+
+function switchTab(tabName) {
+  // 保存当前 Tab 状态
+  saveTabState(currentTab);
+  
+  // 隐藏所有 Sidebar 和 Main 内容
+  document.querySelectorAll('.sidebar-content').forEach(el => {
+    el.style.display = 'none';
+  });
+  document.querySelectorAll('.main-content').forEach(el => {
+    el.style.display = 'none';
+  });
+  
+  // 显示目标 Tab 的内容
+  const sidebarEl = document.getElementById(`sidebar-${tabName}`);
+  const mainEl = document.getElementById(`main-${tabName}`);
+  
+  if (sidebarEl) sidebarEl.style.display = 'block';
+  if (mainEl) {
+    mainEl.style.display = 'block';
+    // 重新触发动画
+    mainEl.classList.add('switching');
+    requestAnimationFrame(() => {
+      mainEl.classList.remove('switching');
+    });
+  }
+  
+  // 更新 Tab 按钮状态
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.classList.remove('active');
+  });
+  const activeBtn = document.querySelector(`[data-tab="${tabName}"]`);
+  if (activeBtn) activeBtn.classList.add('active');
+  
+  // 恢复目标 Tab 状态
+  restoreTabState(tabName);
+  
+  // 如果是首次切换到文档管理 Tab，加载数据
+  if (tabName === 'doc-mgmt' && !docMgmtLoaded) {
+    loadDocList();
+    loadDocTree();
+    loadDocStats();
+    docMgmtLoaded = true;
+  }
+  
+  currentTab = tabName;
+  console.log(`Switched to tab: ${tabName}`);
+}
+
+function saveTabState(tabName) {
+  const state = tabState[tabName];
+  if (!state) return;
+  
+  if (tabName === 'doc-gen') {
+    const sidebarEl = document.getElementById('sidebar-doc-gen');
+    const mainEl = document.getElementById('main-doc-gen');
+    if (sidebarEl) state.sidebarScroll = sidebarEl.scrollTop;
+    if (mainEl) state.mainScroll = mainEl.scrollTop;
+    state.promptContent = window._currentPromptMarkdown || '';
+  } else if (tabName === 'doc-mgmt') {
+    const sidebarEl = document.getElementById('sidebar-doc-mgmt');
+    const mainEl = document.getElementById('main-doc-mgmt');
+    if (sidebarEl) state.sidebarScroll = sidebarEl.scrollTop;
+    if (mainEl) state.mainScroll = mainEl.scrollTop;
+  }
+}
+
+function restoreTabState(tabName) {
+  const state = tabState[tabName];
+  if (!state) return;
+  
+  if (tabName === 'doc-gen') {
+    const sidebarEl = document.getElementById('sidebar-doc-gen');
+    const mainEl = document.getElementById('main-doc-gen');
+    if (sidebarEl) sidebarEl.scrollTop = state.sidebarScroll;
+    if (mainEl) mainEl.scrollTop = state.mainScroll;
+  } else if (tabName === 'doc-mgmt') {
+    const sidebarEl = document.getElementById('sidebar-doc-mgmt');
+    const mainEl = document.getElementById('main-doc-mgmt');
+    if (sidebarEl) sidebarEl.scrollTop = state.sidebarScroll;
+    if (mainEl) mainEl.scrollTop = state.mainScroll;
+  }
+}
+
+// 快捷键支持
+document.addEventListener('keydown', (e) => {
+  if (e.ctrlKey || e.metaKey) {
+    if (e.key === '1') {
+      e.preventDefault();
+      switchTab('doc-gen');
+    } else if (e.key === '2') {
+      e.preventDefault();
+      switchTab('doc-mgmt');
+    } else if (e.key === '3') {
+      e.preventDefault();
+      switchTab('analytics');
+    }
+  }
+});
+
+// Sidebar 折叠功能
+let sidebarCollapsed = false;
+
+function toggleSidebar() {
+  const sidebar = document.getElementById('sidebar');
+  const app = document.querySelector('.app');
+  if (!sidebar || !app) return;
+  
+  sidebarCollapsed = !sidebarCollapsed;
+  
+  if (sidebarCollapsed) {
+    sidebar.classList.add('collapsed');
+    app.classList.add('sidebar-collapsed');
+  } else {
+    sidebar.classList.remove('collapsed');
+    app.classList.remove('sidebar-collapsed');
+  }
+  
+  // 保存状态到 localStorage
+  localStorage.setItem('sidebarCollapsed', sidebarCollapsed);
+}
+
+// 页面加载时恢复 Sidebar 状态
+document.addEventListener('DOMContentLoaded', () => {
+  const saved = localStorage.getItem('sidebarCollapsed');
+  if (saved === 'true') {
+    const sidebar = document.getElementById('sidebar');
+    const app = document.querySelector('.app');
+    if (sidebar && app) {
+      sidebar.classList.add('collapsed');
+      app.classList.add('sidebar-collapsed');
+      sidebarCollapsed = true;
+    }
+  }
+});
+
 // 文档管理面板 - Document Management Panel (v2)
 // ============================================
 
@@ -7794,18 +8457,23 @@ let _docManager = {
 };
 
 function openDocumentViewer() {
-  const modal = document.getElementById('documentViewerModal');
-  modal.classList.add('show');
+  // 切换到文档管理 Tab
+  switchTab('doc-mgmt');
+  
+  // 加载文档数据
   loadDocList();
   loadDocTree();
   loadDocStats();
+  
+  // 显示生成文档按钮（如果有提示词）
   const promptText = (window._currentPromptMarkdown || getCurrentContent() || '').trim();
   const genBtn = document.getElementById('genDocBtn');
   if (genBtn) genBtn.style.display = promptText ? 'inline-flex' : 'none';
 }
 
 function closeDocumentViewer() {
-  document.getElementById('documentViewerModal').classList.remove('show');
+  // 切换回文档生成 Tab
+  switchTab('doc-gen');
 }
 
 // ---- 数据加载 ----
@@ -7884,7 +8552,7 @@ function buildTreeHTML(nodes, depth) {
       html += '</div></div>';
     } else {
       const isActive = _docManager.currentDoc && _docManager.currentDoc.id === node.id;
-      html += '<div class="doc-tree-file' + (isActive ? ' active' : '') + '" onclick="viewDocument(\'' + node.id + '\')">';
+      html += '<div class="doc-tree-file' + (isActive ? ' active' : '') + '" data-doc-id="' + node.id + '" onclick="viewDocument(this.dataset.docId)">';
       html += '<span class="doc-tree-file-icon">📄</span>';
       html += '<span class="doc-tree-file-name">' + escapeHtml(node.name) + '</span>';
       if (node.version > 1) {
@@ -7920,7 +8588,7 @@ function renderDocList(docs) {
     const isActive = _docManager.currentDoc && _docManager.currentDoc.id === doc.id;
     const date = new Date(doc.updated_at);
     const dateStr = date.toLocaleDateString('zh-CN') + ' ' + date.toLocaleTimeString('zh-CN', {hour:'2-digit',minute:'2-digit'});
-    return '<div class="doc-list-item' + (isActive ? ' active' : '') + '" onclick="viewDocument(\'' + doc.id + '\')">' +
+    return '<div class="doc-list-item' + (isActive ? ' active' : '') + '" data-doc-id="' + doc.id + '" onclick="viewDocument(this.dataset.docId)">' +
       '<div class="doc-list-item-title">' + escapeHtml(doc.title) + '</div>' +
       '<div class="doc-list-item-meta">' +
         '<span>' + dateStr + '</span>' +
@@ -8004,7 +8672,7 @@ function renderSearchResults(results) {
       ? '<div class="doc-list-item-match">💡 ' + highlightMatch(doc.matches[0].context, doc.matches[0].highlight) + '</div>'
       : '';
     
-    return '<div class="doc-list-item" onclick="viewDocument(\'' + doc.id + '\')">' +
+    return '<div class="doc-list-item" data-doc-id="' + doc.id + '" onclick="viewDocument(this.dataset.docId)">' +
       '<div class="doc-list-item-title">' + escapeHtml(doc.title) + '</div>' +
       '<div class="doc-list-item-meta">' +
         '<span>' + dateStr + '</span>' +
@@ -8037,7 +8705,7 @@ function switchDocViewMode(mode) {
 
 async function viewDocument(docId) {
   try {
-    const resp = await fetch(BACKEND + '/api/document/' + docId + '/content');
+    const resp = await fetch(BACKEND + '/api/document/' + encodeURIComponent(docId) + '/content');
     const result = await resp.json();
     if (!result.success) throw new Error(result.message);
     
@@ -8090,10 +8758,24 @@ function renderDocContent(content, mode) {
   if (mode === 'preview') {
     previewEl.style.display = 'block';
     editPane.style.display = 'none';
+    
+    let processedContent = content || '';
+    
+    // Strip YAML front matter if present (wrapped in ```yaml code block)
+    const yamlFrontMatterRegex = /^```yaml\s*\n---[\s\S]*?---\s*\n```\s*\n?/;
+    processedContent = processedContent.replace(yamlFrontMatterRegex, '');
+    
+    // Also handle standard YAML front matter (not in code block)
+    const standardYamlRegex = /^---[\s\S]*?---\s*\n?/;
+    processedContent = processedContent.replace(standardYamlRegex, '');
+    
     if (typeof marked !== 'undefined') {
-      previewEl.innerHTML = marked.parse(content || '');
+      previewEl.innerHTML = marked.parse(processedContent);
+      
+      // Auto-detect and render special code block types
+      autoRenderCodeBlocks(previewEl);
     } else {
-      previewEl.innerHTML = '<pre style="white-space:pre-wrap">' + escapeHtml(content || '') + '</pre>';
+      previewEl.innerHTML = '<pre style="white-space:pre-wrap">' + escapeHtml(processedContent) + '</pre>';
     }
   } else {
     previewEl.style.display = 'none';
@@ -8101,6 +8783,60 @@ function renderDocContent(content, mode) {
     const textarea = document.getElementById('docEditTextarea');
     textarea.value = content || '';
     updateLineNumbers();
+  }
+}
+
+// Auto-detect and render special code block types
+function autoRenderCodeBlocks(container) {
+  // Mermaid diagrams
+  if (typeof mermaid !== 'undefined') {
+    const mermaidSelectors = [
+      '.language-mermaid',
+      '.language-flowchart', 
+      '.language-graph',
+      '.language-sequenceDiagram',
+      '.language-stateDiagram',
+      '.language-classDiagram',
+      '.language-erDiagram',
+      '.language-gantt',
+      '.language-pie',
+      '.language-journey'
+    ];
+    
+    mermaid.initialize({ startOnLoad: false, theme: 'default' });
+    
+    mermaidSelectors.forEach(selector => {
+      const elements = container.querySelectorAll(selector);
+      elements.forEach((el, index) => {
+        const code = el.textContent;
+        const id = 'mermaid-' + Date.now() + '-' + index;
+        el.parentElement.outerHTML = '<div class="mermaid" id="' + id + '">' + code + '</div>';
+      });
+    });
+    
+    // Render all mermaid diagrams
+    mermaid.run({
+      querySelector: '.mermaid',
+      postRenderCallback: (id) => {
+        console.log('Mermaid rendered:', id);
+      }
+    });
+  }
+  
+  // PlantUML diagrams (if plantuml-encoder is available)
+  const plantumlElements = container.querySelectorAll('.language-plantuml');
+  if (plantumlElements.length > 0) {
+    plantumlElements.forEach(el => {
+      const code = el.textContent;
+      el.parentElement.outerHTML = '<div class="plantuml-placeholder"><pre>' + escapeHtml(code) + '</pre><small>PlantUML 图表（需要服务端渲染）</small></div>';
+    });
+  }
+  
+  // Apply syntax highlighting to code blocks
+  if (typeof hljs !== 'undefined') {
+    container.querySelectorAll('pre code').forEach(block => {
+      hljs.highlightElement(block);
+    });
   }
 }
 
@@ -8258,6 +8994,40 @@ async function generateDocFromPrompt() {
   } finally {
     genBtn.disabled = false;
     genBtn.textContent = '🚀 生成文档';
+  }
+}
+
+
+// 保存输出内容为文档
+async function saveOutputAsDocument() {
+  const content = (window._currentPromptMarkdown || getCurrentContent() || '').trim();
+  if (!content) {
+    showToast('⚠️ 没有可保存的内容');
+    return;
+  }
+  const title = document.getElementById('kpName')?.value || '未命名文档';
+  try {
+    const outputPath = typeof getOutputPath === 'function' ? getOutputPath({
+      part: document.getElementById('kpPart')?.value,
+      chapter: document.getElementById('kpChapter')?.value
+    }) : '';
+    const resp = await fetch(BACKEND + '/api/document/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        content: content,
+        path: (outputPath || '') + title + '.md',
+        title: title
+      })
+    });
+    const result = await resp.json();
+    if (result.success) {
+      showToast('✅ 文档已保存 (v' + result.data.version + ')');
+    } else {
+      throw new Error(result.message);
+    }
+  } catch (err) {
+    showToast('❌ 保存失败: ' + err.message);
   }
 }
 

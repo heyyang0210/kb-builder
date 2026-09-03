@@ -16,6 +16,32 @@ describe('知识中心通用化兼容基线', () => {
     ]));
   });
 
+  test('提示词生成器通过前端网关同源访问文档 API', () => {
+    const page = read('agent-runner/frontend/prompt-generator.html');
+    const gateway = read('agent-runner/frontend-server.js');
+    expect(page).toContain('return \'\';');
+    expect(page).toContain("window.location.port !== '4100'");
+    expect(gateway).toContain('createProxy');
+    expect(gateway).toContain('proxyDocumentApi');
+    expect(gateway).toContain("pathname.startsWith('/api/')");
+  });
+
+  test('知识中心使用语义化源码入口并保留目录与旧显式入口兼容', () => {
+    const gateway = read('agent-runner/frontend-server.js');
+    const routes = read('agent-runner/routes/knowledge-center.js');
+    expect(gateway).toContain("const KNOWLEDGE_CENTER_ENTRY = 'knowledge-center-management.html'");
+    expect(routes).toContain("relativePath === 'index.html'");
+    expect(fs.existsSync(path.join(root, 'agent-runner/frontend/knowledge-center/knowledge-center-management.html'))).toBe(true);
+    expect(fs.existsSync(path.join(root, 'agent-runner/frontend/knowledge-center/index.html'))).toBe(false);
+  });
+
+  test('知识中心静态网关使用入口文件承载模块深链', () => {
+    const server = read('agent-runner/routes/knowledge-center.js');
+    expect(server).toContain("path.join(KNOWLEDGE_CENTER_ROOT, KNOWLEDGE_CENTER_ENTRY)");
+    expect(server).toContain("pathname.startsWith(`${KNOWLEDGE_CENTER_PREFIX}/`)");
+    expect(read('agent-runner/frontend/knowledge-center/common/state/navigation.js')).toContain("assets: '/knowledge-center/assets'");
+  });
+
   test('Socket.IO 事件和 task_id 房间语义仍存在于服务实现', () => {
     const server = read('agent-runner/server.js');
     const agent = read('agent-runner/routes/agent.js');

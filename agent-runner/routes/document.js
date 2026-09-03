@@ -3,6 +3,7 @@ const router = express.Router();
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const { createAggregateStore } = require('../lib/aggregate-store');
 const multer = require('multer');
 const logger = require('../lib/logger');
 
@@ -168,8 +169,10 @@ const COMMENTS_STORE_PATH = process.env.DOCUMENT_COMMENTS_PATH
   ? path.resolve(process.env.DOCUMENT_COMMENTS_PATH)
   : path.join(__dirname, '..', 'data', 'document-comments.json');
 const COMMENTS_LOCK_KEY = 'document-comments';
+const commentsAggregateStore = createAggregateStore({ namespace: 'documents', key: 'comments', filePath: COMMENTS_STORE_PATH, emptyValue: { version: 1, comments: [] } });
 
 function readCommentsStore() {
+  if (process.env.KNOWLEDGE_STORAGE_MODE === 'database') return commentsAggregateStore.read();
   if (!fs.existsSync(COMMENTS_STORE_PATH)) {
     return { version: 1, comments: [] };
   }
@@ -181,6 +184,7 @@ function readCommentsStore() {
 }
 
 function writeCommentsStore(store) {
+  if (process.env.KNOWLEDGE_STORAGE_MODE === 'database') { commentsAggregateStore.write(store); return; }
   const directory = path.dirname(COMMENTS_STORE_PATH);
   fs.mkdirSync(directory, { recursive: true });
   const temporaryPath = `${COMMENTS_STORE_PATH}.${process.pid}.${crypto.randomUUID()}.tmp`;
@@ -288,8 +292,10 @@ const docUpload = multer({
 });
 
 const DOC_METADATA_PATH = path.join(DOC_PROCESSED_DIR, 'metadata.json');
+const docMetadataAggregateStore = createAggregateStore({ namespace: 'documents', key: 'metadata', filePath: DOC_METADATA_PATH, emptyValue: { documents: [] } });
 
 async function loadDocMetadata() {
+  if (process.env.KNOWLEDGE_STORAGE_MODE === 'database') return docMetadataAggregateStore.read();
   await acquireLock('doc_metadata');
   try {
     if (fs.existsSync(DOC_METADATA_PATH)) {
@@ -306,6 +312,7 @@ async function loadDocMetadata() {
 }
 
 async function saveDocMetadata(metadata) {
+  if (process.env.KNOWLEDGE_STORAGE_MODE === 'database') { docMetadataAggregateStore.write(metadata); return; }
   await acquireLock('doc_metadata');
   try {
     if (!fs.existsSync(DOC_PROCESSED_DIR)) fs.mkdirSync(DOC_PROCESSED_DIR, { recursive: true });

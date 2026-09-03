@@ -7133,7 +7133,10 @@ function detectOutlineFormat(content) {
 
 // ========== 后端连接状态检查 ==========
 function getBackendBaseUrl() {
-  return `http://${window.location.hostname}:4100`;
+  // All API calls use the same-origin frontend gateway. The gateway proxies
+  // /api/* to the internal document service, which is not exposed to LAN
+  // clients. This also avoids CORS and hard-coded private-port failures.
+  return '';
 }
 
 const BACKEND_URL = getBackendBaseUrl();
@@ -7656,6 +7659,14 @@ function togglePromptView() {
 
 function connectWebSocket(taskId) {
   console.log('连接 WebSocket:', BACKEND);
+
+  // The public frontend gateway currently proxies HTTP APIs only. Use the
+  // already-supported polling path for tasks when the page is not served
+  // directly by the document service (4100).
+  if (window.location.port !== '4100') {
+    pollProgress(taskId);
+    return;
+  }
   
   if (typeof io === 'undefined') {
     console.warn('Socket.IO 未加载，使用轮询模式');
