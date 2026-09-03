@@ -1,0 +1,422 @@
+Created by 谢昭贤 on 十月 13, 2024
+
+#   [YDBRD-25042](https://jira.yasdb.com/browse/YDBRD-25042)     - 【yasql】支持自定义  字符  字段宽度测试设计
+
+  
+
+
+-   [YDBRD-25042 - 【yasql】支持自定义字符字段宽度测试设计](#YDBRD25042【yasql】支持自定义字符字段宽度测试设计-YDBRD-25042-【yasql】支持自定义字符字段宽度测试设计)  
+-   [](#YDBRD25042【yasql】支持自定义字符字段宽度测试设计-)  
+-   [1. 概述](#YDBRD25042【yasql】支持自定义字符字段宽度测试设计-1.概述)  
+    -   [1.1 相关文档](#YDBRD25042【yasql】支持自定义字符字段宽度测试设计-1.1相关文档)  
+    -   [1.2 特性说明](#YDBRD25042【yasql】支持自定义字符字段宽度测试设计-1.2特性说明)  
+-   [2. 需求分析](#YDBRD25042【yasql】支持自定义字符字段宽度测试设计-2.需求分析)  
+    -   [2.1 功能点分析](#YDBRD25042【yasql】支持自定义字符字段宽度测试设计-2.1功能点分析)  
+    -   [2.2 应用场景](#YDBRD25042【yasql】支持自定义字符字段宽度测试设计-2.2应用场景)  
+    -   [2.3 规格约束](#YDBRD25042【yasql】支持自定义字符字段宽度测试设计-2.3规格约束)  
+-   [3. 详细测试设计](#YDBRD25042【yasql】支持自定义字符字段宽度测试设计-3.详细测试设计)  
+    -   [3.1 测试设计方法](#YDBRD25042【yasql】支持自定义字符字段宽度测试设计-3.1测试设计方法)  
+    -   [3.2 详细测试设计](#YDBRD25042【yasql】支持自定义字符字段宽度测试设计-3.2详细测试设计)  
+        - 
+        -   [3.2.1 DFX测试](#YDBRD25042【yasql】支持自定义字符字段宽度测试设计-3.2.1DFX测试)  
+        -   [3.2.2 等价类](#YDBRD25042【yasql】支持自定义字符字段宽度测试设计-3.2.2等价类)  
+-   [4. 测试用例](#YDBRD25042【yasql】支持自定义字符字段宽度测试设计-4.测试用例)  
+    -   [4.1 冒烟用例](#YDBRD25042【yasql】支持自定义字符字段宽度测试设计-4.1冒烟用例)  
+    -   [4.2 文本用例](#YDBRD25042【yasql】支持自定义字符字段宽度测试设计-4.2文本用例)  
+-   [5. 测试框架设计](#YDBRD25042【yasql】支持自定义字符字段宽度测试设计-5.测试框架设计)  
+-   [6. 测试环境说明](#YDBRD25042【yasql】支持自定义字符字段宽度测试设计-6.测试环境说明)  
+-   [7. 工作量评估](#YDBRD25042【yasql】支持自定义字符字段宽度测试设计-7.工作量评估)  
+
+
+# 1. 概述
+
+## 1.1 相关文档
+
+SR: 
+
+  [YDBRD-25042](https://jira.yasdb.com/browse/YDBRD-25042?src=confmacro)    -  【yasql】支持显示字段宽度控制  完成
+
+开发设计文档：    [开发文档：yasql支持自定义字段宽度](133585660.html)  
+
+个人调研文档：    [1.8.0【调研】YDBRD-25042](https://conf.yasdb.com/pages/viewpage.action?pageId=141584765)  
+
+调研文档：    [01-yasql支持显示字段宽度设置测试调研](https://conf.yasdb.com/pages/viewpage.action?pageId=135596374)  
+
+概要设计文档：    [02-yasql支持显示字段宽度设置概要测试](135596377.html)  
+
+## 1.2 特性说明
+
+yasql客户端工具支持  自定义  **字符字段**  宽度。
+
+# 2. 需求分析
+
+## 2.1 功能点分析
+
+语法图：
+
+![](https://pingcode.yasdb.com/atlas/files/public/67396bbda1ad9a3311dc8524/origin-url?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWRfZm9yX3B1YmljX2ltYWdlIjoiOTZjMTAxNTExNDIyNGNhNzhmOWM1YmZiZDYzY2QyNWIiLCJ0ZWFtX2Zvcl9wdWJsaWNfaW1hZ2UiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJibG9vbV9maWx0ZXIiOnsidHlwZSI6IkJsb29tRmlsdGVyIiwiX3NpemUiOjEwMjQsIl9uYkhhc2hlcyI6NSwiX2ZpbHRlciI6eyJzaXplIjoxMDI0LCJjb250ZW50IjoiQUFBQUFBQUFBQWdBQUFBQUFBQUFBQUFBQUFBQUFBQVFBQUFBQUFBQUFBQUFBQUFBQUFBQWdBQUFBQUFBQUFBQUFBQUFBQUFBQUFBZ0FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBSUFBQUFBQUFBQUFBPSJ9LCJfc2VlZCI6NzgxODc0OTM1MjB9LCJpYXQiOjE3ODIyOTY2NTksImV4cCI6MTc4MjMwNzQ1OX0.2bjtBSXx_BWpJU_r5E5WgrON9w3WT60F7xLcWM7NIkI)
+
+|语法|作用|  
+|
+|:---|:---|---|
+|**col/column   <column_name> | expr     for/format   An**,  
+|设置  所有列名为 <  column_name  > | expr  的显示属性值|expr:     使用表达式，则必须输入与SELECT命令中显示的  完全相同  的表达式。例如，如果SELECT命令中的表达式是a+b，则不能在COLUMN命令中使用b+a或（a+b）来引用SELECT命令的表达式。|
+|**col/column**|显示所有列的显示属性值|  
+|
+|**col/column   <column_name>**,  
+|显示所有列名为 <  column_name  > 的显示属性值|  
+|
+|**col/column   <column_name> cle/clear**|清除  单列属性|  
+|
+|**cl/clear col/column/columns**|将所有列的显示属性值清除|  
+|
+
+
+  
+
+
+字符字段支持的具体格式：
+
+|当前|Element|Examples|Description|
+|:---|:---|:---|:---|
+|  
+|**An**|A10、A20|**A 代表字母，**  控制列的宽度 |
+
+
+## 2.2 应用场景
+
+1）客户使用时，可以控制显示格式，让显示结果清晰。
+
+2）查询 表、视图、ac、统计信息等，控制显示结果
+
+## 2.3 规格约束
+
+1）部署形态，优先单机
+
+2）本次SR转测范围  **针对字符字段**
+
+3）如果某个值不适合列宽，将  **默认截断**  字符串，不支持换行。不支持trunc[ate] 等补充语法。大小写不敏感。
+
+4）语法  **仅为 **  **col 或者 column**  ，不支持  任意     COL[UMN] 。
+
+5）  **字符字段**  适用的列类型：除了    [数值类型](https://cod-doc.yasdb.com/yashandb/22.2/zh/%E5%BC%80%E5%8F%91%E6%89%8B%E5%86%8C/SQL%E5%8F%82%E8%80%83%E6%89%8B%E5%86%8C/%E6%95%B0%E6%8D%AE%E7%B1%BB%E5%9E%8B/%E6%95%B0%E5%80%BC%E5%9E%8B.html)    ，其他都适用。（区分方式：数值列是右对齐，字符列是左对齐）
+
+6）设置后的生效域：当前yasql进程生效。
+
+7）  **不支持**  直接对特殊符号进行属性设置，需要加双引号/单引号。双引号/单引号内部的内容为 列名/expr 。
+
+① column 100+299 format A2;
+
+② column '100+299' format A2;
+
+③ column "100+299" format A2;
+
+以上三种都是设置：（  **YashanDB只支持后两种**  ）
+
+COLUMN 100+299 ON    
+  FORMAT A2
+
+**8) n最大可以设置32000，因为**  **YashanDB单列限制是32000。**
+
+  [1.8.1.2【规格对齐】column最大支持32000](https://conf.yasdb.com/pages/viewpage.action?pageId=141589793)  
+
+  
+
+
+# 3. 详细测试设计
+
+## 3.1 测试设计方法
+
+1）根据语法功能的  **<column_name>、cle / clear**  ，使用等价类划分，覆盖相关功能点、使用场景。
+
+2）根据语法功能的参数   **n**  ，采用边界值覆盖。
+
+3）根据语法流程图，采用路径图覆盖、等价类划分。
+
+  
+
+
+## 3.2 详细测试设计
+
+#### 3.2.1 DFX测试
+
+|系统级DFX分类|是否涉及|测试点|
+|---|---|---|
+|CT并发|否|无|
+|KT|否|无|
+|长稳|否|无|
+|一致性|否|无|
+|三方测试工具 (sqltest，sqlancer)|否|无|
+|安全|否|无|
+|DFR故障|否|无|
+|HA高可用|否|无|
+|压力|否|无|
+|性能|否|无|
+|可维护性|否|无|
+
+
+  
+
+
+### 3.2.2 等价类
+
+|序|类别|输入条件|有效等价类|备注|无效等价类|备注|
+|---|---|---|---|---|---|---|
+|1|功能校验|指定的n范围|A10,A20,  
+,0,1,  
+|CHAR、NCHAR、VARCHAR2 (VARCHAR) 和 NVARCHAR2 (NCHAR VARYING) 列的默认宽度是数据库中列的宽度。,  
+,LONG、BLOB、BFILE、CLOB、NCLOB、XMLType 或 JSON 列的宽度默认为 SET LONGCHUNKSIZE 或 SET LONG 的值（以  **较小者**  为准）。,  
+,  
+|**A0 报错**,  
+,**最大界：**,**oracle 60000可以创建，**,**60001报错**|YASQL-00026 illegal FORMAT string 'A0'|
+|2|  
+|column,clear|显示,清除属性|是否清理所有同名列|  
+|  
+|
+|3|功能校验|表达式expr|  
+|column指定表达式|  
+|  
+|
+|4|功能校验|数据类型列|22.2支持的  **字符类型**,  [22.2数据类型](https://cod-doc.yasdb.com/yashandb/22.2/zh/%E5%BC%80%E5%8F%91%E6%89%8B%E5%86%8C/SQL%E5%8F%82%E8%80%83%E6%89%8B%E5%86%8C/%E6%95%B0%E6%8D%AE%E7%B1%BB%E5%9E%8B/00%E6%95%B0%E6%8D%AE%E7%B1%BB%E5%9E%8B.html)  |数值型,字符型,布尔型,日期型,大对象型,raw,json,~~xmltype~~,rowid urowid,用户自定义udt,~~地理信息~~|**数值型 变成 ##### 或者报错且不生效**,  
+,其他均生效|  
+|
+|5|  
+|  
+|n与数据长度|等于,小于,大于|  
+|  
+|
+|6|  
+|  
+|长标题、数据内容|相关性低，  **一起截断**|  
+|  
+|
+|7|  
+|如果某个值不适合列宽|截断|  
+|换行|还不支持|
+|8|  
+|与列标题|截断|指定的宽度短于列标题，SQL*Plus 会  **截断标题**|  
+|  
+|
+|9|  
+|列无法容纳某个值|Oracle：,显示井号 (#)|  
+|  
+|  
+|
+|10|  
+|格式化对齐|格式化为左对齐|  
+|  
+|  
+|
+|11|  
+|  
+|  
+|  
+|  
+|  
+|
+|12|  
+|  
+|  
+|  
+|  
+|  
+|
+|13|功能校验|结合UDT|  
+|以谁为准？|  
+|  
+|
+|14|功能校验|字符类型|字母,数字,特殊字符,多字节字符|**测试包含多字节字符（如中文、日文）的文本，**  **确保宽度计算正确。**,  
+,  
+|  
+|  
+|
+|15|功能校验|列的选择|选单列,**多表 选择  多相同列**|**同一列上多次更改宽度设置，确保每次更改后的输出都符合预期**,**测试当一个列的宽度设置改变时，它是否会影响到相邻列的显示。**,**拥有同名列时设置是否正常生效（注意用户权限问题）**,**表里不能建  column名的列和for列（同Oracle）**|  
+|  
+|
+|16|功能校验|列名与语法|特殊字符,表情包|  
+|  
+|  
+|
+|17|  
+|  
+|**列名和本次语法关键字重名时是否设置正常**,  
+,**建表时列名为双引号内带空格大小写，这种列名在column设置时是否正常**|  
+|  
+|  
+|
+|18|  
+|表构建|4096列,投影列,表类型|相关性低|  
+|  
+|
+|19|  
+|表类型|不同表（heap\tac\lsc，临时表，不同用户所属表）|  
+|  
+|  
+|
+|20|  
+|查询|- 多表连接（    [子查询](https://cod-doc.yasdb.com/yashandb/alpha/zh/%E5%BC%80%E5%8F%91%E6%89%8B%E5%86%8C/SQL%E5%8F%82%E8%80%83%E6%89%8B%E5%86%8C/SQL%E8%AF%AD%E5%8F%A5/SELECT.html#subquery)    、    [SET](https://cod-doc.yasdb.com/yashandb/alpha/zh/%E5%BC%80%E5%8F%91%E6%89%8B%E5%86%8C/SQL%E5%8F%82%E8%80%83%E6%89%8B%E5%86%8C/SQL%E8%AF%AD%E5%8F%A5/SELECT.html#setoper)    、    [JOIN](https://cod-doc.yasdb.com/yashandb/alpha/zh/%E5%BC%80%E5%8F%91%E6%89%8B%E5%86%8C/SQL%E5%8F%82%E8%80%83%E6%89%8B%E5%86%8C/SQL%E8%AF%AD%E5%8F%A5/SELECT.html#joinclause)    等）
+- 排序    [ORDER BY](https://cod-doc.yasdb.com/yashandb/alpha/zh/%E5%BC%80%E5%8F%91%E6%89%8B%E5%86%8C/SQL%E5%8F%82%E8%80%83%E6%89%8B%E5%86%8C/SQL%E8%AF%AD%E5%8F%A5/SELECT.html#orderbyclause)  
+- 分组    [GROUP BY](https://cod-doc.yasdb.com/yashandb/alpha/zh/%E5%BC%80%E5%8F%91%E6%89%8B%E5%86%8C/SQL%E5%8F%82%E8%80%83%E6%89%8B%E5%86%8C/SQL%E8%AF%AD%E5%8F%A5/SELECT.html#groupbyclause)  
+-   [CASE](https://cod-doc.yasdb.com/yashandb/alpha/zh/%E5%BC%80%E5%8F%91%E6%89%8B%E5%86%8C/SQL%E5%8F%82%E8%80%83%E6%89%8B%E5%86%8C/SQL%E8%AF%AD%E5%8F%A5/SELECT.html#caseclause)  
+-   [LIMIT](https://cod-doc.yasdb.com/yashandb/alpha/zh/%E5%BC%80%E5%8F%91%E6%89%8B%E5%86%8C/SQL%E5%8F%82%E8%80%83%E6%89%8B%E5%86%8C/SQL%E8%AF%AD%E5%8F%A5/SELECT.html#rowlimitingclause)  
+-   [CTE](https://cod-doc.yasdb.com/yashandb/alpha/zh/%E5%BC%80%E5%8F%91%E6%89%8B%E5%86%8C/SQL%E5%8F%82%E8%80%83%E6%89%8B%E5%86%8C/SQL%E8%AF%AD%E5%8F%A5/SELECT.html#cteclause)  
+-   [层次化/递归](https://cod-doc.yasdb.com/yashandb/alpha/zh/%E5%BC%80%E5%8F%91%E6%89%8B%E5%86%8C/SQL%E5%8F%82%E8%80%83%E6%89%8B%E5%86%8C/SQL%E8%AF%AD%E5%8F%A5/SELECT.html#hierarchicalqueryclause)  
+-   [抽样](https://cod-doc.yasdb.com/yashandb/alpha/zh/%E5%BC%80%E5%8F%91%E6%89%8B%E5%86%8C/SQL%E5%8F%82%E8%80%83%E6%89%8B%E5%86%8C/SQL%E8%AF%AD%E5%8F%A5/SELECT.html#sampleclause)  
+-   [指定分区](https://cod-doc.yasdb.com/yashandb/alpha/zh/%E5%BC%80%E5%8F%91%E6%89%8B%E5%86%8C/SQL%E5%8F%82%E8%80%83%E6%89%8B%E5%86%8C/SQL%E8%AF%AD%E5%8F%A5/SELECT.html#queryname)  
+-   [指定切片](https://cod-doc.yasdb.com/yashandb/alpha/zh/%E5%BC%80%E5%8F%91%E6%89%8B%E5%86%8C/SQL%E5%8F%82%E8%80%83%E6%89%8B%E5%86%8C/SQL%E8%AF%AD%E5%8F%A5/SELECT.html#queryslice)    （Slice）
+- 带    [hint](https://cod-doc.yasdb.com/yashandb/22.2/zh/%E5%BC%80%E5%8F%91%E6%89%8B%E5%86%8C/SQL%E5%8F%82%E8%80%83%E6%89%8B%E5%86%8C/%E9%80%9A%E7%94%A8SQL%E8%AF%AD%E6%B3%95/hint.html)  
+|  
+|  
+|  
+|
+|21|  
+|  
+|查表,查视图,查统计信息|  
+|  
+|  
+|
+|22|  
+|  
+|  
+|  
+|  
+|  
+|
+|23|与yasql基本  功能  关联|yasql @<sqlfilename.sql>,yasql   -f [-e]<filename>,yasql   -c "SQL"|执行本地SQL文件,执行一个SQL文件。其中，“-e”显示执行的语句,运行单条语句后退出|  
+|  
+|  
+|
+|24|  
+|与yasql其它功能交互,注意：Oracle:  SET HEADING OFF 命令  **不会影响显示的列宽**  ，它只会控制列标题本身的打印。|-    **set num[width] <1~128>  **
+-  set auto[commit] on|off   
+- set timi[ng] on|off 
+-  set DIRE[CTEXECUTE] on|off 
+- desc
+- show
+- **ctrl + c / kill session**
+-   [set autotrace on/off;](https://cod-doc.yasdb.com/yashandb/22.2/zh/%E5%BC%80%E5%8F%91%E6%89%8B%E5%86%8C/SQL%E5%8F%82%E8%80%83%E6%89%8B%E5%86%8C/SQL%E8%AF%AD%E5%8F%A5/SET%20AUTOTRACE.html)  
+|命令设置显示宽度    
+  事务自动提交    
+  控制执行计时操作（每次执行结果会不同，手动验证即可，不能自动化）    
+  来控制一次执行    
+  获取数据库对象的描述信息     
+  显示参数值    
+  中止当前执行的SQL进程    
+  统计信息|  
+|  
+|
+|25|  
+|结合set |SET LONGCHUNKSIZE ？,SET LONG ？,**SET NUMWIDTH**|确保数据不会丢失或错误地显示|  
+|  
+|
+|26|  
+|**结合explain**|  
+|  
+|  
+|  
+|
+|27|参数校验|大小写、通配符|大小写敏感性：,COl_09、COL_09、col_09都是同列,目前是查出所有列为 <column_name>的,通配符是否支持？不支持,显示相当于对一个 col_0* 列进行format|  
+|  
+|  
+|
+|28|  
+|拦截报错|设置数值列？##号,其他语法拦截,ALI[AS] alias BOOL[EAN]{YES [NO]} CLE[AR] ENTMAP {ON | OFF} FOLD_A[FTER] FOLD_B[EFORE]  format HEA[DING] text JUS[TIFY] {L[EFT] | C[ENTER] | R[IGHT]} LIKE {expr | alias} NEWL[INE] NEW_V[ALUE] variable NOPRI[NT] | PRI[NT] NUL[L] text OLD_V[ALUE] variable ON | OFF WRA[PPED] | WOR[D_WRAPPED] | TRU[NCATED]|  
+|FOR[MAT]|  
+|
+|29|参数校验|  
+|col,column,  
+|大小写不敏感|c,co,colu,colum,columnn,  
+|  
+|
+|30|  
+|  
+|for,format,  
+|**双引号？**,大小写不敏感|f,fo,form,forma,formate,  
+|  
+|
+|31|  
+|An,an|  
+|**a 与 n之间存在空格之类**,存在符号|  
+|  
+|
+|32|场景|column 字符列,查,alter该列为数值类型,查（预计显示#####）|  
+|  
+|  
+|  
+|
+|33|  
+|结合lob|  [DBMS_LOB](https://cod-doc.yasdb.com/yashandb/alpha/zh/%E5%BC%80%E5%8F%91%E6%89%8B%E5%86%8C/PLSQL%E5%8F%82%E8%80%83%E6%89%8B%E5%86%8C/%E5%86%85%E7%BD%AE%E9%AB%98%E7%BA%A7%E5%8C%85/DBMS_LOB.html)  |相关性低|  
+|  
+|
+|34|  
+|plsql创建|同Oracle，不能这样设置yasql|  
+|  
+|  
+|
+|35|  
+|类型转换、  转换函数|  [22.2数据类型转换](https://cod-doc.yasdb.com/yashandb/22.2/zh/%E5%BC%80%E5%8F%91%E6%89%8B%E5%86%8C/SQL%E5%8F%82%E8%80%83%E6%89%8B%E5%86%8C/%E6%95%B0%E6%8D%AE%E7%B1%BB%E5%9E%8B/%E6%95%B0%E6%8D%AE%E7%B1%BB%E5%9E%8B%E8%BD%AC%E6%8D%A2.html)  ,  
+,  [TO_CHAR](https://cod-doc.yasdb.com/yashandb/22.2/zh/%E5%BC%80%E5%8F%91%E6%89%8B%E5%86%8C/SQL%E5%8F%82%E8%80%83%E6%89%8B%E5%86%8C/%E5%86%85%E7%BD%AE%E5%87%BD%E6%95%B0/TO_CHAR)  ,  [JSON_SERIALIZE](https://cod-doc.yasdb.com/yashandb/22.2/zh/%E5%BC%80%E5%8F%91%E6%89%8B%E5%86%8C/SQL%E5%8F%82%E8%80%83%E6%89%8B%E5%86%8C/%E5%86%85%E7%BD%AE%E5%87%BD%E6%95%B0/JSON_SERIALIZE)  |  
+|  [BIN](https://cod-doc.yasdb.com/yashandb/22.2/zh/%E5%BC%80%E5%8F%91%E6%89%8B%E5%86%8C/SQL%E5%8F%82%E8%80%83%E6%89%8B%E5%86%8C/%E5%86%85%E7%BD%AE%E5%87%BD%E6%95%B0/BIN)  ,  [NUMTODSINTERVAL](https://cod-doc.yasdb.com/yashandb/22.2/zh/%E5%BC%80%E5%8F%91%E6%89%8B%E5%86%8C/SQL%E5%8F%82%E8%80%83%E6%89%8B%E5%86%8C/%E5%86%85%E7%BD%AE%E5%87%BD%E6%95%B0/NUMTODSINTERVAL)  ,  [NUMTOYMINTERVAL](https://cod-doc.yasdb.com/yashandb/22.2/zh/%E5%BC%80%E5%8F%91%E6%89%8B%E5%86%8C/SQL%E5%8F%82%E8%80%83%E6%89%8B%E5%86%8C/%E5%86%85%E7%BD%AE%E5%87%BD%E6%95%B0/NUMTOYMINTERVAL)  ,  [SCN_TO_TIMESTAMP](https://cod-doc.yasdb.com/yashandb/22.2/zh/%E5%BC%80%E5%8F%91%E6%89%8B%E5%86%8C/SQL%E5%8F%82%E8%80%83%E6%89%8B%E5%86%8C/%E5%86%85%E7%BD%AE%E5%87%BD%E6%95%B0/SCN_TO_TIMESTAMP)  ,  [TIMESTAMP_TO_SCN](https://cod-doc.yasdb.com/yashandb/22.2/zh/%E5%BC%80%E5%8F%91%E6%89%8B%E5%86%8C/SQL%E5%8F%82%E8%80%83%E6%89%8B%E5%86%8C/%E5%86%85%E7%BD%AE%E5%87%BD%E6%95%B0/TIMESTAMP_TO_SCN)  ,  [TO_NUMBER](https://cod-doc.yasdb.com/yashandb/22.2/zh/%E5%BC%80%E5%8F%91%E6%89%8B%E5%86%8C/SQL%E5%8F%82%E8%80%83%E6%89%8B%E5%86%8C/%E5%86%85%E7%BD%AE%E5%87%BD%E6%95%B0/TO_NUMBER)  ,  [TO_DATE](https://cod-doc.yasdb.com/yashandb/22.2/zh/%E5%BC%80%E5%8F%91%E6%89%8B%E5%86%8C/SQL%E5%8F%82%E8%80%83%E6%89%8B%E5%86%8C/%E5%86%85%E7%BD%AE%E5%87%BD%E6%95%B0/TO_DATE)  ,  [TO_TIMESTAMP](https://cod-doc.yasdb.com/yashandb/22.2/zh/%E5%BC%80%E5%8F%91%E6%89%8B%E5%86%8C/SQL%E5%8F%82%E8%80%83%E6%89%8B%E5%86%8C/%E5%86%85%E7%BD%AE%E5%87%BD%E6%95%B0/TO_TIMESTAMP)  ,  [TO_YMINTERVAL](https://cod-doc.yasdb.com/yashandb/22.2/zh/%E5%BC%80%E5%8F%91%E6%89%8B%E5%86%8C/SQL%E5%8F%82%E8%80%83%E6%89%8B%E5%86%8C/%E5%86%85%E7%BD%AE%E5%87%BD%E6%95%B0/TO_YMINTERVAL)  ,  [TO_DSINTERVAL](https://cod-doc.yasdb.com/yashandb/22.2/zh/%E5%BC%80%E5%8F%91%E6%89%8B%E5%86%8C/SQL%E5%8F%82%E8%80%83%E6%89%8B%E5%86%8C/%E5%86%85%E7%BD%AE%E5%87%BD%E6%95%B0/TO_DSINTERVAL)  ,  [JSON](https://cod-doc.yasdb.com/yashandb/22.2/zh/%E5%BC%80%E5%8F%91%E6%89%8B%E5%86%8C/SQL%E5%8F%82%E8%80%83%E6%89%8B%E5%86%8C/%E5%86%85%E7%BD%AE%E5%87%BD%E6%95%B0/JSON)  ,  [JSON_SERIALIZE](https://cod-doc.yasdb.com/yashandb/22.2/zh/%E5%BC%80%E5%8F%91%E6%89%8B%E5%86%8C/SQL%E5%8F%82%E8%80%83%E6%89%8B%E5%86%8C/%E5%86%85%E7%BD%AE%E5%87%BD%E6%95%B0/JSON_SERIALIZE)  |  
+|
+|36|场景校验|**字符集**|gbk,utf8|怎么显示？|  
+|  
+|
+
+
+  
+
+
+# 4. 测试用例
+
+## 4.1 冒烟用例
+
+```
+1.col/column   <column_name> | expr     for/format   An 格式化功能正常
+2.col/column     / <column_name> 显示功能正常
+3.cle/clear 功能正常
+```
+
+## 4.2 文本用例
+
+  [YDBRD-25042.xlsx](#)  
+
+属性表：
+
+  [TESTCASE_YDBRD-25042.csv](#)  
+
+  
+
+
+测试用例：
+
+  [https://git.yasdb.com/cod-test/yasft/-/tree/master/standalone/testcase/yasql/column_format](https://git.yasdb.com/cod-test/yasft/-/tree/master/standalone/testcase/yasql/column_format)  
+
+  
+
+
+# 5. 测试框架设计
+
+1） 自动化用例：Guider框架执行用例，生成预期，使用yasql模式执行。
+
+# 6. 测试环境说明
+
+1）辅助工具：①部署Guider脚本 ② 配置客户端、服务端字符集部署数据库脚本：    [https://git.yasdb.com/xiezhaoxian/scripts](https://git.yasdb.com/xiezhaoxian/scripts)  
+
+2）测试环境：
+
+|  
+|CPU|操作系统|可用内存|可用磁盘空间|磁盘类型|
+|:---|:---|:---|:---|:---|:---|
+|192.168.7.97|Intel(R) Xeon(R) Gold 6230R CPU @ 2.10GHz|Linux AchorBase 3.10.0-1160.el7.x86_64|35G|322G|HDD|
+
+
+# 7. 工作量评估
+
+工作量：7天
+
+计划测试完成时间：1117
+
+  
+
+
+## Attachments:

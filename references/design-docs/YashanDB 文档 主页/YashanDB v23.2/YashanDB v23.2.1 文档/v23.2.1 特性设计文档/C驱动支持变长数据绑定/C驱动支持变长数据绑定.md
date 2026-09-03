@@ -1,0 +1,45 @@
+Created by 冯皓博, last modified on 十一月 28, 2023
+
+# 问题背景：
+
+### 用户提此需求的目标痛点：当前的多行绑定场景对于内存的浪费现象比较严重，同时需要提前知道批量插入或fetch数据的最大长度
+
+### 1、对于绑定场景：
+
+![](https://pingcode.yasdb.com/atlas/files/public/67396c048970c2af4f5208bf/origin-url?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWRfZm9yX3B1YmljX2ltYWdlIjoiOTZjMTAxNTExNDIyNGNhNzhmOWM1YmZiZDYzY2QyNWIiLCJ0ZWFtX2Zvcl9wdWJsaWNfaW1hZ2UiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJibG9vbV9maWx0ZXIiOnsidHlwZSI6IkJsb29tRmlsdGVyIiwiX3NpemUiOjEwMjQsIl9uYkhhc2hlcyI6NSwiX2ZpbHRlciI6eyJzaXplIjoxMDI0LCJjb250ZW50IjoiQUFBQUFBUUFBQUNRQUFBQUFBSUFBQUFBQVFBQUFBQUJBQUFBQUFBQUFRQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFCQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBUUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFDQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPSJ9LCJfc2VlZCI6NzgxODc0OTM1MjB9LCJpYXQiOjE3ODIyOTg1NjcsImV4cCI6MTc4MjMwOTM2N30.jHvG5HlhQU8SQCv5m_CuoxQV869TykLbaPxVpHw0DgY)
+
+使用以上绑定方式，会发现两个缺点：
+
+1、需要提前知道此次批量插入数据的最大数据长度，这种情况其实就对批量绑定产生了一个隐形要求，可能会约束应用导致应用不能大量批量插入数据：
+
+比如应用程序每次从文件中读取一批数据进行插入，但是上述要求就导致应用程序不能以IO流的方式读取数据并立即绑定到缓冲区，而是需要每次从文件中读取一批数据，对数据进行预读，先明确数据的最大长度，然后整理数据格式后申请内存，绑定到内存上
+
+2、对内存的浪费较严重，内存使用有大量空洞
+
+### 2、对于fetch场景：
+
+fetch情况下存在相同问题，绑定者需要提前预知当前数据的最大长度，从而给数据一个最长长度的buf来接数
+
+# 问题方案：
+
+### 1、动态绑定+动态定义    
+    
+
+
+**此方案存在的问题在于：**
+
+动态绑定要求客户只提供一次数据，但我们内部的流机制实际上会先读取数据长度，然后发现满足流传输条件后，二次读取数据将其填到行报文末尾
+
+此时就产生了两次数据读取
+
+**解决方案：**
+
+malloc内存缓存数据，但是会产生大量内存浪费，尤其是这些数据本身就要走流传输，数据量本身是很大的
+
+### 2、参考OCIRaw+OCIString实现
+
+![](https://pingcode.yasdb.com/atlas/files/public/67396c048970c2af4f5208c0/origin-url?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWRfZm9yX3B1YmljX2ltYWdlIjoiOTZjMTAxNTExNDIyNGNhNzhmOWM1YmZiZDYzY2QyNWIiLCJ0ZWFtX2Zvcl9wdWJsaWNfaW1hZ2UiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJibG9vbV9maWx0ZXIiOnsidHlwZSI6IkJsb29tRmlsdGVyIiwiX3NpemUiOjEwMjQsIl9uYkhhc2hlcyI6NSwiX2ZpbHRlciI6eyJzaXplIjoxMDI0LCJjb250ZW50IjoiQUFBQUFBUUFBQUNRQUFBQUFBSUFBQUFBQVFBQUFBQUJBQUFBQUFBQUFRQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFCQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBUUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFDQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPSJ9LCJfc2VlZCI6NzgxODc0OTM1MjB9LCJpYXQiOjE3ODIyOTg1NjcsImV4cCI6MTc4MjMwOTM2N30.jHvG5HlhQU8SQCv5m_CuoxQV869TykLbaPxVpHw0DgY)
+
+要求resize必须设置？
+
+## Attachments:

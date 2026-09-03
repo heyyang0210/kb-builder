@@ -1,0 +1,331 @@
+Created by 黄子迅, last modified on 六月 03, 2024
+
+IR链接：    [[YDBRD-29807] 导数任务支持调度排队 - SICS-CoD Jira (yasdb.com)](https://jira.yasdb.com/browse/YDBRD-29807)  
+
+SR链接：    [[YDBRD-26209] 支持配置单个导入任务的最大内存配额](https://pingcode.yasdb.com/pjm/items/6618f47cfd997db58ad85657? #YDBRD-26209 支持配置单个导入任务的最大内存配额)  
+
+  
+
+
+##   [1. Overview（概述）](https://conf.yasdb.com/pages/viewpage.action?pageId=91780307#1-overview%E6%A6%82%E8%BF%B0)  
+
+当环境中内存资源非常少时，每DN能配置的 COLUMNAR VM BUFFER 很小，LSC表导入数据特别容易出现内存不足的场景。
+
+如果单个导入任务的内存配额太小，会导致严重的换入换出；如果单个导入任务的内存配额太大，会导致多分区、高并行度场景下总资源不足。
+
+因此需要能够设置单个导入任务的最大内存配额，使用户可以灵活调整。
+
+  
+
+
+需求功能：  支持配置单个导入任务的最大内存。
+
+需求意义：  可限制极端情况下单个任务内存配额的无序扩张，主要解决分区过多场景下的问题。
+
+  
+
+
+  [2. Features（功能特性）](https://conf.yasdb.com/pages/viewpage.action?pageId=91780307#2-features%E5%8A%9F%E8%83%BD%E7%89%B9%E6%80%A7)  
+
+1、  隐藏配置项 _COLUMNAR_MAX_BULKLOAD_MEM_PERCENT 控制 Rgd 可用最大内存占列存物化内存的上限，  将其调整为非隐藏参数：BULKLOAD_MAX_MEM_PERCENT。
+
+2、  增加单个导入任务的最大使用内存配置项:   SESSION_BULKLOAD_MAX_MEM_PERCENT  ：
+
+```
+alter system set BULKLOAD_MAX_MEM_PERCENT = 80;
+alter system set SESSION_BULKLOAD_MAX_MEM_PERCENT= 50;
+```
+
+3、实际单个导入任务下申请的内存总额不能超过该配额，内存不足时需等待换入换出。
+
+4、如果当前导入换出严重，应适当提升该值；如果当前导入没有换出，可适当减少该值，提升导入并行度。
+
+示例：
+
+![](https://pingcode.yasdb.com/atlas/files/public/67396d61a1ad9a3311dc90d8/origin-url?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWRfZm9yX3B1YmljX2ltYWdlIjoiOTZjMTAxNTExNDIyNGNhNzhmOWM1YmZiZDYzY2QyNWIiLCJ0ZWFtX2Zvcl9wdWJsaWNfaW1hZ2UiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJibG9vbV9maWx0ZXIiOnsidHlwZSI6IkJsb29tRmlsdGVyIiwiX3NpemUiOjEwMjQsIl9uYkhhc2hlcyI6NSwiX2ZpbHRlciI6eyJzaXplIjoxMDI0LCJjb250ZW50IjoiQUFCQUFBQUFBQUFBQUFBQUFBQUFBQkFBQVFBQUFBQUFFQUFBQUFBQUFBQUFBQUFBQUlBQUFBQUFBQUFBQUFBQUFBQUFJQUFBQ0FBQUFBQUlBSUFBQUFBZ0FBQUFBQUFBQUFBRUFBQUFBRUFBQUFBQUFBQUFBQUFBQWdBQUFBQUFBQUFBQ0FBQUFBQUFBQUFnQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPSJ9LCJfc2VlZCI6NzgxODc0OTM1MjB9LCJpYXQiOjE3ODIzMDc4MTUsImV4cCI6MTc4MjMxODYxNX0.TmFHdTeTo5SOHctwZ3FljBsxOy-WofIicQiwfUsvLqM)
+
+  
+
+
+  [3. Interfaces（接口）](https://conf.yasdb.com/pages/viewpage.action?pageId=91780307#3-interfaces%E6%8E%A5%E5%8F%A3)  
+
+1、增加配置参数：
+
+|参数名称|描述|配置范围|默认|生效方式|生效级别|
+|---|---|---|---|---|---|
+|BULKLOAD_MAX_MEM_PERCENT|所有导入任务使用的物化内存占 COLUMNAR_VM_BUFFER_SIZE 的上限百分比|[1, 100  ]|100|both|system|
+|SESSION_BULKLOAD_MAX_MEM_PERCENT|单个导入任务使用的物化内存占 BULKLOAD_MAX_MEM_PERCENT 的上限百分比|[1, 100  ]|100|both|system|
+
+
+2、在 $SYSTEM_PARAMETER 视图里增加该参数：
+
+**V$SYSTEM_PARAMETER**
+
+**DV$SYSTEM_PARAMETER**
+
+```
+select * from v$SYSTEM_PARAMETER where name = 'BULKLOAD_MAX_MEM_PERCENT';
+select * from v$SYSTEM_PARAMETER where name = 'SESSION_BULKLOAD_MAX_MEM_PERCENT';
+```
+
+|NAME|VALUE|DEFAULT_VALUE|IS_DEPRECATED|
+|---|---|---|---|
+|BULKLOAD_MAX_MEM_PERCENT|  `100`  |```
+<span class="token number" style="color: rgb(240,141,73);">100</span>
+```|```
+<span class="token boolean" style="color: rgb(240,141,73);">FALSE</span>  
+```|
+|BULKLOAD_MAX_MEM_PERCENT|  `100`  |```
+<span class="token number" style="color: rgb(240,141,73);">100</span>
+```|```
+<span class="token boolean" style="color: rgb(240,141,73);">FALSE</span>  
+```|
+
+
+3、show parameter 时可显示该参数值：
+
+```
+show parameter BULKLOAD_MAX_MEM_PERCENT;
+show parameter SESSION_BULKLOAD_MAX_MEM_PERCENT;
+```
+
+4、可通过编辑 yasdb.ini 文件修改该参数（重启生效），修改后的参数值也会写入 yasdb.ini文件。
+
+5、增加文档说明。
+
+##   [4. Specification And Constraints（规格与约束）](https://conf.yasdb.com/pages/viewpage.action?pageId=91780307#4-specification-and-constraints%E8%A7%84%E6%A0%BC%E4%B8%8E%E7%BA%A6%E6%9D%9F)  
+
+1. 单个导入任务的内存配额太小，会导致严重的换入换出；内存配额太大，会导致多分区、高并行度场景下总资源不足；要能够灵活调整。
+1. 单个导入任务的最大内存范围为 1~100  ，也不能小于要求的最小导入内存（TODO），否则报错。
+1. 单个导入任务的内存不能超过分配给导入任务的总内存，导入任务的总内存不能超过列存物化内存。
+1. 修改配置参数不影响已经开始的导入任务  。
+
+
+##   [5. Detail Design（详细设计）](https://conf.yasdb.com/pages/viewpage.action?pageId=91780307#5-detail-design%E8%AF%A6%E7%BB%86%E8%AE%BE%E8%AE%A1)  
+
+###   [5.1 ](https://conf.yasdb.com/pages/viewpage.action?pageId=91780307#51-architecture%E6%9E%B6%E6%9E%84)      [Architecture（架构）](https://conf.yasdb.com/pages/viewpage.action?pageId=138548361#51-architecture%E6%9E%B6%E6%9E%84)  
+
+方案一（废弃）：
+
+1、修改单个导入任务最大内存配额参数值
+
+参数指的范围应该在 0 到   COLUMNAR_VM_BUFFER_SIZE  / 导入线程数之间：
+
+- 客户端可感知当前导入线程数，故应拦截将参数值设为超过 (COLUMNAR_VM_BUFFER_SIZE  / 导入线程数)。
+- 存储层无法感知导入线程数，故简单拦截将参数值设为大于 COLUMNAR_VM_BUFFER_SIZE 或小于 0。
+    - 当前有未完成的导入任务时，不允许将参数值设为小于当前值。
+
+
+2、  实际单个导入任务下申请的内存总额不能超过该配额，内存不足时需等待换入换出。
+
+单个导入任务下申请到的内存耗尽，Rgd 需要扩展 quota 大小时，判断总共需要的内存是否大于参数值。
+
+废弃原因：
+
+1. 单个任务的最大内存值不需要和线程数相关，用户自定义即可。
+1. 设置导入任务进行中不允许调小内存配额的限制会影响用户使用，使开始实际内存分配后不受配置项的影响即可。
+
+
+  
+
+
+方案二（废弃）：
+
+1、将单个导入任务最大内存配置项调整为和 _COLUMNAR_MAX_BULKLOAD_MEM_PERCENT 一样   COLUMNAR_VM_BUFFER_SIZE   的占百分比
+
+- 上限不可超过 _COLUMNAR_MAX_BULKLOAD_MEM_PERCENT 总的导入内存占用百分比
+- 隐含约束是 _COLUMNAR_MAX_BULKLOAD_MEM_PERCENT 调小时，单个导入任务最大内存参数也得相应调小
+
+
+废弃原因：隐含约束没有实际影响，但对用户来说不直观，将配置项改为对应 _COLUMNAR_MAX_BULKLOAD_MEM_PERCENT 的百分比。
+
+  
+
+
+方案三（最终）：
+
+1、将参数 _COLUMNAR_MAX_BULKLOAD_MEM_PERCENT 调整为非隐藏参数，且重名为 BULKLOAD_MAX_MEM_PERCENT，意为所有导入任务使用的物化内存占 COLUMNAR_VM_BUFFER_SIZE 的上限百分比。
+
+2、单个导入任务最大内存的配置项命名为 SESSION_BULKLOAD_MAX_MEM_PERCENT，指单个导入任务使用的物化内存占 BULKLOAD_MAX_MEM_PERCENT 的上限百分比。
+
+- 用户配置能分多大范围的内存给所有 Bulkload 导入任务，再配置其中又能分多大范围的内存给每个导入任务；默认均为对范围不设限，即不超过 COLUMNAR_VM_BUFFER_SIZE。
+- 如果当前导入任务的内存换出严重，建议适当调大此参数；如果当前导入任务没有内存换出，可适当调小此参数，调大导入并行度。
+- 参数的范围应该在 1 到   100 之间（与原有 _COLUMNAR_MAX_BULKLOAD_MEM_PERCENT 的限制保持一致），默认为 100；  后续加上  单个导入任务的最大内存也不能小于最小导入内存的限制。
+
+
+3、  实际单个导入任务下申请的内存总额不能超过该配额，内存不足时需等待换入换出；所有导入任务的内存总额也不能超过由 BULKLOAD_MAX_MEM_PERCENT 约束的内存上限。
+
+- 单个导入任务能申请的内存上限，在相应 quota 初始化时即由配置参数确定；此后修改配置参数不影响已开始的导入任务的内存分配。
+
+
+###   [5.2 Data Structures & Flow（数据结构与流程）](https://conf.yasdb.com/pages/viewpage.action?pageId=91780307#52-data-structures--flow%E6%95%B0%E6%8D%AE%E7%BB%93%E6%9E%84%E4%B8%8E%E6%B5%81%E7%A8%8B)  
+
+#### 1、结构体新增成员
+
+_COLUMNAR_MAX_BULKLOAD_MEM_PERCENT 改名为 BULKLOAD_MAX_MEM_PERCENT，对应新增参数 SESSION_BULKLOAD_MAX_MEM_PERCENT，SESSION 表示单个对话中的导入任务，也即单个任务。
+
+```
+typedef enum EnParamId {
+	PARAM_BULKLOAD_MAX_MEM_PERCENT,
+    PARAM_SESSION_BULKLOAD_MAX_MEM_PERCENT,
+} ParamId;
+```
+
+  
+
+
+KernelAttr 上新增成员 maxSesBulkLoadMemPercent，与 maxBulkLoadMemPercent 相对应。
+
+```
+typedef struct StKernelAttr {
+    CodUint32         maxBulkLoadMemPercent;
+    CodUint32         maxSesBulkLoadMemPercent;
+} KernelAttr;
+```
+
+  
+
+
+#### 2、参数修改流程
+
+原有：修改隐藏参数 _COLUMNAR_MAX_BULKLOAD_MEM_PERCENT 时  调用 ckpmMaxBulkloadMemPercent 接口检查参数值的范围是否在 0~100 之间，再在 cbpmBulkloadMaxMemPercent 接口里更新 attr 上的参数值。
+
+改为（废弃）：
+
+因为百分比的基本范围限制均为 0~100，将 ckpmMaxBulkloadMemPercent 接口改为两个配置项的共用接口，用来检查参数值的范围是否合法；
+
+新增 cbpmSesBulkloadMaxMemPercent 接口，用于   SESSION_BULKLOAD_MAX_MEM_PERCENT 配置项  更新 attr 上的参数值。
+
+```
+static CodResult cbpmSesBulkloadMaxMemPercent(CodParamItem* item, CodText* value, CodParamScope scope)
+```
+
+改为：
+
+新增 ckpmMaxSesBulkloadMemPercent 接口，用来检查参数值的范围是否合法；
+
+新增 cbpmSesBulkloadMaxMemPercent 接口，用于   SESSION_BULKLOAD_MAX_MEM_PERCENT 配置项  更新 attr 上的参数值。
+
+```
+static CodResult cbpmSesBulkloadMaxMemPercent(CodParamItem* item, CodText* value, CodParamScope scope)
+```
+
+  
+
+
+3、  Rgd   内存申请流程：
+
+原有：
+
+单个导入任务的   Rgd      通过每个 handler 自己的 quota 申请内存，quota 的内存上限（  quotator  ->  capacity）  设置为 → 所有导入任务  使用的物化内存占 CO  LUMNAR  _  VM  _  BUFFER  _  SIZE 的上  限百分比  ；
+
+Rgd   需要扩展 quota 内存时，先调用   rgdGlobalQuotarFull 接口判断，所有导入任务所占的全局总内存是否达到设置的内存上限，计算公式为：
+
+```
+BULKLOAD总内存 &gt; COLUMNAR_MATERIAL_PERCENT * COLUMNAR_VM_BUFFER_SIZE * BULKLOAD_MAX_MEM_PERCENT ?
+
+```
+
+如果内存已达上限，则分配失败，等待换入换出。
+
+  
+
+
+改为（废弃）：
+
+单个导入任务的   Rgd   通过每个handler自己的 quota 申请内存，quota 的内存上限改设为 → 单个导入任务  使用的物化内存占 BULKLOAD_MAX_MEM_PERCENT   的上  限百分比  ；
+
+Rgd   需要扩展 quota 内存时，先调用   rgdGlobalQuotarFull 接口判断，所有导入任务所占的总内存是否达到设置的内存上限;
+
+如果总内存未达上限，则计算当前   Rgd   还需要分配的内存，再调用   rgdLocalQuotarFull 接口判断，quota 能否在自己的内存上限内分配出所需内存大小：
+
+```
+quota当前内存大小 + 需分配的内存大小 &gt; COLUMNAR_MATERIAL_PERCENT * COLUMNAR_VM_BUFFER_SIZE * BULKLOAD_MAX_MEM_PERCENT * SESSION_BULKLOAD_MAX_MEM_PERCENT ?
+
+```
+
+如果内存已达上限，则分配失败，等待换入换出。
+
+```
+static CodBool rgdLocalQuotarFull(Kernel* kernel, CodUint64 oldSize, CodUint64 allocSize);
+```
+
+改为：
+
+单个导入任务的   Rgd   通过每个handler自己的 quota 申请内存，quota 的内存上限改设为 → 单个导入任务  使用的物化内存占 BULKLOAD_MAX_MEM_PERCENT   的上  限百分比，且再创建 quota 时即记录此限制  ；
+
+Rgd   需要扩展 quota 内存时，先调用   rgdGlobalQuotarFull 接口判断，所有导入任务所占的总内存是否达到设置的内存上限;
+
+如果总内存未达上限，则调用 quota 分配内存的接口  ，看 quota 能否在自己的内存上限内分配出所需内存大小：
+
+如果内存已达上限，则分配失败，等待换入换出。
+
+##   [6. Testcases（自测用例）](https://conf.yasdb.com/pages/viewpage.action?pageId=91780307#6-testcases%E8%87%AA%E6%B5%8B%E7%94%A8%E4%BE%8B)  
+
+1. 分区表/非分区表的导入，资源充足场景，能正常完成
+1. 内存配额耗尽，导入能正常完成，不阻塞
+1. 导入结束（成功/失败）等正常/异常场景不会有内存泄漏。
+
+
+##   [7.资料设计章节](https://conf.yasdb.com/pages/viewpage.action?pageId=91780307#7%E8%B5%84%E6%96%99%E8%AE%BE%E8%AE%A1%E7%AB%A0%E8%8A%82)  
+
+在doc文件目录下增加配置参数 BULKLOAD_MAX_MEM_PERCENT 与 SESSION_BULKLOAD_MAX_MEM_PERCENT 的介绍。
+
+![](https://pingcode.yasdb.com/atlas/files/public/67396d618970c2af4f521267/origin-url?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWRfZm9yX3B1YmljX2ltYWdlIjoiOTZjMTAxNTExNDIyNGNhNzhmOWM1YmZiZDYzY2QyNWIiLCJ0ZWFtX2Zvcl9wdWJsaWNfaW1hZ2UiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJibG9vbV9maWx0ZXIiOnsidHlwZSI6IkJsb29tRmlsdGVyIiwiX3NpemUiOjEwMjQsIl9uYkhhc2hlcyI6NSwiX2ZpbHRlciI6eyJzaXplIjoxMDI0LCJjb250ZW50IjoiQUFCQUFBQUFBQUFBQUFBQUFBQUFBQkFBQVFBQUFBQUFFQUFBQUFBQUFBQUFBQUFBQUlBQUFBQUFBQUFBQUFBQUFBQUFJQUFBQ0FBQUFBQUlBSUFBQUFBZ0FBQUFBQUFBQUFBRUFBQUFBRUFBQUFBQUFBQUFBQUFBQWdBQUFBQUFBQUFBQ0FBQUFBQUFBQUFnQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPSJ9LCJfc2VlZCI6NzgxODc0OTM1MjB9LCJpYXQiOjE3ODIzMDc4MTUsImV4cCI6MTc4MjMxODYxNX0.TmFHdTeTo5SOHctwZ3FljBsxOy-WofIicQiwfUsvLqM)
+
+![](https://pingcode.yasdb.com/atlas/files/public/67396d61a1ad9a3311dc90d9/origin-url?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWRfZm9yX3B1YmljX2ltYWdlIjoiOTZjMTAxNTExNDIyNGNhNzhmOWM1YmZiZDYzY2QyNWIiLCJ0ZWFtX2Zvcl9wdWJsaWNfaW1hZ2UiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJibG9vbV9maWx0ZXIiOnsidHlwZSI6IkJsb29tRmlsdGVyIiwiX3NpemUiOjEwMjQsIl9uYkhhc2hlcyI6NSwiX2ZpbHRlciI6eyJzaXplIjoxMDI0LCJjb250ZW50IjoiQUFCQUFBQUFBQUFBQUFBQUFBQUFBQkFBQVFBQUFBQUFFQUFBQUFBQUFBQUFBQUFBQUlBQUFBQUFBQUFBQUFBQUFBQUFJQUFBQ0FBQUFBQUlBSUFBQUFBZ0FBQUFBQUFBQUFBRUFBQUFBRUFBQUFBQUFBQUFBQUFBQWdBQUFBQUFBQUFBQ0FBQUFBQUFBQUFnQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPSJ9LCJfc2VlZCI6NzgxODc0OTM1MjB9LCJpYXQiOjE3ODIzMDc4MTUsImV4cCI6MTc4MjMxODYxNX0.TmFHdTeTo5SOHctwZ3FljBsxOy-WofIicQiwfUsvLqM)
+
+##   [8. TODO（遗留问题）](https://conf.yasdb.com/pages/viewpage.action?pageId=91780307#8-todo%E9%81%97%E7%95%99%E9%97%AE%E9%A2%98)  
+
+预期编码时间：0.5人周
+
+预期自测时间：0.5人周
+
+  
+
+
+## Attachments:
+
+[image2024-4-19_13-59-58.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjczOTZkNjBhMWFkOWEzMzExZGM5MGQzIiwicmVmX2lkIjoiNjczOTZkNjA3MjgyMDZlZmI5MmYxZTVhIiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyMzA3ODE1LCJleHAiOjE3ODIzOTQyMTV9.Hff98xfPEpon5ulSoiIHCOsA0f74ZQ_plOd79Q7Ps4o)
+
+ (image/png)    
+
+
+[image2024-3-29_11-51-53.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjczOTZkNjA4OTcwYzJhZjRmNTIxMjYxIiwicmVmX2lkIjoiNjczOTZkNjA3MjgyMDZlZmI5MmYxZTVhIiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyMzA3ODE1LCJleHAiOjE3ODIzOTQyMTV9.NQ9I2hIB2J9PxY9BgoDgTIZsv9Zww4rvn1UfNlkaLio)
+
+ (image/png)    
+
+
+[image2023-8-9_14-38-47.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjczOTZkNjBhMWFkOWEzMzExZGM5MGQ0IiwicmVmX2lkIjoiNjczOTZkNjA3MjgyMDZlZmI5MmYxZTVhIiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyMzA3ODE1LCJleHAiOjE3ODIzOTQyMTV9.AsfVCCGvOjmvYQMwAK-Qby8Y1M5Ei0SWSgZzCAgG6iE)
+
+ (image/png)    
+
+
+[image2024-4-23_14-46-2.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjczOTZkNjE4OTcwYzJhZjRmNTIxMjYzIiwicmVmX2lkIjoiNjczOTZkNjA3MjgyMDZlZmI5MmYxZTVhIiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyMzA3ODE1LCJleHAiOjE3ODIzOTQyMTV9.AY6dfCIxqqq8nxLDFbvQihUd5ftAYzh0aJo82dGT_sI)
+
+ (image/png)    
+
+
+[image2024-4-23_14-46-19.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjczOTZkNjFhMWFkOWEzMzExZGM5MGQ1IiwicmVmX2lkIjoiNjczOTZkNjA3MjgyMDZlZmI5MmYxZTVhIiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyMzA3ODE1LCJleHAiOjE3ODIzOTQyMTV9.uqLWiFSulNdNEvVsMPCUT3F5oRCgp0eu8FAimgiaGgA)
+
+ (image/png)    
+
+
+[image2024-4-23_16-55-44.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjczOTZkNjFhMWFkOWEzMzExZGM5MGQ2IiwicmVmX2lkIjoiNjczOTZkNjA3MjgyMDZlZmI5MmYxZTVhIiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyMzA3ODE1LCJleHAiOjE3ODIzOTQyMTV9.LxryhpQnJWwtKn-nf37eTltCUZofjORO93qlcOEEvRI)
+
+ (image/png)    
+
+
+[image2024-4-24_14-31-30.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjczOTZkNjE4OTcwYzJhZjRmNTIxMjY1IiwicmVmX2lkIjoiNjczOTZkNjA3MjgyMDZlZmI5MmYxZTVhIiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyMzA3ODE1LCJleHAiOjE3ODIzOTQyMTV9.O1sIPLjt6ZnSwoTIzG-uncTLAsZINhqWihJPzL3M59c)
+
+ (image/png)    
+
+
+## Comments:
+
+|  [](null)  ,第一次讨论：【2024/4/19】    
+  1、隐藏参数_COLUMNAR_MAX_BULKLOAD_MEM_PERCENT改为非隐藏    
+  2、COLUMNAR_MAX_BULKLOAD_MEM 改为同 _COLUMNAR_MAX_BULKLOAD_MEM_PERCENT 一样的百分比形式    
+  3、修改配置参数不受是否有未完成的导入任务的影响，单个导入任务完成之前quota的大小不受配置参数的影响,Posted by huangzixun at 四月 24, 2024 09:36|
+|---|
+|  [](null)  ,正式评审：【2024/4/23】,将配置项命名改为   SESSION_BULKLOAD_MAX_MEM_PERCENT ,Posted by huangzixun at 四月 24, 2024 14:32|

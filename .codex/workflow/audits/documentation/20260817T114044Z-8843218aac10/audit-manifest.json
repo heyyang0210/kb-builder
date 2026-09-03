@@ -1,0 +1,14 @@
+{
+  "artifacts": {
+    "change-context.json": "1a5bafc0b0ca9ee1883a97827d791cf40da97b28ff0634f4e6b82569f077ebb4",
+    "impact-report.md": "b8748cce6cacaaf4530c5e2d280f72aff1220dd18d9f1517eca94a52e37f8509"
+  },
+  "baselineRef": null,
+  "mode": "full",
+  "policyDigest": "78a9e7147bf55db0c9c2352db7dff2121d918d01aca8a7754a5c69294ea9f8a4",
+  "ruleVersion": "reconcile-docs/v1",
+  "runId": "20260817T114044Z-8843218aac10",
+  "runStartHead": "8843218aac10f6991b5ddc96f9e23870a2b22e93",
+  "schemaVersion": "reconcile-audit-manifest/v1",
+  "validationStatus": "pending"
+}

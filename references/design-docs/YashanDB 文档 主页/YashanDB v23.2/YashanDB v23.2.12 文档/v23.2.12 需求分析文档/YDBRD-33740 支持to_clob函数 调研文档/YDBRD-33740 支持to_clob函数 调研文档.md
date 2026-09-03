@@ -1,0 +1,257 @@
+
+
+IR链接：  [https://pingcode.yasdb.com/pjm/items/670736b8e489dd0868f34b9e?](https://pingcode.yasdb.com/pjm/items/670736b8e489dd0868f34b9e?)  #YDBRD-33740 支持to_clob函数  
+SR链接：  [https://pingcode.yasdb.com/pjm/items/670736ba6544792659b35e44?](https://pingcode.yasdb.com/pjm/items/670736ba6544792659b35e44?)  #YDBRD-33742 开发任务：支持to_clob函数
+
+#   [1. Overview（概述）](#1-overview概述)  
+
+支持to_clob函数，函数的语法、功能调研基于ORACLE 19c。
+
+#   [2. Features（功能特性）](#2-features功能特性)  
+
+(1) 功能按等价类划分子特性，将每个子特性对应的输出行为，尝试进行行为解释说明。等价类划分要证明全面。
+
+|功能|调研表现|
+|---|---|
+|TO_CLOB( {   bfile | blob   } [, csid] [, mime_type] )|TO_CLOB (bfile|blob)将 BFILE 或 BLOB 数据根据源字符集转换为数据库字符集，并以 CLOB 值返回。|
+|TO_CLOB(lob_column | char)|TO_CLOB (character) 将 LOB 列中的 NCLOB 值或其他字符串转换为 CLOB 值。Oracle 数据库通过将底层 LOB 数据从国家字符集转换为数据库字符集来执行此函数。,在 PL/SQL 包中，可以使用 TO_CLOB（字符）函数将 RAW、CHAR、VARCHAR、VARCHAR2、NCHAR、NVARCHAR2、CLOB 或 NCLOB 值转换为 CLOB 或 NCLOB 值。|
+
+
+(2) 函数或者表达式特性调研，必须给出不同参数组合情况下，功能特性的表现情况。同时因为与数据类型相关，要组合不同数据类型入参下，计划和执行阶段出参的类型。
+
+##   [2.1 TO_CLOB](#21-lcase)  
+
+### 2.1.1 两种语法支持范围
+
+```
+create or replace directory TO_CLOB_DIR as '/data/dqy_test';
+
+-- UTF8 TEST
+DROP TABLE T;
+CREATE TABLE T(BLOB_COL BLOB, CLOB_COL CLOB, RAW_COL RAW(200), VARCHAR_COL VARCHAR(200));
+
+declare
+	HANDLE_R UTL_FILE.FILE_TYPE;
+	RAW_VAR RAW(200);
+	VARCHAR_VAR VARCHAR(200);
+	BLOB_VAR BLOB;
+	CLOB_VAR CLOB;
+
+begin
+	HANDLE_R := utl_file.fopen('TO_CLOB_DIR', './utf8.bin', 'r', 8000);
+	utl_file.GET_RAW(HANDLE_R, RAW_VAR, 32000);
+
+	-- RAW TEST
+	DBMS_OUTPUT.PUT_LINE('PLSQL RAW_VAR: '||RAW_VAR);
+	DBMS_OUTPUT.PUT_LINE('PLSQL TO_CLOB(RAW_VAR): '||TO_CLOB(RAW_VAR));
+	DBMS_OUTPUT.PUT_LINE('PLSQL TO_CLOB(RAW_VAR,873): '||TO_CLOB(RAW_VAR,873));-- AL32UTF8
+	DBMS_OUTPUT.PUT_LINE('PLSQL TO_CLOB(RAW_VAR,865): '||TO_CLOB(RAW_VAR,865));-- ZHT16BIG5
+	DBMS_OUTPUT.PUT_LINE('PLSQL TO_CLOB(RAW_VAR,31): '||TO_CLOB(RAW_VAR,31));-- WE8ISO8859P1
+	-- DBMS_OUTPUT.PUT_LINE(TO_CLOB(RAW_VAR,873,'text/xml'));
+	-- DBMS_OUTPUT.PUT_LINE(TO_CLOB(RAW_VAR,852,'text/xml'));
+	-- DBMS_OUTPUT.PUT_LINE(TO_CLOB(RAW_VAR,31,'text/xml'));
+
+	delete from T;
+	INSERT INTO T VALUES(RAW_VAR, RAW_VAR, RAW_VAR, RAW_VAR);
+
+
+
+	-- BLOB TEST
+	select BLOB_COL into BLOB_VAR from t;
+	DBMS_OUTPUT.PUT_LINE('PLSQL TO_CLOB(BLOB_VAR): ' || TO_CLOB(BLOB_VAR));
+	DBMS_OUTPUT.PUT_LINE('PLSQL TO_CLOB(BLOB_VAR,873): ' || TO_CLOB(BLOB_VAR,873));
+	DBMS_OUTPUT.PUT_LINE('PLSQL TO_CLOB(BLOB_VAR,865): ' || TO_CLOB(BLOB_VAR,865));
+	DBMS_OUTPUT.PUT_LINE('PLSQL TO_CLOB(BLOB_VAR,31): ' || TO_CLOB(BLOB_VAR,31));
+	-- DBMS_OUTPUT.PUT_LINE(TO_CLOB(BLOB_VAR,873,'text/xml'));
+	-- DBMS_OUTPUT.PUT_LINE(TO_CLOB(BLOB_VAR,852,'text/xml'));
+	-- DBMS_OUTPUT.PUT_LINE(TO_CLOB(BLOB_VAR,31,'text/xml'));
+
+
+	-- VARCHAR TEST
+	select VARCHAR_COL into VARCHAR_VAR from t;
+	DBMS_OUTPUT.PUT_LINE('PLSQL VARCHAR_VAR: ' || VARCHAR_VAR);
+	DBMS_OUTPUT.PUT_LINE('PLSQL TO_CLOB(VARCHAR_VAR): ' || TO_CLOB(VARCHAR_VAR));
+	-- DBMS_OUTPUT.PUT_LINE(TO_CLOB(VARCHAR_VAR,873));
+	-- DBMS_OUTPUT.PUT_LINE(TO_CLOB(VARCHAR_VAR,865));
+	-- DBMS_OUTPUT.PUT_LINE(TO_CLOB(VARCHAR_VAR,31));
+	-- DBMS_OUTPUT.PUT_LINE(TO_CLOB(VARCHAR_VAR,873,'text/xml'));
+	-- DBMS_OUTPUT.PUT_LINE(TO_CLOB(VARCHAR_VAR,852,'text/xml'));
+	-- DBMS_OUTPUT.PUT_LINE(TO_CLOB(VARCHAR_VAR,31,'text/xml'));
+
+
+	-- CLOB TEST
+	select CLOB_COL into CLOB_VAR from t;
+	DBMS_OUTPUT.PUT_LINE('PLSQL CLOB_VAR: ' || CLOB_VAR);
+	DBMS_OUTPUT.PUT_LINE('PLSQL TO_CLOB(CLOB_VAR): ' || TO_CLOB(CLOB_VAR));
+	-- DBMS_OUTPUT.PUT_LINE(TO_CLOB(CLOB_VAR,873));
+	-- DBMS_OUTPUT.PUT_LINE(TO_CLOB(CLOB_VAR,865));
+	-- DBMS_OUTPUT.PUT_LINE(TO_CLOB(CLOB_VAR,31));
+	-- DBMS_OUTPUT.PUT_LINE(TO_CLOB(CLOB_VAR,873,'text/xml'));
+	-- DBMS_OUTPUT.PUT_LINE(TO_CLOB(CLOB_VAR,852,'text/xml'));
+	-- DBMS_OUTPUT.PUT_LINE(TO_CLOB(CLOB_VAR,31,'text/xml'));
+end;
+/
+
+-- BLOB
+SELECT 'COL TO_CLOB(BLOB_COL): ' || TO_CLOB(BLOB_COL) c1, BLOB_COL  FROM T;
+SELECT 'COL TO_CLOB(BLOB_COL,873): ' || TO_CLOB(BLOB_COL,873) c1, BLOB_COL  FROM T;
+SELECT 'COL TO_CLOB(BLOB_COL,865): ' || TO_CLOB(BLOB_COL,865) c1, BLOB_COL  FROM T;
+SELECT 'COL TO_CLOB(BLOB_COL,31): ' || TO_CLOB(BLOB_COL,31) c1, BLOB_COL  FROM T;
+SELECT 'COL TO_CLOB(BLOB_COL,873,''text/xml''): ' || TO_CLOB(BLOB_COL,873,'text/xml') c1, BLOB_COL  FROM T;
+SELECT 'COL TO_CLOB(BLOB_COL,865,''text/xml''): ' || TO_CLOB(BLOB_COL,865,'text/xml') c1, BLOB_COL  FROM T;
+SELECT 'COL TO_CLOB(BLOB_COL,31,''text/xml''): ' || TO_CLOB(BLOB_COL,31,'text/xml') c1, BLOB_COL  FROM T;
+
+-- RAW
+SELECT 'COL TO_CLOB(RAW_COL): ' || TO_CLOB(RAW_COL) c1, RAW_COL  FROM T;
+-- SELECT TO_CLOB(RAW_COL,873) FROM T;
+-- SELECT TO_CLOB(RAW_COL,865) FROM T;
+-- SELECT TO_CLOB(RAW_COL,31) FROM T;
+-- SELECT TO_CLOB(RAW_COL,873,'text/xml') FROM T;
+-- SELECT TO_CLOB(RAW_COL,865,'text/xml') FROM T;
+-- SELECT TO_CLOB(RAW_COL,31,'text/xml') FROM T;
+
+-- VARCHAR
+SELECT 'COL TO_CLOB(VARCHAR_COL): ' || TO_CLOB(VARCHAR_COL) c1, VARCHAR_COL  FROM T;
+-- SELECT TO_CLOB(VARCHAR_COL,873) FROM T;
+-- SELECT TO_CLOB(VARCHAR_COL,865) FROM T;
+-- SELECT TO_CLOB(VARCHAR_COL,31) FROM T;
+-- SELECT TO_CLOB(VARCHAR_COL,873,'text/xml') FROM T;
+-- SELECT TO_CLOB(VARCHAR_COL,865,'text/xml') FROM T;
+-- SELECT TO_CLOB(VARCHAR_COL,31,'text/xml') FROM T;
+
+
+
+-- CLOB
+SELECT 'COL TO_CLOB(CLOB_COL): ' || TO_CLOB(CLOB_COL) c1, CLOB_COL  FROM T;
+-- SELECT TO_CLOB(CLOB_COL,873) FROM T;
+-- SELECT TO_CLOB(CLOB_COL,865) FROM T;
+-- SELECT TO_CLOB(CLOB_COL,31) FROM T;
+-- SELECT TO_CLOB(CLOB_COL,873,'text/xml') FROM T;
+-- SELECT TO_CLOB(CLOB_COL,865,'text/xml') FROM T;
+-- SELECT TO_CLOB(CLOB_COL,31,'text/xml') FROM T;
+
+
+```
+
+||PLSQL变量|||表列|||
+|---|---|---|---|---|---|---|
+|BLOB|csid：语法支持，但是未生效（只是语法兼容）,mime_type：语法不支持|||csid：支持，且实际生效,mime_type：支持，但是未生效（看起来只是语法兼容）|||
+|RAW||||csid、mime_type：不支持，直接报参数个数错误|||
+|CLOB|csid、mime_type：不支持，直接报参数个数错误||||||
+|VARCHAR|||||||
+
+
+结论：
+
+PLSQL变量：二进制类型支持1-2个参数，但是第二个参数仅做语法兼容
+
+表列：只有blob类型支持1-3个参数，但是第三个参数仅做语法兼容
+
+
+
+## 2.1.2 csid
+
+1、指定 BFILE 或 BLOB 数据的字符集 ID。如果 BFILE 或 BLOB 数据的字符集是数据库字符集，则可以将 csid 的值指定为 0，或完全省略 csid。
+
+![image.png](https://pingcode.yasdb.com/atlas/files/public/67eb8f0439823f2ac1f2735a/origin-url?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWRfZm9yX3B1YmljX2ltYWdlIjoiOTZjMTAxNTExNDIyNGNhNzhmOWM1YmZiZDYzY2QyNWIiLCJ0ZWFtX2Zvcl9wdWJsaWNfaW1hZ2UiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJibG9vbV9maWx0ZXIiOnsidHlwZSI6IkJsb29tRmlsdGVyIiwiX3NpemUiOjEwMjQsIl9uYkhhc2hlcyI6NSwiX2ZpbHRlciI6eyJzaXplIjoxMDI0LCJjb250ZW50IjoiQUFBQUFBQUVnQUFRQUFBQUFBQUFBQUFRQUFBQUFDQUFBQUVBR0FBRUFnUUFBQUlBRWdBQUFBQUFBQUFBQUFBQUFBQVlDRUFBQUFBQkFBQUFBQUFBQUFJQUFBUUFBUUFBQUVBQUFBQUFBQUFBSUFCWUJBSUFBQUFBQUFBQUNnQWdBQ0FBQVFBQUFBQUFBSUNBQUFDQUFBQkFTQUVCQUFBQUFBQkFBQUFBQUFBPSJ9LCJfc2VlZCI6NzgxODc0OTM1MjB9LCJpYXQiOjE3ODIzNzA0NjcsImV4cCI6MTc4MjM4MTI2N30.rmcC7JRZKr43FBTl8qRRZ6UFXPKb96d1w0I43KxQlqA)
+
+2、数值本身向下取整
+
+![image.png](https://pingcode.yasdb.com/atlas/files/public/67eb8e886a1ae92ae3737808/origin-url?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWRfZm9yX3B1YmljX2ltYWdlIjoiOTZjMTAxNTExNDIyNGNhNzhmOWM1YmZiZDYzY2QyNWIiLCJ0ZWFtX2Zvcl9wdWJsaWNfaW1hZ2UiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJibG9vbV9maWx0ZXIiOnsidHlwZSI6IkJsb29tRmlsdGVyIiwiX3NpemUiOjEwMjQsIl9uYkhhc2hlcyI6NSwiX2ZpbHRlciI6eyJzaXplIjoxMDI0LCJjb250ZW50IjoiQUFBQUFBQUVnQUFRQUFBQUFBQUFBQUFRQUFBQUFDQUFBQUVBR0FBRUFnUUFBQUlBRWdBQUFBQUFBQUFBQUFBQUFBQVlDRUFBQUFBQkFBQUFBQUFBQUFJQUFBUUFBUUFBQUVBQUFBQUFBQUFBSUFCWUJBSUFBQUFBQUFBQUNnQWdBQ0FBQVFBQUFBQUFBSUNBQUFDQUFBQkFTQUVCQUFBQUFBQkFBQUFBQUFBPSJ9LCJfc2VlZCI6NzgxODc0OTM1MjB9LCJpYXQiOjE3ODIzNzA0NjcsImV4cCI6MTc4MjM4MTI2N30.rmcC7JRZKr43FBTl8qRRZ6UFXPKb96d1w0I43KxQlqA)
+
+3、NLS_CHARSET_ID函数可以查找到字符集对应的字符集ID（暂未查到ORACLE所有有效字符集和其ID的对应文档）
+
+![image.png](https://pingcode.yasdb.com/atlas/files/public/67ea85c66a1ae92ae37377bc/origin-url?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWRfZm9yX3B1YmljX2ltYWdlIjoiOTZjMTAxNTExNDIyNGNhNzhmOWM1YmZiZDYzY2QyNWIiLCJ0ZWFtX2Zvcl9wdWJsaWNfaW1hZ2UiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJibG9vbV9maWx0ZXIiOnsidHlwZSI6IkJsb29tRmlsdGVyIiwiX3NpemUiOjEwMjQsIl9uYkhhc2hlcyI6NSwiX2ZpbHRlciI6eyJzaXplIjoxMDI0LCJjb250ZW50IjoiQUFBQUFBQUVnQUFRQUFBQUFBQUFBQUFRQUFBQUFDQUFBQUVBR0FBRUFnUUFBQUlBRWdBQUFBQUFBQUFBQUFBQUFBQVlDRUFBQUFBQkFBQUFBQUFBQUFJQUFBUUFBUUFBQUVBQUFBQUFBQUFBSUFCWUJBSUFBQUFBQUFBQUNnQWdBQ0FBQVFBQUFBQUFBSUNBQUFDQUFBQkFTQUVCQUFBQUFBQkFBQUFBQUFBPSJ9LCJfc2VlZCI6NzgxODc0OTM1MjB9LCJpYXQiOjE3ODIzNzA0NjcsImV4cCI6MTc4MjM4MTI2N30.rmcC7JRZKr43FBTl8qRRZ6UFXPKb96d1w0I43KxQlqA)
+
+![image.png](https://pingcode.yasdb.com/atlas/files/public/67ea3e3c6a1ae92ae373777c/origin-url?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWRfZm9yX3B1YmljX2ltYWdlIjoiOTZjMTAxNTExNDIyNGNhNzhmOWM1YmZiZDYzY2QyNWIiLCJ0ZWFtX2Zvcl9wdWJsaWNfaW1hZ2UiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJibG9vbV9maWx0ZXIiOnsidHlwZSI6IkJsb29tRmlsdGVyIiwiX3NpemUiOjEwMjQsIl9uYkhhc2hlcyI6NSwiX2ZpbHRlciI6eyJzaXplIjoxMDI0LCJjb250ZW50IjoiQUFBQUFBQUVnQUFRQUFBQUFBQUFBQUFRQUFBQUFDQUFBQUVBR0FBRUFnUUFBQUlBRWdBQUFBQUFBQUFBQUFBQUFBQVlDRUFBQUFBQkFBQUFBQUFBQUFJQUFBUUFBUUFBQUVBQUFBQUFBQUFBSUFCWUJBSUFBQUFBQUFBQUNnQWdBQ0FBQVFBQUFBQUFBSUNBQUFDQUFBQkFTQUVCQUFBQUFBQkFBQUFBQUFBPSJ9LCJfc2VlZCI6NzgxODc0OTM1MjB9LCJpYXQiOjE3ODIzNzA0NjcsImV4cCI6MTc4MjM4MTI2N30.rmcC7JRZKr43FBTl8qRRZ6UFXPKb96d1w0I43KxQlqA)
+
+4、如果无效ID会报错
+
+![image.png](https://pingcode.yasdb.com/atlas/files/public/67eb8f6939823f2ac1f2735b/origin-url?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWRfZm9yX3B1YmljX2ltYWdlIjoiOTZjMTAxNTExNDIyNGNhNzhmOWM1YmZiZDYzY2QyNWIiLCJ0ZWFtX2Zvcl9wdWJsaWNfaW1hZ2UiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJibG9vbV9maWx0ZXIiOnsidHlwZSI6IkJsb29tRmlsdGVyIiwiX3NpemUiOjEwMjQsIl9uYkhhc2hlcyI6NSwiX2ZpbHRlciI6eyJzaXplIjoxMDI0LCJjb250ZW50IjoiQUFBQUFBQUVnQUFRQUFBQUFBQUFBQUFRQUFBQUFDQUFBQUVBR0FBRUFnUUFBQUlBRWdBQUFBQUFBQUFBQUFBQUFBQVlDRUFBQUFBQkFBQUFBQUFBQUFJQUFBUUFBUUFBQUVBQUFBQUFBQUFBSUFCWUJBSUFBQUFBQUFBQUNnQWdBQ0FBQVFBQUFBQUFBSUNBQUFDQUFBQkFTQUVCQUFBQUFBQkFBQUFBQUFBPSJ9LCJfc2VlZCI6NzgxODc0OTM1MjB9LCJpYXQiOjE3ODIzNzA0NjcsImV4cCI6MTc4MjM4MTI2N30.rmcC7JRZKr43FBTl8qRRZ6UFXPKb96d1w0I43KxQlqA)
+
+5、解析字符集和原blob字节的字符集不匹配也会报错/或者乱码
+
+乱码：
+
+![image.png](https://pingcode.yasdb.com/atlas/files/public/67eb904239823f2ac1f2735e/origin-url?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWRfZm9yX3B1YmljX2ltYWdlIjoiOTZjMTAxNTExNDIyNGNhNzhmOWM1YmZiZDYzY2QyNWIiLCJ0ZWFtX2Zvcl9wdWJsaWNfaW1hZ2UiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJibG9vbV9maWx0ZXIiOnsidHlwZSI6IkJsb29tRmlsdGVyIiwiX3NpemUiOjEwMjQsIl9uYkhhc2hlcyI6NSwiX2ZpbHRlciI6eyJzaXplIjoxMDI0LCJjb250ZW50IjoiQUFBQUFBQUVnQUFRQUFBQUFBQUFBQUFRQUFBQUFDQUFBQUVBR0FBRUFnUUFBQUlBRWdBQUFBQUFBQUFBQUFBQUFBQVlDRUFBQUFBQkFBQUFBQUFBQUFJQUFBUUFBUUFBQUVBQUFBQUFBQUFBSUFCWUJBSUFBQUFBQUFBQUNnQWdBQ0FBQVFBQUFBQUFBSUNBQUFDQUFBQkFTQUVCQUFBQUFBQkFBQUFBQUFBPSJ9LCJfc2VlZCI6NzgxODc0OTM1MjB9LCJpYXQiOjE3ODIzNzA0NjcsImV4cCI6MTc4MjM4MTI2N30.rmcC7JRZKr43FBTl8qRRZ6UFXPKb96d1w0I43KxQlqA)
+
+隐藏字符：
+
+![image.png](https://pingcode.yasdb.com/atlas/files/public/67eb9f2f39823f2ac1f27378/origin-url?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWRfZm9yX3B1YmljX2ltYWdlIjoiOTZjMTAxNTExNDIyNGNhNzhmOWM1YmZiZDYzY2QyNWIiLCJ0ZWFtX2Zvcl9wdWJsaWNfaW1hZ2UiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJibG9vbV9maWx0ZXIiOnsidHlwZSI6IkJsb29tRmlsdGVyIiwiX3NpemUiOjEwMjQsIl9uYkhhc2hlcyI6NSwiX2ZpbHRlciI6eyJzaXplIjoxMDI0LCJjb250ZW50IjoiQUFBQUFBQUVnQUFRQUFBQUFBQUFBQUFRQUFBQUFDQUFBQUVBR0FBRUFnUUFBQUlBRWdBQUFBQUFBQUFBQUFBQUFBQVlDRUFBQUFBQkFBQUFBQUFBQUFJQUFBUUFBUUFBQUVBQUFBQUFBQUFBSUFCWUJBSUFBQUFBQUFBQUNnQWdBQ0FBQVFBQUFBQUFBSUNBQUFDQUFBQkFTQUVCQUFBQUFBQkFBQUFBQUFBPSJ9LCJfc2VlZCI6NzgxODc0OTM1MjB9LCJpYXQiOjE3ODIzNzA0NjcsImV4cCI6MTc4MjM4MTI2N30.rmcC7JRZKr43FBTl8qRRZ6UFXPKb96d1w0I43KxQlqA)
+
+6、ID位置承接甚至超过UINT64最大值了
+
+![image.png](https://pingcode.yasdb.com/atlas/files/public/67eba97539823f2ac1f27388/origin-url?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWRfZm9yX3B1YmljX2ltYWdlIjoiOTZjMTAxNTExNDIyNGNhNzhmOWM1YmZiZDYzY2QyNWIiLCJ0ZWFtX2Zvcl9wdWJsaWNfaW1hZ2UiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJibG9vbV9maWx0ZXIiOnsidHlwZSI6IkJsb29tRmlsdGVyIiwiX3NpemUiOjEwMjQsIl9uYkhhc2hlcyI6NSwiX2ZpbHRlciI6eyJzaXplIjoxMDI0LCJjb250ZW50IjoiQUFBQUFBQUVnQUFRQUFBQUFBQUFBQUFRQUFBQUFDQUFBQUVBR0FBRUFnUUFBQUlBRWdBQUFBQUFBQUFBQUFBQUFBQVlDRUFBQUFBQkFBQUFBQUFBQUFJQUFBUUFBUUFBQUVBQUFBQUFBQUFBSUFCWUJBSUFBQUFBQUFBQUNnQWdBQ0FBQVFBQUFBQUFBSUNBQUFDQUFBQkFTQUVCQUFBQUFBQkFBQUFBQUFBPSJ9LCJfc2VlZCI6NzgxODc0OTM1MjB9LCJpYXQiOjE3ODIzNzA0NjcsImV4cCI6MTc4MjM4MTI2N30.rmcC7JRZKr43FBTl8qRRZ6UFXPKb96d1w0I43KxQlqA)
+
+## 2.1.3 mime_type
+
+指定要在此函数返回的 CLOB 值上设置的 MIME 类型。如果省略 mime_type，则不会在 CLOB 值上设置 MIME 类型。
+
+下面的示例将返回表 media_tab 中 BFILE 列值 document 的 CLOB，该列使用 ID 为 873 的字符集。它将生成的 CLOB 的 MIME 类型设置为 text/xml。
+
+SELECT TO_CLOB(docu, 873, 'text/xml') FROM media_tab;
+
+但是oracle这个参数也像是只做了兼容
+
+![image.png](https://pingcode.yasdb.com/atlas/files/public/67eba2f839823f2ac1f2737e/origin-url?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWRfZm9yX3B1YmljX2ltYWdlIjoiOTZjMTAxNTExNDIyNGNhNzhmOWM1YmZiZDYzY2QyNWIiLCJ0ZWFtX2Zvcl9wdWJsaWNfaW1hZ2UiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJibG9vbV9maWx0ZXIiOnsidHlwZSI6IkJsb29tRmlsdGVyIiwiX3NpemUiOjEwMjQsIl9uYkhhc2hlcyI6NSwiX2ZpbHRlciI6eyJzaXplIjoxMDI0LCJjb250ZW50IjoiQUFBQUFBQUVnQUFRQUFBQUFBQUFBQUFRQUFBQUFDQUFBQUVBR0FBRUFnUUFBQUlBRWdBQUFBQUFBQUFBQUFBQUFBQVlDRUFBQUFBQkFBQUFBQUFBQUFJQUFBUUFBUUFBQUVBQUFBQUFBQUFBSUFCWUJBSUFBQUFBQUFBQUNnQWdBQ0FBQVFBQUFBQUFBSUNBQUFDQUFBQkFTQUVCQUFBQUFBQkFBQUFBQUFBPSJ9LCJfc2VlZCI6NzgxODc0OTM1MjB9LCJpYXQiOjE3ODIzNzA0NjcsImV4cCI6MTc4MjM4MTI2N30.rmcC7JRZKr43FBTl8qRRZ6UFXPKb96d1w0I43KxQlqA)
+
+|MIME 类型|描述|
+|---|---|
+|  `text/plain`  |纯文本文件|
+|  `text/html`  |HTML 网页文件|
+|  `text/css`  |CSS 样式表文件|
+|  `text/javascript`  |JavaScript 脚本文件|
+|  `application/json`  |JSON 数据格式|
+|  `application/xml`  |XML 数据文件|
+|  `application/pdf`  |PDF 文档文件|
+|  `application/msword`  |Microsoft Word 文档 (.doc)|
+|  `application/vnd.openxmlformats-officedocument.wordprocessingml.document`  |Microsoft Word 文档 (.docx)|
+|  `application/vnd.ms-excel`  |Microsoft Excel 文档 (.xls)|
+|  `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`  |Microsoft Excel 文档 (.xlsx)|
+|  `application/vnd.ms-powerpoint`  |Microsoft PowerPoint 文档 (.ppt)|
+|  `application/vnd.openxmlformats-officedocument.presentationml.presentation`  |Microsoft PowerPoint 文档 (.pptx)|
+|  `application/zip`  |ZIP 压缩文件|
+|  `application/x-gzip`  |GZip 压缩文件|
+|  `application/x-tar`  |TAR 压缩文件|
+|  `image/jpeg`  |JPEG 图像文件|
+|  `image/png`  |PNG 图像文件|
+|  `image/gif`  |GIF 动画图像文件|
+|  `image/bmp`  |BMP 图像文件|
+|  `image/svg+xml`  |SVG 矢量图像文件|
+|  `audio/mpeg`  |MP3 音频文件|
+|  `audio/wav`  |WAV 音频文件|
+|  `audio/ogg`  |OGG 音频文件|
+|  `video/mp4`  |MP4 视频文件|
+|  `video/avi`  |AVI 视频文件|
+|  `video/quicktime`  |QuickTime 视频文件|
+|  `video/webm`  |WebM 视频文件|
+|  `application/octet-stream`  |二进制数据流，通常用于未知文件类型|
+|  `multipart/mixed`  |包含多个独立部分的混合体，每个部分可以有不同的类型|
+|  `multipart/alternative`  |包含同一内容的多个版本，通常是文本和 HTML 格式的邮件正文|
+|  `multipart/related`  |包含相互依赖的部分，例如 HTML 页面和内嵌的图片或样式表|
+|  `multipart/form-data`  |用于 HTML 表单上传，可以包含文本和二进制数据|
+|  `multipart/byteranges`  |当响应包含多个字节范围时使用，用于部分内容请求|
+|  `multipart/report`  |用于邮件报告，通常包含消息和相关的错误报告|
+|  `multipart/x-mixed-replace`  |用于持续更新的数据流，如实时图片流|
+
+
+## 2.1.4 支持的原数据类型
+
+除了UDT类型都支持
+
+##   [3. Specification And Constraints（规格与约束）](#3-specification-and-constraints规格与约束)  
+
+说明整个特性或子特性，在对应数据库下，调研得到的功能限制或约束。
+
+##   [4. Dependency（功能依赖）](#4-dependency功能依赖)  
+
+说明整个特性或子特性，在对应数据库下，调研得到的功能对第三方件的依赖，开源协议。
+
+##   [5. TODO（遗留问题）](#5-todo遗留问题)  
+
+*说明本方案遗留的问题或下一步需要解决的问题。*
+
+
+
+
+

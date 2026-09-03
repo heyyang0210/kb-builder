@@ -7,3 +7,7 @@
 - [中文任务卡索引](../../tasks/knowledge-platform-generalization/README.md)
 
 中文任务卡文件名用于可发现性，`TASK-KPG-序号` 用于稳定追踪。跨任务状态、验收证据和残余风险只在 `PROGRESS.md` 汇总。
+
+## 隔离验证入口
+
+在本分支验证融合平台时，使用 `agent-runner/restart-knowledge-center-isolated.sh`。默认使用前端 `13510`、文档 API `14110`、资料加工 API `18010`，通过 `KNOWLEDGE_CENTER_*_PORT` 环境变量覆盖。脚本仅停止自身 PID 状态文件记录且工作目录匹配的进程；检测到目标端口由其他进程占用时会失败并保留现场，避免影响 `dev` 分支服务。

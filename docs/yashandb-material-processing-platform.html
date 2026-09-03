@@ -1,0 +1,760 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>YashanDB 资料加工平台 — 整体构建思路</title>
+<style>
+  :root {
+    --primary: #1a56db;
+    --primary-light: #e8effc;
+    --accent: #0ea5e9;
+    --dark: #1e293b;
+    --gray-50: #f8fafc;
+    --gray-100: #f1f5f9;
+    --gray-200: #e2e8f0;
+    --gray-300: #cbd5e1;
+    --gray-500: #64748b;
+    --gray-700: #334155;
+    --gray-900: #0f172a;
+    --success: #10b981;
+    --warning: #f59e0b;
+    --danger: #ef4444;
+    --info: #6366f1;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    color: var(--gray-900);
+    line-height: 1.7;
+    background: #fff;
+  }
+  .container { max-width: 1100px; margin: 0 auto; padding: 0 2rem; }
+
+  /* Hero */
+  .hero {
+    background: linear-gradient(135deg, #1e3a5f 0%, #1a56db 50%, #0ea5e9 100%);
+    color: #fff;
+    padding: 5rem 0 4rem;
+    text-align: center;
+  }
+  .hero h1 { font-size: 2.8rem; font-weight: 700; margin-bottom: 1rem; letter-spacing: -0.02em; }
+  .hero .subtitle { font-size: 1.25rem; opacity: 0.9; max-width: 700px; margin: 0 auto 2rem; }
+  .hero .meta { font-size: 0.9rem; opacity: 0.7; }
+  .hero .badges { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; margin-top: 1.5rem; }
+  .hero .badge {
+    background: rgba(255,255,255,0.15);
+    border: 1px solid rgba(255,255,255,0.25);
+    border-radius: 2rem;
+    padding: 0.4rem 1.2rem;
+    font-size: 0.85rem;
+    backdrop-filter: blur(4px);
+  }
+
+  /* Sections */
+  section { padding: 4rem 0; }
+  section:nth-child(even) { background: var(--gray-50); }
+  .section-title {
+    font-size: 1.8rem;
+    font-weight: 700;
+    color: var(--dark);
+    margin-bottom: 0.5rem;
+  }
+  .section-desc {
+    color: var(--gray-500);
+    font-size: 1.05rem;
+    margin-bottom: 2.5rem;
+    max-width: 700px;
+  }
+
+  /* Cards */
+  .card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem; }
+  .card {
+    background: #fff;
+    border: 1px solid var(--gray-200);
+    border-radius: 12px;
+    padding: 1.8rem;
+    transition: box-shadow 0.2s, transform 0.2s;
+  }
+  .card:hover { box-shadow: 0 8px 24px rgba(0,0,0,0.08); transform: translateY(-2px); }
+  .card .icon { font-size: 2rem; margin-bottom: 0.8rem; }
+  .card h3 { font-size: 1.15rem; font-weight: 600; margin-bottom: 0.5rem; color: var(--dark); }
+  .card p { color: var(--gray-500); font-size: 0.95rem; }
+
+  /* Architecture diagram */
+  .arch-box {
+    background: #fff;
+    border: 1px solid var(--gray-200);
+    border-radius: 12px;
+    padding: 2rem;
+    margin: 2rem 0;
+    overflow-x: auto;
+  }
+  .arch-box pre {
+    font-family: "JetBrains Mono", "Fira Code", monospace;
+    font-size: 0.82rem;
+    line-height: 1.6;
+    color: var(--gray-700);
+    white-space: pre;
+  }
+
+  /* Pipeline */
+  .pipeline { display: flex; flex-direction: column; gap: 0; margin: 2rem 0; }
+  .pipeline-step {
+    display: flex;
+    align-items: flex-start;
+    gap: 1.5rem;
+    padding: 1.5rem 0;
+    border-left: 3px solid var(--primary-light);
+    padding-left: 2rem;
+    position: relative;
+  }
+  .pipeline-step::before {
+    content: attr(data-step);
+    position: absolute;
+    left: -16px;
+    top: 1.5rem;
+    width: 30px;
+    height: 30px;
+    background: var(--primary);
+    color: #fff;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.8rem;
+    font-weight: 700;
+  }
+  .pipeline-step h4 { font-size: 1.1rem; font-weight: 600; color: var(--dark); margin-bottom: 0.3rem; }
+  .pipeline-step .step-desc { color: var(--gray-500); font-size: 0.92rem; }
+  .pipeline-step .step-io {
+    margin-top: 0.5rem;
+    display: flex;
+    gap: 0.8rem;
+    flex-wrap: wrap;
+  }
+  .pipeline-step .tag {
+    font-size: 0.75rem;
+    padding: 0.2rem 0.6rem;
+    border-radius: 4px;
+    font-weight: 500;
+  }
+  .tag-input { background: #dbeafe; color: #1e40af; }
+  .tag-output { background: #d1fae5; color: #065f46; }
+  .tag-agent { background: #fef3c7; color: #92400e; }
+
+  /* Feature table */
+  .feature-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 1.5rem 0;
+    font-size: 0.92rem;
+  }
+  .feature-table th {
+    background: var(--gray-100);
+    text-align: left;
+    padding: 0.8rem 1rem;
+    font-weight: 600;
+    color: var(--gray-700);
+    border-bottom: 2px solid var(--gray-200);
+  }
+  .feature-table td {
+    padding: 0.8rem 1rem;
+    border-bottom: 1px solid var(--gray-200);
+    color: var(--gray-700);
+  }
+  .feature-table tr:hover td { background: var(--gray-50); }
+
+  /* Pain points */
+  .pain-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1.5rem; margin: 2rem 0; }
+  .pain-card {
+    background: #fff;
+    border: 1px solid var(--gray-200);
+    border-radius: 12px;
+    padding: 1.5rem;
+    border-left: 4px solid var(--danger);
+  }
+  .pain-card h4 { font-size: 1.05rem; font-weight: 600; color: var(--danger); margin-bottom: 0.5rem; }
+  .pain-card .desc { color: var(--gray-700); font-size: 0.92rem; margin-bottom: 0.8rem; }
+  .pain-card .solution {
+    background: var(--gray-50);
+    border-radius: 8px;
+    padding: 0.8rem 1rem;
+    font-size: 0.85rem;
+    color: var(--gray-700);
+  }
+  .pain-card .solution strong { color: var(--success); }
+
+  /* Roadmap */
+  .roadmap { margin: 2rem 0; }
+  .roadmap-phase {
+    background: #fff;
+    border: 1px solid var(--gray-200);
+    border-radius: 12px;
+    padding: 1.5rem 2rem;
+    margin-bottom: 1rem;
+    display: flex;
+    gap: 1.5rem;
+    align-items: flex-start;
+  }
+  .roadmap-phase .phase-label {
+    min-width: 80px;
+    font-weight: 700;
+    font-size: 0.85rem;
+    color: var(--primary);
+    padding-top: 0.2rem;
+  }
+  .roadmap-phase h4 { font-size: 1.05rem; font-weight: 600; margin-bottom: 0.3rem; }
+  .roadmap-phase p { color: var(--gray-500); font-size: 0.92rem; }
+  .roadmap-phase .status {
+    font-size: 0.75rem;
+    padding: 0.2rem 0.6rem;
+    border-radius: 4px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .status-done { background: #d1fae5; color: #065f46; }
+  .status-wip { background: #fef3c7; color: #92400e; }
+  .status-planned { background: var(--gray-100); color: var(--gray-500); }
+
+  /* Highlights */
+  .highlight-list { list-style: none; margin: 1.5rem 0; }
+  .highlight-list li {
+    padding: 0.8rem 0 0.8rem 2rem;
+    position: relative;
+    color: var(--gray-700);
+    font-size: 0.95rem;
+    border-bottom: 1px solid var(--gray-100);
+  }
+  .highlight-list li::before {
+    content: "✓";
+    position: absolute;
+    left: 0;
+    color: var(--success);
+    font-weight: 700;
+  }
+
+  /* Footer */
+  footer {
+    background: var(--gray-900);
+    color: var(--gray-300);
+    padding: 3rem 0;
+    text-align: center;
+    font-size: 0.9rem;
+  }
+  footer a { color: var(--accent); text-decoration: none; }
+
+  /* Responsive */
+  @media (max-width: 768px) {
+    .hero h1 { font-size: 2rem; }
+    .card-grid { grid-template-columns: 1fr; }
+    .pain-grid { grid-template-columns: 1fr; }
+    .roadmap-phase { flex-direction: column; gap: 0.5rem; }
+  }
+
+  /* Comparison table */
+  .compare-table { width: 100%; border-collapse: collapse; margin: 1.5rem 0; font-size: 0.88rem; }
+  .compare-table th { background: var(--primary); color: #fff; padding: 0.7rem 1rem; text-align: left; }
+  .compare-table td { padding: 0.7rem 1rem; border-bottom: 1px solid var(--gray-200); }
+  .compare-table tr:nth-child(even) td { background: var(--gray-50); }
+
+  .callout {
+    background: var(--primary-light);
+    border-left: 4px solid var(--primary);
+    border-radius: 0 8px 8px 0;
+    padding: 1.2rem 1.5rem;
+    margin: 1.5rem 0;
+    font-size: 0.95rem;
+    color: var(--gray-700);
+  }
+</style>
+</head>
+<body>
+
+<!-- Hero -->
+<div class="hero">
+  <div class="container">
+    <h1>YashanDB 资料加工平台</h1>
+    <p class="subtitle">从原始技术文档到可追溯知识资产 — 面向数据库知识域的端到端智能加工体系</p>
+    <div class="badges">
+      <span class="badge">六步骤流水线</span>
+      <span class="badge">LLM 可控执行</span>
+      <span class="badge">证据化知识图谱</span>
+      <span class="badge">质量门禁闭环</span>
+    </div>
+    <p class="meta" style="margin-top: 2rem;">技术交流文档 · 2026 年 8 月</p>
+  </div>
+</div>
+
+<!-- 1. 背景与挑战 -->
+<section>
+  <div class="container">
+    <h2 class="section-title">一、背景与挑战</h2>
+    <p class="section-desc">数据库产品积累了海量技术文档，如何将这些散落在 Wiki、Office、PDF 中的知识转化为结构化、可检索、可推理的知识资产，是我们构建本平台的出发点。</p>
+
+    <div class="card-grid">
+      <div class="card">
+        <div class="icon">📚</div>
+        <h3>文档规模大、格式杂</h3>
+        <p>YashanDB 知识库涵盖 200+ 空间、8000+ 页面，涉及 Markdown、DOCX、PPTX、PDF、SQL 等多种格式，人工整理成本极高。</p>
+      </div>
+      <div class="card">
+        <div class="icon">🔗</div>
+        <h3>知识关联缺失</h3>
+        <p>文档之间缺少显式语义关联，同一概念在不同文档中表述不一致，导致检索碎片化、回答不完整。</p>
+      </div>
+      <div class="card">
+        <div class="icon">🤖</div>
+        <h3>LLM 直接处理不可控</h3>
+        <p>大模型存在幻觉风险，直接将原始文档喂给 LLM 无法保证输出的准确性、可追溯性和质量一致性。</p>
+      </div>
+      <div class="card">
+        <div class="icon">🔄</div>
+        <h3>增量更新困难</h3>
+        <p>文档持续迭代，需要一套能感知变更、增量加工、版本可追溯的流水线，而非每次全量重建。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 2. 平台定位 -->
+<section>
+  <div class="container">
+    <h2 class="section-title">二、平台定位与设计原则</h2>
+    <p class="section-desc">平台定位为面向数据库知识域的"资料→知识"转化引擎，不是通用 RAG 工具，而是深度适配技术文档特性的垂直知识工程系统。</p>
+
+    <div class="card-grid">
+      <div class="card">
+        <div class="icon">🎯</div>
+        <h3>知识域垂直深耕</h3>
+        <p>针对数据库产品文档（SQL 语义、存储引擎、运维手册等）定制提取规则和知识本体，而非通用 NLP。</p>
+      </div>
+      <div class="card">
+        <div class="icon">🔍</div>
+        <h3>证据优先</h3>
+        <p>每一条知识产物都必须追溯到原始文档段落，支持"为什么得出这个结论"的审计链路。</p>
+      </div>
+      <div class="card">
+        <div class="icon">⚙️</div>
+        <h3>LLM 可控执行</h3>
+        <p>提示词版本化、Skill 可插拔、模型调用可审计，杜绝"黑箱调用"。</p>
+      </div>
+      <div class="card">
+        <div class="icon">🛡️</div>
+        <h3>质量门禁前置</h3>
+        <p>在知识进入图谱之前设置多层校验：Schema 校验、证据校验、语义复核、人工确认。</p>
+      </div>
+    </div>
+
+    <div class="callout" style="margin-top: 2rem;">
+      <strong>核心理念：</strong>原始资料永久保留，步骤之间只传递结构化元数据和候选结果；模型输出不能直接进入图谱，必须经过代码校验；任何失败和降级都生成中文说明和可追溯事件。
+    </div>
+  </div>
+</section>
+
+<!-- 3. 总体架构 -->
+<section>
+  <div class="container">
+    <h2 class="section-title">三、总体架构</h2>
+    <p class="section-desc">平台采用"控制面 + Worker + 产物存储"三层分离架构，保证加工过程可观察、可恢复、可审计。</p>
+
+    <div class="arch-box">
+<pre>
+┌─────────────────────────────────────────────────────────────────────────┐
+│                          Browser (Vue 3 + Monaco)                       │
+│   空间管理 │ 下载文件 │ 源文件预览 │ 知识加工 │ Prompt/Skill 管理 │ 质量门禁  │
+└───────────────────────────────┬─────────────────────────────────────────┘
+                                │ HTTP + SSE
+┌───────────────────────────────▼─────────────────────────────────────────┐
+│                      FastAPI 控制面 (Control Plane)                      │
+│  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐   │
+│  │ Pipeline     │ │ Prompt/Skill │ │ Run Service  │ │ Audit Query  │   │
+│  │ Registry     │ │ Registry     │ │ / Approval   │ │ API          │   │
+│  └──────────────┘ └──────────────┘ └──────────────┘ └──────────────┘   │
+└───────────────────────────────┬─────────────────────────────────────────┘
+                                │
+        ┌───────────────────────┼───────────────────────┐
+        ▼                       ▼                       ▼
+┌───────────────┐    ┌──────────────────┐    ┌──────────────────┐
+│ SQLite 元数据 │    │ Artifact Store   │    │ Model Gateway    │
+│ & 事件库      │    │ (不可变产物)      │    │ (统一模型接口)    │
+│               │    │                  │    │                  │
+│ · PipelineRun │    │ · 源文件原文      │    │ · Chat Provider  │
+│ · StageRun    │    │ · 清洗/分块产物   │    │ · Vision Provider│
+│ · WorkItem    │    │ · 知识候选结果    │    │ · Embedding      │
+│ · ModelCall   │    │ · 图谱 JSON      │    │ · 错误分类/限流  │
+│ · Event       │    │ · 运行快照       │    │ · 密钥隔离       │
+└───────────────┘    └──────────────────┘    └──────────────────┘
+</pre>
+    </div>
+
+    <h3 style="margin: 2rem 0 1rem; font-size: 1.2rem;">关键技术选型</h3>
+    <table class="feature-table">
+      <thead>
+        <tr><th>层次</th><th>技术</th><th>选型理由</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>后端框架</td><td>Python 3.10+ / FastAPI</td><td>异步原生、类型安全、OpenAPI 文档自动生成</td></tr>
+        <tr><td>前端框架</td><td>Vue 3 + Vite + Monaco Editor</td><td>组件化开发、代码预览和 Diff 对比能力</td></tr>
+        <tr><td>浏览器自动化</td><td>Playwright (Chromium)</td><td>CAS 单点登录、页面内容提取、图片保真下载</td></tr>
+        <tr><td>元数据存储</td><td>SQLite (规划中) / JsonStore (首期)</td><td>首期快速验证，后续迁移到可靠持久化</td></tr>
+        <tr><td>模型接入</td><td>OpenAI-compatible Gateway</td><td>统一接口屏蔽厂商差异，密钥不进入加工链路</td></tr>
+        <tr><td>内容格式</td><td>Slate.js → Markdown</td><td>保留结构语义，适合 AI 处理和文本分析</td></tr>
+        <tr><td>并发策略</td><td>API 串行 + 文件 I/O 并行</td><td>Playwright 非线程安全，文件写入才并行</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- 4. 六步骤流水线 -->
+<section>
+  <div class="container">
+    <h2 class="section-title">四、六步骤知识加工流水线</h2>
+    <p class="section-desc">将"原始资料→知识图谱"的复杂过程分解为六个前端可见、产物可追溯的固定步骤，每步只读取上一步已落盘并通过 Schema 校验的产物。</p>
+
+    <div class="pipeline">
+      <div class="pipeline-step" data-step="1">
+        <div>
+          <h4>资料预处理</h4>
+          <p class="step-desc">格式识别、安全解压、文本清洗、字符分块。将杂乱的原始文件转化为标准化的处理单元。</p>
+          <div class="step-io">
+            <span class="tag tag-input">输入: MaterialBatch</span>
+            <span class="tag tag-output">输出: chunks.jsonl, source-documents.jsonl</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="pipeline-step" data-step="2">
+        <div>
+          <h4>元数据构建</h4>
+          <p class="step-desc">为每个处理单元附加上下文元数据：文档层级、面包屑路径、关联资源、格式特征。</p>
+          <div class="step-io">
+            <span class="tag tag-input">输入: chunks.jsonl</span>
+            <span class="tag tag-output">输出: documents.jsonl, chunk-contexts.jsonl</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="pipeline-step" data-step="3">
+        <div>
+          <h4>知识提取</h4>
+          <p class="step-desc">调用知识提取 Skill（Agent 执行），从处理单元中提取知识点候选、实体关系候选，标记不确定项。</p>
+          <div class="step-io">
+            <span class="tag tag-input">输入: chunk-contexts.jsonl</span>
+            <span class="tag tag-agent">Agent: 知识提取 Skill</span>
+            <span class="tag tag-output">输出: knowledge-candidates.jsonl</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="pipeline-step" data-step="4">
+        <div>
+          <h4>按需语义补充</h4>
+          <p class="step-desc">对第 3 步标记的不确定项，调用语义复核 Skill 进行消歧、补全和交叉验证。</p>
+          <div class="step-io">
+            <span class="tag tag-input">输入: pending.jsonl (不确定项)</span>
+            <span class="tag tag-agent">Agent: 语义复核 Skill</span>
+            <span class="tag tag-output">输出: semantic-resolution.jsonl</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="pipeline-step" data-step="5">
+        <div>
+          <h4>知识校验与合并</h4>
+          <p class="step-desc">代码级 Schema 校验、证据链校验、实体对齐和去重。不通过校验的产物进入 rejected 集合。</p>
+          <div class="step-io">
+            <span class="tag tag-input">输入: candidates + resolutions</span>
+            <span class="tag tag-output">输出: knowledge.jsonl (最终), rejected.jsonl</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="pipeline-step" data-step="6">
+        <div>
+          <h4>图谱与数据集生成</h4>
+          <p class="step-desc">基于 final-results 构建知识图谱（节点+边），生成可发布的数据集清单和运行报告。</p>
+          <div class="step-io">
+            <span class="tag tag-input">输入: knowledge.jsonl</span>
+            <span class="tag tag-output">输出: nodes.json, edges.json, manifest.json</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="callout">
+      <strong>设计约束：</strong>原始资料永久保留；步骤之间传递结构化元数据而非原文副本；处理单元是原文的"处理视图"，不代表删除或覆盖原文；任何失败、跳过和降级都生成中文说明和可追溯事件。
+    </div>
+  </div>
+</section>
+
+<!-- 5. 核心能力 -->
+<section>
+  <div class="container">
+    <h2 class="section-title">五、核心能力详解</h2>
+    <p class="section-desc">平台围绕"接入→加工→输出"三阶段构建完整能力矩阵。</p>
+
+    <h3 style="margin: 1.5rem 0 1rem; font-size: 1.15rem;">5.1 素材接入层</h3>
+    <table class="feature-table">
+      <thead>
+        <tr><th>能力</th><th>说明</th><th>状态</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>PingCode Wiki 批量下载</td><td>CAS 单点登录、空间级爬取、目录树构建、附件多线程下载</td><td>✅ 已完成</td></tr>
+        <tr><td>页面内容提取</td><td>Slate.js → Markdown 转换，页面内图片保真下载与资源登记</td><td>✅ 已完成</td></tr>
+        <tr><td>本地资料上传</td><td>分片上传、SHA256 校验、ZIP/TAR 安全解压、格式识别</td><td>✅ 已完成</td></tr>
+        <tr><td>空间发现与映射</td><td>自动发现 PingCode 可访问空间，建立本地逻辑空间映射</td><td>✅ 已完成</td></tr>
+        <tr><td>源文件加工预览</td><td>高密度 Cockpit：结构特征矩阵、解析诊断、转换保真一屏总览</td><td>✅ 已完成</td></tr>
+        <tr><td>增量爬取</td><td>感知文档变更，只下载更新内容</td><td>🔄 规划中</td></tr>
+      </tbody>
+    </table>
+
+    <h3 style="margin: 2rem 0 1rem; font-size: 1.15rem;">5.2 知识加工层</h3>
+    <table class="feature-table">
+      <thead>
+        <tr><th>能力</th><th>说明</th><th>状态</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Prompt/Skill 版本管理</td><td>文件化 Registry、草稿→校验→渲染预览→发布→Diff，不可变版本继承</td><td>✅ 已完成</td></tr>
+        <tr><td>Model Gateway</td><td>统一 Chat/Vision/Embedding 接口，密钥隔离，调用审计</td><td>🔄 首期接入中</td></tr>
+        <tr><td>四类 Skill 执行器</td><td>图片说明、摘要分类、知识提取、语义复核</td><td>🔄 框架就绪</td></tr>
+        <tr><td>质量门禁</td><td>Schema 校验、证据链校验、问题级下钻</td><td>✅ 基础完成</td></tr>
+        <tr><td>人工质量门禁</td><td>模型结果需人工确认后才能进入正式数据集</td><td>🔄 规划中</td></tr>
+        <tr><td>Embedding & 向量库</td><td>文本向量化和向量检索数据集生成</td><td>⏳ 待实施</td></tr>
+      </tbody>
+    </table>
+
+    <h3 style="margin: 2rem 0 1rem; font-size: 1.15rem;">5.3 知识输出层</h3>
+    <table class="feature-table">
+      <thead>
+        <tr><th>能力</th><th>说明</th><th>状态</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>知识图谱生成</td><td>节点+边 JSON，支持 Neo4j / NebulaGraph 导入</td><td>🔄 框架设计中</td></tr>
+        <tr><td>数据集版本发布</td><td>manifest.json 描述数据集组成、来源和版本</td><td>🔄 规划中</td></tr>
+        <tr><td>检索评测</td><td>固定查询集检索验证，评估召回率和精确率</td><td>⏳ 待实施</td></tr>
+        <tr><td>下游系统对接</td><td>FastGPT 集成改造、RAG Pipeline 接入</td><td>🔄 方案设计中</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- 6. 技术亮点 -->
+<section>
+  <div class="container">
+    <h2 class="section-title">六、技术亮点</h2>
+    <p class="section-desc">在通用 RAG 方案基础上，针对数据库知识域的特殊性做了多项针对性设计。</p>
+
+    <ul class="highlight-list">
+      <li><strong>LLM 可控执行体系：</strong>提示词版本化（草稿→发布→不可变版本）、Skill 可插拔注册、模型调用全链路审计（Provider、模型、Token、耗时、重试），杜绝"黑箱调用"。</li>
+      <li><strong>证据化知识提取：</strong>每个知识点候选都必须携带原文证据片段（段落级定位），支持"为什么得出这个结论"的审计链路，消灭 LLM 幻觉。</li>
+      <li><strong>不确定项路由机制：</strong>知识提取阶段自动标记低置信度候选，由专门的语义复核 Skill 进行消歧和补全，而非将所有判断都交给单一模型。</li>
+      <li><strong>源文件加工预览 Cockpit：</strong>1366px 宽度下一屏完成"是否可解析、解析到什么程度、转换是否保真"的判断，区分"已统计/明确为0/不适用/未统计/解析失败"五种状态。</li>
+      <li><strong>Office 轻量字符统计：</strong>直接解析 OOXML 结构统计可见文本字符数，不依赖 LibreOffice 转换，避免格式降级造成的统计偏差。</li>
+      <li><strong>密钥零暴露：</strong>模型密钥仅由独立的 ConfigManager 解密调用，不进入加工服务、前端、Prompt、事件和运行快照。</li>
+      <li><strong>产物不可变性：</strong>步骤间传递的产物一旦写入不可修改，新版本生成新文件，保证审计链路完整。</li>
+      <li><strong>安全边界明确：</strong>压缩包解压设置膨胀率上限（100x）、文件数上限、递归深度上限，防止恶意文件攻击。</li>
+    </ul>
+  </div>
+</section>
+
+<!-- 7. 与业界方案对比 -->
+<section>
+  <div class="container">
+    <h2 class="section-title">七、与业界方案对比</h2>
+    <p class="section-desc">知识加工领域的主流方案各有侧重，我们的设计在可控性和证据追溯上做了更多投入。</p>
+
+    <table class="compare-table">
+      <thead>
+        <tr>
+          <th>维度</th>
+          <th>通用 RAG (LangChain/LlamaIndex)</th>
+          <th>Microsoft GraphRAG</th>
+          <th>YashanDB 资料加工平台</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>知识提取方式</strong></td>
+          <td>分块 → Embedding → 向量检索</td>
+          <td>分块 → LLM 抽取实体/关系 → 社区聚类</td>
+          <td>六步骤流水线：预处理 → 元数据 → 提取 → 语义补充 → 校验 → 图谱</td>
+        </tr>
+        <tr>
+          <td><strong>证据追溯</strong></td>
+          <td>Chunk 级引用</td>
+          <td>实体级引用 + 社区摘要</td>
+          <td>段落级证据 + 不确定项路由 + 多层校验链路</td>
+        </tr>
+        <tr>
+          <td><strong>LLM 可控性</strong></td>
+          <td>Prompt 模板，版本管理弱</td>
+          <td>Prompt 内嵌代码，修改需重跑</td>
+          <td>Prompt/Skill 版本化 Registry，草稿→发布→不可变版本</td>
+        </tr>
+        <tr>
+          <td><strong>质量保障</strong></td>
+          <td>依赖检索参数调优</td>
+          <td>社区聚类质量，人工介入少</td>
+          <td>Schema 校验 + 证据校验 + 语义复核 + 人工门禁（规划中）</td>
+        </tr>
+        <tr>
+          <td><strong>领域适配</strong></td>
+          <td>通用，需自行适配</td>
+          <td>通用，社区检测自适应</td>
+          <td>数据库知识域垂直深耕，定制本体和提取规则</td>
+        </tr>
+        <tr>
+          <td><strong>增量更新</strong></td>
+          <td>需自行实现</td>
+          <td>增量模式支持有限</td>
+          <td>设计支持增量加工（规划中），产物版本化</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- 8. 痛点与挑战 -->
+<section>
+  <div class="container">
+    <h2 class="section-title">八、当前痛点与业界最佳实践</h2>
+    <p class="section-desc">知识工程领域面临的核心挑战，以及我们当前应对策略和业界参考方案。</p>
+
+    <div class="pain-grid">
+      <div class="pain-card">
+        <h4>痛点 1：LLM 幻觉与事实准确性</h4>
+        <p class="desc">大模型在知识提取时可能生成看似合理但实际错误的知识点，尤其在专业领域（如数据库 SQL 语义、存储引擎原理）。</p>
+        <div class="solution">
+          <strong>我们的方案：</strong>证据化提取 + 多层校验。每个知识点必须携带原文证据片段，通过 Schema 校验和证据链校验后才能进入图谱。<br><br>
+          <strong>业界实践：</strong>Anthropic 的 Constitutional AI、Microsoft GraphRAG 的社区摘要交叉验证、RAG 领域的"检索增强 + 事实核查"双链路。
+        </div>
+      </div>
+
+      <div class="pain-card">
+        <h4>痛点 2：长文档上下文丢失 (Lost in the Middle)</h4>
+        <p class="desc">数据库技术文档通常较长（运维手册可达数万字），LLM 在处理长上下文时容易忽略中间部分的关键信息。</p>
+        <div class="solution">
+          <strong>我们的方案：</strong>结构化分块策略（结构优先 + 元数据边界上下文），控制单块在 6000 字符以内，保留文档层级和面包屑路径作为上下文锚点。<br><br>
+          <strong>业界实践：</strong>LangChain 的 RecursiveCharacterTextSplitter、LlamaIndex 的 SentenceWindowNodeParser、Google 的 LongT5 长文档编码器。
+        </div>
+      </div>
+
+      <div class="pain-card">
+        <h4>痛点 3：实体消歧与知识融合</h4>
+        <p class="desc">同一概念在不同文档中可能有多种表述（如"事务隔离级别"与"Transaction Isolation"），需要统一为标准实体。</p>
+        <div class="solution">
+          <strong>我们的方案：</strong>知识校验与合并步骤中的实体对齐机制，结合语义复核 Skill 进行消歧。当前为规则+模型混合，后续引入图数据库的实体合并能力。<br><br>
+          <strong>业界实践：</strong>Microsoft GraphRAG 的实体合并（LLM 驱动的实体解析）、Neo4j 的 APOC 图算法（相似度合并）、Google Knowledge Graph 的 Freebase 融合。
+        </div>
+      </div>
+
+      <div class="pain-card">
+        <h4>痛点 4：Token 成本控制</h4>
+        <p class="desc">几万篇文档的知识提取需要大量 LLM 调用，Token 成本可能成为规模化落地的瓶颈。</p>
+        <div class="solution">
+          <strong>我们的方案：</strong>模型分级使用 — 确定性步骤（清洗、分块、校验）用规则，只有提取和语义复核调用模型；不确定项才触发额外的语义补充调用。<br><br>
+          <strong>业界实践：</strong>用小模型（如 qwen-turbo）做初筛和 Embedding，大模型（如 qwen-max）只处理复杂提取；Microsoft 的 cost-aware RAG 调度。
+        </div>
+      </div>
+
+      <div class="pain-card">
+        <h4>痛点 5：多格式文档解析保真度</h4>
+        <p class="desc">Office、PDF、Wiki 页面中的表格、代码块、图片、公式在转换为统一格式时容易丢失结构信息。</p>
+        <div class="solution">
+          <strong>我们的方案：</strong>源文件加工预览 Cockpit 提供"转换保真"诊断，区分五种状态；Office 字符数使用轻量 OOXML 解析而非 LibreOffice 转换，避免格式降级。<br><br>
+          <strong>业界实践：</strong>Unstructured.io 的多格式解析引擎、Azure Document Intelligence 的布局分析、Marker 的 PDF→Markdown 高保真转换。
+        </div>
+      </div>
+
+      <div class="pain-card">
+        <h4>痛点 6：加工过程可观察性与可恢复性</h4>
+        <p class="desc">大规模知识加工任务耗时长，中途失败后需要能从断点恢复，而非全量重跑。</p>
+        <div class="solution">
+          <strong>我们的方案：</strong>设计 SQLite 控制面 + 租约式 Worker（规划中），支持租约过期恢复、幂等键复用、SSE 运行事件和断线重连。<br><br>
+          <strong>业界实践：</strong>Celery + Redis 的任务队列、Temporal 的持久化工作流、Apache Airflow 的 DAG 断点续跑。
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 9. 演进规划 -->
+<section>
+  <div class="container">
+    <h2 class="section-title">九、演进规划</h2>
+    <p class="section-desc">平台按"验证→工程化→规模化"三阶段演进，每阶段有明确的交付边界和验收标准。</p>
+
+    <div class="roadmap">
+      <div class="roadmap-phase">
+        <span class="phase-label">Phase 1</span>
+        <div>
+          <h4>端到端框架验证 <span class="status status-done">已完成</span></h4>
+          <p>PingCode 素材下载、本地上传、源文件扫描与预览、Prompt/Skill Registry、Prompt 草稿/发布/Diff、质量门禁基础规则。首期用 JsonStore + 后台线程验证最小闭环。</p>
+        </div>
+      </div>
+
+      <div class="roadmap-phase">
+        <span class="phase-label">Phase 2</span>
+        <div>
+          <h4>LLM 可控执行 <span class="status status-wip">进行中</span></h4>
+          <p>统一 Model Provider 接入、四类 Skill 真实执行器、加工预检与成本估算、SSE 运行事件协议、前端 Prompt/Skill 管理界面。实现"每次加工都能回答用了什么模型、什么提示词、处理了什么输入"。</p>
+        </div>
+      </div>
+
+      <div class="roadmap-phase">
+        <span class="phase-label">Phase 3</span>
+        <div>
+          <h4>证据化图谱框架 <span class="status status-planned">规划中</span></h4>
+          <p>SQLite 控制面 + 独立 Worker、证据化实体关系图谱、Embedding Provider + 向量库、人工质量门禁、数据集版本发布。产物可追溯到原文段落，支持审计和人工确认。</p>
+        </div>
+      </div>
+
+      <div class="roadmap-phase">
+        <span class="phase-label">Phase 4</span>
+        <div>
+          <h4>规模化与下游对接 <span class="status status-planned">规划中</span></h4>
+          <p>增量加工能力、检索评测（固定查询集）、FastGPT/RAG Pipeline 集成、真实模型故障验收（限流、断网、重启、SSE 重连）。支撑万级文档规模的日常加工和持续更新。</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 10. 总结 -->
+<section style="background: linear-gradient(135deg, #1e3a5f 0%, #1a56db 100%); color: #fff;">
+  <div class="container" style="text-align: center;">
+    <h2 style="font-size: 1.8rem; margin-bottom: 1rem;">总结</h2>
+    <p style="font-size: 1.1rem; opacity: 0.9; max-width: 700px; margin: 0 auto 2rem;">
+      YashanDB 资料加工平台不是又一个通用 RAG 工具，而是面向数据库知识域的垂直知识工程系统。通过六步骤流水线、LLM 可控执行和证据化知识图谱，我们将"原始技术文档→可追溯知识资产"的过程变得透明、可控、可审计。
+    </p>
+    <div style="display: flex; gap: 2rem; justify-content: center; flex-wrap: wrap; margin-top: 2rem;">
+      <div>
+        <div style="font-size: 2.5rem; font-weight: 700;">8000+</div>
+        <div style="opacity: 0.7; font-size: 0.9rem;">已接入文档页面</div>
+      </div>
+      <div>
+        <div style="font-size: 2.5rem; font-weight: 700;">200+</div>
+        <div style="opacity: 0.7; font-size: 0.9rem;">PingCode 知识空间</div>
+      </div>
+      <div>
+        <div style="font-size: 2.5rem; font-weight: 700;">6</div>
+        <div style="opacity: 0.7; font-size: 0.9rem;">加工流水线步骤</div>
+      </div>
+      <div>
+        <div style="font-size: 2.5rem; font-weight: 700;">4</div>
+        <div style="opacity: 0.7; font-size: 0.9rem;">模型 Skill 类型</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="container">
+    <p>YashanDB 资料加工平台 · 技术交流文档</p>
+    <p style="margin-top: 0.5rem; opacity: 0.6;">© 2026 YashanDB Team · 内部工具，仅供技术交流</p>
+  </div>
+</footer>
+
+</body>
+</html>

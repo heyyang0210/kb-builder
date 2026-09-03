@@ -1,0 +1,295 @@
+Created by 陈楚坤, last modified by  唐嘉欣 on 八月 20, 2024
+
+IR链接：：    [https://pingcode.yasdb.com/ship/ideas/6614fdba009f91eb87f32f4d](https://pingcode.yasdb.com/ship/ideas/6614fdba009f91eb87f32f4d)    ?#YASHAN-2817 INSERT_INTO_SELECT性能优化
+
+*SR链接：*  ：    [https://pingcode.yasdb.com/pjm/items/6618e9bdfd997db58ad832cd](https://pingcode.yasdb.com/pjm/items/6618e9bdfd997db58ad832cd)    ?#YDBRD-26179 INSERT_INTO_SELECT性能优化
+
+##   [1. 总述](#1-总述)  
+
+基于批量执行框架，实现批量insert into select算子。 目标是select部分能够通过批量执行进行加速，已提升insert into select的性能。
+
+###   [1.1 需求来源](#11-需求来源)  
+
+在行存引擎跑批生成报表的场景，数据量大，表达式计算复杂，YashanDB和Oracle在SQL引擎的计算效率上的差距非常明显，性能通常落后2到10倍之间，客户对性能提升述求明确。 通过对聚集函数场景指令分布分析，SQL引擎和存储引擎指令数量各占比50%，即使没有SQL引擎，YashanDB仍然与Oracle有性能差距。因此优化执行代码无法解决成倍的性能差距。
+
+###   [1.2 调研文档](#12-调研文档)  
+
+###   [1.3 需求分析](#13-需求分析)  
+
+本需求的目标是通过批量执行来优化insert into select的性能。
+
+|属性|场景名称|方案设计|关键技术点|特性是否涉及|SR|
+|---|---|---|---|---|---|
+|功能|批量插入|见下文|是|是|----|
+
+
+###   [1.4 数据字典](#14-数据字典)  
+
+无
+
+###   [1.5 开源依赖](#15-开源依赖)  
+
+无开源依赖
+
+##   [2. 接口](#2-接口)  
+
+- 1.insert into select ...。
+
+
+##   [3. 规格与约束](#3-规格与约束)  
+
+- 1.只支持普通非分区heap表，不支持多表插入。
+- 2.不支持UDT类型、default sequence。
+- 3.不支持ON DUPLICATE KEY UPDATE。
+- 4.select子句必须只包含当前批量执行支持的算子、表达式，否则不走批量执行。
+
+
+##   [4. 特性](#4-特性)  
+
+###   [4.1 批量插入](#41-批量插入)  
+
+批量insert into select的关键是要让select能够批量执行，在此基础上，实现将批量select的结果批量的插入到目标表中。对于第一个问题只需在批量执行引擎中支持insert into select算子，然后对select调用已有的open和batchFetch接口即可。对于第二个问题单行执行已经实现了批量插入接口(ankBatchInsert)，批量执行只需按接口的要求准备好数据，然后调用ankBatchInsert即可实现批量插入。
+
+select返回的数据按DataChunk组织，ankBatchInsert接口要求输入数据为Compact Row，为此需要将DataChunk转换为Compact Row。执行流程如下：
+
+- 1.初始化批量插入缓冲区，缓冲区大小为128KB，当行数据大小超过64KB时，将调用ankBatchInsert执行批量插入。
+- 2.初始化rowSize和colSize数组。
+- 3.遍历DataChunk，执行ColSize流程，批量的生成rowSize和colSize数组，rowSize表示每行数据编码为Compact Row后的大小，colSize表示每行每列数据的大小。用于辅助生成Compact Row。
+- 4.根据RowSize初始化RowManager，将每个RowManager指向缓冲区的一个区域。
+- 5.遍历DataChunk，执行Scatter流程，批量的将DataChunk的数据通过RowManager写入到缓冲区中。当遍历到行数据的总大小超过64KB时，执行ankBatchInsert批量插入数据。然后重复以上流程继续插入。
+
+
+##   [5. Testcases（自测用例）](#5-testcases自测用例)  
+
+- 1.覆盖所有数据类型、default、sequence。
+- 2.覆盖源表和目标表数据类型不同的场景。
+- 3.覆盖select存在filter的场景。
+- 4.覆盖只查询和插入部分列的场景。
+
+
+##   [6.资料设计章节](#6资料设计章节)  
+
+不涉及资料。
+
+##   [7.未来规划](#7未来规划)  
+
+## Attachments:
+
+[image2023-11-15_9-18-5.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjczOTZlYWU4OTcwYzJhZjRmNTIxYTVkIiwicmVmX2lkIjoiNjczOTZlYWU3MjgyMDZlZmI5MmYyYWY2IiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyNDM4NzgwLCJleHAiOjE3ODI1MjUxODB9.kHhQQzfnMBntaPihbqZjsxu5O60kP57uo04_vdclWqI)
+
+ (image/png)    
+
+
+[image2023-11-15_9-17-30.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjczOTZlYWU4OTcwYzJhZjRmNTIxYTVlIiwicmVmX2lkIjoiNjczOTZlYWU3MjgyMDZlZmI5MmYyYWY2IiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyNDM4NzgwLCJleHAiOjE3ODI1MjUxODB9.Mq_EyzVtJYbxO5Kqotc12K0wUpGIm9oW1SYgEl7K7b0)
+
+ (image/png)    
+
+
+[image2024-6-14_11-33-45.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjczOTZlYWY4OTcwYzJhZjRmNTIxYTYwIiwicmVmX2lkIjoiNjczOTZlYWU3MjgyMDZlZmI5MmYyYWY2IiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyNDM4NzgwLCJleHAiOjE3ODI1MjUxODB9.IYCRCBpg_tllvy6pdXdV8xomdy23uJP1lo_y6rOGXDk)
+
+ (image/png)    
+
+
+[image2024-6-14_11-4-11.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjczOTZlYWZhMWFkOWEzMzExZGM5OGQ0IiwicmVmX2lkIjoiNjczOTZlYWU3MjgyMDZlZmI5MmYyYWY2IiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyNDM4NzgwLCJleHAiOjE3ODI1MjUxODB9.T8r4O0zZzD5WF_oksmbGoOFqBUjdH543pmTCMIYlb_M)
+
+ (image/png)    
+
+
+[image2024-6-14_11-3-9.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjczOTZlYWY4OTcwYzJhZjRmNTIxYTYxIiwicmVmX2lkIjoiNjczOTZlYWU3MjgyMDZlZmI5MmYyYWY2IiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyNDM4NzgwLCJleHAiOjE3ODI1MjUxODB9.MKJeUfwwOYGJ1NsacxP-wLCOr5JJgOJPWcDEtm6yagM)
+
+ (image/png)    
+
+
+[image2024-6-14_10-59-44.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjczOTZlYWY4OTcwYzJhZjRmNTIxYTYyIiwicmVmX2lkIjoiNjczOTZlYWU3MjgyMDZlZmI5MmYyYWY2IiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyNDM4NzgwLCJleHAiOjE3ODI1MjUxODB9.jPmERgVvHeH09RnH-IhKWavTjk9WvWUitZy97yQjrnU)
+
+ (image/png)    
+
+
+[image2024-4-28_17-47-39.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjczOTZlYWY4OTcwYzJhZjRmNTIxYTY0IiwicmVmX2lkIjoiNjczOTZlYWU3MjgyMDZlZmI5MmYyYWY2IiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyNDM4NzgwLCJleHAiOjE3ODI1MjUxODB9.3G7o5zBdMoDOVx_ZSykcvUge1DiW8JG81Th43hj1290)
+
+ (image/png)    
+
+
+[image2024-4-28_16-54-29.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjczOTZlYWY4OTcwYzJhZjRmNTIxYTY1IiwicmVmX2lkIjoiNjczOTZlYWU3MjgyMDZlZmI5MmYyYWY2IiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyNDM4NzgwLCJleHAiOjE3ODI1MjUxODB9.DOlVjJxDATMRBuOmmjvQYp8CG3ulw0uxQD1w3oEL9WQ)
+
+ (image/png)    
+
+
+[image2024-4-28_14-54-24.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjczOTZlYWZhMWFkOWEzMzExZGM5OGQ4IiwicmVmX2lkIjoiNjczOTZlYWU3MjgyMDZlZmI5MmYyYWY2IiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyNDM4NzgwLCJleHAiOjE3ODI1MjUxODB9.caXhs-qCY3D1dOfSBEDxGzMKd52O7F1h15b53ROxvv4)
+
+ (image/png)    
+
+
+[image2024-4-28_11-57-16.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjczOTZlYWY4OTcwYzJhZjRmNTIxYTY3IiwicmVmX2lkIjoiNjczOTZlYWU3MjgyMDZlZmI5MmYyYWY2IiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyNDM4NzgwLCJleHAiOjE3ODI1MjUxODB9.-NkZuEq7paBRGoZliQGnEtG_NJiBVugXypZ9rhKngLc)
+
+ (image/png)    
+
+
+[image2024-4-28_11-11-50.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjczOTZlYWZhMWFkOWEzMzExZGM5OGRhIiwicmVmX2lkIjoiNjczOTZlYWU3MjgyMDZlZmI5MmYyYWY2IiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyNDM4NzgwLCJleHAiOjE3ODI1MjUxODB9.Q-lTOJws8dZs8dfsqG2WSQioogufgecKhIPR1US53DY)
+
+ (image/png)    
+
+
+[image2024-4-28_11-3-17.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjczOTZlYWZhMWFkOWEzMzExZGM5OGRjIiwicmVmX2lkIjoiNjczOTZlYWU3MjgyMDZlZmI5MmYyYWY2IiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyNDM4NzgwLCJleHAiOjE3ODI1MjUxODB9.hWG_m_itDTEt0vGQLcUKn8KqOjLUJpCo2-KIXipZEJw)
+
+ (image/png)    
+
+
+[image2024-4-28_10-51-6.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjczOTZlYWY4OTcwYzJhZjRmNTIxYTZhIiwicmVmX2lkIjoiNjczOTZlYWU3MjgyMDZlZmI5MmYyYWY2IiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyNDM4NzgwLCJleHAiOjE3ODI1MjUxODB9.xXAC2cMHed-Uo50i_g6BD2Cs4WoauHz17UNOinbQD7Y)
+
+ (image/png)    
+
+
+[image2024-7-8_15-50-11.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjczOTZlYWZhMWFkOWEzMzExZGM5OGRkIiwicmVmX2lkIjoiNjczOTZlYWU3MjgyMDZlZmI5MmYyYWY2IiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyNDM4NzgwLCJleHAiOjE3ODI1MjUxODB9.mNj_xQgpUaHSy-vXeoytoTGrbsE9MkxLiNsqTFXDOAg)
+
+ (image/png)    
+
+
+[image2024-7-8_15-39-52.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjczOTZlYWZhMWFkOWEzMzExZGM5OGRmIiwicmVmX2lkIjoiNjczOTZlYWU3MjgyMDZlZmI5MmYyYWY2IiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyNDM4NzgwLCJleHAiOjE3ODI1MjUxODB9.a8ku0qP0ZTZG8WUtJCf6vl-WsX5734N1xMvGk3zuVmw)
+
+ (image/png)    
+
+
+[image2024-4-25_15-13-10.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjczOTZlYWZhMWFkOWEzMzExZGM5OGUwIiwicmVmX2lkIjoiNjczOTZlYWU3MjgyMDZlZmI5MmYyYWY2IiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyNDM4NzgwLCJleHAiOjE3ODI1MjUxODB9.tB0KZ4Q7qCunc_yaRncLlK2ZmnLi4wLjueHsEBMKuEs)
+
+ (image/png)    
+
+
+[image2024-4-25_15-8-7.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjczOTZlYWZhMWFkOWEzMzExZGM5OGUxIiwicmVmX2lkIjoiNjczOTZlYWU3MjgyMDZlZmI5MmYyYWY2IiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyNDM4NzgwLCJleHAiOjE3ODI1MjUxODB9.9VI3Uk9b3jdWhs7HqAkQUqhPcD6fLEA5lwud9-fpcVA)
+
+ (image/png)    
+
+
+[image2024-4-25_15-5-58.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjczOTZlYWY4OTcwYzJhZjRmNTIxYTZlIiwicmVmX2lkIjoiNjczOTZlYWU3MjgyMDZlZmI5MmYyYWY2IiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyNDM4NzgwLCJleHAiOjE3ODI1MjUxODB9.bDQ99UBcGwx98OJR7vYMnNtHGAAcCWnUmpEfyoHPgRU)
+
+ (image/png)    
+
+
+[image2024-4-25_11-11-29.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjczOTZlYjA4OTcwYzJhZjRmNTIxYTZmIiwicmVmX2lkIjoiNjczOTZlYWU3MjgyMDZlZmI5MmYyYWY2IiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyNDM4NzgwLCJleHAiOjE3ODI1MjUxODB9.g8AXFSoC-cRz4c1fmYesZdudCzlsXn3-qTJhZ_5Upl8)
+
+ (image/png)    
+
+
+[image2024-4-19_14-19-29.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjczOTZlYjA4OTcwYzJhZjRmNTIxYTcwIiwicmVmX2lkIjoiNjczOTZlYWU3MjgyMDZlZmI5MmYyYWY2IiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyNDM4NzgwLCJleHAiOjE3ODI1MjUxODB9.M0YlU_gA2ATUh_yxoNaCAwQfw6iTjOpPcz1qDNqafVQ)
+
+ (image/png)    
+
+
+[image2024-4-19_14-19-24.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjczOTZlYjA4OTcwYzJhZjRmNTIxYTcyIiwicmVmX2lkIjoiNjczOTZlYWU3MjgyMDZlZmI5MmYyYWY2IiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyNDM4NzgwLCJleHAiOjE3ODI1MjUxODB9.ra2xQ-w8NgOnRkxflSD9us1ruJU1ahPoqzm_gTxwy7k)
+
+ (image/png)    
+
+
+[image2024-4-19_11-14-50.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjczOTZlYjBhMWFkOWEzMzExZGM5OGU5IiwicmVmX2lkIjoiNjczOTZlYWU3MjgyMDZlZmI5MmYyYWY2IiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyNDM4NzgwLCJleHAiOjE3ODI1MjUxODB9.8E1quUq4_2PMUutvoIG-5YCDU2gRzSGl9bcCEgrRaho)
+
+ (image/png)    
+
+
+[image2024-4-18_18-34-4.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjczOTZlYjA4OTcwYzJhZjRmNTIxYTc3IiwicmVmX2lkIjoiNjczOTZlYWU3MjgyMDZlZmI5MmYyYWY2IiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyNDM4NzgwLCJleHAiOjE3ODI1MjUxODB9.Lc6mnITn0_Pp2ulwCulJgibjcOTr_uf6ygnH1iMEhYI)
+
+ (image/png)    
+
+
+[image2024-4-18_17-35-18.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjczOTZlYjFhMWFkOWEzMzExZGM5OGVjIiwicmVmX2lkIjoiNjczOTZlYWU3MjgyMDZlZmI5MmYyYWY2IiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyNDM4NzgwLCJleHAiOjE3ODI1MjUxODB9.GlUlkggNM2sTFopi3IKdBmMfvJKYEmOi_VZEucSmAXA)
+
+ (image/png)    
+
+
+[image2024-4-18_17-32-27.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjczOTZlYjE4OTcwYzJhZjRmNTIxYTdhIiwicmVmX2lkIjoiNjczOTZlYWU3MjgyMDZlZmI5MmYyYWY2IiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyNDM4NzgwLCJleHAiOjE3ODI1MjUxODB9.HtKVhksx1fLFrXT3yByrUurgLB_2D5DgNaN41IlYLWM)
+
+ (image/png)    
+
+
+[image2024-4-18_11-36-16.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjczOTZlYjFhMWFkOWEzMzExZGM5OGYxIiwicmVmX2lkIjoiNjczOTZlYWU3MjgyMDZlZmI5MmYyYWY2IiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyNDM4NzgwLCJleHAiOjE3ODI1MjUxODB9.mmyobh9UxJkUE05jXUJ9zPSh91JD-kPKM3xtSiriK9g)
+
+ (image/png)    
+
+
+[image2024-4-18_11-21-8.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjczOTZlYjE4OTcwYzJhZjRmNTIxYTdmIiwicmVmX2lkIjoiNjczOTZlYWU3MjgyMDZlZmI5MmYyYWY2IiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyNDM4NzgwLCJleHAiOjE3ODI1MjUxODB9.r56J-A3Quosx0xMKfJ3P-hABHdU0jar3QoYOWaMWiVA)
+
+ (image/png)    
+
+
+[image2024-4-18_10-56-56.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjczOTZlYjJhMWFkOWEzMzExZGM5OGY1IiwicmVmX2lkIjoiNjczOTZlYWU3MjgyMDZlZmI5MmYyYWY2IiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyNDM4NzgwLCJleHAiOjE3ODI1MjUxODB9.Dw9WRl-7VxF2nxNnxfUhnGNtBpyfLqKk_89EF8Mh7Ks)
+
+ (image/png)    
+
+
+[image2024-4-17_17-53-37.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjczOTZlYjJhMWFkOWEzMzExZGM5OGY2IiwicmVmX2lkIjoiNjczOTZlYWU3MjgyMDZlZmI5MmYyYWY2IiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyNDM4NzgwLCJleHAiOjE3ODI1MjUxODB9.bOa4h8hNod7P0lsqsCPSs7b-ZTQFffsnaVCO9afSjzU)
+
+ (image/png)    
+
+
+[image2024-4-17_17-34-57.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjczOTZlYjI4OTcwYzJhZjRmNTIxYTgxIiwicmVmX2lkIjoiNjczOTZlYWU3MjgyMDZlZmI5MmYyYWY2IiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyNDM4NzgwLCJleHAiOjE3ODI1MjUxODB9.JNc102Xc7zu8ENURiH981sAOGybjFVdoccI358zQewo)
+
+ (image/png)    
+
+
+[image2024-4-17_17-19-18.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjczOTZlYjI4OTcwYzJhZjRmNTIxYTgyIiwicmVmX2lkIjoiNjczOTZlYWU3MjgyMDZlZmI5MmYyYWY2IiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyNDM4NzgwLCJleHAiOjE3ODI1MjUxODB9.En3YLHjktWRcZ3sJEfERFr1Mj3bumujsybmXXrEbd_c)
+
+ (image/png)    
+
+
+[image2024-4-17_17-17-14.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjczOTZlYjI4OTcwYzJhZjRmNTIxYTgzIiwicmVmX2lkIjoiNjczOTZlYWU3MjgyMDZlZmI5MmYyYWY2IiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyNDM4NzgwLCJleHAiOjE3ODI1MjUxODB9.zZ2p95aDg1WHWNDjdGYlkP9tCPlcErsvB9iRMUeDo-k)
+
+ (image/png)    
+
+
+[image2024-4-17_16-54-16.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjczOTZlYjI4OTcwYzJhZjRmNTIxYTg0IiwicmVmX2lkIjoiNjczOTZlYWU3MjgyMDZlZmI5MmYyYWY2IiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyNDM4NzgwLCJleHAiOjE3ODI1MjUxODB9.t1YKgiNtji15XYi0ddPiwzRiSDcd_2spC7qoWOrPlsI)
+
+ (image/png)    
+
+
+[image2024-4-17_16-54-0.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjczOTZlYjJhMWFkOWEzMzExZGM5OGY3IiwicmVmX2lkIjoiNjczOTZlYWU3MjgyMDZlZmI5MmYyYWY2IiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyNDM4NzgwLCJleHAiOjE3ODI1MjUxODB9.aVNS2V8PmHKwz_uOw_dbAtzYz3OhNaIF00lQb5r7NCM)
+
+ (image/png)    
+
+
+[image2024-4-17_16-6-32.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjczOTZlYjI4OTcwYzJhZjRmNTIxYTg1IiwicmVmX2lkIjoiNjczOTZlYWU3MjgyMDZlZmI5MmYyYWY2IiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyNDM4NzgwLCJleHAiOjE3ODI1MjUxODB9.U84s_SiTnlz-v6zjZobFQFeymEvnDlVn0c5emA4eScA)
+
+ (image/png)    
+
+
+[image2024-4-16_16-32-5.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjczOTZlYjI4OTcwYzJhZjRmNTIxYTg2IiwicmVmX2lkIjoiNjczOTZlYWU3MjgyMDZlZmI5MmYyYWY2IiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyNDM4NzgwLCJleHAiOjE3ODI1MjUxODB9.7fVZlPzyxlK0LagMJ4h3VHGcpjqV4f_FkXlbUCdtT5Q)
+
+ (image/png)    
+
+
+[image2024-4-16_16-11-3.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjczOTZlYjI4OTcwYzJhZjRmNTIxYTg4IiwicmVmX2lkIjoiNjczOTZlYWU3MjgyMDZlZmI5MmYyYWY2IiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyNDM4NzgwLCJleHAiOjE3ODI1MjUxODB9.hJ8fkn5gN34cMWhkUWXTZZMTVBG_Gw-DV5dhIZGzoQI)
+
+ (image/png)    
+
+
+[image2024-4-16_15-55-2.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjczOTZlYjJhMWFkOWEzMzExZGM5OGZhIiwicmVmX2lkIjoiNjczOTZlYWU3MjgyMDZlZmI5MmYyYWY2IiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyNDM4NzgwLCJleHAiOjE3ODI1MjUxODB9.2mDi2Y5g2jOpRX3AVG4Mh0ki8B6DuZRoCxR0HS7mC-0)
+
+ (image/png)    
+
+
+[image2024-4-16_15-41-22.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjczOTZlYjJhMWFkOWEzMzExZGM5OGZjIiwicmVmX2lkIjoiNjczOTZlYWU3MjgyMDZlZmI5MmYyYWY2IiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyNDM4NzgwLCJleHAiOjE3ODI1MjUxODB9.xhyGwaHDfvYb-G1Z9BHSLLlMDR_XRLrYiJh1i0F-Mdk)
+
+ (image/png)    
+
+
+[image2024-4-16_15-35-16.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjczOTZlYjI4OTcwYzJhZjRmNTIxYThiIiwicmVmX2lkIjoiNjczOTZlYWU3MjgyMDZlZmI5MmYyYWY2IiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyNDM4NzgwLCJleHAiOjE3ODI1MjUxODB9.B7b_cnmFFT7PrgJ-kG3F_cr1tCzsxlCQkKTmYQpawVg)
+
+ (image/png)    
+
+
+[image2024-4-16_15-12-26.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjczOTZlYjI4OTcwYzJhZjRmNTIxYThjIiwicmVmX2lkIjoiNjczOTZlYWU3MjgyMDZlZmI5MmYyYWY2IiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyNDM4NzgwLCJleHAiOjE3ODI1MjUxODB9.MDjjAfyX4gDIs6ayzil6lBbbF33mJoy7NiSFidVIJag)
+
+ (image/png)    
+
+
+[image2024-4-16_14-46-57.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjczOTZlYjJhMWFkOWEzMzExZGM5OGZmIiwicmVmX2lkIjoiNjczOTZlYWU3MjgyMDZlZmI5MmYyYWY2IiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyNDM4NzgwLCJleHAiOjE3ODI1MjUxODB9.SGlZ-KDmGdWaSTQmLaixc_Nar-fsk0pJa_ujMh7Vj8U)
+
+ (image/png)    
+
+
+[image2024-4-16_14-38-59.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjczOTZlYjJhMWFkOWEzMzExZGM5OTAwIiwicmVmX2lkIjoiNjczOTZlYWU3MjgyMDZlZmI5MmYyYWY2IiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyNDM4NzgwLCJleHAiOjE3ODI1MjUxODB9.z6Rt-5q-sULYlewb1DnE65HDEvX_xwcbSSESOrqgl08)
+
+ (image/png)    
+
+
+[image2023-11-15_9-19-1.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjczOTZlYjJhMWFkOWEzMzExZGM5OTAxIiwicmVmX2lkIjoiNjczOTZlYWU3MjgyMDZlZmI5MmYyYWY2IiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyNDM4NzgwLCJleHAiOjE3ODI1MjUxODB9.Y000_xMXx5SQ0jJGCDcnxuKS7cPpTAghzUH8wqtUCvs)
+
+ (image/png)    

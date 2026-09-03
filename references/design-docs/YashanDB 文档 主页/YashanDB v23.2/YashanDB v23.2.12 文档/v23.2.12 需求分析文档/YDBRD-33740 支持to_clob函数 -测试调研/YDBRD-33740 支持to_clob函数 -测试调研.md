@@ -1,0 +1,293 @@
+Created by 胡晓畔, last modified on 十一月 08, 2024
+
+
+
+
+
+# 1. 需求概述
+
+IR：
+
+  [https://pingcode.yasdb.com/ship/ideas/660b7483009f91eb87f2c092?](https://pingcode.yasdb.com/ship/ideas/660b7483009f91eb87f2c092?)  
+
+#YASHAN-1414  支持to_clob函数
+
+SR：
+
+  [https://pingcode.yasdb.com/pjm/items/670736b8e489dd0868f34b9e?](https://pingcode.yasdb.com/pjm/items/670736b8e489dd0868f34b9e?)  
+
+#YDBRD-33740 支持to_clob函数
+
+# 2. 友商的实现情况
+
+|特性|友商|实现情况|
+|:---|:---|:---|
+|to_clob|oracle|用于将将非 LOB 类型转换为 CLOB 类型   
+最大可支持存储 4GB 的字符数据|
+|TO_CLOB (bfile|blob)|oracle|将  `BFILE`  或  `BLOB`  数据转换为数据库字符集，并将数据作为  `CLOB`  值返回 ,语法 ：TO_CLOB( { bfile | blob } [, csid] [, mime_type] ),  `csid：`  可选，指定   `BFILE`   或   `BLOB`   数据的字符集 ID。如果   `BFILE`   或   `BLOB`   数据的字符集是数据库字符集，则可以为   `csid`   指定值 0，或者完全省略   `csid`   参数。,  `mime_type：`  可选，它指定要在此函数返回的   `CLOB`   值上设置的 MIME 类型。如果省略   `mime_type`  ，则在返回的   `CLOB`   值上将不设置 MIME 类型|
+
+
+
+
+# 3. 示例
+
+## TO_CLOB 
+
+
+
+|场景|用例|  
+|  
+|
+|---|---|---|---|
+|入参为null|** **,```
+SELECT TO_CLOB(null ) FROM dual;
+ 
+```|  
+返回null,![image.png](https://pingcode.yasdb.com/atlas/files/public/67ea7a8239823f2ac1f2731e/origin-url?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWRfZm9yX3B1YmljX2ltYWdlIjoiOTZjMTAxNTExNDIyNGNhNzhmOWM1YmZiZDYzY2QyNWIiLCJ0ZWFtX2Zvcl9wdWJsaWNfaW1hZ2UiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJibG9vbV9maWx0ZXIiOnsidHlwZSI6IkJsb29tRmlsdGVyIiwiX3NpemUiOjEwMjQsIl9uYkhhc2hlcyI6NSwiX2ZpbHRlciI6eyJzaXplIjoxMDI0LCJjb250ZW50Ijoia0JBQUFBQUJFQUNFQ0FFQUFBQUNBaUFBb0FJQ0FPQUFCZ0NCQUFBQUFIQUVBQWdJd0FBZ2dJQUJBa0FKQUFFQ2dBZ29ZSVFBQkFBQWdnQ0FDQUFBaENBQUFBSmdRQUFBQUlBQUFBb0FBQUFBRVFBQUFBSWhBQUFBQUFRQUFBQWdrQUF3Z2dBQUFnQUFrZ0FBUUFBQUFBQUFBQkFGQUNBQUFBQkFBSkVBQUFRPSJ9LCJfc2VlZCI6NzgxODc0OTM1MjB9LCJpYXQiOjE3ODIzNzA1MDEsImV4cCI6MTc4MjM4MTMwMX0.qw4ILZ5ySTTDsF_LZJYCfVhuX1pzlLCZD2IV9nAOdj4)|  
+,  
+,  
+,  
+|
+|入参为常量|```
+SELECT TO_CLOB('aaa中' ) FROM dual;
+
+```|![image.png](https://pingcode.yasdb.com/atlas/files/public/67ea7b536a1ae92ae37377ad/origin-url?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWRfZm9yX3B1YmljX2ltYWdlIjoiOTZjMTAxNTExNDIyNGNhNzhmOWM1YmZiZDYzY2QyNWIiLCJ0ZWFtX2Zvcl9wdWJsaWNfaW1hZ2UiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJibG9vbV9maWx0ZXIiOnsidHlwZSI6IkJsb29tRmlsdGVyIiwiX3NpemUiOjEwMjQsIl9uYkhhc2hlcyI6NSwiX2ZpbHRlciI6eyJzaXplIjoxMDI0LCJjb250ZW50Ijoia0JBQUFBQUJFQUNFQ0FFQUFBQUNBaUFBb0FJQ0FPQUFCZ0NCQUFBQUFIQUVBQWdJd0FBZ2dJQUJBa0FKQUFFQ2dBZ29ZSVFBQkFBQWdnQ0FDQUFBaENBQUFBSmdRQUFBQUlBQUFBb0FBQUFBRVFBQUFBSWhBQUFBQUFRQUFBQWdrQUF3Z2dBQUFnQUFrZ0FBUUFBQUFBQUFBQkFGQUNBQUFBQkFBSkVBQUFRPSJ9LCJfc2VlZCI6NzgxODc0OTM1MjB9LCJpYXQiOjE3ODIzNzA1MDEsImV4cCI6MTc4MjM4MTMwMX0.qw4ILZ5ySTTDsF_LZJYCfVhuX1pzlLCZD2IV9nAOdj4)|  
+|
+|入参为标量子查询 |```
+ SELECT TO_CLOB(select c04 from test_oracle ) FROM dual;
+
+```|![image.png](https://pingcode.yasdb.com/atlas/files/public/67ea7c236a1ae92ae37377ae/origin-url?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWRfZm9yX3B1YmljX2ltYWdlIjoiOTZjMTAxNTExNDIyNGNhNzhmOWM1YmZiZDYzY2QyNWIiLCJ0ZWFtX2Zvcl9wdWJsaWNfaW1hZ2UiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJibG9vbV9maWx0ZXIiOnsidHlwZSI6IkJsb29tRmlsdGVyIiwiX3NpemUiOjEwMjQsIl9uYkhhc2hlcyI6NSwiX2ZpbHRlciI6eyJzaXplIjoxMDI0LCJjb250ZW50Ijoia0JBQUFBQUJFQUNFQ0FFQUFBQUNBaUFBb0FJQ0FPQUFCZ0NCQUFBQUFIQUVBQWdJd0FBZ2dJQUJBa0FKQUFFQ2dBZ29ZSVFBQkFBQWdnQ0FDQUFBaENBQUFBSmdRQUFBQUlBQUFBb0FBQUFBRVFBQUFBSWhBQUFBQUFRQUFBQWdrQUF3Z2dBQUFnQUFrZ0FBUUFBQUFBQUFBQkFGQUNBQUFBQkFBSkVBQUFRPSJ9LCJfc2VlZCI6NzgxODc0OTM1MjB9LCJpYXQiOjE3ODIzNzA1MDEsImV4cCI6MTc4MjM4MTMwMX0.qw4ILZ5ySTTDsF_LZJYCfVhuX1pzlLCZD2IV9nAOdj4)|  
+|
+| ,  
+入参为类型列,数值型|** **,```
+create or replace type arr_type as varray(5) of char(10);
+/
+
+drop table test_oracle;
+create table test_oracle (id int,c01 binary_float,c02 number,c03 binary_double,c04 char(10), c06 varchar2(10), c07 clob ,c08 blob,c09 nclob,c10 nvarchar2(10),c11 raw(8),c12 ROWID,c13 json ,c14 xmltype, c15 arr_type);
+insert into test_oracle values (1,1.2,1.3,4.4,'aa','aa','aa','aa','aa','aa','aa','AAAACPAABAAAAShAAA','{"name":"Jack", "city":"Beijing"}','<employee><id>2</id><name>hahaha</name></employee>',arr_type('2000', 'guangdong'));
+commit;
+
+
+SELECT TO_CLOB(id ) FROM test_oracle;
+SELECT TO_CLOB(c01 ) FROM test_oracle;
+SELECT TO_CLOB(c02 ) FROM test_oracle;
+SELECT TO_CLOB(c03 ) FROM test_oracle;
+
+
+
+```|  
+,![image.png](https://pingcode.yasdb.com/atlas/files/public/67ea7d086a1ae92ae37377af/origin-url?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWRfZm9yX3B1YmljX2ltYWdlIjoiOTZjMTAxNTExNDIyNGNhNzhmOWM1YmZiZDYzY2QyNWIiLCJ0ZWFtX2Zvcl9wdWJsaWNfaW1hZ2UiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJibG9vbV9maWx0ZXIiOnsidHlwZSI6IkJsb29tRmlsdGVyIiwiX3NpemUiOjEwMjQsIl9uYkhhc2hlcyI6NSwiX2ZpbHRlciI6eyJzaXplIjoxMDI0LCJjb250ZW50Ijoia0JBQUFBQUJFQUNFQ0FFQUFBQUNBaUFBb0FJQ0FPQUFCZ0NCQUFBQUFIQUVBQWdJd0FBZ2dJQUJBa0FKQUFFQ2dBZ29ZSVFBQkFBQWdnQ0FDQUFBaENBQUFBSmdRQUFBQUlBQUFBb0FBQUFBRVFBQUFBSWhBQUFBQUFRQUFBQWdrQUF3Z2dBQUFnQUFrZ0FBUUFBQUFBQUFBQkFGQUNBQUFBQkFBSkVBQUFRPSJ9LCJfc2VlZCI6NzgxODc0OTM1MjB9LCJpYXQiOjE3ODIzNzA1MDEsImV4cCI6MTc4MjM4MTMwMX0.qw4ILZ5ySTTDsF_LZJYCfVhuX1pzlLCZD2IV9nAOdj4),** **,|  
+|
+|时间类型|** **,```
+ SELECT TO_CLOB(c16 ) FROM test_oracle;
+SELECT TO_CLOB(c17 ) FROM test_oracle;
+
+```,|![image.png](https://pingcode.yasdb.com/atlas/files/public/67ea7d856a1ae92ae37377b0/origin-url?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWRfZm9yX3B1YmljX2ltYWdlIjoiOTZjMTAxNTExNDIyNGNhNzhmOWM1YmZiZDYzY2QyNWIiLCJ0ZWFtX2Zvcl9wdWJsaWNfaW1hZ2UiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJibG9vbV9maWx0ZXIiOnsidHlwZSI6IkJsb29tRmlsdGVyIiwiX3NpemUiOjEwMjQsIl9uYkhhc2hlcyI6NSwiX2ZpbHRlciI6eyJzaXplIjoxMDI0LCJjb250ZW50Ijoia0JBQUFBQUJFQUNFQ0FFQUFBQUNBaUFBb0FJQ0FPQUFCZ0NCQUFBQUFIQUVBQWdJd0FBZ2dJQUJBa0FKQUFFQ2dBZ29ZSVFBQkFBQWdnQ0FDQUFBaENBQUFBSmdRQUFBQUlBQUFBb0FBQUFBRVFBQUFBSWhBQUFBQUFRQUFBQWdrQUF3Z2dBQUFnQUFrZ0FBUUFBQUFBQUFBQkFGQUNBQUFBQkFBSkVBQUFRPSJ9LCJfc2VlZCI6NzgxODc0OTM1MjB9LCJpYXQiOjE3ODIzNzA1MDEsImV4cCI6MTc4MjM4MTMwMX0.qw4ILZ5ySTTDsF_LZJYCfVhuX1pzlLCZD2IV9nAOdj4), ,|  
+|
+|字符型,  
+| ,```
+SELECT TO_CLOB(c04 ) FROM test_oracle;
+SELECT TO_CLOB(c06 ) FROM test_oracle;
+SELECT TO_CLOB(c10 ) FROM test_oracle;
+ 
+
+```|  
+,![image.png](https://pingcode.yasdb.com/atlas/files/public/67ea7dcc6a1ae92ae37377b1/origin-url?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWRfZm9yX3B1YmljX2ltYWdlIjoiOTZjMTAxNTExNDIyNGNhNzhmOWM1YmZiZDYzY2QyNWIiLCJ0ZWFtX2Zvcl9wdWJsaWNfaW1hZ2UiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJibG9vbV9maWx0ZXIiOnsidHlwZSI6IkJsb29tRmlsdGVyIiwiX3NpemUiOjEwMjQsIl9uYkhhc2hlcyI6NSwiX2ZpbHRlciI6eyJzaXplIjoxMDI0LCJjb250ZW50Ijoia0JBQUFBQUJFQUNFQ0FFQUFBQUNBaUFBb0FJQ0FPQUFCZ0NCQUFBQUFIQUVBQWdJd0FBZ2dJQUJBa0FKQUFFQ2dBZ29ZSVFBQkFBQWdnQ0FDQUFBaENBQUFBSmdRQUFBQUlBQUFBb0FBQUFBRVFBQUFBSWhBQUFBQUFRQUFBQWdrQUF3Z2dBQUFnQUFrZ0FBUUFBQUFBQUFBQkFGQUNBQUFBQkFBSkVBQUFRPSJ9LCJfc2VlZCI6NzgxODc0OTM1MjB9LCJpYXQiOjE3ODIzNzA1MDEsImV4cCI6MTc4MjM4MTMwMX0.qw4ILZ5ySTTDsF_LZJYCfVhuX1pzlLCZD2IV9nAOdj4)|  
+|
+|clob  nclob|```
+  SELECT c07,TO_CLOB(c07 ) FROM test_oracle;
+ SELECT c09,TO_CLOB(c09 ) FROM test_oracle;
+ 
+```|![image.png](https://pingcode.yasdb.com/atlas/files/public/67ea7f356a1ae92ae37377b3/origin-url?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWRfZm9yX3B1YmljX2ltYWdlIjoiOTZjMTAxNTExNDIyNGNhNzhmOWM1YmZiZDYzY2QyNWIiLCJ0ZWFtX2Zvcl9wdWJsaWNfaW1hZ2UiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJibG9vbV9maWx0ZXIiOnsidHlwZSI6IkJsb29tRmlsdGVyIiwiX3NpemUiOjEwMjQsIl9uYkhhc2hlcyI6NSwiX2ZpbHRlciI6eyJzaXplIjoxMDI0LCJjb250ZW50Ijoia0JBQUFBQUJFQUNFQ0FFQUFBQUNBaUFBb0FJQ0FPQUFCZ0NCQUFBQUFIQUVBQWdJd0FBZ2dJQUJBa0FKQUFFQ2dBZ29ZSVFBQkFBQWdnQ0FDQUFBaENBQUFBSmdRQUFBQUlBQUFBb0FBQUFBRVFBQUFBSWhBQUFBQUFRQUFBQWdrQUF3Z2dBQUFnQUFrZ0FBUUFBQUFBQUFBQkFGQUNBQUFBQkFBSkVBQUFRPSJ9LCJfc2VlZCI6NzgxODc0OTM1MjB9LCJpYXQiOjE3ODIzNzA1MDEsImV4cCI6MTc4MjM4MTMwMX0.qw4ILZ5ySTTDsF_LZJYCfVhuX1pzlLCZD2IV9nAOdj4)|  
+|
+|blob|```
+ SELECT c08,TO_CLOB(c08 ) FROM test_oracle;
+ 
+```|  
+,![image.png](https://pingcode.yasdb.com/atlas/files/public/67ea7f086a1ae92ae37377b2/origin-url?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWRfZm9yX3B1YmljX2ltYWdlIjoiOTZjMTAxNTExNDIyNGNhNzhmOWM1YmZiZDYzY2QyNWIiLCJ0ZWFtX2Zvcl9wdWJsaWNfaW1hZ2UiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJibG9vbV9maWx0ZXIiOnsidHlwZSI6IkJsb29tRmlsdGVyIiwiX3NpemUiOjEwMjQsIl9uYkhhc2hlcyI6NSwiX2ZpbHRlciI6eyJzaXplIjoxMDI0LCJjb250ZW50Ijoia0JBQUFBQUJFQUNFQ0FFQUFBQUNBaUFBb0FJQ0FPQUFCZ0NCQUFBQUFIQUVBQWdJd0FBZ2dJQUJBa0FKQUFFQ2dBZ29ZSVFBQkFBQWdnQ0FDQUFBaENBQUFBSmdRQUFBQUlBQUFBb0FBQUFBRVFBQUFBSWhBQUFBQUFRQUFBQWdrQUF3Z2dBQUFnQUFrZ0FBUUFBQUFBQUFBQkFGQUNBQUFBQkFBSkVBQUFRPSJ9LCJfc2VlZCI6NzgxODc0OTM1MjB9LCJpYXQiOjE3ODIzNzA1MDEsImV4cCI6MTc4MjM4MTMwMX0.qw4ILZ5ySTTDsF_LZJYCfVhuX1pzlLCZD2IV9nAOdj4)|  
+|
+|raw|```
+ SELECT TO_CLOB(c11 ) FROM test_oracle;
+ 
+```|![image.png](https://pingcode.yasdb.com/atlas/files/public/67ea7f496a1ae92ae37377b4/origin-url?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWRfZm9yX3B1YmljX2ltYWdlIjoiOTZjMTAxNTExNDIyNGNhNzhmOWM1YmZiZDYzY2QyNWIiLCJ0ZWFtX2Zvcl9wdWJsaWNfaW1hZ2UiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJibG9vbV9maWx0ZXIiOnsidHlwZSI6IkJsb29tRmlsdGVyIiwiX3NpemUiOjEwMjQsIl9uYkhhc2hlcyI6NSwiX2ZpbHRlciI6eyJzaXplIjoxMDI0LCJjb250ZW50Ijoia0JBQUFBQUJFQUNFQ0FFQUFBQUNBaUFBb0FJQ0FPQUFCZ0NCQUFBQUFIQUVBQWdJd0FBZ2dJQUJBa0FKQUFFQ2dBZ29ZSVFBQkFBQWdnQ0FDQUFBaENBQUFBSmdRQUFBQUlBQUFBb0FBQUFBRVFBQUFBSWhBQUFBQUFRQUFBQWdrQUF3Z2dBQUFnQUFrZ0FBUUFBQUFBQUFBQkFGQUNBQUFBQkFBSkVBQUFRPSJ9LCJfc2VlZCI6NzgxODc0OTM1MjB9LCJpYXQiOjE3ODIzNzA1MDEsImV4cCI6MTc4MjM4MTMwMX0.qw4ILZ5ySTTDsF_LZJYCfVhuX1pzlLCZD2IV9nAOdj4)||
+|ROWID|```
+SELECT TO_CLOB(c12 ) FROM test_oracle;
+ 
+```|![image.png](https://pingcode.yasdb.com/atlas/files/public/67ea7f5c6a1ae92ae37377b5/origin-url?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWRfZm9yX3B1YmljX2ltYWdlIjoiOTZjMTAxNTExNDIyNGNhNzhmOWM1YmZiZDYzY2QyNWIiLCJ0ZWFtX2Zvcl9wdWJsaWNfaW1hZ2UiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJibG9vbV9maWx0ZXIiOnsidHlwZSI6IkJsb29tRmlsdGVyIiwiX3NpemUiOjEwMjQsIl9uYkhhc2hlcyI6NSwiX2ZpbHRlciI6eyJzaXplIjoxMDI0LCJjb250ZW50Ijoia0JBQUFBQUJFQUNFQ0FFQUFBQUNBaUFBb0FJQ0FPQUFCZ0NCQUFBQUFIQUVBQWdJd0FBZ2dJQUJBa0FKQUFFQ2dBZ29ZSVFBQkFBQWdnQ0FDQUFBaENBQUFBSmdRQUFBQUlBQUFBb0FBQUFBRVFBQUFBSWhBQUFBQUFRQUFBQWdrQUF3Z2dBQUFnQUFrZ0FBUUFBQUFBQUFBQkFGQUNBQUFBQkFBSkVBQUFRPSJ9LCJfc2VlZCI6NzgxODc0OTM1MjB9LCJpYXQiOjE3ODIzNzA1MDEsImV4cCI6MTc4MjM4MTMwMX0.qw4ILZ5ySTTDsF_LZJYCfVhuX1pzlLCZD2IV9nAOdj4)||
+|json|```
+  SELECT TO_CLOB(c13 ) FROM test_oracle;
+ 
+```|![image.png](https://pingcode.yasdb.com/atlas/files/public/67ea7f646a1ae92ae37377b6/origin-url?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWRfZm9yX3B1YmljX2ltYWdlIjoiOTZjMTAxNTExNDIyNGNhNzhmOWM1YmZiZDYzY2QyNWIiLCJ0ZWFtX2Zvcl9wdWJsaWNfaW1hZ2UiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJibG9vbV9maWx0ZXIiOnsidHlwZSI6IkJsb29tRmlsdGVyIiwiX3NpemUiOjEwMjQsIl9uYkhhc2hlcyI6NSwiX2ZpbHRlciI6eyJzaXplIjoxMDI0LCJjb250ZW50Ijoia0JBQUFBQUJFQUNFQ0FFQUFBQUNBaUFBb0FJQ0FPQUFCZ0NCQUFBQUFIQUVBQWdJd0FBZ2dJQUJBa0FKQUFFQ2dBZ29ZSVFBQkFBQWdnQ0FDQUFBaENBQUFBSmdRQUFBQUlBQUFBb0FBQUFBRVFBQUFBSWhBQUFBQUFRQUFBQWdrQUF3Z2dBQUFnQUFrZ0FBUUFBQUFBQUFBQkFGQUNBQUFBQkFBSkVBQUFRPSJ9LCJfc2VlZCI6NzgxODc0OTM1MjB9LCJpYXQiOjE3ODIzNzA1MDEsImV4cCI6MTc4MjM4MTMwMX0.qw4ILZ5ySTTDsF_LZJYCfVhuX1pzlLCZD2IV9nAOdj4)||
+|xmltype|```
+ SELECT TO_CLOB(c14 ) FROM test_oracle;
+ 
+```|![image.png](https://pingcode.yasdb.com/atlas/files/public/67ea7f6c6a1ae92ae37377b7/origin-url?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWRfZm9yX3B1YmljX2ltYWdlIjoiOTZjMTAxNTExNDIyNGNhNzhmOWM1YmZiZDYzY2QyNWIiLCJ0ZWFtX2Zvcl9wdWJsaWNfaW1hZ2UiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJibG9vbV9maWx0ZXIiOnsidHlwZSI6IkJsb29tRmlsdGVyIiwiX3NpemUiOjEwMjQsIl9uYkhhc2hlcyI6NSwiX2ZpbHRlciI6eyJzaXplIjoxMDI0LCJjb250ZW50Ijoia0JBQUFBQUJFQUNFQ0FFQUFBQUNBaUFBb0FJQ0FPQUFCZ0NCQUFBQUFIQUVBQWdJd0FBZ2dJQUJBa0FKQUFFQ2dBZ29ZSVFBQkFBQWdnQ0FDQUFBaENBQUFBSmdRQUFBQUlBQUFBb0FBQUFBRVFBQUFBSWhBQUFBQUFRQUFBQWdrQUF3Z2dBQUFnQUFrZ0FBUUFBQUFBQUFBQkFGQUNBQUFBQkFBSkVBQUFRPSJ9LCJfc2VlZCI6NzgxODc0OTM1MjB9LCJpYXQiOjE3ODIzNzA1MDEsImV4cCI6MTc4MjM4MTMwMX0.qw4ILZ5ySTTDsF_LZJYCfVhuX1pzlLCZD2IV9nAOdj4)||
+| udt自定义类型,--不支持|```
+ SELECT TO_CLOB(c15 ) FROM test_oracle;
+ 
+```|![image.png](https://pingcode.yasdb.com/atlas/files/public/67ea7f766a1ae92ae37377b8/origin-url?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWRfZm9yX3B1YmljX2ltYWdlIjoiOTZjMTAxNTExNDIyNGNhNzhmOWM1YmZiZDYzY2QyNWIiLCJ0ZWFtX2Zvcl9wdWJsaWNfaW1hZ2UiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJibG9vbV9maWx0ZXIiOnsidHlwZSI6IkJsb29tRmlsdGVyIiwiX3NpemUiOjEwMjQsIl9uYkhhc2hlcyI6NSwiX2ZpbHRlciI6eyJzaXplIjoxMDI0LCJjb250ZW50Ijoia0JBQUFBQUJFQUNFQ0FFQUFBQUNBaUFBb0FJQ0FPQUFCZ0NCQUFBQUFIQUVBQWdJd0FBZ2dJQUJBa0FKQUFFQ2dBZ29ZSVFBQkFBQWdnQ0FDQUFBaENBQUFBSmdRQUFBQUlBQUFBb0FBQUFBRVFBQUFBSWhBQUFBQUFRQUFBQWdrQUF3Z2dBQUFnQUFrZ0FBUUFBQUFBQUFBQkFGQUNBQUFBQkFBSkVBQUFRPSJ9LCJfc2VlZCI6NzgxODc0OTM1MjB9LCJpYXQiOjE3ODIzNzA1MDEsImV4cCI6MTc4MjM4MTMwMX0.qw4ILZ5ySTTDsF_LZJYCfVhuX1pzlLCZD2IV9nAOdj4)||
+
+
+
+
+
+
+## TO_CLOB (bfile|blob)
+
+|场景|用例|表现|备注|
+|---|---|---|---|
+|  oracle的 bfile ,yashan是否支持？,,CREATE OR REPLACE DIRECTORY ext_files AS '/path/to/files';,GRANT READ ON DIRECTORY ext_files TO username;,CREATE TABLE documents (,    doc_id NUMBER,,    doc_name VARCHAR2(100),,    doc_file BFILE,);,,INSERT INTO documents VALUES (,    1, ,    'sample.pdf',,    BFILENAME('EXT_FILES', 'sample.pdf'),);,,||,,,,| BFILE 提供了一种在数据库外部管理大型二进制文件的灵活方式，特别适合那些需要保持文件独立于数据库管理的应用场景,**基本概念**,- **外部存储**  ：BFILE 存储的是指向操作系统文件的指针，而不是文件内容本身
+- **只读属性**  ：BFILE 是只读的，不能通过 Oracle 修改外部文件内容
+- **大文件支持**  ：理论上可支持最大 2^64-1 字节（16EB）的文件
+- **不参与事务**  ：对 BFILE 的操作不记录在数据库重做日志中
+,**BFILE 包含两个部分**  ：,1. **定位器 (Locator)**  ：存储在数据库表中的指针
+1. **外部文件**  ：实际存储在数据库服务器文件系统上的文件
+,**使用场景**,- 存储不经常修改的大型文件（如视频、音频、PDF等）
+- 当需要保持文件独立于数据库管理时
+- 需要节省数据库存储空间的情况
+,**BFILE 的限制**,1. 文件必须位于数据库服务器上，客户端无法直接访问
+1. 需要数据库管理员创建目录对象并设置权限
+1. 不提供事务支持或恢复功能
+1. 文件管理必须通过操作系统完成
+,,![image.png](https://pingcode.yasdb.com/atlas/files/public/67ea822d6a1ae92ae37377bb/origin-url?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWRfZm9yX3B1YmljX2ltYWdlIjoiOTZjMTAxNTExNDIyNGNhNzhmOWM1YmZiZDYzY2QyNWIiLCJ0ZWFtX2Zvcl9wdWJsaWNfaW1hZ2UiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJibG9vbV9maWx0ZXIiOnsidHlwZSI6IkJsb29tRmlsdGVyIiwiX3NpemUiOjEwMjQsIl9uYkhhc2hlcyI6NSwiX2ZpbHRlciI6eyJzaXplIjoxMDI0LCJjb250ZW50Ijoia0JBQUFBQUJFQUNFQ0FFQUFBQUNBaUFBb0FJQ0FPQUFCZ0NCQUFBQUFIQUVBQWdJd0FBZ2dJQUJBa0FKQUFFQ2dBZ29ZSVFBQkFBQWdnQ0FDQUFBaENBQUFBSmdRQUFBQUlBQUFBb0FBQUFBRVFBQUFBSWhBQUFBQUFRQUFBQWdrQUF3Z2dBQUFnQUFrZ0FBUUFBQUFBQUFBQkFGQUNBQUFBQkFBSkVBQUFRPSJ9LCJfc2VlZCI6NzgxODc0OTM1MjB9LCJpYXQiOjE3ODIzNzA1MDEsImV4cCI6MTc4MjM4MTMwMX0.qw4ILZ5ySTTDsF_LZJYCfVhuX1pzlLCZD2IV9nAOdj4)|
+|blob类型的列,SELECT TO_CLOB(c08, 873, 'text/xml') FROM test_oracle;,,csid |AL32UTF8     873,```
+SELECT TO_CLOB(c08, 873, 'text/xml') FROM test_oracle;
+SELECT TO_CLOB(c08, 873, 'application/octet-stream') FROM test_oracle;
+
+ 
+```,,,,AL16UTF16  2000 ,```
+SELECT TO_CLOB(c08, 2000, 'text/xml') FROM test_oracle;
+SELECT TO_CLOB(c08, 2000, 'application/octet-stream') FROM test_oracle;
+
+ 
+```,,,ZHS16GBK   852,```
+SELECT TO_CLOB(c08, 825, 'text/xml') FROM test_oracle;
+SELECT TO_CLOB(c08, 852, 'application/octet-stream') FROM test_oracle;
+
+ 
+```,,,,WE8MSWIN1252   178,```
+SELECT TO_CLOB(c08, 178, 'text/xml') FROM test_oracle;
+SELECT TO_CLOB(c08, 178, 'application/octet-stream') FROM test_oracle;
+
+ 
+```,,,,,JA16SJIS   832, ,```
+SELECT TO_CLOB(c08, 832, 'text/xml') FROM test_oracle;
+SELECT TO_CLOB(c08, 832, 'application/octet-stream') FROM test_oracle;
+
+ 
+```|![image.png](https://pingcode.yasdb.com/atlas/files/public/67ea81256a1ae92ae37377ba/origin-url?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWRfZm9yX3B1YmljX2ltYWdlIjoiOTZjMTAxNTExNDIyNGNhNzhmOWM1YmZiZDYzY2QyNWIiLCJ0ZWFtX2Zvcl9wdWJsaWNfaW1hZ2UiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJibG9vbV9maWx0ZXIiOnsidHlwZSI6IkJsb29tRmlsdGVyIiwiX3NpemUiOjEwMjQsIl9uYkhhc2hlcyI6NSwiX2ZpbHRlciI6eyJzaXplIjoxMDI0LCJjb250ZW50Ijoia0JBQUFBQUJFQUNFQ0FFQUFBQUNBaUFBb0FJQ0FPQUFCZ0NCQUFBQUFIQUVBQWdJd0FBZ2dJQUJBa0FKQUFFQ2dBZ29ZSVFBQkFBQWdnQ0FDQUFBaENBQUFBSmdRQUFBQUlBQUFBb0FBQUFBRVFBQUFBSWhBQUFBQUFRQUFBQWdrQUF3Z2dBQUFnQUFrZ0FBUUFBQUFBQUFBQkFGQUNBQUFBQkFBSkVBQUFRPSJ9LCJfc2VlZCI6NzgxODc0OTM1MjB9LCJpYXQiOjE3ODIzNzA1MDEsImV4cCI6MTc4MjM4MTMwMX0.qw4ILZ5ySTTDsF_LZJYCfVhuX1pzlLCZD2IV9nAOdj4),![image.png](https://pingcode.yasdb.com/atlas/files/public/67eb610439823f2ac1f2734e/origin-url?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWRfZm9yX3B1YmljX2ltYWdlIjoiOTZjMTAxNTExNDIyNGNhNzhmOWM1YmZiZDYzY2QyNWIiLCJ0ZWFtX2Zvcl9wdWJsaWNfaW1hZ2UiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJibG9vbV9maWx0ZXIiOnsidHlwZSI6IkJsb29tRmlsdGVyIiwiX3NpemUiOjEwMjQsIl9uYkhhc2hlcyI6NSwiX2ZpbHRlciI6eyJzaXplIjoxMDI0LCJjb250ZW50Ijoia0JBQUFBQUJFQUNFQ0FFQUFBQUNBaUFBb0FJQ0FPQUFCZ0NCQUFBQUFIQUVBQWdJd0FBZ2dJQUJBa0FKQUFFQ2dBZ29ZSVFBQkFBQWdnQ0FDQUFBaENBQUFBSmdRQUFBQUlBQUFBb0FBQUFBRVFBQUFBSWhBQUFBQUFRQUFBQWdrQUF3Z2dBQUFnQUFrZ0FBUUFBQUFBQUFBQkFGQUNBQUFBQkFBSkVBQUFRPSJ9LCJfc2VlZCI6NzgxODc0OTM1MjB9LCJpYXQiOjE3ODIzNzA1MDEsImV4cCI6MTc4MjM4MTMwMX0.qw4ILZ5ySTTDsF_LZJYCfVhuX1pzlLCZD2IV9nAOdj4),,![image.png](https://pingcode.yasdb.com/atlas/files/public/67eb612839823f2ac1f2734f/origin-url?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWRfZm9yX3B1YmljX2ltYWdlIjoiOTZjMTAxNTExNDIyNGNhNzhmOWM1YmZiZDYzY2QyNWIiLCJ0ZWFtX2Zvcl9wdWJsaWNfaW1hZ2UiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJibG9vbV9maWx0ZXIiOnsidHlwZSI6IkJsb29tRmlsdGVyIiwiX3NpemUiOjEwMjQsIl9uYkhhc2hlcyI6NSwiX2ZpbHRlciI6eyJzaXplIjoxMDI0LCJjb250ZW50Ijoia0JBQUFBQUJFQUNFQ0FFQUFBQUNBaUFBb0FJQ0FPQUFCZ0NCQUFBQUFIQUVBQWdJd0FBZ2dJQUJBa0FKQUFFQ2dBZ29ZSVFBQkFBQWdnQ0FDQUFBaENBQUFBSmdRQUFBQUlBQUFBb0FBQUFBRVFBQUFBSWhBQUFBQUFRQUFBQWdrQUF3Z2dBQUFnQUFrZ0FBUUFBQUFBQUFBQkFGQUNBQUFBQkFBSkVBQUFRPSJ9LCJfc2VlZCI6NzgxODc0OTM1MjB9LCJpYXQiOjE3ODIzNzA1MDEsImV4cCI6MTc4MjM4MTMwMX0.qw4ILZ5ySTTDsF_LZJYCfVhuX1pzlLCZD2IV9nAOdj4),,,![image.png](https://pingcode.yasdb.com/atlas/files/public/67eb616039823f2ac1f27350/origin-url?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWRfZm9yX3B1YmljX2ltYWdlIjoiOTZjMTAxNTExNDIyNGNhNzhmOWM1YmZiZDYzY2QyNWIiLCJ0ZWFtX2Zvcl9wdWJsaWNfaW1hZ2UiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJibG9vbV9maWx0ZXIiOnsidHlwZSI6IkJsb29tRmlsdGVyIiwiX3NpemUiOjEwMjQsIl9uYkhhc2hlcyI6NSwiX2ZpbHRlciI6eyJzaXplIjoxMDI0LCJjb250ZW50Ijoia0JBQUFBQUJFQUNFQ0FFQUFBQUNBaUFBb0FJQ0FPQUFCZ0NCQUFBQUFIQUVBQWdJd0FBZ2dJQUJBa0FKQUFFQ2dBZ29ZSVFBQkFBQWdnQ0FDQUFBaENBQUFBSmdRQUFBQUlBQUFBb0FBQUFBRVFBQUFBSWhBQUFBQUFRQUFBQWdrQUF3Z2dBQUFnQUFrZ0FBUUFBQUFBQUFBQkFGQUNBQUFBQkFBSkVBQUFRPSJ9LCJfc2VlZCI6NzgxODc0OTM1MjB9LCJpYXQiOjE3ODIzNzA1MDEsImV4cCI6MTc4MjM4MTMwMX0.qw4ILZ5ySTTDsF_LZJYCfVhuX1pzlLCZD2IV9nAOdj4),,,,![image.png](https://pingcode.yasdb.com/atlas/files/public/67eb62056a1ae92ae37377f0/origin-url?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWRfZm9yX3B1YmljX2ltYWdlIjoiOTZjMTAxNTExNDIyNGNhNzhmOWM1YmZiZDYzY2QyNWIiLCJ0ZWFtX2Zvcl9wdWJsaWNfaW1hZ2UiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJibG9vbV9maWx0ZXIiOnsidHlwZSI6IkJsb29tRmlsdGVyIiwiX3NpemUiOjEwMjQsIl9uYkhhc2hlcyI6NSwiX2ZpbHRlciI6eyJzaXplIjoxMDI0LCJjb250ZW50Ijoia0JBQUFBQUJFQUNFQ0FFQUFBQUNBaUFBb0FJQ0FPQUFCZ0NCQUFBQUFIQUVBQWdJd0FBZ2dJQUJBa0FKQUFFQ2dBZ29ZSVFBQkFBQWdnQ0FDQUFBaENBQUFBSmdRQUFBQUlBQUFBb0FBQUFBRVFBQUFBSWhBQUFBQUFRQUFBQWdrQUF3Z2dBQUFnQUFrZ0FBUUFBQUFBQUFBQkFGQUNBQUFBQkFBSkVBQUFRPSJ9LCJfc2VlZCI6NzgxODc0OTM1MjB9LCJpYXQiOjE3ODIzNzA1MDEsImV4cCI6MTc4MjM4MTMwMX0.qw4ILZ5ySTTDsF_LZJYCfVhuX1pzlLCZD2IV9nAOdj4)|,,,,,AL16UTF16  2000  为何报错？--版本差异 19c 不会报错|
+|MIME 类型|```
+SELECT TO_CLOB(c08, 2000, 'text/xml') FROM test_oracle;
+SELECT TO_CLOB(c08, 2000, 'application/octet-stream') FROM test_oracle;
+
+ 
+```,||什么情况下,不同的MIME 类型能导致函数返回不同的结果？,|
+||数据类型,```
+drop table test_oracle;
+create table test_oracle (id int,c01 binary_float,c02 number,c03 binary_double,c04 char(10), c06 varchar2(10), c07 clob ,c08 blob,c09 nclob,c10 nvarchar2(10),c11 raw(8),c12 ROWID,c13 json ,c14 xmltype, c15 arr_type ,c16 date,c17 timestamp);
+insert into test_oracle values (1,1.2,1.3,4.4,'aa','aa','aa','aa','aa','aa','aa','AAAACPAABAAAAShAAA','{"name":"Jack", "city":"Beijing"}','<employee><id>2</id><name>hahaha</name></employee>',arr_type('2000', 'guangdong'),sysdate,systimestamp);
+ insert into test_oracle values (2,'inf',1.3,4.4,'aa','aa','aa','61006100','aa','aa','aa','AAAACPAABAAAAShAAA','{"name":"Jack", "city":"Beijing"}','<employee><id>2</id><name>hahaha</name></employee>',arr_type('2000', 'guangdong'),sysdate,systimestamp);
+ 
+commit;
+
+
+SELECT TO_CLOB(c08, 178, 'aaaaaaaaa中') FROM test_oracle;
+SELECT TO_CLOB(c08, 178, '中中中aaaaaaaaa中') FROM test_oracle;
+SELECT TO_CLOB(c08, 178, '  ') FROM test_oracle;
+SELECT TO_CLOB(c08, 178, 123789) FROM test_oracle;
+SELECT TO_CLOB(c08, 178, c01) FROM test_oracle;
+SELECT TO_CLOB(c08, 178, c02) FROM test_oracle;
+SELECT TO_CLOB(c08, 178, c03) FROM test_oracle;
+SELECT TO_CLOB(c08, 178, c07) FROM test_oracle;
+SELECT TO_CLOB(c08, 178, c08) FROM test_oracle;
+SELECT TO_CLOB(c08, 178, c09) FROM test_oracle;
+SELECT TO_CLOB(c08, 178, c10) FROM test_oracle;
+SELECT TO_CLOB(c08, 178, c11) FROM test_oracle;
+SELECT TO_CLOB(c08, 178, c12) FROM test_oracle;
+SELECT TO_CLOB(c08, 178, c13) FROM test_oracle;
+SELECT TO_CLOB(c08, 178, c14) FROM test_oracle;
+SELECT TO_CLOB(c08, 178, c15) FROM test_oracle;
+SELECT TO_CLOB(c08, 178, c16) FROM test_oracle;
+SELECT TO_CLOB(c08, 178, c17) FROM test_oracle;
+SELECT TO_CLOB(c08, 178, sysdate) FROM test_oracle;
+
+```|,出 udt 外 ， 其他类型都支持||
+
+
+
+
+
+
+  
+
+
+# 4. 参考文档
+
+  [https://docs.oracle.com/en/database/oracle/oracle-database/19/sqlrf/TO_CLOB-character.html](https://docs.oracle.com/en/database/oracle/oracle-database/19/sqlrf/TO_CLOB-character.html)  
+
+  [https://docs.oracle.com/en/database/oracle/oracle-database/19/sqlrf/TO_CLOB-bfile-blob.html](https://docs.oracle.com/en/database/oracle/oracle-database/19/sqlrf/TO_CLOB-bfile-blob.html)    
+
+
+# 5. 后续关注 
+
+  
+
+
+
+  
+
+
+## Attachments:
+
+[image2024-10-30_11-27-35.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjdlYTVkYWE1MjliNWMwMjMxZDA3Zjk5IiwicmVmX2lkIjoiNjdlYTVkYWE1MjliNWMwMjMxZDA3ZmIxIiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyMzcwNTAwLCJleHAiOjE3ODI0NTY5MDB9.JpbJ7u8RQteTIjpwE-RW1hNVslNcgLXUaauSDHVvt00)
+
+ (image/png)    
+
+
+[image2024-10-30_11-17-33.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjdlYTVkYWE1MjliNWMwMjMxZDA3Zjk1IiwicmVmX2lkIjoiNjdlYTVkYWE1MjliNWMwMjMxZDA3ZmIxIiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyMzcwNTAwLCJleHAiOjE3ODI0NTY5MDB9.opJbX_gGgFNxOkVVim5yzBP-kc4RPHJXtqEHdBgZtXc)
+
+ (image/png)    
+
+
+[image2024-10-29_16-58-3.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjdlYTVkYWE1MjliNWMwMjMxZDA3Zjk2IiwicmVmX2lkIjoiNjdlYTVkYWE1MjliNWMwMjMxZDA3ZmIxIiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyMzcwNTAwLCJleHAiOjE3ODI0NTY5MDB9.FQ0ZNiVfnxXAs_xdWj0IEgG9tB6rUYYKAbv16nBC4p8)
+
+ (image/png)    
+
+
+[image2024-10-29_16-31-50.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjdlYTVkYWE1MjliNWMwMjMxZDA3ZjlhIiwicmVmX2lkIjoiNjdlYTVkYWE1MjliNWMwMjMxZDA3ZmIxIiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyMzcwNTAwLCJleHAiOjE3ODI0NTY5MDB9.rpAFeFj-pw_OdhlWbMTX7guemjQ6nhebDmTnyr0WLSs)
+
+ (image/png)    
+
+
+[image2024-10-29_16-31-39.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjdlYTVkYWE1MjliNWMwMjMxZDA3Zjk3IiwicmVmX2lkIjoiNjdlYTVkYWE1MjliNWMwMjMxZDA3ZmIxIiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyMzcwNTAwLCJleHAiOjE3ODI0NTY5MDB9._2NdhE-ySB4mZGxsFfYl1z9U-TEvIFq9Eq5zdj9aMvk)
+
+ (image/png)    
+
+
+[image2024-10-29_16-28-39.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjdlYTVkYWE1MjliNWMwMjMxZDA3ZjliIiwicmVmX2lkIjoiNjdlYTVkYWE1MjliNWMwMjMxZDA3ZmIxIiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyMzcwNTAwLCJleHAiOjE3ODI0NTY5MDB9.SkqqIZeH8j69VGFf4Sm14FJn59ps6VbzAI0EKgwJSVI)
+
+ (image/png)    
+
+
+[image2024-10-29_16-22-46.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjdlYTVkYWE1MjliNWMwMjMxZDA3Zjk4IiwicmVmX2lkIjoiNjdlYTVkYWE1MjliNWMwMjMxZDA3ZmIxIiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyMzcwNTAwLCJleHAiOjE3ODI0NTY5MDB9.Fl5RVZ5z3Ar0iAS7caWU7Qty6iOMDT1Ami6xVOk5pc0)
+
+ (image/png)    
+
+
+[image2024-10-29_16-22-41.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjdlYTVkYWE1MjliNWMwMjMxZDA3ZjljIiwicmVmX2lkIjoiNjdlYTVkYWE1MjliNWMwMjMxZDA3ZmIxIiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyMzcwNTAwLCJleHAiOjE3ODI0NTY5MDB9.9yG9ipPxpgahzFRDfuVMkjEYlHBTCzB5IJRgfoefxWo)
+
+ (image/png)    
+
+
+[image2024-10-28_17-43-13.png](https://pingcode.yasdb.com/atlas/file/origin-url?version=undefined&action=download&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiI5NmMxMDE1MTE0MjI0Y2E3OGY5YzViZmJkNjNjZDI1YiIsInRlYW1faWQiOiI2NWQ2ZjRmZTZiM2U1NjI1MTZjZGU2YjciLCJwZXJtaXNzaW9uIjoiMTExMTEiLCJmaWxlX2lkIjoiNjdlYTVkYWE1MjliNWMwMjMxZDA3ZjlkIiwicmVmX2lkIjoiNjdlYTVkYWE1MjliNWMwMjMxZDA3ZmIxIiwicmVmX3R5cGUiOiJwYWdlIiwiaWF0IjoxNzgyMzcwNTAwLCJleHAiOjE3ODI0NTY5MDB9._3mEAXAeZviLZv-9T8ngfZ4fTgiCO7Nmi7jH0oFYlF4)
+
+ (image/png)    
+
+
+## Comments:
+
+|  [](null)  ,  [特性调研-YDBRD-33978：支持ANY_VALUE函数 - 王博文 - SICS-CoD Confluence](https://conf.yasdb.com/pages/viewpage.action?pageId=177833134)  ,  [详细设计-YDBRD-33978：支持ANY_VALUE函数 - 王博文 - SICS-CoD Confluence](https://conf.yasdb.com/pages/viewpage.action?pageId=177832898)  ,Posted by huxiaopan at 十月 30, 2024 20:00|
+|---|
+
+

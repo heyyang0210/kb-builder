@@ -191,6 +191,8 @@ function resolveNodeState(nodeId, includeRules, excludeRules):
 
 下载任务必须支持页面级断点续传。后端每完成一个页面都写入批次目录下的下载账本，至少包含页面状态、资源明细、失败摘要、告警摘要、重试次数和最后更新时间；`resources.json` 由账本汇总生成，不再依赖内存中的临时结果。后端重启后，处于 `running/downloading` 的下载任务统一标记为 `interrupted`，前端展示“已中断，可继续”，用户点击继续后只处理未完成页面。
 
+图片和附件的二进制内容必须通过浏览器请求上下文直接读取，不得在页面 JavaScript 中展开为字节数组。若 Playwright 驱动通道因内存或进程异常关闭，本页记录失败后必须使当前客户端失效；下一页请求重建会话，任务继续收敛到 `completed` 或 `interrupted`，不得长期停留在伪 `running` 状态。
+
 断点账本建议目录：
 
 ```text
