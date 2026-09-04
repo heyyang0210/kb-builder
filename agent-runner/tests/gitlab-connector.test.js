@@ -23,7 +23,23 @@ describe('GitLab connector', () => {
     const item = upsertConnection({ name: 'yasdoc', host: 'https://git-tools.yasdb.com', project: 'cod-doc/yasdoc', credentialRef: 'ci-ref' }, file);
     expect(item.mode).toBe('disabled');
     expect(item.credentialConfigured).toBe(true);
+    expect(item.authMode).toBe('service_account');
+    expect(item.purpose).toBe('read');
     expect(JSON.parse(fs.readFileSync(file, 'utf8')).connections[0].token).toBeUndefined();
+  });
+
+  test('projects legacy connections with derived display fields', () => {
+    fs.writeFileSync(file, JSON.stringify({ connections: [{ id: 'legacy', name: 'legacy', host: 'https://git-tools.yasdb.com', project: 'cod-doc/yasdoc', mode: 'production', credentialRef: null }] }));
+    const item = require('../lib/gitlab-connector').sanitizeConnection(readConfig(file).connections[0]);
+    expect(item).toMatchObject({ baseUrl: 'https://git-tools.yasdb.com', projectPath: 'cod-doc/yasdoc', authMode: 'user_oauth', purpose: 'read', credentialConfigured: false, status: 'pending' });
+  });
+
+  test('service account requires a credential reference and OAuth clears legacy references', () => {
+    expect(() => upsertConnection({ name: 'service', host: 'https://git-tools.yasdb.com', project: 'cod-doc/service', authMode: 'service_account' }, file)).toThrow(expect.objectContaining({ code: 'GITLAB_CREDENTIAL_REF_REQUIRED' }));
+    const service = upsertConnection({ name: 'service', host: 'https://git-tools.yasdb.com', project: 'cod-doc/service', credentialRef: 'service_read', authMode: 'service_account' }, file);
+    const oauth = upsertConnection({ id: service.id, name: 'service', host: 'https://git-tools.yasdb.com', project: 'cod-doc/service', authMode: 'user_oauth' }, file);
+    expect(oauth).toMatchObject({ authMode: 'user_oauth', credentialConfigured: false });
+    expect(readConfig(file).connections[0].credentialRef).toBeNull();
   });
 
   test('disabled connector refuses remote calls', async () => {

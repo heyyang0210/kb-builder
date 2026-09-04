@@ -7,6 +7,10 @@
  * provided, the suite fails with a clear missing-module/factory error.
  */
 const http = require('http');
+const fs = require('fs');
+const path = require('path');
+const vm = require('vm');
+const childProcess = require('child_process');
 
 const AUTH_MODULE = '../lib/knowledge-center-auth';
 const AUTH_PREFIX = process.env.KC_AUTH_PREFIX || '/knowledge-center/auth';
@@ -96,6 +100,44 @@ function handlerFromModule(mod, options) {
 }
 
 describe('知识中心认证 HTTP 契约（真实服务 + CAS 协议桩）', () => {
+  test('入口依赖完整且初始化超时提供恢复入口', () => {
+    const root = path.resolve(__dirname, '..');
+    const html = fs.readFileSync(path.join(root, 'frontend/knowledge-center/knowledge-center-management.html'), 'utf8');
+    const app = fs.readFileSync(path.join(root, 'frontend/knowledge-center/app.js'), 'utf8');
+    const appDirectory = path.dirname(path.join(root, 'frontend/knowledge-center/app.js'));
+    const imports = [...app.matchAll(/from\s+['"](\.\/[^'"]+\.js)['"]/g)].map(match => match[1]);
+    expect(imports.length).toBeGreaterThan(0);
+    for (const importPath of imports) {
+      expect(fs.existsSync(path.resolve(appDirectory, importPath))).toBe(true);
+    }
+    expect(() => childProcess.execFileSync(process.execPath, ['--check', path.join(appDirectory, 'app.js')], { stdio: 'pipe' })).not.toThrow();
+    expect(html).toContain('auth-bootstrap-fallback');
+    expect(html).toContain('data-bootstrap-timeout');
+  });
+
+  test('入口模块未完成初始化时会退出无限加载并显示重新加载按钮', () => {
+    const root = path.resolve(__dirname, '..');
+    const html = fs.readFileSync(path.join(root, 'frontend/knowledge-center/knowledge-center-management.html'), 'utf8');
+    const script = html.match(/<script id="auth-bootstrap-watchdog">([\s\S]*?)<\/script>/)?.[1];
+    const loading = { hidden: false, setAttribute: jest.fn() };
+    const fallback = { hidden: true };
+    let watchdog;
+
+    vm.runInNewContext(script, {
+      window: { setTimeout: callback => { watchdog = callback; } },
+      document: {
+        getElementById: id => ({
+          'auth-loading': loading,
+          'auth-bootstrap-fallback': fallback,
+        })[id] || null,
+      },
+    });
+    watchdog();
+
+    expect(fallback.hidden).toBe(false);
+    expect(loading.setAttribute).toHaveBeenCalledWith('data-bootstrap-timeout', 'true');
+  });
+
   let cas;
   let app;
   let server;

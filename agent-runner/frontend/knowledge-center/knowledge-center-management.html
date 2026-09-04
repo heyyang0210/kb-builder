@@ -14,11 +14,16 @@
   <link rel="stylesheet" href="./modules/production/production.css">
   <link rel="stylesheet" href="./modules/repository/repository.css">
   <link rel="stylesheet" href="./modules/auth/login.css">
+  <link rel="stylesheet" href="./modules/platform-admin/platform-admin.css">
 </head>
 <body>
   <section id="auth-loading" class="auth-loading" aria-live="polite">
     <span class="auth-loading-mark" aria-hidden="true"></span>
     <p>正在检查登录状态</p>
+    <div id="auth-bootstrap-fallback" class="auth-bootstrap-fallback" hidden role="alert">
+      <p>页面初始化未完成，请重新加载。</p>
+      <button id="auth-bootstrap-retry" class="button secondary" type="button" onclick="window.location.reload()">重新加载</button>
+    </div>
   </section>
   <section id="auth-shell" class="auth-shell" aria-labelledby="auth-title" aria-busy="true" hidden>
     <div class="auth-panel">
@@ -93,6 +98,16 @@
     </div>
   </div>
   <script src="./common/vendor/lucide.min.js"></script>
+  <script id="auth-bootstrap-watchdog">
+    window.setTimeout(function () {
+      var loading = document.getElementById('auth-loading');
+      var fallback = document.getElementById('auth-bootstrap-fallback');
+      if (loading && !loading.hidden && fallback) {
+        fallback.hidden = false;
+        loading.setAttribute('data-bootstrap-timeout', 'true');
+      }
+    }, 10000);
+  </script>
   <script type="module" src="./app.js"></script>
 </body>
 </html>

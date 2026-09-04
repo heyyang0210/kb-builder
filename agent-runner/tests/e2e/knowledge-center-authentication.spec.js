@@ -46,3 +46,16 @@ test('管理员错误密码显示就近错误并保持可恢复', async ({ page 
   await expect(alert).toBeFocused();
   await expect(page.getByRole('button', { name: '统一认证登录' })).toBeVisible();
 });
+
+test('平台入口不会长期停留在登录检查态', async ({ page }) => {
+  const pageErrors = [];
+  page.on('pageerror', error => pageErrors.push(error.message));
+
+  await page.goto(`${baseUrl}/knowledge-center/platform`);
+  await expect(page.locator('#auth-loading')).toBeHidden();
+  await expect(page.locator('#auth-bootstrap-fallback')).toBeHidden();
+  await expect(page.locator('#auth-shell')).toBeVisible();
+  await expect(page.getByText('请选择登录方式')).toBeVisible();
+
+  expect(pageErrors).toEqual([]);
+});

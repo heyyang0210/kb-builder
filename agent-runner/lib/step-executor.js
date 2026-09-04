@@ -6,13 +6,14 @@ class StepExecutor {
     this.toolManager = toolManager;
   }
 
-  async executeStep(step, input, onDetail) {
-    const agent = this.agentManager.getAgent(step.agent);
+  async execute(step, input, onDetail) {
+    const agentId = step.agent || step.name;
+    const agent = this.agentManager.getAgent(agentId);
     if (!agent) {
-      throw new Error(`Agent not found: ${step.agent}`);
+      throw new Error(`Agent not found: ${agentId}`);
     }
 
-    logger.info(`[StepExecutor] Executing step: ${step.name} (agent: ${step.agent})`);
+    logger.info(`[StepExecutor] Executing step: ${step.name} (agent: ${agentId})`);
 
     // 如果 agent 支持 toolManager，设置它
     if (agent.setToolManager && this.toolManager) {
@@ -31,20 +32,32 @@ class StepExecutor {
     return output;
   }
 
-  transformInput(step, prevOutput, workflowInput) {
-    const input = { ...workflowInput };
+  // 保留旧方法名作为别名
+  async executeStep(step, input, onDetail) {
+    return this.execute(step, input, onDetail);
+  }
 
-    // 根据步骤类型转换输入
-    if (step.name === 'planner') {
+  transformInput(step, prevOutput, workflowInput) {
+    const agent = step.agent || step.name;
+    if (!agent) {
+      return prevOutput;
+    }
+
+    const input = { ...workflowInput };
+    const findStep = name => workflowInput.steps?.find(s => (s.agent || s.name) === name);
+
+    if (agent === 'planner') {
       input.knowledgePoint = workflowInput.knowledge_point || workflowInput.knowledgePoint;
-    } else if (step.name === 'retriever') {
+    } else if (agent === 'retriever') {
       input.executionPlan = prevOutput;
-    } else if (step.name === 'generator') {
-      input.executionPlan = workflowInput.steps?.find(s => s.name === 'planner')?.output || prevOutput;
-      input.references = prevOutput;
-    } else if (step.name === 'validator') {
+    } else if (agent === 'generator') {
+      input.executionPlan = findStep('planner')?.output || prevOutput;
+      input.references = prevOutput.references || prevOutput;
+    } else if (agent === 'validator') {
       input.document = prevOutput?.document || prevOutput;
-      input.executionPlan = workflowInput.steps?.find(s => s.name === 'planner')?.output;
+      input.executionPlan = findStep('planner')?.output;
+    } else {
+      return prevOutput;
     }
 
     return input;

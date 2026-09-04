@@ -55,13 +55,29 @@ function transaction(filePath, mutate) {
 function sanitizeConnection(connection) {
   if (!connection) return null;
   const { credentialRef, ...safe } = connection;
-  return { ...safe, credentialConfigured: Boolean(credentialRef) };
+  const credentialConfigured = Boolean(credentialRef || connection.credentialConfigured);
+  const authMode = connection.authMode || (credentialConfigured ? 'service_account' : 'user_oauth');
+  const purpose = connection.purpose || 'read';
+  const managementStatus = connection.status === 'inactive' ? 'disabled' : 'active';
+  const verificationStatus = connection.lastVerification?.status || 'pending';
+  return {
+    ...safe,
+    baseUrl: connection.baseUrl || connection.host,
+    projectPath: connection.projectPath || connection.project,
+    authMode,
+    purpose,
+    credentialConfigured,
+    lastVerification: connection.lastVerification || null,
+    managementStatus,
+    verificationStatus,
+    status: managementStatus === 'disabled' ? 'disabled' : verificationStatus,
+  };
 }
 
 function upsertConnection(input, filePath = DEFAULT_CONFIG_PATH, audit = {}) {
   const name = String(input.name || input.id || 'default').trim();
-  const host = String(input.host || '').trim().replace(/\/$/, '');
-  const project = String(input.project || '').trim();
+  const host = String(input.baseUrl || input.host || '').trim().replace(/\/$/, '');
+  const project = String(input.projectPath || input.project || '').trim();
   if (!host || !project) throw new GitLabConnectorError('GITLAB_CONFIG_INVALID', 'GitLab 地址和项目不能为空');
   let parsed;
   try { parsed = new URL(host); } catch (_error) { throw new GitLabConnectorError('GITLAB_CONFIG_INVALID', 'GitLab 地址格式不正确'); }
@@ -69,24 +85,55 @@ function upsertConnection(input, filePath = DEFAULT_CONFIG_PATH, audit = {}) {
   if (parsed.username || parsed.password) throw new GitLabConnectorError('GITLAB_CONFIG_INVALID', 'GitLab 地址不能包含账号或密码');
   const allowedHosts = new Set(String(process.env.KNOWLEDGE_CENTER_GITLAB_ALLOWED_HOSTS || 'git-tools.yasdb.com').split(',').map(value => value.trim()).filter(Boolean));
   if (!allowedHosts.has(parsed.hostname)) throw new GitLabConnectorError('GITLAB_HOST_NOT_ALLOWED', 'GitLab 地址不在平台允许列表中', 403);
-  const mode = ['disabled', 'sandbox', 'production'].includes(input.mode) ? input.mode : 'disabled';
+  const mode = ['disabled', 'sandbox', 'production'].includes(input.mode)
+    ? input.mode
+    : (input.baseUrl || input.projectPath ? 'production' : 'disabled');
   if (mode === 'production' && parsed.protocol !== 'https:') throw new GitLabConnectorError('GITLAB_HTTPS_REQUIRED', '生产读取模式必须使用 HTTPS', 400);
   const productionProjects = new Set(String(process.env.KNOWLEDGE_CENTER_GITLAB_PRODUCTION_PROJECTS || 'git-tools.yasdb.com/cod-doc/yasdoc').split(',').map(value => value.trim()).filter(Boolean));
   if (mode === 'sandbox' && productionProjects.has(`${parsed.hostname}/${project}`)) throw new GitLabConnectorError('GITLAB_SANDBOX_PROJECT_REQUIRED', '隔离验证模式不允许连接正式手册仓库', 409);
   return transaction(filePath, config => {
     if (audit.idempotencyKey && config.idempotency.some(item => item.key === audit.idempotencyKey)) throw new GitLabConnectorError('IDEMPOTENCY_REPLAY', '该配置请求已处理', 409);
     const existing = config.connections.find(item => item.name === name || item.id === input.id);
+    const authMode = ['user_oauth', 'service_account'].includes(input.authMode) ? input.authMode : (existing?.authMode || (input.credentialRef || existing?.credentialRef ? 'service_account' : 'user_oauth'));
+    const credentialRef = authMode === 'service_account' ? String(input.credentialRef || existing?.credentialRef || '').trim() || null : null;
+    if (authMode === 'service_account' && !credentialRef) throw new GitLabConnectorError('GITLAB_CREDENTIAL_REF_REQUIRED', '服务账号认证必须配置凭证引用名');
     const connection = {
       id: existing?.id || `gitlab-${crypto.randomUUID()}`, name, host, project,
       pathPrefix: String(input.pathPrefix || '').replace(/^\/+|\/+$/g, ''),
       defaultBranch: String(input.defaultBranch || 'master').trim(),
       mode,
-      credentialRef: String(input.credentialRef || existing?.credentialRef || '').trim() || null,
-      updatedAt: new Date().toISOString()
+      credentialRef,
+      authMode,
+      purpose: ['read', 'read_write'].includes(input.purpose) ? input.purpose : (existing?.purpose || 'read'),
+      lastVerification: existing?.lastVerification || null,
+      status: existing?.status || 'active', updatedAt: new Date().toISOString()
     };
     if (existing) Object.assign(existing, connection); else config.connections.push(connection);
     if (audit.idempotencyKey) config.idempotency.push({ key: audit.idempotencyKey, at: connection.updatedAt });
     config.audit.push({ action: 'GITLAB_CONNECTION_UPSERT', connectionId: connection.id, operatorId: audit.operatorId || null, at: connection.updatedAt });
+    return sanitizeConnection(connection);
+  });
+}
+
+function recordVerification(id, verification, filePath = DEFAULT_CONFIG_PATH, audit = {}) {
+  return transaction(filePath, config => {
+    const connection = config.connections.find(item => item.id === id || item.name === id);
+    if (!connection) throw new GitLabConnectorError('GITLAB_CONNECTION_NOT_FOUND', 'GitLab 仓库连接不存在', 404);
+    connection.lastVerification = verification;
+    connection.updatedAt = new Date().toISOString();
+    config.audit.push({ action: 'GITLAB_CONNECTION_VERIFY', connectionId: connection.id, operatorId: audit.operatorId || null, at: connection.updatedAt, result: verification.status });
+    return sanitizeConnection(connection);
+  });
+}
+
+function setConnectionStatus(id, status, filePath = DEFAULT_CONFIG_PATH, audit = {}) {
+  if (!['active', 'inactive'].includes(status)) throw new GitLabConnectorError('GITLAB_STATUS_INVALID', '连接状态不合法');
+  return transaction(filePath, config => {
+    const connection = config.connections.find(item => item.id === id || item.name === id);
+    if (!connection) throw new GitLabConnectorError('GITLAB_CONNECTION_NOT_FOUND', 'GitLab 仓库连接不存在', 404);
+    connection.status = status;
+    connection.updatedAt = new Date().toISOString();
+    config.audit.push({ action: status === 'active' ? 'GITLAB_CONNECTION_ENABLED' : 'GITLAB_CONNECTION_DISABLED', connectionId: connection.id, operatorId: audit.operatorId || null, at: connection.updatedAt });
     return sanitizeConnection(connection);
   });
 }
@@ -155,6 +202,7 @@ function tokenFor(connection) {
 }
 
 function ensureEnabled(connection) {
+  if (connection.status === 'inactive') throw new GitLabConnectorError('GITLAB_CONNECTION_INACTIVE', 'GitLab 连接已停用，请联系平台管理员', 409);
   if (connection.mode === 'disabled') throw new GitLabConnectorError('GITLAB_CONNECTOR_DISABLED', 'GitLab 连接器当前未启用', 409);
 }
 
@@ -234,4 +282,4 @@ function authorizeMappedRequest(mapping, ref, language, requestedPath = '') {
   return clean;
 }
 
-module.exports = { GitLabConnectorError, readConfig, writeConfig, sanitizeConnection, upsertConnection, upsertMapping, findMapping, findConnection, listBranches, listTree, readFile, authorizeMappedRequest, request };
+module.exports = { GitLabConnectorError, readConfig, writeConfig, sanitizeConnection, upsertConnection, recordVerification, setConnectionStatus, upsertMapping, findMapping, findConnection, listBranches, listTree, readFile, authorizeMappedRequest, request };

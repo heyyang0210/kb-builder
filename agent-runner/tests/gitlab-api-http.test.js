@@ -124,4 +124,61 @@ describe('GitLab same-origin HTTP API', () => {
     const statistics = await fetch(`${baseUrl}/knowledge-center/api/gitlab/handbooks/DB-001/statistics?ref=master&language=zh`, { headers: { cookie: 'reader=1' } });
     await expect(statistics.json()).resolves.toMatchObject({ data: { branch: 'master', chapterCount: 1, documentCount: 2, headSha: 'abcdef123456' } });
   });
+
+  test('connection verification persists its latest result in the admin projection', async () => {
+    const configured = await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections`, {
+      method: 'POST', headers: { cookie: 'admin=1', 'content-type': 'application/json', 'idempotency-key': 'http-verify-connection' },
+      body: JSON.stringify({ name: 'verify-yasdoc', baseUrl: gitlabUrl, projectPath: 'cod-doc/yasdoc', mode: 'sandbox', credentialRef: 'local_read', authMode: 'service_account', purpose: 'read' })
+    });
+    expect(configured.status).toBe(200);
+    const connection = (await configured.json()).data;
+
+    const verified = await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections/${encodeURIComponent(connection.id)}/verify`, { method: 'POST', headers: { cookie: 'admin=1' } });
+    expect(verified.status).toBe(200);
+    await expect(verified.json()).resolves.toMatchObject({ data: { connectionId: connection.id, status: 'verified', branchCount: 1 } });
+
+    const listed = await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections`, { headers: { cookie: 'admin=1' } });
+    const item = (await listed.json()).data.items.find(candidate => candidate.id === connection.id);
+    expect(item).toMatchObject({ authMode: 'service_account', purpose: 'read', status: 'verified', managementStatus: 'active', verificationStatus: 'verified', lastVerification: { status: 'verified', branchCount: 1 } });
+    expect(item.lastVerification.verifiedAt).toBeTruthy();
+  });
+
+  test('administrator edits, disables and enables an isolated connection', async () => {
+    const createdResponse = await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections`, {
+      method: 'POST', headers: { cookie: 'admin=1', 'content-type': 'application/json', 'idempotency-key': 'http-lifecycle-create' },
+      body: JSON.stringify({ name: 'lifecycle-docs', baseUrl: gitlabUrl, projectPath: 'cod-doc/original', mode: 'sandbox', credentialRef: 'local_read', authMode: 'service_account', purpose: 'read' })
+    });
+    const created = (await createdResponse.json()).data;
+
+    const editedResponse = await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections/${encodeURIComponent(created.id)}`, {
+      method: 'PATCH', headers: { cookie: 'admin=1', 'content-type': 'application/json', 'idempotency-key': 'http-lifecycle-edit' },
+      body: JSON.stringify({ projectPath: 'cod-doc/edited', purpose: 'read_write' })
+    });
+    expect(editedResponse.status).toBe(200);
+    await expect(editedResponse.json()).resolves.toMatchObject({ data: { id: created.id, projectPath: 'cod-doc/edited', purpose: 'read_write', authMode: 'service_account' } });
+
+    const disabled = await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections/${encodeURIComponent(created.id)}/disable`, { method: 'POST', headers: { cookie: 'admin=1' } });
+    await expect(disabled.json()).resolves.toMatchObject({ data: { status: 'disabled' } });
+    const rejected = await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections/${encodeURIComponent(created.id)}/verify`, { method: 'POST', headers: { cookie: 'admin=1' } });
+    expect(rejected.status).toBe(409);
+    await expect(rejected.json()).resolves.toMatchObject({ error: { code: 'GITLAB_CONNECTION_INACTIVE' } });
+
+    const enabled = await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections/${encodeURIComponent(created.id)}/enable`, { method: 'POST', headers: { cookie: 'admin=1' } });
+    await expect(enabled.json()).resolves.toMatchObject({ data: { id: created.id } });
+  });
+
+  test('connection verification persists structured upstream failures', async () => {
+    const configured = await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections`, {
+      method: 'POST', headers: { cookie: 'admin=1', 'content-type': 'application/json', 'idempotency-key': 'http-failed-connection' },
+      body: JSON.stringify({ name: 'failed-yasdoc', baseUrl: gitlabUrl, projectPath: 'cod-doc/yasdoc', mode: 'sandbox', authMode: 'user_oauth', purpose: 'read' })
+    });
+    const connection = (await configured.json()).data;
+    const failed = await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections/${encodeURIComponent(connection.id)}/verify`, { method: 'POST', headers: { cookie: 'admin=1' } });
+    expect(failed.status).toBe(401);
+    await expect(failed.json()).resolves.toMatchObject({ error: { code: 'GITLAB_OAUTH_REQUIRED', message: '请先连接 GitLab 账号' } });
+
+    const listed = await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections`, { headers: { cookie: 'admin=1' } });
+    const item = (await listed.json()).data.items.find(candidate => candidate.id === connection.id);
+    expect(item).toMatchObject({ status: 'failed', lastVerification: { status: 'failed', error: { code: 'GITLAB_OAUTH_REQUIRED', message: '请先连接 GitLab 账号' } } });
+  });
 });

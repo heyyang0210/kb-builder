@@ -80,3 +80,6 @@ src/FastGPT/
 # 提示词
 prompt.md
 prompt-log.md
+
+# Playwright E2E 测试报告（构建产物）
+agent-runner/tests/e2e/reports/

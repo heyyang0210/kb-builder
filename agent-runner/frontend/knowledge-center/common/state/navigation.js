@@ -13,8 +13,16 @@ const routeByView = {
 const viewByRoute = Object.fromEntries(Object.entries(routeByView).filter(([view]) => view !== 'repository').map(([view, route]) => [route, view]));
 viewByRoute['/knowledge-center'] = 'dashboard';
 
-export function pathForView(view) {
-  return routeByView[view] || routeByView.dashboard;
+const validPlatformTabs = new Set(['governance', 'permissions', 'gitlab']);
+const defaultPlatformTab = 'governance';
+
+export function pathForView(view, params) {
+  const base = routeByView[view] || routeByView.dashboard;
+  if (view === 'platform' && params?.tab) {
+    const tab = validPlatformTabs.has(params.tab) ? params.tab : defaultPlatformTab;
+    return `${base}?tab=${tab}`;
+  }
+  return base;
 }
 
 export function viewFromPath(pathname) {
@@ -23,3 +31,11 @@ export function viewFromPath(pathname) {
   if (normalized.startsWith('/knowledge-center/outlines/')) return 'outlines';
   return viewByRoute[normalized] || null;
 }
+
+export function platformTabFromSearch(search) {
+  const params = new URLSearchParams(search);
+  const tab = params.get('tab');
+  return validPlatformTabs.has(tab) ? tab : defaultPlatformTab;
+}
+
+export { validPlatformTabs, defaultPlatformTab };

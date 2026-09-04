@@ -1,10 +1,10 @@
 import { archiveAsset, createAsset, deleteOutline, importOutline, loadAssets, loadOutlineData, loadPlatformData, resolveAssetStatus, restoreAsset, updateAsset, updateAssetStatus, loadPlatformPermissions, updatePlatformUserPermissions } from './common/api/platform-api.js';
-import { loadGitLabBranches, loadGitLabConnections, loadGitLabOAuthStatus, loadGitLabOAuthConfig, loadGitLabTree, loadHandbookRepository, loadHandbookRepositoryFile, loadHandbookRepositoryMapping, loadHandbookRepositoryStatistics, loadHandbookRepositoryTree, saveGitLabConnection, saveHandbookRepositoryMapping } from './common/api/gitlab-api.js';
+import { loadGitLabBranches, loadGitLabConnections, loadGitLabOAuthStatus, loadGitLabOAuthConfig, loadGitLabTree, loadHandbookRepository, loadHandbookRepositoryFile, loadHandbookRepositoryMapping, loadHandbookRepositoryStatistics, loadHandbookRepositoryTree, saveGitLabConnection, saveHandbookRepositoryMapping, createGitLabConnection, updateGitLabConnection, verifyGitLabConnection, disableGitLabConnection, enableGitLabConnection, searchGitLabConnections } from './common/api/gitlab-api.js';
 import { addIncrementalSource, commentIncrementalReview, createIncrementalReview, createIncrementalRevision, createIncrementalTask, decideIncrementalReview, loadIncrementalBaselines, loadIncrementalTask, loadIncrementalTasks, publishIncrementalTask, recordIncrementalEvidence, runIncrementalChecks, saveIncrementalDraft, submitIncrementalCandidate, updateIncrementalTarget } from './common/api/incremental-api.js';
 import { bootstrapAuth, consumeRememberedTarget, performLogout, rememberCurrentTarget, startCasLogin, submitAdminLogin } from './common/auth/auth-controller.js';
 import { appState, views } from './common/state/app-state.js';
 import { authState, canAccessView, canPerform, clearSession, displayName, firstAccessibleView, isPlatformAdmin } from './common/state/auth-state.js';
-import { pathForView, viewFromPath } from './common/state/navigation.js';
+import { pathForView, viewFromPath, platformTabFromSearch } from './common/state/navigation.js';
 import { onKnowledgeDataChanged } from './common/state/data-change.js';
 import { byId, escapeHtml } from './common/utils/dom.js';
 import { renderDashboard } from './modules/dashboard/view.js';
@@ -14,7 +14,7 @@ import { renderOutlines } from './modules/outlines/view.js';
 import { renderTemplates } from './modules/templates/view.js';
 import { renderProduction, renderStages } from './modules/production/view.js';
 import { renderReviewPublishing } from './modules/review-publishing/view.js';
-import { renderPlatformAdmin } from './modules/platform-admin/view.js';
+import { renderPermissionResults, renderPlatformAdmin } from './modules/platform-admin/view.js';
 import { renderRepository } from './modules/repository/view.js';
 
 const renderers = {
@@ -52,6 +52,9 @@ function render() {
     assetRenderDeferred = true;
     return;
   }
+  if (appState.activeView === 'platform'
+    && (appState.gitlabAddingConnection || appState.gitlabEditingConnection)
+    && document.querySelector('[data-gitlab-add-form], [data-gitlab-edit-form]')) return;
   const renderer = renderers[appState.activeView] || renderDashboard;
   byId('page-title').textContent = views[appState.activeView][1];
   document.querySelectorAll('.nav-item').forEach(button => {
@@ -63,7 +66,7 @@ function render() {
   });
   document.querySelector('.nav-caption.governance').hidden = !canAccessView('platform');
   const outlineView = appState.activeView === 'outlines' ? outlineRouteState() : {};
-  byId('view-root').innerHTML = renderer({ projection: appState.activeView === 'repository' ? appState.gitlabProjection : appState.projection, outlineProjection: appState.outlineProjection, assetCatalog: appState.assetCatalog, incrementalProjection: appState.incrementalProjection, gitlabProjection: appState.gitlabProjection, permissionProjection: appState.permissionProjection, selectedPermissionUserId: appState.selectedPermissionUserId, permissionSaveStatus: appState.permissionSaveStatus, platformAdmin: isPlatformAdmin(), outlinePermissions: { create: canPerform('outline:create'), delete: canPerform('outline:delete') }, outlineView });
+  byId('view-root').innerHTML = renderer({ projection: appState.activeView === 'repository' ? appState.gitlabProjection : appState.projection, outlineProjection: appState.outlineProjection, assetCatalog: appState.assetCatalog, incrementalProjection: appState.incrementalProjection, gitlabProjection: appState.gitlabProjection, permissionProjection: appState.permissionProjection, governanceProjection: appState.platformGovernance, selectedPermissionUserId: appState.selectedPermissionUserId, permissionSaveStatus: appState.permissionSaveStatus, permissionUserSearch: appState.permissionUserSearch, gitlabVerification: appState.gitlabVerification, platformAdmin: isPlatformAdmin(), platformTab: appState.platformTab, gitlabListState: appState.gitlabListState, gitlabAddingConnection: appState.gitlabAddingConnection, gitlabEditingConnection: appState.gitlabEditingConnection, outlinePermissions: { create: canPerform('outline:create'), delete: canPerform('outline:delete') }, outlineView });
   window.lucide?.createIcons();
   if (appState.activeView === 'outlines' && !outlineView.isDetail && appState.outlineListState.scrollPosition) requestAnimationFrame(() => { byId('main-shell').scrollTop = appState.outlineListState.scrollPosition; });
 }
@@ -83,8 +86,8 @@ function navigate(view, updateHistory = true) {
     return navigate(fallback, updateHistory);
   }
   appState.activeView = view;
-  const targetPath = pathForView(view);
-  if (updateHistory && window.location.pathname !== targetPath) window.history.pushState({ view }, '', targetPath);
+  const targetPath = view === "platform" ? pathForView(view, { tab: appState.platformTab }) : pathForView(view);
+  if (updateHistory && (window.location.pathname + window.location.search) !== targetPath) window.history.pushState({ view, tab: appState.platformTab }, '', targetPath);
   render();
   if (view === 'outlines' && !appState.outlineProjection) loadOutlines();
   if (view === 'assets') loadAssetCatalog();
@@ -116,7 +119,22 @@ async function loadRepositoryWorkspace() {
     const file = firstFile ? await loadHandbookRepositoryFile(state.handbookId, branch, state.language, firstFile) : null;
     appState.gitlabProjection = { status: 'ok', handbookId: state.handbookId, handbookName: metadata.handbookName, connectionName: metadata.connectionName, project: metadata.project, languages: metadata.languages, branches, branch, language: state.language, tree, file, commitSha: file?.commitId || metadata.commitSha };
   } catch (error) {
-    appState.gitlabProjection = { status: error.status === 403 ? 'forbidden' : 'unavailable', handbookId: state.handbookId, error: { code: error.code, message: error.message } };
+    const statusByCode = {
+      GITLAB_OAUTH_REQUIRED: 'unauthorized',
+      GITLAB_CREDENTIAL_UNAVAILABLE: 'unauthorized',
+      GITLAB_MAPPING_NOT_FOUND: 'not-mapped',
+      GITLAB_LANGUAGE_NOT_MAPPED: 'not-mapped',
+      GITLAB_BRANCH_NOT_FOUND: 'not-found',
+      GITLAB_CONNECTION_NOT_FOUND: 'not-found',
+      GITLAB_BRANCH_NOT_ALLOWED: 'forbidden',
+      GITLAB_PATH_FORBIDDEN: 'forbidden',
+      GITLAB_FORBIDDEN: 'forbidden',
+      GITLAB_UNAUTHORIZED: 'unauthorized',
+      GITLAB_CONNECTION_INACTIVE: 'conflict',
+      GITLAB_CONNECTOR_DISABLED: 'conflict',
+    };
+    const status = statusByCode[error.code] || (error.status === 403 ? 'forbidden' : error.status === 401 ? 'unauthorized' : error.status === 404 ? 'not-found' : error.status === 409 ? 'conflict' : 'unavailable');
+    appState.gitlabProjection = { status, handbookId: state.handbookId, error: { code: error.code, message: error.message, httpStatus: error.status } };
   }
   render();
 }
@@ -178,6 +196,18 @@ async function loadGitLabAdmin() {
   if (appState.activeView === 'platform') render();
 }
 
+function refreshPermissionResults(searchValue) {
+  appState.permissionUserSearch = searchValue.trim();
+  const results = renderPermissionResults(appState.permissionProjection || {}, appState.selectedPermissionUserId, appState.permissionSaveStatus, appState.permissionUserSearch);
+  appState.selectedPermissionUserId = results.selectedUserId;
+  const list = byId('view-root')?.querySelector('[data-permission-user-list]');
+  const detail = byId('view-root')?.querySelector('[data-permission-user-detail]');
+  if (list) list.innerHTML = results.listHtml;
+  if (detail) detail.innerHTML = results.detailHtml;
+}
+
+let permissionSearchComposing = false;
+
 async function loadIncrementalWorkspace(preferredTaskId = null) {
   if (appState.activeView !== 'production' && appState.activeView !== 'stages') return;
   const params = new URLSearchParams(window.location.search);
@@ -226,6 +256,11 @@ function showAppNotice(message) {
   const panel = byId('error-panel');
   panel.hidden = false;
   byId('error-message').textContent = message;
+}
+
+function showApplicationError(error) {
+  showApplication();
+  showAppNotice(`页面加载失败：${error?.message || '请重新加载页面。'}`);
 }
 
 function authErrorMessage(error) {
@@ -301,7 +336,11 @@ async function load(scopes = ['context', 'overview']) {
     if (currentContext?.context?.brand?.enterpriseName) byId('enterprise-name').textContent = currentContext.context.brand.enterpriseName;
     else if (!appState.projection) byId('enterprise-name').textContent = '企业信息暂不可用';
     updatePlatformState(currentContext, currentOverview);
-    render();
+    try {
+      render();
+    } catch (error) {
+      showApplicationError(error);
+    }
   })();
   try {
     await loadInFlight;
@@ -373,6 +412,115 @@ document.addEventListener('click', async event => {
       gitlabRefreshRepo.textContent = '刷新失败';
       setTimeout(() => { gitlabRefreshRepo.textContent = originalText; gitlabRefreshRepo.disabled = false; }, 2000);
     }
+    return;
+  }
+  /* ---- 平台管理标签页切换 ---- */
+  const platformTab = event.target.closest("[data-platform-tab]");
+  if (platformTab) {
+    const tab = platformTab.dataset.platformTab;
+    if (tab && tab !== appState.platformTab) {
+      appState.platformTab = tab;
+      appState.gitlabAddingConnection = false;
+      window.history.pushState({ view: "platform", tab }, "", pathForView("platform", { tab }));
+      render();
+      if (tab === "gitlab" && !appState.gitlabProjection?.connections?.length) loadGitLabAdmin();
+    }
+    return;
+  }
+  /* ---- GitLab 连接选择 ---- */
+  const gitlabConn = event.target.closest("[data-gitlab-connection]");
+  if (gitlabConn) {
+    appState.gitlabListState.selectedConnectionId = gitlabConn.dataset.gitlabConnection;
+    render();
+    return;
+  }
+  /* ---- GitLab 分页 ---- */
+  const gitlabPage = event.target.closest("[data-gitlab-page]");
+  if (gitlabPage) {
+    const dir = gitlabPage.dataset.gitlabPage;
+    if (dir === "prev" && appState.gitlabListState.page > 1) appState.gitlabListState.page--;
+    else if (dir === "next") appState.gitlabListState.page++;
+    render();
+    return;
+  }
+  /* ---- GitLab 添加连接 ---- */
+  const gitlabAdd = event.target.closest("[data-gitlab-add-connection]");
+  if (gitlabAdd) {
+    appState.gitlabAddingConnection = true;
+    render();
+    return;
+  }
+  /* ---- GitLab 取消添加 ---- */
+  const gitlabCancel = event.target.closest("[data-gitlab-cancel-add]");
+  /* ---- GitLab 取消编辑 ---- */
+  const gitlabCancelEdit = event.target.closest("[data-gitlab-cancel-edit]");
+  if (gitlabCancelEdit) {
+    appState.gitlabEditingConnection = null;
+    render();
+    return;
+  }
+  if (gitlabCancel) {
+    appState.gitlabAddingConnection = false;
+    render();
+    return;
+  }
+  /* ---- GitLab 编辑连接 ---- */
+  const gitlabEdit = event.target.closest("[data-gitlab-edit]");
+  if (gitlabEdit) {
+    const connId = gitlabEdit.dataset.gitlabEdit;
+    const conn = appState.gitlabProjection?.connections?.find(item => item.id === connId);
+    if (!conn) return;
+    appState.gitlabEditingConnection = conn;
+    appState.gitlabAddingConnection = false;
+    render();
+    return;
+  }
+  /* ---- GitLab 验证连接 ---- */
+  const gitlabVerify = event.target.closest("[data-gitlab-verify]");
+  if (gitlabVerify) {
+    const connId = gitlabVerify.dataset.gitlabVerify;
+    appState.gitlabVerification = { connectionId: connId, status: 'verifying' };
+    render();
+    try {
+      appState.gitlabVerification = await verifyGitLabConnection(connId);
+      await loadGitLabAdmin();
+      appState.gitlabVerification = null;
+      render();
+    } catch (error) {
+      appState.gitlabVerification = { connectionId: connId, status: 'failed', verifiedAt: new Date().toISOString(), error: { code: error.code, message: error.message } };
+      await loadGitLabAdmin();
+    }
+    return;
+  }
+  /* ---- GitLab 停用连接 ---- */
+  const gitlabDisable = event.target.closest("[data-gitlab-disable]");
+  if (gitlabDisable) {
+    if (!window.confirm("确认停用此连接？停用后不影响已有关联手册。")) return;
+    const connId = gitlabDisable.dataset.gitlabDisable;
+    gitlabDisable.disabled = true;
+    try {
+      await disableGitLabConnection(connId);
+      await loadGitLabAdmin();
+    } catch (error) { gitlabDisable.disabled = false; }
+    return;
+  }
+  /* ---- GitLab 重新启用连接 ---- */
+  const gitlabEnable = event.target.closest("[data-gitlab-enable]");
+  if (gitlabEnable) {
+    const connId = gitlabEnable.dataset.gitlabEnable;
+    gitlabEnable.disabled = true;
+    try {
+      await enableGitLabConnection(connId);
+      await loadGitLabAdmin();
+    } catch (error) { gitlabEnable.disabled = false; }
+    return;
+  }
+  /* ---- 用户权限 - 选择用户 ---- */
+  const permUser = event.target.closest("[data-permission-user]");
+  if (permUser) {
+    appState.selectedPermissionUserId = permUser.dataset.permissionUser;
+    appState.permissionSaveStatus = null;
+    render();
     return;
   }
   const outlineInfoToggle = event.target.closest('[data-outline-info-toggle]');
@@ -919,6 +1067,64 @@ document.addEventListener('submit', async event => {
     } catch (error) { appState.permissionSaveStatus = 'error'; render(); }
     return;
   }
+  /* ---- GitLab 添加连接表单提交 ---- */
+  const gitlabAddForm = event.target.closest("[data-gitlab-add-form]");
+  if (gitlabAddForm) {
+    event.preventDefault();
+    const button = gitlabAddForm.querySelector('button[type="submit"]');
+    const statusEl = gitlabAddForm.querySelector(".form-status");
+    button.disabled = true;
+    statusEl.textContent = "正在保存并验证…";
+    try {
+      const saved = await createGitLabConnection({
+        name: gitlabAddForm.elements.name.value.trim(),
+        baseUrl: gitlabAddForm.elements.baseUrl.value.trim(),
+        projectPath: gitlabAddForm.elements.projectPath.value.trim(),
+        purpose: gitlabAddForm.elements.purpose.value,
+        authMode: gitlabAddForm.elements.authMode.value,
+        ...(gitlabAddForm.elements.credentialRef.value.trim() ? { credentialRef: gitlabAddForm.elements.credentialRef.value.trim() } : {}),
+      });
+      appState.gitlabListState.selectedConnectionId = saved.id;
+      appState.gitlabAddingConnection = false;
+      if (saved.authMode !== 'user_oauth' || appState.gitlabProjection?.oauthStatus?.connected) {
+        appState.gitlabVerification = { connectionId: saved.id, status: 'verifying' };
+        await verifyGitLabConnection(saved.id);
+      }
+      await loadGitLabAdmin();
+      appState.gitlabVerification = null;
+    } catch (error) {
+      statusEl.textContent = error.message || "保存失败，请重试";
+      button.disabled = false;
+    }
+    return;
+  }
+  /* ---- GitLab 编辑连接表单提交 ---- */
+  const gitlabEditForm = event.target.closest("[data-gitlab-edit-form]");
+  if (gitlabEditForm) {
+    event.preventDefault();
+    const button = gitlabEditForm.querySelector("button[type=\"submit\"]");
+    const statusEl = gitlabEditForm.querySelector(".form-status");
+    const connId = gitlabEditForm.elements.id.value;
+    button.disabled = true;
+    statusEl.textContent = "正在保存…";
+    try {
+      await updateGitLabConnection(connId, {
+        name: gitlabEditForm.elements.name.value.trim(),
+        baseUrl: gitlabEditForm.elements.baseUrl.value.trim(),
+        projectPath: gitlabEditForm.elements.projectPath.value.trim(),
+        purpose: gitlabEditForm.elements.purpose.value,
+        authMode: gitlabEditForm.elements.authMode.value,
+        ...(gitlabEditForm.elements.credentialRef.value.trim() ? { credentialRef: gitlabEditForm.elements.credentialRef.value.trim() } : {}),
+      });
+      statusEl.textContent = "连接已更新";
+      appState.gitlabEditingConnection = null;
+      await loadGitLabAdmin();
+    } catch (error) {
+      statusEl.textContent = error.message || "保存失败，请重试";
+      button.disabled = false;
+    }
+    return;
+  }
   const gitLabConnectionForm = event.target.closest('[data-gitlab-connection-form]');
   if (gitLabConnectionForm) {
     event.preventDefault();
@@ -1142,6 +1348,12 @@ document.addEventListener('submit', async event => {
 });
 
 document.addEventListener('change', event => {
+  const gitlabAuthMode = event.target.closest('[data-gitlab-auth-mode]');
+  if (gitlabAuthMode) {
+    const credentialField = gitlabAuthMode.form?.querySelector('[data-gitlab-credential-field]');
+    if (credentialField) credentialField.hidden = gitlabAuthMode.value !== 'service_account';
+    return;
+  }
   const operationType = event.target.closest('[data-incremental-operation-type]');
   if (operationType) {
     const form = operationType.form;
@@ -1173,6 +1385,33 @@ document.addEventListener('change', event => {
 });
 
 document.addEventListener('input', event => {
+  /* ---- GitLab 连接搜索 ---- */
+  const gitlabSearch = event.target.closest("[data-gitlab-list-search]");
+  if (gitlabSearch) {
+    const selectionStart = gitlabSearch.selectionStart;
+    const selectionEnd = gitlabSearch.selectionEnd;
+    appState.gitlabListState.search = gitlabSearch.value.trim();
+    appState.gitlabListState.page = 1;
+    render();
+    const restored = byId("view-root")?.querySelector("[data-gitlab-list-search]");
+    if (restored && restored !== event.target) {
+      restored.value = gitlabSearch.value;
+      restored.focus();
+      if (typeof selectionStart === 'number' && typeof selectionEnd === 'number') {
+        const cursorStart = Math.min(selectionStart, restored.value.length);
+        const cursorEnd = Math.min(selectionEnd, restored.value.length);
+        restored.setSelectionRange(cursorStart, cursorEnd);
+      }
+    }
+    return;
+  }
+  /* ---- 用户权限搜索 ---- */
+  const permSearch = event.target.closest("[data-permission-search]");
+  if (permSearch) {
+    if (permissionSearchComposing || event.isComposing) return;
+    refreshPermissionResults(permSearch.value);
+    return;
+  }
   const repositorySearch = event.target.closest('[data-repository-search]');
   if (repositorySearch) {
     const query = repositorySearch.value.trim().toLowerCase();
@@ -1196,6 +1435,18 @@ document.addEventListener('input', event => {
   const rows = [...document.querySelectorAll('[data-outline-row]')];
   const empty = document.querySelector('[data-outline-filter-empty]');
   if (empty) empty.hidden = rows.some(row => !row.hidden);
+});
+
+document.addEventListener('compositionstart', event => {
+  if (event.target.closest('[data-permission-search]')) permissionSearchComposing = true;
+});
+
+document.addEventListener('compositionend', event => {
+  const permSearch = event.target.closest('[data-permission-search]');
+  if (permSearch) {
+    permissionSearchComposing = false;
+    refreshPermissionResults(permSearch.value);
+  }
 });
 
 document.addEventListener('change', event => {
@@ -1314,7 +1565,9 @@ mobileNavigation.addEventListener('change', () => {
   else syncMobileNavigationState();
 });
 window.addEventListener('popstate', () => {
+  const previousTab = appState.platformTab;
   const view = viewFromPath(window.location.pathname) || 'dashboard';
+  if (view === "platform") appState.platformTab = platformTabFromSearch(window.location.search);
   if (authState.status === 'authenticated') {
     appState.outlineProjection = view === 'outlines' ? null : appState.outlineProjection;
     navigate(view, false);
@@ -1397,8 +1650,14 @@ resizer?.addEventListener('keydown', event => {
 });
 
 const initialView = viewFromPath(window.location.pathname);
-if (initialView) appState.activeView = initialView;
-else window.history.replaceState({ view: 'dashboard' }, '', pathForView('dashboard'));
+if (initialView) {
+  appState.activeView = initialView;
+  if (initialView === "platform") {
+    appState.platformTab = platformTabFromSearch(window.location.search);
+  }
+} else {
+  window.history.replaceState({ view: 'dashboard' }, '', pathForView('dashboard'));
+}
 
 async function bootstrap() {
   let session;
@@ -1435,5 +1694,6 @@ async function bootstrap() {
 }
 
 bootstrap().catch(error => {
-  showAuth(error, '认证检查未完成，请重试。');
+  if (authState.status === 'authenticated') showApplicationError(error);
+  else showAuth(error, '认证检查未完成，请重试。');
 });

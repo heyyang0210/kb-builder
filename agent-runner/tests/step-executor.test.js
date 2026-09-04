@@ -37,6 +37,11 @@ describe('StepExecutor', () => {
     expect(mockAgent.setToolManager).toHaveBeenCalledWith(mockTM);
   });
 
+  test('execute 兼容仅使用 name 的旧步骤', async () => {
+    await executor.execute({ name: 'planner' }, {});
+    expect(mockAgentManager.getAgent).toHaveBeenCalledWith('planner');
+  });
+
   test('transformInput - planner 步骤', () => {
     const inputData = {
       knowledge_point: { name: '测试', type: '通用基础' },
@@ -55,6 +60,14 @@ describe('StepExecutor', () => {
 
     const result = executor.transformInput({ agent: 'planner' }, null, inputData);
     expect(result.knowledgePoint.name).toBe('测试');
+  });
+
+  test('transformInput 兼容旧步骤和旧步骤列表字段', () => {
+    const prevOutput = { references: '参考资料' };
+    const workflowInput = { steps: [{ name: 'planner', output: '执行计划' }] };
+    const result = executor.transformInput({ name: 'generator' }, prevOutput, workflowInput);
+    expect(result.executionPlan).toBe('执行计划');
+    expect(result.references).toBe('参考资料');
   });
 
   test('transformInput - retriever 步骤', () => {

@@ -2,7 +2,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { loadPlatformContext, loadPlatformProjection } = require('../lib/platform-context-gateway');
-const { GitLabConnectorError, readConfig: readGitLabConfig, upsertConnection, upsertMapping, findMapping, findConnection, listBranches, listTree, readFile: readGitLabFile, sanitizeConnection, authorizeMappedRequest } = require('../lib/gitlab-connector');
+const { GitLabConnectorError, readConfig: readGitLabConfig, upsertConnection, recordVerification, setConnectionStatus, upsertMapping, findMapping, findConnection, listBranches, listTree, readFile: readGitLabFile, sanitizeConnection, authorizeMappedRequest } = require('../lib/gitlab-connector');
 const { GitLabOAuthError, start: startGitLabOAuth, callback: completeGitLabOAuth, tokenForUser, status: gitLabOAuthStatus } = require('../lib/gitlab-oauth');
 const { ASSET_STATUS_LABELS, systemAssetStatus, assetStatus, projectAsset, queryKnowledgeAssets: queryKnowledgeAssetsBase, isPlatformAdmin } = require('../lib/knowledge-asset-utils');
 
@@ -348,7 +348,7 @@ function createKnowledgeCenterHandler(options) {
         if (rules.extensions.has(ext) && !rules.excludedNames.has(path.basename(entry.path).toLowerCase())) documents.add(entry.path);
       }
     }
-    return { handbookId, ref, language, headSha, chapters: chapters.size, documents: documents.size, mappedRoots: roots, extensions: [...rules.extensions] };
+    return { handbookId, ref, language, headSha, branch: ref, chapterCount: chapters.size, documentCount: documents.size, chapters: chapters.size, documents: documents.size, mappedRoots: roots, extensions: [...rules.extensions] };
   }
 
   async function handleGitLabApi(req, res, session) {
@@ -393,11 +393,24 @@ function createKnowledgeCenterHandler(options) {
       if (req.method === 'GET' && pathname === '/knowledge-center/api/gitlab/connections') {
         if (forbidUnlessPlatformAdmin(res, session)) return;
         const cfg = readGitLabConfig(GITLAB_CONFIG_PATH);
-        const items = (cfg.connections || []).map(sanitizeConnection);
+        const params = new URL(req.url, 'http://localhost').searchParams;
+        const q = String(params.get('q') || '').trim().toLowerCase();
+        const status = String(params.get('status') || '').trim();
+        const page = Math.max(1, Number.parseInt(params.get('page') || '1', 10) || 1);
+        const pageSize = Math.min(100, Math.max(1, Number.parseInt(params.get('pageSize') || '20', 10) || 20));
+        const mappingCounts = new Map();
+        for (const mapping of cfg.mappings || []) mappingCounts.set(mapping.connectionId, (mappingCounts.get(mapping.connectionId) || 0) + 1);
+        const projected = (cfg.connections || []).map(item => ({
+          ...sanitizeConnection(item),
+          linkedHandbookCount: mappingCounts.get(item.id) || 0,
+        }));
+        const filtered = projected.filter(item => (!q || `${item.name} ${item.host} ${item.project}`.toLowerCase().includes(q)) && (!status || item.managementStatus === status || item.verificationStatus === status || item.status === status));
+        const items = filtered.slice((page - 1) * pageSize, page * pageSize);
+        const generatedAt = projected.map(item => item.updatedAt).filter(Boolean).sort().at(-1) || null;
         res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
-        res.end(JSON.stringify({ success: true, data: { items } })); return;
+        res.end(JSON.stringify({ success: true, data: { items, page, pageSize, total: filtered.length, generatedAt } })); return;
       }
-      if (req.method === 'PUT' && pathname === '/knowledge-center/api/gitlab/connections') {
+      if ((req.method === 'PUT' || req.method === 'POST') && pathname === '/knowledge-center/api/gitlab/connections') {
         if (forbidUnlessPlatformAdmin(res, session)) return;
         const idempotencyKey = String(req.headers['idempotency-key'] || '').trim();
         if (!idempotencyKey) throw new GitLabConnectorError('IDEMPOTENCY_KEY_REQUIRED', '配置更新必须携带 Idempotency-Key', 400);
@@ -405,6 +418,44 @@ function createKnowledgeCenterHandler(options) {
         const connection = upsertConnection(body, GITLAB_CONFIG_PATH, { idempotencyKey, operatorId: session?.user?.id });
         res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
         res.end(JSON.stringify({ success: true, data: connection })); return;
+      }
+      const connectionUpdate = pathname.match(/^\/knowledge-center\/api\/gitlab\/connections\/([^/]+)$/);
+      if (connectionUpdate && req.method === 'PATCH') {
+        if (forbidUnlessPlatformAdmin(res, session)) return;
+        const idempotencyKey = String(req.headers['idempotency-key'] || '').trim();
+        if (!idempotencyKey) throw new GitLabConnectorError('IDEMPOTENCY_KEY_REQUIRED', '配置更新必须携带 Idempotency-Key', 400);
+        const id = decodeURIComponent(connectionUpdate[1]);
+        const existing = findConnection(id, GITLAB_CONFIG_PATH);
+        const connection = upsertConnection({ ...existing, ...await readJsonBody(req), id }, GITLAB_CONFIG_PATH, { idempotencyKey, operatorId: session?.user?.id });
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify({ success: true, data: connection })); return;
+      }
+      const connectionCommand = pathname.match(/^\/knowledge-center\/api\/gitlab\/connections\/([^/]+)\/(verify|disable|enable)$/);
+      if (connectionCommand) {
+        if (forbidUnlessPlatformAdmin(res, session)) return;
+        if (req.method !== 'POST') { res.writeHead(405); res.end(); return; }
+        const connectionId = decodeURIComponent(connectionCommand[1]);
+        const action = connectionCommand[2];
+        if (action === 'disable' || action === 'enable') {
+          const connection = setConnectionStatus(connectionId, action === 'enable' ? 'active' : 'inactive', GITLAB_CONFIG_PATH, { operatorId: session?.user?.id });
+          res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+          res.end(JSON.stringify({ success: true, data: connection })); return;
+        }
+        const connection = findConnection(connectionId, GITLAB_CONFIG_PATH);
+        if ((connection.status || 'active') === 'inactive') throw new GitLabConnectorError('GITLAB_CONNECTION_INACTIVE', '已停用连接不能验证，请先重新启用', 409);
+        const accessToken = tokenForUser(session?.user?.id, connection.host);
+        let data;
+        try {
+          const branches = await listBranches(connection, accessToken ? { accessToken } : {});
+          data = { connectionId: connection.id, status: 'verified', branchCount: branches.length, verifiedAt: new Date().toISOString() };
+        } catch (error) {
+          const failed = { connectionId: connection.id, status: 'failed', verifiedAt: new Date().toISOString(), error: { code: error.code || 'GITLAB_VERIFY_FAILED', message: error.message } };
+          recordVerification(connection.id, failed, GITLAB_CONFIG_PATH, { operatorId: session?.user?.id });
+          throw error;
+        }
+        recordVerification(connection.id, data, GITLAB_CONFIG_PATH, { operatorId: session?.user?.id });
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify({ success: true, data })); return;
       }
       const mappingUpdate = pathname.match(/^\/knowledge-center\/api\/gitlab\/mappings\/([^/]+)$/);
       if (mappingUpdate && req.method === 'GET') {

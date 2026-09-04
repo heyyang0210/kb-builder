@@ -12,9 +12,16 @@ export const views = {
 };
 
 export const appState = {
-  activeView: 'dashboard', contextProjection: null, projection: null, outlineProjection: null, assetCatalog: null, incrementalProjection: null, gitlabProjection: null,
+  activeView: 'dashboard', contextProjection: null, projection: null, outlineProjection: null, assetCatalog: null, incrementalProjection: null, gitlabProjection: { connections: [] },
   outlineListState: { search: '', statusFilter: '', scrollPosition: 0 },
   selectedPermissionUserId: null,
   permissionSaveStatus: null,
+  permissionUserSearch: '',
+  platformTab: 'governance',
+  platformGovernance: null,
+  gitlabAddingConnection: false,
+  gitlabEditingConnection: null,
+  gitlabListState: { search: '', page: 1, pageSize: 20, selectedConnectionId: null },
+  gitlabVerification: null,
   mappingState: { connectionId: null, treeItems: [], expandedPaths: new Set(), branches: [], enabledBranches: [], zhPaths: [], enPaths: [], activeLang: 'zh' },
 };

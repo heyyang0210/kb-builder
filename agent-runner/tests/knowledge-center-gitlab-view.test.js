@@ -18,7 +18,7 @@ describe('知识资产 GitLab 阅读前端契约', () => {
     expect(navigation).toContain("normalized.startsWith('/knowledge-center/assets/')");
   });
   test('阅读工作区展示目录正文分支提交和错误状态', () => {
-    for (const label of ['目录', '分支', '提交', '正在读取仓库内容', '没有权限查看仓库', '仓库暂时不可用']) expect(view()).toContain(label);
+    for (const label of ['目录', '分支', '提交', '正在读取仓库内容', '无权限访问此仓库内容', '需要连接 GitLab 账号', '该手册尚未配置可读内容', '找不到请求的仓库内容', '仓库服务暂时不可用']) expect(view()).toContain(label);
     expect(view()).toContain('repository-workspace');
     expect(view()).toContain('data-repository-file');
     expect(view()).toContain('treeHierarchy');
@@ -45,11 +45,13 @@ describe('知识资产 GitLab 阅读前端契约', () => {
   });
   test('平台管理员可在平台管理页配置 GitLab 连接', () => {
     const admin = read('frontend/knowledge-center/modules/platform-admin/view.js');
-    expect(admin).toContain('data-gitlab-connection-form');
+    // 新架构：三标签页 + 连接列表 + 添加表单
+    expect(admin).toContain('GitLab 仓库');
+    expect(admin).toContain('data-gitlab-add-form');
     expect(admin).toContain('GitLab 地址');
-    expect(admin).toContain('凭证引用');
-    expect(admin).toContain('连接 GitLab');
-    expect(admin).toContain('development-only');
+    expect(admin).toContain('添加仓库连接');
+    expect(admin).toContain('验证连接');
+    expect(admin).toContain('停用');
     expect(admin).not.toContain('accessToken');
   });
   test('平台管理页提供用户角色权限配置入口', () => {
@@ -60,6 +62,34 @@ describe('知识资产 GitLab 阅读前端契约', () => {
     expect(admin).toContain('平台管理员');
     expect(api).toContain('/knowledge-center/api/auth/users');
     expect(api).toContain('updatePlatformUserPermissions');
+  });
+  test('权限搜索只更新结果区域并支持中文组合输入', () => {
+    const admin = read('frontend/knowledge-center/modules/platform-admin/view.js');
+    const app = read('frontend/knowledge-center/app.js');
+    expect(admin).toContain('data-permission-user-list');
+    expect(admin).toContain('data-permission-user-detail');
+    expect(admin).toContain('无匹配用户');
+    expect(admin).toContain('请调整搜索条件');
+    expect(app).toContain('function refreshPermissionResults');
+    expect(app).toContain('event.isComposing');
+    expect(app).toContain("document.addEventListener('compositionstart'");
+    expect(app).toContain("document.addEventListener('compositionend'");
+  });
+  test('GitLab 搜索重绘后恢复光标，避免输入字符倒序', () => {
+    const app = read('frontend/knowledge-center/app.js');
+    expect(app).toContain('const selectionStart = gitlabSearch.selectionStart;');
+    expect(app).toContain('const selectionEnd = gitlabSearch.selectionEnd;');
+    expect(app).toContain('restored.setSelectionRange(cursorStart, cursorEnd);');
+  });
+  test('GitLab 详情明确展示访问能力和验证结果', () => {
+    const admin = read('frontend/knowledge-center/modules/platform-admin/view.js');
+    const connector = read('lib/gitlab-connector.js');
+    expect(admin).toContain('访问能力');
+    expect(admin).toContain('正在验证连接');
+    expect(admin).toContain('验证失败');
+    expect(admin).toContain('个分支');
+    expect(connector).toContain('lastVerification');
+    expect(connector).toContain('authMode');
   });
   test('OAuth 状态通过同源 API 读取，令牌不暴露到前端', () => {
     const api = read('frontend/knowledge-center/common/api/gitlab-api.js');

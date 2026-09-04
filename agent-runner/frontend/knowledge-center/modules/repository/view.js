@@ -103,13 +103,24 @@ function treeHierarchy(items) {
   return sort(roots);
 }
 
-function message(title, detail) { return `<section class="repository-state"><h2>${escapeHtml(title)}</h2><p>${escapeHtml(detail || '')}</p></section>`; }
+function message(title, detail, action = '') { return `<section class="repository-state"><h2>${escapeHtml(title)}</h2><p>${escapeHtml(detail || '')}</p>${action ? `<p class="repository-error-action">${escapeHtml(action)}</p>` : ''}</section>`; }
+
+function errorState(projection) {
+  const detail = projection.error?.message;
+  switch (projection.status) {
+    case 'unauthorized': return message('需要连接 GitLab 账号', detail || '当前账号尚未完成 GitLab 授权。请先连接有权读取该仓库的 GitLab 账号。', '授权完成后返回本页面并点击“刷新内容”。');
+    case 'forbidden': return message('无权限访问此仓库内容', detail || '当前 GitLab 账号没有读取该手册仓库、分支或目录的权限。', '请联系 GitLab 仓库管理员开通读取权限，或切换有权限的 GitLab 账号。');
+    case 'not-mapped': return message('该手册尚未配置可读内容', detail || '管理员尚未为该手册配置对应的 GitLab 仓库、语言路径或内容映射。', '请联系平台管理员完成手册仓库映射。');
+    case 'not-found': return message('找不到请求的仓库内容', detail || 'GitLab 项目、分支、文件或手册映射不存在，可能已被删除或调整。', '请返回知识资产确认映射和分支配置。');
+    case 'conflict': return message('当前仓库连接不可读取', detail || '该 GitLab 连接已停用或连接器未启用。', '请联系平台管理员重新启用连接后再试。');
+    default: return message('仓库服务暂时不可用', detail || 'GitLab 服务暂时不可达或返回了未知错误。', '请稍后重试；如果问题持续，请联系平台管理员。');
+  }
+}
 
 export function renderRepository({ projection = {}, platformAdmin = false }) {
   const p = projection || {};
   if (p.status === 'loading') return message('正在读取仓库内容', '请稍候。');
-  if (p.status === 'forbidden') return message('没有权限查看仓库', '请联系平台管理员确认手册映射和仓库权限。');
-  if (p.status === 'unavailable') return message('仓库暂时不可用', p.error?.message || '请稍后重试。');
+  if (['unauthorized', 'forbidden', 'not-mapped', 'not-found', 'conflict', 'unavailable'].includes(p.status)) return errorState(p);
   const branches = Array.isArray(p.branches) ? p.branches : [];
   const selectedBranch = p.branch || branches[0]?.name || '';
   const content = p.file ? safeMarkdown(p.file.content, p.file.path, { handbookId: p.handbookId, branch: selectedBranch, language: p.language || 'zh' }) : '<p class="muted">请选择左侧文档。</p>';
