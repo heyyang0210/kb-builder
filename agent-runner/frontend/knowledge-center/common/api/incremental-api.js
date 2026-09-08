@@ -45,13 +45,18 @@ export function loadIncrementalTasks(params = new URLSearchParams()) {
   return request(`${endpoint}${query ? `?${query}` : ''}`);
 }
 
-export function loadIncrementalBaselines(handbookId, businessVersion) {
-  const query = new URLSearchParams({ handbookId, businessVersion });
+export function loadIncrementalBaselines(handbookId, businessVersion = '') {
+  const query = new URLSearchParams({ handbookId });
+  if (businessVersion) query.set('businessVersion', businessVersion);
   return request(`${endpoint}/baselines?${query}`);
 }
 
 export const loadIncrementalTask = taskId => request(`${endpoint}/${encodeURIComponent(taskId)}`);
+export const loadCandidateDiff = taskId => request(`${endpoint}/${encodeURIComponent(taskId)}/diff`);
+export const loadHandbookReviewSummary = handbookId => request(`${endpoint}/handbooks/${encodeURIComponent(handbookId)}/review-summary`);
 export const createIncrementalTask = body => request(endpoint, { method: 'POST', body: JSON.stringify(body) });
+export const createOnlineReview = body => request(`${endpoint}/online-reviews`, { method: 'POST', body: JSON.stringify(body) });
+export const bootstrapBaseline = body => request(`${endpoint}/bootstrap-baseline`, { method: 'POST', body: JSON.stringify(body) });
 export const addIncrementalSource = (taskId, body) => command(taskId, 'sources', body);
 export const updateIncrementalTarget = (taskId, body) => command(taskId, 'target', body, 'PATCH');
 export const saveIncrementalDraft = (taskId, body) => command(taskId, 'draft', body, 'PUT');
@@ -59,6 +64,10 @@ export const runIncrementalChecks = (taskId, body = {}) => command(taskId, 'chec
 export const submitIncrementalCandidate = (taskId, body = {}) => command(taskId, 'candidate', body);
 export const createIncrementalReview = (taskId, body = {}) => command(taskId, 'reviews', body);
 export const commentIncrementalReview = (taskId, reviewId, body) => command(taskId, `reviews/${encodeURIComponent(reviewId)}/comments`, body);
+export const replyIncrementalReviewComment = (taskId, reviewId, commentId, body) => command(taskId, `reviews/${encodeURIComponent(reviewId)}/comments/${encodeURIComponent(commentId)}/replies`, body);
+export const resolveIncrementalReviewComment = (taskId, reviewId, commentId, body = {}) => command(taskId, `reviews/${encodeURIComponent(reviewId)}/comments/${encodeURIComponent(commentId)}/resolve`, body);
+export const reopenIncrementalReviewComment = (taskId, reviewId, commentId, body = {}) => command(taskId, `reviews/${encodeURIComponent(reviewId)}/comments/${encodeURIComponent(commentId)}/reopen`, body);
+export const linkIncrementalReviewCommentOperation = (taskId, reviewId, commentId, body) => command(taskId, `reviews/${encodeURIComponent(reviewId)}/comments/${encodeURIComponent(commentId)}/link-operation`, body);
 export const decideIncrementalReview = (taskId, reviewId, body) => command(taskId, `reviews/${encodeURIComponent(reviewId)}/decision`, body);
 export const publishIncrementalTask = (taskId, body = {}) => command(taskId, 'publish', body);
 export const recordIncrementalEvidence = (taskId, body) => command(taskId, 'external-evidence', body);

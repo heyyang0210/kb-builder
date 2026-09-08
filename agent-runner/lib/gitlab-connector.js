@@ -271,6 +271,26 @@ async function readFile(connection, ref, filePath, options = {}) {
   return { path: result.file_path || filePath, ref: ref || connection.defaultBranch, blobId: result.blob_id || null, commitId: result.commit_id || null, content: text ? buffer.toString('utf8') : buffer.toString('base64'), encoding: text ? 'utf-8' : 'base64', size: buffer.length };
 }
 
+
+async function listCommits(connection, ref, options = {}) {
+  const result = [];
+  for (let page = 1; page <= 5; page += 1) {
+    const query = `?ref_name=${encodeURIComponent(ref || connection.defaultBranch)}&per_page=20&page=${page}`;
+    const batch = await request(connection, `/projects/${projectPath(connection)}/repository/commits${query}`, options);
+    result.push(...batch);
+    if (result.length >= 100 || batch.length < 20) break;
+  }
+  return result.map(item => ({
+    sha: item.id || item.short_id,
+    shortSha: item.short_id,
+    title: item.title,
+    message: item.message,
+    authorName: item.author_name,
+    authoredDate: item.authored_date,
+    webUrl: item.web_url || null,
+  }));
+}
+
 function authorizeMappedRequest(mapping, ref, language, requestedPath = '') {
   if (!mapping.enabledBranches.includes(ref)) throw new GitLabConnectorError('GITLAB_BRANCH_NOT_ALLOWED', '该分支不属于当前手册映射', 403);
   const roots = language === 'en' ? mapping.enPaths : mapping.zhPaths;
@@ -282,4 +302,4 @@ function authorizeMappedRequest(mapping, ref, language, requestedPath = '') {
   return clean;
 }
 
-module.exports = { GitLabConnectorError, readConfig, writeConfig, sanitizeConnection, upsertConnection, recordVerification, setConnectionStatus, upsertMapping, findMapping, findConnection, listBranches, listTree, readFile, authorizeMappedRequest, request };
+module.exports = { GitLabConnectorError, readConfig, writeConfig, sanitizeConnection, upsertConnection, recordVerification, setConnectionStatus, upsertMapping, findMapping, findConnection, listBranches, listTree, readFile, listCommits, authorizeMappedRequest, request };

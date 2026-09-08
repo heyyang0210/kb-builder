@@ -50,4 +50,94 @@ describe('增量构建前端契约', () => {
     expect(css).toContain('@media (max-width: 800px)');
     expect(css).toContain('@media (max-width: 560px)');
   });
+
+  test('审核与发布采用三步页面并保留完整差异和行级意见', () => {
+    const review = read('frontend/knowledge-center/modules/review-publishing/view.js');
+    const app = read('frontend/knowledge-center/app.js');
+    expect(review).toContain('1 阅读文档');
+    expect(review).toContain('2 查看修改');
+    expect(review).toContain('3 处理审核意见');
+    expect(review).toContain('修改前后全文对照');
+    expect(review).toContain('data-review-line');
+    expect(review).toContain('data-review-comment-form');
+    expect(review).toContain('待审核版本：修改稿');
+    expect(review).not.toContain('审核收件箱');
+    expect(review).not.toContain('候选版本：v1.0.2');
+    expect(app).toContain('loadCandidateDiff');
+    expect(app).toContain('loadHandbookReviewSummary');
+  });
+
+  test('审核阅读能力复用统一阅读器并以服务端能力驱动多角色门禁', () => {
+    const review = read('frontend/knowledge-center/modules/review-publishing/view.js');
+    expect(review).toContain("import { safeMarkdown, treeHierarchy } from '../repository/view.js'");
+    for (const control of ['data-review-document-search', 'data-review-branch', 'data-review-language', 'data-review-reader-refresh']) expect(review).toContain(control);
+    for (const evidence of ['reasoningSummary', 'ruleRefs', 'candidateDigest', 'publicationId']) expect(review).toContain(evidence);
+    for (const role of ["['reader', true", "['reviewer', capabilities.canReview === true", "['publisher', capabilities.canPublish === true"]) expect(review).toContain(role);
+    expect(review).toContain('data-role-card="${key}"');
+    expect(review).toContain('连接 GitLab 账号');
+    expect(review).toContain('仓库阅读不可用，当前显示候选快照');
+    expect(review).toContain('暂无真实 AI 分析结果');
+    expect(review).toContain('文档上下文不一致');
+    expect(review).toContain('当前没有待处理审核事项');
+    expect(review).toContain('审核任务数据不完整');
+    expect(review).toContain('尚无待审核修改稿');
+    expect(review).toContain('前往文档生产');
+    expect(review).toContain('data-review-handbook-select');
+    for (const control of ['data-review-directory-toggle', 'data-review-directory-resizer', 'data-review-focus-toggle']) expect(review).toContain(control);
+    for (const honestState of ['数据库语法、参数依赖、版本适配、错误码和运维命令专项检查尚未执行', '分析尚未执行', '版本变更记录', '审核历史']) expect(review).toContain(honestState);
+    expect(app()).toContain('appState.gitlabProjection = null');
+    expect(app()).toContain('contextConflict');
+    expect(app()).toContain("['under_review', 'review_pending', 'approved', 'pending_publish']");
+    expect(app()).toContain('requested ? await loadIncrementalTask(requested)');
+    expect(app()).toContain("new URLSearchParams({ pageSize: '100' })");
+    expect(app()).toContain('knowledge-center-review-directory-collapsed');
+    expect(app()).toContain("event.key === 'Escape'");
+    expect(read('frontend/knowledge-center/common/state/app-state.js')).toContain('reviewUi:');
+    expect(read('frontend/knowledge-center/styles.css')).toContain('body.review-view main');
+  });
+
+  test('阅读文档步骤提供在线选区提意见入口并复用审核线程', () => {
+    const review = read('frontend/knowledge-center/modules/review-publishing/view.js');
+    const app = read('frontend/knowledge-center/app.js');
+    for (const marker of ['data-review-reader-comment-form', 'candidateDigest', '在阅读文档中提出意见', 'data-review-selection-bubble', 'data-review-bubble-trigger', '全文意见（兼容模式）']) expect(review).toContain(marker);
+    for (const marker of ['data-review-inline-form', 'commentType', 'severity']) expect(app).toContain(marker);
+    expect(review).not.toContain('value="important"');
+    expect(app).toContain('document_span');
+    for (const marker of ['contextBefore', 'contextAfter', 'data-review-reply-form', 'data-review-decision-form', 'data-review-comment-resolve', 'data-review-comment-reopen']) expect(app + review).toContain(marker);
+    expect(app).toContain("document.addEventListener('mouseup'");
+    expect(app).toContain('review-reader-comment-form');
+  });
+
+  test('在线评审快照没有增量操作时，当前文档范围仍可生成行级意见锚点', () => {
+    const review = read('frontend/knowledge-center/modules/review-publishing/view.js');
+    expect(review).toContain("const scopedDocuments = list(task?.target?.documentIds);");
+    expect(review).toContain("task?.target?.scope === 'document' && scopedDocuments.length === 1");
+    expect(review).toContain("? scopedDocuments[0]");
+    expect(review).toContain("const onlineReviewSnapshot = task?.reviewMode === 'online_review' && snapshot;");
+    expect(review).toContain('当前显示正式版本评审快照');
+    expect(app()).toContain('name: onlineReviewForm.dataset.handbookName ? `${onlineReviewForm.dataset.handbookName} 在线评审` : \'在线评审\'');
+  });
+
+  test('审核阅读页的提意见变量必须在 reader 作用域声明', () => {
+    const review = read('frontend/knowledge-center/modules/review-publishing/view.js');
+    const readerStart = review.indexOf('function reader(projection, task, ui = {})');
+    const readerEnd = review.indexOf('\nfunction diff(', readerStart);
+    expect(readerStart).toBeGreaterThanOrEqual(0);
+    expect(readerEnd).toBeGreaterThan(readerStart);
+    const readerBody = review.slice(readerStart, readerEnd);
+    expect(readerBody).toContain("const reviewId = list(task?.reviews)[0]?.id || task?.reviewId || '';");
+    expect(readerBody).toContain('const canComment = task?.capabilities?.canComment === true;');
+  });
+
+  test('审核阅读器统一保留 marked 代码块的语言元数据', () => {
+    const renderer = read('frontend/knowledge-center/common/markdown/markdown-renderer.js');
+    expect(renderer).toContain('function normalizeCodeBlocks(html)');
+    expect(renderer).toContain('class="repository-code"');
+    expect(renderer).toContain('data-language="${normalizedLanguage}"');
+  });
+
+  test('审核页面不展示全局平台数据错误条，错误由审核投影单独呈现', () => {
+    expect(app()).toContain("appState.activeView === 'review' && appState.reviewProjection?.status !== 'unavailable'");
+    expect(app()).toContain('globalErrorPanel.hidden = true');
+  });
 });

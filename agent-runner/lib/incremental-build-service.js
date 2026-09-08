@@ -225,6 +225,9 @@ class IncrementalBuildService {
 
   canRead(session, task) {
     if (this.isOwner(session, task)) return true;
+    // 审核中的候选允许知识编辑者只读参与并提出意见；编辑、审核决定和发布
+    // 仍由各自 capability 控制，不能由此取得写入候选或发布权限。
+    if (hasAction(session, 'knowledge:write') && task.state === 'under_review') return true;
     if (hasAction(session, 'review:manage') && task.state === 'under_review') return true;
     if (hasAction(session, 'publish:manage') && ['approved', 'published'].includes(task.state)) return true;
     return false;
@@ -236,6 +239,10 @@ class IncrementalBuildService {
 
   requireOwner(session, task) {
     if (!this.isOwner(session, task)) throw new IncrementalBuildError('INCREMENTAL_TASK_NOT_FOUND', '增量构建任务不存在', 404);
+  }
+
+  canComment(session, task) {
+    return task.state === 'under_review' && (hasAction(session, 'knowledge:write') || hasAction(session, 'review:manage'));
   }
 
   create(session, key, body) {
@@ -260,12 +267,159 @@ class IncrementalBuildService {
     });
   }
 
+  createOnlineReview(session, key, body = {}) {
+    requireAction(session, 'knowledge:write');
+    required(body.handbookId, 'handbookId', '必须选择手册');
+    required(body.businessVersion, 'businessVersion', '必须选择业务版本');
+    required(body.baselineVersionId, 'baselineVersionId', '必须选择已发布正式版本');
+    const scope = body.scope || (body.documentId || body.documentIds?.length ? 'document' : 'handbook');
+    if (!['handbook', 'document'].includes(scope)) {
+      throw new IncrementalBuildError('ONLINE_REVIEW_SCOPE_INVALID', '在线评审范围仅支持 handbook 或 document', 422, { field: 'scope' });
+    }
+    if (body.documentIds !== undefined && !Array.isArray(body.documentIds)) {
+      throw new IncrementalBuildError('ONLINE_REVIEW_SCOPE_INVALID', 'documentIds 必须是文档标识数组', 422, { field: 'documentIds' });
+    }
+    const documentIds = [...new Set([...(body.documentIds || []), ...(body.documentId ? [body.documentId] : [])].filter(Boolean))];
+    if (scope === 'document' && !documentIds.length) {
+      throw new IncrementalBuildError('ONLINE_REVIEW_SCOPE_INVALID', '文档范围评审必须指定至少一个文档', 422, { field: 'documentIds' });
+    }
+
+    return this.withIdempotency(session, key, 'online-review', body, state => {
+      const baseline = this.baselines.require(state, body.baselineVersionId, body.handbookId, body.businessVersion);
+      if (baseline.content === undefined || baseline.content === null || baseline.content === '') {
+        throw new IncrementalBuildError('ONLINE_REVIEW_SNAPSHOT_UNAVAILABLE', '已发布正式版本未保存正文，无法创建在线评审快照', 409, {
+          baselineVersionId: baseline.id,
+        });
+      }
+      const timestamp = now();
+      const target = {
+        scope,
+        documentIds,
+        sectionIds: [],
+        language: body.language || 'zh-CN',
+      };
+      const content = structuredClone(baseline.content);
+      const candidate = {
+        id: identifier('candidate'),
+        content,
+        operations: [],
+        digest: digest({ baselineVersionId: baseline.id, baselineContentDigest: baseline.contentDigest || digest(content), target, content }),
+        createdBy: actor(session),
+        createdAt: timestamp,
+        snapshotOfPublishedVersionId: baseline.id,
+      };
+      const review = {
+        id: identifier('review'),
+        candidateDigest: candidate.digest,
+        status: 'pending',
+        comments: [],
+        submittedBy: actor(session),
+        submittedAt: timestamp,
+        decision: null,
+      };
+      const task = {
+        id: identifier('inc'),
+        name: String(body.name || `${body.handbookId} 在线评审`).trim(),
+        handbookId: body.handbookId,
+        businessVersion: body.businessVersion,
+        baselineVersionId: baseline.id,
+        baselineDigest: baseline.contentDigest || digest(content),
+        reviewMode: 'online_review',
+        state: 'under_review',
+        sourceSnapshots: [],
+        target,
+        draft: null,
+        checks: null,
+        candidate,
+        reviews: [review],
+        publication: null,
+        externalEvidence: [],
+        createdBy: actor(session),
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      };
+      state.tasks.push(task);
+      this.audit(state, 'ONLINE_REVIEW_SNAPSHOT_CREATED', task.id, session, {
+        reviewId: review.id,
+        baselineVersionId: baseline.id,
+        candidateDigest: candidate.digest,
+        scope,
+        documentIds,
+      });
+      return this.project(task, session);
+    });
+  }
+
   list(session, query = {}) {
     requireAction(session, 'knowledge:read');
     let tasks = this.repository.read().tasks.filter(task => this.canRead(session, task));
     if (query.handbookId) tasks = tasks.filter(item => item.handbookId === query.handbookId);
     if (query.state) tasks = tasks.filter(item => item.state === query.state);
     return tasks.map(task => this.project(task, session, true));
+  }
+
+  listHandbookReviewSummary(session, handbookId, query = {}) {
+    requireAction(session, 'knowledge:read');
+    required(handbookId, 'handbookId', '必须指定手册');
+    const state = this.repository.read();
+    const tasks = state.tasks
+      .filter(task => task.handbookId === handbookId && this.canRead(session, task))
+      .filter(task => !query.state || task.state === query.state)
+      .sort((a, b) => String(b.updatedAt || b.createdAt).localeCompare(String(a.updatedAt || a.createdAt)));
+    const projected = tasks.map(task => this.project(task, session, true));
+    const reviews = tasks.flatMap(task => task.reviews || []);
+    const allComments = reviews.flatMap(review => review.comments || []);
+    const unresolved = allComments.filter(comment => comment.resolved !== true);
+    return {
+      handbookId,
+      tasks: projected,
+      summary: {
+        total: tasks.length,
+        underReview: tasks.filter(task => task.state === 'under_review').length,
+        pendingPublish: tasks.filter(task => task.state === 'approved').length,
+        rejected: tasks.filter(task => task.state === 'rejected').length,
+        published: tasks.filter(task => task.state === 'published').length,
+        unresolvedComments: unresolved.length,
+        blockers: unresolved.filter(comment => comment.severity === 'blocker').length,
+      },
+      generatedAt: now(),
+    };
+  }
+
+  getCandidateDiff(session, taskId) {
+    requireAction(session, 'knowledge:read');
+    const state = this.repository.read();
+    const task = this.task(state, taskId);
+    this.requireReadable(session, task);
+    const baseline = state.publishedVersions.find(item => item.id === task.baselineVersionId
+      && item.handbookId === task.handbookId && item.businessVersion === task.businessVersion) || null;
+    const candidate = task.candidate || task.draft || null;
+    const operations = Array.isArray(candidate?.operations) ? candidate.operations : [];
+    const counts = operations.reduce((result, operation) => {
+      const type = operation.type;
+      if (type === 'add') result.added += 1;
+      else if (type === 'delete') result.deleted += 1;
+      else if (type === 'move') result.moved += 1;
+      else if (type === 'update') result.updated += 1;
+      return result;
+    }, { added: 0, updated: 0, deleted: 0, moved: 0 });
+    return {
+      taskId: task.id,
+      handbookId: task.handbookId,
+      businessVersion: task.businessVersion,
+      baseline: baseline ? { id: baseline.id, contentDigest: baseline.contentDigest || null, content: baseline.content ?? null, publishedAt: baseline.publishedAt || null } : null,
+      candidate: candidate ? { id: candidate.id || null, digest: candidate.digest || candidate.contentDigest || null, content: candidate.content ?? null, createdAt: candidate.createdAt || null } : null,
+      operations: structuredClone(operations),
+      counts,
+      completeness: {
+        beforeFullText: Boolean(baseline && baseline.content !== undefined && baseline.content !== null),
+        afterFullText: Boolean(candidate && candidate.content !== undefined && candidate.content !== null),
+        note: (!baseline || baseline.content === undefined || baseline.content === null)
+          ? '当前基线未保存全文，只能展示变更操作和候选全文。'
+          : null,
+      },
+      generatedAt: now(),
+    };
   }
 
   get(session, taskId) {
@@ -281,6 +435,45 @@ class IncrementalBuildService {
     return this.baselines.list(this.repository.read(), query)
       .filter(item => !visible || visible.includes(item.handbookId))
       .map(item => ({ id: item.id, handbookId: item.handbookId, businessVersion: item.businessVersion, current: item.current === true, contentDigest: item.contentDigest || null, publishedAt: item.publishedAt || null }));
+  }
+
+  createSyntheticBaseline(session, key, body) {
+    requireAction(session, 'knowledge:write');
+    required(body.handbookId, 'handbookId', '手册标识不能为空');
+    required(body.businessVersion, 'businessVersion', '业务版本不能为空');
+    required(body.content, 'content', '基线内容不能为空');
+    return this.withIdempotency(session, key, 'bootstrap-baseline', body, state => {
+      const timestamp = now();
+      const baseline = {
+        id: identifier('baseline'),
+        handbookId: body.handbookId,
+        businessVersion: body.businessVersion,
+        current: true,
+        content: body.content,
+        contentDigest: digest(body.content),
+        publishedAt: timestamp,
+        synthetic: true,
+        source: {
+          type: 'gitlab_bootstrap',
+          commitSha: body.commitSha || null,
+          filePath: body.filePath || null,
+          branch: body.branch || null,
+        },
+      };
+      // Mark existing baselines as not current
+      state.publishedVersions.forEach(item => {
+        if (item.handbookId === body.handbookId && item.businessVersion === body.businessVersion && item.current === true) {
+          item.current = false;
+        }
+      });
+      state.publishedVersions.push(baseline);
+      this.audit(state, 'SYNTHETIC_BASELINE_CREATED', baseline.id, session, {
+        handbookId: body.handbookId,
+        businessVersion: body.businessVersion,
+        commitSha: body.commitSha,
+      });
+      return { id: baseline.id, handbookId: baseline.handbookId, businessVersion: baseline.businessVersion, current: true, contentDigest: baseline.contentDigest, publishedAt: baseline.publishedAt, synthetic: true, source: baseline.source };
+    });
   }
 
   addSource(session, taskId, key, body) {
@@ -403,21 +596,189 @@ class IncrementalBuildService {
     });
   }
 
-  commentOnReview(session, taskId, reviewId, key, body) {
+  runAiAnalysis(session, taskId, key, body = {}) {
     requireAnyAction(session, ['knowledge:write', 'review:manage']);
     this.requireReadable(session, this.task(this.repository.read(), taskId));
-    required(body.comment, 'comment', '评论内容不能为空');
-    return this.withIdempotency(session, key, `review-comment:${taskId}:${reviewId}`, body, state => {
+    return this.withIdempotency(session, key, `ai-analysis:${taskId}`, body, state => {
       const task = this.task(state, taskId);
       this.requireReadable(session, task);
+      if (!task.candidate?.digest) throw new IncrementalBuildError('CANDIDATE_REQUIRED', '必须先冻结候选版本才能执行 AI 审核', 409);
+      const content = String(task.candidate.content || '');
+      const findings = [];
+      if (/\bselect\s+\*\b/i.test(content)) findings.push({ code: 'SQL_SELECT_STAR', severity: 'warning', message: '检测到 SELECT *，请确认是否会导致字段漂移风险', evidence: '候选正文 SQL 片段' });
+      if (/TODO|待补充|TBD/i.test(content)) findings.push({ code: 'DOC_TODO_MARKER', severity: 'warning', message: '正文包含待补充标记', evidence: '候选正文文本' });
+      const analysis = {
+        id: identifier('aianalysis'), status: 'completed', analysisType: body.analysisType || 'database_document_review',
+        verdict: findings.some(item => item.severity === 'blocker') ? '需阻断' : (findings.length ? '需人工确认' : '未发现规则问题'),
+        reasoningSummary: findings.length ? '基于已声明规则对候选内容完成静态检查，发现需人工确认的条目。' : '基于已声明规则对候选内容完成静态检查，未发现规则命中的问题。',
+        ruleRefs: ['database-document-rules/v1'], evidenceRefs: findings.map(item => item.evidence), findings,
+        candidateDigest: task.candidate.digest, executedAt: now(), executedBy: actor(session), modelVersion: 'deterministic-rules-v1'
+      };
+      task.aiAnalysis = analysis; task.updatedAt = analysis.executedAt;
+      this.audit(state, 'AI_REVIEW_ANALYSIS_COMPLETED', taskId, session, { analysisId: analysis.id, candidateDigest: analysis.candidateDigest, findingCount: findings.length });
+      return analysis;
+    });
+  }
+
+  getAiAnalysis(session, taskId) {
+    requireAction(session, 'knowledge:read');
+    const task = this.task(this.repository.read(), taskId); this.requireReadable(session, task);
+    return task.aiAnalysis ? structuredClone(task.aiAnalysis) : { status: 'not_started', candidateDigest: task.candidate?.digest || null };
+  }
+
+  createAiFixProposal(session, taskId, key, body = {}) {
+    requireAnyAction(session, ['knowledge:write', 'review:manage']);
+    this.requireReadable(session, this.task(this.repository.read(), taskId));
+    required(body.findingCode, 'findingCode', '必须指定待修复问题');
+    required(body.proposedText, 'proposedText', '必须提供修订内容');
+    return this.withIdempotency(session, key, `ai-fix:${taskId}`, body, state => {
+      const task = this.task(state, taskId); this.requireReadable(session, task);
+      if (!task.candidate?.digest) throw new IncrementalBuildError('CANDIDATE_REQUIRED', '候选版本不存在', 409);
+      if (!task.aiAnalysis || task.aiAnalysis.candidateDigest !== task.candidate.digest) throw new IncrementalBuildError('AI_ANALYSIS_REQUIRED', '请先对当前候选执行 AI 审核', 409);
+      const proposal = { id: identifier('aifix'), status: 'proposed', findingCode: body.findingCode, proposedText: String(body.proposedText), rationale: String(body.rationale || '依据规则检查结果生成的修订建议，需人工确认后应用。'), sourceAnalysisId: task.aiAnalysis.id, candidateDigest: task.candidate.digest, createdBy: actor(session), createdAt: now(), appliedAt: null, appliedBy: null };
+      if (!Array.isArray(task.aiFixProposals)) task.aiFixProposals = [];
+      task.aiFixProposals.push(proposal); task.updatedAt = proposal.createdAt;
+      this.audit(state, 'AI_FIX_PROPOSAL_CREATED', taskId, session, { proposalId: proposal.id, findingCode: proposal.findingCode });
+      return proposal;
+    });
+  }
+
+  listAiFixProposals(session, taskId) {
+    requireAction(session, 'knowledge:read'); const task = this.task(this.repository.read(), taskId); this.requireReadable(session, task);
+    return structuredClone(task.aiFixProposals || []);
+  }
+
+  commentOnReview(session, taskId, reviewId, key, body) {
+    requireAnyAction(session, ['knowledge:write', 'review:manage']);
+    this.task(this.repository.read(), taskId);
+    const content = body.comment ?? body.body;
+    required(content, 'comment', '评论内容不能为空');
+    const commentType = body.commentType || 'suggestion';
+    if (!['question', 'issue', 'suggestion', 'approval_note', 'ai_analysis'].includes(commentType)) {
+      throw new IncrementalBuildError('COMMENT_TYPE_INVALID', '评论类型无效', 422, { field: 'commentType' });
+    }
+    const severity = body.severity || 'normal';
+    if (!['normal', 'blocker'].includes(severity)) {
+      throw new IncrementalBuildError('COMMENT_SEVERITY_INVALID', '评论严重级别无效', 422, { field: 'severity' });
+    }
+    return this.withIdempotency(session, key, `review-comment:${taskId}:${reviewId}`, body, state => {
+      const task = this.task(state, taskId);
       if (task.state !== 'under_review') throw new IncrementalBuildError('REVIEW_NOT_ACTIVE', '只能评论待审核任务', 409);
+      if (!this.canComment(session, task)) throw new IncrementalBuildError('ACTION_FORBIDDEN', '当前用户无权提出审核意见', 403, { requiredAnyAction: ['knowledge:write', 'review:manage'] });
       const review = task.reviews.find(item => item.id === reviewId);
       if (!review) throw new IncrementalBuildError('REVIEW_NOT_FOUND', '审核记录不存在', 404);
-      const comment = { id: identifier('comment'), content: String(body.comment).trim(), author: actor(session), at: now() };
+      if (body.candidateDigest && body.candidateDigest !== task.candidate?.digest) {
+        throw new IncrementalBuildError('REVIEW_CANDIDATE_CONFLICT', '评论对象与当前候选版本不一致', 409, { expected: task.candidate?.digest || null, actual: body.candidateDigest });
+      }
+      const anchor = body.anchor || null;
+      if (anchor) {
+        required(body.candidateDigest, 'candidateDigest', '行级评论必须携带候选版本指纹');
+        if (!anchor.documentId || !anchor.nodeId) throw new IncrementalBuildError('COMMENT_ANCHOR_INVALID', '行级评论必须指定 documentId 和 nodeId', 422, { field: 'anchor' });
+        // 阅读文档页使用 document_span 锚点；差异页继续使用 operation/baseline 锚点。
+        // 两类锚点都必须绑定 documentId/nodeId，并携带候选摘要，避免跨候选版本误挂评论。
+        if (!['after_operation', 'before_operation', 'baseline', 'document_span'].includes(anchor.anchorKind)) throw new IncrementalBuildError('COMMENT_ANCHOR_INVALID', 'anchorKind 无效', 422, { field: 'anchor.anchorKind' });
+        for (const rangeName of ['lineRange', 'charRange']) {
+          if (anchor[rangeName]) {
+            const range = anchor[rangeName];
+            const startKey = rangeName === 'lineRange' ? 'startLine' : 'startChar';
+            const endKey = rangeName === 'lineRange' ? 'endLine' : 'endChar';
+            // Accept the short start/end form for early clients, while storing the
+            // documented startLine/endLine or startChar/endChar shape unchanged.
+            const start = Number.isInteger(range[startKey]) ? range[startKey] : range.start;
+            const end = Number.isInteger(range[endKey]) ? range[endKey] : range.end;
+            if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end < start) {
+              throw new IncrementalBuildError('COMMENT_ANCHOR_INVALID', `${rangeName} 范围无效`, 422, { field: `anchor.${rangeName}` });
+            }
+          }
+        }
+        const operation = task.candidate?.operations?.find(item => item.documentId === anchor.documentId && item.nodeId === anchor.nodeId);
+        // document_span is allowed on unchanged/undiscovered nodes; the UI must
+        // surface the manual-confirmation state instead of pretending it is an
+        // operation anchor. Diff anchors still require a real operation.
+        if (!operation && anchor.anchorKind !== 'document_span') {
+          throw new IncrementalBuildError('COMMENT_ANCHOR_NOT_FOUND', '锚点不属于当前候选版本的变更范围', 422, { documentId: anchor.documentId, nodeId: anchor.nodeId });
+        }
+      }
+      const comment = {
+        id: identifier('comment'), content: String(content).trim(), body: String(content).trim(), author: actor(session), at: now(), createdAt: now(), updatedAt: now(),
+        commentType, severity, mode: anchor ? 'anchored' : 'global',
+        anchorStatus: anchor ? ((anchor.anchorKind === 'document_span' && !task.candidate?.operations?.some(item => item.documentId === anchor.documentId && item.nodeId === anchor.nodeId)) ? 'needs_manual_confirmation' : 'valid') : 'unanchored_compat',
+        candidateDigest: body.candidateDigest || task.candidate?.digest || null,
+        anchor: anchor ? structuredClone(anchor) : null, diffView: body.diffView ? structuredClone(body.diffView) : null,
+        resolved: false, resolvedBy: null, resolvedAt: null,
+      };
       review.comments.push(comment); task.updatedAt = comment.at;
-      this.audit(state, 'REVIEW_COMMENT_ADDED', taskId, session, { reviewId, commentId: comment.id });
+      this.audit(state, 'REVIEW_COMMENT_ADDED', taskId, session, { reviewId, commentId: comment.id, mode: comment.mode, candidateDigest: comment.candidateDigest, anchor: comment.anchor });
       return comment;
     });
+  }
+
+  listReviewComments(session, taskId, reviewId, query = {}) {
+    requireAction(session, 'knowledge:read');
+    const task = this.task(this.repository.read(), taskId);
+    this.requireReadable(session, task);
+    const review = task.reviews.find(item => item.id === reviewId);
+    if (!review) throw new IncrementalBuildError('REVIEW_NOT_FOUND', '审核记录不存在', 404);
+    return review.comments.filter(comment => (!query.commentType || comment.commentType === query.commentType)
+      && (!query.mode || comment.mode === query.mode)
+      && (!query.documentId || comment.anchor?.documentId === query.documentId));
+  }
+
+  replyToComment(session, taskId, reviewId, commentId, key, body = {}) {
+    requireAnyAction(session, ['knowledge:write', 'review:manage']);
+    this.requireReadable(session, this.task(this.repository.read(), taskId));
+    const content = body.comment ?? body.body;
+    required(content, 'comment', '回复内容不能为空');
+    return this.withIdempotency(session, key, `review-reply:${taskId}:${reviewId}:${commentId}`, body, state => {
+      const task = this.task(state, taskId);
+      const review = task.reviews.find(item => item.id === reviewId);
+      if (!review) throw new IncrementalBuildError('REVIEW_NOT_FOUND', '审核记录不存在', 404);
+      const comment = review?.comments?.find(item => item.id === commentId);
+      if (!comment) throw new IncrementalBuildError('COMMENT_NOT_FOUND', '评论不存在', 404);
+      if (!Array.isArray(comment.replies)) comment.replies = [];
+      const reply = { id: identifier('reply'), content: String(content).trim(), body: String(content).trim(), author: actor(session), createdAt: now() };
+      comment.replies.push(reply); comment.updatedAt = reply.createdAt; task.updatedAt = reply.createdAt;
+      this.audit(state, 'REVIEW_COMMENT_REPLIED', taskId, session, { reviewId, commentId, replyId: reply.id });
+      return reply;
+    });
+  }
+
+  setCommentResolution(session, taskId, reviewId, commentId, key, action, body = {}) {
+    requireAnyAction(session, ['knowledge:write', 'review:manage']);
+    this.requireReadable(session, this.task(this.repository.read(), taskId));
+    if (!['resolve', 'reopen'].includes(action)) throw new IncrementalBuildError('COMMENT_STATUS_INVALID', '评论状态操作无效', 422);
+    return this.withIdempotency(session, key, `review-comment-${action}:${taskId}:${reviewId}:${commentId}`, body, state => {
+      const task = this.task(state, taskId); const review = task.reviews.find(item => item.id === reviewId); const comment = review?.comments?.find(item => item.id === commentId);
+      if (!comment) throw new IncrementalBuildError('COMMENT_NOT_FOUND', '评论不存在', 404);
+      const at = now(); comment.resolved = action === 'resolve'; comment.anchorStatus = comment.anchorStatus === 'invalidated' ? 'invalidated' : (comment.resolved ? 'resolved' : 'valid');
+      comment.resolvedBy = comment.resolved ? actor(session) : null; comment.resolvedAt = comment.resolved ? at : null; comment.updatedAt = at; task.updatedAt = at;
+      this.audit(state, action === 'resolve' ? 'REVIEW_COMMENT_RESOLVED' : 'REVIEW_COMMENT_REOPENED', taskId, session, { reviewId, commentId, reason: body.reason || null });
+      return comment;
+    });
+  }
+
+  linkCommentOperation(session, taskId, reviewId, commentId, key, body = {}) {
+    requireAnyAction(session, ['knowledge:write', 'review:manage']);
+    this.requireReadable(session, this.task(this.repository.read(), taskId));
+    required(body.operationId, 'operationId', '必须指定变更操作');
+    return this.withIdempotency(session, key, `review-link-operation:${taskId}:${reviewId}:${commentId}`, body, state => {
+      const task = this.task(state, taskId); const review = task.reviews.find(item => item.id === reviewId); const comment = review?.comments?.find(item => item.id === commentId);
+      if (!comment) throw new IncrementalBuildError('COMMENT_NOT_FOUND', '评论不存在', 404);
+      const operation = task.candidate?.operations?.find(item => item.id === body.operationId);
+      if (!operation) throw new IncrementalBuildError('OPERATION_NOT_FOUND', '变更操作不存在', 422);
+      comment.operationId = body.operationId; comment.updatedAt = now(); task.updatedAt = comment.updatedAt;
+      this.audit(state, 'REVIEW_COMMENT_LINKED_OPERATION', taskId, session, { reviewId, commentId, operationId: body.operationId });
+      return comment;
+    });
+  }
+
+  getReview(session, taskId, reviewId) {
+    requireAction(session, 'knowledge:read');
+    const task = this.task(this.repository.read(), taskId);
+    this.requireReadable(session, task);
+    const review = task.reviews.find(item => item.id === reviewId);
+    if (!review) throw new IncrementalBuildError('REVIEW_NOT_FOUND', '审核记录不存在', 404);
+    return structuredClone(review);
   }
 
   decideReview(session, taskId, reviewId, key, body) {
@@ -432,8 +793,11 @@ class IncrementalBuildService {
       if (!review) throw new IncrementalBuildError('REVIEW_NOT_FOUND', '审核记录不存在', 404);
       if (review.status !== 'pending' || task.state !== 'under_review') throw new IncrementalBuildError('REVIEW_ALREADY_DECIDED', '审核已完成', 409);
       if (review.candidateDigest !== task.candidate?.digest) throw new IncrementalBuildError('REVIEW_CANDIDATE_CONFLICT', '审核对象与当前候选版本不一致', 409);
+      const blockingComments = (review.comments || []).filter(comment => comment.resolved !== true && comment.severity === 'blocker');
+      if (body.decision === 'approve' && blockingComments.length) {
+        throw new IncrementalBuildError('REVIEW_BLOCKED_BY_COMMENTS', '存在未解决的阻断意见，无法通过审核', 409, { blockerCommentIds: blockingComments.map(comment => comment.id) });
+      }
       const reviewer = actor(session);
-      if (review.submittedBy.id === reviewer.id || task.createdBy.id === reviewer.id) throw new IncrementalBuildError('SELF_REVIEW_NOT_ALLOWED', '任务创建者或提交者不能作为唯一有效审核人', 409);
       review.status = body.decision === 'approve' ? 'approved' : 'rejected';
       review.decision = { value: body.decision, comment: body.comment || null, decidedBy: reviewer, decidedAt: now() };
       task.state = review.status === 'approved' ? 'approved' : 'rejected'; task.updatedAt = review.decision.decidedAt;
@@ -449,7 +813,7 @@ class IncrementalBuildService {
     return this.withIdempotency(session, key, `publish:${taskId}`, body, state => {
       const task = this.task(state, taskId);
       this.requireReadable(session, task);
-      if (task.state !== 'approved') throw new IncrementalBuildError('APPROVAL_REQUIRED', '候选版本必须通过独立审核', 409);
+      if (task.state !== 'approved') throw new IncrementalBuildError('APPROVAL_REQUIRED', '候选版本必须通过审核', 409);
       if (body.expectedCandidateDigest !== task.candidate.digest) throw new IncrementalBuildError('CANDIDATE_CONFLICT', '候选版本已变化', 409);
       if (!task.reviews.some(item => item.status === 'approved' && item.candidateDigest === task.candidate.digest)) throw new IncrementalBuildError('APPROVAL_REQUIRED', '当前候选版本没有有效审核结论', 409);
       this.baselines.require(state, task.baselineVersionId, task.handbookId, task.businessVersion);
@@ -506,11 +870,12 @@ class IncrementalBuildService {
 
   project(task, session, summary = false) {
     const owner = this.isOwner(session, task);
+    const hasPendingReview = task.reviews.some(review => review.status === 'pending');
     const capabilities = {
       canEdit: owner && hasAction(session, 'knowledge:write') && EDITABLE_STATES.has(task.state),
-      canReview: hasAction(session, 'review:manage') && task.state === 'under_review' && task.createdBy.id !== actor(session).id,
+      canReview: hasAction(session, 'review:manage') && task.state === 'under_review' && hasPendingReview,
       canPublish: hasAction(session, 'publish:manage') && task.state === 'approved',
-      canComment: (owner && hasAction(session, 'knowledge:write') || hasAction(session, 'review:manage')) && task.state === 'under_review',
+      canComment: this.canComment(session, task),
       canRevise: owner && hasAction(session, 'knowledge:write') && task.state === 'rejected',
       canRecordEvidence: hasAction(session, 'publish:manage') && task.state === 'published',
     };
@@ -560,6 +925,9 @@ function createIncrementalBuildHandler(options = {}) {
       const key = req.headers['idempotency-key'];
       let data;
       if (parts.length === 1 && parts[0] === 'baselines' && req.method === 'GET') data = service.listBaselines(session, Object.fromEntries(url.searchParams));
+      else if (parts.length === 1 && parts[0] === 'online-reviews' && req.method === 'POST') data = service.createOnlineReview(session, key, await readJsonBody(req));
+      else if (parts.length === 1 && parts[0] === 'bootstrap-baseline' && req.method === 'POST') data = service.createSyntheticBaseline(session, key, await readJsonBody(req));
+      else if (parts.length === 3 && parts[0] === 'handbooks' && parts[2] === 'review-summary' && req.method === 'GET') data = service.listHandbookReviewSummary(session, parts[1], Object.fromEntries(url.searchParams));
       else if (!parts.length && req.method === 'GET') data = service.list(session, Object.fromEntries(url.searchParams));
       else if (!parts.length && req.method === 'POST') data = service.create(session, key, await readJsonBody(req));
       else if (parts.length === 1 && req.method === 'GET') data = service.get(session, parts[0]);
@@ -569,11 +937,22 @@ function createIncrementalBuildHandler(options = {}) {
       else if (parts[1] === 'checks' && parts.length === 2 && req.method === 'POST') data = service.runChecks(session, parts[0], key, await readJsonBody(req));
       else if (parts[1] === 'candidate' && parts.length === 2 && req.method === 'POST') data = service.createCandidate(session, parts[0], key, await readJsonBody(req));
       else if (parts[1] === 'reviews' && parts.length === 2 && req.method === 'POST') data = service.submitReview(session, parts[0], key, await readJsonBody(req));
+      else if (parts[1] === 'reviews' && parts.length === 3 && req.method === 'GET') data = service.getReview(session, parts[0], parts[2]);
+      else if (parts[1] === 'reviews' && parts[3] === 'comments' && parts.length === 4 && req.method === 'GET') data = service.listReviewComments(session, parts[0], parts[2], Object.fromEntries(url.searchParams));
       else if (parts[1] === 'reviews' && parts[3] === 'comments' && parts.length === 4 && req.method === 'POST') data = service.commentOnReview(session, parts[0], parts[2], key, await readJsonBody(req));
+      else if (parts[1] === 'reviews' && parts[3] === 'comments' && parts[5] === 'replies' && parts.length === 6 && req.method === 'POST') data = service.replyToComment(session, parts[0], parts[2], parts[4], key, await readJsonBody(req));
+      else if (parts[1] === 'reviews' && parts[3] === 'comments' && parts[5] === 'resolve' && parts.length === 6 && req.method === 'POST') data = service.setCommentResolution(session, parts[0], parts[2], parts[4], key, 'resolve', await readJsonBody(req));
+      else if (parts[1] === 'reviews' && parts[3] === 'comments' && parts[5] === 'reopen' && parts.length === 6 && req.method === 'POST') data = service.setCommentResolution(session, parts[0], parts[2], parts[4], key, 'reopen', await readJsonBody(req));
+      else if (parts[1] === 'reviews' && parts[3] === 'comments' && parts[5] === 'link-operation' && parts.length === 6 && req.method === 'POST') data = service.linkCommentOperation(session, parts[0], parts[2], parts[4], key, await readJsonBody(req));
       else if (parts[1] === 'reviews' && parts[3] === 'decision' && parts.length === 4 && req.method === 'POST') data = service.decideReview(session, parts[0], parts[2], key, await readJsonBody(req));
+      else if (parts[1] === 'ai-analysis' && parts.length === 2 && req.method === 'POST') data = service.runAiAnalysis(session, parts[0], key, await readJsonBody(req));
+      else if (parts[1] === 'ai-analysis' && parts.length === 2 && req.method === 'GET') data = service.getAiAnalysis(session, parts[0]);
+      else if (parts[1] === 'ai-fix-proposals' && parts.length === 2 && req.method === 'POST') data = service.createAiFixProposal(session, parts[0], key, await readJsonBody(req));
+      else if (parts[1] === 'ai-fix-proposals' && parts.length === 2 && req.method === 'GET') data = service.listAiFixProposals(session, parts[0]);
       else if (parts[1] === 'publish' && parts.length === 2 && req.method === 'POST') data = service.publish(session, parts[0], key, await readJsonBody(req));
       else if (parts[1] === 'external-evidence' && parts.length === 2 && req.method === 'POST') data = service.addExternalEvidence(session, parts[0], key, await readJsonBody(req));
       else if (parts[1] === 'revisions' && parts.length === 2 && req.method === 'POST') data = service.createRevision(session, parts[0], key, await readJsonBody(req));
+      else if (parts[1] === 'diff' && parts.length === 2 && req.method === 'GET') data = service.getCandidateDiff(session, parts[0]);
       else throw new IncrementalBuildError('ROUTE_NOT_FOUND', '增量构建接口不存在', 404);
       sendJson(res, parts.length || req.method === 'GET' ? 200 : 201, { success: true, data });
     } catch (error) {

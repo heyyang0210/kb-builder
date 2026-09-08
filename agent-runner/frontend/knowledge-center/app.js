@@ -1,6 +1,6 @@
 import { archiveAsset, createAsset, deleteOutline, importOutline, loadAssets, loadOutlineData, loadPlatformData, resolveAssetStatus, restoreAsset, updateAsset, updateAssetStatus, loadPlatformPermissions, updatePlatformUserPermissions } from './common/api/platform-api.js';
-import { loadGitLabBranches, loadGitLabConnections, loadGitLabOAuthStatus, loadGitLabOAuthConfig, loadGitLabTree, loadHandbookRepository, loadHandbookRepositoryFile, loadHandbookRepositoryMapping, loadHandbookRepositoryStatistics, loadHandbookRepositoryTree, saveGitLabConnection, saveHandbookRepositoryMapping, createGitLabConnection, updateGitLabConnection, verifyGitLabConnection, disableGitLabConnection, enableGitLabConnection, searchGitLabConnections } from './common/api/gitlab-api.js';
-import { addIncrementalSource, commentIncrementalReview, createIncrementalReview, createIncrementalRevision, createIncrementalTask, decideIncrementalReview, loadIncrementalBaselines, loadIncrementalTask, loadIncrementalTasks, publishIncrementalTask, recordIncrementalEvidence, runIncrementalChecks, saveIncrementalDraft, submitIncrementalCandidate, updateIncrementalTarget } from './common/api/incremental-api.js';
+import { disconnectGitLabOAuth, loadGitLabBranches, loadGitLabConnections, loadGitLabOAuthStatus, loadGitLabOAuthConfig, loadGitLabTree, loadHandbookGitLabAccess, loadHandbookRepository, loadHandbookRepositoryCommits, loadHandbookRepositoryFile, loadHandbookRepositoryMapping, loadHandbookRepositoryStatistics, loadHandbookRepositoryTree, saveGitLabConnection, saveHandbookRepositoryMapping, createGitLabConnection, updateGitLabConnection, verifyGitLabConnection, disableGitLabConnection, enableGitLabConnection, searchGitLabConnections } from './common/api/gitlab-api.js';
+import { addIncrementalSource, bootstrapBaseline, commentIncrementalReview, createIncrementalReview, createIncrementalRevision, createIncrementalTask, createOnlineReview, decideIncrementalReview, loadCandidateDiff, loadHandbookReviewSummary, loadIncrementalBaselines, loadIncrementalTask, loadIncrementalTasks, publishIncrementalTask, recordIncrementalEvidence, reopenIncrementalReviewComment, replyIncrementalReviewComment, resolveIncrementalReviewComment, runIncrementalChecks, saveIncrementalDraft, submitIncrementalCandidate, updateIncrementalTarget } from './common/api/incremental-api.js';
 import { bootstrapAuth, consumeRememberedTarget, performLogout, rememberCurrentTarget, startCasLogin, submitAdminLogin } from './common/auth/auth-controller.js';
 import { appState, views } from './common/state/app-state.js';
 import { authState, canAccessView, canPerform, clearSession, displayName, firstAccessibleView, isPlatformAdmin } from './common/state/auth-state.js';
@@ -56,7 +56,13 @@ function render() {
     && (appState.gitlabAddingConnection || appState.gitlabEditingConnection)
     && document.querySelector('[data-gitlab-add-form], [data-gitlab-edit-form]')) return;
   const renderer = renderers[appState.activeView] || renderDashboard;
+  // 全局平台概览错误不应污染审核与发布工作区。审核页有独立的
+  // reviewProjection 错误投影，只有该投影明确失败时才展示页面级错误。
+  const globalErrorPanel = byId('error-panel');
+  if (globalErrorPanel && appState.activeView === 'review' && appState.reviewProjection?.status !== 'unavailable') globalErrorPanel.hidden = true;
   byId('page-title').textContent = views[appState.activeView][1];
+  document.body.classList.toggle('review-view', appState.activeView === 'review');
+  document.body.classList.toggle('review-focus-mode', appState.activeView === 'review' && appState.reviewUi.focusMode === true);
   document.querySelectorAll('.nav-item').forEach(button => {
     const allowed = canAccessView(button.dataset.view);
     button.hidden = !allowed;
@@ -66,7 +72,7 @@ function render() {
   });
   document.querySelector('.nav-caption.governance').hidden = !canAccessView('platform');
   const outlineView = appState.activeView === 'outlines' ? outlineRouteState() : {};
-  byId('view-root').innerHTML = renderer({ projection: appState.activeView === 'repository' ? appState.gitlabProjection : appState.projection, outlineProjection: appState.outlineProjection, assetCatalog: appState.assetCatalog, incrementalProjection: appState.incrementalProjection, gitlabProjection: appState.gitlabProjection, permissionProjection: appState.permissionProjection, governanceProjection: appState.platformGovernance, selectedPermissionUserId: appState.selectedPermissionUserId, permissionSaveStatus: appState.permissionSaveStatus, permissionUserSearch: appState.permissionUserSearch, gitlabVerification: appState.gitlabVerification, platformAdmin: isPlatformAdmin(), platformTab: appState.platformTab, gitlabListState: appState.gitlabListState, gitlabAddingConnection: appState.gitlabAddingConnection, gitlabEditingConnection: appState.gitlabEditingConnection, outlinePermissions: { create: canPerform('outline:create'), delete: canPerform('outline:delete') }, outlineView });
+  byId('view-root').innerHTML = renderer({ projection: appState.activeView === 'repository' ? appState.gitlabProjection : appState.projection, reviewProjection: appState.reviewProjection, reviewUi: appState.reviewUi, outlineProjection: appState.outlineProjection, assetCatalog: appState.assetCatalog, incrementalProjection: appState.incrementalProjection, gitlabProjection: appState.gitlabProjection, permissionProjection: appState.permissionProjection, governanceProjection: appState.platformGovernance, selectedPermissionUserId: appState.selectedPermissionUserId, permissionSaveStatus: appState.permissionSaveStatus, permissionUserSearch: appState.permissionUserSearch, gitlabVerification: appState.gitlabVerification, platformAdmin: isPlatformAdmin(), platformTab: appState.platformTab, gitlabListState: appState.gitlabListState, gitlabAddingConnection: appState.gitlabAddingConnection, gitlabEditingConnection: appState.gitlabEditingConnection, outlinePermissions: { create: canPerform('outline:create'), delete: canPerform('outline:delete') }, outlineView });
   window.lucide?.createIcons();
   if (appState.activeView === 'outlines' && !outlineView.isDetail && appState.outlineListState.scrollPosition) requestAnimationFrame(() => { byId('main-shell').scrollTop = appState.outlineListState.scrollPosition; });
 }
@@ -86,12 +92,14 @@ function navigate(view, updateHistory = true) {
     return navigate(fallback, updateHistory);
   }
   appState.activeView = view;
+  if (view === 'review') enterReviewLayout();
   const targetPath = view === "platform" ? pathForView(view, { tab: appState.platformTab }) : pathForView(view);
   if (updateHistory && (window.location.pathname + window.location.search) !== targetPath) window.history.pushState({ view, tab: appState.platformTab }, '', targetPath);
   render();
   if (view === 'outlines' && !appState.outlineProjection) loadOutlines();
   if (view === 'assets') loadAssetCatalog();
   if (view === 'production') loadIncrementalWorkspace();
+  if (view === 'review') loadReviewWorkspace();
   if (view === 'repository') loadRepositoryWorkspace();
   if (view === 'platform') loadGitLabAdmin();
   closeMobileNavigation(false);
@@ -104,12 +112,29 @@ function repositoryRouteState() {
   return { handbookId: parts[1] === 'assets' && parts[3] === 'repository' ? parts[2] : '', branch: params.get('branch') || '', language: params.get('lang') === 'en' ? 'en' : 'zh', path: params.get('path') || '' };
 }
 
+function repositoryStatusFor(error) {
+  const statusByCode = {
+    GITLAB_OAUTH_REQUIRED: 'unauthorized', GITLAB_UNAUTHORIZED: 'unauthorized', GITLAB_CREDENTIAL_UNAVAILABLE: 'conflict',
+    HANDBOOK_READ_FORBIDDEN: 'forbidden', GITLAB_MAPPING_NOT_FOUND: 'not-mapped', GITLAB_LANGUAGE_NOT_MAPPED: 'not-mapped',
+    GITLAB_BRANCH_NOT_FOUND: 'not-found', GITLAB_CONNECTION_NOT_FOUND: 'not-found', GITLAB_BRANCH_NOT_ALLOWED: 'forbidden',
+    GITLAB_PATH_FORBIDDEN: 'forbidden', GITLAB_FORBIDDEN: 'forbidden', GITLAB_CONNECTION_INACTIVE: 'conflict', GITLAB_CONNECTOR_DISABLED: 'conflict',
+  };
+  return statusByCode[error.code] || (error.status === 403 ? 'forbidden' : error.status === 401 ? 'unauthorized' : error.status === 404 ? 'not-found' : error.status === 409 ? 'conflict' : 'unavailable');
+}
+
+function requireReadableGitLabAccess(access) {
+  if (access?.canRead !== false) return;
+  if (access.nextAction === 'connect_gitlab') throw Object.assign(new Error(access.message || '需要连接 GitLab 账号'), { code: 'GITLAB_OAUTH_REQUIRED', status: 401 });
+  throw Object.assign(new Error(access.message || '当前仓库连接不可读取'), { code: 'GITLAB_CONNECTION_INACTIVE', status: 409 });
+}
+
 async function loadRepositoryWorkspace() {
   const state = repositoryRouteState();
   if (!state.handbookId) return;
   appState.gitlabProjection = { status: 'loading', handbookId: state.handbookId };
   render();
   try {
+    requireReadableGitLabAccess(await loadHandbookGitLabAccess(state.handbookId));
     const metadata = await loadHandbookRepository(state.handbookId);
     const branches = Array.isArray(metadata) ? metadata : (metadata.items || metadata.branches || []);
     const branch = state.branch || metadata.defaultBranch || branches[0]?.name || '';
@@ -119,22 +144,7 @@ async function loadRepositoryWorkspace() {
     const file = firstFile ? await loadHandbookRepositoryFile(state.handbookId, branch, state.language, firstFile) : null;
     appState.gitlabProjection = { status: 'ok', handbookId: state.handbookId, handbookName: metadata.handbookName, connectionName: metadata.connectionName, project: metadata.project, languages: metadata.languages, branches, branch, language: state.language, tree, file, commitSha: file?.commitId || metadata.commitSha };
   } catch (error) {
-    const statusByCode = {
-      GITLAB_OAUTH_REQUIRED: 'unauthorized',
-      GITLAB_CREDENTIAL_UNAVAILABLE: 'unauthorized',
-      GITLAB_MAPPING_NOT_FOUND: 'not-mapped',
-      GITLAB_LANGUAGE_NOT_MAPPED: 'not-mapped',
-      GITLAB_BRANCH_NOT_FOUND: 'not-found',
-      GITLAB_CONNECTION_NOT_FOUND: 'not-found',
-      GITLAB_BRANCH_NOT_ALLOWED: 'forbidden',
-      GITLAB_PATH_FORBIDDEN: 'forbidden',
-      GITLAB_FORBIDDEN: 'forbidden',
-      GITLAB_UNAUTHORIZED: 'unauthorized',
-      GITLAB_CONNECTION_INACTIVE: 'conflict',
-      GITLAB_CONNECTOR_DISABLED: 'conflict',
-    };
-    const status = statusByCode[error.code] || (error.status === 403 ? 'forbidden' : error.status === 401 ? 'unauthorized' : error.status === 404 ? 'not-found' : error.status === 409 ? 'conflict' : 'unavailable');
-    appState.gitlabProjection = { status, handbookId: state.handbookId, error: { code: error.code, message: error.message, httpStatus: error.status } };
+    appState.gitlabProjection = { status: repositoryStatusFor(error), handbookId: state.handbookId, branch: state.branch, language: state.language, path: state.path, error: { code: error.code, message: error.message, httpStatus: error.status } };
   }
   render();
 }
@@ -233,6 +243,91 @@ async function loadIncrementalWorkspace(preferredTaskId = null) {
   render();
 }
 
+async function loadReviewWorkspace(taskId = null) {
+  const params = new URLSearchParams(window.location.search);
+  const handbookId = params.get('handbookId') || '';
+  appState.reviewProjection = { status: 'loading', items: [], detail: null, handbookId };
+  appState.gitlabProjection = null;
+  render();
+  try {
+    const result = handbookId ? await loadHandbookReviewSummary(handbookId).catch(() => loadIncrementalTasks({ handbookId })) : await loadIncrementalTasks();
+    const allItems = Array.isArray(result) ? result : (result?.items || result?.tasks || []);
+    const activeItems = allItems.filter(item => ['under_review', 'review_pending', 'approved', 'pending_publish'].includes(item?.state || item?.status));
+    const requested = taskId || new URLSearchParams(window.location.search).get('taskId');
+    // A deep link is an explicit request to open that task. Read it directly
+    // instead of silently replacing it with the first active task or an empty state.
+    let detail = requested ? await loadIncrementalTask(requested) : null;
+    const detailTask = detail?.task || detail;
+    const items = requested && detailTask && !activeItems.some(item => String(item.id) === String(requested))
+      ? [detailTask, ...activeItems]
+      : activeItems;
+    const selected = requested || items[0]?.id;
+    if (!detail && selected) detail = await loadIncrementalTask(selected);
+    const selectedTask = detail?.task || detail;
+    let reviewHandbooks = [];
+    if (!selectedTask) {
+      const assets = await loadAssets(new URLSearchParams({ pageSize: '100' })).catch(() => null);
+      reviewHandbooks = (assets?.items || assets?.data?.items || []).filter(item => item.repositoryMapped);
+    }
+    const readerHandbookId = selectedTask?.handbookId || handbookId || reviewHandbooks[0]?.handbookId || '';
+    let onlineReviewBaselines = [];
+    let onlineReviewBaselineError = null;
+    let onlineReviewCommits = [];
+    if (!selectedTask && readerHandbookId) {
+      try {
+        onlineReviewBaselines = await loadIncrementalBaselines(readerHandbookId);
+      } catch (error) {
+        onlineReviewBaselineError = { code: error.code, message: error.message || '正式版本读取失败，无法发起在线评审。' };
+      }
+
+    }
+    if (readerHandbookId) {
+      try {
+        requireReadableGitLabAccess(await loadHandbookGitLabAccess(readerHandbookId));
+        const metadata = await loadHandbookRepository(readerHandbookId);
+        const metadataObject = Array.isArray(metadata) ? {} : metadata;
+        const branches = Array.isArray(metadata) ? metadata : (metadata.items || metadata.branches || []);
+        const language = params.get('lang') === 'en' ? 'en' : 'zh';
+        const branch = params.get('branch') || metadataObject.defaultBranch || branches[0]?.name || '';
+        const treeResult = branch ? await loadHandbookRepositoryTree(readerHandbookId, branch, language) : [];
+        const tree = Array.isArray(treeResult) ? treeResult : (treeResult.items || treeResult.tree || []);
+        const operationPath = selectedTask?.target?.documentPaths?.[0] || selectedTask?.target?.paths?.[0] || selectedTask?.candidate?.operations?.find(item => item.path)?.path || '';
+        const firstFile = params.get('path') || operationPath || tree.find(item => item.type !== 'tree' && /\.md$/i.test(item.path || item.name))?.path || '';
+        let loadedFile = null;
+        if (firstFile) {
+          try { loadedFile = await loadHandbookRepositoryFile(readerHandbookId, branch, language, firstFile); }
+          catch (fileErr) {
+            // 自动重试一次
+            try { loadedFile = await loadHandbookRepositoryFile(readerHandbookId, branch, language, firstFile); }
+            catch (retryErr) { throw retryErr; }
+          }
+        }
+        const actualPath = loadedFile?.path || '';
+        const contextConflict = firstFile && actualPath !== firstFile ? { expectedPath: firstFile, actualPath } : null;
+        const file = contextConflict ? null : loadedFile;
+        appState.gitlabProjection = { status: contextConflict ? 'conflict' : 'ok', handbookId: readerHandbookId, handbookName: metadataObject.handbookName, connectionName: metadataObject.connectionName, project: metadataObject.project, languages: metadataObject.languages, branches, branch, language, tree, file, requestedPath: firstFile, contextConflict, commitSha: file?.commitId || metadataObject.commitSha, updatedAt: file?.updatedAt || metadataObject.updatedAt };
+      } catch (error) {
+        appState.gitlabProjection = { status: repositoryStatusFor(error), handbookId: readerHandbookId, branch: params.get('branch') || '', language: params.get('lang') === 'en' ? 'en' : 'zh', path: params.get('path') || '', error: { code: error.code, message: error.message, status: error.status } };
+      }
+    }
+    const hasBaseline = onlineReviewBaselines.some(item => item?.current === true);
+    if (!selectedTask && readerHandbookId && !hasBaseline && !onlineReviewBaselineError) {
+      try {
+        const resolvedBranch = appState.gitlabProjection?.branch || params.get('branch') || '';
+        if (resolvedBranch) onlineReviewCommits = await loadHandbookRepositoryCommits(readerHandbookId, resolvedBranch);
+      } catch (_) { /* commits loading is best-effort */ }
+    }
+    const step = params.get('step') || 'read';
+    let diff = null;
+    if (selected && step === 'diff') diff = await loadCandidateDiff(selected).catch(error => ({ error: { message: error.message } }));
+    appState.reviewProjection = { status: 'ok', items, allItems, detail: detail?.task ? detail : detail ? { task: detail } : null, handbookId: readerHandbookId, reviewHandbooks, onlineReviewBaselines, onlineReviewBaselineError, onlineReviewCommits, diff };
+  } catch (error) {
+    // 保留已成功加载的 gitlabProjection，避免清除仓库正文导致阅读区空白
+    appState.reviewProjection = { status: 'unavailable', items: [], detail: null, error: { code: error.code, message: error.message } };
+  }
+  if (appState.activeView === 'review') render();
+}
+
 function incrementalStatus(formOrSection, message, error = false) {
   const status = formOrSection?.querySelector?.('.incremental-form-status');
   if (status) { status.textContent = message; status.classList.toggle('error', error); }
@@ -245,7 +340,11 @@ async function runIncrementalAction(control, taskId, operation, successMessage) 
   try {
     await operation();
     incrementalStatus(container, successMessage);
-    await loadIncrementalWorkspace(taskId);
+    // Keep the active projection in sync. Review actions must reload the
+    // review workspace (and its server-computed capabilities); otherwise a
+    // successful decision would leave stale buttons visible until navigation.
+    if (appState.activeView === 'review') await loadReviewWorkspace(taskId);
+    else await loadIncrementalWorkspace(taskId);
   } catch (error) {
     incrementalStatus(container, error.message || '操作失败', true);
     control.disabled = false;
@@ -307,14 +406,45 @@ function showApplication() {
   byId('sidebar-user').textContent = displayName();
 }
 
+function renderGitLabAccountDialog() {
+  const root = byId('external-account-content');
+  const projection = appState.gitlabAccountProjection || { status: 'loading' };
+  if (projection.status === 'loading') {
+    root.innerHTML = '<div class="external-account-loading" role="status">正在读取 GitLab 账号状态…</div>';
+  } else if (projection.status === 'unavailable') {
+    root.innerHTML = `<div class="external-account-error" role="alert"><strong>暂时无法读取账号状态</strong><p>${escapeHtml(projection.error || '请稍后重试。')}</p><button class="button secondary" type="button" data-external-account-retry>重试</button></div>`;
+  } else if (projection.connected) {
+    const updatedAt = projection.updatedAt ? new Date(projection.updatedAt).toLocaleString('zh-CN', { hour12: false }) : '本次登录期间';
+    root.innerHTML = `<section class="external-account-item"><div class="external-account-provider"><i data-lucide="git-branch" aria-hidden="true"></i><div><h3>GitLab</h3><p>用于读取你有权访问的手册仓库</p></div><span class="external-account-status connected">已连接</span></div><dl><div><dt>最近授权</dt><dd>${escapeHtml(updatedAt)}</dd></div><div><dt>权限范围</dt><dd>沿用你的 GitLab 项目权限</dd></div></dl><button class="button tertiary" type="button" data-external-account-disconnect>解除连接</button></section>`;
+  } else {
+    root.innerHTML = '<section class="external-account-item"><div class="external-account-provider"><i data-lucide="git-branch" aria-hidden="true"></i><div><h3>GitLab</h3><p>当前没有已连接的个人 GitLab 账号</p></div><span class="external-account-status">未连接</span></div><p class="external-account-guidance">打开需要阅读的具体手册后，使用“连接 GitLab 账号”完成授权。</p></section>';
+  }
+  window.lucide?.createIcons();
+}
+
+async function loadGitLabAccount() {
+  appState.gitlabAccountProjection = { status: 'loading' };
+  renderGitLabAccountDialog();
+  try {
+    appState.gitlabAccountProjection = { status: 'ok', ...await loadGitLabOAuthStatus() };
+  } catch (error) {
+    appState.gitlabAccountProjection = { status: 'unavailable', error: error.message };
+  }
+  renderGitLabAccountDialog();
+}
+
 function updatePlatformState(context, overview) {
   const states = [context?.status, overview?.status].filter(Boolean);
   const ok = states.length === 2 && states.every(status => status === 'ok');
   const unavailable = states.length === 0 || states.every(status => status === 'unavailable');
   byId('platform-status').textContent = ok ? '平台运行正常' : unavailable ? '平台数据不可用' : '部分服务降级';
   byId('platform-dot').className = `status-dot ${ok ? 'ok' : 'warning'}`;
-  byId('error-panel').hidden = !unavailable;
-  if (unavailable) byId('error-message').textContent = '当前无法读取平台数据，请稍后重新检查。';
+  // 审核与发布有独立的审核/仓库数据链路。平台概览服务不可用时，不能
+  // 覆盖审核页面并误报“平台数据暂时不可用”；该页面只由 reviewProjection
+  // 的真实状态决定是否展示错误。
+  const isReviewView = appState.activeView === 'review';
+  byId('error-panel').hidden = !unavailable || isReviewView;
+  if (unavailable && !isReviewView) byId('error-message').textContent = '当前无法读取平台数据，请稍后重新检查。';
 }
 
 let loadInFlight = null;
@@ -722,6 +852,71 @@ document.addEventListener('click', async event => {
     return;
   }
   if (event.target.closest('[data-incremental-reload]')) { loadIncrementalWorkspace(); return; }
+  if (event.target.closest('[data-review-reload]')) { loadReviewWorkspace(); return; }
+  if (event.target.closest('[data-review-online-start]')) {
+    const dialog = document.querySelector('[data-review-online-dialog]');
+    if (dialog?.showModal) dialog.showModal();
+    return;
+  }
+  if (event.target.closest('[data-review-online-close], [data-review-online-cancel]')) {
+    document.querySelector('[data-review-online-dialog]')?.close();
+    return;
+  }
+  const dbCopy = event.target.closest('[data-db-copy-code]');
+  if (dbCopy) {
+    const block = dbCopy.closest('.db-code-block');
+    const code = block?.querySelector('code')?.textContent || '';
+    try { await navigator.clipboard.writeText(code); dbCopy.textContent = '已复制'; setTimeout(() => { dbCopy.textContent = '复制'; }, 1200); } catch (_) { showAppNotice('复制失败，请手动选择代码。'); }
+    return;
+  }
+  const reviewTask = event.target.closest('[data-review-task]');
+  if (reviewTask) { const url = new URL(window.location.href); url.searchParams.set('taskId', reviewTask.dataset.reviewTask); window.history.pushState({ view: 'review', taskId: reviewTask.dataset.reviewTask }, document.title, url); loadReviewWorkspace(reviewTask.dataset.reviewTask); return; }
+  const reviewStep = event.target.closest('[data-review-step]');
+  if (reviewStep) { const url = new URL(window.location.href); url.searchParams.set('step', reviewStep.dataset.reviewStep); window.history.pushState({ view: 'review', step: reviewStep.dataset.reviewStep }, document.title, url); loadReviewWorkspace(new URLSearchParams(url.search).get('taskId')); return; }
+  const reviewDocument = event.target.closest('[data-review-document]');
+  if (reviewDocument) {
+    const handbookId = new URLSearchParams(window.location.search).get('handbookId') || appState.gitlabProjection?.handbookId;
+    const branch = appState.gitlabProjection?.branch || '';
+    if (handbookId && branch) {
+      try {
+        const url = new URL(window.location.href);
+        url.searchParams.set('path', reviewDocument.dataset.reviewDocument);
+        window.history.pushState({ view: 'review', path: reviewDocument.dataset.reviewDocument }, '', url);
+        const expectedPath = reviewDocument.dataset.reviewDocument;
+        const loadedFile = await loadHandbookRepositoryFile(handbookId, branch, appState.gitlabProjection.language || 'zh', expectedPath);
+        const actualPath = loadedFile?.path || '';
+        const contextConflict = actualPath !== expectedPath ? { expectedPath, actualPath } : null;
+        appState.gitlabProjection = { ...appState.gitlabProjection, status: contextConflict ? 'conflict' : 'ok', requestedPath: expectedPath, contextConflict, file: contextConflict ? null : loadedFile };
+        render();
+      } catch (error) { showAppNotice(`文档读取失败：${error.message}`); }
+    }
+    return;
+  }
+  const focusToggle = event.target.closest('[data-review-focus-toggle]');
+  if (focusToggle) { appState.reviewUi.focusMode = !appState.reviewUi.focusMode; document.body.classList.toggle('review-focus-mode', appState.reviewUi.focusMode); render(); return; }
+  const densityToggle = event.target.closest('[data-review-density]');
+  if (densityToggle) { appState.reviewUi.readingDensity = 'comfortable'; saveReviewUi(); render(); return; }
+  if (event.target.closest('[data-review-reader-refresh]')) { loadReviewWorkspace(new URLSearchParams(window.location.search).get('taskId')); return; }
+  const reviewLanguage = event.target.closest('[data-review-language]');
+  if (reviewLanguage) { const url = new URL(window.location.href); url.searchParams.set('lang', reviewLanguage.dataset.reviewLanguage); url.searchParams.delete('path'); window.history.pushState({ view: 'review', lang: reviewLanguage.dataset.reviewLanguage }, '', url); loadReviewWorkspace(url.searchParams.get('taskId')); return; }
+  const reviewLine = event.target.closest('[data-review-line]');
+  if (reviewLine) { document.querySelectorAll('[data-review-line]').forEach(line => line.classList.toggle('selected', line === reviewLine)); const form = document.querySelector('[data-review-comment-form]'); if (form) { const documentId = reviewLine.dataset.documentId; const nodeId = reviewLine.dataset.nodeId; const anchor = documentId && nodeId ? { documentId, nodeId, anchorKind: reviewLine.dataset.anchorKind === 'baseline' ? 'baseline' : 'after_operation', lineRange: { startLine: Number(reviewLine.dataset.reviewLine), endLine: Number(reviewLine.dataset.reviewLine) } } : null; form.elements.anchor.value = anchor ? JSON.stringify(anchor) : ''; const label = form.querySelector('[data-review-anchor-status]'); if (label) label.textContent = anchor ? `已定位第 ${reviewLine.dataset.reviewLine} 行` : '未能定位到具体段落，将作为全文意见提交。'; } return; }
+  const commentLocate = event.target.closest('[data-review-comment-locate]');
+  if (commentLocate) { const url = new URL(window.location.href); url.searchParams.set('step', 'diff'); if (commentLocate.dataset.reviewLine) url.searchParams.set('line', commentLocate.dataset.reviewLine); else url.searchParams.delete('line'); window.history.pushState({ view: 'review', step: 'diff' }, document.title, url); loadReviewWorkspace(url.searchParams.get('taskId')); return; }
+  const commentResolve = event.target.closest('[data-review-comment-resolve], [data-review-comment-reopen]');
+  if (commentResolve) { const reopen = commentResolve.hasAttribute('data-review-comment-reopen'); runIncrementalAction(commentResolve, commentResolve.dataset.taskId, () => (reopen ? reopenIncrementalReviewComment : resolveIncrementalReviewComment)(commentResolve.dataset.taskId, commentResolve.dataset.reviewId, commentResolve.dataset.reviewCommentResolve || commentResolve.dataset.reviewCommentReopen), reopen ? '意见已重新打开' : '意见已标记为已处理'); return; }
+  const replyToggle = event.target.closest('[data-review-reply-toggle], [data-review-reply-cancel]');
+  if (replyToggle) {
+    const opinion = replyToggle.closest('[data-review-opinion]');
+    const form = opinion?.querySelector('[data-review-reply-form]');
+    const opening = replyToggle.hasAttribute('data-review-reply-toggle') && form?.hidden;
+    if (form) form.hidden = !opening;
+    opinion?.querySelector('[data-review-reply-toggle]')?.setAttribute('aria-expanded', String(Boolean(opening)));
+    if (opening) form?.querySelector('textarea')?.focus();
+    return;
+  }
+  const reviewRevision = event.target.closest('[data-review-revision]');
+  if (reviewRevision) { runIncrementalAction(reviewRevision, reviewRevision.dataset.reviewRevision, async () => { const created = await createIncrementalRevision(reviewRevision.dataset.reviewRevision); const url = new URL(window.location.href); url.searchParams.set('taskId', created.id); url.searchParams.set('step', 'read'); window.history.replaceState({ view: 'review', taskId: created.id }, document.title, url); return created; }, '修订任务已创建'); return; }
   if (event.target.closest('[data-repository-refresh]')) { loadRepositoryWorkspace(); return; }
   const repositoryLanguage = event.target.closest('[data-repository-language]');
   if (repositoryLanguage) { const url=new URL(window.location.href); url.searchParams.set('lang',repositoryLanguage.dataset.repositoryLanguage); url.searchParams.delete('path'); window.history.pushState({view:'repository'},'',url); loadRepositoryWorkspace(); return; }
@@ -748,6 +943,15 @@ document.addEventListener('click', async event => {
     if (decision === 'reject' && !comment?.trim()) return;
     runIncrementalAction(reviewDecision, reviewDecision.dataset.taskId, () => decideIncrementalReview(reviewDecision.dataset.taskId, reviewDecision.dataset.reviewId, { decision, ...(comment?.trim() ? { comment: comment.trim() } : {}) }), decision === 'approve' ? '审核已通过' : '候选已退回');
     return;
+  }
+  const reviewDecisionP0 = event.target.closest('[data-review-decision]');
+  if (reviewDecisionP0) { if (reviewDecisionP0.disabled) return; runIncrementalAction(reviewDecisionP0, reviewDecisionP0.dataset.taskId, () => decideIncrementalReview(reviewDecisionP0.dataset.taskId, reviewDecisionP0.dataset.reviewId, { decision: reviewDecisionP0.dataset.reviewDecision }), '审核已通过'); return; }
+  const reviewPublish = event.target.closest('[data-review-publish]');
+  if (reviewPublish) {
+    const task = appState.reviewProjection?.detail?.task || appState.reviewProjection?.detail;
+    const confirmed = window.confirm(`请确认发布\n基线：${task?.baselineVersionId || '未知'}\n候选摘要：${task?.candidate?.digest || task?.candidateDigest || '未知'}\n发布后将替代当前正式版本。`);
+    if (!confirmed) return;
+    runIncrementalAction(reviewPublish, reviewPublish.dataset.reviewPublish, () => publishIncrementalTask(reviewPublish.dataset.reviewPublish, { expectedCandidateDigest: task?.candidate?.digest || task?.candidateDigest }), '平台版本已发布'); return;
   }
   const publish = event.target.closest('[data-incremental-publish]');
   if (publish) {
@@ -1223,6 +1427,101 @@ document.addEventListener('submit', async event => {
     await runIncrementalAction(button, taskId, () => commentIncrementalReview(taskId, commentForm.dataset.reviewId, { comment: commentForm.elements.comment.value.trim() }), '评论已添加');
     return;
   }
+  const onlineReviewForm = event.target.closest('[data-review-online-form]');
+  if (onlineReviewForm) {
+    event.preventDefault();
+    const submit = onlineReviewForm.querySelector('button[type="submit"]');
+    const errorPanel = onlineReviewForm.querySelector('[data-review-online-error]');
+    const baseline = onlineReviewForm.elements.baselineVersionId;
+    const selected = baseline?.selectedOptions?.[0];
+    const scope = onlineReviewForm.elements.scope?.value || 'handbook';
+    const documentPath = onlineReviewForm.dataset.documentPath;
+    const bootstrapFromRepository = onlineReviewForm.elements.bootstrapFromRepository?.value === 'true';
+    const commitSha = onlineReviewForm.elements.commitSha?.value || '';
+    const branch = onlineReviewForm.dataset.branch || appState.gitlabProjection?.branch || '';
+    if (errorPanel) errorPanel.hidden = true;
+    submit.disabled = true;
+    try {
+      let baselineVersionId = baseline?.value || '';
+      let businessVersion = selected?.dataset.businessVersion || '';
+      if (bootstrapFromRepository) {
+        const handbookId = onlineReviewForm.dataset.handbookId;
+        const language = appState.gitlabProjection?.language === 'en' ? 'en' : 'zh';
+        const filePath = scope === 'document' && documentPath ? documentPath : '';
+        let fileContent = '';
+        if (filePath) {
+          try {
+            const fileData = await loadHandbookRepositoryFile(handbookId, commitSha || branch, language, filePath);
+            fileContent = fileData?.content || '';
+          } catch (fileError) {
+            throw new Error(`无法读取 GitLab 文件内容：${fileError.message || '未知错误'}`);
+          }
+        } else if (scope === 'handbook') {
+          // handbook 范围：从当前已加载的 GitLab 投影获取文件内容作为基线
+          const currentFile = appState.gitlabProjection?.file;
+          if (currentFile?.content) {
+            fileContent = currentFile.content;
+          } else {
+            // 尝试从树中加载第一个 markdown 文件
+            const tree = appState.gitlabProjection?.tree || [];
+            const firstMd = tree.find(item => item.type !== 'tree' && /\.md$/i.test(item.path || item.name));
+            if (firstMd) {
+              try {
+                const fileData = await loadHandbookRepositoryFile(handbookId, commitSha || branch, language, firstMd.path);
+                fileContent = fileData?.content || '';
+              } catch (_) { /* best-effort */ }
+            }
+          }
+        }
+        businessVersion = onlineReviewForm.elements.businessVersion?.value?.trim() || `bootstrap-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}`;
+        const syntheticBaseline = await bootstrapBaseline({
+          handbookId,
+          businessVersion,
+          content: fileContent || `# ${onlineReviewForm.dataset.handbookName || handbookId}\n\n合成基线，来源：GitLab ${commitSha ? `提交 ${commitSha.slice(0, 8)}` : 'HEAD'}`,
+          commitSha: commitSha || null,
+          filePath: filePath || null,
+          branch: branch || null,
+        });
+        baselineVersionId = syntheticBaseline.id;
+      }
+      const created = await createOnlineReview({
+        name: onlineReviewForm.dataset.handbookName ? `${onlineReviewForm.dataset.handbookName} 在线评审` : '在线评审',
+        handbookId: onlineReviewForm.dataset.handbookId,
+        handbookName: onlineReviewForm.dataset.handbookName,
+        businessVersion,
+        baselineVersionId,
+        scope,
+        documentIds: scope === 'document' && documentPath ? [documentPath] : [],
+        language: appState.gitlabProjection?.language === 'en' ? 'en-US' : 'zh-CN',
+        note: onlineReviewForm.elements.note.value.trim(),
+      });
+      const url = new URL(window.location.href);
+      url.searchParams.set('handbookId', created.handbookId);
+      url.searchParams.set('taskId', created.id);
+      url.searchParams.set('step', 'read');
+      url.searchParams.delete('line');
+      window.history.pushState({ view: 'review', taskId: created.id }, document.title, url);
+      onlineReviewForm.closest('dialog')?.close();
+      await loadReviewWorkspace(created.id);
+    } catch (error) {
+      if (errorPanel) {
+        const message = String(error?.message || '').trim();
+        errorPanel.textContent = !message || /^(failed to fetch|networkerror|load failed)$/i.test(message)
+          ? '无法连接平台服务，请检查网络后重试。'
+          : message;
+        errorPanel.hidden = false;
+        errorPanel.focus();
+      }
+      submit.disabled = false;
+    }
+    return;
+  }
+  const reviewCommentForm = event.target.closest('[data-review-comment-form]');
+  if (reviewCommentForm) { event.preventDefault(); const button = reviewCommentForm.querySelector('button'); let anchor = null; try { anchor = reviewCommentForm.elements.anchor.value ? JSON.parse(reviewCommentForm.elements.anchor.value) : null; } catch (_) { anchor = null; } await runIncrementalAction(button, reviewCommentForm.dataset.taskId, () => commentIncrementalReview(reviewCommentForm.dataset.taskId, reviewCommentForm.dataset.reviewId, { comment: reviewCommentForm.elements.comment.value.trim(), commentType: reviewCommentForm.elements.commentType?.value || 'suggestion', severity: reviewCommentForm.elements.severity?.value || 'normal', candidateDigest: reviewCommentForm.elements.candidateDigest.value, ...(anchor ? { anchor } : {}) }), '意见已添加'); return; }
+  const reviewReplyForm = event.target.closest('[data-review-reply-form]');
+  if (reviewReplyForm) { event.preventDefault(); const button = reviewReplyForm.querySelector('button[type="submit"]'); await runIncrementalAction(button, reviewReplyForm.dataset.taskId, () => replyIncrementalReviewComment(reviewReplyForm.dataset.taskId, reviewReplyForm.dataset.reviewId, reviewReplyForm.dataset.commentId, { comment: reviewReplyForm.elements.comment.value.trim() }), '回复已发送'); return; }
+  const reviewDecisionForm = event.target.closest('[data-review-decision-form]');
+  if (reviewDecisionForm) { event.preventDefault(); const button = reviewDecisionForm.querySelector('button[type="submit"]'); await runIncrementalAction(button, reviewDecisionForm.dataset.taskId, () => decideIncrementalReview(reviewDecisionForm.dataset.taskId, reviewDecisionForm.dataset.reviewId, { decision: 'reject', comment: reviewDecisionForm.elements.comment.value.trim() }), '修改稿已退回'); return; }
   const evidenceForm = event.target.closest('[data-incremental-evidence-form]');
   if (evidenceForm) {
     event.preventDefault();
@@ -1347,7 +1646,251 @@ document.addEventListener('submit', async event => {
   } finally { submit.disabled = false; }
 });
 
+
+
+// 滚动时隐藏选区气泡（避免位置偏移）
+document.addEventListener('scroll', () => {
+  const bubble = document.querySelector('[data-review-selection-bubble]');
+  if (bubble && !bubble.hidden) bubble.hidden = true;
+}, true);
+
 document.addEventListener('change', event => {
+  const reviewHandbookSelect = event.target.closest('[data-review-handbook-select]');
+  if (reviewHandbookSelect) {
+    const url = new URL(window.location.href);
+    url.search = new URLSearchParams({ handbookId: reviewHandbookSelect.value }).toString();
+    window.history.pushState({ view: 'review', handbookId: reviewHandbookSelect.value }, document.title, url);
+    loadReviewWorkspace();
+    return;
+  }
+  const reviewTaskSelect = event.target.closest('[data-review-task-select]');
+  if (reviewTaskSelect) {
+    const url = new URL(window.location.href);
+    url.searchParams.set('taskId', reviewTaskSelect.value);
+    url.searchParams.delete('path');
+    url.searchParams.delete('branch');
+    window.history.pushState({ view: 'review', taskId: reviewTaskSelect.value }, document.title, url);
+    loadReviewWorkspace(reviewTaskSelect.value);
+    return;
+  }
+  const reviewBranch = event.target.closest('[data-review-branch]');
+  if (!reviewBranch) return;
+  const url = new URL(window.location.href); url.searchParams.set('branch', reviewBranch.value); url.searchParams.delete('path'); window.history.pushState({ view: 'review', branch: reviewBranch.value }, '', url); loadReviewWorkspace(url.searchParams.get('taskId'));
+});
+
+const reviewUiStorage = {
+  directoryCollapsed: 'knowledge-center-review-directory-collapsed',
+  directoryWidth: 'knowledge-center-review-directory-width',
+  readingDensity: 'knowledge-center-review-reading-density',
+};
+
+function saveReviewUi() {
+  try {
+    localStorage.setItem(reviewUiStorage.directoryCollapsed, String(appState.reviewUi.directoryCollapsed));
+    localStorage.setItem(reviewUiStorage.directoryWidth, String(appState.reviewUi.directoryWidth));
+    localStorage.setItem(reviewUiStorage.readingDensity, appState.reviewUi.readingDensity);
+  } catch (_) { /* 存储不可用或配额已满，降级到内存状态 */ }
+}
+
+function restoreReviewUi() {
+  try {
+    appState.reviewUi.directoryCollapsed = localStorage.getItem(reviewUiStorage.directoryCollapsed) === 'true';
+    appState.reviewUi.directoryWidth = Math.min(360, Math.max(200, Number(localStorage.getItem(reviewUiStorage.directoryWidth)) || 260));
+  } catch (_) { /* 存储不可用，使用内存默认值 */ }
+  // 审核阅读区统一使用舒适型排版；清理旧版本可能保存的 compact 偏好。
+  appState.reviewUi.readingDensity = 'comfortable';
+  try { localStorage.setItem(reviewUiStorage.readingDensity, 'comfortable'); } catch (_) { /* 存储不可用 */ }
+}
+
+document.addEventListener('click', event => {
+  const toggle = event.target.closest('[data-review-directory-toggle]');
+  if (!toggle) return;
+  appState.reviewUi.directoryCollapsed = !appState.reviewUi.directoryCollapsed;
+  saveReviewUi();
+  render();
+});
+
+let reviewDirectoryDragging = false;
+document.addEventListener('pointerdown', event => {
+  const handle = event.target.closest('[data-review-directory-resizer]');
+  if (!handle) return;
+  reviewDirectoryDragging = true;
+  handle.setPointerCapture?.(event.pointerId);
+});
+document.addEventListener('pointermove', event => {
+  if (!reviewDirectoryDragging) return;
+  const layout = document.querySelector('.review-reading-layout');
+  if (!layout) return;
+  appState.reviewUi.directoryWidth = Math.min(360, Math.max(200, event.clientX - layout.getBoundingClientRect().left));
+  layout.style.setProperty('--review-directory-width', `${appState.reviewUi.directoryWidth}px`);
+  document.querySelector('[data-review-directory-resizer]')?.setAttribute('aria-valuenow', String(Math.round(appState.reviewUi.directoryWidth)));
+});
+document.addEventListener('pointerup', () => {
+  if (!reviewDirectoryDragging) return;
+  reviewDirectoryDragging = false;
+  saveReviewUi();
+});
+document.addEventListener('keydown', event => {
+  const handle = event.target.closest?.('[data-review-directory-resizer]');
+  if (handle && ['ArrowLeft', 'ArrowRight'].includes(event.key)) {
+    event.preventDefault();
+    appState.reviewUi.directoryWidth = Math.min(360, Math.max(200, appState.reviewUi.directoryWidth + (event.key === 'ArrowRight' ? 16 : -16)));
+    saveReviewUi();
+    render();
+    document.querySelector('[data-review-directory-resizer]')?.focus();
+    return;
+  }
+  if (appState.activeView !== 'review' || event.ctrlKey || event.metaKey || event.altKey || event.target.closest?.('input, textarea, select, [contenteditable="true"]')) return;
+  if (event.key === 'Escape' && appState.reviewUi.focusMode) { appState.reviewUi.focusMode = false; render(); return; }
+  const step = new URLSearchParams(window.location.search).get('step') || 'read';
+  const selector = step === 'diff' && ['j', 'k'].includes(event.key.toLowerCase()) ? '[data-review-line]' : step === 'opinions' && ['[', ']'].includes(event.key) ? '.review-opinion' : '';
+  if (!selector) return;
+  const items = [...document.querySelectorAll(selector)];
+  if (!items.length) return;
+  event.preventDefault();
+  const current = items.findIndex(item => item.classList.contains('keyboard-current'));
+  const forward = ['j', ']'].includes(event.key.toLowerCase());
+  const index = current < 0 ? (forward ? 0 : items.length - 1) : Math.min(items.length - 1, Math.max(0, current + (forward ? 1 : -1)));
+  items.forEach((item, itemIndex) => item.classList.toggle('keyboard-current', itemIndex === index));
+  items[index].scrollIntoView({ block: 'center', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+  items[index].focus?.();
+});
+
+document.addEventListener('input', event => {
+  const search = event.target.closest('[data-review-document-search]');
+  if (!search) return;
+  const query = search.value.trim().toLowerCase();
+  document.querySelectorAll('[data-review-tree-item]').forEach(item => { item.hidden = Boolean(query && !item.textContent.toLowerCase().includes(query)); });
+});
+
+// 阅读文档中的选区评论：仅在能找到候选文档和稳定节点时生成行级锚点。
+// 阅读文档中的选区评论：选中文字 → 浮动气泡 → 内联批注输入框
+document.addEventListener('mouseup', event => {
+  const content = event.target.closest?.('.review-document-content');
+  const bubble = document.querySelector('[data-review-selection-bubble]');
+  // 如果点击的是气泡本身或内联批注输入框，不处理
+  if (event.target.closest?.('[data-review-bubble-trigger], .review-inline-input-box')) return;
+  if (!bubble) return;
+  // 清除选区时也隐藏气泡
+  const selection = window.getSelection?.();
+  const selectedText = selection?.toString().trim() || '';
+  if (!selectedText || !content) { bubble.hidden = true; return; }
+  // 计算选区坐标，显示气泡
+  const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+  if (!range) return;
+  const rect = range.getBoundingClientRect();
+  bubble.hidden = false;
+  const contentRect = content.getBoundingClientRect();
+  bubble.style.top = `${Math.max(8, rect.top - contentRect.top + content.scrollTop - 44)}px`;
+  bubble.style.left = `${Math.max(8, rect.right - contentRect.left + content.scrollLeft + 4)}px`;
+  // 存储选区信息到气泡的 dataset
+  const documentId = content.dataset.reviewDocumentId || '';
+  const container = selection?.anchorNode?.nodeType === Node.ELEMENT_NODE ? selection.anchorNode : selection?.anchorNode?.parentElement;
+  const node = container?.closest?.('[id]');
+  const nodeId = node?.id || '';
+  const text = content.textContent || '';
+  const prefix = range ? document.createRange() : null;
+  let startChar = 0;
+  if (prefix) { prefix.selectNodeContents(content); prefix.setEnd(range.startContainer, range.startOffset); startChar = prefix.toString().length; }
+  const endChar = startChar + selectedText.length;
+  const startLine = text.slice(0, startChar).split(/\n/).length;
+  const endLine = text.slice(0, endChar).split(/\n/).length;
+  const anchor = documentId && nodeId ? {
+    documentId, nodeId, anchorKind: 'document_span',
+    lineRange: { startLine, endLine }, charRange: { startChar, endChar }, selectedText,
+    contextBefore: text.slice(Math.max(0, startChar - 120), startChar),
+    contextAfter: text.slice(endChar, endChar + 120),
+  } : null;
+  bubble.dataset.anchor = anchor ? JSON.stringify(anchor) : '';
+  bubble.dataset.selectedText = selectedText.slice(0, 200);
+  bubble.dataset.startLine = String(startLine);
+  bubble.dataset.endLine = String(endLine);
+});
+
+// 气泡按钮点击 → 在选区位置展开内联批注输入框
+document.addEventListener('click', event => {
+  const trigger = event.target.closest?.('[data-review-bubble-trigger]');
+  if (!trigger) return;
+  const bubble = trigger.closest('[data-review-selection-bubble]');
+  if (!bubble) return;
+  event.preventDefault();
+  // 移除已有的内联输入框
+  document.querySelectorAll('.review-inline-input-box').forEach(el => el.remove());
+  const selectedText = bubble.dataset.selectedText || '';
+  const anchor = bubble.dataset.anchor || '';
+  const startLine = bubble.dataset.startLine || '';
+  const endLine = bubble.dataset.endLine || '';
+  const content = document.querySelector('.review-document-content');
+  if (!content) return;
+  // 找到侧栏评论表单获取 taskId 和 reviewId
+  const sidebarForm = document.querySelector('[data-review-reader-comment-form]');
+  const taskId = sidebarForm?.dataset.taskId || '';
+  const reviewId = sidebarForm?.dataset.reviewId || '';
+  const candidateDigest = sidebarForm?.querySelector('[name="candidateDigest"]')?.value || '';
+  // 创建内联输入框
+  const inputBox = document.createElement('div');
+  inputBox.className = 'review-inline-input-box';
+  inputBox.innerHTML = `<div class="review-inline-input-quote">已选中：${escapeHtml(selectedText.length > 80 ? selectedText.slice(0, 80) + '…' : selectedText || '全文')}</div><form class="review-inline-input-form" data-review-inline-form data-task-id="${escapeHtml(taskId)}" data-review-id="${escapeHtml(reviewId)}"><input type="hidden" name="anchor" value="${escapeHtml(anchor)}"><input type="hidden" name="candidateDigest" value="${escapeHtml(candidateDigest)}"><input type="hidden" name="commentType" value="issue"><input type="hidden" name="severity" value="normal"><textarea name="comment" required placeholder="描述你的意见…" rows="3"></textarea><div class="review-inline-input-actions"><button type="submit" class="button primary compact">提交意见</button><button type="button" class="button secondary compact" data-review-inline-cancel>取消</button></div></form>`;
+  // 定位输入框在文档内容区右侧
+  const mainContent = content.querySelector('main') || content;
+  const bubbleRect = bubble.getBoundingClientRect();
+  inputBox.style.top = `${bubbleRect.top + window.scrollY - content.getBoundingClientRect().top}px`;
+  mainContent.appendChild(inputBox);
+  inputBox.querySelector('textarea')?.focus();
+  bubble.hidden = true;
+  // 取消按钮
+  inputBox.querySelector('[data-review-inline-cancel]')?.addEventListener('click', () => inputBox.remove());
+  // 表单提交
+  inputBox.querySelector('[data-review-inline-form]')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const form = e.target;
+    const submitBtn = form.querySelector('button[type="submit"]');
+    submitBtn.disabled = true;
+    let anchorObj = null;
+    try { anchorObj = form.elements.anchor.value ? JSON.parse(form.elements.anchor.value) : null; } catch (_) { anchorObj = null; }
+    try {
+      const { commentIncrementalReview } = await import('./common/api/incremental-api.js');
+      await commentIncrementalReview(taskId, reviewId, {
+        comment: form.elements.comment.value.trim(),
+        commentType: form.elements.commentType?.value || 'issue',
+        severity: form.elements.severity?.value || 'normal',
+        candidateDigest: form.elements.candidateDigest?.value || '',
+        ...(anchorObj ? { anchor: anchorObj } : {}),
+      });
+      inputBox.remove();
+      await loadReviewWorkspace(taskId);
+    } catch (err) {
+      submitBtn.disabled = false;
+      const errorEl = form.querySelector('.review-inline-error') || (() => {
+        const el = document.createElement('p');
+        el.className = 'review-inline-error';
+        form.appendChild(el);
+        return el;
+      })();
+      errorEl.textContent = err?.message || '提交失败，请重试。';
+    }
+  });
+});
+
+
+
+// 滚动时隐藏选区气泡（避免位置偏移）
+document.addEventListener('scroll', () => {
+  const bubble = document.querySelector('[data-review-selection-bubble]');
+  if (bubble && !bubble.hidden) bubble.hidden = true;
+}, true);
+
+document.addEventListener('change', event => {
+  const opinionFilter = event.target.closest('[data-review-opinion-filter]');
+  if (opinionFilter) {
+    document.querySelectorAll('[data-review-opinion]').forEach(opinion => {
+      const visible = opinionFilter.value === 'all'
+        || (opinionFilter.value === 'open' && opinion.dataset.resolved !== 'true')
+        || (opinionFilter.value === 'blocker' && opinion.dataset.severity === 'blocker');
+      opinion.hidden = !visible;
+    });
+    return;
+  }
   const gitlabAuthMode = event.target.closest('[data-gitlab-auth-mode]');
   if (gitlabAuthMode) {
     const credentialField = gitlabAuthMode.form?.querySelector('[data-gitlab-credential-field]');
@@ -1377,6 +1920,14 @@ document.addEventListener('change', event => {
   if (baseline) { baseline.form.querySelector('button[type="submit"]').disabled = !baseline.value; return; }
   const size=event.target.closest('[data-asset-page-size]'); if(!size)return; const url=new URL(window.location.href); url.searchParams.set('pageSize',size.value); url.searchParams.set('page','1'); window.history.pushState({view:'assets'},'',url); loadAssetCatalog();
 });
+
+
+
+// 滚动时隐藏选区气泡（避免位置偏移）
+document.addEventListener('scroll', () => {
+  const bubble = document.querySelector('[data-review-selection-bubble]');
+  if (bubble && !bubble.hidden) bubble.hidden = true;
+}, true);
 
 document.addEventListener('change', event => {
   const branch = event.target.closest('[data-repository-branch]');
@@ -1449,6 +2000,14 @@ document.addEventListener('compositionend', event => {
   }
 });
 
+
+
+// 滚动时隐藏选区气泡（避免位置偏移）
+document.addEventListener('scroll', () => {
+  const bubble = document.querySelector('[data-review-selection-bubble]');
+  if (bubble && !bubble.hidden) bubble.hidden = true;
+}, true);
+
 document.addEventListener('change', event => {
   const filter = event.target.closest('[data-outline-status-filter]');
   if (!filter) return;
@@ -1499,6 +2058,27 @@ byId('logout').addEventListener('click', async () => {
   try { await performLogout(); } catch { clearSession(); }
   if (authState.status !== 'authenticated') showAuth(null, '您已退出登录');
   byId('logout').disabled = false;
+});
+byId('external-account-open').addEventListener('click', () => {
+  byId('external-account-dialog').showModal();
+  loadGitLabAccount();
+});
+byId('external-account-close').addEventListener('click', () => byId('external-account-dialog').close());
+byId('external-account-dialog').addEventListener('click', async event => {
+  if (event.target === event.currentTarget) { event.currentTarget.close(); return; }
+  if (event.target.closest('[data-external-account-retry]')) { await loadGitLabAccount(); return; }
+  const disconnect = event.target.closest('[data-external-account-disconnect]');
+  if (!disconnect) return;
+  disconnect.disabled = true;
+  disconnect.textContent = '正在解除…';
+  try {
+    await disconnectGitLabOAuth();
+    appState.gitlabAccountProjection = { status: 'ok', connected: false };
+    renderGitLabAccountDialog();
+  } catch (error) {
+    appState.gitlabAccountProjection = { status: 'unavailable', error: error.message };
+    renderGitLabAccountDialog();
+  }
 });
 
 onKnowledgeDataChanged(({ scopes }) => load(scopes));
@@ -1591,6 +2171,13 @@ let sidebarWidth = Number(localStorage.getItem('knowledge-center-sidebar-width')
 let sidebarHidden = localStorage.getItem('knowledge-center-sidebar-hidden') === 'true';
 let sidebarCollapsed = localStorage.getItem('knowledge-center-sidebar-collapsed') === 'true';
 
+function enterReviewLayout() {
+  if (localStorage.getItem('knowledge-center-review-sidebar-default-applied') === 'true') return;
+  if (localStorage.getItem('knowledge-center-sidebar-user-set') !== 'true' && !sidebarHidden) sidebarCollapsed = true;
+  localStorage.setItem('knowledge-center-review-sidebar-default-applied', 'true');
+  saveSidebar();
+}
+
 function applySidebar() {
   shell.classList.toggle('sidebar-collapsed', sidebarCollapsed);
   shell.classList.toggle('sidebar-hidden', sidebarHidden);
@@ -1611,15 +2198,18 @@ function saveSidebar() {
 }
 
 byId('sidebar-collapse').addEventListener('click', () => {
+  localStorage.setItem('knowledge-center-sidebar-user-set', 'true');
   sidebarCollapsed = !sidebarCollapsed;
   sidebarHidden = false;
   saveSidebar();
 });
 byId('sidebar-hide').addEventListener('click', () => {
+  localStorage.setItem('knowledge-center-sidebar-user-set', 'true');
   sidebarHidden = true;
   saveSidebar();
 });
 byId('sidebar-restore').addEventListener('click', () => {
+  localStorage.setItem('knowledge-center-sidebar-user-set', 'true');
   sidebarHidden = false;
   sidebarCollapsed = false;
   saveSidebar();
@@ -1627,6 +2217,7 @@ byId('sidebar-restore').addEventListener('click', () => {
 
 let dragging = false;
 resizer?.addEventListener('pointerdown', event => {
+  localStorage.setItem('knowledge-center-sidebar-user-set', 'true');
   dragging = true;
   resizer.setPointerCapture(event.pointerId);
 });
@@ -1672,6 +2263,7 @@ async function bootstrap() {
     return;
   }
   showApplication();
+  restoreReviewUi();
   const rememberedTarget = consumeRememberedTarget();
   const remembered = rememberedTarget ? viewFromPath(new URL(rememberedTarget, window.location.origin).pathname) : null;
   const requested = remembered || viewFromPath(window.location.pathname) || 'dashboard';
@@ -1681,6 +2273,7 @@ async function bootstrap() {
     window.history.replaceState({ view: targetView }, document.title, pathForView(targetView));
   }
   appState.activeView = targetView;
+  if (targetView === 'review') enterReviewLayout();
   applySidebar();
   syncMobileNavigationState();
   window.lucide?.createIcons();
@@ -1689,6 +2282,7 @@ async function bootstrap() {
   if (appState.activeView === 'outlines') loadOutlines();
   if (appState.activeView === 'assets') loadAssetCatalog();
   if (appState.activeView === 'production') loadIncrementalWorkspace();
+  if (appState.activeView === 'review') loadReviewWorkspace();
   if (appState.activeView === 'repository') loadRepositoryWorkspace();
   if (appState.activeView === 'platform') loadGitLabAdmin();
 }

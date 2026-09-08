@@ -12,7 +12,7 @@ export const views = {
 };
 
 export const appState = {
-  activeView: 'dashboard', contextProjection: null, projection: null, outlineProjection: null, assetCatalog: null, incrementalProjection: null, gitlabProjection: { connections: [] },
+  activeView: 'dashboard', contextProjection: null, projection: null, outlineProjection: null, assetCatalog: null, incrementalProjection: null, reviewProjection: null, gitlabProjection: { connections: [] }, gitlabAccountProjection: null,
   outlineListState: { search: '', statusFilter: '', scrollPosition: 0 },
   selectedPermissionUserId: null,
   permissionSaveStatus: null,
@@ -23,5 +23,6 @@ export const appState = {
   gitlabEditingConnection: null,
   gitlabListState: { search: '', page: 1, pageSize: 20, selectedConnectionId: null },
   gitlabVerification: null,
+  reviewUi: { directoryCollapsed: false, directoryWidth: 260, focusMode: false, readingDensity: 'comfortable' },
   mappingState: { connectionId: null, treeItems: [], expandedPaths: new Set(), branches: [], enabledBranches: [], zhPaths: [], enPaths: [], activeLang: 'zh' },
 };

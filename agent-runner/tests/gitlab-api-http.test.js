@@ -16,15 +16,21 @@ describe('GitLab same-origin HTTP API', () => {
     const assets = path.join(tempRoot, 'assets.json');
     fs.writeFileSync(assets, JSON.stringify({ handbooks: [{ handbookId: 'DB-001', name: '数据库手册' }] }));
     authServer = http.createServer((req, res) => {
-      const admin = String(req.headers.cookie || '').includes('admin');
+      const cookie = String(req.headers.cookie || '');
+      const admin = cookie.includes('admin');
+      const noRead = cookie.includes('no-read');
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ content: { user: { id: admin ? 'admin' : 'reader' }, roles: admin ? ['PLATFORM_ADMIN'] : ['AUTHOR'], allowedActions: admin ? ['platform:manage'] : [] } }));
+      res.end(JSON.stringify({ content: { user: { id: admin ? 'admin' : noRead ? 'no-read' : 'reader' }, roles: admin ? ['PLATFORM_ADMIN'] : ['AUTHOR'], allowedActions: admin ? ['platform:manage', 'knowledge:read'] : noRead ? [] : ['knowledge:read'] } }));
     });
     await new Promise(resolve => authServer.listen(0, '127.0.0.1', resolve));
     process.env.KNOWLEDGE_CENTER_AUTH_PORT = String(authServer.address().port);
     process.env.KNOWLEDGE_ASSETS_CONFIG = assets;
     process.env.KNOWLEDGE_CENTER_GITLAB_CONFIG = path.join(tempRoot, 'gitlab.json');
     process.env.KNOWLEDGE_CENTER_GITLAB_ALLOWED_HOSTS = 'git-tools.yasdb.com,127.0.0.1';
+    process.env.KNOWLEDGE_CENTER_GITLAB_OAUTH_CLIENT_ID = 'http-client';
+    process.env.KNOWLEDGE_CENTER_GITLAB_OAUTH_CLIENT_SECRET = 'http-secret';
+    process.env.KNOWLEDGE_CENTER_GITLAB_OAUTH_REDIRECT_URI = 'http://127.0.0.1:13510/knowledge-center/api/gitlab/oauth/callback';
+    process.env.KNOWLEDGE_CENTER_GITLAB_OAUTH_DEV_HTTP = 'true';
     process.env.GITLAB_TOKEN_local_read = 'test-only-token';
     gitlabServer = http.createServer((req, res) => {
       if (req.headers['private-token'] !== 'test-only-token') { res.writeHead(401); res.end(JSON.stringify({ message: 'unauthorized' })); return; }
@@ -50,6 +56,10 @@ describe('GitLab same-origin HTTP API', () => {
     delete process.env.KNOWLEDGE_ASSETS_CONFIG;
     delete process.env.KNOWLEDGE_CENTER_GITLAB_CONFIG;
     delete process.env.KNOWLEDGE_CENTER_GITLAB_ALLOWED_HOSTS;
+    delete process.env.KNOWLEDGE_CENTER_GITLAB_OAUTH_CLIENT_ID;
+    delete process.env.KNOWLEDGE_CENTER_GITLAB_OAUTH_CLIENT_SECRET;
+    delete process.env.KNOWLEDGE_CENTER_GITLAB_OAUTH_REDIRECT_URI;
+    delete process.env.KNOWLEDGE_CENTER_GITLAB_OAUTH_DEV_HTTP;
     delete process.env.GITLAB_TOKEN_local_read;
   });
 
@@ -58,6 +68,30 @@ describe('GitLab same-origin HTTP API', () => {
     expect(response.status).toBe(403);
     const direct = await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections/unknown/tree`, { headers: { cookie: 'reader=1' } });
     expect(direct.status).toBe(403);
+  });
+
+  test('knowledge readers can inspect handbook access status without enumerating connections', async () => {
+    const configured = await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections`, {
+      method: 'POST', headers: { cookie: 'admin=1', 'content-type': 'application/json', 'idempotency-key': 'http-access-status' },
+      body: JSON.stringify({ name: 'oauth-access', host: gitlabUrl, project: 'cod-doc/access', mode: 'sandbox', authMode: 'user_oauth', purpose: 'read' })
+    });
+    const connection = (await configured.json()).data;
+    const mapped = await fetch(`${baseUrl}/knowledge-center/api/gitlab/mappings/DB-001`, {
+      method: 'PUT', headers: { cookie: 'admin=1', 'content-type': 'application/json', 'idempotency-key': 'http-access-mapping' },
+      body: JSON.stringify({ connectionId: connection.id, defaultBranch: 'master', enabledBranches: ['master'], zhPaths: ['doc/产品文档'], enPaths: [] })
+    });
+    expect(mapped.status).toBe(200);
+    const access = await fetch(`${baseUrl}/knowledge-center/api/gitlab/handbooks/DB-001/access-status`, { headers: { cookie: 'reader=1' } });
+    expect(access.status).toBe(200);
+    await expect(access.json()).resolves.toMatchObject({ data: { authMode: 'user_oauth', connected: false, canRead: false, nextAction: 'connect_gitlab' } });
+    const connections = await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections`, { headers: { cookie: 'reader=1' } });
+    expect(connections.status).toBe(403);
+  });
+
+  test('handbook GitLab APIs require knowledge read permission', async () => {
+    const access = await fetch(`${baseUrl}/knowledge-center/api/gitlab/handbooks/DB-001/access-status`, { headers: { cookie: 'no-read=1' } });
+    expect(access.status).toBe(403);
+    await expect(access.json()).resolves.toMatchObject({ error: { code: 'HANDBOOK_READ_FORBIDDEN' } });
   });
 
   test('administrator changes handbook status through controlled commands', async () => {

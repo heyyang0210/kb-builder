@@ -63,7 +63,8 @@ function tokenForUser(userId, host) {
 
 function status(userId, host) {
   const token = tokenForUser(userId, host);
-  return { connected: Boolean(token), mode: config().devHttp ? 'development-only' : 'production' };
+  const record = token ? tokens.get(userId) : null;
+  return { connected: Boolean(token), mode: config().devHttp ? 'development-only' : 'production', updatedAt: record?.updatedAt || null, expiresAt: record?.expiresAt ? new Date(record.expiresAt).toISOString() : null };
 }
 
 function disconnect(userId, host) {

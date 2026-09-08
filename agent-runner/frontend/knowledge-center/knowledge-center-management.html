@@ -15,6 +15,7 @@
   <link rel="stylesheet" href="./modules/repository/repository.css">
   <link rel="stylesheet" href="./modules/auth/login.css">
   <link rel="stylesheet" href="./modules/platform-admin/platform-admin.css">
+  <link rel="stylesheet" href="./common/vendor/katex.min.css">
 </head>
 <body>
   <section id="auth-loading" class="auth-loading" aria-live="polite">
@@ -77,7 +78,7 @@
       <div class="sidebar-footer">
         <span class="status-dot" id="platform-dot"></span>
         <span class="sidebar-status" id="platform-status">正在检查平台</span>
-        <span class="sidebar-user" id="sidebar-user" aria-live="polite"></span>
+        <button class="sidebar-user" id="external-account-open" type="button" aria-label="查看个人外部账号" title="查看个人外部账号"><i data-lucide="user-round" aria-hidden="true"></i><span id="sidebar-user" aria-live="polite"></span></button>
         <button id="logout" class="sidebar-control" type="button" aria-label="退出登录" title="退出登录"><i data-lucide="log-out" aria-hidden="true"></i></button>
         <button id="sidebar-hide" class="sidebar-control" type="button" aria-label="完全隐藏导航" title="完全隐藏导航"><i data-lucide="x" aria-hidden="true"></i></button>
       </div>
@@ -97,6 +98,13 @@
       </main>
     </div>
   </div>
+  <dialog class="external-account-dialog" id="external-account-dialog" aria-labelledby="external-account-title">
+    <div class="external-account-head">
+      <div><span class="eyebrow">个人设置</span><h2 id="external-account-title">外部账号</h2></div>
+      <button class="icon-button" id="external-account-close" type="button" aria-label="关闭外部账号" title="关闭"><i data-lucide="x" aria-hidden="true"></i></button>
+    </div>
+    <div id="external-account-content" class="external-account-content" aria-live="polite"></div>
+  </dialog>
   <script src="./common/vendor/lucide.min.js"></script>
   <script id="auth-bootstrap-watchdog">
     window.setTimeout(function () {

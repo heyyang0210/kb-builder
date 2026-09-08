@@ -25,6 +25,8 @@ export const loadGitLabConnections = (params = new URLSearchParams()) => {
 export const loadGitLabOAuthStatus = () => request('/knowledge-center/api/gitlab/oauth/status');
 export const loadGitLabOAuthConfig = () => request('/knowledge-center/api/gitlab/oauth/config');
 export const disconnectGitLabOAuth = () => request('/knowledge-center/api/gitlab/oauth/disconnect', { method: 'POST', headers: { Accept: 'application/json', 'Idempotency-Key': idempotencyKey('gitlab-oauth-disconnect') } });
+export const loadHandbookGitLabAccess = handbookId => request(`${handbookEndpoint}/${encodeURIComponent(handbookId)}/access-status`);
+export const handbookGitLabOAuthHref = (handbookId, returnTo) => `${handbookEndpoint}/${encodeURIComponent(handbookId)}/oauth/start?returnTo=${encodeURIComponent(returnTo)}`;
 export const saveGitLabConnection = value => request(endpoint, { method: 'PUT', headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'Idempotency-Key': idempotencyKey('gitlab-connection') }, body: JSON.stringify(value) });
 export const verifyGitLabConnection = id => request(`${endpoint}/${encodeURIComponent(id)}/verify`, { method: 'POST', headers: { Accept: 'application/json', 'Idempotency-Key': idempotencyKey(`gitlab-verify-${id}`) } });
 export const disableGitLabConnection = id => request(`${endpoint}/${encodeURIComponent(id)}/disable`, { method: 'POST', headers: { Accept: 'application/json', 'Idempotency-Key': idempotencyKey(`gitlab-disable-${id}`) } });
@@ -36,6 +38,7 @@ export const loadHandbookRepository = handbookId => request(`${handbookEndpoint}
 export const loadHandbookRepositoryStatistics = (handbookId, branch, language = 'zh') => request(`${handbookEndpoint}/${encodeURIComponent(handbookId)}/statistics?ref=${encodeURIComponent(branch)}&language=${encodeURIComponent(language)}`);
 export const loadHandbookRepositoryTree = (handbookId, branch, language, path = '') => request(`${handbookEndpoint}/${encodeURIComponent(handbookId)}/tree?ref=${encodeURIComponent(branch)}&language=${encodeURIComponent(language)}&path=${encodeURIComponent(path)}`);
 export const loadHandbookRepositoryFile = (handbookId, branch, language, path) => request(`${handbookEndpoint}/${encodeURIComponent(handbookId)}/file?ref=${encodeURIComponent(branch)}&language=${encodeURIComponent(language)}&path=${encodeURIComponent(path)}`);
+export const loadHandbookRepositoryCommits = (handbookId, branch) => request(`${handbookEndpoint}/${encodeURIComponent(handbookId)}/commits?ref=${encodeURIComponent(branch)}`);
 export const loadHandbookRepositoryMapping = handbookId => request(`/knowledge-center/api/gitlab/mappings/${encodeURIComponent(handbookId)}`);
 export const saveHandbookRepositoryMapping = (handbookId, value) => request(`/knowledge-center/api/gitlab/mappings/${encodeURIComponent(handbookId)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'Idempotency-Key': idempotencyKey('gitlab-mapping') }, body: JSON.stringify(value) });
 

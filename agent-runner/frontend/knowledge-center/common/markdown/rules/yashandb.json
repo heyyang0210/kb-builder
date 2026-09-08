@@ -1,0 +1,28 @@
+{
+  "database": "YashanDB",
+  "version": "1",
+  "categories": {
+    "sql": [
+      {"id":"sql.select","label":"SELECT","pattern":"\\bSELECT\\b","className":"db-token-sql"},
+      {"id":"sql.ddl","label":"DDL","pattern":"\\b(CREATE|ALTER|DROP|TRUNCATE)\\b","className":"db-token-sql"},
+      {"id":"sql.dml","label":"DML","pattern":"\\b(INSERT|UPDATE|DELETE|MERGE)\\b","className":"db-token-sql"}
+    ],
+    "parameter": [
+      {"id":"parameter.max_connections","label":"max_connections","pattern":"\\bmax_connections\\b","className":"db-token-parameter"},
+      {"id":"parameter.shared_buffers","label":"shared_buffers","pattern":"\\bshared_buffers\\b","className":"db-token-parameter"}
+    ],
+    "dataType": [
+      {"id":"datatype.number","label":"NUMBER","pattern":"\\bNUMBER(?:\\s*\\([^)]*\\))?\\b","className":"db-token-type"},
+      {"id":"datatype.varchar","label":"VARCHAR","pattern":"\\bVARCHAR2?(?:\\s*\\([^)]*\\))?\\b","className":"db-token-type"},
+      {"id":"datatype.lob","label":"LOB","pattern":"\\b(BLOB|CLOB|NCLOB)\\b","className":"db-token-type"},
+      {"id":"datatype.json","label":"JSON","pattern":"\\bJSON\\b","className":"db-token-type"}
+    ],
+    "errorCode": [
+      {"id":"error.code","label":"错误码","pattern":"\\b(?:YAS|ORA|ERR)[-_]?\\d{3,6}\\b","className":"db-token-error"}
+    ],
+    "command": [
+      {"id":"command.sqlplus","label":"客户端命令","pattern":"(^|\\s)(SET|SPOOL|CONNECT|DESC)(?=\\s|$)","className":"db-token-command"},
+      {"id":"command.dangerous","label":"高风险命令","pattern":"\\b(DROP\\s+DATABASE|SHUTDOWN\\s+ABORT|rm\\s+-rf)\\b","className":"db-token-danger"}
+    ]
+  }
+}

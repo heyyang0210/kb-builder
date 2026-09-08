@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "tasks": [],
+  "publishedVersions": [
+    {
+      "id": "v1",
+      "handbookId": "DB-001",
+      "businessVersion": "23.4",
+      "current": true,
+      "contentDigest": "review-e2e-baseline",
+      "content": "# YashanDB 产品描述手册\n\n<span id=\"YFS\" name=\"YFS\">YFS 参数说明</span>\n\n## 参数说明\n\n数据库版本必须与参数依赖一致。"
+    }
+  ],
+  "idempotency": {},
+  "audits": []
+}

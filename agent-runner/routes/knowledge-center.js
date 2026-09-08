@@ -2,8 +2,8 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { loadPlatformContext, loadPlatformProjection } = require('../lib/platform-context-gateway');
-const { GitLabConnectorError, readConfig: readGitLabConfig, upsertConnection, recordVerification, setConnectionStatus, upsertMapping, findMapping, findConnection, listBranches, listTree, readFile: readGitLabFile, sanitizeConnection, authorizeMappedRequest } = require('../lib/gitlab-connector');
-const { GitLabOAuthError, start: startGitLabOAuth, callback: completeGitLabOAuth, tokenForUser, status: gitLabOAuthStatus } = require('../lib/gitlab-oauth');
+const { GitLabConnectorError, readConfig: readGitLabConfig, upsertConnection, recordVerification, setConnectionStatus, upsertMapping, findMapping, findConnection, listBranches, listTree, readFile: readGitLabFile, listCommits, sanitizeConnection, authorizeMappedRequest } = require('../lib/gitlab-connector');
+const { GitLabOAuthError, config: gitLabOAuthConfig, start: startGitLabOAuth, callback: completeGitLabOAuth, tokenForUser, status: gitLabOAuthStatus } = require('../lib/gitlab-oauth');
 const { ASSET_STATUS_LABELS, systemAssetStatus, assetStatus, projectAsset, queryKnowledgeAssets: queryKnowledgeAssetsBase, isPlatformAdmin } = require('../lib/knowledge-asset-utils');
 
 /**
@@ -76,6 +76,13 @@ function createKnowledgeCenterHandler(options) {
     res.writeHead(403, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
     res.end(JSON.stringify({ success: false, error: { code: 'PLATFORM_ADMIN_REQUIRED', message: '仅平台管理员可维护手册资产' } }));
     return true;
+  }
+
+  function requireHandbookRead(session, handbookId) {
+    if (!hasAction(session, 'knowledge:read')) throw new GitLabConnectorError('HANDBOOK_READ_FORBIDDEN', '没有权限查看此手册', 403);
+    const visible = session?.visibleHandbookIds || session?.user?.visibleHandbookIds;
+    if (Array.isArray(visible) && !visible.map(String).includes(String(handbookId))) throw new GitLabConnectorError('HANDBOOK_READ_FORBIDDEN', '没有权限查看此手册', 403);
+    assetById(readKnowledgeAssets(), handbookId);
   }
 
   // --- File path helpers ---
@@ -324,6 +331,7 @@ function createKnowledgeCenterHandler(options) {
   }
 
   async function handbookRepositoryStatistics(res, session, handbookId, params) {
+    requireHandbookRead(session, handbookId);
     const { mapping, connection } = findMapping(handbookId, GITLAB_CONFIG_PATH);
     const ref = params.get('ref') || mapping.defaultBranch;
     const language = params.get('language') === 'en' ? 'en' : 'zh';
@@ -355,6 +363,7 @@ function createKnowledgeCenterHandler(options) {
     const pathname = new URL(req.url, 'http://localhost').pathname;
     try {
       if (req.method === 'GET' && pathname === '/knowledge-center/api/gitlab/oauth/start') {
+        if (forbidUnlessPlatformAdmin(res, session)) return;
         const params = new URL(req.url, 'http://localhost').searchParams;
         const connection = findConnection(params.get('connectionId') || '', GITLAB_CONFIG_PATH);
         const returnTo = params.get('returnTo') || '/knowledge-center/platform';
@@ -389,6 +398,38 @@ function createKnowledgeCenterHandler(options) {
         if (typeof oauth.disconnect === 'function') oauth.disconnect(session?.user?.id, host);
         res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
         res.end(JSON.stringify({ success: true, data: { ...data, connected: false } })); return;
+      }
+      const handbookAccess = pathname.match(/^\/knowledge-center\/api\/gitlab\/handbooks\/([^/]+)\/access-status$/);
+      if (handbookAccess && req.method === 'GET') {
+        const handbookId = decodeURIComponent(handbookAccess[1]);
+        requireHandbookRead(session, handbookId);
+        const { connection } = findMapping(handbookId, GITLAB_CONFIG_PATH);
+        const projected = sanitizeConnection(connection);
+        if (projected.managementStatus === 'disabled' || connection.mode === 'disabled') {
+          res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+          res.end(JSON.stringify({ success: true, data: { authMode: projected.authMode, connected: false, canRead: false, nextAction: 'contact_admin', message: '仓库连接暂不可用' } })); return;
+        }
+        if (projected.authMode === 'service_account') {
+          const configured = Boolean(connection.credentialRef);
+          res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+          res.end(JSON.stringify({ success: true, data: { authMode: 'service_account', connected: configured, canRead: configured, nextAction: configured ? null : 'contact_admin', message: configured ? '可读取仓库内容' : '平台读取凭证尚未配置' } })); return;
+        }
+        const oauthStatus = gitLabOAuthStatus(session?.user?.id, connection.host);
+        const oauth = gitLabOAuthConfig();
+        const configured = Boolean(oauth.clientId && oauth.clientSecret && oauth.redirectUri);
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify({ success: true, data: { authMode: 'user_oauth', connected: oauthStatus.connected, canRead: oauthStatus.connected, nextAction: oauthStatus.connected ? null : (configured ? 'connect_gitlab' : 'contact_admin'), message: oauthStatus.connected ? 'GitLab 账号已连接' : (configured ? '需要连接 GitLab 账号' : 'GitLab OAuth 尚未配置') } })); return;
+      }
+      const handbookOAuthStart = pathname.match(/^\/knowledge-center\/api\/gitlab\/handbooks\/([^/]+)\/oauth\/start$/);
+      if (handbookOAuthStart && req.method === 'GET') {
+        const handbookId = decodeURIComponent(handbookOAuthStart[1]);
+        requireHandbookRead(session, handbookId);
+        const { connection } = findMapping(handbookId, GITLAB_CONFIG_PATH);
+        if (sanitizeConnection(connection).authMode !== 'user_oauth') throw new GitLabOAuthError('GITLAB_OAUTH_NOT_REQUIRED', '该手册使用平台只读账号，无需连接个人 GitLab', 409);
+        const params = new URL(req.url, 'http://localhost').searchParams;
+        const fallback = `/knowledge-center/assets/${encodeURIComponent(handbookId)}/repository`;
+        const authorizationUrl = startGitLabOAuth({ userId: session?.user?.id, connectionId: connection.id, host: connection.host, returnTo: params.get('returnTo') || fallback });
+        res.writeHead(302, { Location: authorizationUrl, 'Cache-Control': 'no-store' }); res.end(); return;
       }
       if (req.method === 'GET' && pathname === '/knowledge-center/api/gitlab/connections') {
         if (forbidUnlessPlatformAdmin(res, session)) return;
@@ -489,9 +530,10 @@ function createKnowledgeCenterHandler(options) {
         res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
         res.end(JSON.stringify({ success: true, data })); return;
       }
-      const mapped = pathname.match(/^\/knowledge-center\/api\/gitlab\/handbooks\/([^/]+)\/(branches|tree|file|statistics)$/);
+      const mapped = pathname.match(/^\/knowledge-center\/api\/gitlab\/handbooks\/([^/]+)\/(branches|tree|file|statistics|commits)$/);
       if (mapped) {
         const handbookId = decodeURIComponent(mapped[1]);
+        requireHandbookRead(session, handbookId);
         if (mapped[2] === 'statistics') {
           if (req.method !== 'GET') { res.writeHead(405); res.end(); return; }
           const params = new URL(req.url, 'http://localhost').searchParams;
@@ -514,6 +556,10 @@ function createKnowledgeCenterHandler(options) {
             connectionName: connection.name, project: connection.project,
             languages: { zh: mapping.zhPaths.length > 0, en: mapping.enPaths.length > 0 },
           };
+        } else if (mapped[2] === 'commits') {
+          const accessToken = tokenForUser(session?.user?.id, connection.host);
+          const requestOptions = accessToken ? { accessToken } : {};
+          data = await listCommits(connection, ref, requestOptions);
         } else if (mapped[2] === 'tree') {
           const requested = params.get('path') || '';
           const roots = language === 'en' ? mapping.enPaths : mapping.zhPaths;
