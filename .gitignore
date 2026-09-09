@@ -87,3 +87,11 @@ prompt-log.md
 
 # Playwright E2E 测试报告（构建产物）
 agent-runner/tests/e2e/reports/
+agent-runner/tests/e2e/screenshots/
+
+# 知识加工和大纲生成中间产物
+agent-runner/preprocessing-output/
+agent-runner/outlines/
+
+# 本地备份文件
+*.bak
