@@ -229,7 +229,9 @@ function renderGitLabTab(gitlabProjection = {}, platformAdmin = false, listState
     </div>
     <ul class="gitlab-connection-list" role="listbox" aria-label="GitLab 连接列表">
       ${paged.length ? paged.map(c => {
-        const status = c.status || (c.verified ? 'verified' : 'unverified');
+        const status = c.status === 'inactive' || c.managementStatus === 'disabled'
+          ? 'disabled'
+          : (c.verificationStatus || (c.lastVerification?.status) || (c.verified ? 'verified' : 'unverified'));
         const isSelected = selected && c.id === selected.id;
         const isDisabled = c.managementStatus === 'disabled';
         return `<li class="gitlab-connection-item${isSelected ? ' selected' : ''}${isDisabled ? ' disabled' : ''}" role="option" aria-selected="${isSelected}" data-gitlab-connection="${escapeHtml(c.id)}" tabindex="0">
@@ -284,13 +286,13 @@ function renderVerificationStatus(connection, transientVerification) {
 
 function renderGitLabDetail(connection, platformAdmin, transientVerification, oauthStatus = {}, oauthConfig = {}) {
   const verification = verificationFor(connection, transientVerification);
-  const status = transientVerification?.connectionId === connection.id ? transientVerification.status : (connection.status || verification?.status || 'pending');
-  const isDisabled = connection.managementStatus === 'disabled';
+  const status = transientVerification?.connectionId === connection.id ? transientVerification.status : (connection.status === 'inactive' || connection.managementStatus === 'disabled' ? 'disabled' : (connection.verificationStatus || verification?.status || 'pending'));
+  const isDisabled = connection.status === 'inactive' || connection.managementStatus === 'disabled';
   const fields = [
     { label: '连接地址', value: connection.baseUrl || connection.host || '-' },
     { label: '项目路径', value: connection.projectPath || connection.project || '-' },
     { label: '认证方式', value: connection.authMode === 'user_oauth' ? '用户 OAuth' : connection.authMode === 'service_account' ? '服务账号' : connection.authMode || '-' },
-    { label: '认证状态', value: connection.authMode === 'user_oauth' ? (oauthStatus?.connected ? '已连接 GitLab 账号' : '未连接 GitLab 账号') : (connection.credentialConfigured ? '服务凭证已配置' : '服务凭证未配置') },
+    { label: connection.authMode === 'user_oauth' ? '当前管理员授权' : '认证状态', value: connection.authMode === 'user_oauth' ? (oauthStatus?.connected ? '已连接，可验证平台配置' : '尚未连接') : (connection.credentialConfigured ? '服务凭证已配置' : '服务凭证未配置') },
     { label: '运行模式', value: connection.mode === 'production' ? '生产读取' : connection.mode === 'sandbox' ? '隔离验证' : '已禁用' },
   ];
   if (connection.linkedHandbookCount != null) {
@@ -321,16 +323,16 @@ function renderGitLabDetail(connection, platformAdmin, transientVerification, oa
         <div><span>读取权限</span><strong>${escapeHtml(readLabel)}</strong></div>
         <div><span>写入权限</span><strong>${escapeHtml(writeLabel)}</strong></div>
       </section>
-      ${needsOAuth ? `<div class="gitlab-oauth-prompt" role="status"><strong>尚未连接 GitLab 账号</strong><span>连接后将按当前登录用户的 GitLab 权限读取仓库。</span>${oauthConfig?.configured ? `<a class="button secondary" href="${escapeHtml(oauthHref)}">连接 GitLab 账号</a>` : '<span>GitLab OAuth 尚未配置，请联系平台管理员。</span>'}</div>` : ''}
+      ${needsOAuth ? `<div class="gitlab-oauth-prompt" role="status"><strong>需要使用管理员账号验证平台连接</strong><span>这里只验证平台配置和项目可读性，不会代替业务用户授权。</span>${oauthConfig?.configured ? `<a class="button secondary" href="${escapeHtml(oauthHref)}">用我的 GitLab 验证连接</a>` : '<span>GitLab OAuth 尚未配置，请先完成平台配置。</span>'}</div>` : ''}
       ${renderVerificationStatus(connection, transientVerification)}
       ${platformAdmin ? `<div class="gitlab-detail-actions">
-        <button class="button secondary" type="button" data-gitlab-verify="${escapeHtml(connection.id)}" ${isDisabled || needsOAuth || verification?.status === 'verifying' ? 'disabled' : ''} ${needsOAuth ? 'title="请先连接 GitLab 账号"' : ''}>${verification ? '重新验证' : '验证连接'}</button>
+        <button class="button secondary" type="button" data-gitlab-verify="${escapeHtml(connection.id)}" ${isDisabled || needsOAuth || verification?.status === 'verifying' ? 'disabled' : ''} ${needsOAuth ? 'title="请先用当前管理员的 GitLab 账号验证连接"' : ''}>${verification ? '重新验证' : '验证连接'}</button>
         <button class="button secondary" type="button" data-gitlab-edit="${escapeHtml(connection.id)}" ${isDisabled ? 'disabled' : ''}>编辑</button>
         ${isDisabled
           ? `<button class="button secondary" type="button" data-gitlab-enable="${escapeHtml(connection.id)}">重新启用</button>`
           : `<button class="button secondary" type="button" data-gitlab-disable="${escapeHtml(connection.id)}">停用</button>`}
       </div>` : ''}
-      <div class="gitlab-detail-note">手册映射请到"知识资产"配置</div>
+      <div class="gitlab-detail-note">手册映射请到“知识资产”配置；业务用户在阅读具体手册时连接自己的 GitLab 账号。</div>
     </div>`;
 }
 

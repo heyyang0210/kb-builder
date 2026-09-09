@@ -3,6 +3,10 @@
 .env.local
 .env.production
 
+# 含真实基础设施数据的配置文件
+agent-runner/config/gitlab-connections.json
+agent-runner/config/knowledge-assets.json
+
 # 数据目录（大文件，不提交）
 data/
 output/

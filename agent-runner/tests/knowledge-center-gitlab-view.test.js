@@ -18,7 +18,7 @@ describe('知识资产 GitLab 阅读前端契约', () => {
     expect(navigation).toContain("normalized.startsWith('/knowledge-center/assets/')");
   });
   test('阅读工作区展示目录正文分支提交和错误状态', () => {
-    for (const label of ['目录', '分支', '提交', '正在读取仓库内容', '无权限访问此仓库内容', '需要连接 GitLab 账号', '该手册尚未配置可读内容', '找不到请求的仓库内容', '仓库服务暂时不可用']) expect(view()).toContain(label);
+    for (const label of ['目录', '分支', '提交', '正在读取仓库内容', '无权限访问此仓库内容', 'GitLab 账号尚未连接', '连接 GitLab 账号', '该手册尚未配置可读内容', '找不到请求的仓库内容', '仓库服务暂时不可用']) expect(view()).toContain(label);
     expect(view()).toContain('repository-workspace');
     expect(view()).toContain('data-repository-file');
     expect(view()).toContain('treeHierarchy');
@@ -35,9 +35,9 @@ describe('知识资产 GitLab 阅读前端契约', () => {
   test('仓库内容归入审核与发布，管理员可维护映射', () => {
     const assets = read('frontend/knowledge-center/modules/assets/view.js');
     expect(assets).toContain('repositoryMapped');
-    expect(assets).toContain("repositoryMapped ? `/knowledge-center/assets/${encodeURIComponent(id)}/repository`");
+    expect(assets).toContain("/knowledge-center/review?handbookId=${encodeURIComponent(id)}");
     expect(assets).toContain('<strong>审核与发布</strong>');
-    expect(assets).toContain('查看仓库内容、审阅并发布');
+    expect(assets).toContain('阅读文档、查看修改并完成审核');
     expect(assets).not.toContain('<strong>仓库内容</strong>');
     expect(assets).toContain('配置仓库映射');
     expect(assets).toContain('维护仓库映射');

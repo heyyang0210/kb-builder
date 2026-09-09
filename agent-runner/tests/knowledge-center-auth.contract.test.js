@@ -225,6 +225,17 @@ describe('知识中心认证 HTTP 契约（真实服务 + CAS 协议桩）', () 
     expect([200, 204, 401]).toContain(repeat.status);
   });
 
+  test('内置 test 用户由 KNOWLEDGE_EDITOR 角色投影只读审核页能力', async () => {
+    const login = await jsonRequest(base, 'POST', AUTH_PATH('admin/login'), { username: 'test', password: 'test' });
+    expect(login.status).toBe(200);
+    const cookie = login.headers['set-cookie']?.map(value => value.split(';')[0]).join('; ');
+    const session = await jsonRequest(base, 'GET', AUTH_PATH('session'), null, { cookie });
+    expect(session.data.content.roles).toEqual(['KNOWLEDGE_EDITOR']);
+    expect(session.data.content.visibleModules).toContain('review');
+    expect(session.data.content.allowedActions).toEqual(expect.arrayContaining(['knowledge:read', 'knowledge:write']));
+    expect(session.data.content.allowedActions).not.toEqual(expect.arrayContaining(['review:manage', 'publish:manage']));
+  });
+
   test('平台管理员可为 CAS 用户配置角色，普通用户被拒绝', async () => {
     const login = await jsonRequest(base, 'POST', AUTH_PATH('admin/login'), { username: process.env.KC_ADMIN_USERNAME || 'admin', password: process.env.KC_ADMIN_PASSWORD || 'admin' });
     const adminCookie = login.headers['set-cookie']?.map(value => value.split(';')[0]).join('; ');
@@ -232,12 +243,17 @@ describe('知识中心认证 HTTP 契约（真实服务 + CAS 协议桩）', () 
     expect(users.status).toBe(200);
     expect(users.data.content.assignableRoles).toEqual(expect.arrayContaining(['PLATFORM_ADMIN', 'KNOWLEDGE_EDITOR']));
     const target = users.data.content.users.find(item => item.loginName === 'alice');
+    const builtin = users.data.content.users.find(item => item.loginName === 'test');
     expect(target).toBeTruthy();
+    expect(builtin).toBeTruthy();
     const updated = await jsonRequest(base, 'PATCH', AUTH_PATH(`users/${encodeURIComponent(target.id)}/roles`), { roles: ['PLATFORM_ADMIN'] }, { cookie: adminCookie });
     expect(updated.status).toBe(200);
     expect(updated.data.content.user.roles).toContain('PLATFORM_ADMIN');
     const promotedSession = await jsonRequest(base, 'GET', AUTH_PATH('session'), null, { cookie: businessCookie });
     expect(promotedSession.data.content.roles).toContain('PLATFORM_ADMIN');
+    const builtinUpdated = await jsonRequest(base, 'PATCH', AUTH_PATH(`users/${encodeURIComponent(builtin.id)}/roles`), { roles: ['REVIEWER'] }, { cookie: adminCookie });
+    expect(builtinUpdated.data.content.user.roles).toEqual(['REVIEWER']);
+    expect(builtinUpdated.data.content.user.allowedActions).toContain('review:manage');
     const forbidden = await jsonRequest(base, 'GET', AUTH_PATH('users'), null, { cookie: 'kc_session=invalid' });
     expect(forbidden.status).toBe(401);
   });

@@ -3,10 +3,10 @@
 > 文档类型：模块详细设计
 > 设计编号：KC-M10-GITLAB-DETAIL-001
 > 状态：已实现只读闭环（待真实 GitLab 授权验收）
-> 版本：0.2.0
-> 更新日期：2026-09-02
+> 版本：0.3.0
+> 更新日期：2026-09-06
 > 上游概要设计：`../02-概要设计/知识中心-知识资产-GitLab手册映射与协作审阅-概要设计文档.md`
-> 关联设计：`知识中心-知识资产-手册目录与文档资产-详细设计文档.md`、`知识中心-平台-外部平台连接器与回写策略-详细设计文档.md`
+> 关联设计：`知识中心-知识资产-手册目录与文档资产-详细设计文档.md`、`知识中心-平台-外部平台连接器与回写策略-详细设计文档.md`、`知识中心-知识资产-GitLab个人授权入口-前端详细设计文档.md`
 
 ## 1. 设计范围与交付边界
 
@@ -107,7 +107,7 @@ BranchContentSnapshot(id, mappingVersionId, branchId, language,
 
 切换仓库连接或选择分支时，必须清空当前未保存的中英文路径、展开状态和旧目录数据，再读取新分支的完整目录，避免跨仓库或跨分支保留失效路径。目录加载中、空目录、OAuth 未连接、无权限和外部读取失败均在树区域就近展示，不得回退为模拟目录。
 
-已确认映射的仓库正文归入“审核与发布”统一内容工作区，不再在手册详情中提供独立“仓库内容”入口。所有已登录用户可以通过“审核与发布”查看映射范围内的仓库内容；审阅决定、发布和映射维护仍分别按平台动作和管理员权限控制。
+已确认映射的仓库正文归入“审核与发布”统一内容工作区，不再在手册详情中提供独立“仓库内容”入口。具有 `knowledge:read` 且当前手册对其可见的用户，可以查看映射范围内的仓库内容；审阅决定、发布和映射维护仍分别按平台动作和管理员权限控制。用户 OAuth 模式下，未授权用户从正文区域就地连接自己的 GitLab 账号，不进入平台管理；详细交互见个人授权入口前端设计。
 
 ### 3.3 配置校验
 
@@ -129,6 +129,9 @@ PUT /knowledge-center/api/gitlab/mappings/:handbookId
 GET /knowledge-center/api/gitlab/handbooks/:handbookId/branches
 GET /knowledge-center/api/gitlab/handbooks/:handbookId/tree?ref=&language=&path=
 GET /knowledge-center/api/gitlab/handbooks/:handbookId/file?ref=&language=&path=
+GET /knowledge-center/api/gitlab/handbooks/:handbookId/access-status
+GET /knowledge-center/api/gitlab/handbooks/:handbookId/oauth/start?returnTo=
+POST /knowledge-center/api/gitlab/oauth/disconnect
 ```
 
 连接和映射接口仅平台管理员可用，写请求必须携带 `Idempotency-Key`。普通登录用户只能调用 `handbookId` 级读取接口；通用 `connectionId` 分支、目录和文件接口仅用于管理员诊断，不能作为普通阅读入口。资产列表只返回 `repositoryMapped` 和确认状态，不向普通用户暴露连接 ID、凭证引用或整仓范围。
@@ -162,7 +165,7 @@ Markdown 渲染必须使用共享安全渲染层：允许标题、段落、列�
 
 ## 7. 权限与审计
 
-平台管理员可新增/修改连接配置、读取真实分支，并确认默认分支、允许切换的启用分支集合及内容映射；A/B 角可查看所属手册并发起审阅；普通授权成员只读。后端每次操作同时校验平台资源权限、映射范围和 GitLab OAuth 权限，前端隐藏按钮不能替代后端校验。审计记录包括操作者、动作、配置/映射版本、项目 ID、分支、路径、结果和错误码，严禁记录令牌正文、Cookie 或完整响应。
+平台管理员可新增/修改连接配置、读取真实分支，并确认默认分支、允许切换的启用分支集合及内容映射；A/B 角可查看所属手册并发起审阅；具有 `knowledge:read` 的普通授权成员只读。后端每次操作同时校验用户动作、手册可见范围、映射范围和 GitLab OAuth 权限，前端隐藏按钮不能替代后端校验。用户可以连接或解除自己的 GitLab 授权，但不能查看连接清单、其他用户授权或凭证。审计记录包括操作者、动作、配置/映射版本、项目 ID、分支、路径、结果和错误码，严禁记录令牌正文、Cookie 或完整响应。
 
 ## 8. 协作审阅衔接
 

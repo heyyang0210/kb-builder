@@ -35,12 +35,23 @@
 .repository-markdown p { margin:.65em 0; }
 .repository-markdown img { display:block; max-width:100%; height:auto; margin:18px auto; border-radius:var(--radius-sm); }
 .repository-markdown a { color:var(--color-brand); text-decoration:underline; text-underline-offset:2px; }
+.repository-anchor { display:block; position:relative; scroll-margin-top:20px; }
 .repository-markdown blockquote { margin:16px 0; padding:10px 14px; border-left:3px solid var(--color-brand); background:var(--color-brand-subtle); color:var(--color-text-secondary); }
 .repository-table-wrap { max-width:100%; overflow:auto; margin:16px 0; }
 .repository-table-wrap table { width:100%; border-collapse:collapse; }
 .repository-table-wrap th,.repository-table-wrap td { padding:9px 11px; border:1px solid var(--color-border); text-align:left; vertical-align:top; }
 .repository-table-wrap th { background:var(--color-surface-subtle); }
 .repository-code { overflow:auto; padding:14px; border-radius:6px; background:#18212b; color:#e6edf3; }
-.repository-state { padding:40px 20px; border:1px solid var(--color-border); background:var(--color-surface); }
+.repository-state { display:grid; justify-items:center; gap:10px; min-height:360px; padding:56px 20px; border:1px solid var(--color-border); background:var(--color-surface); text-align:center; }
+.repository-state h2,.repository-state p { margin:0; }
+.repository-state > p { max-width:620px; color:var(--color-text-secondary); line-height:1.65; }
+.repository-error-action { font-size:13px; }
+.repository-auth-action { display:grid; justify-items:center; gap:18px; margin-top:8px; }
+.repository-auth-action .button { min-height:44px; gap:8px; }
+.repository-auth-action .button svg { width:17px; height:17px; }
+.repository-auth-action dl { display:flex; gap:24px; margin:0; padding-top:14px; border-top:1px solid var(--color-border); text-align:left; }
+.repository-auth-action dl div { min-width:150px; }
+.repository-auth-action dt { color:var(--color-text-secondary); font-size:12px; }
+.repository-auth-action dd { margin:4px 0 0; color:var(--color-text); font-size:13px; overflow-wrap:anywhere; }
 @media (max-width:1000px) { .repository-workspace { grid-template-columns:minmax(200px,260px) minmax(0,1fr); } }
-@media (max-width:700px) { .repository-header { align-items:flex-start; flex-direction:column; } .repository-workspace { grid-template-columns:1fr; } .repository-sidebar { max-height:260px; border-right:0; border-bottom:1px solid var(--color-border); } .repository-content { padding:18px 14px; } }
+@media (max-width:700px) { .repository-header { align-items:flex-start; flex-direction:column; } .repository-workspace { grid-template-columns:1fr; } .repository-sidebar { max-height:260px; border-right:0; border-bottom:1px solid var(--color-border); } .repository-content { padding:18px 14px; } .repository-auth-action dl { display:grid; gap:10px; width:100%; } }

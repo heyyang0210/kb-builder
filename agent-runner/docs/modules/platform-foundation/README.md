@@ -5,6 +5,7 @@
 | 类型 | 文档 |
 |---|---|
 | 总体架构 | [知识中心建设平台通用化总体架构设计](./overview/知识中心建设平台通用化总体架构设计.md) |
+| 重构执行 | [知识中心管理平台目标模式重构执行提示词](./overview/知识中心管理平台目标模式重构执行提示词.md) |
 | 配置设计 | [enterprise-profile/v1 配置与运行上下文设计](./development/enterprise-profile-v1配置与运行上下文设计.md) |
 | 数据存储 | [YashanDB 数据存储与迁移开发设计](./development/yashandb-storage-and-migration-design.md) |
 | 迁移报告 | [知识中心平台 YashanDB 存储迁移全景与验证测试报告](../../../../.codex/知识中心建设平台/05-测试报告/知识中心-平台-YashanDB存储迁移全景与验证-测试报告文档.md) |

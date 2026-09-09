@@ -11,6 +11,12 @@ const BUSINESS_ACTIONS = ['knowledge:read', 'knowledge:write', 'outline:read'];
 const ADMIN_MODULES = [...BUSINESS_MODULES, 'review', 'platform'];
 const ADMIN_ACTIONS = [...BUSINESS_ACTIONS, 'outline:create', 'outline:delete', 'review:manage', 'publish:manage', 'platform:manage'];
 const ASSIGNABLE_ROLES = ['KNOWLEDGE_EDITOR', 'OUTLINE_MANAGER', 'REVIEWER', 'PLATFORM_ADMIN'];
+const ROLE_DEFINITIONS = {
+  KNOWLEDGE_EDITOR: { actions: ['knowledge:read', 'knowledge:write', 'outline:read'], modules: [...BUSINESS_MODULES, 'review'] },
+  OUTLINE_MANAGER: { actions: ['knowledge:read', 'knowledge:write', 'outline:read', 'outline:create', 'outline:delete'], modules: BUSINESS_MODULES },
+  REVIEWER: { actions: ['knowledge:read', 'review:manage'], modules: [...BUSINESS_MODULES, 'review'] },
+  PLATFORM_ADMIN: { actions: ADMIN_ACTIONS, modules: ADMIN_MODULES },
+};
 
 class AuthError extends Error {
   constructor(code, message, status = 400, retryable = false) {
@@ -148,6 +154,38 @@ class FileAuthRepository {
       };
       this.state.users.push(user);
       this.audit('ADMIN_INITIALIZED', user.id, 'success');
+      this.save();
+    }
+    return user;
+  }
+
+  ensureBuiltinUser(username, password, role = 'KNOWLEDGE_EDITOR') {
+    if (!ASSIGNABLE_ROLES.includes(role)) throw new AuthError('ROLE_INVALID', `不支持的内置角色：${role}`, 400);
+    let user = this.state.users.find(item => item.identitySource === 'local' && item.loginName === username);
+    if (!user) {
+      const now = new Date().toISOString();
+      user = {
+        id: `usr_${randomId(12)}`,
+        identitySource: 'local',
+        enterpriseSubject: `local:${username}`,
+        loginName: username,
+        displayName: '知识编辑测试用户',
+        passwordHash: passwordHash(password),
+        enabled: true,
+        roles: [role],
+        builtin: true,
+        createdAt: now,
+        updatedAt: now,
+      };
+      this.state.users.push(user);
+      this.audit('BUILTIN_USER_INITIALIZED', user.id, 'success', { role });
+      this.save();
+    } else if (user.builtin && (!Array.isArray(user.roles) || user.roles.length === 0)) {
+      // Keep the built-in account role-driven. Existing installations with an
+      // incomplete record are repaired from the configured role, never from a
+      // login-name permission branch.
+      user.roles = [role];
+      user.updatedAt = new Date().toISOString();
       this.save();
     }
     return user;
@@ -292,15 +330,18 @@ class DatabaseAuthRepository extends FileAuthRepository {
 }
 
 function userProjection(user) {
-  const admin = user.roles.includes('PLATFORM_ADMIN');
+  const roles = Array.isArray(user.roles) ? user.roles : [];
+  const definitions = roles.map(role => ROLE_DEFINITIONS[role]).filter(Boolean);
+  const visibleModules = [...new Set(definitions.flatMap(item => item.modules))];
+  const allowedActions = [...new Set(definitions.flatMap(item => item.actions))];
   return {
     id: user.id,
     loginName: user.loginName,
     displayName: user.displayName,
     identitySource: user.identitySource,
-    roles: [...user.roles],
-    visibleModules: admin ? ADMIN_MODULES : BUSINESS_MODULES,
-    allowedActions: admin ? ADMIN_ACTIONS : BUSINESS_ACTIONS,
+    roles,
+    visibleModules,
+    allowedActions,
   };
 }
 
@@ -352,6 +393,8 @@ function createKnowledgeCenterAuthService(options = {}) {
     serviceUrl: String(options.serviceUrl || ''),
     adminUsername: String(options.adminUsername || 'admin'),
     adminPassword: String(options.adminPassword || 'admin'),
+    knowledgeEditorUsername: String(options.knowledgeEditorUsername || 'test'),
+    knowledgeEditorPassword: String(options.knowledgeEditorPassword || 'test'),
     sessionTtlMs: Number(options.sessionTtlMs || 8 * 60 * 60 * 1000),
     secureCookie: options.secureCookie !== false,
     requestTimeoutMs: Number(options.requestTimeoutMs || 5000),
@@ -364,6 +407,7 @@ function createKnowledgeCenterAuthService(options = {}) {
       ? new DatabaseAuthRepository()
     : options.repository || new FileAuthRepository(options.repositoryPath || path.join(process.cwd(), 'tmp', 'knowledge-center-auth.json'));
   repository.ensureAdmin(config.adminUsername, config.adminPassword);
+  repository.ensureBuiltinUser(config.knowledgeEditorUsername, config.knowledgeEditorPassword, 'KNOWLEDGE_EDITOR');
   const failedAdminAttempts = new Map();
 
   const cookie = token => [
@@ -501,6 +545,7 @@ module.exports = {
   BUSINESS_ACTIONS,
   BUSINESS_MODULES,
   ASSIGNABLE_ROLES,
+  ROLE_DEFINITIONS,
   FileAuthRepository,
   MemoryAuthRepository,
   DatabaseAuthRepository,
