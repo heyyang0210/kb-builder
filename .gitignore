@@ -95,3 +95,13 @@ agent-runner/outlines/
 
 # 本地备份文件
 *.bak
+
+# 本地生成的展示和总结文件
+HTML_GENERATION_SUMMARY.md
+REFACTORING_SUMMARY.md
+YashanDB 知识加工平台构建方案.html
+gitlab-multi-repo-designs.html
+test_svg.html
+
+# 独立维护的外部仓库
+yas-ai-helper/
