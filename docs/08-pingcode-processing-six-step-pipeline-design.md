@@ -1092,7 +1092,7 @@ latest CAS 仅当当前 generation 等于 `expectedGeneration`、输入对应的
 
 摘要只保存脱敏后的行首尾和原始行哈希，不保存完整正文。`commit.json`、manifest 或 Schema 解析失败、文件哈希不匹配、缺少文件、无明确行边界/中间截断、隔离后引用不成立或超过阈值时抛出 `ArtifactIntegrityError` 并终止。
 
-阈值来自版本化的 `scripts/pingcode/processing/artifact-integrity.yaml`：
+阈值来自版本化的 `tools/knowledge-processing/pingcode-processing/artifact-integrity.yaml`：
 
 ```yaml
 schemaVersion: artifact-integrity-config/v1

@@ -1,0 +1,1950 @@
+import json
+import queue
+import re
+from contextlib import asynccontextmanager
+from datetime import datetime
+from pathlib import Path
+from urllib.parse import quote
+
+from fastapi import Body, FastAPI, Header, HTTPException, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from starlette.responses import RedirectResponse
+
+from .config import CONFIG_DIR, PINGCODE_DIR, REPOSITORY_ROOT, runtime_profile, settings
+from .governance_state import GovernanceStateError
+from .ingestion import build_default_framework
+from .models import (
+    BatchCreate,
+    DatasetDeletionRequest,
+    DatasetVersion,
+    DownloadTaskCreate,
+    FilePreview,
+    MaterialBatch,
+    MaterialPrepareRequest,
+    MetadataBuildRequest,
+    MetadataBuildReport,
+    PreprocessPreviewRequest,
+    PreprocessTaskCreate,
+    PreparationReport,
+    PromptDetail,
+    PromptDraftCreate,
+    PromptDraftPublish,
+    PromptDraftTest,
+    PromptDraftUpdate,
+    ScanReport,
+    SpaceMapping,
+    SpaceMappingUpdate,
+    SourceSelection,
+    SourceSnapshot,
+    SkillDetail,
+    SkillSummary,
+    TaskSnapshot,
+    KeywordStatusUpdate,
+    TrainingTaskCreate,
+    TrainingModelConfigUpdate,
+    TrainingReviewDecision,
+    TreeResponse,
+    UploadFileCreate,
+    UploadFileSnapshot,
+    UploadBatchCreate,
+    UploadSessionCreate,
+    UploadSession,
+    WorkbenchSummary,
+)
+from .pingcode_service import PingCodeService
+from .prompt_management import (
+    PromptDraftConflictError,
+    PromptDraftNotFoundError,
+    PromptManagementService,
+    PromptPublishConflictError,
+    PromptValidationError,
+)
+from .prompt_registry import PromptNotFoundError, PromptRegistry, PromptRegistryError
+from .preparation_service import MaterialPreparationService, PreparationServiceError
+from .metadata_service import MetadataConstructionError, MetadataConstructionService
+from .skill_registry import SkillNotFoundError, SkillRegistry, SkillRegistryError
+from .services import (
+    BatchService,
+    FileService,
+    PreprocessService,
+    SpaceMappingService,
+    TaskService,
+)
+from .store import JsonStore
+from .upload_service import UploadAuthorizationError, UploadService, UploadServiceError
+from .graph_observability_service import GraphNodeNotFoundError
+from .graph_quality_check_service import GraphQualityCheckService
+from .graph_version_diff_service import GraphVersionDiffService
+from .graph_version_service import GraphVersionService
+from .training_service import (
+    error_summary,
+    KeywordFilterIncompleteError,
+    KeywordFilterReviewInvalidError,
+    KeywordFilterReviewUnavailableError,
+    KeywordFilterSourceChangedError,
+    ModelGatewayError,
+    ModelTestRequiredError,
+    RebuildSourceError,
+    TrainingService,
+)
+from .workbench_service import WorkbenchService
+from .index_service import IndexService
+from .batch_operation_coordinator import BatchOperationCoordinator
+from .repositories import (
+    GraphVersionIntegrityError,
+    GraphVersionNotFoundError,
+    GraphVersionRepository,
+    KeywordFilterRunImmutableSnapshotError,
+    KeywordFilterRunIntegrityError,
+    KeywordFilterRunNotFoundError,
+    KeywordFilterRunRevisionConflictError,
+    KeywordFilterRunStateError,
+    LocalArtifactRepository,
+)
+
+
+store = JsonStore(settings.data_root / "state.json")
+pingcode = PingCodeService()
+batches = BatchService(store, pingcode)
+tasks = TaskService(store, batches, pingcode)
+files = FileService()
+artifacts = LocalArtifactRepository()
+coordinator = BatchOperationCoordinator(settings.data_root, artifacts)
+preprocess = PreprocessService(store, batches, tasks, files)
+preparation = MaterialPreparationService(
+    batches, files, artifacts=artifacts, coordinator=coordinator
+)
+metadata_construction = MetadataConstructionService(
+    batches, files, artifacts=artifacts, coordinator=coordinator
+)
+space_mappings = SpaceMappingService(store)
+skills = SkillRegistry(settings.processing_skill_root)
+ingestion_framework = build_default_framework()
+uploads = UploadService(store)
+prompts = PromptRegistry(settings.processing_skill_root)
+prompt_management = PromptManagementService(
+    settings.processing_skill_root,
+    settings.processing_prompt_draft_root,
+)
+training = TrainingService(
+    store,
+    batches,
+    tasks,
+    preprocess,
+    prompts,
+    preparation=preparation,
+    metadata_construction=metadata_construction,
+    artifact_repository=artifacts,
+    coordinator=coordinator,
+    file_service=files,
+)
+graph_version_repository = GraphVersionRepository(settings.data_root)
+graph_quality_checks = GraphQualityCheckService(
+    CONFIG_DIR / "graph-observability-rules.json"
+)
+graph_versions = GraphVersionService(
+    settings.data_root,
+    graph_version_repository,
+    graph_quality_checks,
+    training,
+)
+graph_version_diffs = GraphVersionDiffService(graph_version_repository)
+workbench = WorkbenchService(batches, tasks, preprocess, training)
+index_service = IndexService(settings.data_root)
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    tasks.reconcile_interrupted()
+    preprocess.reconcile_interrupted_scans()
+    training.reconcile_interrupted()
+    yield
+    pingcode.close()
+
+
+app = FastAPI(
+    title="PingCode 素材平台 API",
+    version="0.1.0",
+    lifespan=lifespan,
+)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=list(settings.cors_origins),
+    allow_origin_regex=settings.cors_origin_regex,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+def error(
+    code: str,
+    message: str,
+    status: int,
+    *,
+    retryable: bool = False,
+    **details,
+):
+    detail = {"code": code, "message": message, "retryable": retryable}
+    detail.update(details)
+    raise HTTPException(
+        status_code=status,
+        detail=detail,
+    )
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    detail = exc.detail if isinstance(exc.detail, dict) else {"code": "HTTP_ERROR", "message": str(exc.detail)}
+    detail.setdefault("requestId", request.headers.get("x-request-id", ""))
+    return JSONResponse(status_code=exc.status_code, content={"success": False, "error": detail})
+
+
+@app.exception_handler(Exception)
+async def unexpected_exception_handler(request: Request, exc: Exception):
+    return JSONResponse(
+        status_code=500,
+        content={
+            "success": False,
+            "error": {
+                "code": "INTERNAL_ERROR",
+                "message": "服务处理失败，请根据 requestId 查询后端日志",
+                "retryable": False,
+                "requestId": request.headers.get("x-request-id", ""),
+            },
+        },
+    )
+
+
+_BYTE_RANGE_PATTERN = re.compile(r"^bytes=(\d*)-(\d*)$")
+
+
+def _parse_byte_range(value: str | None, size: int) -> tuple[int, int] | None:
+    """Parse one RFC 9110 byte range; multipart ranges are deliberately rejected."""
+    if not value:
+        return None
+    match = _BYTE_RANGE_PATTERN.fullmatch(value.strip())
+    if not match or size <= 0:
+        raise ValueError("仅支持单个有效的 bytes 范围")
+    start_text, end_text = match.groups()
+    if not start_text and not end_text:
+        raise ValueError("范围起止位置不能为空")
+    if start_text:
+        start = int(start_text)
+        if start >= size:
+            raise ValueError("范围起始位置超出文件大小")
+        end = min(int(end_text), size - 1) if end_text else size - 1
+        if end < start:
+            raise ValueError("范围结束位置不能小于起始位置")
+        return start, end
+    suffix_length = int(end_text)
+    if suffix_length <= 0:
+        raise ValueError("范围长度必须大于零")
+    return max(size - suffix_length, 0), size - 1
+
+
+def _content_disposition(disposition: str, filename: str) -> str:
+    safe_name = re.sub(r"[\\\"\r\n]", "_", filename or "download")
+    ascii_name = safe_name.encode("ascii", "replace").decode("ascii")
+    return f"{disposition}; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(safe_name)}"
+
+
+def _range_file_response(request: Request, path: Path, *, media_type: str, filename: str, disposition: str):
+    size = path.stat().st_size
+    headers = {"Accept-Ranges": "bytes"}
+    try:
+        byte_range = _parse_byte_range(request.headers.get("range"), size)
+    except (ValueError, OSError):
+        headers["Content-Range"] = f"bytes */{size}"
+        return JSONResponse(
+            status_code=416,
+            headers=headers,
+            content={"success": False, "error": {"code": "FILE_RANGE_INVALID", "message": "文件范围请求无效", "retryable": False}},
+        )
+    if byte_range is None:
+        return FileResponse(path, media_type=media_type, filename=filename, content_disposition_type=disposition, headers=headers)
+    start, end = byte_range
+
+    def body():
+        remaining = end - start + 1
+        with path.open("rb") as stream:
+            stream.seek(start)
+            while remaining:
+                chunk = stream.read(min(64 * 1024, remaining))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+                yield chunk
+
+    headers.update({
+        "Content-Length": str(end - start + 1),
+        "Content-Range": f"bytes {start}-{end}/{size}",
+        "Content-Disposition": _content_disposition(disposition, filename),
+    })
+    return StreamingResponse(body(), status_code=206, media_type=media_type, headers=headers)
+
+
+@app.api_route(
+    "/pingcode-api/{full_path:path}",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+)
+async def redirect_legacy_pingcode_api(full_path: str, request: Request):
+    target = f"/{full_path}"
+    if request.url.query:
+        target = f"{target}?{request.url.query}"
+    return RedirectResponse(url=target, status_code=307)
+
+
+@app.get("/api/health")
+def health():
+    return {"status": "ok", "version": app.version}
+
+
+@app.get("/api/platform/context")
+def platform_context():
+    return dict(runtime_profile.context)
+
+
+@app.get("/api/system/runtime-config")
+def runtime_config():
+    return {
+        "apiBaseUrl": "",
+        "eventBaseUrl": "",
+        "appBasePath": "/pingcode-materials/",
+        "features": {"localOpenDirectory": False, "graphAnalysis": True},
+        "brand": dict(runtime_profile.brand),
+    }
+
+
+@app.get("/api/system/status")
+def system_status():
+    return {
+        "pingcode": pingcode.status(),
+        "dataRootReady": settings.data_root.exists(),
+        "activeTasks": sum(1 for task in tasks.list() if task.state in {"queued", "running"}),
+    }
+
+
+@app.get("/api/ingestion/capabilities")
+def ingestion_capabilities():
+    return ingestion_framework.capabilities()
+
+
+def upload_token(authorization: str | None) -> str:
+    return ""
+
+
+@app.post("/api/upload-sessions", response_model=UploadSession, status_code=201)
+def create_upload_session(
+    request: UploadSessionCreate,
+    authorization: str | None = Header(default=None),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+):
+    try:
+        return uploads.create(request, upload_token(authorization), idempotency_key)
+    except UploadAuthorizationError as exc:
+        error("UPLOAD_UNAUTHORIZED", str(exc), 401)
+    except UploadServiceError as exc:
+        error("UPLOAD_SESSION_INVALID", str(exc), 400)
+
+
+@app.get("/api/upload-sessions")
+def list_upload_sessions(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, alias="pageSize", ge=1, le=100),
+    authorization: str | None = Header(default=None),
+):
+    try:
+        return uploads.list_page(page, page_size, upload_token(authorization))
+    except UploadAuthorizationError as exc:
+        error("UPLOAD_UNAUTHORIZED", str(exc), 401)
+
+
+@app.get("/api/upload-sessions/{session_id}", response_model=UploadSession)
+def get_upload_session(session_id: str, authorization: str | None = Header(default=None)):
+    try:
+        return uploads.get(session_id, upload_token(authorization))
+    except UploadAuthorizationError as exc:
+        error("UPLOAD_UNAUTHORIZED", str(exc), 401)
+    except KeyError:
+        error("UPLOAD_SESSION_NOT_FOUND", "上传会话不存在", 404)
+
+
+@app.post("/api/upload-sessions/{session_id}/files", response_model=UploadFileSnapshot, status_code=201)
+def add_upload_file(
+    session_id: str,
+    request: UploadFileCreate,
+    authorization: str | None = Header(default=None),
+):
+    try:
+        return uploads.add_file(session_id, request, upload_token(authorization))
+    except UploadAuthorizationError as exc:
+        error("UPLOAD_UNAUTHORIZED", str(exc), 401)
+    except KeyError:
+        error("UPLOAD_SESSION_NOT_FOUND", "上传会话不存在", 404)
+    except UploadServiceError as exc:
+        error("UPLOAD_FILE_INVALID", str(exc), 400)
+
+
+@app.put("/api/upload-sessions/{session_id}/files/{file_id}/chunks/{chunk_index}", response_model=UploadFileSnapshot)
+def upload_chunk(
+    session_id: str,
+    file_id: str,
+    chunk_index: int,
+    body: bytes = Body(default=b""),
+    authorization: str | None = Header(default=None),
+    x_chunk_sha256: str | None = Header(default=None, alias="X-Chunk-SHA256"),
+    content_range: str | None = Header(default=None, alias="Content-Range"),
+):
+    try:
+        return uploads.write_chunk(
+            session_id,
+            file_id,
+            chunk_index,
+            body,
+            x_chunk_sha256,
+            content_range,
+            upload_token(authorization),
+        )
+    except UploadAuthorizationError as exc:
+        error("UPLOAD_UNAUTHORIZED", str(exc), 401)
+    except KeyError:
+        error("UPLOAD_FILE_NOT_FOUND", "上传文件不存在", 404)
+    except UploadServiceError as exc:
+        error("UPLOAD_CHUNK_INVALID", str(exc), 400)
+
+
+@app.post("/api/upload-sessions/{session_id}/files/{file_id}/complete", response_model=UploadFileSnapshot)
+def complete_upload_file(session_id: str, file_id: str, authorization: str | None = Header(default=None)):
+    try:
+        return uploads.complete_file(session_id, file_id, upload_token(authorization))
+    except UploadAuthorizationError as exc:
+        error("UPLOAD_UNAUTHORIZED", str(exc), 401)
+    except KeyError:
+        error("UPLOAD_FILE_NOT_FOUND", "上传文件不存在", 404)
+    except UploadServiceError as exc:
+        error("UPLOAD_FILE_INCOMPLETE", str(exc), 400)
+
+
+@app.post("/api/upload-sessions/{session_id}/complete", response_model=UploadSession)
+def complete_upload_session(session_id: str, authorization: str | None = Header(default=None)):
+    try:
+        return uploads.complete_session(session_id, upload_token(authorization))
+    except UploadAuthorizationError as exc:
+        error("UPLOAD_UNAUTHORIZED", str(exc), 401)
+    except KeyError:
+        error("UPLOAD_SESSION_NOT_FOUND", "上传会话不存在", 404)
+    except UploadServiceError as exc:
+        error("UPLOAD_SESSION_INCOMPLETE", str(exc), 400)
+
+
+@app.post("/api/upload-sessions/{session_id}/cancel", response_model=UploadSession)
+def cancel_upload_session(session_id: str, authorization: str | None = Header(default=None)):
+    try:
+        return uploads.cancel(session_id, upload_token(authorization))
+    except UploadAuthorizationError as exc:
+        error("UPLOAD_UNAUTHORIZED", str(exc), 401)
+    except KeyError:
+        error("UPLOAD_SESSION_NOT_FOUND", "上传会话不存在", 404)
+
+
+@app.post("/api/upload-sessions/{session_id}/create-batch", response_model=MaterialBatch, status_code=201)
+def create_upload_batch(
+    session_id: str,
+    request: UploadBatchCreate,
+    authorization: str | None = Header(default=None),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+):
+    try:
+        return uploads.create_batch(
+            session_id,
+            upload_token(authorization),
+            request.name,
+            idempotency_key,
+        )
+    except UploadAuthorizationError as exc:
+        error("UPLOAD_UNAUTHORIZED", str(exc), 401)
+    except KeyError:
+        error("UPLOAD_SESSION_NOT_FOUND", "上传会话不存在", 404)
+    except UploadServiceError as exc:
+        error("UPLOAD_BATCH_INVALID", str(exc), 400)
+
+
+@app.get("/api/pingcode/spaces")
+def list_spaces(refresh: bool = False):
+    try:
+        remote_spaces = pingcode.list_spaces(refresh)
+    except Exception as exc:
+        error("PINGCODE_SPACES_FAILED", str(exc), 502, retryable=True)
+    mappings = {item.space_key: item for item in space_mappings.list()}
+    items = []
+    for remote in remote_spaces:
+        mapping = mappings.get(remote["key"])
+        items.append(
+            {
+                **remote,
+                "mapped": mapping is not None,
+                "mapping": mapping,
+            }
+        )
+    return {"items": items, "total": len(items), "mappedTotal": len(mappings)}
+
+
+@app.put("/api/pingcode/spaces/{space_key}/mapping", response_model=SpaceMapping)
+def update_space_mapping(space_key: str, update: SpaceMappingUpdate):
+    try:
+        remote = next(
+            (item for item in pingcode.list_spaces() if item["key"] == space_key),
+            None,
+        )
+        if remote is None:
+            error("PINGCODE_SPACE_NOT_FOUND", "PingCode 空间不存在或当前账号不可访问", 404)
+        return space_mappings.upsert(remote, update)
+    except ValueError as exc:
+        error("SPACE_MAPPING_INVALID", str(exc), 400)
+
+
+@app.get("/api/pingcode/space-mappings")
+def list_space_mappings():
+    items = space_mappings.list()
+    return {"items": items, "total": len(items)}
+
+
+@app.get("/api/pingcode/status")
+def pingcode_status():
+    return pingcode.status()
+
+
+@app.get("/api/processing/skills", response_model=dict)
+def list_processing_skills():
+    try:
+        items = [item.summary() for item in skills.list_published()]
+    except SkillRegistryError as exc:
+        error("SKILL_REGISTRY_INVALID", str(exc), 500)
+    return {"items": items, "total": len(items)}
+
+
+@app.get("/api/processing/skills/{skill_id}", response_model=SkillDetail)
+def get_processing_skill(skill_id: str, version: str | None = None):
+    try:
+        return skills.get(skill_id, version).detail()
+    except SkillNotFoundError as exc:
+        error("SKILL_NOT_FOUND", str(exc), 404)
+    except SkillRegistryError as exc:
+        error("SKILL_REGISTRY_INVALID", str(exc), 500)
+
+
+@app.get("/api/processing/prompts", response_model=dict)
+def list_processing_prompts(
+    skill_id: str | None = Query(default=None, alias="skillId"),
+    version: str | None = None,
+):
+    try:
+        items = [item.summary() for item in prompts.list_published(skill_id, version)]
+    except PromptRegistryError as exc:
+        error("PROMPT_REGISTRY_INVALID", str(exc), 500)
+    return {"items": items, "total": len(items)}
+
+
+@app.get("/api/processing/prompts/{prompt_id}", response_model=PromptDetail)
+def get_processing_prompt(prompt_id: str, version: str | None = None):
+    try:
+        return prompts.get(prompt_id, version).detail()
+    except PromptNotFoundError as exc:
+        error("PROMPT_NOT_FOUND", str(exc), 404)
+    except PromptRegistryError as exc:
+        error("PROMPT_REGISTRY_INVALID", str(exc), 500)
+
+
+@app.post("/api/processing/prompts/{prompt_id}/drafts", status_code=201)
+def create_prompt_draft(prompt_id: str, request: PromptDraftCreate):
+    try:
+        return prompt_management.create_draft(
+            prompt_id,
+            request.content,
+            request.base_version,
+            request.actor_id,
+        ).detail()
+    except PromptNotFoundError as exc:
+        error("PROMPT_NOT_FOUND", str(exc), 404)
+    except PromptValidationError as exc:
+        error("PROMPT_VALIDATION_FAILED", "Prompt 校验失败", 422, validation=exc.result)
+    except PromptRegistryError as exc:
+        error("PROMPT_REGISTRY_INVALID", str(exc), 500)
+
+
+@app.get("/api/processing/prompt-drafts/{draft_id}")
+def get_prompt_draft(draft_id: str):
+    try:
+        return prompt_management.get_draft(draft_id).detail()
+    except PromptDraftNotFoundError:
+        error("PROMPT_DRAFT_NOT_FOUND", "Prompt 草稿不存在", 404)
+
+
+@app.put("/api/processing/prompt-drafts/{draft_id}")
+def update_prompt_draft(
+    draft_id: str,
+    request: PromptDraftUpdate,
+    if_match: str | None = Header(default=None, alias="If-Match"),
+):
+    revision_value = if_match.strip().strip('"') if if_match else None
+    if revision_value is not None and request.revision is not None and revision_value != str(request.revision):
+        error("PROMPT_DRAFT_CONFLICT", "If-Match 与请求体 revision 不一致", 409)
+    revision = request.revision
+    if revision is None and revision_value is not None:
+        try:
+            revision = int(revision_value)
+        except ValueError:
+            error("PROMPT_DRAFT_REVISION_INVALID", "If-Match 必须是整数 revision", 400)
+    if revision is None:
+        error("PROMPT_DRAFT_REVISION_REQUIRED", "更新草稿必须提供 If-Match revision", 428)
+    try:
+        return prompt_management.update_draft(
+            draft_id,
+            request.content,
+            revision,
+            request.actor_id,
+        ).detail()
+    except PromptDraftNotFoundError:
+        error("PROMPT_DRAFT_NOT_FOUND", "Prompt 草稿不存在", 404)
+    except PromptDraftConflictError as exc:
+        error("PROMPT_DRAFT_CONFLICT", str(exc), 409)
+    except PromptValidationError as exc:
+        error("PROMPT_VALIDATION_FAILED", "Prompt 校验失败", 422, validation=exc.result)
+
+
+@app.post("/api/processing/prompt-drafts/{draft_id}/validate")
+def validate_prompt_draft(draft_id: str):
+    try:
+        draft, validation = prompt_management.validate_draft(draft_id)
+        return {"draft": draft.detail(), "validation": validation}
+    except PromptDraftNotFoundError:
+        error("PROMPT_DRAFT_NOT_FOUND", "Prompt 草稿不存在", 404)
+    except PromptRegistryError as exc:
+        error("PROMPT_REGISTRY_INVALID", str(exc), 500)
+
+
+@app.post("/api/processing/prompt-drafts/{draft_id}/test")
+def test_prompt_draft(draft_id: str, request: PromptDraftTest):
+    try:
+        return prompt_management.render_test(draft_id, request.variables)
+    except PromptDraftNotFoundError:
+        error("PROMPT_DRAFT_NOT_FOUND", "Prompt 草稿不存在", 404)
+    except PromptRegistryError as exc:
+        error("PROMPT_REGISTRY_INVALID", str(exc), 500)
+
+
+@app.post("/api/processing/prompt-drafts/{draft_id}/publish")
+def publish_prompt_draft(draft_id: str, request: PromptDraftPublish):
+    try:
+        draft, prompt = prompt_management.publish_draft(
+            draft_id,
+            request.version,
+            request.actor_id,
+        )
+        return {"draft": draft.detail(), "prompt": prompt.detail()}
+    except PromptDraftNotFoundError:
+        error("PROMPT_DRAFT_NOT_FOUND", "Prompt 草稿不存在", 404)
+    except PromptValidationError as exc:
+        error("PROMPT_VALIDATION_FAILED", "Prompt 校验失败", 422, validation=exc.result)
+    except PromptPublishConflictError as exc:
+        error("PROMPT_PUBLISH_CONFLICT", str(exc), 409)
+    except PromptRegistryError as exc:
+        error("PROMPT_REGISTRY_INVALID", str(exc), 500)
+
+
+@app.get("/api/processing/prompts/{prompt_id}/versions/{version}/diff")
+def diff_processing_prompt(
+    prompt_id: str,
+    version: str,
+    from_version: str | None = Query(default=None, alias="fromVersion"),
+):
+    try:
+        return prompt_management.diff(prompt_id, version, from_version)
+    except PromptNotFoundError as exc:
+        error("PROMPT_NOT_FOUND", str(exc), 404)
+    except PromptRegistryError as exc:
+        error("PROMPT_REGISTRY_INVALID", str(exc), 500)
+
+
+@app.get("/api/pingcode/spaces/{space_key}/tree", response_model=TreeResponse)
+def get_space_tree(space_key: str, refresh: bool = False):
+    try:
+        return pingcode.get_space_tree(space_key, refresh)
+    except Exception as exc:
+        error("PINGCODE_REQUEST_FAILED", str(exc), 502, retryable=True)
+
+
+@app.post("/api/material-batches/estimate", response_model=SourceSnapshot)
+def estimate_batch(selection: SourceSelection):
+    try:
+        return pingcode.estimate(selection)
+    except Exception as exc:
+        error("PINGCODE_ESTIMATE_FAILED", str(exc), 502, retryable=True)
+
+
+@app.post("/api/material-batches", response_model=MaterialBatch, status_code=201)
+def create_batch(
+    request: BatchCreate,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+):
+    try:
+        mapping = space_mappings.get(request.source_selection.space_key)
+        if mapping is None:
+            error("SPACE_MAPPING_REQUIRED", "请先将 PingCode 空间映射为本地素材空间", 409)
+        if not mapping.enabled:
+            error("SPACE_MAPPING_DISABLED", "该空间映射已停用", 409)
+        return batches.create(request, idempotency_key, mapping)
+    except Exception as exc:
+        error("BATCH_CREATE_FAILED", str(exc), 400, retryable=True)
+
+
+@app.get("/api/material-batches")
+def list_batches(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, alias="pageSize", ge=1, le=100),
+    keyword: str | None = Query(default=None, max_length=200),
+    source_type: str | None = Query(default=None, alias="sourceType"),
+    state: str | None = Query(default=None),
+    ownership: str | None = Query(default=None),
+    completeness: str | None = Query(default=None),
+    updated_from: datetime | None = Query(default=None, alias="updatedFrom"),
+    updated_to: datetime | None = Query(default=None, alias="updatedTo"),
+    local_space: str | None = Query(default=None, alias="localSpace", max_length=200),
+    pingcode_space: str | None = Query(default=None, alias="pingcodeSpace", max_length=200),
+    has_active_task: bool | None = Query(default=None, alias="hasActiveTask"),
+    published: bool | None = Query(default=None),
+    workbench_state: str | None = Query(default=None, alias="workbenchState"),
+    sort: str = Query(default="updatedAt:desc"),
+):
+    try:
+        return workbench.list_page(
+            page=page,
+            page_size=page_size,
+            workbench_state=workbench_state,
+            keyword=keyword,
+            source_types=source_type,
+            states=state,
+            ownership_types=ownership,
+            completeness=completeness,
+            updated_from=updated_from,
+            updated_to=updated_to,
+            local_space=local_space,
+            pingcode_space=pingcode_space,
+            has_active_task=has_active_task,
+            published=published,
+            sort=sort,
+        )
+    except ValueError as exc:
+        error("BATCH_FILTER_INVALID", str(exc), 400)
+
+
+@app.get("/api/material-batches/{batch_id}", response_model=MaterialBatch)
+def get_batch(batch_id: str):
+    try:
+        return batches.get(batch_id)
+    except KeyError:
+        error("BATCH_NOT_FOUND", "资料加工任务不存在", 404)
+
+
+@app.get("/api/workbench/summary", response_model=WorkbenchSummary)
+def get_workbench_summary():
+    return workbench.summary()
+
+
+@app.get("/api/material-batches/{batch_id}/workbench-summary")
+def get_batch_workbench_summary(batch_id: str):
+    try:
+        return workbench.detail(batch_id)
+    except KeyError:
+        error("BATCH_NOT_FOUND", "资料加工任务不存在", 404)
+
+
+@app.get("/api/material-batches/{batch_id}/files")
+def list_batch_files(
+    batch_id: str,
+    category: str = Query(default="all", pattern="^(all|text|conversion_pending)$"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, alias="pageSize", ge=1, le=100),
+):
+    try:
+        batches.get(batch_id)
+    except KeyError:
+        error("BATCH_NOT_FOUND", "资料加工任务不存在", 404)
+    return files.list_page(batch_id, category, page, page_size)
+
+
+@app.post("/api/download/tasks", response_model=TaskSnapshot, status_code=202)
+def create_download_task(
+    request: DownloadTaskCreate,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+):
+    try:
+        batch = batches.get(request.batch_id)
+        if batch.source_selection is None:
+            error("DOWNLOAD_SOURCE_UNSUPPORTED", "本地上传创建的资料加工任务不需要 PingCode 下载", 409)
+        return tasks.create_download(request.batch_id, idempotency_key)
+    except KeyError:
+        error("BATCH_NOT_FOUND", "资料加工任务不存在", 404)
+
+
+@app.get("/api/download/tasks")
+def list_download_tasks(batch_id: str | None = Query(default=None, alias="batchId")):
+    items = tasks.list(batch_id)
+    return {"items": items, "total": len(items)}
+
+
+@app.get("/api/download/tasks/{task_id}", response_model=TaskSnapshot)
+def get_download_task(task_id: str):
+    try:
+        return tasks.get(task_id)
+    except KeyError:
+        error("TASK_NOT_FOUND", "任务不存在", 404)
+
+
+@app.post("/api/download/tasks/{task_id}/retry", response_model=TaskSnapshot)
+def retry_download_task(task_id: str):
+    try:
+        return tasks.retry(task_id)
+    except KeyError:
+        error("TASK_NOT_FOUND", "任务不存在", 404)
+
+
+@app.post("/api/download/tasks/{task_id}/resume", response_model=TaskSnapshot)
+def resume_download_task(task_id: str):
+    try:
+        return tasks.resume(task_id)
+    except KeyError:
+        error("TASK_NOT_FOUND", "任务不存在", 404)
+
+
+@app.get("/api/download/tasks/{task_id}/items")
+def list_download_task_items(
+    task_id: str,
+    state: str | None = Query(default=None, pattern="^(failed|warning|completed|pending)$"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, alias="pageSize", ge=1, le=100),
+):
+    try:
+        return tasks.list_download_items(task_id, state, page, page_size)
+    except KeyError:
+        error("TASK_NOT_FOUND", "任务不存在", 404)
+    except ValueError as exc:
+        error("TASK_TYPE_INVALID", str(exc), 400)
+
+
+@app.post("/api/download/tasks/{task_id}/pause")
+def pause_download_task(task_id: str):
+    try:
+        task = tasks.get(task_id)
+    except KeyError:
+        error("TASK_NOT_FOUND", "任务不存在", 404)
+    if not task.can_pause:
+        error("TASK_PAUSE_UNSUPPORTED", "当前下载器只能在页面边界停止，暂不支持可靠暂停", 409)
+
+
+@app.post("/api/download/tasks/{task_id}/cancel", response_model=TaskSnapshot)
+def cancel_download_task(task_id: str):
+    try:
+        task = tasks.get(task_id)
+    except KeyError:
+        error("TASK_NOT_FOUND", "任务不存在", 404)
+    if not task.can_cancel:
+        error("TASK_CANCEL_UNAVAILABLE", "任务当前不可取消", 409)
+    return tasks.cancel(task_id)
+
+
+@app.get("/api/tasks/{task_id}/events")
+def task_events(
+    task_id: str,
+    last_event_id: int | None = Query(default=None, alias="lastEventId", ge=0),
+    last_event_id_header: int | None = Header(default=None, alias="Last-Event-ID", ge=0),
+):
+    try:
+        tasks.get(task_id)
+    except KeyError:
+        error("TASK_NOT_FOUND", "任务不存在", 404)
+    cursor = last_event_id if last_event_id is not None else (last_event_id_header or 0)
+    return StreamingResponse(
+        tasks.events.stream(task_id, cursor),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.get("/api/tasks/{task_id}", response_model=TaskSnapshot)
+def get_task(task_id: str):
+    try:
+        return tasks.get(task_id)
+    except KeyError:
+        error("TASK_NOT_FOUND", "任务不存在", 404)
+
+
+@app.get("/api/files/{resource_id}/metadata")
+def file_metadata(resource_id: str):
+    try:
+        resource, _ = files.find(resource_id)
+        return resource
+    except (KeyError, FileNotFoundError):
+        error("FILE_NOT_FOUND", "文件资源不存在", 404)
+
+
+@app.get("/api/files/{resource_id}/preview")
+def preview_file(resource_id: str, request: Request):
+    try:
+        resource, path = files.find(resource_id)
+    except (KeyError, FileNotFoundError):
+        error("FILE_NOT_FOUND", "文件资源不存在", 404)
+    if not resource.previewable:
+        error("FILE_PREVIEW_UNSUPPORTED", "该文件类型不支持在线预览", 415)
+    if path.suffix.lower() == ".pdf" or resource.media_type.startswith("image/"):
+        return _range_file_response(request, path, media_type=resource.media_type, filename=resource.name, disposition="inline")
+    return PlainTextResponse(path.read_text(encoding="utf-8", errors="replace"))
+
+
+@app.get("/api/files/{resource_id}/preview-data", response_model=FilePreview)
+def preview_file_data(resource_id: str):
+    try:
+        return files.preview(resource_id)
+    except (KeyError, FileNotFoundError):
+        error("FILE_NOT_FOUND", "文件资源不存在", 404)
+    except ValueError as exc:
+        error("FILE_PREVIEW_UNSUPPORTED", str(exc), 415)
+
+
+@app.get("/api/files/{resource_id}/content")
+def file_content(resource_id: str, request: Request):
+    try:
+        resource, path = files.find(resource_id)
+    except (KeyError, FileNotFoundError):
+        error("FILE_NOT_FOUND", "文件资源不存在", 404)
+    return _range_file_response(request, path, media_type=resource.media_type, filename=resource.name, disposition="inline")
+
+
+@app.get("/api/files/{resource_id}/download")
+def download_file(resource_id: str, request: Request):
+    try:
+        resource, path = files.find(resource_id)
+    except (KeyError, FileNotFoundError):
+        error("FILE_NOT_FOUND", "文件资源不存在", 404)
+    if not resource.downloadable:
+        error("FILE_DOWNLOAD_FORBIDDEN", "该文件当前不允许下载", 403)
+    return _range_file_response(request, path, media_type=resource.media_type, filename=resource.name, disposition="attachment")
+
+
+@app.post("/api/preprocess/scan", response_model=ScanReport)
+def scan_batch(request: DownloadTaskCreate):
+    try:
+        return preprocess.scan(request.batch_id)
+    except KeyError:
+        error("BATCH_NOT_FOUND", "资料加工任务不存在", 404)
+
+
+@app.post("/api/preprocess/scan-tasks", response_model=TaskSnapshot, status_code=202)
+def create_scan_task(request: DownloadTaskCreate):
+    try:
+        return preprocess.create_scan_task(request.batch_id)
+    except KeyError:
+        error("BATCH_NOT_FOUND", "资料加工任务不存在", 404)
+
+
+@app.get("/api/preprocess/scan-tasks")
+def list_scan_tasks(batch_id: str = Query(alias="batchId")):
+    try:
+        batches.get(batch_id)
+    except KeyError:
+        error("BATCH_NOT_FOUND", "资料加工任务不存在", 404)
+    items = preprocess.list_scan_tasks(batch_id)
+    return {"items": items, "total": len(items)}
+
+
+@app.get("/api/preprocess/scan-reports/{batch_id}", response_model=ScanReport)
+def get_scan_report(batch_id: str):
+    try:
+        return preprocess.latest_scan_report(batch_id)
+    except KeyError:
+        error("BATCH_NOT_FOUND", "资料加工任务不存在", 404)
+    except FileNotFoundError:
+        error("SCAN_REPORT_NOT_FOUND", "当前批次尚未生成源文件检查报告", 404)
+
+
+@app.post("/api/preprocess/prepare", response_model=PreparationReport)
+def prepare_batch(request: MaterialPrepareRequest):
+    try:
+        return preparation.prepare(request.batch_id, request.config)
+    except KeyError:
+        error("BATCH_NOT_FOUND", "资料加工任务不存在", 404)
+    except PreparationServiceError as exc:
+        error("PREPARATION_FAILED", str(exc), 400)
+
+
+@app.post("/api/metadata/build", response_model=MetadataBuildReport)
+def build_metadata(request: MetadataBuildRequest):
+    try:
+        snapshot = metadata_construction.discover_latest_preparation(request.batch_id)
+        return metadata_construction.build(request.batch_id, preparation_snapshot=snapshot)
+    except KeyError:
+        error("BATCH_NOT_FOUND", "资料加工任务不存在", 404)
+    except MetadataConstructionError as exc:
+        error("METADATA_BUILD_FAILED", str(exc), 400)
+
+
+@app.post("/api/preprocess/preview")
+def preview_preprocess(request: PreprocessPreviewRequest):
+    try:
+        return preprocess.preview(request)
+    except KeyError:
+        error("FILE_NOT_FOUND", "文件资源不存在或不属于该资料加工任务", 404)
+    except ValueError as exc:
+        error("PREVIEW_UNSUPPORTED", str(exc), 415)
+
+
+@app.post("/api/preprocess/pipeline", response_model=TaskSnapshot, status_code=202)
+def start_preprocess(request: PreprocessTaskCreate):
+    try:
+        return preprocess.start(request)
+    except KeyError:
+        error("BATCH_NOT_FOUND", "资料加工任务不存在", 404)
+
+
+@app.get("/api/preprocess/pipeline/{task_id}", response_model=TaskSnapshot)
+def get_preprocess_task(task_id: str):
+    try:
+        task = tasks.get(task_id)
+    except KeyError:
+        error("TASK_NOT_FOUND", "任务不存在", 404)
+    if task.type != "preprocess":
+        error("TASK_TYPE_MISMATCH", "任务不是预处理任务", 409)
+    return task
+
+
+@app.get("/api/datasets")
+def list_datasets(batch_id: str | None = Query(default=None, alias="batchId")):
+    items = preprocess.list_datasets(batch_id)
+    return {"items": items, "total": len(items)}
+
+
+@app.get("/api/datasets/{dataset_id}", response_model=DatasetVersion)
+def get_dataset(dataset_id: str):
+    try:
+        return preprocess.get_dataset(dataset_id)
+    except KeyError:
+        error("DATASET_NOT_FOUND", "数据集版本不存在", 404)
+
+
+@app.post("/api/training/tasks", response_model=TaskSnapshot, status_code=202)
+def start_training(request: TrainingTaskCreate):
+    try:
+        return training.start(request)
+    except RebuildSourceError as exc:
+        error(exc.code, str(exc), 404 if exc.code == "REBUILD_SOURCE_NOT_FOUND" else 409, retryable=exc.retryable)
+    except KeyError:
+        error("BATCH_NOT_FOUND", "资料加工任务不存在", 404)
+    except ValueError as exc:
+        error("BATCH_NOT_READY", str(exc), 409, retryable=True)
+    except ModelTestRequiredError as exc:
+        error("MODEL_TEST_REQUIRED", str(exc), 409, retryable=True)
+
+
+@app.get("/api/training/admission/{batch_id}")
+def training_admission(batch_id: str):
+    try:
+        return training.admission(batch_id)
+    except KeyError:
+        error("BATCH_NOT_FOUND", "资料加工任务不存在", 404)
+    except ValueError as exc:
+        return {
+            "batchId": batch_id,
+            "canStart": False,
+            "admissionStatus": "blocked",
+            "blockingReason": str(exc),
+        }
+
+
+@app.get("/api/training/model-config")
+def training_model_config():
+    try:
+        return training.model_config()
+    except ModelGatewayError as exc:
+        error("MODEL_GATEWAY_UNAVAILABLE", str(exc), 503, retryable=True)
+
+
+@app.put("/api/training/model-config")
+def update_training_model_config(request: TrainingModelConfigUpdate):
+    error(
+        "MODEL_CONFIG_READ_ONLY",
+        f"资料加工只继承 {runtime_profile.brand['productName']}的文档生成器模型配置，请在文档生成器中修改",
+        405,
+    )
+
+
+@app.post("/api/training/model-test")
+def test_training_model():
+    try:
+        return training.test_model()
+    except ModelGatewayError as exc:
+        error("MODEL_TEST_FAILED", error_summary(exc), 502, retryable=True, technicalMessage=str(exc))
+
+
+@app.post("/api/training/preflight")
+def training_preflight(request: TrainingTaskCreate):
+    try:
+        return training.preflight(request)
+    except KeyError:
+        error("BATCH_NOT_FOUND", "资料加工任务不存在", 404)
+    except ValueError as exc:
+        error("BATCH_NOT_READY", str(exc), 409, retryable=True)
+    except ModelGatewayError as exc:
+        error("MODEL_GATEWAY_UNAVAILABLE", str(exc), 503, retryable=True)
+
+
+@app.get("/api/training/tasks")
+def list_training_tasks(batch_id: str | None = Query(default=None, alias="batchId")):
+    items = training.list(batch_id)
+    return {"items": items, "total": len(items)}
+
+
+@app.get("/api/training/tasks/{task_id}", response_model=TaskSnapshot)
+def get_training_task(task_id: str):
+    try:
+        return training.get(task_id)
+    except KeyError:
+        error("TASK_NOT_FOUND", "训练任务不存在", 404)
+    except ValueError as exc:
+        error("TASK_TYPE_MISMATCH", str(exc), 409)
+
+
+@app.post("/api/training/tasks/{task_id}/cancel", response_model=TaskSnapshot)
+def cancel_training_task(task_id: str):
+    try:
+        return training.cancel(task_id)
+    except KeyError:
+        error("TASK_NOT_FOUND", "训练任务不存在", 404)
+    except ValueError as exc:
+        error("TASK_CANCEL_UNAVAILABLE", str(exc), 409)
+
+
+@app.get("/api/training/tasks/{task_id}/logs")
+def training_task_logs(
+    task_id: str,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=200, ge=1, le=1000),
+):
+    try:
+        return training.logs(task_id, offset, limit)
+    except KeyError:
+        error("TASK_NOT_FOUND", "训练任务不存在", 404)
+    except ValueError as exc:
+        error("TASK_TYPE_MISMATCH", str(exc), 409)
+
+
+@app.get("/api/training/tasks/{task_id}/review-items")
+def training_review_items(task_id: str):
+    try:
+        items = training.review_items(task_id)
+        return {"items": items, "total": len(items)}
+    except KeyError:
+        error("TASK_NOT_FOUND", "训练任务不存在", 404)
+    except ValueError as exc:
+        error("TASK_TYPE_MISMATCH", str(exc), 409)
+
+
+@app.post("/api/training/tasks/{task_id}/review-items/{item_id}/decision")
+def decide_training_review_item(task_id: str, item_id: str, decision: TrainingReviewDecision):
+    try:
+        return training.decide_review_item(task_id, item_id, decision)
+    except KeyError:
+        error("REVIEW_ITEM_NOT_FOUND", "待确认项不存在", 404)
+    except ValueError as exc:
+        error("REVIEW_DECISION_INVALID", str(exc), 409)
+
+
+@app.get("/api/training/tasks/{task_id}/events")
+def training_task_events(
+    task_id: str,
+    last_event_id: int | None = Query(default=None, alias="lastEventId", ge=0),
+    last_event_id_header: int | None = Header(default=None, alias="Last-Event-ID", ge=0),
+):
+    try:
+        training.get(task_id)
+    except KeyError:
+        error("TASK_NOT_FOUND", "训练任务不存在", 404)
+    except ValueError as exc:
+        error("TASK_TYPE_MISMATCH", str(exc), 409)
+    cursor = last_event_id if last_event_id is not None else (last_event_id_header or 0)
+    return StreamingResponse(
+        tasks.events.stream(task_id, cursor),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+def _graph_version_error(exc: Exception):
+    if isinstance(exc, GraphVersionNotFoundError):
+        error("GRAPH_VERSION_NOT_FOUND", str(exc), 404)
+    if isinstance(exc, GraphVersionIntegrityError):
+        error(
+            "GRAPH_VERSION_CORRUPTED",
+            str(exc),
+            409,
+            graphVersionId=exc.graph_version_id,
+        )
+    raise exc
+
+
+@app.get("/api/graph/versions")
+def list_graph_versions(
+    dataset_id: str | None = Query(default=None, alias="datasetId"),
+    page: int = Query(default=1, ge=1),
+    page_size: int | None = Query(default=None, alias="pageSize", ge=1),
+):
+    rules = graph_versions.governance_rules()
+    actual_page_size = page_size or int(rules["defaultPageSize"])
+    if actual_page_size > int(rules["maxPageSize"]):
+        error("GRAPH_VERSION_QUERY_INVALID", "pageSize 超过版本治理规则上限", 422)
+    return graph_versions.list_versions(dataset_id, page, actual_page_size)
+
+
+@app.get("/api/graph/versions/trends")
+def graph_version_trends(
+    dataset_id: str = Query(alias="datasetId"),
+    limit: int | None = Query(default=None, ge=1),
+):
+    rules = graph_versions.governance_rules()
+    actual_limit = limit or int(rules["trendLimit"])
+    if actual_limit > int(rules["maxTrendLimit"]):
+        error("GRAPH_VERSION_QUERY_INVALID", "limit 超过版本治理规则上限", 422)
+    return graph_versions.trends(dataset_id, actual_limit)
+
+
+@app.get("/api/graph/versions/{graph_version_id}")
+def graph_version_detail(graph_version_id: str):
+    try:
+        return graph_versions.detail(graph_version_id)
+    except (GraphVersionNotFoundError, GraphVersionIntegrityError) as exc:
+        _graph_version_error(exc)
+
+
+@app.get("/api/graph/versions/{graph_version_id}/explore")
+def graph_version_explore(
+    graph_version_id: str,
+    focus_node_id: str = Query(alias="focusNodeId"),
+    depth: int = Query(default=1, ge=1),
+):
+    try:
+        return graph_versions.explore(graph_version_id, focus_node_id, depth)
+    except (GraphVersionNotFoundError, GraphVersionIntegrityError) as exc:
+        _graph_version_error(exc)
+    except KeyError:
+        error("GRAPH_VERSION_NODE_NOT_FOUND", "焦点节点不存在于该正式版本", 404)
+    except ValueError as exc:
+        error("GRAPH_VERSION_QUERY_INVALID", str(exc), 422)
+
+
+@app.get("/api/graph/versions/{graph_version_id}/checks")
+def graph_version_checks(graph_version_id: str):
+    try:
+        return graph_versions.checks(graph_version_id)
+    except (GraphVersionNotFoundError, GraphVersionIntegrityError) as exc:
+        _graph_version_error(exc)
+
+
+@app.get("/api/graph/versions/{left_version_id}/diff/{right_version_id}")
+def graph_version_diff(
+    left_version_id: str,
+    right_version_id: str,
+    change_type: str = Query(default="all", alias="changeType"),
+    query: str | None = None,
+    page: int = Query(default=1, ge=1),
+    page_size: int | None = Query(default=None, alias="pageSize", ge=1),
+):
+    if change_type not in {"all", "added", "removed", "changed"}:
+        error("GRAPH_VERSION_QUERY_INVALID", "changeType 只允许 all、added、removed 或 changed", 422)
+    rules = graph_versions.governance_rules()
+    actual_page_size = page_size or int(rules["defaultDiffPageSize"])
+    if actual_page_size > int(rules["maxPageSize"]):
+        error("GRAPH_VERSION_QUERY_INVALID", "pageSize 超过版本治理规则上限", 422)
+    try:
+        return graph_version_diffs.diff(
+            left_version_id,
+            right_version_id,
+            change_type=change_type,
+            query=query,
+            page=page,
+            page_size=actual_page_size,
+        )
+    except (GraphVersionNotFoundError, GraphVersionIntegrityError) as exc:
+        _graph_version_error(exc)
+
+
+@app.get("/api/datasets/{dataset_id}/graph/summary")
+def graph_summary(dataset_id: str):
+    try:
+        return training.graph(dataset_id, "summary")
+    except KeyError:
+        error("DATASET_NOT_FOUND", "数据集版本不存在", 404)
+    except FileNotFoundError:
+        error("GRAPH_NOT_AVAILABLE", "该数据集尚无知识图谱产物", 404)
+
+
+@app.get("/api/datasets/{dataset_id}/graph/observability")
+def graph_observability(
+    dataset_id: str,
+    filter_run_id: str | None = Query(default=None, alias="filterRunId"),
+    view: str = Query(default="after"),
+):
+    if view not in {"before", "after", "changed"}:
+        error("GRAPH_QUERY_INVALID", "view 只允许 before、after 或 changed", 422)
+    try:
+        return training.graph_observability(dataset_id, filter_run_id, view)
+    except KeywordFilterRunNotFoundError:
+        error("FILTER_RUN_NOT_FOUND", "过滤运行不存在或不属于该数据集", 404)
+    except KeyError:
+        error("DATASET_NOT_FOUND", "数据集版本不存在", 404)
+    except FileNotFoundError:
+        error("GRAPH_NOT_AVAILABLE", "该数据集尚无知识图谱产物", 404)
+
+
+@app.get("/api/datasets/{dataset_id}/graph/search")
+def graph_search(
+    dataset_id: str,
+    filter_run_id: str | None = Query(default=None, alias="filterRunId"),
+    view: str = Query(default="after"),
+    query: str | None = None,
+    node_type: str | None = Query(default=None, alias="nodeType"),
+    issue_category: str | None = Query(default=None, alias="issueCategory"),
+    resource_id: str | None = Query(default=None, alias="resourceId"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, alias="pageSize", ge=1, le=100),
+):
+    if view not in {"before", "after", "changed"}:
+        error("GRAPH_QUERY_INVALID", "view 只允许 before、after 或 changed", 422)
+    try:
+        return training.graph_search(
+            dataset_id,
+            filter_run_id=filter_run_id,
+            view=view,
+            query=query,
+            node_type=node_type,
+            issue_category=issue_category,
+            resource_id=resource_id,
+            page=page,
+            page_size=page_size,
+        )
+    except KeywordFilterRunNotFoundError:
+        error("FILTER_RUN_NOT_FOUND", "过滤运行不存在或不属于该数据集", 404)
+    except KeyError:
+        error("DATASET_NOT_FOUND", "数据集版本不存在", 404)
+    except FileNotFoundError:
+        error("GRAPH_NOT_AVAILABLE", "该数据集尚无知识图谱产物", 404)
+
+
+@app.get("/api/datasets/{dataset_id}/graph/explore")
+def graph_explore(
+    dataset_id: str,
+    focus_node_id: str = Query(alias="focusNodeId"),
+    filter_run_id: str | None = Query(default=None, alias="filterRunId"),
+    view: str = Query(default="after"),
+    depth: int = Query(default=1, ge=1, le=2),
+    node_type: str | None = Query(default=None, alias="nodeType"),
+    issue_category: str | None = Query(default=None, alias="issueCategory"),
+    resource_id: str | None = Query(default=None, alias="resourceId"),
+):
+    if view not in {"before", "after", "changed"}:
+        error("GRAPH_QUERY_INVALID", "view 只允许 before、after 或 changed", 422)
+    try:
+        return training.graph_explore(
+            dataset_id,
+            filter_run_id=filter_run_id,
+            view=view,
+            focus_node_id=focus_node_id,
+            depth=depth,
+            node_type=node_type,
+            issue_category=issue_category,
+            resource_id=resource_id,
+        )
+    except KeywordFilterRunNotFoundError:
+        error("FILTER_RUN_NOT_FOUND", "过滤运行不存在或不属于该数据集", 404)
+    except KeyError as exc:
+        if str(exc).strip("'") == focus_node_id:
+            error("GRAPH_NODE_NOT_FOUND", "焦点节点不存在或不属于当前投影", 404)
+        error("DATASET_NOT_FOUND", "数据集版本不存在", 404)
+    except FileNotFoundError:
+        error("GRAPH_NOT_AVAILABLE", "该数据集尚无知识图谱产物", 404)
+
+
+@app.get("/api/datasets/{dataset_id}/graph/evidence")
+def graph_evidence(
+    dataset_id: str,
+    filter_run_id: str | None = Query(default=None, alias="filterRunId"),
+    view: str = Query(default="after"),
+    node_id: str | None = Query(default=None, alias="nodeId"),
+    edge_id: str | None = Query(default=None, alias="edgeId"),
+    resource_id: str | None = Query(default=None, alias="resourceId"),
+    missing_evidence: bool = Query(default=False, alias="missingEvidence"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, alias="pageSize", ge=1, le=100),
+):
+    if view not in {"before", "after", "changed"}:
+        error("GRAPH_QUERY_INVALID", "view 只允许 before、after 或 changed", 422)
+    if not node_id and not edge_id:
+        error("GRAPH_EVIDENCE_TARGET_REQUIRED", "nodeId、edgeId 至少提供一个", 422)
+    try:
+        return training.graph_evidence(
+            dataset_id,
+            filter_run_id=filter_run_id,
+            view=view,
+            node_id=node_id,
+            edge_id=edge_id,
+            resource_id=resource_id,
+            missing_evidence=missing_evidence,
+            page=page,
+            page_size=page_size,
+        )
+    except KeywordFilterRunNotFoundError:
+        error("FILTER_RUN_NOT_FOUND", "过滤运行不存在或不属于该数据集", 404)
+    except KeyError:
+        error("GRAPH_EVIDENCE_TARGET_NOT_FOUND", "节点或关系不存在或不属于当前投影", 404)
+    except FileNotFoundError:
+        error("GRAPH_NOT_AVAILABLE", "该数据集尚无知识图谱产物", 404)
+
+
+@app.post("/api/datasets/{dataset_id}/graph/repair")
+def repair_dataset_graph(dataset_id: str):
+    try:
+        return training.repair_dataset_graph(dataset_id)
+    except KeyError:
+        error("DATASET_NOT_FOUND", "数据集版本不存在", 404)
+    except FileNotFoundError:
+        error("GRAPH_REPAIR_UNAVAILABLE", "该数据集缺少可回填的知识加工产物", 404)
+
+
+@app.post("/api/datasets/{dataset_id}/keywords/{keyword_id}/status")
+def update_keyword_status(dataset_id: str, keyword_id: str, request: KeywordStatusUpdate):
+    try:
+        return training.update_keyword_status(dataset_id, keyword_id, request.status)
+    except KeyError:
+        error("KEYWORD_NOT_FOUND", "数据集版本或关键词不存在", 404)
+    except FileNotFoundError:
+        error("GRAPH_NOT_AVAILABLE", "该数据集尚无关键词图谱产物", 404)
+    except ValueError as exc:
+        error("KEYWORD_STATUS_INVALID", str(exc), 409)
+
+
+def _keyword_filter_run_error(exc: Exception):
+    if isinstance(exc, KeywordFilterRunNotFoundError):
+        error("KEYWORD_FILTER_RUN_NOT_FOUND", str(exc), 404)
+    if isinstance(exc, KeywordFilterRunRevisionConflictError):
+        error(
+            "KEYWORD_FILTER_RUN_REVISION_CONFLICT",
+            str(exc),
+            409,
+            expectedRevision=exc.expected_revision,
+            actualRevision=exc.actual_revision,
+        )
+    if isinstance(exc, KeywordFilterSourceChangedError):
+        error("KEYWORD_FILTER_SOURCE_CHANGED", str(exc), 409)
+    if isinstance(exc, KeywordFilterIncompleteError):
+        error("KEYWORD_FILTER_INCOMPLETE", str(exc), 409)
+    if isinstance(exc, KeywordFilterReviewInvalidError):
+        error("KEYWORD_FILTER_REVIEW_INVALID", str(exc), 422)
+    if isinstance(exc, KeywordFilterReviewUnavailableError):
+        error("KEYWORD_FILTER_REVIEW_UNAVAILABLE", str(exc), 409)
+    if isinstance(exc, KeywordFilterRunImmutableSnapshotError):
+        error("KEYWORD_FILTER_RUN_IMMUTABLE", str(exc), 409)
+    if isinstance(exc, (KeywordFilterRunStateError, ValueError)):
+        error("KEYWORD_FILTER_RUN_STATE_INVALID", str(exc), 409)
+    if isinstance(exc, KeywordFilterRunIntegrityError):
+        error("KEYWORD_FILTER_RUN_INTEGRITY_ERROR", str(exc), 500)
+    if isinstance(exc, (FileNotFoundError, KeyError)):
+        error("DATASET_NOT_FOUND", "数据集不存在或图谱未生成", 404)
+    error("KEYWORD_FILTER_RUN_FAILED", str(exc), 500)
+
+
+@app.post("/api/datasets/{dataset_id}/keyword-filter-runs", status_code=201)
+def create_keyword_filter_run(dataset_id: str):
+    try:
+        return training.create_keyword_filter_run(dataset_id)
+    except Exception as exc:
+        _keyword_filter_run_error(exc)
+
+
+@app.get("/api/datasets/{dataset_id}/keyword-filter-runs")
+def list_keyword_filter_runs(
+    dataset_id: str,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=20, ge=1, le=100),
+):
+    try:
+        return training.list_keyword_filter_runs(dataset_id, offset=offset, limit=limit)
+    except Exception as exc:
+        _keyword_filter_run_error(exc)
+
+
+@app.get("/api/datasets/{dataset_id}/keyword-filter-runs/{filter_run_id}")
+def get_keyword_filter_run(dataset_id: str, filter_run_id: str):
+    try:
+        return training.get_keyword_filter_run(dataset_id, filter_run_id)
+    except Exception as exc:
+        _keyword_filter_run_error(exc)
+
+
+@app.get("/api/datasets/{dataset_id}/keyword-filter-runs/{filter_run_id}/stream")
+async def stream_keyword_filter_run(dataset_id: str, filter_run_id: str):
+    import asyncio
+
+    async def event_generator():
+        loop = asyncio.get_event_loop()
+        yield ": connected\n\n"
+        event_queue = queue.Queue()
+        done = object()
+
+        def run_sync():
+            try:
+                for event in training.stream_keyword_filter_run(dataset_id, filter_run_id):
+                    event_queue.put(event)
+            except Exception as exc:
+                event_queue.put(
+                    f"event: error\ndata: {json.dumps({'error': str(exc)}, ensure_ascii=False)}\n\n"
+                )
+            finally:
+                event_queue.put(done)
+
+        loop.run_in_executor(None, run_sync)
+        while True:
+            try:
+                event = event_queue.get_nowait()
+            except queue.Empty:
+                await asyncio.sleep(0.1)
+                continue
+            if event is done:
+                break
+            yield event
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.patch("/api/datasets/{dataset_id}/keyword-filter-runs/{filter_run_id}/review-decisions")
+def save_keyword_filter_review_decisions(dataset_id: str, filter_run_id: str, request: dict):
+    try:
+        revision = request.get("expectedRevision")
+        if not isinstance(revision, int):
+            error(
+                "KEYWORD_FILTER_RUN_REVISION_REQUIRED",
+                "保存复核决策必须提供 expectedRevision",
+                400,
+            )
+        return training.save_keyword_filter_review_decisions(
+            dataset_id,
+            filter_run_id,
+            expected_revision=revision,
+            changes=request.get("changes"),
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        _keyword_filter_run_error(exc)
+
+
+@app.get("/api/datasets/{dataset_id}/keyword-filter-runs/{filter_run_id}/review-summary")
+def get_keyword_filter_review_summary(dataset_id: str, filter_run_id: str):
+    try:
+        return training.get_keyword_filter_review_summary(dataset_id, filter_run_id)
+    except Exception as exc:
+        _keyword_filter_run_error(exc)
+
+
+@app.get("/api/datasets/{dataset_id}/keyword-filter-runs/{filter_run_id}/issue-overview")
+def get_keyword_issue_overview(dataset_id: str, filter_run_id: str):
+    try:
+        return training.keyword_issue_overview(dataset_id, filter_run_id)
+    except Exception as exc:
+        _keyword_filter_run_error(exc)
+
+
+@app.get("/api/datasets/{dataset_id}/keyword-filter-runs/{filter_run_id}/issue-evidence")
+def get_keyword_issue_evidence(
+    dataset_id: str,
+    filter_run_id: str,
+    category: str | None = None,
+    keyword_id: str | None = Query(default=None, alias="keywordId"),
+    resource_id: str | None = Query(default=None, alias="resourceId"),
+    query: str | None = None,
+    missing_evidence: bool = Query(default=False, alias="missingEvidence"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, alias="pageSize", ge=1, le=100),
+):
+    try:
+        return training.keyword_issue_evidence(
+            dataset_id,
+            filter_run_id,
+            category=category,
+            keyword_id=keyword_id,
+            resource_id=resource_id,
+            query=query,
+            missing_evidence=missing_evidence,
+            page=page,
+            page_size=page_size,
+        )
+    except Exception as exc:
+        _keyword_filter_run_error(exc)
+
+
+@app.get("/api/datasets/{dataset_id}/keyword-filter-runs/{left_run_id}/diff/{right_run_id}")
+def compare_keyword_filter_runs(dataset_id: str, left_run_id: str, right_run_id: str):
+    try:
+        return training.compare_keyword_filter_runs(dataset_id, left_run_id, right_run_id)
+    except Exception as exc:
+        _keyword_filter_run_error(exc)
+
+
+@app.post("/api/datasets/{dataset_id}/keyword-filter-runs/{filter_run_id}/apply")
+def apply_keyword_filter_run(dataset_id: str, filter_run_id: str, request: dict):
+    try:
+        revision = request.get("revision", request.get("expectedRevision"))
+        if not isinstance(revision, int):
+            error(
+                "KEYWORD_FILTER_RUN_REVISION_REQUIRED",
+                "应用过滤运行必须提供 revision",
+                400,
+            )
+        return training.apply_keyword_filter_run(
+            dataset_id, filter_run_id, expected_revision=revision
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        _keyword_filter_run_error(exc)
+
+
+
+
+@app.post("/api/datasets/{dataset_id}/keywords/filter-by-skill")
+def filter_keywords_by_skill(dataset_id: str):
+    """直接使用 keyword-filter SKILL 进行关键词过滤预览。
+
+    直接读取 SKILL.md 作为系统提示词，无需额外参数。
+    """
+    try:
+        return training.preview_keywords_filter_by_skill(dataset_id)
+    except FileNotFoundError:
+        error("DATASET_NOT_FOUND", "数据集不存在或图谱未生成", 404)
+    except Exception as exc:
+        error("KEYWORD_FILTER_SKILL_FAILED", str(exc), 500)
+
+
+@app.get("/api/datasets/{dataset_id}/keywords/filter-by-skill/stream")
+async def filter_keywords_by_skill_stream(dataset_id: str):
+    """流式推送关键词过滤决策（SSE）。使用 async generator 确保逐 chunk 刷新。"""
+    import asyncio
+
+    async def event_generator():
+        loop = asyncio.get_event_loop()
+        yield ": connected\n\n"
+        # Run the sync generator in a thread executor, bridging via queue
+        import queue
+        evt_queue = queue.Queue()
+        DONE = object()
+
+        def _run_sync():
+            try:
+                for evt in training.stream_keywords_filter_by_skill(dataset_id):
+                    evt_queue.put(evt)
+            except Exception as exc:
+                evt_queue.put(f"event: error\ndata: {json.dumps({'error': str(exc)}, ensure_ascii=False)}\n\n")
+            finally:
+                evt_queue.put(DONE)
+
+        # Start sync generator in background thread
+        loop.run_in_executor(None, _run_sync)
+
+        while True:
+            try:
+                evt = evt_queue.get_nowait()
+            except queue.Empty:
+                await asyncio.sleep(0.1)
+                continue
+            if evt is DONE:
+                break
+            yield evt
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.post("/api/datasets/{dataset_id}/keywords/filter-apply")
+def apply_keywords_filter(dataset_id: str, request: dict):
+    """应用用户确认的关键词过滤决策"""
+    try:
+        decisions = request.get("decisions", [])
+        if not decisions:
+            return {"success": False, "error": "决策列表不能为空"}
+        return training.apply_keywords_filter(dataset_id, decisions)
+    except (FileNotFoundError, KeyError):
+        error("DATASET_NOT_FOUND", "数据集不存在或图谱未生成", 404)
+    except KeywordFilterIncompleteError as exc:
+        error("KEYWORD_FILTER_INCOMPLETE", str(exc), 409)
+    except Exception as exc:
+        error("KEYWORD_FILTER_APPLY_FAILED", str(exc), 500)
+
+
+
+@app.post("/api/config/filter-rules")
+def save_filter_rules(request: dict):
+    """新增或更新过滤规则"""
+    rules_path = CONFIG_DIR / "filter-rules.json"
+    try:
+        existing = {"rules": []}
+        if rules_path.exists():
+            existing = json.loads(rules_path.read_text(encoding="utf-8"))
+        rule = request.get("rule", {})
+        if not rule.get("id") or not rule.get("label") or not rule.get("prompt"):
+            error("FILTER_RULE_INVALID", "规则必须包含 id、label 和 prompt", 400)
+        rules = existing.get("rules", [])
+        idx = next((i for i, r in enumerate(rules) if r.get("id") == rule["id"]), -1)
+        if idx >= 0:
+            rules[idx] = {**rules[idx], **rule}
+        else:
+            rule.setdefault("description", "")
+            rule.setdefault("icon", "tag")
+            rule.setdefault("color", "info")
+            rules.append(rule)
+        existing["rules"] = rules
+        rules_path.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
+        return {"success": True, "rules": rules}
+    except Exception as exc:
+        error("FILTER_RULE_SAVE_FAILED", str(exc), 500)
+
+
+@app.delete("/api/config/filter-rules/{rule_id}")
+def delete_filter_rule(rule_id: str):
+    """删除指定过滤规则"""
+    rules_path = CONFIG_DIR / "filter-rules.json"
+    if not rules_path.exists():
+        error("FILTER_RULES_NOT_FOUND", "过滤规则配置文件不存在", 404)
+    try:
+        existing = json.loads(rules_path.read_text(encoding="utf-8"))
+        rules = existing.get("rules", [])
+        existing["rules"] = [r for r in rules if r.get("id") != rule_id]
+        rules_path.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
+        return {"success": True, "rules": existing["rules"]}
+    except Exception as exc:
+        error("FILTER_RULE_DELETE_FAILED", str(exc), 500)
+@app.post("/api/datasets/{dataset_id}/formal-knowledge/tasks", response_model=TaskSnapshot, status_code=202)
+def start_formal_knowledge_task(dataset_id: str):
+    try:
+        return training.start_formal_knowledge_task(dataset_id)
+    except KeyError:
+        error("DATASET_NOT_FOUND", "数据集版本不存在", 404)
+    except FileNotFoundError:
+        error("GRAPH_NOT_AVAILABLE", "该数据集尚无关键词图谱产物", 404)
+    except ValueError as exc:
+        error("FORMAL_KNOWLEDGE_NOT_READY", str(exc), 409, retryable=True)
+    except ModelTestRequiredError as exc:
+        error("MODEL_TEST_REQUIRED", str(exc), 409, retryable=True)
+
+
+@app.get("/api/datasets/{dataset_id}/graph/nodes")
+def graph_nodes(
+    dataset_id: str,
+    offset: int = 0,
+    limit: int = Query(default=100, ge=1, le=1000),
+    node_type: str | None = None,
+    type_: str | None = Query(default=None, alias="type"),
+):
+    try:
+        items = training.graph(dataset_id, "nodes")
+    except KeyError:
+        error("DATASET_NOT_FOUND", "数据集版本不存在", 404)
+    except FileNotFoundError:
+        error("GRAPH_NOT_AVAILABLE", "该数据集尚无知识图谱产物", 404)
+    expected_type = node_type or type_
+    if expected_type:
+        items = [item for item in items if str(item.get("type")) == expected_type]
+    return {"items": items[offset:offset + limit], "total": len(items), "offset": offset, "limit": limit}
+
+
+@app.get("/api/datasets/{dataset_id}/graph/edges")
+def graph_edges(dataset_id: str, offset: int = 0, limit: int = Query(default=100, ge=1, le=1000)):
+    try:
+        items = training.graph(dataset_id, "edges")
+    except KeyError:
+        error("DATASET_NOT_FOUND", "数据集版本不存在", 404)
+    except FileNotFoundError:
+        error("GRAPH_NOT_AVAILABLE", "该数据集尚无知识图谱产物", 404)
+    return {"items": items[offset:offset + limit], "total": len(items), "offset": offset, "limit": limit}
+
+
+@app.get("/api/datasets/{dataset_id}/graph/neighborhood")
+def graph_neighborhood(dataset_id: str, node_id: str = Query(alias="nodeId"), limit: int = Query(default=50, ge=1, le=200), depth: int = Query(default=1, ge=1, le=2)):
+    try:
+        return training.graph_bounded_neighborhood(dataset_id, node_id, limit, depth)
+    except GraphNodeNotFoundError:
+        error("GRAPH_NODE_NOT_FOUND", "焦点节点不存在或在当前视图中不可见", 404)
+    except KeyError:
+        error("DATASET_NOT_FOUND", "数据集版本不存在", 404)
+    except FileNotFoundError:
+        error("GRAPH_NOT_AVAILABLE", "该数据集尚无知识图谱产物", 404)
+
+
+@app.post("/api/datasets/{dataset_id}/publish", response_model=DatasetVersion)
+def publish_dataset(
+    dataset_id: str,
+    force: bool = False,
+    expected_status_version: int | None = Query(default=None, alias="expectedStatusVersion", ge=0),
+):
+    try:
+        published = (
+            preprocess.publish(dataset_id, force)
+            if expected_status_version is None
+            else preprocess.publish(dataset_id, force, expected_status_version)
+        )
+        return published.model_copy(
+            update={"graph_version": graph_versions.after_publish(published)}
+        )
+    except KeyError:
+        error("DATASET_NOT_FOUND", "数据集版本不存在", 404)
+    except GovernanceStateError as exc:
+        error(exc.code, str(exc), 409, **exc.details)
+    except ValueError as exc:
+        error("QUALITY_GATE_FAILED", str(exc), 409)
+
+
+@app.delete("/api/datasets/{dataset_id}", response_model=DatasetVersion)
+def delete_dataset(dataset_id: str, request: DatasetDeletionRequest):
+    try:
+        return preprocess.delete_dataset(dataset_id, request.operator, request.reason)
+    except KeyError:
+        error("DATASET_NOT_FOUND", "数据集版本不存在", 404)
+    except ValueError as exc:
+        error("DATASET_DELETE_FAILED", str(exc), 409)
+@app.get("/api/index/directory-tree")
+def get_directory_tree():
+    """获取层次目录索引"""
+    return index_service.get_directory_tree()
+
+
+@app.get("/api/index/search")
+def search_knowledge(query: str = Query(default=""), limit: int = Query(default=20, ge=1, le=100)):
+    """搜索知识点"""
+    results = index_service.search(query, limit)
+    return {"items": results, "total": len(results), "query": query}
+
+
+@app.get("/api/index/graph")
+def get_knowledge_graph(depth: int = Query(default=2, ge=1, le=5)):
+    """获取知识图谱"""
+    return index_service.get_knowledge_graph(depth)
+
+
+@app.get("/api/index/knowledge/{kp_id}")
+def get_knowledge_point(kp_id: str):
+    """获取单个知识点详情"""
+    kp = index_service.get_knowledge_point(kp_id)
+    if not kp:
+        error("KNOWLEDGE_POINT_NOT_FOUND", "知识点不存在", 404)
+    return kp
+
+
+@app.get("/api/index/stats")
+def get_index_stats():
+    """获取索引统计信息"""
+    return index_service.get_index_stats()
+
+
+# ========== 前端静态文件服务 ==========
+
+_frontend_dist = REPOSITORY_ROOT / "code" / "pingcode" / "web-frontend" / "dist"
+_legacy_frontend = REPOSITORY_ROOT / "code" / "agent-runner" / "frontend"
+
+if _legacy_frontend.exists():
+    @app.get("/prompt-generator.html")
+    async def serve_prompt_generator():
+        return FileResponse(_legacy_frontend / "prompt-generator.html")
+
+    for _legacy_mount in ("css", "js"):
+        _legacy_dir = _legacy_frontend / _legacy_mount
+        if _legacy_dir.exists():
+            app.mount(
+                f"/{_legacy_mount}",
+                StaticFiles(directory=str(_legacy_dir)),
+                name=f"legacy-{_legacy_mount}",
+            )
+
+if _frontend_dist.exists():
+    # 挂载静态资源目录（带内容哈希，支持长期缓存）
+    _assets_dir = _frontend_dist / "assets"
+    if _assets_dir.exists():
+        app.mount(
+            "/pingcode-materials/assets",
+            StaticFiles(directory=str(_assets_dir)),
+            name="static-assets",
+        )
+
+    @app.get("/")
+    async def redirect_to_frontend():
+        return RedirectResponse(url="/pingcode-materials/")
+
+    # 根路径重定向到前端
+    @app.get("/pingcode-materials/")
+    async def serve_frontend_root():
+        return FileResponse(_frontend_dist / "index.html")
+
+    # SPA 路由回退：所有 /pingcode-materials/* 非 API 路由返回 index.html
+    @app.get("/pingcode-materials/{full_path:path}")
+    async def serve_spa_fallback(full_path: str):
+        # 尝试返回实际文件（如 runtime-config.json）
+        file_path = _frontend_dist / full_path
+        if file_path.is_file():
+            return FileResponse(file_path)
+        return FileResponse(_frontend_dist / "index.html")
+
+
+# ============================================================================
+# Keyword Filter Skill API
+# ============================================================================
+
+def get_skill_md_path() -> Path:
+    """获取 keyword-filter SKILL.md 路径"""
+    return REPOSITORY_ROOT / "knowledge/skills" / "keyword-filter" / "SKILL.md"
+
+@app.get("/api/skills/keyword-filter")
+def get_keyword_filter_skill():
+    """获取完整的 SKILL.md 内容"""
+    skill_path = get_skill_md_path()
+    if not skill_path.exists():
+        raise HTTPException(status_code=404, detail="Skill not found")
+
+    try:
+        skill_content = skill_path.read_text(encoding="utf-8")
+        return {"success": True, "content": skill_content}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/api/skills/keyword-filter")
+def update_keyword_filter_skill(request: dict):
+    """更新完整的 SKILL.md"""
+    skill_path = get_skill_md_path()
+    content = request.get("content")
+
+    if not content:
+        raise HTTPException(status_code=400, detail="Content is required")
+
+    try:
+        skill_path.write_text(content, encoding="utf-8")
+        return {"success": True, "message": "Skill updated"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

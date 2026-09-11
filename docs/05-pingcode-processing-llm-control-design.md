@@ -71,7 +71,7 @@ Processing Worker
 
 替代加工任务对 JSON 文件并发更新的依赖，保存运行、阶段、工作项、模型调用、版本、审批和事件。正文、图片、向量和大体积响应不写入数据库，只保存资源 ID、哈希、逻辑路径和摘要。
 
-Prompt/Skill Registry 在本阶段不依赖 SQLite：以 `scripts/pingcode/processing/skills/` 和后续 `prompts/` 下的文件为权威源，Registry 启动时扫描并校验，返回只读版本信息。未来 YashanDB 适配时，文件仍可作为导入/导出和灾备格式，数据库只替换索引与版本查询实现。
+Prompt/Skill Registry 在本阶段不依赖 SQLite：以 `tools/knowledge-processing/pingcode-processing/skills/` 和后续 `prompts/` 下的文件为权威源，Registry 启动时扫描并校验，返回只读版本信息。未来 YashanDB 适配时，文件仍可作为导入/导出和灾备格式，数据库只替换索引与版本查询实现。
 
 ### 3.4 Artifact Store
 
@@ -139,7 +139,7 @@ LLM 不复核全部文档，只处理规则无法确定的边界样本，例如�
 ### 5.1 仓库目录
 
 ```text
-scripts/pingcode/processing/
+tools/knowledge-processing/pingcode-processing/
 ├── pipelines/
 │   └── training-standard.yaml
 ├── skills/

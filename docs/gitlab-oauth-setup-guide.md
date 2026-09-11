@@ -101,7 +101,7 @@ cd /data/docs/AI高效应用示例/06-YashanDB知识库Skill仓库
 
 1. 复制配置模板：
    ```bash
-   cp agent-runner/.env.example agent-runner/.env
+   cp config/knowledge-center/.env.example agent-runner/.env
    ```
 
 2. 编辑 `agent-runner/.env`，添加以下内容：

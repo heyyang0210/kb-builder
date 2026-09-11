@@ -16,7 +16,7 @@
 
 本期采用 FastAPI 进程内后台线程和现有 `JsonStore`，不引入 SQLite、独立 Worker、消息队列、容器、向量数据库或图数据库。该选择只用于尽快验证端到端框架，不代表生产可靠性设计已经完成。
 
-模型配置统一复用 YashanDB 知识库文档生成器 `agent-runner/config/model-config.json`。密钥仅由 `agent-runner` 的 `ConfigManager` 解密并调用模型，Python 服务不读取、不复制、不记录模型密钥。
+模型配置统一复用 YashanDB 知识库文档生成器 `config/knowledge-center/model-config.json`。密钥仅由 `agent-runner` 的 `ConfigManager` 解密并调用模型，Python 服务不读取、不复制、不记录模型密钥。
 
 ## 二、模块与接口
 

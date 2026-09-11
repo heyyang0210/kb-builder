@@ -6,7 +6,7 @@
 
 已确认有两个独立问题：
 
-1. **差异校验失败**：`git diff --check` 报告 `agent-runner/frontend/prompt-generator.html.backup` 多处新增行存在 trailing whitespace。该命令返回非零状态，若 Codex Diff 将 `diff --check` 非零直接视为差异生成失败，就会显示报错。
+1. **差异校验失败**：`git diff --check` 报告 `code/apps/knowledge-center-web/frontend/prompt-generator.html.backup` 多处新增行存在 trailing whitespace。该命令返回非零状态，若 Codex Diff 将 `diff --check` 非零直接视为差异生成失败，就会显示报错。
 2. **差异负载过大且噪声较多**：工作区有 25 个已修改文件，约 3146 行新增、2212 行删除；其中 `prompt-generator.html.backup` 单文件约 1009 行新增、239 行删除，`training_service.py` 约 1773 行删除、372 行新增。另有 `dump.rdb`、生成 HTML、备份文件、运行报告等未跟踪产物。若 Codex Diff 尝试渲染整个工作区而不是限定已审查文件，容易发生超时、截断或前端渲染失败。
 
 因此，“Codex Diff 报错”不能归因于单一业务代码语法错误；首要故障点是差异检查未通过，次要风险是工作区范围过大和生成物混入。
@@ -29,11 +29,11 @@ git diff --exit-code  -> exit=1（表示存在差异，不表示 diff 生成失�
 
 ### P0：先修复差异校验
 
-对 `agent-runner/frontend/prompt-generator.html.backup` 做最小化处理，只清理新增行的行尾空白，不改 HTML 内容、缩进和换行结构。执行后复核：
+对 `code/apps/knowledge-center-web/frontend/prompt-generator.html.backup` 做最小化处理，只清理新增行的行尾空白，不改 HTML 内容、缩进和换行结构。执行后复核：
 
 ```bash
 git diff --check
-git diff -- agent-runner/frontend/prompt-generator.html.backup
+git diff -- code/apps/knowledge-center-web/frontend/prompt-generator.html.backup
 ```
 
 如果该 backup 文件只是临时备份且不属于本次交付，应由文件所有者确认后加入忽略规则或移出提交范围，不能直接删除或回退用户改动。

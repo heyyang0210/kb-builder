@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "schemaVersion": "knowledge-center.v1.stream-download",
+  "sse": [
+    { "method": "GET", "path": "/tasks/:taskId/events", "mediaType": "text/event-stream", "cacheControl": "no-cache", "buffering": "no" },
+    { "method": "GET", "path": "/training/tasks/:taskId/events", "mediaType": "text/event-stream", "cacheControl": "no-cache", "buffering": "no" },
+    { "method": "GET", "path": "/datasets/:datasetId/keyword-filter-runs/:filterRunId/stream", "mediaType": "text/event-stream", "cacheControl": "no-cache", "buffering": "no" },
+    { "method": "GET", "path": "/datasets/:datasetId/keywords/filter-by-skill/stream", "mediaType": "text/event-stream", "cacheControl": "no-cache", "buffering": "no" }
+  ],
+  "connectionPreamble": ": connected\\n\\n",
+  "replay": { "queryParameter": "lastEventId", "header": "Last-Event-ID", "precedence": "查询参数优先；未提供查询参数时读取请求头", "cursorRule": "仅发送 event.id > cursor 的事件，保持事件 ID 单调递增" },
+  "fileResponses": [
+    { "method": "GET", "path": "/files/:resourceId/preview", "disposition": "inline", "permission": "knowledge:read", "range": { "unit": "bytes", "singleRange": true, "partialStatus": 206, "invalidStatus": 416 } },
+    { "method": "GET", "path": "/files/:resourceId/content", "disposition": "inline", "permission": "knowledge:read", "range": { "unit": "bytes", "singleRange": true, "partialStatus": 206, "invalidStatus": 416 } },
+    { "method": "GET", "path": "/files/:resourceId/download", "disposition": "attachment", "permission": "knowledge:read", "range": { "unit": "bytes", "singleRange": true, "partialStatus": 206, "invalidStatus": 416 } }
+  ],
+  "deepLinkRule": "资源 ID 必须来自已授权查询结果；不得通过文件名、绝对路径或未登记路径推断资源。"
+}

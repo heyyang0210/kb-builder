@@ -788,12 +788,12 @@ candidate
 ### 9.2 功能回归
 
 ```bash
-cd scripts/pingcode/web/backend
+cd apps/pingcode-api
 python3 -m unittest discover -s tests -v
 ```
 
 ```bash
-cd scripts/pingcode/web/frontend
+cd apps/pingcode-web
 npm run build
 ```
 

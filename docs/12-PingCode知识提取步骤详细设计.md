@@ -98,7 +98,7 @@ contentHash + semanticTitle + metadataRuleSetHash + skillVersion + promptHash
 目标目录：
 
 ```text
-scripts/pingcode/processing/skills/knowledge-extraction/
+tools/knowledge-processing/pingcode-processing/skills/knowledge-extraction/
 ├── SKILL.md
 ├── skill.yaml
 ├── prompts/
@@ -424,7 +424,7 @@ execute(context):
 
 ## 八、实施迁移要求
 
-当前仓库中的 `scripts/pingcode/processing/skills/knowledge-extraction/` 若仍以 `uncertainItemId` 为必填输入并只解决单个语义不确定项，则与本设计不兼容。实施时必须：
+当前仓库中的 `tools/knowledge-processing/pingcode-processing/skills/knowledge-extraction/` 若仍以 `uncertainItemId` 为必填输入并只解决单个语义不确定项，则与本设计不兼容。实施时必须：
 
 1. 将旧能力迁移或重命名为 `semantic-enrichment`；
 2. 按本设计重建通用 `knowledge-extraction` Skill、Profile 和输入输出 Schema；
@@ -603,4 +603,4 @@ aggregate results into JSON and Markdown reports
 - 真实链路已完成只读验收：健康检查 HTTP 200；`POST /api/training/model-test` 返回 HTTP 200，模型为 `qwen3.7-plus`，耗时 `3163ms`，`schemaPassed=true`；非流式关键词过滤预览返回 HTTP 200，耗时 `58.99s` 并生成 43 条建议；SSE 过滤返回 HTTP 200，耗时 `20.86s`，产生 3 个 `stage`、43 个 `decision`、1 个 `complete` 和 0 个 `error` 事件。
 - 为避免修改用户数据，本轮未主动执行 apply 决策接口；真实环境中的审批状态持久化仍需使用隔离数据集补充写入型验收。
 - 验收时发现 SSE 路径硬编码 `deepseek-v4-flash-0731`，与非流式路径使用的当前模型不一致，并造成同一批关键词的建议统计不同。现行设计要求两条路径统一读取模型配置；硬编码必须删除并纳入关键词过滤一致性回归。远端错误正文未截断、未脱敏仍作为独立后续整改风险。
-- 完整验收命令、接口证据、范围外失败和风险见 [TrainingService Phase 0-2 重构验收报告](../scripts/pingcode/web/backend/tests/test-report-training-service-phase2.md)。
+- 完整验收命令、接口证据、范围外失败和风险见 [TrainingService Phase 0-2 重构验收报告](../tests/pingcode/web-backend/test-report-training-service-phase2.md)。

@@ -35,10 +35,10 @@ FastGPT 不直接替换 PingCode 知识加工处理中心。本期采用混合�
 | 层级 | 当前组件 | 主要职责 | 当前数据/接口 |
 |---|---|---|---|
 | 来源层 | PingCode、上传文件、参考资料 | 提供页面、附件、设计文档和本地资料 | PingCode API、上传 API、文件系统 |
-| 素材平台前端 | `scripts/pingcode/web/frontend` | 批次、下载、加工流水线、质量分析和任务状态 | Vue、SSE、REST |
-| 素材平台后端 | `scripts/pingcode/web/backend` | 来源下载、资料准备、六步加工、任务状态、日志和产物管理 | FastAPI、`JsonStore`、后台线程 |
+| 素材平台前端 | `apps/pingcode-web` | 批次、下载、加工流水线、质量分析和任务状态 | Vue、SSE、REST |
+| 素材平台后端 | `apps/pingcode-api` | 来源下载、资料准备、六步加工、任务状态、日志和产物管理 | FastAPI、`JsonStore`、后台线程 |
 | 模型执行层 | `agent-runner` | 模型配置、模型网关、文档生成 Agent 和 MCP 检索 | `/api/model-provider/*`、文档生成接口 |
-| Skill/Prompt 层 | `scripts/pingcode/processing` | 发布知识提取、语义补充等 Skill、Prompt、Profile 和 Schema | 文件 Registry、版本 API |
+| Skill/Prompt 层 | `tools/knowledge-processing/pingcode-processing` | 发布知识提取、语义补充等 Skill、Prompt、Profile 和 Schema | 文件 Registry、版本 API |
 | 知识加工层 | 六步骤流水线 | 预处理、元数据、提取、补充、校验、图谱和数据集生成 | `training-runs/<taskId>/` |
 | 存储层 | 文件系统、JSON/JSONL | 保存任务快照、原文、候选、证据、图谱和质量问题 | `runtime/web`、`training-runs`、`datasets` |
 | 消费层 | 文档生成器、质量页、MCP | 使用检索结果生成或校验技术文档 | MCP、REST、文件读取 |

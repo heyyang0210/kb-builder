@@ -571,7 +571,7 @@ prepare(context):
 
 资源预处理阶段在元数据、标题清洗和低成本初筛完成后，可以生成 embedding 与聚类报告，作为后续质量分析和调度优化依据。
 
-- 配置来源：`scripts/pingcode/processing/metadata-rules/embedding-rules.yaml`。
+- 配置来源：`tools/knowledge-processing/pingcode-processing/metadata-rules/embedding-rules.yaml`。
 - embedding 产物：`metadata/embedding-index.jsonl` 和 `quality/embedding-issues.json`。
 - 聚类产物：`metadata/cluster-report.json` 和 `quality/cluster-issues.json`。
 - 默认 provider：`deterministic_hash`，不依赖外部 API Key，用于本地和 CI 稳定验证。

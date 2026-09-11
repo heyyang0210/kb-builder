@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://knowledgebase.yashandb.com/schemas/yashandb-connection.json",
+  "title": "YashanDB connection configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "version": { "type": "integer", "const": 1 },
+    "jdbc": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "url": { "type": "string", "minLength": 1 },
+        "username": { "type": "string", "minLength": 1 },
+        "driverJar": { "type": "string", "minLength": 1 }
+      },
+      "required": ["url", "username"]
+    },
+    "storage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "url": { "type": "string", "format": "uri" },
+        "host": { "type": "string", "minLength": 1 },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "timeoutMs": { "type": "integer", "minimum": 1 },
+        "threads": { "type": "integer", "minimum": 1 },
+        "maxBodyBytes": { "type": "integer", "minimum": 1 },
+        "sqlDir": { "type": "string", "minLength": 1 }
+      }
+    },
+    "expImp": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "serverHost": { "type": "string" },
+        "owner": { "type": "string" },
+        "fromUser": { "type": "string" },
+        "toUser": { "type": "string" },
+        "outputDir": { "type": "string" },
+        "logDir": { "type": "string" },
+        "rows": { "type": "string", "enum": ["Y", "N"] },
+        "logLevel": { "type": "string" }
+      }
+    }
+  },
+  "required": ["version", "jdbc", "storage"]
+}

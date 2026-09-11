@@ -1,0 +1,98 @@
+{
+  "apiVersion": "enterprise-profile/v1",
+  "kind": "EnterpriseProfile",
+  "metadata": {
+    "id": "yashandb",
+    "enterpriseId": "yashandb",
+    "version": "1.0.0",
+    "displayName": "YashanDB 企业能力包",
+    "language": "zh-CN"
+  },
+  "brand": {
+    "platformName": "知识中心建设平台",
+    "enterpriseName": "YashanDB",
+    "productName": "YashanDB 知识中心"
+  },
+  "modules": [
+    { "id": "document-generation", "enabled": true, "workspaceRef": "document-generation" },
+    { "id": "material-processing", "enabled": true, "workspaceRef": "material-processing" }
+  ],
+  "workspaces": [
+    { "id": "document-generation", "displayName": "文档生成", "basePath": "/prompt-generator.html", "backend": "node" },
+    { "id": "material-processing", "displayName": "资料加工", "basePath": "/pingcode-materials/", "backend": "python" }
+  ],
+  "domain": { "id": "yashandb", "version": "1.0.0", "manifestRef": "knowledge/domain/yashandb/domain.yaml" },
+  "connectors": [
+    { "id": "local-upload", "type": "local-upload", "enabled": true, "capabilityRefs": ["upload-source"], "secretRefs": [] },
+    { "id": "pingcode", "type": "pingcode", "enabled": true, "capabilityRefs": ["read-source"], "secretRefs": ["secret:connectors/pingcode"] },
+    { "id": "mcp", "type": "mcp", "enabled": true, "capabilityRefs": ["retrieve-knowledge"], "secretRefs": ["secret:connectors/mcp"] }
+  ],
+  "agents": [
+    { "id": "planner", "version": "1.0.0", "manifestRef": "packages/agent-runner-core/lib/agents/planner-agent.js" },
+    { "id": "retriever", "version": "1.0.0", "manifestRef": "packages/agent-runner-core/lib/agents/retriever-agent.js" },
+    { "id": "generator", "version": "1.0.0", "manifestRef": "packages/agent-runner-core/lib/agents/generator-agent.js" },
+    { "id": "validator", "version": "1.0.0", "manifestRef": "packages/agent-runner-core/lib/agents/validator-agent.js" },
+    { "id": "comparator", "version": "1.0.0", "manifestRef": "packages/agent-runner-core/lib/agents/comparator-agent.js" }
+  ],
+  "skills": [
+    { "id": "document-general", "version": "1.0.0", "manifestRef": "knowledge/skills/00-通用生成-skill.md" },
+    { "id": "document-principle", "version": "1.0.0", "manifestRef": "knowledge/skills/01-理论机制-skill.md" },
+    { "id": "document-tuning", "version": "1.0.0", "manifestRef": "knowledge/skills/02-实战调优-skill.md" },
+    { "id": "document-comparison", "version": "1.0.0", "manifestRef": "knowledge/skills/03-架构对比-skill.md" },
+    { "id": "document-operations", "version": "1.0.0", "manifestRef": "knowledge/skills/04-运维SOP-skill.md" },
+    { "id": "document-sql-reference", "version": "1.0.0", "manifestRef": "knowledge/skills/05-SQL开发参考-skill.md" },
+    { "id": "document-compatibility", "version": "1.0.0", "manifestRef": "knowledge/skills/06-兼容性差异-skill.md" },
+    { "id": "keyword-extraction", "version": "1.1.0", "manifestRef": "tools/knowledge-processing/pingcode-processing/skills/keyword-extraction/skill.yaml" },
+    { "id": "knowledge-point-extraction", "version": "2.0.0", "manifestRef": "tools/knowledge-processing/pingcode-processing/skills/knowledge-point-extraction/skill.yaml" }
+  ],
+  "prompts": [
+    { "id": "planner", "version": "1.0.0", "resourceRef": "packages/agent-runner-core/lib/agents/prompts/planner.md" },
+    { "id": "retriever", "version": "1.0.0", "resourceRef": "packages/agent-runner-core/lib/agents/prompts/retriever.md" },
+    { "id": "generator", "version": "1.0.0", "resourceRef": "packages/agent-runner-core/lib/agents/prompts/generator.md" },
+    { "id": "validator", "version": "1.0.0", "resourceRef": "packages/agent-runner-core/lib/agents/prompts/validator.md" },
+    { "id": "batch-generation", "version": "1.0.0", "resourceRef": "knowledge/prompts/01-第一部分-批量生成提示词.md" }
+  ],
+  "templates": [
+    { "id": "general", "version": "1.0.0", "resourceRef": "knowledge/templates/01-通用基础模板.md" },
+    { "id": "principle", "version": "1.0.0", "resourceRef": "knowledge/templates/02-理论机制类模板.md" },
+    { "id": "tuning", "version": "1.0.0", "resourceRef": "knowledge/templates/03-实战调优类模板.md" },
+    { "id": "comparison", "version": "1.0.0", "resourceRef": "knowledge/templates/04-架构对比类模板.md" },
+    { "id": "operations", "version": "1.0.0", "resourceRef": "knowledge/templates/05-运维SOP类模板.md" },
+    { "id": "sql-reference", "version": "1.0.0", "resourceRef": "knowledge/templates/06-SQL开发参考类模板.md" },
+    { "id": "compatibility", "version": "1.0.0", "resourceRef": "knowledge/templates/07-兼容性差异类模板.md" }
+  ],
+  "qualityRules": [
+    { "id": "generation-quality", "version": "1.0.0", "resourceRef": "config/knowledge-center/quality-config.json" },
+    { "id": "metadata-rules", "version": "1.4.0", "resourceRef": "tools/knowledge-processing/pingcode-processing/metadata-rules/manifest.yaml" }
+  ],
+  "generationPolicies": [
+    { "id": "generate-general", "version": "1.0.0", "displayName": "通用基础文档生成策略", "enabled": true, "documentTypes": ["general"], "generationModes": ["full", "incremental", "outline-extraction"], "agentRefs": ["planner", "retriever", "generator", "validator"], "skillRefs": ["document-general"], "promptRefs": ["generator"], "templateRef": "general", "qualityRuleRefs": ["generation-quality"], "sourcePolicy": { "mode": "manual", "allowedConnectorRefs": ["local-upload", "pingcode", "mcp"], "requiredConfirmation": true, "maxSources": 20, "allowKnowledgeBaseFallback": true }, "outputPolicy": { "logicalDirectoryRef": "documents", "pathTemplate": "{manualId}/general/{slug}", "overwrite": "versioned" }, "reviewPolicy": { "requiredValidator": true, "requiredHumanReview": true } },
+    { "id": "generate-principle", "version": "1.0.0", "displayName": "理论机制文档生成策略", "enabled": true, "documentTypes": ["principle"], "generationModes": ["full", "incremental"], "agentRefs": ["planner", "retriever", "generator", "validator"], "skillRefs": ["document-principle"], "promptRefs": ["generator"], "templateRef": "principle", "qualityRuleRefs": ["generation-quality"], "sourcePolicy": { "mode": "preset-review", "allowedConnectorRefs": ["pingcode", "mcp", "local-upload"], "requiredConfirmation": true, "maxSources": 20, "allowKnowledgeBaseFallback": true }, "outputPolicy": { "logicalDirectoryRef": "documents", "pathTemplate": "{manualId}/principle/{slug}", "overwrite": "versioned" }, "reviewPolicy": { "requiredValidator": true, "requiredHumanReview": true } },
+    { "id": "generate-tuning", "version": "1.0.0", "displayName": "实战调优文档生成策略", "enabled": true, "documentTypes": ["tuning"], "generationModes": ["full", "incremental"], "agentRefs": ["planner", "retriever", "generator", "validator"], "skillRefs": ["document-tuning"], "promptRefs": ["generator"], "templateRef": "tuning", "qualityRuleRefs": ["generation-quality"], "sourcePolicy": { "mode": "manual", "allowedConnectorRefs": ["pingcode", "mcp", "local-upload"], "requiredConfirmation": true, "maxSources": 20, "allowKnowledgeBaseFallback": true }, "outputPolicy": { "logicalDirectoryRef": "documents", "pathTemplate": "{manualId}/tuning/{slug}", "overwrite": "versioned" }, "reviewPolicy": { "requiredValidator": true, "requiredHumanReview": true } },
+    { "id": "generate-comparison", "version": "1.0.0", "displayName": "架构对比文档生成策略", "enabled": true, "documentTypes": ["comparison"], "generationModes": ["full", "incremental"], "agentRefs": ["planner", "retriever", "generator", "validator"], "skillRefs": ["document-comparison"], "promptRefs": ["generator"], "templateRef": "comparison", "qualityRuleRefs": ["generation-quality"], "sourcePolicy": { "mode": "manual", "allowedConnectorRefs": ["pingcode", "mcp", "local-upload"], "requiredConfirmation": true, "maxSources": 20, "allowKnowledgeBaseFallback": false }, "outputPolicy": { "logicalDirectoryRef": "documents", "pathTemplate": "{manualId}/comparison/{slug}", "overwrite": "versioned" }, "reviewPolicy": { "requiredValidator": true, "requiredHumanReview": true } },
+    { "id": "generate-operations", "version": "1.0.0", "displayName": "运维SOP文档生成策略", "enabled": true, "documentTypes": ["operations"], "generationModes": ["full", "incremental"], "agentRefs": ["planner", "retriever", "generator", "validator"], "skillRefs": ["document-operations"], "promptRefs": ["generator"], "templateRef": "operations", "qualityRuleRefs": ["generation-quality"], "sourcePolicy": { "mode": "manual", "allowedConnectorRefs": ["pingcode", "mcp", "local-upload"], "requiredConfirmation": true, "maxSources": 20, "allowKnowledgeBaseFallback": true }, "outputPolicy": { "logicalDirectoryRef": "documents", "pathTemplate": "{manualId}/operations/{slug}", "overwrite": "versioned" }, "reviewPolicy": { "requiredValidator": true, "requiredHumanReview": true } },
+    { "id": "generate-sql-reference", "version": "1.0.0", "displayName": "SQL开发参考文档生成策略", "enabled": true, "documentTypes": ["sql-reference"], "generationModes": ["full", "incremental"], "agentRefs": ["planner", "retriever", "generator", "validator"], "skillRefs": ["document-sql-reference"], "promptRefs": ["generator"], "templateRef": "sql-reference", "qualityRuleRefs": ["generation-quality"], "sourcePolicy": { "mode": "manual", "allowedConnectorRefs": ["pingcode", "mcp", "local-upload"], "requiredConfirmation": true, "maxSources": 20, "allowKnowledgeBaseFallback": true }, "outputPolicy": { "logicalDirectoryRef": "documents", "pathTemplate": "{manualId}/sql-reference/{slug}", "overwrite": "versioned" }, "reviewPolicy": { "requiredValidator": true, "requiredHumanReview": true } },
+    { "id": "generate-compatibility", "version": "1.0.0", "displayName": "兼容性差异文档生成策略", "enabled": true, "documentTypes": ["compatibility"], "generationModes": ["full", "incremental"], "agentRefs": ["planner", "retriever", "generator", "validator"], "skillRefs": ["document-compatibility"], "promptRefs": ["generator"], "templateRef": "compatibility", "qualityRuleRefs": ["generation-quality"], "sourcePolicy": { "mode": "manual", "allowedConnectorRefs": ["pingcode", "mcp", "local-upload"], "requiredConfirmation": true, "maxSources": 20, "allowKnowledgeBaseFallback": false }, "outputPolicy": { "logicalDirectoryRef": "documents", "pathTemplate": "{manualId}/compatibility/{slug}", "overwrite": "versioned" }, "reviewPolicy": { "requiredValidator": true, "requiredHumanReview": true } }
+  ],
+  "logicalDirectories": [
+    { "id": "documents", "displayName": "文档产物", "pathRef": "deployment:documents", "writable": true },
+    { "id": "material-data", "displayName": "资料加工数据", "pathRef": "deployment:material-data", "writable": true }
+  ],
+  "capabilities": [
+    { "id": "upload-source", "enabled": true },
+    { "id": "read-source", "enabled": true },
+    { "id": "retrieve-knowledge", "enabled": true },
+    { "id": "generate-document", "enabled": true },
+    { "id": "process-material", "enabled": true }
+  ],
+  "compatibility": {
+    "defaultProfile": true,
+    "legacyEntrypoints": ["/prompt-generator.html", "/pingcode-materials/", "/pingcode-api/"],
+    "legacyApiPreserved": true,
+    "entityTypeAliases": {}
+  },
+  "runtimeProjection": {
+    "exposedBrandFields": ["platformName", "enterpriseName", "productName"],
+    "exposedCapabilityFields": ["id", "enabled"]
+  }
+}

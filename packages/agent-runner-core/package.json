@@ -1,0 +1,7 @@
+{
+  "name": "@yashandb/agent-runner-core",
+  "version": "1.0.0",
+  "private": true,
+  "description": "知识中心共享业务核心、路由和工作流实现",
+  "main": "lib/repo-paths.js"
+}

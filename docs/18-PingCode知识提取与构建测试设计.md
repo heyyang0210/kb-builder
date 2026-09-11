@@ -95,7 +95,7 @@ batchId: batch_b46713c20d9c4ada
 后端回归：
 
 ```bash
-cd scripts/pingcode/web/backend
+cd apps/pingcode-api
 python3 -m unittest discover -s tests -v
 ```
 
@@ -289,9 +289,9 @@ GET /pingcode-api/api/datasets/{datasetId}/graph/summary：通过
 主要证据路径：
 
 ```text
-scripts/pingcode/runtime/web/training-runs/training_aae3e752e1d244ca/
-scripts/pingcode/runtime/web/datasets/dataset_4091451d25294cdf/
-scripts/pingcode/runtime/web/training-runs/training_f2bf3ef8e5cd4af3/events.jsonl
+var/pingcode/web/training-runs/training_aae3e752e1d244ca/
+var/pingcode/web/datasets/dataset_4091451d25294cdf/
+var/pingcode/web/training-runs/training_f2bf3ef8e5cd4af3/events.jsonl
 ```
 
 ## 十、P0-01 正式知识构建可靠性专项
@@ -362,10 +362,10 @@ scripts/pingcode/runtime/web/training-runs/training_f2bf3ef8e5cd4af3/events.json
 
 本地验证记录（2026-07-31）：
 
-- `PYTHONPATH=scripts/pingcode/web/backend python3 -m unittest scripts/pingcode/web/backend/tests/test_embedding_services.py -v`：4 个用例通过，覆盖缓存命中、profile version 失效、provider 不可用 warning 降级和稳定 `clusterId`。
-- `PYTHONPATH=scripts/pingcode/web/backend python3 -m unittest scripts/pingcode/web/backend/tests/test_material_preparation.py -v`：30 个用例通过，覆盖元数据阶段写出 embedding/cluster 产物。
-- `PYTHONPATH=scripts/pingcode/web/backend python3 -m unittest scripts/pingcode/web/backend/tests/test_training_service.py -v`：57 个用例通过。
-- `PYTHONPATH=scripts/pingcode/web/backend python3 -m unittest discover -s scripts/pingcode/web/backend/tests -v`：187 个用例通过，21 个真实 API/浏览器环境用例按配置跳过。
+- `PYTHONPATH=apps/pingcode-api python3 -m unittest tests/pingcode/web-backend/test_embedding_services.py -v`：4 个用例通过，覆盖缓存命中、profile version 失效、provider 不可用 warning 降级和稳定 `clusterId`。
+- `PYTHONPATH=apps/pingcode-api python3 -m unittest tests/pingcode/web-backend/test_material_preparation.py -v`：30 个用例通过，覆盖元数据阶段写出 embedding/cluster 产物。
+- `PYTHONPATH=apps/pingcode-api python3 -m unittest tests/pingcode/web-backend/test_training_service.py -v`：57 个用例通过。
+- `PYTHONPATH=apps/pingcode-api python3 -m unittest discover -s tests/pingcode/web-backend -v`：187 个用例通过，21 个真实 API/浏览器环境用例按配置跳过。
 
 真实 API 验证记录（2026-07-31）：
 
@@ -395,9 +395,9 @@ scripts/pingcode/runtime/web/training-runs/training_f2bf3ef8e5cd4af3/events.json
 - 标题噪声、产品范围词和完整文件名不得重新进入关键词图谱；
 - 标题明确且有证据的文档模型调用数应为 0；
 - 初筛报告缺失的历史运行必须回退旧逻辑，不能阻断关键词分析。
-- 已执行：`PYTHONPATH=scripts/pingcode/web/backend python3 -m unittest scripts/pingcode/web/backend/tests/test_material_preparation.py -v`，结果 30 个用例通过。
-- 已执行：`PYTHONPATH=scripts/pingcode/web/backend python3 -m unittest scripts/pingcode/web/backend/tests/test_training_service.py -v`，结果 57 个用例通过。
-- 已执行：`PYTHONPATH=scripts/pingcode/web/backend python3 -m unittest discover -s scripts/pingcode/web/backend/tests -v`，结果 183 个用例通过，21 个真实 API/浏览器环境用例按配置跳过。
+- 已执行：`PYTHONPATH=apps/pingcode-api python3 -m unittest tests/pingcode/web-backend/test_material_preparation.py -v`，结果 30 个用例通过。
+- 已执行：`PYTHONPATH=apps/pingcode-api python3 -m unittest tests/pingcode/web-backend/test_training_service.py -v`，结果 57 个用例通过。
+- 已执行：`PYTHONPATH=apps/pingcode-api python3 -m unittest discover -s tests/pingcode/web-backend -v`，结果 183 个用例通过，21 个真实 API/浏览器环境用例按配置跳过。
 - 已重启 8001 后端，`/api/health` 与 `3500/pingcode-api/api/health` 返回 `{"status":"ok","version":"0.1.0"}`。
 
 ### 2026-07-30 P1 第一批真实 API 验证
@@ -430,8 +430,8 @@ scripts/pingcode/runtime/web/training-runs/training_f2bf3ef8e5cd4af3/events.json
 
 真实证据路径：
 
-- `scripts/pingcode/runtime/web/training-runs/training_7c867ce751364fbf/events.jsonl`
-- `scripts/pingcode/runtime/web/training-runs/training_99ab8ad07837425f/events.jsonl`
+- `var/pingcode/web/training-runs/training_7c867ce751364fbf/events.jsonl`
+- `var/pingcode/web/training-runs/training_99ab8ad07837425f/events.jsonl`
 
 专项结论：`TASK-P0-01` 为**部分完成，代码层最小闭环已补齐**。取消终态、模型调用可追溯、Skill 参数透传和取消后批次解锁已完成真实验证；失败分类、批次审计字段、质量问题字段和僵尸 activeTask 恢复已由单测覆盖。仍需重新执行真实 formal task，验证新事件顶层字段、真实 timeout/局部失败落盘和其他 chunk 继续处理后，才能标记为“已验证/完成”。
 
@@ -448,8 +448,8 @@ scripts/pingcode/runtime/web/training-runs/training_f2bf3ef8e5cd4af3/events.json
 针对性执行命令：
 
 ```bash
-PYTHONPATH=scripts/pingcode/web/backend python3 -m unittest scripts/pingcode/web/backend/tests/test_knowledge_extraction_tools.py -v
-PYTHONPATH=scripts/pingcode/web/backend python3 -m unittest scripts/pingcode/web/backend/tests/test_training_service.py -v
+PYTHONPATH=apps/pingcode-api python3 -m unittest tests/pingcode/web-backend/test_knowledge_extraction_tools.py -v
+PYTHONPATH=apps/pingcode-api python3 -m unittest tests/pingcode/web-backend/test_training_service.py -v
 ```
 
 ## 十二、方案 C 并发快照与损坏隔离测试设计
@@ -476,7 +476,7 @@ concurrent_case(workers, operation):
   validate no reader observed staging or partial JSON
 ```
 
-测试配置必须加载 `scripts/pingcode/processing/artifact-integrity.yaml`，断言 `schemaVersion=artifact-integrity-config/v1`、`maxRecordRatio=0.001`、`maxRecordCount=10`；业务测试不得自行复制另一套阈值。
+测试配置必须加载 `tools/knowledge-processing/pingcode-processing/artifact-integrity.yaml`，断言 `schemaVersion=artifact-integrity-config/v1`、`maxRecordRatio=0.001`、`maxRecordCount=10`；业务测试不得自行复制另一套阈值。
 
 ### 12.2 正确性与故障注入矩阵
 

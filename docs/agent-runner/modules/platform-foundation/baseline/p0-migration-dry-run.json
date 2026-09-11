@@ -1,0 +1,70 @@
+{
+  "success": true,
+  "mode": "dry-run",
+  "count": 9,
+  "records": [
+    {
+      "namespace": "auth",
+      "key": "state",
+      "source": "tmp/knowledge-center-auth.json",
+      "sha256": "62b6e41775e07aa838f98d8818cddc558d9658ab7fcde61d56f6caabb24eaa2a",
+      "action": "would_import"
+    },
+    {
+      "namespace": "assets",
+      "key": "catalog",
+      "source": "config/knowledge-assets.json",
+      "sha256": "f16a935ecb95cca1313c878cd627b9ce243d94510b1f11bb501824de8b06cf7d",
+      "action": "would_import"
+    },
+    {
+      "namespace": "outlines",
+      "key": "metadata",
+      "source": "outlines/metadata.json",
+      "sha256": "75201a6e6884454d3215e337904c6e40c75bb6036ae2dbda7f353ca746fe31f2",
+      "action": "would_import"
+    },
+    {
+      "namespace": "documents",
+      "key": "metadata",
+      "source": "tmp/doc-processed/metadata.json",
+      "sha256": "c0768b64007530375f64edd5a48ec95f544e04ca2bdf49b5cb315a28cb3361a4",
+      "action": "would_import"
+    },
+    {
+      "namespace": "documents",
+      "key": "comments",
+      "source": "data/document-comments.json",
+      "sha256": "8d5f68827a5bdabda81dfc4463be6f673db66eac9bad473a7531b9828ceb00df",
+      "action": "would_import"
+    },
+    {
+      "namespace": "incremental",
+      "key": "state",
+      "source": "tmp/incremental-build-state.json",
+      "sha256": "3fea345f6a16450f45f3a2bcc8f1bf286951da317ed7679013a44e4e68947de6",
+      "action": "would_import"
+    },
+    {
+      "namespace": "workflows",
+      "key": "default",
+      "source": "workflows/default.json",
+      "sha256": "a16ad6bc5ffe3d768d76d8e58eb3b03bbb5ebe8c8ac910ac681f4a2cc5feb5f6",
+      "action": "would_import"
+    },
+    {
+      "namespace": "workflows",
+      "key": "fast",
+      "source": "workflows/fast.json",
+      "sha256": "9a39a98dbbd0a9d84fe54f9008061ec1363b21066971f7f4ac01e07053325638",
+      "action": "would_import"
+    },
+    {
+      "namespace": "workflows",
+      "key": "high_quality",
+      "source": "workflows/high_quality.json",
+      "sha256": "6c91d63c5e1db8a2dbf2dc7588d90410202279135ca5df344e8a4561bb1a01bf",
+      "action": "would_import"
+    }
+  ]
+}

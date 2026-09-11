@@ -1,0 +1,13 @@
+{
+  "base_url": "https://pingcode.yasdb.com",
+  "credentials": {
+    "email": "heyang",
+    "password": "heyang1226"
+  },
+  "targets": [
+    {
+      "name": "YASSTORAGE知识库",
+      "url": "https://pingcode.yasdb.com/wiki/spaces/YASSTORAGE/pages/SBlM3dKV"
+    }
+  ]
+}

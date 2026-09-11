@@ -1,0 +1,23 @@
+{
+  "server_url": "https://knowledgebase.yashandb.com/api/mcp",
+  "timeout": 30000,
+  "retry_count": 3,
+  "cache": {
+    "enabled": true,
+    "ttl": 3600
+  },
+  "headers": [
+    {
+      "name": "X-Ksacraft-Kb-Id",
+      "value": "1",
+      "encrypted": false,
+      "description": "YashanDB官方文档"
+    },
+    {
+      "name": "X-Ksacraft-Kb-Id",
+      "value": "24",
+      "encrypted": false,
+      "description": "YashanDB运维文档"
+    }
+  ]
+}

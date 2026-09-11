@@ -20,7 +20,7 @@
 
 ## 2. 文件存储
 
-已发布内容继续保存于 `scripts/pingcode/processing/skills/`。草稿保存于配置项 `PINGCODE_PROCESSING_PROMPT_DRAFT_ROOT`，默认位于 Web 数据根目录：
+已发布内容继续保存于 `tools/knowledge-processing/pingcode-processing/skills/`。草稿保存于配置项 `PINGCODE_PROCESSING_PROMPT_DRAFT_ROOT`，默认位于 Web 数据根目录：
 
 ```text
 runtime/web/processing/prompt-drafts/<draft-id>/

@@ -1,0 +1,884 @@
+{
+  "schemaVersion": "knowledge-center.v1",
+  "sourceService": "tools/pingcode-cli/web/backend",
+  "gatewayPrefix": "/knowledge-center/api/cleaning",
+  "legacyPrefix": "/api",
+  "endpoints": [
+    {
+      "id": "workbench-summary",
+      "method": "GET",
+      "path": "/workbench/summary",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "material-batches-list",
+      "method": "GET",
+      "path": "/material-batches",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "material-batch-detail",
+      "method": "GET",
+      "path": "/material-batches/:batchId",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "material-batch-files",
+      "method": "GET",
+      "path": "/material-batches/:batchId/files",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "datasets-list",
+      "method": "GET",
+      "path": "/datasets",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "dataset-detail",
+      "method": "GET",
+      "path": "/datasets/:datasetId",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "training-tasks-list",
+      "method": "GET",
+      "path": "/training/tasks",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "training-task-detail",
+      "method": "GET",
+      "path": "/training/tasks/:taskId",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "task-detail",
+      "method": "GET",
+      "path": "/tasks/:taskId",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "task-events",
+      "method": "GET",
+      "path": "/tasks/:taskId/events",
+      "operation": "event-stream",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "file-metadata",
+      "method": "GET",
+      "path": "/files/:resourceId/metadata",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "file-preview",
+      "method": "GET",
+      "path": "/files/:resourceId/preview",
+      "operation": "download",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "file-preview-data",
+      "method": "GET",
+      "path": "/files/:resourceId/preview-data",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "file-content",
+      "method": "GET",
+      "path": "/files/:resourceId/content",
+      "operation": "download",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "file-download",
+      "method": "GET",
+      "path": "/files/:resourceId/download",
+      "operation": "download",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "upload-session-create",
+      "method": "POST",
+      "path": "/upload-sessions",
+      "operation": "command",
+      "action": "knowledge:write",
+      "idempotency": true
+    },
+    {
+      "id": "upload-session-list",
+      "method": "GET",
+      "path": "/upload-sessions",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "upload-session-detail",
+      "method": "GET",
+      "path": "/upload-sessions/:sessionId",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "upload-file-add",
+      "method": "POST",
+      "path": "/upload-sessions/:sessionId/files",
+      "operation": "command",
+      "action": "knowledge:write"
+    },
+    {
+      "id": "upload-chunk",
+      "method": "PUT",
+      "path": "/upload-sessions/:sessionId/files/:fileId/chunks/:chunkIndex",
+      "operation": "command",
+      "action": "knowledge:write"
+    },
+    {
+      "id": "upload-file-complete",
+      "method": "POST",
+      "path": "/upload-sessions/:sessionId/files/:fileId/complete",
+      "operation": "command",
+      "action": "knowledge:write"
+    },
+    {
+      "id": "upload-session-complete",
+      "method": "POST",
+      "path": "/upload-sessions/:sessionId/complete",
+      "operation": "command",
+      "action": "knowledge:write",
+      "idempotency": true
+    },
+    {
+      "id": "upload-session-cancel",
+      "method": "POST",
+      "path": "/upload-sessions/:sessionId/cancel",
+      "operation": "command",
+      "action": "knowledge:write"
+    },
+    {
+      "id": "upload-create-batch",
+      "method": "POST",
+      "path": "/upload-sessions/:sessionId/create-batch",
+      "operation": "command",
+      "action": "knowledge:write",
+      "idempotency": true
+    },
+    {
+      "id": "batch-estimate",
+      "method": "POST",
+      "path": "/material-batches/estimate",
+      "operation": "command",
+      "action": "knowledge:write"
+    },
+    {
+      "id": "batch-create",
+      "method": "POST",
+      "path": "/material-batches",
+      "operation": "command",
+      "action": "knowledge:write",
+      "idempotency": true
+    },
+    {
+      "id": "preprocess-scan",
+      "method": "POST",
+      "path": "/preprocess/scan",
+      "operation": "command",
+      "action": "knowledge:write"
+    },
+    {
+      "id": "preprocess-scan-task-create",
+      "method": "POST",
+      "path": "/preprocess/scan-tasks",
+      "operation": "command",
+      "action": "knowledge:write",
+      "idempotency": true
+    },
+    {
+      "id": "preprocess-scan-task-list",
+      "method": "GET",
+      "path": "/preprocess/scan-tasks",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "preprocess-scan-report",
+      "method": "GET",
+      "path": "/preprocess/scan-reports/:batchId",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "preprocess-prepare",
+      "method": "POST",
+      "path": "/preprocess/prepare",
+      "operation": "command",
+      "action": "knowledge:write"
+    },
+    {
+      "id": "metadata-build",
+      "method": "POST",
+      "path": "/metadata/build",
+      "operation": "command",
+      "action": "knowledge:write",
+      "idempotency": true
+    },
+    {
+      "id": "preprocess-preview",
+      "method": "POST",
+      "path": "/preprocess/preview",
+      "operation": "command",
+      "action": "knowledge:write"
+    },
+    {
+      "id": "preprocess-pipeline-start",
+      "method": "POST",
+      "path": "/preprocess/pipeline",
+      "operation": "command",
+      "action": "knowledge:write",
+      "idempotency": true
+    },
+    {
+      "id": "preprocess-pipeline-detail",
+      "method": "GET",
+      "path": "/preprocess/pipeline/:taskId",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "training-task-create",
+      "method": "POST",
+      "path": "/training/tasks",
+      "operation": "command",
+      "action": "knowledge:write",
+      "idempotency": true
+    },
+    {
+      "id": "training-task-cancel",
+      "method": "POST",
+      "path": "/training/tasks/:taskId/cancel",
+      "operation": "command",
+      "action": "knowledge:write"
+    },
+    {
+      "id": "training-task-logs",
+      "method": "GET",
+      "path": "/training/tasks/:taskId/logs",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "training-task-events",
+      "method": "GET",
+      "path": "/training/tasks/:taskId/events",
+      "operation": "event-stream",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "keyword-filter-run-create",
+      "method": "POST",
+      "path": "/datasets/:datasetId/keyword-filter-runs",
+      "operation": "command",
+      "action": "knowledge:write",
+      "idempotency": true
+    },
+    {
+      "id": "keyword-filter-run-stream",
+      "method": "GET",
+      "path": "/datasets/:datasetId/keyword-filter-runs/:filterRunId/stream",
+      "operation": "event-stream",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "keyword-filter-run-apply",
+      "method": "POST",
+      "path": "/datasets/:datasetId/keyword-filter-runs/:filterRunId/apply",
+      "operation": "command",
+      "action": "knowledge:write"
+    },
+    {
+      "id": "keyword-filter-by-skill",
+      "method": "POST",
+      "path": "/datasets/:datasetId/keywords/filter-by-skill",
+      "operation": "command",
+      "action": "knowledge:write",
+      "idempotency": true
+    },
+    {
+      "id": "keyword-filter-apply",
+      "method": "POST",
+      "path": "/datasets/:datasetId/keywords/filter-apply",
+      "operation": "command",
+      "action": "knowledge:write"
+    },
+    {
+      "id": "graph-repair",
+      "method": "POST",
+      "path": "/datasets/:datasetId/graph/repair",
+      "operation": "command",
+      "action": "knowledge:write"
+    },
+    {
+      "id": "formal-knowledge-task",
+      "method": "POST",
+      "path": "/datasets/:datasetId/formal-knowledge/tasks",
+      "operation": "command",
+      "action": "knowledge:write",
+      "idempotency": true
+    },
+    {
+      "id": "dataset-publish",
+      "method": "POST",
+      "path": "/datasets/:datasetId/publish",
+      "operation": "command",
+      "action": "knowledge:write",
+      "idempotency": true
+    },
+    {
+      "id": "get-health",
+      "method": "GET",
+      "path": "/health",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "get-platform-context",
+      "method": "GET",
+      "path": "/platform/context",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "get-system-runtime-config",
+      "method": "GET",
+      "path": "/system/runtime-config",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "get-system-status",
+      "method": "GET",
+      "path": "/system/status",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "get-ingestion-capabilities",
+      "method": "GET",
+      "path": "/ingestion/capabilities",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "get-pingcode-spaces",
+      "method": "GET",
+      "path": "/pingcode/spaces",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "put-pingcode-spaces-spacekey-mapping",
+      "method": "PUT",
+      "path": "/pingcode/spaces/:spaceKey/mapping",
+      "operation": "command",
+      "action": "knowledge:write",
+      "idempotency": true
+    },
+    {
+      "id": "get-pingcode-space-mappings",
+      "method": "GET",
+      "path": "/pingcode/space-mappings",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "get-pingcode-status",
+      "method": "GET",
+      "path": "/pingcode/status",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "get-processing-skills",
+      "method": "GET",
+      "path": "/processing/skills",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "get-processing-skills-skillid",
+      "method": "GET",
+      "path": "/processing/skills/:skillId",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "get-processing-prompts",
+      "method": "GET",
+      "path": "/processing/prompts",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "get-processing-prompts-promptid",
+      "method": "GET",
+      "path": "/processing/prompts/:promptId",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "post-processing-prompts-promptid-drafts",
+      "method": "POST",
+      "path": "/processing/prompts/:promptId/drafts",
+      "operation": "command",
+      "action": "knowledge:write"
+    },
+    {
+      "id": "get-processing-prompt-drafts-draftid",
+      "method": "GET",
+      "path": "/processing/prompt-drafts/:draftId",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "put-processing-prompt-drafts-draftid",
+      "method": "PUT",
+      "path": "/processing/prompt-drafts/:draftId",
+      "operation": "command",
+      "action": "knowledge:write"
+    },
+    {
+      "id": "post-processing-prompt-drafts-draftid-validate",
+      "method": "POST",
+      "path": "/processing/prompt-drafts/:draftId/validate",
+      "operation": "command",
+      "action": "knowledge:write"
+    },
+    {
+      "id": "post-processing-prompt-drafts-draftid-test",
+      "method": "POST",
+      "path": "/processing/prompt-drafts/:draftId/test",
+      "operation": "command",
+      "action": "knowledge:write"
+    },
+    {
+      "id": "post-processing-prompt-drafts-draftid-publish",
+      "method": "POST",
+      "path": "/processing/prompt-drafts/:draftId/publish",
+      "operation": "command",
+      "action": "knowledge:write",
+      "idempotency": true
+    },
+    {
+      "id": "get-processing-prompts-promptid-versions-version-diff",
+      "method": "GET",
+      "path": "/processing/prompts/:promptId/versions/:version/diff",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "get-pingcode-spaces-spacekey-tree",
+      "method": "GET",
+      "path": "/pingcode/spaces/:spaceKey/tree",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "get-material-batches-batchid-workbench-summary",
+      "method": "GET",
+      "path": "/material-batches/:batchId/workbench-summary",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "post-download-tasks",
+      "method": "POST",
+      "path": "/download/tasks",
+      "operation": "command",
+      "action": "knowledge:write",
+      "idempotency": true
+    },
+    {
+      "id": "get-download-tasks",
+      "method": "GET",
+      "path": "/download/tasks",
+      "operation": "download",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "get-download-tasks-taskid",
+      "method": "GET",
+      "path": "/download/tasks/:taskId",
+      "operation": "download",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "post-download-tasks-taskid-retry",
+      "method": "POST",
+      "path": "/download/tasks/:taskId/retry",
+      "operation": "command",
+      "action": "knowledge:write",
+      "idempotency": true
+    },
+    {
+      "id": "post-download-tasks-taskid-resume",
+      "method": "POST",
+      "path": "/download/tasks/:taskId/resume",
+      "operation": "command",
+      "action": "knowledge:write",
+      "idempotency": true
+    },
+    {
+      "id": "get-download-tasks-taskid-items",
+      "method": "GET",
+      "path": "/download/tasks/:taskId/items",
+      "operation": "download",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "post-download-tasks-taskid-pause",
+      "method": "POST",
+      "path": "/download/tasks/:taskId/pause",
+      "operation": "command",
+      "action": "knowledge:write",
+      "idempotency": true
+    },
+    {
+      "id": "post-download-tasks-taskid-cancel",
+      "method": "POST",
+      "path": "/download/tasks/:taskId/cancel",
+      "operation": "command",
+      "action": "knowledge:write",
+      "idempotency": true
+    },
+    {
+      "id": "get-training-admission-batchid",
+      "method": "GET",
+      "path": "/training/admission/:batchId",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "get-training-model-config",
+      "method": "GET",
+      "path": "/training/model-config",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "put-training-model-config",
+      "method": "PUT",
+      "path": "/training/model-config",
+      "operation": "command",
+      "action": "knowledge:write",
+      "idempotency": true
+    },
+    {
+      "id": "post-training-model-test",
+      "method": "POST",
+      "path": "/training/model-test",
+      "operation": "command",
+      "action": "knowledge:write",
+      "idempotency": true
+    },
+    {
+      "id": "post-training-preflight",
+      "method": "POST",
+      "path": "/training/preflight",
+      "operation": "command",
+      "action": "knowledge:write"
+    },
+    {
+      "id": "get-training-tasks-taskid-review-items",
+      "method": "GET",
+      "path": "/training/tasks/:taskId/review-items",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "post-training-tasks-taskid-review-items-itemid-decision",
+      "method": "POST",
+      "path": "/training/tasks/:taskId/review-items/:itemId/decision",
+      "operation": "command",
+      "action": "knowledge:write",
+      "idempotency": true
+    },
+    {
+      "id": "get-graph-versions",
+      "method": "GET",
+      "path": "/graph/versions",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "get-graph-versions-trends",
+      "method": "GET",
+      "path": "/graph/versions/trends",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "get-graph-versions-graphversionid",
+      "method": "GET",
+      "path": "/graph/versions/:graphVersionId",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "get-graph-versions-graphversionid-explore",
+      "method": "GET",
+      "path": "/graph/versions/:graphVersionId/explore",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "get-graph-versions-graphversionid-checks",
+      "method": "GET",
+      "path": "/graph/versions/:graphVersionId/checks",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "get-graph-versions-leftversionid-diff-rightversionid",
+      "method": "GET",
+      "path": "/graph/versions/:leftVersionId/diff/:rightVersionId",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "get-datasets-datasetid-graph-summary",
+      "method": "GET",
+      "path": "/datasets/:datasetId/graph/summary",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "get-datasets-datasetid-graph-observability",
+      "method": "GET",
+      "path": "/datasets/:datasetId/graph/observability",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "get-datasets-datasetid-graph-search",
+      "method": "GET",
+      "path": "/datasets/:datasetId/graph/search",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "get-datasets-datasetid-graph-explore",
+      "method": "GET",
+      "path": "/datasets/:datasetId/graph/explore",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "get-datasets-datasetid-graph-evidence",
+      "method": "GET",
+      "path": "/datasets/:datasetId/graph/evidence",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "post-datasets-datasetid-keywords-keywordid-status",
+      "method": "POST",
+      "path": "/datasets/:datasetId/keywords/:keywordId/status",
+      "operation": "command",
+      "action": "knowledge:write"
+    },
+    {
+      "id": "get-datasets-datasetid-keyword-filter-runs",
+      "method": "GET",
+      "path": "/datasets/:datasetId/keyword-filter-runs",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "get-datasets-datasetid-keyword-filter-runs-filterrunid",
+      "method": "GET",
+      "path": "/datasets/:datasetId/keyword-filter-runs/:filterRunId",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "patch-datasets-datasetid-keyword-filter-runs-filterrunid-review-decisions",
+      "method": "PATCH",
+      "path": "/datasets/:datasetId/keyword-filter-runs/:filterRunId/review-decisions",
+      "operation": "command",
+      "action": "knowledge:write",
+      "idempotency": true
+    },
+    {
+      "id": "get-datasets-datasetid-keyword-filter-runs-filterrunid-review-summary",
+      "method": "GET",
+      "path": "/datasets/:datasetId/keyword-filter-runs/:filterRunId/review-summary",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "get-datasets-datasetid-keyword-filter-runs-filterrunid-issue-overview",
+      "method": "GET",
+      "path": "/datasets/:datasetId/keyword-filter-runs/:filterRunId/issue-overview",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "get-datasets-datasetid-keyword-filter-runs-filterrunid-issue-evidence",
+      "method": "GET",
+      "path": "/datasets/:datasetId/keyword-filter-runs/:filterRunId/issue-evidence",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "get-datasets-datasetid-keyword-filter-runs-leftrunid-diff-rightrunid",
+      "method": "GET",
+      "path": "/datasets/:datasetId/keyword-filter-runs/:leftRunId/diff/:rightRunId",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "get-datasets-datasetid-keywords-filter-by-skill-stream",
+      "method": "GET",
+      "path": "/datasets/:datasetId/keywords/filter-by-skill/stream",
+      "operation": "event-stream",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "post-config-filter-rules",
+      "method": "POST",
+      "path": "/config/filter-rules",
+      "operation": "command",
+      "action": "knowledge:write",
+      "idempotency": true
+    },
+    {
+      "id": "delete-config-filter-rules-ruleid",
+      "method": "DELETE",
+      "expose": false,
+      "path": "/config/filter-rules/:ruleId",
+      "operation": "command",
+      "action": "knowledge:write",
+      "idempotency": true
+    },
+    {
+      "id": "get-datasets-datasetid-graph-nodes",
+      "method": "GET",
+      "path": "/datasets/:datasetId/graph/nodes",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "get-datasets-datasetid-graph-edges",
+      "method": "GET",
+      "path": "/datasets/:datasetId/graph/edges",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "get-datasets-datasetid-graph-neighborhood",
+      "method": "GET",
+      "path": "/datasets/:datasetId/graph/neighborhood",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "delete-datasets-datasetid",
+      "method": "DELETE",
+      "expose": false,
+      "path": "/datasets/:datasetId",
+      "operation": "command",
+      "action": "knowledge:write"
+    },
+    {
+      "id": "get-index-directory-tree",
+      "method": "GET",
+      "path": "/index/directory-tree",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "get-index-search",
+      "method": "GET",
+      "path": "/index/search",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "get-index-graph",
+      "method": "GET",
+      "path": "/index/graph",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "get-index-knowledge-kpid",
+      "method": "GET",
+      "path": "/index/knowledge/:kpId",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "get-index-stats",
+      "method": "GET",
+      "path": "/index/stats",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "get-skills-keyword-filter",
+      "method": "GET",
+      "path": "/skills/keyword-filter",
+      "operation": "query",
+      "action": "knowledge:read"
+    },
+    {
+      "id": "put-skills-keyword-filter",
+      "method": "PUT",
+      "path": "/skills/keyword-filter",
+      "operation": "command",
+      "action": "knowledge:write",
+      "idempotency": true
+    }
+  ],
+  "rules": [
+    {
+      "id": "cleaning-core-v1",
+      "status": "adapter-enabled",
+      "description": "统一入口通过显式白名单代理资料加工服务，旧 /api 路径保持不变。",
+      "endpointSource": "packages/platform-contracts/knowledge-center/v1/endpoint-mapping.json#endpoints",
+      "request": {
+        "forwardHeaders": [
+          "Cookie",
+          "Authorization",
+          "Idempotency-Key",
+          "X-Request-Id",
+          "X-Correlation-Id",
+          "X-Chunk-SHA256",
+          "Content-Range"
+        ],
+        "injectedHeaders": [
+          "X-Actor-Id",
+          "X-Actor-Display-Name"
+        ]
+      },
+      "response": {
+        "successEnvelope": "upstream-compatible",
+        "legacyFields": "preserve",
+        "errorEnvelope": "success=false,error.code,error.message,error.retryable,error.requestId"
+      },
+      "rollback": "停止使用 /knowledge-center/api/cleaning/* 适配路由即可，旧 /api/* 和 /pingcode-api/* 不受影响。"
+    }
+  ]
+}

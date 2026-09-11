@@ -1,0 +1,1134 @@
+# 27-资料预处理框架概要设计
+
+> 版本：v1.0
+> 日期：2026-07-23
+> 状态：设计中
+> 前置文档：`26-设计文档预处理与分层索引设计.md`、`10-设计文档预处理-专业提示词.md`
+> 替代文档：`27-设计文档预处理系统概要设计.md`（v1.0，已废弃）
+
+---
+
+## 1. 概述
+
+### 1.1 模块定位
+
+资料预处理框架是 **独立于检索和生成流程的预处理模块**，负责将各类原始素材转化为高质量、可检索的知识资产。
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    资料预处理框架                              │
+│                                                             │
+│  输入：原始素材          输出：清洗后素材 + 索引              │
+│  - 设计文档（当前）      - 标准化 Markdown                   │
+│  - 代码（后续）          - 分层索引                          │
+│  - 工单（后续）          - 结构化摘要                        │
+│  - ...（可扩展）         - 质量报告                          │
+│                                                             │
+│  特性：幂等执行 / 可回溯 / 结构化日志 / 可扩展              │
+└─────────────────────────────────────────────────────────────┘
+         │                                    │
+         ▼                                    ▼
+  code/packages/agent-runner-core/lib/                  retrieval-strategy
+  preprocessing/                     （消费预处理产出）
+```
+
+**核心原则**：
+1. **独立性**：预处理模块不依赖检索/生成流程，可独立运行和测试
+2. **通用性**：框架层面不绑定特定资料类型，通过 Pipeline 扩展
+3. **幂等性**：相同输入产生相同输出，可安全重复执行
+4. **可回溯**：每次执行记录完整快照，支持回滚到任意历史版本
+5. **可观测**：结构化日志 + 执行报告，每次执行可审计
+
+### 1.2 与现有架构的关系
+
+```mermaid
+flowchart TB
+    subgraph "资料预处理框架（独立模块）"
+        direction TB
+        ENGINE["预处理执行引擎<br>PreprocessingEngine"]
+        ENGINE --> PIPELINE1["DesignDocPipeline<br>设计文档"]
+        ENGINE --> PIPELINE2["CodePipeline<br>代码（后续）"]
+        ENGINE --> PIPELINE3["TicketPipeline<br>工单（后续）"]
+        ENGINE --> LOGGER["日志系统<br>PreprocessingLogger"]
+        ENGINE --> TRACKER["回溯管理<br>SnapshotTracker"]
+    end
+
+    subgraph "产出目录"
+        OUTPUT["preprocessing-output/<br>├── design-docs/<br>├── code/<br>├── tickets/<br>└── _reports/"]
+    end
+
+    subgraph "下游消费"
+        RETRIEVER["retrieval-strategy<br>检索策略"]
+        GENERATOR["generator<br>文档生成"]
+    end
+
+    PIPELINE1 --> OUTPUT
+    PIPELINE2 --> OUTPUT
+    PIPELINE3 --> OUTPUT
+    OUTPUT --> RETRIEVER
+    OUTPUT --> GENERATOR
+
+    style ENGINE fill:#e3f2fd,stroke:#1565c0
+    style OUTPUT fill:#e8f5e9,stroke:#2e7d32
+```
+
+### 1.3 模块目录结构
+
+```
+agent-runner/
+├── lib/
+│   ├── preprocessing/                    # 预处理模块（新增）
+│   │   ├── index.js                      # 模块入口，导出 PreprocessingEngine
+│   │   ├── engine.js                     # 预处理执行引擎
+│   │   ├── pipeline.js                   # Pipeline 基类
+│   │   ├── source-adapter.js             # SourceAdapter 基类
+│   │   ├── quality-validator.js          # 质量验证器
+│   │   ├── snapshot-tracker.js           # 回溯管理
+│   │   ├── preprocessing-logger.js       # 预处理专用日志
+│   │   ├── pipelines/                    # 具体 Pipeline 实现
+│   │   │   ├── design-doc-pipeline.js    # 设计文档流水线
+│   │   │   └── (后续: code-pipeline.js)
+│   │   │   └── (后续: ticket-pipeline.js)
+│   │   ├── cleaners/                     # 清洗器
+│   │   │   ├── design-doc-cleaner.js     # 设计文档清洗
+│   │   │   └── (后续: ...)
+│   │   ├── chunkers/                     # 分块器
+│   │   │   ├── semantic-chunker.js       # 语义分块
+│   │   │   └── (后续: ...)
+│   │   └── indexers/                     # 索引构建器
+│   │       ├── layered-indexer.js        # 分层索引
+│   │       └── (后续: ...)
+│   ├── retrieval-strategy/               # 现有检索策略（消费预处理产出）
+│   ├── retrieval/                        # 现有检索模块
+│   └── ...
+├── config/
+│   └── preprocessing-config.json         # 预处理配置（新增）
+├── scripts/
+│   └── preprocess.js                     # CLI 入口（新增）
+└── preprocessing-output/                 # 预处理产出目录（新增）
+    ├── design-docs/                      # 设计文档预处理产出
+    │   ├── cleaned/                      # 清洗后文件
+    │   ├── chunks/                       # 语义分块
+    │   └── index/                        # 分层索引
+    ├── _snapshots/                       # 执行快照（回溯用）
+    └── _reports/                         # 执行报告
+```
+
+---
+
+## 2. 核心抽象
+
+### 2.1 Pipeline — 流水线基类
+
+每种资料类型实现一个 Pipeline，定义从原始素材到可检索知识资产的完整处理流程。
+
+```javascript
+/**
+ * 资料预处理流水线基类
+ * 
+ * 每种资料类型（设计文档/代码/工单...）继承此基类，
+ * 实现具体的清洗、分块、索引构建逻辑。
+ */
+class Pipeline {
+  /**
+   * 流水线名称（唯一标识）
+   * @returns {string} 如 'design-docs', 'code', 'tickets'
+   */
+  get name() { throw new Error('Not implemented'); }
+
+  /**
+   * 源数据适配器
+   * @returns {SourceAdapter}
+   */
+  get adapter() { throw new Error('Not implemented'); }
+
+  /**
+   * 执行完整流水线
+   * 
+   * @param {Object} context - 执行上下文
+   * @param {string} context.sourceDir - 原始素材目录
+   * @param {string} context.outputDir - 产出目录
+   * @param {Object} context.config - 配置
+   * @param {Object} context.snapshot - 上次执行快照（用于增量判断）
+   * @returns {Promise<PipelineResult>}
+   */
+  async execute(context) {
+    const { sourceDir, outputDir, config, snapshot } = context;
+    const report = new PipelineReport(this.name);
+
+    // 1. 扫描源文件
+    const files = await this.adapter.scan(sourceDir);
+    report.scan(files.length);
+
+    // 2. 增量检测：计算变更集
+    const delta = this.computeDelta(files, snapshot);
+    report.delta(delta);
+
+    // 3. 清洗
+    const cleaned = await this.clean(delta.changed, config);
+    report.clean(cleaned);
+
+    // 4. 分块（可选，由子类决定是否启用）
+    const chunked = await this.chunk(cleaned, config);
+    report.chunk(chunked);
+
+    // 5. 索引构建
+    const indexed = await this.index(chunked || cleaned, config);
+    report.index(indexed);
+
+    // 6. 质量验证
+    const quality = await this.validate(report, config);
+    report.quality(quality);
+
+    // 7. 清理已删除文件的产出
+    await this.cleanupDeleted(delta.deleted, outputDir);
+
+    return report;
+  }
+
+  // === 子类可覆写的阶段 ===
+
+  /** 清洗阶段 */
+  async clean(files, config) { throw new Error('Not implemented'); }
+
+  /** 分块阶段（默认不启用） */
+  async chunk(cleaned, config) { return null; }
+
+  /** 索引构建阶段 */
+  async index(data, config) { throw new Error('Not implemented'); }
+
+  /** 质量验证阶段 */
+  async validate(report, config) { return { passed: true }; }
+}
+```
+
+### 2.2 SourceAdapter — 源数据适配器
+
+负责屏蔽不同资料格式的差异，输出统一的 `NormalizedDocument`。支持多种文档格式的智能识别和转换。
+
+#### 2.2.1 支持的文档格式
+
+| 格式 | 扩展名 | 适配器 | 依赖库 | 状态 |
+|------|--------|--------|--------|------|
+| Markdown | .md, .markdown | MarkdownAdapter | 无 | ✅ 已实现 |
+| HTML | .html, .htm | HtmlAdapter | cheerio | ✅ 已实现 |
+| PDF | .pdf | PdfAdapter | pdf-parse@1.x | ✅ 已实现 |
+| Word | .docx | DocxAdapter | mammoth | ✅ 已实现 |
+| PowerPoint | .pptx | PptxAdapter | adm-zip + cheerio | ✅ 已实现 |
+| Excel | .xlsx, .xls | ExcelAdapter | xlsx | ✅ 已实现 |
+| 压缩包 | .tar, .tar.gz, .zip | ArchiveAdapter | tar-stream, adm-zip | ✅ 已实现 |
+
+```javascript
+/**
+ * 源数据适配器基类
+ * 
+ * 将不同格式的原始文件转化为统一的 NormalizedDocument。
+ * Pipeline 通过 adapter 与原始数据交互，不直接处理格式差异。
+ */
+class SourceAdapter {
+  get name() { throw new Error('Not implemented'); }
+  get supportedExtensions() { throw new Error('Not implemented'); }
+
+  /** 检测是否可处理 */
+  canHandle(filePath) {
+    const ext = path.extname(filePath).toLowerCase();
+    return this.supportedExtensions.includes(ext);
+  }
+
+  /** 解析单个文件为标准化文档 */
+  async parse(filePath) { throw new Error('Not implemented'); }
+
+  /** 扫描目录，返回匹配文件列表 */
+  async scan(dir) { throw new Error('Not implemented'); }
+
+  /** 计算文件内容 hash */
+  async computeHash(filePath) {
+    const content = await fs.readFile(filePath);
+    return crypto.createHash('sha256').update(content).digest('hex');
+  }
+}
+
+/**
+ * 标准化文档 — 所有适配器的统一输出
+ */
+class NormalizedDocument {
+  constructor({ title, content, metadata }) {
+    this.title = title;
+    this.content = content;          // 统一为 Markdown 格式
+    this.metadata = {
+      sourcePath: metadata.sourcePath,     // 原始文件路径
+      sourceFormat: metadata.sourceFormat, // 原始格式
+      version: metadata.version || '',
+      docType: metadata.docType || '',
+      author: metadata.author || '',
+      createdDate: metadata.createdDate || '',
+      keywords: metadata.keywords || [],
+      extra: metadata.extra || {}          // 扩展字段
+    };
+    this.hash = metadata.hash || '';       // 内容 hash
+  }
+}
+```
+
+### 2.3 Pipeline 扩展示例
+
+后续新增资料类型时，只需实现 Pipeline + SourceAdapter：
+
+```javascript
+// 示例：代码预处理流水线（后续实现）
+class CodePipeline extends Pipeline {
+  get name() { return 'code'; }
+  get adapter() { return new CodeAdapter(); }
+
+  async clean(files, config) {
+    // 去除注释噪音、提取函数签名、标准化格式
+  }
+
+  async chunk(cleaned, config) {
+    // 按函数/类/模块分块
+  }
+
+  async index(data, config) {
+    // 构建 API 索引、调用关系索引
+  }
+}
+
+// 示例：工单预处理流水线（后续实现）
+class TicketPipeline extends Pipeline {
+  get name() { return 'tickets'; }
+  get adapter() { return new TicketAdapter(); }
+
+  async clean(files, config) {
+    // 提取问题描述、解决方案、关联特性
+  }
+
+  async index(data, config) {
+    // 构建问题-解决方案索引
+  }
+}
+```
+
+---
+
+## 3. 预处理执行引擎
+
+### 3.1 PreprocessingEngine
+
+引擎负责 Pipeline 的调度、日志记录、快照管理。
+
+```javascript
+/**
+ * 预处理执行引擎
+ * 
+ * 职责：
+ * 1. 注册和管理 Pipeline
+ * 2. 调度 Pipeline 执行
+ * 3. 管理执行快照（支持增量和回溯）
+ * 4. 记录结构化日志
+ * 5. 生成执行报告
+ */
+class PreprocessingEngine {
+  constructor(config) {
+    this.config = config;
+    this.pipelines = new Map();
+    this.logger = new PreprocessingLogger(config.logDir);
+    this.snapshotTracker = new SnapshotTracker(config.snapshotDir);
+  }
+
+  /** 注册 Pipeline */
+  register(pipeline) {
+    this.pipelines.set(pipeline.name, pipeline);
+  }
+
+  /**
+   * 执行指定 Pipeline
+   * 
+   * @param {string} pipelineName - 流水线名称
+   * @param {Object} options - 执行选项
+   * @param {boolean} options.full - 是否强制全量（忽略增量）
+   * @param {boolean} options.dryRun - 预览模式
+   * @param {string} options.snapshotId - 回滚到指定快照
+   * @returns {Promise<ExecutionReport>}
+   */
+  async run(pipelineName, options = {}) {
+    const pipeline = this.pipelines.get(pipelineName);
+    if (!pipeline) throw new Error(`Pipeline not found: ${pipelineName}`);
+
+    const executionId = this.generateExecutionId();
+    this.logger.startExecution(executionId, pipelineName, options);
+
+    try {
+      // 加载上次执行快照
+      const snapshot = options.full
+        ? null
+        : await this.snapshotTracker.loadLatest(pipelineName);
+
+      // 构建执行上下文
+      const context = {
+        sourceDir: this.resolveSourceDir(pipelineName),
+        outputDir: this.resolveOutputDir(pipelineName),
+        config: this.config.pipelines?.[pipelineName] || {},
+        snapshot,
+        executionId,
+        dryRun: options.dryRun || false
+      };
+
+      // 执行流水线
+      const startTime = Date.now();
+      const result = await pipeline.execute(context);
+      const duration = Date.now() - startTime;
+
+      // 保存执行快照
+      const newSnapshot = this.buildSnapshot(executionId, result, context);
+      if (!options.dryRun) {
+        await this.snapshotTracker.save(pipelineName, newSnapshot);
+      }
+
+      // 记录日志和报告
+      this.logger.endExecution(executionId, result, duration);
+      const report = this.buildReport(executionId, result, duration, newSnapshot);
+      await this.saveReport(report);
+
+      return report;
+
+    } catch (error) {
+      this.logger.error(executionId, error);
+      throw error;
+    }
+  }
+
+  /**
+   * 执行所有已注册的 Pipeline
+   */
+  async runAll(options = {}) {
+    const results = [];
+    for (const [name] of this.pipelines) {
+      const result = await this.run(name, options);
+      results.push(result);
+    }
+    return results;
+  }
+
+  /**
+   * 回滚到指定快照
+   */
+  async rollback(pipelineName, snapshotId) {
+    const snapshot = await this.snapshotTracker.load(pipelineName, snapshotId);
+    if (!snapshot) throw new Error(`Snapshot not found: ${snapshotId}`);
+
+    this.logger.info(`Rolling back ${pipelineName} to snapshot ${snapshotId}`);
+    // 恢复产出目录到快照状态
+    await this.restoreFromSnapshot(snapshot);
+  }
+
+  /**
+   * 列出所有执行快照
+   */
+  async listSnapshots(pipelineName) {
+    return this.snapshotTracker.list(pipelineName);
+  }
+}
+```
+
+### 3.2 执行流程
+
+```mermaid
+flowchart TB
+    START["调用 engine.run(pipelineName)"] --> LOAD_SNAPSHOT["加载上次执行快照"]
+    LOAD_SNAPSHOT --> DELTA["增量检测<br>对比文件 hash"]
+
+    DELTA --> CHANGED["变更文件集<br>新增 / 修改 / 删除"]
+    CHANGED --> EXECUTE["执行 Pipeline"]
+
+    subgraph "Pipeline 执行"
+        direction TB
+        ADAPT["SourceAdapter.parse()<br>格式标准化"]
+        CLEAN["pipeline.clean()<br>清洗"]
+        CHUNK["pipeline.chunk()<br>分块（可选）"]
+        INDEX["pipeline.index()<br>索引构建"]
+        VALIDATE["pipeline.validate()<br>质量验证"]
+        ADAPT --> CLEAN --> CHUNK --> INDEX --> VALIDATE
+    end
+
+    EXECUTE --> ADAPT
+    VALIDATE --> SAVE_SNAPSHOT["保存执行快照"]
+    SAVE_SNAPSHOT --> SAVE_REPORT["生成执行报告"]
+    SAVE_REPORT --> DONE["完成"]
+
+    style START fill:#e3f2fd,stroke:#1565c0
+    style DONE fill:#e8f5e9,stroke:#2e7d32
+```
+
+---
+
+## 4. 幂等性与回溯设计
+
+### 4.1 幂等性保证
+
+预处理操作设计为 **幂等的**：相同输入 + 相同配置 = 相同输出。
+
+**保证措施**：
+
+| 维度 | 策略 |
+|------|------|
+| **文件写入** | 写入临时文件 → 原子 rename，避免半写状态 |
+| **索引更新** | 增量合并时按 id upsert，结果确定性 |
+| **hash 计算** | 基于文件内容（SHA-256），不含时间戳等变量 |
+| **摘要生成** | LLM 摘要设置 temperature=0，确保确定性 |
+| **配置版本** | 快照中记录配置 hash，配置变更触发全量重处理 |
+
+**幂等执行流程**：
+
+```
+第 1 次执行：处理全部 2,596 文件 → 产出 A
+第 2 次执行（无变更）：检测到 0 变更 → 跳过 → 产出不变
+第 3 次执行（3 文件修改）：仅处理 3 文件 → 合并到产出 A → 产出 A'
+第 4 次执行（同第 3 次输入）：与第 3 次结果完全一致
+```
+
+### 4.2 快照与回溯
+
+每次执行生成一个快照，记录本次执行的完整状态。
+
+```json
+{
+  "snapshot_id": "snap-20260723-100000-a1b2c3",
+  "pipeline": "design-docs",
+  "executed_at": "2026-07-23T10:00:00Z",
+  "duration_ms": 45200,
+  "config_hash": "f4e3d2c1b0a9...",
+  "trigger": "manual",
+
+  "input": {
+    "source_dir": "references/design-docs/YashanDB 文档 主页",
+    "total_files": 2596,
+    "delta": {
+      "added": 0,
+      "modified": 3,
+      "deleted": 0,
+      "unchanged": 2593
+    }
+  },
+
+  "output": {
+    "cleaned_files": 2596,
+    "chunk_count": 8432,
+    "l1_entries": 2596,
+    "l2_summaries": 2596
+  },
+
+  "quality": {
+    "passed": true,
+    "checks": {
+      "table_preservation": { "rate": 1.0, "threshold": 1.0 },
+      "code_block_preservation": { "rate": 1.0, "threshold": 1.0 },
+      "term_coverage": { "rate": 0.97, "threshold": 0.95 }
+    }
+  },
+
+  "file_hashes": {
+    "YashanDB v23.1/.../C驱动支持TAF设计文档.md": {
+      "hash": "a1b2c3d4...",
+      "processed_at": "2026-07-23T10:00:00Z",
+      "chunk_count": 7
+    }
+  },
+
+  "previous_snapshot_id": "snap-20260722-150000-x9y8z7"
+}
+```
+
+**回溯操作**：
+
+```bash
+# 查看历史快照
+node scripts/preprocess.js --list-snapshots design-docs
+
+# 回滚到指定快照
+node scripts/preprocess.js --rollback design-docs --snapshot snap-20260722-150000-x9y8z7
+```
+
+**快照保留策略**：
+- 默认保留最近 10 个快照
+- 可通过配置调整：`snapshots.maxRetained: 20`
+- 每个快照包含 file_hashes，支持精确回溯
+
+---
+
+## 5. 日志系统设计
+
+### 5.1 日志架构
+
+预处理模块使用独立的日志系统，与主 `logger.js` 分离但风格一致（基于 winston）。
+
+```mermaid
+flowchart LR
+    ENGINE["PreprocessingEngine"] --> PLOG["PreprocessingLogger"]
+    PIPELINE["Pipeline"] --> PLOG
+    CLEANER["Cleaner"] --> PLOG
+    CHUNKER["Chunker"] --> PLOG
+
+    PLOG --> FILE_JSON["logs/preprocessing/<br>preprocessing.jsonl<br>（结构化日志）"]
+    PLOG --> FILE_TEXT["logs/preprocessing/<br>preprocessing.log<br>（人类可读）"]
+    PLOG --> CONSOLE["控制台输出"]
+    PLOG --> REPORT["执行报告<br>_reports/{executionId}.json"]
+```
+
+### 5.2 日志级别与分类
+
+| 级别 | 用途 | 示例 |
+|------|------|------|
+| `error` | 不可恢复的错误 | 文件读取失败、hash 计算异常 |
+| `warn` | 可恢复的异常 | 摘要生成失败降级为规则提取 |
+| `info` | 关键流程节点 | 扫描完成、清洗完成、索引构建完成 |
+| `debug` | 详细处理过程 | 单文件清洗详情、分块边界检测结果 |
+| `trace` | 最细粒度追踪 | 每条清洗规则的应用情况 |
+
+### 5.3 结构化日志格式
+
+每条日志为 JSON 行（JSONL），便于程序化分析：
+
+```json
+{
+  "timestamp": "2026-07-23T10:00:01.234Z",
+  "level": "info",
+  "execution_id": "exec-20260723-100000-a1b2",
+  "pipeline": "design-docs",
+  "phase": "clean",
+  "message": "清洗完成",
+  "data": {
+    "total_files": 2596,
+    "cleaned_files": 2596,
+    "skipped_files": 0,
+    "duration_ms": 12000,
+    "stats": {
+      "meta_removed": 2258,
+      "links_cleaned": 8432,
+      "images_handled": 1092,
+      "anchors_cleaned": 3210
+    }
+  }
+}
+```
+
+### 5.4 执行报告
+
+每次执行生成一份完整的执行报告，保存为 JSON 文件：
+
+```
+preprocessing-output/_reports/
+├── design-docs/
+│   ├── exec-20260723-100000-a1b2.json    # 最近一次
+│   ├── exec-20260722-150000-x9y8.json    # 上一次
+│   └── ...
+└── _latest.json -> 软链接到最新报告
+```
+
+**报告结构**：
+
+```json
+{
+  "execution_id": "exec-20260723-100000-a1b2",
+  "pipeline": "design-docs",
+  "started_at": "2026-07-23T10:00:00Z",
+  "finished_at": "2026-07-23T10:00:45Z",
+  "duration_ms": 45200,
+  "status": "success",
+
+  "phases": {
+    "scan": {
+      "status": "completed",
+      "duration_ms": 500,
+      "files_found": 2596
+    },
+    "delta": {
+      "status": "completed",
+      "duration_ms": 1200,
+      "added": 0, "modified": 3, "deleted": 0, "unchanged": 2593
+    },
+    "clean": {
+      "status": "completed",
+      "duration_ms": 12000,
+      "processed": 3,
+      "stats": { "meta_removed": 3, "links_cleaned": 12 }
+    },
+    "chunk": {
+      "status": "completed",
+      "duration_ms": 8000,
+      "chunks_generated": 21
+    },
+    "index": {
+      "status": "completed",
+      "duration_ms": 23000,
+      "l1_entries": 2596,
+      "l2_summaries": 2596
+    },
+    "validate": {
+      "status": "completed",
+      "duration_ms": 500,
+      "passed": true,
+      "checks": { "..." : "..." }
+    }
+  },
+
+  "warnings": [
+    { "phase": "clean", "file": "...", "message": "编码异常，已尝试 GBK→UTF-8 转换" }
+  ],
+
+  "errors": []
+}
+```
+
+---
+
+## 6. 设计文档 Pipeline 详细设计
+
+### 6.1 DesignDocPipeline
+
+支持多格式文档处理，通过适配器链自动选择对应的解析器。
+
+```javascript
+class DesignDocPipeline extends Pipeline {
+  get name() { return 'design-docs'; }
+  
+  // 使用适配器链，支持多格式
+  get adapter() { 
+    return new AdapterChain([
+      new MarkdownAdapter(),
+      new HtmlAdapter(),
+      new PdfAdapter(),
+      new DocxAdapter(),
+      new PptxAdapter(),
+      new ExcelAdapter(),
+      new ArchiveAdapter()
+    ]); 
+  }
+
+  constructor(config) {
+    super();
+    this.cleaner = new DesignDocCleaner(config.cleaning);
+    this.chunker = new SemanticChunker(config.chunking);
+    this.indexer = new LayeredIndexer(config.indexing);
+    this.validator = new QualityValidator(config.quality);
+  }
+
+  async clean(files, config) {
+    const results = [];
+    for (const file of files) {
+      const doc = await this.adapter.parse(file.filePath);
+      const cleaned = this.cleaner.cleanFile(doc);
+      results.push(cleaned);
+    }
+    return results;
+  }
+
+  async chunk(cleaned, config) {
+    if (!config.chunking?.enabled) return null;
+    const chunks = [];
+    for (const doc of cleaned) {
+      const docChunks = this.chunker.chunkFile(doc.content, doc.metadata);
+      chunks.push(...docChunks);
+    }
+    return chunks;
+  }
+
+  async index(data, config) {
+    return this.indexer.build(data, config);
+  }
+
+  async validate(report, config) {
+    return this.validator.validateAll(report, config);
+  }
+}
+```
+
+### 6.2 DesignDocCleaner（6 条清洗规则）
+
+与 doc #26 设计一致，此处不重复。关键规则：
+
+| 规则 | 输入 | 输出 |
+|------|------|------|
+| 去除 Confluence 元数据 | `Created by ... on ...` | 删除该行 |
+| 清理内部链接 | `[text](https://conf.yasdb.com/...)` | `text` |
+| 处理图片引用 | `![alt](url)` | `[图片: alt]` |
+| 清理锚点链接 | `[text](#anchor)` | `text` |
+| 统一标题层级 | 最小层级 > `#` | 整体提升至 `#` |
+| 标注文档元信息 | 文件内容 | 添加 YAML 前置元数据 |
+
+### 6.3 SemanticChunker（语义分块）
+
+**分块策略**：规则驱动的语义边界检测。
+
+```
+优先级 1（强边界）：一级/二级标题 → 必定切分
+优先级 2（中边界）：三级标题 → token 超阈值时切分
+优先级 3（弱边界）：段落间空行 → 仅在超限时切分
+
+保护规则（不可切分）：表格内部、代码块内部、YAML 元数据块
+```
+
+**上下文前缀**：每个 chunk 头部添加元信息。
+
+```markdown
+<!--
+chunk_id: "v23.1-特性设计-C驱动TAF-chunk-003"
+source_doc: "C驱动支持TAF设计文档"
+version: "v23.1"
+doc_type: "特性设计"
+section_path: "详细设计 > 参数配置"
+chunk_index: 3 / 7
+tokens: 856
+-->
+
+> 📄 C驱动支持TAF设计文档 | v23.1 | 特性设计
+> 📑 详细设计 > 参数配置
+
+---
+
+（正文内容）
+```
+
+**参数**：minTokens=500, maxTokens=1500, overlap=2 句
+
+### 6.4 分层索引（L1/L2/L3）
+
+与 doc #26 设计一致：
+
+| 层级 | 内容 | Token 预算 | 加载方式 |
+|------|------|-----------|----------|
+| L1 全局索引 | 每条 ~50 tokens 的轻量记录 | ~130K | 一次性加载 |
+| L2 文档摘要 | 每篇 ~300 tokens | ~300/篇 | 按需加载 |
+| L3 清洗原文 / chunk | 完整内容 | 按需 | 按需加载 |
+
+L1 索引扩展 chunk 引用：
+
+```json
+{
+  "id": "v23.1-特性设计-C驱动TAF",
+  "title": "C驱动支持TAF设计文档",
+  "version": "v23.1",
+  "doc_type": "特性设计",
+  "keywords": ["TAF", "故障转移"],
+  "chunk_count": 7,
+  "chunks_index": "chunks/.../_chunks.json",
+  "content_path": "cleaned/.../C驱动TAF.md"
+}
+```
+
+### 6.5 多格式处理策略
+
+#### 6.5.1 压缩包处理
+
+对于 tar/tar.gz/zip 等压缩包，采用递归解压策略：
+
+```javascript
+class ArchiveAdapter extends SourceAdapter {
+  get name() { return 'archive'; }
+  get supportedExtensions() { return ['.tar', '.tar.gz', '.tgz', '.zip']; }
+  
+  async parse(filePath) {
+    // 1. 解压到临时目录
+    const tempDir = await this.extractToTemp(filePath);
+    
+    // 2. 递归扫描解压后的文件
+    const files = await this.scanRecursive(tempDir);
+    
+    // 3. 对每个文件调用对应的适配器
+    const documents = [];
+    for (const file of files) {
+      const adapter = this.selectAdapter(file);
+      if (adapter) {
+        const doc = await adapter.parse(file);
+        documents.push(doc);
+      }
+    }
+    
+    // 4. 返回聚合文档（或分别处理）
+    return this.aggregateDocuments(documents, filePath);
+  }
+}
+```
+
+#### 6.5.2 Office 文档处理
+
+**PPT 处理**：
+- 提取每页幻灯片的文本内容
+- 保留幻灯片顺序和标题
+- 将备注（notes）作为补充内容
+- 图片转为 `[图片: 描述]` 标注
+
+**Excel 处理**：
+- 每个 Sheet 作为一个章节
+- 表格数据保留为 Markdown 表格
+- 提取 Sheet 名称作为章节标题
+- 公式和图表转为文字描述
+
+```javascript
+class PptxAdapter extends SourceAdapter {
+  async parse(filePath) {
+    const pptx = await pptx2json.parse(filePath);
+    const slides = pptx.slides.map((slide, index) => {
+      const title = slide.title || `幻灯片 ${index + 1}`;
+      const content = slide.textObjects.map(t => t.text).join('\n');
+      const notes = slide.notes || '';
+      return `## ${title}\n\n${content}\n\n${notes ? '**备注：**\n' + notes : ''}`;
+    });
+    
+    return new NormalizedDocument({
+      title: path.basename(filePath, '.pptx'),
+      content: slides.join('\n\n---\n\n'),
+      metadata: { sourceFormat: 'pptx', ... }
+    });
+  }
+}
+
+class ExcelAdapter extends SourceAdapter {
+  async parse(filePath) {
+    const workbook = xlsx.readFile(filePath);
+    const sheets = workbook.SheetNames.map(sheetName => {
+      const sheet = workbook.Sheets[sheetName];
+      const data = xlsx.utils.sheet_to_json(sheet, { header: 1 });
+      const markdownTable = this.convertToMarkdownTable(data);
+      return `## ${sheetName}\n\n${markdownTable}`;
+    });
+    
+    return new NormalizedDocument({
+      title: path.basename(filePath, '.xlsx'),
+      content: sheets.join('\n\n---\n\n'),
+      metadata: { sourceFormat: 'xlsx', ... }
+    });
+  }
+}
+```
+
+#### 6.5.3 适配器链设计
+
+```javascript
+class AdapterChain {
+  constructor(adapters) {
+    this.adapters = adapters;
+  }
+  
+  canHandle(filePath) {
+    return this.adapters.some(a => a.canHandle(filePath));
+  }
+  
+  async parse(filePath) {
+    // 智能选择适配器
+    const adapter = this.adapters.find(a => a.canHandle(filePath));
+    if (!adapter) {
+      throw new Error(`No adapter found for file: ${filePath}`);
+    }
+    return await adapter.parse(filePath);
+  }
+  
+  async scan(dir) {
+    // 聚合所有适配器的扫描结果
+    const files = [];
+    for (const adapter of this.adapters) {
+      const adapterFiles = await adapter.scan(dir);
+      files.push(...adapterFiles);
+    }
+    return files;
+  }
+}
+```
+
+---
+
+## 7. 配置文件
+
+```json
+{
+  "engine": {
+    "logDir": "logs/preprocessing",
+    "snapshotDir": "preprocessing-output/_snapshots",
+    "reportDir": "preprocessing-output/_reports",
+    "snapshots": {
+      "maxRetained": 10
+    }
+  },
+  "pipelines": {
+    "design-docs": {
+      "source": {
+        "inputDir": "references/design-docs/YashanDB 文档 主页",
+        "filePattern": "**/*.md",
+        "adapter": "markdown"
+      },
+      "output": {
+        "baseDir": "preprocessing-output/design-docs"
+      },
+      "cleaning": {
+        "removeConfluenceMeta": true,
+        "cleanInternalLinks": true,
+        "handleImageRefs": true,
+        "cleanAnchorLinks": true,
+        "normalizeHeadings": true,
+        "addYamlFront": true,
+        "internalDomains": ["conf.yasdb.com", "jira.yasdb.com", "pingcode.yasdb.com"]
+      },
+      "chunking": {
+        "enabled": true,
+        "minTokens": 500,
+        "maxTokens": 1500,
+        "overlapSentences": 2,
+        "protectTables": true,
+        "protectCodeBlocks": true
+      },
+      "indexing": {
+        "maxKeywords": 15,
+        "summaryMaxLength": 300,
+        "useLlmForSummary": true,
+        "llmModel": "qwen-plus",
+        "ruleBasedSummaryFirst": true,
+        "ruleBasedMinLength": 100
+      },
+      "quality": {
+        "enabled": true,
+        "failOnCritical": true,
+        "termDictionary": "config/db-terms.json"
+      },
+      "retrieval": {
+        "maxCandidates": 30,
+        "maxConfirmed": 5,
+        "maxChunksPerDoc": 8,
+        "relevanceThreshold": 0.3
+      }
+    }
+  }
+}
+```
+
+---
+
+## 8. CLI 设计
+
+```bash
+# === 基本操作 ===
+node scripts/preprocess.js run design-docs              # 执行设计文档预处理
+node scripts/preprocess.js run design-docs --full       # 强制全量（忽略增量）
+node scripts/preprocess.js run design-docs --dry-run    # 预览模式
+node scripts/preprocess.js run-all                      # 执行所有已注册 Pipeline
+
+# === 分阶段执行（调试用）===
+node scripts/preprocess.js run design-docs --phase clean    # 仅清洗
+node scripts/preprocess.js run design-docs --phase chunk    # 仅分块
+node scripts/preprocess.js run design-docs --phase index    # 仅索引
+
+# === 回溯 ===
+node scripts/preprocess.js snapshots design-docs            # 列出快照
+node scripts/preprocess.js rollback design-docs --snapshot <id>  # 回滚
+
+# === 质量验证 ===
+node scripts/preprocess.js validate design-docs             # 仅运行质量验证
+
+# === 日志 ===
+node scripts/preprocess.js logs design-docs --last 5        # 查看最近 5 次执行日志
+```
+
+---
+
+## 9. 产出目录结构
+
+```
+preprocessing-output/
+├── design-docs/
+│   ├── cleaned/                         # 清洗后文件
+│   │   ├── _index.json                  # 清洗统计
+│   │   └── YashanDB v23.1/ ...          # 保持原目录结构
+│   ├── chunks/                          # 语义分块
+│   │   ├── _manifest.json               # 分块统计
+│   │   └── YashanDB v23.1/
+│   │       └── {doc-id}/
+│   │           ├── chunk_000.md
+│   │           └── ...
+│   └── index/                           # 分层索引
+│       ├── l1-global-index.json
+│       ├── l2-summaries/
+│       └── _stats.json
+├── _snapshots/                          # 执行快照
+│   └── design-docs/
+│       ├── snap-20260723-100000-a1b2.json
+│       └── ...
+└── _reports/                            # 执行报告
+    └── design-docs/
+        ├── exec-20260723-100000-a1b2.json
+        └── ...
+```
+
+---
+
+## 10. 实施计划
+
+### 10.1 阶段划分
+
+| 阶段 | 内容 | 预估工时 | 交付物 |
+|------|------|----------|--------|
+| **M1：框架骨架** | Pipeline/Adapter/Engine 基类 + 日志 + 快照 | 12h | 可运行的空框架 |
+| **M2：设计文档 Pipeline** | Cleaner + Chunker + Indexer + Validator | 20h | 设计文档预处理完整功能 |
+| **M3：集成联调** | CLI + Retriever 集成 + 端到端测试 | 10h | 可用的预处理系统 |
+| **M4：多格式支持** | HtmlAdapter + PdfAdapter + DocxAdapter + PptxAdapter + ExcelAdapter + ArchiveAdapter | 24h | ✅ 已完成 |
+| **M5：后续扩展** | Code/Ticket Pipeline（按需） | 待定 | 多资料类型支持 |
+
+### 10.2 任务分解
+
+| 编号 | 任务 | 优先级 | 预估 | 依赖 |
+|------|------|--------|------|------|
+| T1 | Pipeline 基类 + SourceAdapter 基类 | P0 | 3h | 无 |
+| T2 | PreprocessingEngine 执行引擎 | P0 | 4h | T1 |
+| T3 | PreprocessingLogger 日志系统 | P0 | 3h | 无 |
+| T4 | SnapshotTracker 快照管理 | P0 | 3h | 无 |
+| T5 | MarkdownAdapter（设计文档适配器） | P0 | 2h | T1 |
+| T6 | DesignDocCleaner（6 条清洗规则） | P0 | 4h | T5 |
+| T7 | SemanticChunker（语义分块） | P0 | 6h | T6 |
+| T8 | LayeredIndexer（L1/L2/L3 索引） | P0 | 5h | T7 |
+| T9 | QualityValidator（质量验证） | P0 | 3h | T6, T7 |
+| T10 | DesignDocPipeline 组装 | P0 | 2h | T6-T9 |
+| T11 | CLI 入口 | P1 | 3h | T10 |
+| T12 | Retriever 集成改造 | P0 | 4h | T10 |
+| T13 | 单元测试 + 集成测试 | P1 | 5h | T10 |
+| T14 | HtmlAdapter（HTML 适配器） | P1 | 3h | T1 |
+| T15 | PdfAdapter（PDF 适配器） | P1 | 4h | T1 |
+| T16 | DocxAdapter（Word 适配器） | P1 | 3h | T1 |
+| T17 | PptxAdapter（PPT 适配器） | P1 | 4h | T1 |
+| T18 | ExcelAdapter（Excel 适配器） | P1 | 3h | T1 |
+| T19 | ArchiveAdapter（压缩包适配器） | P1 | 5h | T1 |
+| T20 | AdapterChain（适配器链） | P1 | 2h | T14-T19 |
+| | **合计** | | **71h** | |
+
+---
+
+## 11. 评估标准
+
+| 维度 | 指标 | 目标值 |
+|------|------|--------|
+| **幂等性** | 相同输入重复执行，产出一致 | 100% |
+| **回溯** | 可回滚到任意历史快照 | 保留 ≥ 10 个快照 |
+| **日志** | 每次执行有完整结构化日志 | 100% 覆盖 |
+| **扩展性** | 新增资料类型的开发成本 | ≤ 2 天（实现 Pipeline + Adapter） |
+| **清洗质量** | 表格/代码块保留率 | 100% |
+| | 关键术语覆盖率 | ≥ 95% |
+| **分块质量** | chunk token 范围 | 500-1500 |
+| | 上下文前缀完整性 | 100% |
+| **性能** | 清洗速度 | ≥ 50 文件/秒 |
+| | 三层检索总耗时 | ≤ 5s |
+
+---
+
+## 12. 关键决策记录
+
+| 决策 | 选择 | 理由 |
+|------|------|------|
+| 模块独立性 | 独立 `lib/preprocessing/` 目录 | 与检索/生成解耦，可独立演进 |
+| 扩展模式 | Pipeline + Adapter | 新增资料类型只需实现两个类 |
+| 幂等性策略 | 内容 hash + 原子写入 | 保证重复执行安全性 |
+| 回溯粒度 | 文件级 hash 快照 | 精确到文件级别的增量和回滚 |
+| 日志格式 | JSONL + 人类可读双输出 | 程序化分析 + 人工排查兼顾 |
+| 分块策略 | 规则驱动（非 embedding） | 降低复杂度，标题/表格边界已足够清晰 |
+| 摘要生成 | 规则优先 + LLM 兜底 | 零成本优先，质量有保障 |
+
+---
+
+**文档版本**：v1.0
+**最后更新**：2026-07-23
+**维护者**：YashanDB 知识库团队

@@ -1,0 +1,116 @@
+{
+  "gatewayUrl": "http://127.0.0.1:4100/api/model-provider",
+  "timeoutMs": 45000,
+  "httpTimeoutMs": 55000,
+  "defaultOptions": {
+    "enable_thinking": false,
+    "chat_template_kwargs": {
+      "enable_thinking": false
+    },
+    "json_repair": false
+  },
+  "outputLimits": {
+    "knowledgePoints": 4,
+    "entities": 8,
+    "relations": 4,
+    "uncertainItems": 3
+  },
+  "skillRoot": "tools/knowledge-processing/pingcode-processing/skills/knowledge-extraction",
+  "cases": [
+    {
+      "id": "connection-test",
+      "kind": "gateway_test",
+      "repeat": 1
+    },
+    {
+      "id": "short-text",
+      "kind": "chat",
+      "responseFormat": "text",
+      "maxTokens": 80,
+      "system": "你是连接诊断器，只回答 ok。",
+      "user": "请只返回 ok。",
+      "repeat": 1
+    },
+    {
+      "id": "minimal-json",
+      "kind": "chat",
+      "responseFormat": "json",
+      "maxTokens": 80,
+      "system": "你是 JSON 诊断器，只返回 JSON 对象。",
+      "user": "请返回 {\"status\":\"ok\"}。",
+      "repeat": 1
+    },
+    {
+      "id": "unit-minimal-text",
+      "kind": "chat",
+      "responseFormat": "text",
+      "maxTokens": 200,
+      "system": "你是技术文档诊断器。只统计输入内容字符数并返回一句话。",
+      "userTemplate": "当前处理单元：\n{{chunk_content}}\n请只返回内容字符数。",
+      "repeat": 1
+    },
+    {
+      "id": "unit-minimal-json",
+      "kind": "chat",
+      "responseFormat": "json",
+      "maxTokens": 200,
+      "system": "你是 JSON 技术文档诊断器，只返回 count 和 summary 两个字段。",
+      "userTemplate": "当前处理单元：\n{{chunk_content}}\n请返回 {\"count\":整数,\"summary\":字符串}。",
+      "repeat": 1
+    },
+    {
+      "id": "system-simple-contract",
+      "kind": "skill",
+      "contextMode": "compact",
+      "responseFormat": "json",
+      "maxTokens": 500,
+      "userSuffix": "请只返回 {\"metadata\":{},\"knowledgePoints\":[],\"entities\":[],\"relations\":[],\"uncertainItems\":[]}，不要输出其他字段。",
+      "repeat": 1
+    },
+    {
+      "id": "full-prompt-compact-500",
+      "kind": "skill",
+      "contextMode": "compact",
+      "responseFormat": "json",
+      "maxTokens": 500,
+      "repeat": 1
+    },
+    {
+      "id": "full-prompt-json-200",
+      "kind": "skill",
+      "contextMode": "full",
+      "responseFormat": "json",
+      "maxTokens": 200,
+      "repeat": 1
+    },
+    {
+      "id": "full-prompt-json-500",
+      "kind": "skill",
+      "contextMode": "full",
+      "responseFormat": "json",
+      "maxTokens": 500,
+      "repeat": 1
+    },
+    {
+      "id": "full-prompt-json-1000",
+      "kind": "skill",
+      "contextMode": "full",
+      "responseFormat": "json",
+      "maxTokens": 1000,
+      "repeat": 1
+    },
+    {
+      "id": "full-prompt-json-2000",
+      "kind": "skill",
+      "contextMode": "full",
+      "responseFormat": "json",
+      "maxTokens": 2000,
+      "repeat": 1
+    }
+  ],
+  "comparison": {
+    "enabled": true,
+    "model": "qwen-plus",
+    "repeat": 2
+  }
+}

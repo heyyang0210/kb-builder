@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "jdbc": {
+    "url": "jdbc:yasdb://127.0.0.1:1688/YASDB",
+    "username": "knowledge_app",
+    "driverJar": "apps/yashandb-storage/lib/yashandb-jdbc.jar"
+  },
+  "storage": {
+    "url": "http://127.0.0.1:14210",
+    "host": "127.0.0.1",
+    "port": 14210,
+    "timeoutMs": 15000,
+    "threads": 8,
+    "maxBodyBytes": 10485760,
+    "sqlDir": "apps/yashandb-storage/sql"
+  },
+  "expImp": {
+    "serverHost": "127.0.0.1:1688",
+    "owner": "KNOWLEDGE_APP",
+    "fromUser": "KNOWLEDGE_APP",
+    "toUser": "KNOWLEDGE_APP",
+    "outputDir": "runtime/yashandb-export",
+    "logDir": "runtime/yashandb-export/logs",
+    "rows": "Y",
+    "logLevel": "INFO"
+  }
+}

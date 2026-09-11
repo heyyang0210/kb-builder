@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["id", "state", "createdAt", "updatedAt"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "state": { "enum": ["queued", "running", "succeeded", "failed", "cancelled"] },
+    "revision": { "type": "integer", "minimum": 0 },
+    "inputSnapshot": { "type": ["object", "null"] },
+    "steps": { "type": "array" },
+    "outputRefs": { "type": "array" },
+    "error": { "type": ["object", "null"] },
+    "retry": { "type": "object" },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "updatedAt": { "type": "string", "format": "date-time" }
+  },
+  "additionalProperties": true
+}

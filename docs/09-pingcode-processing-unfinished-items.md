@@ -10,7 +10,7 @@
 
 | 能力 | 当前状态 | 代码/文档依据 |
 |------|----------|----------------|
-| 四个首批 Skill 文件 | 已完成 | `scripts/pingcode/processing/skills/` |
+| 四个首批 Skill 文件 | 已完成 | `tools/knowledge-processing/pingcode-processing/skills/` |
 | Skill Registry | 已完成 | Skill 列表、详情、版本查询和路径校验 |
 | Prompt 只读 Registry | 已完成 | Prompt 列表、详情、哈希、版本查询 |
 | Prompt 草稿文件存储 | 已完成 | `runtime/web/processing/prompt-drafts/`，可通过配置覆盖 |
@@ -42,7 +42,7 @@
 
 ### 1. 统一 Model Provider（P0）
 
-**缺失内容**：`scripts/pingcode/processing/providers/` 尚未形成统一接口、Provider Registry、模型配置和错误分类。
+**缺失内容**：`tools/knowledge-processing/pingcode-processing/providers/` 尚未形成统一接口、Provider Registry、模型配置和错误分类。
 
 **需要实现**：
 

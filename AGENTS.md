@@ -1,6 +1,7 @@
 # AGENTS.md — YashanDB知识库构建仓库 工作空间指引
 
 ## 约束要求
+- 当前职责目录为 apps/packages/tools/tests/config/knowledge/docs/external/runtime。运行写入集中在 runtime，知识资源使用 knowledge 路径；external 独立维护，默认不参与主仓库扫描与测试。
 - 调整对应目录结构，如果对应目录下有README.md文档，需要同步进行更新
 - 功能开发、公共契约或架构变更先更新必要设计、接口和伪代码；明确根因的局部 Bugfix 与维护任务只需先确认范围和验收方式
 - 修改代码功能，需要同步更新设计文档
@@ -21,7 +22,7 @@
 
 ## 任务路由与分发流程
 - 项目目标是人类治理下的边界自治，不是完全自动化开发；AI 在目标明确、范围有界、验收方式与风险匹配、可回退且失败影响在授权内时自治执行。
-- 先依据 [Task Routing Contract v1](agent-runner/docs/40-Task-Routing-Contract-v1与最小角色路径设计.md) 选择“直接处理 / 标准开发 / 治理任务”，默认选择能安全闭环的最短路径。
+- 先依据 [Task Routing Contract v1](docs/agent-runner/40-Task-Routing-Contract-v1与最小角色路径设计.md) 选择“直接处理 / 标准开发 / 治理任务”，默认选择能安全闭环的最短路径。
 - 明确、局部、可逆的 Bugfix 走直接处理；需要补设计或独立验证时走标准开发；触及人工决策边界时才走治理任务。
 - 用户明确提出的功能默认已获得产品范围授权；实现中扩大范围、改变业务规则或出现重大取舍时再确认。
 - 路由先确定 `requiredResponsibilities`，再确定由主执行者、独立 Agent、确定性工具或人类承担；只有需要独立上下文、证据或权限时才启动新 Agent。执行中发现范围、风险或不确定性扩大时停止受限写入并重新路由。
@@ -42,7 +43,7 @@
 
 ### 人机交互边界
 
-人工审批以 [Approval Boundary v1](agent-runner/docs/41-Approval-Boundary-v1人工审批边界.md) 为单一事实源：
+人工审批以 [Approval Boundary v1](docs/agent-runner/41-Approval-Boundary-v1人工审批边界.md) 为单一事实源：
 
 - 未命中必须审批项时，AI 在用户任务范围内继续执行，无需创建审批对象或任务卡。
 - 命中任一必须审批项时停止对应受限操作并返回 `needs_decision`；治理任务记录原因和有效审批引用。

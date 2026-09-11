@@ -3,7 +3,7 @@
 > 版本：v1.1
 > 更新日期：2026-08-07
 > 上位设计：`docs/08-pingcode-processing-six-step-pipeline-design.md`
-> 实现状态：代码版 v1 与方案 C 显式快照消费已实现，核心真实 API 已验证；当前规则由 `scripts/pingcode/processing/metadata-rules/` 维护
+> 实现状态：代码版 v1 与方案 C 显式快照消费已实现，核心真实 API 已验证；当前规则由 `tools/knowledge-processing/pingcode-processing/metadata-rules/` 维护
 
 ## 一、范围与职责
 
@@ -67,7 +67,7 @@ execute(context):
 
 ## 七、规则文件与数据库词典
 
-规则只维护一套当前版本，目录为 `scripts/pingcode/processing/metadata-rules/`，历史由 Git 人工管理，不建立 `versions/` 目录。`manifest.yaml` 声明规则文件、`ruleSetVersion` 和成熟度；运行时只计算并记录规则集内容哈希，不读取或记录 Git commit。
+规则只维护一套当前版本，目录为 `tools/knowledge-processing/pingcode-processing/metadata-rules/`，历史由 Git 人工管理，不建立 `versions/` 目录。`manifest.yaml` 声明规则文件、`ruleSetVersion` 和成熟度；运行时只计算并记录规则集内容哈希，不读取或记录 Git commit。
 
 数据库词典分为 `database-glossary.yaml` 通用数据库术语和 `yashandb-glossary.yaml` YashanDB 专有术语。元数据步骤不据此生成实体或关系，而是对处理单元正文执行别名匹配，输出稳定 `termId`、标准术语、命中别名、出现次数、所属处理单元、领域分类和词典来源。标题同时保留原始值和按规则清洗后的 `semanticTitle`：完整标题不能原样进入关键词集合，但 `semanticTitle`、摘要、章节标题、正文和领域术语会作为知识提取模型的联合输入。YashanDB 专有词典优先于通用词典；无法消解的同名术语记录质量问题，不强行映射。YAS/ORA 错误码还通过规则模式生成错误码领域术语，方便后续知识提取定位。图谱构建优先使用 `termId` 作为术语身份，别名只作为规范化和后续查询入口，不单独作为关键词节点写入图谱。`dataset_*`、`file_*`、`chunk_*` 等追溯标识以及 `YashanDB`、`DSI`、`内幕文档`、副本编号等命名噪声由规则文件过滤，不得进入别名和图谱关键词集合。
 

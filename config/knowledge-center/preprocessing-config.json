@@ -1,0 +1,120 @@
+{
+  "engine": {
+    "logDir": "logs/preprocessing",
+    "snapshotDir": "preprocessing-output/_snapshots",
+    "reportDir": "preprocessing-output/_reports",
+    "snapshots": {
+      "maxRetained": 10
+    }
+  },
+  "pipelines": {
+    "design-docs": {
+      "source": {
+        "inputDir": "knowledge/refs/pingcode",
+        "filePattern": "**/*.md",
+        "adapter": "chain",
+        "excludePatterns": ["/_test_output/", "\\\\_test_output\\\\"]
+      },
+      "output": {
+        "baseDir": "runtime/agent-runner/preprocessing-output/pingcode"
+      },
+      "cleaning": {
+        "removeConfluenceMeta": true,
+        "cleanInternalLinks": true,
+        "handleImageRefs": true,
+        "cleanAnchorLinks": true,
+        "normalizeHeadings": true,
+        "addYamlFront": true,
+        "internalDomains": [
+          "conf.yasdb.com",
+          "jira.yasdb.com",
+          "pingcode.yasdb.com"
+        ]
+      },
+      "qualityFilter": {
+        "enabled": true,
+        "minContentChars": 50,
+        "borderlineMaxChars": 300,
+        "maxHeadingRatio": 0.8,
+        "useLlmForBorderline": false,
+        "llmMinScore": 3
+      },
+      "classification": {
+        "enabled": true,
+        "minConfidence": 0.7,
+        "featureListPath": "config/features-list.json",
+        "useLlmFallback": false
+      },
+      "captioning": {
+        "enabled": false,
+        "provider": "openai-compatible",
+        "endpoint": {
+          "type": "official",
+          "baseURL": "",
+          "baseUrlEnv": "VISION_BASE_URL"
+        },
+        "apiKeyEnv": "VISION_API_KEY",
+        "model": "gpt-5.6-terra",
+        "modelEnv": "VISION_MODEL",
+        "request": {
+          "reasoningEffort": "none",
+          "maxOutputTokens": 120,
+          "imageDetail": "low",
+          "timeoutMs": 60000
+        }
+      },
+      "officeRendering": {
+        "enabled": true,
+        "provider": "libreoffice",
+        "command": "libreoffice",
+        "pdfToImageCommand": "pdftoppm",
+        "dpi": 144,
+        "timeoutMs": 120000
+      },
+      "chunking": {
+        "enabled": true,
+        "minTokens": 500,
+        "maxTokens": 1500,
+        "overlapSentences": 2,
+        "protectTables": true,
+        "protectCodeBlocks": true
+      },
+      "indexing": {
+        "maxKeywords": 15,
+        "summaryMaxLength": 300,
+        "useLlmForSummary": true,
+        "llmModel": "qwen-plus",
+        "ruleBasedSummaryFirst": true,
+        "ruleBasedMinLength": 100,
+        "vector": {
+          "enabled": true,
+          "embedding": {
+            "provider": "hash",
+            "dimension": 128
+          }
+        },
+        "graph": {
+          "enabled": true
+        },
+        "evaluation": {
+          "vectorCoverageThreshold": 0.99,
+          "graphEvidenceThreshold": 1.0,
+          "maxIsolatedChunkRate": 0.05
+        }
+      },
+      "quality": {
+        "enabled": true,
+        "failOnCritical": true,
+        "textRecallThreshold": 0.98,
+        "mediaCoverageThreshold": 1.0,
+        "termDictionary": "config/db-terms.json"
+      },
+      "retrieval": {
+        "maxCandidates": 30,
+        "maxConfirmed": 5,
+        "maxChunksPerDoc": 8,
+        "relevanceThreshold": 0.3
+      }
+    }
+  }
+}

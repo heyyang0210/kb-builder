@@ -36,7 +36,7 @@
 本步骤使用独立的 `semantic-enrichment@1.0.0`，不能复用 `knowledge-extraction`。前者一次只解决一个局部语义问题，后者一次处理一个完整处理单元，两者的任务边界、输入字段和输出 Schema 均不同。
 
 ```text
-scripts/pingcode/processing/skills/semantic-enrichment/
+tools/knowledge-processing/pingcode-processing/skills/semantic-enrichment/
 ├── SKILL.md
 ├── skill.yaml
 ├── prompts/system.md

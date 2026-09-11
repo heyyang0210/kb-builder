@@ -1,4 +1,14 @@
 {
+  "private": true,
+  "workspaces": [
+    "apps/knowledge-center-api",
+    "apps/knowledge-center-web",
+    "packages/*"
+  ],
+  "scripts": {
+    "check:node": "node tools/repository/check-node-syntax.js",
+    "test:knowledge-center": "jest --config tests/unit/agent-runner/jest.config.js"
+  },
   "dependencies": {
     "mermaid": "^11.16.0"
   }

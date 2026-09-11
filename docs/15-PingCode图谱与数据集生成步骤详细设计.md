@@ -153,4 +153,4 @@ delete_dataset(datasetId, operator, reason):
 - 指定数据集 `dataset_1df85d1df97143ca` 的图谱摘要接口返回 HTTP 200，结果包含 43 个关键词、27 个 chunks 和 163 条 edges；非流式过滤预览与 SSE 过滤分析也均返回 HTTP 200。
 - 本轮没有执行数据集发布，也未主动执行关键词 apply 决策接口，因此不能据此判定发布链路或真实写入行为已经验收。
 - 验收时发现 SSE 路径硬编码 `deepseek-v4-flash-0731`，与非流式当前模型不一致。现行设计要求非流式与 SSE 统一读取当前模型配置，并以相同状态和统计契约生成建议；远端错误正文仍未截断、未脱敏，作为独立后续整改风险。
-- 详细验收证据见 [TrainingService Phase 0-2 重构验收报告](../scripts/pingcode/web/backend/tests/test-report-training-service-phase2.md)。
+- 详细验收证据见 [TrainingService Phase 0-2 重构验收报告](../tests/pingcode/web-backend/test-report-training-service-phase2.md)。

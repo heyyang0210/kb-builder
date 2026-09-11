@@ -20,7 +20,7 @@ Prompt 和 Skill 的权威源先使用仓库文件。未来接入 YashanDB 时�
 当前 Prompt 复用 Skill 版本目录，不额外复制 Prompt 文件：
 
 ```text
-scripts/pingcode/processing/skills/<skill-id>/
+tools/knowledge-processing/pingcode-processing/skills/<skill-id>/
 ├── skill.yaml
 ├── SKILL.md
 ├── prompts/
@@ -32,7 +32,7 @@ scripts/pingcode/processing/skills/<skill-id>/
 版本也可以放在：
 
 ```text
-scripts/pingcode/processing/skills/<skill-id>/versions/<semver>/
+tools/knowledge-processing/pingcode-processing/skills/<skill-id>/versions/<semver>/
 ├── skill.yaml
 ├── prompts/<name>.md
 └── schemas/

@@ -7,10 +7,10 @@
 **修复**: 将超时时间从 60秒 调整为 120秒
 
 ### 修改文件
-1. `scripts/pingcode/web/backend/app/training_service.py:260`
+1. `apps/pingcode-api/app/training_service.py:260`
    - `"timeoutMs": int(formal_defaults.get("timeoutMs", 120000))`
 
-2. `scripts/pingcode/processing/skills/knowledge-point-extraction/skill.yaml`
+2. `tools/knowledge-processing/pingcode-processing/skills/knowledge-point-extraction/skill.yaml`
    - `timeoutMs: 120000`
 
 ### 配置验证
@@ -113,7 +113,7 @@ curl -s http://localhost:8001/api/tasks/{task_id}/events | jq '.items[-10:]'
 
 #### 方法 3: 查看后端日志
 ```bash
-tail -f scripts/pingcode/web/backend/backend.log | grep -E "formal|knowledge|timeout"
+tail -f apps/pingcode-api/backend.log | grep -E "formal|knowledge|timeout"
 ```
 
 ### 阶段 4: 验证生成结果
@@ -135,7 +135,7 @@ curl -s http://localhost:8001/api/tasks/{task_id} | jq '{state, stage, message}'
 #### 4.2 检查生成的文件
 ```bash
 # 查找任务目录
-TASK_DIR=$(find scripts/pingcode/web/backend/data -name "{task_id}" -type d)
+TASK_DIR=$(find apps/pingcode-api/data -name "{task_id}" -type d)
 echo "任务目录: $TASK_DIR"
 
 # 检查关键文件
@@ -223,7 +223,7 @@ curl -s http://localhost:8001/api/training/model-config | jq .formalKnowledge.ti
 2. 如果仍为 60000，重启后端服务：
 ```bash
 pkill -f "uvicorn app.main"
-cd scripts/pingcode/web/backend
+cd apps/pingcode-api
 nohup uvicorn app.main:app --host 127.0.0.1 --port 8001 > backend.log 2>&1 &
 ```
 
@@ -244,7 +244,7 @@ curl -s http://localhost:8001/api/tasks/{task_id} | jq '{stage, progressDetail}'
 curl -s http://localhost:8001/api/tasks/{task_id}/events | jq '.items[-5:]'
 
 # 3. 查看后端日志
-tail -100 scripts/pingcode/web/backend/backend.log | grep -i "{task_id}"
+tail -100 apps/pingcode-api/backend.log | grep -i "{task_id}"
 ```
 
 ### 问题 4: 生成的文件为空
@@ -339,4 +339,4 @@ cat $TASK_DIR/extraction-results/formal-knowledge-input.json | jq '.scheduledChu
 3. 后端日志片段（最后 100 行）
 4. 生成的文件内容（如有）
 
-**日志位置**: `scripts/pingcode/web/backend/backend.log`
+**日志位置**: `apps/pingcode-api/backend.log`

@@ -1,0 +1,330 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-09-09T01:49:32.138Z",
+  "purpose": "知识中心管理平台目标模式重构 P0 事实基线，只读采集，不代表目标模式已完成",
+  "sourceOfTruth": "当前工作树、运行服务响应和本文件生成时的文件摘要",
+  "entryPoints": [
+    {
+      "path": "/knowledge-center/",
+      "kind": "统一主入口",
+      "status": "已由代码或真实 API 证实",
+      "evidence": "frontend-server.js + HTTP 200"
+    },
+    {
+      "path": "/prompt-generator.html",
+      "kind": "旧文档生成入口",
+      "status": "已由代码或真实 API 证实",
+      "evidence": "frontend-server.js 默认静态路由"
+    },
+    {
+      "path": "/pingcode-materials/",
+      "kind": "旧资料加工入口",
+      "status": "已由代码或真实 API 证实",
+      "evidence": "frontend-server.js + Python SPA 路由"
+    },
+    {
+      "path": "/pingcode-api/*",
+      "kind": "旧资料加工 API 代理",
+      "status": "已由代码或真实 API 证实",
+      "evidence": "frontend-server.js 代理规则"
+    },
+    {
+      "path": "/api/*",
+      "kind": "旧文档服务 API 代理",
+      "status": "已由代码或真实 API 证实",
+      "evidence": "frontend-server.js 代理规则"
+    }
+  ],
+  "services": [
+    {
+      "name": "统一前端网关",
+      "process": "code/code/code/apps/knowledge-center-web/frontend-server.js",
+      "port": 13510,
+      "health": "GET /knowledge-center/"
+    },
+    {
+      "name": "认证服务",
+      "process": "code/apps/knowledge-center-auth/auth-server.js",
+      "port": 14200,
+      "health": "GET /knowledge-center/api/auth/config"
+    },
+    {
+      "name": "文档生产服务",
+      "process": "code/apps/knowledge-center-api/server.js",
+      "port": 14110,
+      "health": "GET /api/health"
+    },
+    {
+      "name": "资料加工服务",
+      "process": "apps/pingcode-api/app/main.py",
+      "port": 18010,
+      "health": "GET /api/health"
+    },
+    {
+      "name": "YashanDB 存储服务",
+      "process": "code/apps/yashandb-storage",
+      "port": null,
+      "health": "待配置真实 JDBC 环境后验证"
+    }
+  ],
+  "routeInventory": [
+    {
+      "source": "code/apps/knowledge-center-api/server.js",
+      "status": "已由代码或真实 API 证实",
+      "routes": [
+        "/api/health",
+        "/api/platform/context"
+      ]
+    },
+    {
+      "source": "code/packages/agent-runner-core/routes/*.js",
+      "status": "已由代码或真实 API 证实",
+      "routes": [
+        "/",
+        "/:id",
+        "/:id/comments",
+        "/:id/comments/:commentId",
+        "/:id/content",
+        "/:id/download",
+        "/:id/versions",
+        "/agent",
+        "/agents",
+        "/cancel/:taskId",
+        "/candidates/:id/nodes",
+        "/candidates/:id/preflight",
+        "/catalog/products",
+        "/chat",
+        "/chat/stream",
+        "/config",
+        "/embedding",
+        "/execute",
+        "/force-continue/:taskId",
+        "/generate",
+        "/generate-prompts",
+        "/governance/:id",
+        "/governance/:id/impact",
+        "/governance/:id/responsibility",
+        "/governance/list",
+        "/handbooks",
+        "/health",
+        "/import",
+        "/list",
+        "/mcp",
+        "/model",
+        "/paths",
+        "/paths/:id",
+        "/preflight",
+        "/preprocess",
+        "/preprocess/:id",
+        "/raw/:rootId/*",
+        "/save",
+        "/search",
+        "/stats",
+        "/status",
+        "/status/:taskId",
+        "/task/:taskId/logs",
+        "/task/:taskId/logs/:stage/:file",
+        "/test",
+        "/test-llm",
+        "/test-mcp",
+        "/tree",
+        "/upload",
+        "/versions/:id",
+        "/versions/:id/publish",
+        "/vision"
+      ]
+    },
+    {
+      "source": "apps/pingcode-api/app/main.py",
+      "status": "已由代码或真实 API 证实",
+      "routes": [
+        "/",
+        "/api/config/filter-rules",
+        "/api/config/filter-rules/{rule_id}",
+        "/api/datasets",
+        "/api/datasets/{dataset_id}",
+        "/api/datasets/{dataset_id}/formal-knowledge/tasks",
+        "/api/datasets/{dataset_id}/graph/edges",
+        "/api/datasets/{dataset_id}/graph/evidence",
+        "/api/datasets/{dataset_id}/graph/explore",
+        "/api/datasets/{dataset_id}/graph/neighborhood",
+        "/api/datasets/{dataset_id}/graph/nodes",
+        "/api/datasets/{dataset_id}/graph/observability",
+        "/api/datasets/{dataset_id}/graph/repair",
+        "/api/datasets/{dataset_id}/graph/search",
+        "/api/datasets/{dataset_id}/graph/summary",
+        "/api/datasets/{dataset_id}/keyword-filter-runs",
+        "/api/datasets/{dataset_id}/keyword-filter-runs/{filter_run_id}",
+        "/api/datasets/{dataset_id}/keyword-filter-runs/{filter_run_id}/apply",
+        "/api/datasets/{dataset_id}/keyword-filter-runs/{filter_run_id}/issue-evidence",
+        "/api/datasets/{dataset_id}/keyword-filter-runs/{filter_run_id}/issue-overview",
+        "/api/datasets/{dataset_id}/keyword-filter-runs/{filter_run_id}/review-decisions",
+        "/api/datasets/{dataset_id}/keyword-filter-runs/{filter_run_id}/review-summary",
+        "/api/datasets/{dataset_id}/keyword-filter-runs/{filter_run_id}/stream",
+        "/api/datasets/{dataset_id}/keyword-filter-runs/{left_run_id}/diff/{right_run_id}",
+        "/api/datasets/{dataset_id}/keywords/filter-apply",
+        "/api/datasets/{dataset_id}/keywords/filter-by-skill",
+        "/api/datasets/{dataset_id}/keywords/filter-by-skill/stream",
+        "/api/datasets/{dataset_id}/keywords/{keyword_id}/status",
+        "/api/datasets/{dataset_id}/publish",
+        "/api/download/tasks",
+        "/api/download/tasks/{task_id}",
+        "/api/download/tasks/{task_id}/cancel",
+        "/api/download/tasks/{task_id}/items",
+        "/api/download/tasks/{task_id}/pause",
+        "/api/download/tasks/{task_id}/resume",
+        "/api/download/tasks/{task_id}/retry",
+        "/api/files/{resource_id}/content",
+        "/api/files/{resource_id}/download",
+        "/api/files/{resource_id}/metadata",
+        "/api/files/{resource_id}/preview",
+        "/api/files/{resource_id}/preview-data",
+        "/api/graph/versions",
+        "/api/graph/versions/trends",
+        "/api/graph/versions/{graph_version_id}",
+        "/api/graph/versions/{graph_version_id}/checks",
+        "/api/graph/versions/{graph_version_id}/explore",
+        "/api/graph/versions/{left_version_id}/diff/{right_version_id}",
+        "/api/health",
+        "/api/index/directory-tree",
+        "/api/index/graph",
+        "/api/index/knowledge/{kp_id}",
+        "/api/index/search",
+        "/api/index/stats",
+        "/api/ingestion/capabilities",
+        "/api/material-batches",
+        "/api/material-batches/estimate",
+        "/api/material-batches/{batch_id}",
+        "/api/material-batches/{batch_id}/files",
+        "/api/material-batches/{batch_id}/workbench-summary",
+        "/api/metadata/build",
+        "/api/pingcode/space-mappings",
+        "/api/pingcode/spaces",
+        "/api/pingcode/spaces/{space_key}/mapping",
+        "/api/pingcode/spaces/{space_key}/tree",
+        "/api/pingcode/status",
+        "/api/platform/context",
+        "/api/preprocess/pipeline",
+        "/api/preprocess/pipeline/{task_id}",
+        "/api/preprocess/prepare",
+        "/api/preprocess/preview",
+        "/api/preprocess/scan",
+        "/api/preprocess/scan-reports/{batch_id}",
+        "/api/preprocess/scan-tasks",
+        "/api/processing/prompt-drafts/{draft_id}",
+        "/api/processing/prompt-drafts/{draft_id}/publish",
+        "/api/processing/prompt-drafts/{draft_id}/test",
+        "/api/processing/prompt-drafts/{draft_id}/validate",
+        "/api/processing/prompts",
+        "/api/processing/prompts/{prompt_id}",
+        "/api/processing/prompts/{prompt_id}/drafts",
+        "/api/processing/prompts/{prompt_id}/versions/{version}/diff",
+        "/api/processing/skills",
+        "/api/processing/skills/{skill_id}",
+        "/api/skills/keyword-filter",
+        "/api/system/runtime-config",
+        "/api/system/status",
+        "/api/tasks/{task_id}",
+        "/api/tasks/{task_id}/events",
+        "/api/training/admission/{batch_id}",
+        "/api/training/model-config",
+        "/api/training/model-test",
+        "/api/training/preflight",
+        "/api/training/tasks",
+        "/api/training/tasks/{task_id}",
+        "/api/training/tasks/{task_id}/cancel",
+        "/api/training/tasks/{task_id}/events",
+        "/api/training/tasks/{task_id}/logs",
+        "/api/training/tasks/{task_id}/review-items",
+        "/api/training/tasks/{task_id}/review-items/{item_id}/decision",
+        "/api/upload-sessions",
+        "/api/upload-sessions/{session_id}",
+        "/api/upload-sessions/{session_id}/cancel",
+        "/api/upload-sessions/{session_id}/complete",
+        "/api/upload-sessions/{session_id}/create-batch",
+        "/api/upload-sessions/{session_id}/files",
+        "/api/upload-sessions/{session_id}/files/{file_id}/chunks/{chunk_index}",
+        "/api/upload-sessions/{session_id}/files/{file_id}/complete",
+        "/api/workbench/summary",
+        "/pingcode-materials/",
+        "/pingcode-materials/{full_path:path}",
+        "/prompt-generator.html"
+      ]
+    }
+  ],
+  "persistentSources": [
+    {
+      "path": "config/knowledge-center/knowledge-assets.json",
+      "status": "已由代码或真实 API 证实",
+      "bytes": 54146,
+      "modifiedAt": "2026-09-02T08:11:35.559Z",
+      "sha256": "0e5db261d393fbea9823cb257b33248dbe5091f9df1664a1e72411a4b020f9c7"
+    },
+    {
+      "path": "agent-runner/data/document-comments.json",
+      "status": "已由代码或真实 API 证实",
+      "bytes": 36,
+      "modifiedAt": "2026-08-27T08:36:08.280Z",
+      "sha256": "b11e398ab118089654b4e57996f2f4709fd871b89fcbeedf1eb5979a8f302543"
+    },
+    {
+      "path": "agent-runner/outlines/metadata.json",
+      "status": "已由代码或真实 API 证实",
+      "bytes": 48397,
+      "modifiedAt": "2026-09-03T10:15:51.906Z",
+      "sha256": "48f24a654ff8436e95f3680040411d8902e8555465c50a0f9f4b6f84f6cb70b1"
+    },
+    {
+      "path": "agent-runner/tmp/doc-processed/metadata.json",
+      "status": "已由代码或真实 API 证实",
+      "bytes": 2736,
+      "modifiedAt": "2026-08-17T03:59:11.780Z",
+      "sha256": "3671d47547834275f4fa2a3e783aeb3fde0ce31fc961dfccbd10623fad1215f1"
+    },
+    {
+      "path": "agent-runner/tmp/incremental-build-state.json",
+      "status": "已由代码或真实 API 证实",
+      "bytes": 24504,
+      "modifiedAt": "2026-09-08T10:13:50.964Z",
+      "sha256": "422a63fdfd49dbc5778620b0affebef97514c5aba350a0ffe84150ac3d8ba6fd"
+    },
+    {
+      "path": "apps/pingcode-api/data/state.json",
+      "status": "待确认",
+      "reason": "文件不存在"
+    }
+  ],
+  "objectOwnership": [
+    {
+      "object": "用户/角色/会话/资产/大纲/任务/审核/发布/审计",
+      "target": "YashanDB 结构化记录",
+      "current": "部分已接入，需逐对象回读确认",
+      "status": "待确认"
+    },
+    {
+      "object": "原始文件/清洗产物/生成文档/大型索引图谱",
+      "target": "受控文件或对象存储 + Artifact 元数据",
+      "current": "本地目录与服务仓储并存",
+      "status": "已由代码证实"
+    },
+    {
+      "object": "规则/模板/Prompt/Skill/Schema",
+      "target": "版本控制资源 + 数据库版本登记",
+      "current": "配置目录、资源目录和服务注册表并存",
+      "status": "已由代码证实"
+    },
+    {
+      "object": "缓存/分片/日志/中间文件",
+      "target": "有生命周期的临时工作目录",
+      "current": "目录存在，清理审计需补证据",
+      "status": "待确认"
+    }
+  ],
+  "verificationPlan": [
+    "入口/API/Socket.IO/SSE/下载/预览深链契约快照",
+    "黄金流程真实 API 与浏览器 E2E",
+    "历史源数量、SHA-256 与业务回读对账",
+    "数据库不可用时 503 且不回写 JSON",
+    "四种视口、权限、降级、失败恢复和回滚验证"
+  ]
+}

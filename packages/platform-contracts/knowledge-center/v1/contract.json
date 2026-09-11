@@ -1,0 +1,14 @@
+{
+  "schemaVersion": "knowledge-center.v1",
+  "envelope": {
+    "requestId": "string",
+    "actor": { "id": "string|null", "displayName": "string|null" },
+    "idempotencyKey": "string|null",
+    "revision": "integer|null"
+  },
+  "pagination": { "page": "positive integer", "pageSize": "positive integer", "total": "non-negative integer" },
+  "resourceIds": ["Document", "MaterialBatch", "DatasetVersion", "Outline", "Template", "PromptProfile", "WorkflowRun", "GeneratedDocument", "Review", "Publication", "Artifact", "AuditEvent", "SourceSnapshot"],
+  "taskStates": ["queued", "running", "succeeded", "failed", "cancelled"],
+  "eventTypes": ["task.created", "task.progress", "task.succeeded", "task.failed", "task.cancelled", "artifact.created", "publication.created", "audit.recorded"],
+  "compatibility": { "legacyFields": "preserve", "gatewayWrites": false, "longLivedDualWrite": false }
+}

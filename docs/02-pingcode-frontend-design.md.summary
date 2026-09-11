@@ -60,5 +60,5 @@
 - 总体设计：`docs/02-pingcode-frontend-design.md`
 - 交互详细设计：`docs/03-pingcode-frontend-interaction-detail.md`
 - LLM 可控加工专项设计：`docs/05-pingcode-processing-llm-control-design.md`
-- PingCode 下载器设计：`scripts/pingcode/docs/design.md`
-- PingCode 下载器使用说明：`scripts/pingcode/docs/usage.md`
+- PingCode 下载器设计：`docs/pingcode/design.md`
+- PingCode 下载器使用说明：`docs/pingcode/usage.md`

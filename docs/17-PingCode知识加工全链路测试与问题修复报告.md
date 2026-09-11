@@ -41,11 +41,11 @@
 
 ## 四、证据路径
 
-- `scripts/pingcode/runtime/web/training-runs/training_eab455f5e69e40ec/run-manifest.json`
-- `scripts/pingcode/runtime/web/training-runs/training_eab455f5e69e40ec/events.jsonl`
-- `scripts/pingcode/runtime/web/training-runs/training_eab455f5e69e40ec/metadata/chunks.jsonl`
-- `scripts/pingcode/runtime/web/training-runs/training_eab455f5e69e40ec/quality/fix-report.json`
-- `scripts/pingcode/runtime/web/training-runs/training_eab455f5e69e40ec/quality/fix-report.md`
+- `var/pingcode/web/training-runs/training_eab455f5e69e40ec/run-manifest.json`
+- `var/pingcode/web/training-runs/training_eab455f5e69e40ec/events.jsonl`
+- `var/pingcode/web/training-runs/training_eab455f5e69e40ec/metadata/chunks.jsonl`
+- `var/pingcode/web/training-runs/training_eab455f5e69e40ec/quality/fix-report.json`
+- `var/pingcode/web/training-runs/training_eab455f5e69e40ec/quality/fix-report.md`
 
 ## 五、未完成验证
 

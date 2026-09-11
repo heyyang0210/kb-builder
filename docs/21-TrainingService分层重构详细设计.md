@@ -3,7 +3,7 @@
 > 版本：v1.4
 > 更新日期：2026-08-07
 > 状态：Phase 1 已完成；Phase 2 有条件通过；方案 C 核心实现与真实 API 验证完成，大规模性能基线待验证
-> 适用范围：`scripts/pingcode/web/backend/app/training_service.py`
+> 适用范围：`apps/pingcode-api/app/training_service.py`
 > 上位设计：[12-PingCode知识提取步骤详细设计.md](./12-PingCode知识提取步骤详细设计.md)、[15-PingCode图谱与数据集生成步骤详细设计.md](./15-PingCode图谱与数据集生成步骤详细设计.md)
 
 ---
@@ -12,7 +12,7 @@
 
 本文冻结 `TrainingService` Phase 2 重构所需的基础设施兼容基线，并同步 2026-08-05 已落盘的模型网关和产物仓储实现。其后续关键词过滤收敛改造以 `docs/20` 顶部 2026-08-05 设计为准：保留关键词过滤预览、SSE、应用决策、图谱读取、正式知识构建和发布门禁，删除业务三态、L2 和质量评价专用公共 API。
 
-本文明确区分三层状态：源码与聚焦自动化测试已验证；真实后端 API 和真实模型网关只读链路已验收；主动 apply 决策写入尚未验收。验收结论和边界以 [TrainingService Phase 0-2 重构验收报告](../scripts/pingcode/web/backend/tests/test-report-training-service-phase2.md) 为准，不得用 fake HTTP server、临时目录或单元测试结果替代真实链路证据。
+本文明确区分三层状态：源码与聚焦自动化测试已验证；真实后端 API 和真实模型网关只读链路已验收；主动 apply 决策写入尚未验收。验收结论和边界以 [TrainingService Phase 0-2 重构验收报告](../tests/pingcode/web-backend/test-report-training-service-phase2.md) 为准，不得用 fake HTTP server、临时目录或单元测试结果替代真实链路证据。
 
 ## 2. 现状量化与问题
 
@@ -462,7 +462,7 @@ Phase 2 不执行数据格式迁移，因此回滚不需要转换现有 `trainin
 
 ### 13.1 模型网关测试
 
-统一命令：`cd scripts/pingcode/web/backend && python -m unittest tests.test_model_gateway -v`
+统一命令：`cd apps/pingcode-api && python -m unittest tests.test_model_gateway -v`
 
 | ID | 前置条件 | 输入 | 预期结果 | 执行命令 |
 |---|---|---|---|---|
@@ -481,7 +481,7 @@ Phase 2 不执行数据格式迁移，因此回滚不需要转换现有 `trainin
 
 ### 13.2 产物仓储测试
 
-统一命令：`cd scripts/pingcode/web/backend && python -m unittest tests.test_artifact_repository -v`
+统一命令：`cd apps/pingcode-api && python -m unittest tests.test_artifact_repository -v`
 
 | ID | 前置条件 | 输入 | 预期结果 | 执行命令 |
 |---|---|---|---|---|
@@ -525,7 +525,7 @@ Phase 2 不执行数据格式迁移，因此回滚不需要转换现有 `trainin
 Phase 2 已按由小到大的顺序执行本地测试；以下命令保留为可重复验证入口：
 
 ```bash
-cd scripts/pingcode/web/backend
+cd apps/pingcode-api
 
 python -m unittest tests.test_model_gateway -v
 python -m unittest tests.test_artifact_repository -v
@@ -542,7 +542,7 @@ curl -fsS -X POST http://127.0.0.1:8001/api/datasets/<dataset_id>/keywords/filte
 curl -N http://127.0.0.1:8001/api/datasets/<dataset_id>/keywords/filter-by-skill/stream
 ```
 
-本轮已在网关配置可用的后端进程上完成真实验收：健康检查返回 HTTP 200；模型测试返回 HTTP 200，实际模型 `qwen3.7-plus`，耗时 `3163ms`，`schemaPassed=true`；`dataset_1df85d1df97143ca` 图谱摘要返回 HTTP 200；非流式过滤预览返回 HTTP 200，耗时 `58.99s` 并生成 43 条建议；SSE 返回 HTTP 200，耗时 `20.86s`，事件统计为 `stage=3`、`decision=43`、`complete=1`、`error=0`。为避免修改用户数据，本轮未主动执行 apply 决策接口。详细证据见 [TrainingService Phase 0-2 重构验收报告](../scripts/pingcode/web/backend/tests/test-report-training-service-phase2.md)。
+本轮已在网关配置可用的后端进程上完成真实验收：健康检查返回 HTTP 200；模型测试返回 HTTP 200，实际模型 `qwen3.7-plus`，耗时 `3163ms`，`schemaPassed=true`；`dataset_1df85d1df97143ca` 图谱摘要返回 HTTP 200；非流式过滤预览返回 HTTP 200，耗时 `58.99s` 并生成 43 条建议；SSE 返回 HTTP 200，耗时 `20.86s`，事件统计为 `stage=3`、`decision=43`、`complete=1`、`error=0`。为避免修改用户数据，本轮未主动执行 apply 决策接口。详细证据见 [TrainingService Phase 0-2 重构验收报告](../tests/pingcode/web-backend/test-report-training-service-phase2.md)。
 
 ## 15. Phase 2 完成定义
 
@@ -756,7 +756,7 @@ executionHash = SHA-256(stageVersion + inputSnapshotManifestHash
 
 ### 16.7 损坏隔离、质量问题与异常契约
 
-版本化配置固定放在 `scripts/pingcode/processing/artifact-integrity.yaml`，由 manifest 记录配置内容 hash：
+版本化配置固定放在 `tools/knowledge-processing/pingcode-processing/artifact-integrity.yaml`，由 manifest 记录配置内容 hash：
 
 ```yaml
 schemaVersion: artifact-integrity-config/v1
