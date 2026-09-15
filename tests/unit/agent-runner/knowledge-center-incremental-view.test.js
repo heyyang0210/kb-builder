@@ -54,6 +54,7 @@ describe('增量构建前端契约', () => {
   test('审核与发布采用三步页面并保留完整差异和行级意见', () => {
     const review = read('apps/knowledge-center-web/frontend/knowledge-center/modules/review-publishing/view.js');
     const app = read('apps/knowledge-center-web/frontend/knowledge-center/app.js');
+    const css = read('apps/knowledge-center-web/frontend/knowledge-center/styles.css');
     expect(review).toContain('1 阅读文档');
     expect(review).toContain('2 查看修改');
     expect(review).toContain('3 处理审核意见');
@@ -63,6 +64,9 @@ describe('增量构建前端契约', () => {
     expect(review).toContain('待审核版本：修改稿');
     expect(review).not.toContain('审核收件箱');
     expect(review).not.toContain('候选版本：v1.0.2');
+    expect(review).toContain('class="icon-button review-panel-close" data-review-panel-close aria-label="关闭审核依据侧栏" title="关闭审核依据侧栏"><i data-lucide="x"');
+    expect(review).not.toContain('class="button secondary compact" data-review-panel-close aria-label="关闭审核依据侧栏">关闭</button>');
+    expect(css).toContain(':is(.review-comment-drawer,.review-evidence-drawer) .review-panel-close');
     expect(app).toContain('loadCandidateDiff');
     expect(app).toContain('loadHandbookReviewSummary');
   });

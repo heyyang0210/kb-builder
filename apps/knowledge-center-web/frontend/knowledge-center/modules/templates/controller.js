@@ -2,7 +2,8 @@ import * as api from '../../common/api/platform-api.js';
 import { renderTemplateResults } from './view.js';
 
 export function createTemplateController({ appState, render, canPerform }) {
-  const ui = appState.templateUi = { search: '', type: '', status: 'active', mode: 'preview', drafts: {}, draftKey: '', historyOpen: false };
+  const storedWidth = Number(globalThis.localStorage?.getItem('knowledge-center:template-list-width'));
+  const ui = appState.templateUi = { search: '', type: '', status: 'active', mode: 'preview', drafts: {}, draftKey: '', historyOpen: false, createOpen: false, listCollapsed: globalThis.localStorage?.getItem('knowledge-center:template-list-collapsed') === 'true', focusMode: globalThis.localStorage?.getItem('knowledge-center:template-focus-mode') === 'true', listWidth: Number.isFinite(storedWidth) ? Math.min(420, Math.max(240, storedWidth)) : 280 };
   let request = 0;
   // 中文输入法组词期间不能重绘搜索框，否则替换 DOM 会中断 composition 会话。
   const composingSearchFields = new WeakSet();
@@ -43,7 +44,7 @@ export function createTemplateController({ appState, render, canPerform }) {
   function newDraft(payload = {}) {
     if (ui.drafts.new?.dirty && !window.confirm('已有未保存的新模板草稿，是否放弃并替换？')) return;
     ui.drafts.new = { name: '', type: '', description: '', content: '', dirty: true, ...payload };
-    ui.draftKey = 'new'; ui.historyVersion = null; ui.historyOpen = false; ui.mode = 'preview'; render();
+    ui.draftKey = 'new'; ui.historyVersion = null; ui.historyOpen = false; ui.createOpen = false; ui.mode = 'edit'; render();
   }
   async function click(event) {
     const zone = event.target.closest('[data-template-dropzone]');
@@ -52,12 +53,16 @@ export function createTemplateController({ appState, render, canPerform }) {
     if (!button || appState.activeView !== 'templates' || ui.busy) return;
     if (button.hasAttribute('data-template-draft')) { ui.draftKey = button.dataset.templateDraft; ui.mode = 'preview'; render(); return; }
     if (button.hasAttribute('data-template-id')) { ui.mode = 'preview'; ui.historyOpen = false; await load(button.dataset.templateId); return; }
-    if (button.hasAttribute('data-template-new') && canPerform('template:edit')) { newDraft(); return; }
-    if (button.hasAttribute('data-template-cancel') && canPerform('template:edit')) { if (draft()?.dirty && !window.confirm('放弃当前未保存内容？')) return; delete ui.drafts[ui.draftKey]; ui.draftKey = ''; ui.mode = 'preview'; ui.historyVersion = null; render(); return; }
+    if (button.hasAttribute('data-template-new') && canPerform('template:edit')) { ui.createOpen = !ui.createOpen; render(); return; }
+    if (button.hasAttribute('data-template-create-blank') && canPerform('template:edit')) { newDraft(); return; }
+    if (button.hasAttribute('data-template-create-upload') && canPerform('template:edit')) { document.querySelector('[data-template-file]')?.click(); return; }
+    if (button.hasAttribute('data-template-cancel')) { if (draft()?.dirty && !window.confirm('放弃当前未保存内容？')) return; if (ui.draftKey === 'new') { delete ui.drafts.new; ui.draftKey = selected()?.id || ''; } ui.mode = 'preview'; ui.historyVersion = null; render(); return; }
     if (button.hasAttribute('data-template-upload') && canPerform('template:edit')) { document.querySelector('[data-template-file]')?.click(); return; }
     if (button.hasAttribute('data-template-history')) { ui.historyOpen = !ui.historyOpen; render(); if (ui.historyOpen) document.querySelector('[data-template-history-close]')?.focus(); return; }
     if (button.hasAttribute('data-template-history-close')) { ui.historyOpen = false; render(); document.querySelector('[data-template-history]')?.focus(); return; }
-    if (button.hasAttribute('data-template-mode')) { ui.mode = button.dataset.templateMode; render(); return; }
+    if (button.hasAttribute('data-template-list-toggle')) { ui.listCollapsed = !ui.listCollapsed; globalThis.localStorage?.setItem('knowledge-center:template-list-collapsed', String(ui.listCollapsed)); render(); return; }
+    if (button.hasAttribute('data-template-focus')) { ui.focusMode = !ui.focusMode; globalThis.localStorage?.setItem('knowledge-center:template-focus-mode', String(ui.focusMode)); render(); return; }
+    if (button.hasAttribute('data-template-edit') && canPerform('template:edit')) { ui.mode = 'edit'; render(); return; }
     if (button.hasAttribute('data-template-current')) { ui.historyVersion = null; render(); return; }
     if (button.hasAttribute('data-template-version')) { await operation(async () => { ui.historyVersion = (await api.loadTemplateVersion(selected().id, Number(button.dataset.templateVersion))).data; }); return; }
     if (button.hasAttribute('data-template-restore') && canPerform('template:edit')) {
@@ -151,6 +156,14 @@ export function createTemplateController({ appState, render, canPerform }) {
   document.addEventListener('dragleave', event => event.target.closest('[data-template-dropzone]')?.classList.remove('is-dragging'));
   document.addEventListener('drop', event => { const zone = event.target.closest('[data-template-dropzone]'); if (!zone || !canPerform('template:edit')) return; event.preventDefault(); zone.classList.remove('is-dragging'); importFiles([...event.dataTransfer.files]); });
   document.addEventListener('keydown', event => { const zone = event.target.closest('[data-template-dropzone]'); if (zone && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); document.querySelector('[data-template-file]')?.click(); } });
+  document.addEventListener('pointerdown', event => {
+    const handle = event.target.closest('[data-template-list-resizer]');
+    if (!handle || appState.activeView !== 'templates' || ui.listCollapsed || ui.focusMode) return;
+    event.preventDefault(); const startX = event.clientX; const startWidth = ui.listWidth;
+    const move = current => { ui.listWidth = Math.min(420, Math.max(240, startWidth + current.clientX - startX)); const workspace = document.querySelector('[data-template-workspace]'); if (workspace) workspace.style.setProperty('--template-list-width', `${ui.listWidth}px`); handle.setAttribute('aria-valuenow', String(Math.round(ui.listWidth))); };
+    const done = () => { globalThis.localStorage?.setItem('knowledge-center:template-list-width', String(Math.round(ui.listWidth))); document.removeEventListener('pointermove', move); document.removeEventListener('pointerup', done); };
+    document.addEventListener('pointermove', move); document.addEventListener('pointerup', done, { once: true });
+  });
   const hasDrafts = () => Object.values(ui.drafts).some(item => item.dirty);
   function canLeave() { return !hasDrafts() || window.confirm('存在未保存草稿。离开后草稿将在本次会话中保留，确定离开？'); }
   document.addEventListener('click', click); document.addEventListener('input', input); document.addEventListener('change', change);
@@ -158,6 +171,11 @@ export function createTemplateController({ appState, render, canPerform }) {
   window.addEventListener('knowledge-center:session-expired', () => { ui.drafts = {}; ui.draftKey = ''; appState.templateProjection = null; render(); });
   window.addEventListener('knowledge-center:permission-denied', () => { ui.drafts = {}; ui.draftKey = ''; render(); });
   document.addEventListener('keydown', event => {
+    const resizer = event.target.closest('[data-template-list-resizer]');
+    if (resizer && ['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
+      event.preventDefault(); ui.listWidth = event.key === 'Home' ? 240 : event.key === 'End' ? 420 : Math.min(420, Math.max(240, ui.listWidth + (event.key === 'ArrowRight' ? 16 : -16)));
+      globalThis.localStorage?.setItem('knowledge-center:template-list-width', String(ui.listWidth)); render(); return;
+    }
     if (appState.activeView !== 'templates' || !ui.historyOpen) return;
     if (event.key === 'Escape') { ui.historyOpen = false; render(); document.querySelector('[data-template-history]')?.focus(); }
     if (event.key === 'Tab' && window.matchMedia('(max-width: 900px)').matches) {
