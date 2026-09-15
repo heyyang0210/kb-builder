@@ -55,14 +55,15 @@ const baseline = {
   sourceOfTruth: '当前工作树、运行服务响应和本文件生成时的文件摘要',
   entryPoints: [
     { path: '/knowledge-center/', kind: '统一主入口', status: '已由代码或真实 API 证实', evidence: 'frontend-server.js + HTTP 200' },
-    { path: '/prompt-generator.html', kind: '旧文档生成入口', status: '已由代码或真实 API 证实', evidence: 'frontend-server.js 默认静态路由' },
+    { path: '/document-generation-workbench.html', kind: '文档生成工作台入口', status: '已由代码或真实 API 证实', evidence: 'frontend-server.js 默认静态路由' },
+    { path: '/prompt-generator.html', kind: '旧文档生成入口', status: '兼容重定向', evidence: 'frontend-server.js 302 到文档生成工作台' },
     { path: '/pingcode-materials/', kind: '旧资料加工入口', status: '已由代码或真实 API 证实', evidence: 'frontend-server.js + Python SPA 路由' },
     { path: '/pingcode-api/*', kind: '旧资料加工 API 代理', status: '已由代码或真实 API 证实', evidence: 'frontend-server.js 代理规则' },
     { path: '/api/*', kind: '旧文档服务 API 代理', status: '已由代码或真实 API 证实', evidence: 'frontend-server.js 代理规则' },
   ],
   services: [
     { name: '统一前端网关', process: 'apps/knowledge-center-web/frontend-server.js', port: 13510, health: 'GET /knowledge-center/' },
-    { name: '认证服务', process: 'apps/knowledge-center-auth/auth-server.js', port: 14200, health: 'GET /knowledge-center/api/auth/config' },
+    { name: '平台内置认证模块', process: 'apps/knowledge-center-web/frontend-server.js', port: 13510, health: 'GET /knowledge-center/api/auth/config' },
     { name: '文档生产服务', process: 'apps/knowledge-center-api/server.js', port: 14110, health: 'GET /api/health' },
     { name: '资料加工服务', process: 'apps/pingcode-api/app/main.py', port: 18010, health: 'GET /api/health' },
     { name: 'YashanDB 存储服务', process: 'apps/yashandb-storage', port: null, health: '待配置真实 JDBC 环境后验证' },

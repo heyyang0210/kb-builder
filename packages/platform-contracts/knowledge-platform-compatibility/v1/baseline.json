@@ -3,7 +3,8 @@
   "capturedAt": "2026-08-27T21:16:00+08:00",
   "scope": "通用化改造兼容面，不代表真实外部平台业务成功",
   "http": [
-    { "method": "GET", "path": "/prompt-generator.html", "expectedStatus": 200, "behavior": "document-generation-legacy-entry" },
+    { "method": "GET", "path": "/document-generation-workbench.html", "expectedStatus": 200, "behavior": "document-generation-workbench-entry" },
+    { "method": "GET", "path": "/prompt-generator.html", "expectedStatus": 302, "behavior": "document-generation-legacy-redirect" },
     { "method": "GET", "path": "/pingcode-materials/", "expectedStatus": 200, "behavior": "material-processing-legacy-entry" },
     { "method": "GET", "path": "/pingcode-materials/workbench?space=ops", "expectedStatus": 200, "behavior": "spa-deep-link-preserves-query" },
     { "method": "GET", "path": "/pingcode-api/api/health", "expectedStatus": 200, "behavior": "python-api-proxy" },

@@ -10,3 +10,5 @@
 底层逻辑是依次回答“产品是什么、服务怎样运行、内容怎样处理”。根目录不得继续增加无法归入这三类的 JSON；持续变化的知识资产、GitLab 连接和模板库位于 `runtime/knowledge-center/`，不随配置发布包覆盖。
 
 `.env.example` 只描述环境注入契约；本地 `.env` 可保存本机凭据但不得提交，生产密钥应由环境变量或密钥系统注入。
+
+认证配置由平台内核读取，生产平台不需要独立认证端口；`KNOWLEDGE_CENTER_AUTH_PORT/HOST` 仅为隔离运行 `apps/knowledge-center-auth/auth-server.js` 的兼容测试变量保留。

@@ -101,7 +101,7 @@ function createDialog(projection) {
 export function renderProduction({ incrementalProjection, platformAdmin }) {
   const projection = incrementalProjection || { status: 'loading' };
   const task = selectedTask(projection);
-  return `<div class="page-intro production-heading"><div><h2>文档生产</h2></div><button class="button" type="button" data-incremental-create-open>创建增量任务</button></div><div class="incremental-workspace"><aside class="incremental-sidebar" aria-label="增量任务"><header><h2>增量任务</h2><span>${array(projection.items || projection.tasks).length} 项</span></header>${taskList(projection)}</aside><div class="incremental-main">${taskDetail(task, platformAdmin)}</div></div>${createDialog(projection)}`;
+  return `<div class="page-intro production-heading"><div><h2>文档生产</h2></div><button class="button" type="button" data-incremental-create-open>创建增量任务</button></div><nav class="production-subnav" aria-label="文档生产子页面"><a class="production-subnav-link active" href="/knowledge-center/production" aria-current="page">增量任务</a><a class="production-subnav-link" href="/document-generation-workbench.html" target="_blank" rel="noopener">文档生成工作台<span class="production-subnav-hint">新标签页打开</span></a></nav><div class="incremental-workspace"><aside class="incremental-sidebar" aria-label="增量任务"><header><h2>增量任务</h2><span>${array(projection.items || projection.tasks).length} 项</span></header>${taskList(projection)}</aside><div class="incremental-main">${taskDetail(task, platformAdmin)}</div></div>${createDialog(projection)}`;
 }
 
 export function renderStages({ incrementalProjection }) {

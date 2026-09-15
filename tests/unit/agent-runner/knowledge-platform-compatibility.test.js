@@ -11,6 +11,7 @@ describe('知识中心通用化兼容基线', () => {
     const paths = baseline.http.map(item => `${item.method} ${item.path}`);
     expect(paths).toEqual(expect.arrayContaining([
       'GET /knowledge-center/',
+      'GET /document-generation-workbench.html',
       'GET /prompt-generator.html',
       'GET /pingcode-materials/',
       'GET /pingcode-api/api/health'
@@ -18,13 +19,15 @@ describe('知识中心通用化兼容基线', () => {
   });
 
   test('提示词生成器通过前端网关同源访问文档 API', () => {
-    const page = read('apps/knowledge-center-web/frontend/prompt-generator.html');
+    const page = read('apps/knowledge-center-web/frontend/document-generation-workbench.html');
     const gateway = read('apps/knowledge-center-web/frontend-server.js');
     expect(page).toContain('return \'\';');
     expect(page).toContain("window.location.port !== '4100'");
     expect(gateway).toContain('createProxy');
     expect(gateway).toContain('proxyDocumentApi');
     expect(gateway).toContain("pathname.startsWith('/api/')");
+    expect(gateway).toContain("pathname === '/prompt-generator.html'");
+    expect(gateway).toContain('/document-generation-workbench.html');
   });
 
   test('知识中心使用语义化源码入口并保留目录与旧显式入口兼容', () => {

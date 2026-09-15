@@ -100,10 +100,38 @@ function handlerFromModule(mod, options) {
 }
 
 describe('知识中心认证 HTTP 契约（真实服务 + CAS 协议桩）', () => {
+  test('五类业务角色按最小职责投影模块和动作', () => {
+    const { userProjection } = require(AUTH_MODULE);
+    const project = role => userProjection({ id: role, loginName: role, displayName: role, identitySource: 'test', roles: [role] });
+
+    expect(project('KNOWLEDGE_EDITOR')).toMatchObject({
+      visibleModules: ['dashboard', 'assets', 'outlines', 'production', 'review'],
+      allowedActions: ['knowledge:read', 'knowledge:write', 'outline:read'],
+    });
+    expect(project('OUTLINE_MANAGER')).toMatchObject({
+      visibleModules: ['dashboard', 'assets', 'outlines'],
+      allowedActions: ['knowledge:read', 'outline:read', 'outline:create', 'outline:delete'],
+    });
+    expect(project('REVIEWER')).toMatchObject({
+      visibleModules: ['dashboard', 'assets', 'outlines', 'review'],
+      allowedActions: ['knowledge:read', 'review:manage'],
+    });
+    expect(project('TEMPLATE_EDITOR')).toMatchObject({
+      visibleModules: ['dashboard', 'outlines', 'templates'],
+      allowedActions: ['knowledge:read', 'outline:read', 'template:read', 'template:edit', 'template:manage'],
+    });
+    expect(project('PLATFORM_ADMIN')).toMatchObject({
+      visibleModules: ['dashboard', 'assets', 'outlines', 'production', 'cleaning', 'templates', 'review', 'platform'],
+      allowedActions: expect.arrayContaining(['review:manage', 'publish:manage', 'platform:manage', 'template:manage']),
+    });
+  });
+
   test('入口依赖完整且初始化超时提供恢复入口', () => {
     const root = path.resolve(__dirname, '../../..');
     const html = fs.readFileSync(path.join(root, 'apps/knowledge-center-web/frontend/knowledge-center/knowledge-center-management.html'), 'utf8');
     const app = fs.readFileSync(path.join(root, 'apps/knowledge-center-web/frontend/knowledge-center/app.js'), 'utf8');
+    const gateway = fs.readFileSync(path.join(root, 'apps/knowledge-center-web/frontend-server.js'), 'utf8');
+    const operations = fs.readFileSync(path.join(root, 'knowledge-center.sh'), 'utf8');
     const appDirectory = path.dirname(path.join(root, 'apps/knowledge-center-web/frontend/knowledge-center/app.js'));
     const imports = [...app.matchAll(/from\s+['"](\.\/[^'"]+\.js)['"]/g)].map(match => match[1]);
     expect(imports.length).toBeGreaterThan(0);
@@ -113,6 +141,10 @@ describe('知识中心认证 HTTP 契约（真实服务 + CAS 协议桩）', () 
     expect(() => childProcess.execFileSync(process.execPath, ['--check', path.join(appDirectory, 'app.js')], { stdio: 'pipe' })).not.toThrow();
     expect(html).toContain('auth-bootstrap-fallback');
     expect(html).toContain('data-bootstrap-timeout');
+    expect(gateway).toContain("platformModules.register({ id: 'auth', version: '1.0.0'");
+    expect(gateway).not.toContain('const proxyKnowledgeCenterAuth = createProxy');
+    expect(operations).not.toContain('start_service auth');
+    expect(operations).toContain('status --verbose');
   });
 
   test('入口模块未完成初始化时会退出无限加载并显示重新加载按钮', () => {
@@ -254,6 +286,13 @@ describe('知识中心认证 HTTP 契约（真实服务 + CAS 协议桩）', () 
     const builtinUpdated = await jsonRequest(base, 'PATCH', AUTH_PATH(`users/${encodeURIComponent(builtin.id)}/roles`), { roles: ['REVIEWER'] }, { cookie: adminCookie });
     expect(builtinUpdated.data.content.user.roles).toEqual(['REVIEWER']);
     expect(builtinUpdated.data.content.user.allowedActions).toContain('review:manage');
+    expect(builtinUpdated.data.content.user.allowedActions).not.toContain('publish:manage');
+    const outlineManager = await jsonRequest(base, 'PATCH', AUTH_PATH(`users/${encodeURIComponent(builtin.id)}/roles`), { roles: ['OUTLINE_MANAGER'] }, { cookie: adminCookie });
+    expect(outlineManager.data.content.user.visibleModules).toEqual(['dashboard', 'assets', 'outlines']);
+    expect(outlineManager.data.content.user.allowedActions).toEqual(['knowledge:read', 'outline:read', 'outline:create', 'outline:delete']);
+    const templateManager = await jsonRequest(base, 'PATCH', AUTH_PATH(`users/${encodeURIComponent(builtin.id)}/roles`), { roles: ['TEMPLATE_EDITOR'] }, { cookie: adminCookie });
+    expect(templateManager.data.content.user.visibleModules).toEqual(['dashboard', 'outlines', 'templates']);
+    expect(templateManager.data.content.user.allowedActions).toEqual(['knowledge:read', 'outline:read', 'template:read', 'template:edit', 'template:manage']);
     const forbidden = await jsonRequest(base, 'GET', AUTH_PATH('users'), null, { cookie: 'kc_session=invalid' });
     expect(forbidden.status).toBe(401);
   });

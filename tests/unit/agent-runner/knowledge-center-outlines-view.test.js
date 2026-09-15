@@ -53,7 +53,7 @@ describe('知识中心大纲管理前端契约', () => {
   test('普通用户只读，管理员删除候选且目录显示编号和内容说明', () => {
     const source = view();
     const api = read('apps/knowledge-center-web/frontend/knowledge-center/common/api/platform-api.js');
-    expect(source).toContain('仅平台管理员可新增或删除大纲');
+    expect(source).toContain('只有具备大纲管理权限的账号可新增或删除大纲');
     expect(source).toContain('permissions.delete && canDelete(item)');
     expect(source).toContain('item.sourceId');
     expect(source).toContain('outline-document-meta');

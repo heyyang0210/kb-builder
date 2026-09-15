@@ -251,8 +251,8 @@ function renderOutlinesLegacy({ outlineProjection: source, outlineView = {}, out
   else if (source.status !== 'ok') body = pendingState(source.status === 'forbidden' ? '无权查看大纲' : '大纲服务不可用', source.error?.message || '请稍后重试。');
   else if (!items.length) body = pendingState('尚无大纲', '当前没有可展示的大纲，请导入文件创建候选版本。');
   else body = list(items, outlineView.listState, outlinePermissions);
-  const accessNote = outlinePermissions.create || outlinePermissions.delete ? '' : '<p class="outline-readonly-note" role="note"><i data-lucide="lock" aria-hidden="true"></i>当前为只读模式，仅平台管理员可新增或删除大纲。</p>';
-    return `<div class="page-intro outline-list-intro"><div><p class="eyebrow">手册结构治理</p><h2>大纲管理</h2><p class="muted">查找手册并继续处理大纲。</p></div><div class="outline-list-intro-actions">${templateDownloadLink()}</div></div>${accessNote}${body}${source?.asOf ? dataNote({ asOf: source.asOf }) : ''}${templateHelpPanel()}`;
+  const accessNote = outlinePermissions.create || outlinePermissions.delete ? '' : '<p class="outline-readonly-note" role="note"><i data-lucide="lock" aria-hidden="true"></i>当前为只读模式，只有具备大纲管理权限的账号可新增或删除大纲。</p>';
+  return `<div class="page-intro outline-list-intro"><div><p class="eyebrow">手册结构治理</p><h2>大纲管理</h2><p class="muted">查找手册并继续处理大纲。</p></div><div class="outline-list-intro-actions">${templateDownloadLink()}</div></div>${accessNote}${body}${source?.asOf ? dataNote({ asOf: source.asOf }) : ''}${templateHelpPanel()}`;
 }
 
 export function renderOutlines(args) {

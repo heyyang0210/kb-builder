@@ -12,7 +12,7 @@ relatedTasks: []
 
 ## 目标
 
-保证知识中心管理平台的五个业务运行单元由根目录权威入口成组管理：YashanDB 存储 HTTP 服务、文档 API、资料加工 API、认证 API 和 Web 网关。脚本不操作 YashanDB 数据库实例本身。
+保证知识中心管理平台的运行单元由根目录权威入口成组管理：平台内核（含 Auth 模块）、文档 API、资料加工 API和过渡期 YashanDB Storage。脚本不操作 YashanDB 数据库实例本身；Storage 完成直接数据模块迁移后不再作为独立 HTTP 运行单元。
 
 ## 启动顺序
 
@@ -33,19 +33,20 @@ relatedTasks: []
 
 ## 当前限制
 
-脚本仍是单机进程编排，不替代 systemd、Docker Compose 或进程管理器。生产部署应将五个运行单元分别纳入进程监管与自动重启策略。
+脚本仍是单机进程编排，不替代 systemd、Docker Compose 或进程管理器。认证已并入平台内核，不再作为独立运行单元；当前过渡期管理平台、文档、资料加工和 JDBC Storage 四个进程。Storage 完成直接数据模块迁移后再从进程监管清单移除。
 
 ## 知识中心通用化分支隔离验证
 
 通用化分支使用 `knowledge-center.sh` 做开发验证，默认端口为前端 `13510`、文档生成 API `14110`、资料加工 API `18010`。可通过 `KNOWLEDGE_CENTER_FRONTEND_PORT`、`KNOWLEDGE_CENTER_DOCUMENT_API_PORT` 和 `KNOWLEDGE_CENTER_PINGCODE_API_PORT` 覆盖；脚本也接受兼容的 `PORT`、`DOCUMENT_API_PORT` 和 `PINGCODE_API_PORT` 环境变量。
 
-前端继续监听 `0.0.0.0`，局域网默认入口为 `http://192.168.130.180:13510/knowledge-center/`。`KNOWLEDGE_CENTER_PUBLIC_HOST` 用于改写对外入口和 CAS `service` 地址，默认为 `192.168.130.180`；`KNOWLEDGE_CENTER_INTERNAL_HOST` 用于内部服务绑定、代理和健康检查，默认为 `127.0.0.1`。内部文档和认证端口不向局域网暴露。
+平台继续监听 `0.0.0.0`，局域网默认入口为 `http://192.168.130.180:13510/knowledge-center/`。`KNOWLEDGE_CENTER_PUBLIC_HOST` 用于改写对外入口和 CAS `service` 地址，默认为 `192.168.130.180`；`KNOWLEDGE_CENTER_INTERNAL_HOST` 用于内部 Worker 绑定、代理和健康检查，默认为 `127.0.0.1`。认证模块与公开页面共享 13510，不再监听独立认证端口。
 
 脚本只读取自身状态目录中的 PID 文件，并校验进程工作目录和命令行后才停止；目标端口若存在未由本脚本记录的监听进程则直接失败，不执行宽泛 `pkill` 或强制杀进程，因此不会误停其他分支服务。日志和 PID 默认写入 `runtime/agent-runner/logs/knowledge-center-isolated` 与 `runtime/agent-runner/.runtime/knowledge-center-isolated`，均可用 `KNOWLEDGE_CENTER_LOG_DIR`、`KNOWLEDGE_CENTER_STATE_DIR` 覆盖。
 
 ```bash
 ./knowledge-center.sh start
 ./knowledge-center.sh status
+./knowledge-center.sh status --verbose
 ./knowledge-center.sh restart
 ./knowledge-center.sh stop
 ```
@@ -64,9 +65,10 @@ New-NetFirewallRule -DisplayName "Knowledge Center 13510" -Direction Inbound -Ac
 
 该脚本用于本地隔离验收，不替代生产进程管理器；真实 GitLab 写回和外部凭证仍不在脚本职责内。脚本以 dotenv 语义解析 `config/knowledge-center/.env`，不使用 Shell `source`，因此配置中的 URL、OAuth Secret、带空格的 scope 和示例占位符不会被 Shell 重定向语法误解析。示例占位符不会覆盖脚本的安全运行默认值；真实地址应通过环境变量或本地配置显式提供。
 
-## 端口隔离与认证降级
+## 单一入口与认证降级
 
 - `server.js` 和 `frontend-server.js` 都会加载仓库 `.env`。通用启动脚本必须在启动命令中显式传入端口：文档服务 `4100`、前端网关 `3500`，不得依赖进程内部默认值，否则 `.env` 中用于隔离知识中心的 `PORT=13510` 会使文档服务错误占用前端入口。
-- 隔离知识中心必须通过 `knowledge-center.sh` 成组管理前端、文档、认证和资料加工服务。仅启动前端网关会使 `/knowledge-center/api/auth/*` 返回 `AUTH_SERVICE_UNAVAILABLE`。
+- 隔离知识中心必须通过 `knowledge-center.sh` 成组管理平台、文档、资料加工和过渡期 Storage。认证模块由平台进程直接挂载，`/knowledge-center/api/auth/*` 不经过内部 HTTP 转发。
+- `status` 默认只显示平台访问地址和组件汇总；只有 `status --verbose` 输出内部诊断端点和 PID，避免将部署拓扑误当作多个产品入口。
 - 浏览器认证初始化无论遇到网络错误、代理 `502` 还是脚本异常，都必须隐藏 `auth-loading`，切换到可重试的中文错误面板，禁止无限停留在“正在检查登录状态”。
 - 前端模块脚本必须执行语法检查和登录页 E2E；涉及异步事件处理时，事件回调必须显式声明 `async`。

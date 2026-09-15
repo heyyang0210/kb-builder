@@ -315,7 +315,7 @@ P2 改变解析和零知识点上传行为，P4 新增预检/确认 API，均属
 
 知识中心和 YashanDB 知识库文档生成器共用服务端 `outline-management` 的解析与节点投影。浏览器只消费 `parts → chapters → kps` 或其 `nodes` 投影，不再将客户端 Markdown 解析结果作为成功事实。目录默认展示部分、章节、知识点编号、标题和描述，顺序及层级以服务端返回为准。
 
-所有已登录用户具有 `outline:read`；只有 `PLATFORM_ADMIN` 具有 `outline:create` 和 `outline:delete`。普通用户已有的 `knowledge:write` 不包含大纲增删。知识中心 BFF 对每个写请求读取平台会话并校验动作，前端只承担入口呈现和只读说明，不能作为授权边界。
+所有已登录用户具有 `outline:read`；`OUTLINE_MANAGER` 与 `PLATFORM_ADMIN` 具有 `outline:create` 和 `outline:delete`。大纲管理员不继承 `knowledge:write`，普通用户已有的 `knowledge:write` 也不包含大纲增删。知识中心 BFF 对每个写请求读取平台会话并校验动作，前端只承担入口呈现和只读说明，不能作为授权边界。
 
 删除仅适用于未发布、非只读候选大纲；已发布、已替代和遗留来源保持不可变，通过归档或新版本治理，不允许物理删除。具体接口、伪代码和验收见[统一解析展示与管理员增删权限设计](../development/44-知识中心大纲统一解析展示与管理员增删权限设计.md)。
 

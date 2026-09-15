@@ -51,6 +51,16 @@ describe('增量构建前端契约', () => {
     expect(css).toContain('@media (max-width: 560px)');
   });
 
+  test('文档生产只提供一个文档生成器入口并复用现有页面', () => {
+    const css = read('apps/knowledge-center-web/frontend/knowledge-center/modules/production/production.css');
+    expect(view()).toContain('class="production-subnav"');
+    expect(view()).toContain('href="/document-generation-workbench.html"');
+    expect(view()).toContain('>文档生成工作台<span class="production-subnav-hint">新标签页打开</span>');
+    expect(view()).toContain('target="_blank" rel="noopener"');
+    expect(view()).not.toContain('data-action="open-generator"');
+    expect(css).toContain('.production-subnav-link:focus-visible');
+  });
+
   test('审核与发布采用三步页面并保留完整差异和行级意见', () => {
     const review = read('apps/knowledge-center-web/frontend/knowledge-center/modules/review-publishing/view.js');
     const app = read('apps/knowledge-center-web/frontend/knowledge-center/app.js');

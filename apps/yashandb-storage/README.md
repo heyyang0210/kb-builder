@@ -1,6 +1,6 @@
 # YashanDB 存储服务
 
-该服务是现有 Node.js 业务与 YashanDB 之间的内部 JDBC 边界，提供记录读写、乐观并发、Schema 初始化和完整导出。所有建表语句集中存放在 `sql/`，服务启动时按文件名顺序执行缺失表检查；生产迁移可直接复用这些 SQL 文件。
+该服务是当前过渡期的 JDBC 运行组件，提供记录读写、乐观并发、Schema 初始化和完整导出。长期目标是将同一数据访问契约作为平台内核 Storage 模块直接调用，业务请求不再经过 HTTP 中转；在 Node/YashanDB 直接适配器和回退验证完成前，14210 仍由运维脚本管理，不得提前删除。
 
 详细设计见 [YashanDB 数据存储与迁移开发设计](../../docs/modules/platform-foundation/development/yashandb-storage-and-migration-design.md)。
 
@@ -82,3 +82,14 @@ node ../../tools/knowledge-processing/export-yashandb-storage.js /安全目录/k
 - `YASDB_STORAGE_POOL_BORROW_TIMEOUT_MS`：连接池耗尽时的最大等待时间，默认 5000ms。
 
 连接归还池前会回滚未提交事务；现有 `If-Match` CAS 和 `SELECT ... FOR UPDATE` 语义保持不变。
+# 启动入口说明
+
+`start.sh` 是本模块的启动入口，负责启动 YashanDB 业务存储 HTTP 服务（默认端口 `14210`），不启动或停止 YashanDB 数据库实例，也不默认执行迁移。数据库 JDBC 地址、用户名和密码由 `config/database/` 统一配置，环境变量可覆盖配置；SQL 目录默认为本模块的 `sql/`。
+
+常用操作：
+
+```bash
+apps/yashandb-storage/start.sh
+```
+
+启动前需要可用的 JDK/JDBC 驱动和 `YASDB_JDBC_URL`、`YASDB_USERNAME`；密码由统一环境加载器或外部密钥注入。平台级服务应优先使用根目录 `knowledge-center.sh` 统一启停。

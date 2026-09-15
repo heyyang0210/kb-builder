@@ -1,12 +1,10 @@
 const { test, expect } = require('@playwright/test');
 const baseUrl = process.env.KPG_BASE_URL || 'http://127.0.0.1:13502';
 
-test('旧入口保留迁移提示且不改变当前地址', async ({ page }) => {
+test('旧入口重定向到文档生成工作台并保留查询参数', async ({ page }) => {
   await page.goto(`${baseUrl}/prompt-generator.html?tab=doc-mgmt`);
-  await expect(page.getByRole('link', { name: '知识中心建设平台' })).toHaveAttribute('href', '/knowledge-center/');
-  await expect(page).toHaveURL(/\/prompt-generator\.html\?tab=doc-mgmt$/);
-  await page.getByRole('button', { name: '知道了' }).click();
-  await expect(page.getByText('这是文档生成专业工作区')).toBeHidden();
+  await expect(page).toHaveURL(/\/document-generation-workbench\.html\?tab=doc-mgmt$/);
+  await expect(page).toHaveTitle(/YashanDB 知识库文档生成器/);
 });
 
 test('资料加工旧入口保留迁移提示且统一入口可访问', async ({ page }) => {

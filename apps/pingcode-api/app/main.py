@@ -1864,12 +1864,17 @@ def get_index_stats():
 # ========== 前端静态文件服务 ==========
 
 _frontend_dist = REPOSITORY_ROOT / "code" / "pingcode" / "web-frontend" / "dist"
-_legacy_frontend = REPOSITORY_ROOT / "code" / "agent-runner" / "frontend"
+_legacy_frontend = REPOSITORY_ROOT / "apps" / "knowledge-center-web" / "frontend"
 
 if _legacy_frontend.exists():
+    @app.get("/document-generation-workbench.html")
+    async def serve_document_generation_workbench():
+        return FileResponse(_legacy_frontend / "document-generation-workbench.html")
+
     @app.get("/prompt-generator.html")
     async def serve_prompt_generator():
-        return FileResponse(_legacy_frontend / "prompt-generator.html")
+        # 保留旧服务端地址，内容与语义化入口保持一致；统一网关会对用户请求执行 302。
+        return FileResponse(_legacy_frontend / "document-generation-workbench.html")
 
     for _legacy_mount in ("css", "js"):
         _legacy_dir = _legacy_frontend / _legacy_mount

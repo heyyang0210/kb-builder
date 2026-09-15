@@ -13,6 +13,8 @@ const { CONFIG_PATHS } = require('../../packages/agent-runner-core/lib/config-re
 const { createBrandIconStore } = require('../../packages/agent-runner-core/lib/brand-icon-store');
 const { createTemplateStore } = require('../../packages/agent-runner-core/lib/template-store');
 const { createDomainStore } = require('../../packages/agent-runner-core/lib/domain-store');
+const { createKnowledgeCenterAuthService } = require('../../packages/agent-runner-core/lib/knowledge-center-auth');
+const { PlatformModuleRegistry } = require('../../packages/agent-runner-core/lib/platform-module-registry');
 
 const PORT = Number(process.env.PORT || 3500);
 const HOST = '0.0.0.0';
@@ -38,8 +40,6 @@ const PINGCODE_API_PORT = Number(process.env.PINGCODE_API_PORT || 8001);
 const DOCUMENT_API_HOST = process.env.DOCUMENT_API_HOST || '127.0.0.1';
 const DOCUMENT_API_PORT = Number(process.env.DOCUMENT_API_PORT || 4100);
 const PLATFORM_CONTEXT_TIMEOUT_MS = Number(process.env.PLATFORM_CONTEXT_TIMEOUT_MS || 2000);
-const AUTH_API_HOST = process.env.KNOWLEDGE_CENTER_AUTH_HOST || '127.0.0.1';
-const AUTH_API_PORT = Number(process.env.KNOWLEDGE_CENTER_AUTH_PORT || 4200);
 const OUTLINE_INTERNAL_TOKEN = process.env.KNOWLEDGE_CENTER_OUTLINE_INTERNAL_TOKEN || '';
 const KNOWLEDGE_ASSETS_CONFIG = process.env.KNOWLEDGE_ASSETS_CONFIG
   ? path.resolve(process.env.KNOWLEDGE_ASSETS_CONFIG)
@@ -86,6 +86,30 @@ const GITLAB_CONFIG_PATH = process.env.KNOWLEDGE_CENTER_GITLAB_CONFIG
 const GITLAB_DOCUMENT_TYPES_PATH = process.env.KNOWLEDGE_CENTER_GITLAB_DOCUMENT_TYPES
   ? path.resolve(process.env.KNOWLEDGE_CENTER_GITLAB_DOCUMENT_TYPES)
   : CONFIG_PATHS.contentRules;
+const authModule = createKnowledgeCenterAuthService({
+  casBaseUrl: process.env.KNOWLEDGE_CENTER_CAS_URL || 'https://cas.yasdb.com/cas',
+  serviceUrl: process.env.KNOWLEDGE_CENTER_SERVICE_URL || `http://${PUBLIC_HOST}:${PORT}/knowledge-center/`,
+  adminUsername: process.env.KNOWLEDGE_CENTER_ADMIN_USERNAME || 'admin',
+  adminPassword: process.env.KNOWLEDGE_CENTER_ADMIN_PASSWORD || 'admin',
+  knowledgeEditorUsername: process.env.KNOWLEDGE_CENTER_KNOWLEDGE_EDITOR_USERNAME || 'test',
+  knowledgeEditorPassword: process.env.KNOWLEDGE_CENTER_KNOWLEDGE_EDITOR_PASSWORD || 'test',
+  sessionTtlMs: Number(process.env.KNOWLEDGE_CENTER_SESSION_TTL_MS || 8 * 60 * 60 * 1000),
+  secureCookie: process.env.KNOWLEDGE_CENTER_COOKIE_SECURE !== 'false',
+  repositoryPath: process.env.KNOWLEDGE_CENTER_AUTH_STORE || path.join(AGENT_RUNNER_RUNTIME_ROOT, 'tmp', 'knowledge-center-auth.json'),
+  // Auth state stays on the local repository in the platform process. The
+  // database aggregate store currently exposes synchronous curl-backed APIs;
+  // using it here would block the shared 13510 event loop on every login or
+  // permission request. Enable database-backed auth only after an async
+  // adapter is available for this process.
+  repository: undefined,
+});
+const usingDefaultAdmin = !process.env.KNOWLEDGE_CENTER_ADMIN_USERNAME && !process.env.KNOWLEDGE_CENTER_ADMIN_PASSWORD;
+const usingDefaultEditor = !process.env.KNOWLEDGE_CENTER_KNOWLEDGE_EDITOR_USERNAME && !process.env.KNOWLEDGE_CENTER_KNOWLEDGE_EDITOR_PASSWORD;
+if (usingDefaultAdmin || usingDefaultEditor) {
+  console.warn('[认证模块] 警告：正在使用内置默认凭据，请通过环境变量配置正式账号密码后重新启动。');
+}
+const platformModules = new PlatformModuleRegistry();
+platformModules.register({ id: 'auth', version: '1.0.0', ...authModule });
 
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -124,12 +148,6 @@ const proxyDocumentApi = createProxy({
   targetHost: DOCUMENT_API_HOST, targetPort: DOCUMENT_API_PORT,
   pathTransform: req => req.url || '/',
   errorPayload: () => ({ success: false, error: { code: 'DOCUMENT_API_UNAVAILABLE', message: '文档服务暂时不可用', retryable: true } }),
-});
-
-const proxyKnowledgeCenterAuth = createProxy({
-  targetHost: AUTH_API_HOST, targetPort: AUTH_API_PORT,
-  pathTransform: req => req.url,
-  errorPayload: () => ({ success: false, error: { code: 'AUTH_SERVICE_UNAVAILABLE', message: '认证服务暂时不可用', retryable: true } }),
 });
 
 const proxyKnowledgeCenterCleaning = createProxy({
@@ -184,12 +202,6 @@ const proxyKnowledgeCenterCleaning = createProxy({
   errorPayload: (_error, requestId, correlationId) => ({ success: false, error: { code: 'MATERIAL_PROCESSING_UNAVAILABLE', message: '资料加工服务暂时不可用', retryable: true, requestId, correlationId } }),
 });
 
-const proxyPermissionApi = createProxy({
-  targetHost: AUTH_API_HOST, targetPort: AUTH_API_PORT,
-  pathTransform: req => `/knowledge-center/api/auth/users${req.url.slice('/knowledge-center/api/platform/permissions'.length)}`,
-  errorPayload: () => ({ success: false, error: { code: 'AUTH_SERVICE_UNAVAILABLE', message: '认证服务暂时不可用' } }),
-});
-
 function proxyKnowledgeCenterOutline(req, res) {
   const suffix = req.url.slice('/knowledge-center/api/outline'.length);
   const targetPath = `/api/outline${suffix}`;
@@ -210,10 +222,10 @@ function proxyKnowledgeCenterOutline(req, res) {
 
 const handleKnowledgeCenter = createKnowledgeCenterHandler({
   sendFile,
-  proxyAuth: proxyKnowledgeCenterAuth,
+  proxyAuth: null,
   proxyCleaning: proxyKnowledgeCenterCleaning,
   proxyOutline: proxyKnowledgeCenterOutline,
-  proxyPermission: proxyPermissionApi,
+  proxyPermission: null,
   handleIncrementalBuild,
   KNOWLEDGE_ASSETS_CONFIG_PATH: KNOWLEDGE_ASSETS_CONFIG,
   config: {
@@ -223,10 +235,10 @@ const handleKnowledgeCenter = createKnowledgeCenterHandler({
     DOCUMENT_API_HOST, DOCUMENT_API_PORT,
     PINGCODE_API_HOST, PINGCODE_API_PORT,
     PLATFORM_CONTEXT_TIMEOUT_MS,
-    AUTH_API_HOST, AUTH_API_PORT,
     GITLAB_CONFIG_PATH, GITLAB_DOCUMENT_TYPES_PATH,
   },
   stores: { knowledgeAssetsStore, templateStore, brandIconStore },
+  moduleRegistry: platformModules,
 });
 
 // --- Main server ---
@@ -274,15 +286,21 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // Default: serve prompt generator static files
-  const filePath = path.join(ROOT, pathname === '/' ? '/prompt-generator.html' : pathname);
+  // Default: serve the semantically named document-generation workbench.
+  // Keep the historical prompt-generator URL as a redirect-only compatibility entry.
+  if (pathname === '/prompt-generator.html') {
+    res.writeHead(302, { Location: `/document-generation-workbench.html${new URL(req.url, 'http://localhost').search}` });
+    res.end();
+    return;
+  }
+  const filePath = path.join(ROOT, pathname === '/' ? '/document-generation-workbench.html' : pathname);
   sendFile(filePath, res);
 });
 
 if (require.main === module) {
   server.listen(PORT, HOST, () => {
     console.log(`Frontend server listening on http://${HOST}:${PORT}`);
-    console.log(`Open http://${PUBLIC_HOST}:${PORT}/prompt-generator.html in your browser`);
+    console.log(`Open http://${PUBLIC_HOST}:${PORT}/document-generation-workbench.html in your browser`);
     console.log(`Open http://${PUBLIC_HOST}:${PORT}${PINGCODE_PREFIX}/ in your browser`);
   });
 }

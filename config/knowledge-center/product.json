@@ -33,7 +33,7 @@
     {
       "id": "document-generation",
       "displayName": "文档生成",
-      "basePath": "/prompt-generator.html",
+      "basePath": "/document-generation-workbench.html",
       "backend": "node"
     },
     {
@@ -616,6 +616,7 @@
   "compatibility": {
     "defaultProfile": true,
     "legacyEntrypoints": [
+      "/document-generation-workbench.html",
       "/prompt-generator.html",
       "/pingcode-materials/",
       "/pingcode-api/"

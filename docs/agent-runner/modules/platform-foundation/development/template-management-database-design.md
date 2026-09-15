@@ -12,7 +12,7 @@
 
 ## 权限
 
-`template:read` 控制查看，`template:edit` 控制 Markdown 编辑、上传和保存，`template:manage` 控制停用、恢复、删除及授权。`template:edit` 不从 `knowledge:write` 推导，平台管理员拥有全部权限。前端只做即时提示和控件隐藏，后端校验才是安全边界。
+`template:read` 控制查看，`template:edit` 控制 Markdown 编辑、上传和保存，`template:manage` 控制停用、恢复、删除及授权。模板管理员和平台管理员拥有全部三项模板权限；`template:edit` 不从 `knowledge:write` 推导。前端只做即时提示和控件隐藏，后端校验才是安全边界。
 
 ## 交互与接口
 

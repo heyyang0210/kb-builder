@@ -1,6 +1,8 @@
-# 知识中心认证服务
+# 知识中心认证模块
 
-认证服务启动入口为 `auth-server.js`，业务实现位于 `packages/agent-runner-core/lib/knowledge-center-auth.js`。
+认证业务实现位于 `packages/agent-runner-core/lib/knowledge-center-auth.js`，正式知识中心由 13510 平台进程直接挂载，不经过内部 HTTP 代理。
+
+`auth-server.js` 只保留为认证契约的隔离测试入口和旧环境兼容入口，不属于 `knowledge-center.sh` 的必需运行单元：
 
 ```bash
 node apps/knowledge-center-auth/auth-server.js

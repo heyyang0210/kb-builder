@@ -85,10 +85,19 @@ PYTHON_MODULE_PATH="$PINGCODE_API_DIR:$PINGCODE_CORE_DIR${PYTHONPATH:+:$PYTHONPA
 OUTLINE_INTERNAL_TOKEN="${KNOWLEDGE_CENTER_OUTLINE_INTERNAL_TOKEN:-}"
 ACTION="${1:-help}"
 NO_BUILD=0
+VERBOSE=0
 if [[ -n "${2:-}" ]]; then
-  [[ "$2" == "--no-build" ]] || { echo "错误：未知参数：$2" >&2; exit 2; }
-  [[ "$ACTION" == start || "$ACTION" == restart ]] || { echo "错误：--no-build 仅适用于 start/restart" >&2; exit 2; }
-  NO_BUILD=1
+  case "$2" in
+    --no-build)
+      [[ "$ACTION" == start || "$ACTION" == restart ]] || { echo "错误：--no-build 仅适用于 start/restart" >&2; exit 2; }
+      NO_BUILD=1
+      ;;
+    --verbose)
+      [[ "$ACTION" == status ]] || { echo "错误：--verbose 仅适用于 status" >&2; exit 2; }
+      VERBOSE=1
+      ;;
+    *) echo "错误：未知参数：$2" >&2; exit 2 ;;
+  esac
 fi
 [[ -z "${3:-}" ]] || { echo "错误：参数过多" >&2; exit 2; }
 
@@ -204,11 +213,10 @@ validate_environment() {
       command -v "$command_name" >/dev/null 2>&1 || { echo "错误：缺少命令：$command_name" >&2; return 1; }
     fi
   done
-  for directory in "$DOCUMENT_DIR" "$AUTH_DIR" "$FRONTEND_DIR" "$PINGCODE_API_DIR" "$PINGCODE_WEB_DIR" "$PINGCODE_CORE_DIR" "$STORAGE_DIR"; do
+  for directory in "$DOCUMENT_DIR" "$FRONTEND_DIR" "$PINGCODE_API_DIR" "$PINGCODE_WEB_DIR" "$PINGCODE_CORE_DIR" "$STORAGE_DIR"; do
     [[ -d "$directory" ]] || { echo "错误：目录不存在：$directory" >&2; return 1; }
   done
   [[ -f "$DOCUMENT_DIR/server.js" ]] || { echo "错误：文档 API 入口不存在" >&2; return 1; }
-  [[ -f "$AUTH_DIR/auth-server.js" ]] || { echo "错误：认证 API 入口不存在" >&2; return 1; }
   [[ -f "$FRONTEND_DIR/frontend-server.js" ]] || { echo "错误：Web 网关入口不存在" >&2; return 1; }
   [[ -f "$PINGCODE_API_DIR/app/main.py" ]] || { echo "错误：资料加工 API 入口不存在" >&2; return 1; }
   [[ -f "$STORAGE_DIR/start.sh" ]] || { echo "错误：YashanDB 存储服务入口不存在" >&2; return 1; }
@@ -247,6 +255,7 @@ stop_service() {
 
 stop_all() {
   local failed=0 name
+  # auth 已并入 frontend 平台进程；仍受控清理历史独立进程。
   for name in frontend auth pingcode document storage; do
     stop_service "$name" || failed=1
   done
@@ -332,8 +341,9 @@ start_platform() {
   validate_environment
   if (( NO_BUILD == 0 )); then build_frontend; fi
   reconcile_known_services
+  # 14200 是旧认证服务端口。认证模块已并入平台进程，启动时受控清理遗留实例。
+  stop_service auth
   assert_port_available "$FRONTEND_PORT"
-  assert_port_available "$AUTH_API_PORT"
   assert_port_available "$DOCUMENT_API_PORT"
   assert_port_available "$PINGCODE_API_PORT"
   assert_port_available "${YASDB_STORAGE_PORT:-14210}"
@@ -350,6 +360,7 @@ start_platform() {
 
   start_service document "$DOCUMENT_DIR" "$LOG_DIR/document.log" \
     env NODE_PATH="$NODE_MODULE_PATH" PORT="$DOCUMENT_API_PORT" HOST="$INTERNAL_HOST" \
+    KNOWLEDGE_CENTER_AUTH_HOST="$INTERNAL_HOST" KNOWLEDGE_CENTER_AUTH_PORT="$FRONTEND_PORT" \
     KNOWLEDGE_CENTER_OUTLINE_INTERNAL_TOKEN="$token" "$NODE_BIN" server.js
   wait_ready document "$(service_url document)" || { rollback_started; return 1; }
 
@@ -358,16 +369,11 @@ start_platform() {
     "$PYTHON_BIN" -m uvicorn app.main:app --host "$PINGCODE_HOST" --port "$PINGCODE_API_PORT"
   wait_ready pingcode "$(service_url pingcode)" || { rollback_started; return 1; }
 
-  start_service auth "$AUTH_DIR" "$LOG_DIR/auth.log" \
-    env NODE_PATH="$NODE_MODULE_PATH" KNOWLEDGE_CENTER_AUTH_PORT="$AUTH_API_PORT" KNOWLEDGE_CENTER_AUTH_HOST="$INTERNAL_HOST" \
-    KNOWLEDGE_CENTER_SERVICE_URL="http://$PUBLIC_HOST:$FRONTEND_PORT/knowledge-center/" KNOWLEDGE_CENTER_COOKIE_SECURE=false \
-    "$NODE_BIN" auth-server.js
-  wait_ready auth "$(service_url auth)" || { rollback_started; return 1; }
-
   start_service frontend "$FRONTEND_DIR" "$LOG_DIR/frontend.log" \
     env NODE_PATH="$NODE_MODULE_PATH" PORT="$FRONTEND_PORT" KNOWLEDGE_STORAGE_MODE="${KNOWLEDGE_STORAGE_MODE:-database}" YASDB_PASSWORD="${YASDB_PASSWORD:-}" YASDB_STORAGE_URL="${YASDB_STORAGE_URL:-http://127.0.0.1:14210}" YASDB_STORAGE_HOST="${YASDB_STORAGE_HOST:-127.0.0.1}" YASDB_STORAGE_PORT="${YASDB_STORAGE_PORT:-14210}" YASDB_STORAGE_TIMEOUT_MS="${YASDB_STORAGE_TIMEOUT_MS:-15000}" DOCUMENT_API_HOST="$INTERNAL_HOST" DOCUMENT_API_PORT="$DOCUMENT_API_PORT" \
-    PINGCODE_API_HOST="$PINGCODE_HOST" PINGCODE_API_PORT="$PINGCODE_API_PORT" KNOWLEDGE_CENTER_AUTH_HOST="$INTERNAL_HOST" \
-    KNOWLEDGE_CENTER_AUTH_PORT="$AUTH_API_PORT" KNOWLEDGE_CENTER_OUTLINE_INTERNAL_TOKEN="$token" "$NODE_BIN" frontend-server.js
+    PINGCODE_API_HOST="$PINGCODE_HOST" PINGCODE_API_PORT="$PINGCODE_API_PORT" \
+    KNOWLEDGE_CENTER_SERVICE_URL="http://$PUBLIC_HOST:$FRONTEND_PORT/knowledge-center/" KNOWLEDGE_CENTER_COOKIE_SECURE=false \
+    KNOWLEDGE_CENTER_OUTLINE_INTERNAL_TOKEN="$token" "$NODE_BIN" frontend-server.js
   wait_ready frontend "$(service_url frontend)" || { rollback_started; return 1; }
 
   echo "知识中心管理平台已启动：http://$PUBLIC_HOST:$FRONTEND_PORT/knowledge-center/"
@@ -386,19 +392,31 @@ restart_platform() {
 }
 
 status_platform() {
-  local failed=0 name pid url port owner
-  for name in document pingcode auth frontend storage; do
+  local failed=0 healthy=0 total=4 name pid url port owner state
+  for name in document pingcode frontend storage; do
     pid="$(cat "$(pid_file "$name")" 2>/dev/null || true)"
     url="$(service_url "$name")"
     port="$(service_port "$name")"
     owner="$(listener_pid "$port")"
     if service_process_matches "$name" "$pid" && [[ "$owner" == "$pid" ]] && http_ready "$url"; then
-      echo "$name: running pid=$pid url=$url"
+      state=running
+      healthy=$((healthy + 1))
     else
-      echo "$name: stopped-or-unhealthy url=$url"
+      state=stopped-or-unhealthy
       failed=1
     fi
+    if (( VERBOSE == 1 )); then
+      echo "$name: $state pid=${pid:-unknown} url=$url"
+    fi
   done
+  if (( failed == 0 )); then
+    echo "知识中心管理平台：运行中"
+  else
+    echo "知识中心管理平台：部分组件异常"
+  fi
+  echo "访问地址：http://$PUBLIC_HOST:$FRONTEND_PORT/knowledge-center/"
+  echo "内部组件：$healthy/$total 正常（认证作为平台内置模块运行）"
+  (( VERBOSE == 1 )) || echo "详细诊断：$0 status --verbose"
   return "$failed"
 }
 
@@ -408,16 +426,18 @@ platform_healthy() {
 
 case "$ACTION" in
   help|-h|--help)
-    echo "用法：$0 {start|stop|restart|status} [--no-build]"
+    echo "用法：$0 {start|stop|restart|status} [--no-build|--verbose]"
     echo "  start    启动知识中心平台；已运行的同名服务会先受控接管"
     echo "  stop     停止知识中心平台服务，不操作 YashanDB 数据库实例"
     echo "  restart  停止后重新启动全部平台服务"
-    echo "  status   检查进程、端口归属和健康接口"
+    echo "  status   显示统一平台状态，不暴露内部诊断端点"
     echo "  --no-build  启动/重启时跳过 PingCode Web 构建"
+    echo "  --verbose   status 时显示内部组件、PID 和诊断端点"
     ;;
   start)
     acquire_operation_lock
     reconcile_known_services
+    stop_service auth
     if platform_healthy; then
       echo "知识中心管理平台已在运行：http://$PUBLIC_HOST:$FRONTEND_PORT/knowledge-center/"
       exit 0

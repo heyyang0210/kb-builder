@@ -21,7 +21,7 @@
 4. [P3 安全上传与真实 API 验收](./development/41-管理员手册大纲兼容阶段三-安全上传与真实API验收设计.md)：实现写前校验、原子提交和失败无残留。
 5. [P4 预检、差异确认与正式上传](./development/42-管理员手册大纲兼容阶段四-预检差异确认与正式上传设计.md)：让用户确认转换结果后再落库。
 6. [P5 评分、修改建议与持续治理](./development/43-管理员手册大纲兼容阶段五-评分建议与持续治理设计.md)：提供配置化评分、证据化建议和规则生命周期。
-7. [知识中心统一解析展示与管理员增删权限](./development/44-知识中心大纲统一解析展示与管理员增删权限设计.md)：冻结文档生成器与知识中心共用的服务端解析/目录投影，以及平台管理员专属新增、删除动作。
+7. [知识中心统一解析展示与管理员增删权限](./development/44-知识中心大纲统一解析展示与管理员增删权限设计.md)：冻结文档生成器与知识中心共用的服务端解析/目录投影，以及大纲管理员、平台管理员的新增和删除动作。
 8. [大纲两个工作区责任分工与发布任务](./development/45-大纲三阶段责任分工与发布任务设计.md)：六列模板导入初始分工、目录兼页面、未分工定位、层级导航中的轻量调整、预览发布门禁和领域建设任务。
 
 ## 代码映射
@@ -30,7 +30,7 @@
 |---|---|---|
 | [`packages/agent-runner-core/routes/outline.js`](../../../../packages/agent-runner-core/routes/outline.js) | XLSX 上传、统一解析、计数、列表、详情、删除和提示词生成入口 | 第一阶段固定 XLSX 模板；后续再扩展其他格式，路由只承担协议适配 |
 | [`apps/knowledge-center-web/frontend/js/components/OutlineUploader.js`](../../../../apps/knowledge-center-web/frontend/js/components/OutlineUploader.js) | 浏览器侧解析和上传请求 | P2 后服务端成为解析事实来源，P4 增加预检与确认交互 |
-| [`apps/knowledge-center-web/frontend/prompt-generator.html`](../../../../apps/knowledge-center-web/frontend/prompt-generator.html) | 大纲列表、知识点选择、删除和提示词生成界面 | 消费标准树、诊断、差异和评分报告，界面文案保持中文 |
+| [`apps/knowledge-center-web/frontend/document-generation-workbench.html`](../../../../apps/knowledge-center-web/frontend/document-generation-workbench.html) | 大纲列表、知识点选择、删除和提示词生成界面 | 消费标准树、诊断、差异和评分报告，界面文案保持中文；旧 `/prompt-generator.html` 仅保留兼容跳转 |
 | [`apps/knowledge-center-web/frontend/knowledge-center/modules/outlines/view.js`](../../../../apps/knowledge-center-web/frontend/knowledge-center/modules/outlines/view.js) | 知识中心大纲列表与详情视图 | 列表/详情按路由分离，目录、责任、模板、检查、发布共享服务端治理事实 |
 | [`apps/knowledge-center-web/frontend/knowledge-center/modules/outlines/outlines.css`](../../../../apps/knowledge-center-web/frontend/knowledge-center/modules/outlines/outlines.css) | 知识中心大纲管理专属布局与响应式样式 | 详情工作区全宽优先，手册信息按需打开，四种目标视口无页面级横向溢出 |
 | `outlines/metadata.json` 与上传文件 | 当前文件型持久化 | P3 增加原子性、幂等、并发和补偿边界 |

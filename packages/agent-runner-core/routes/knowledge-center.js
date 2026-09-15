@@ -23,7 +23,7 @@ function perfTrace(message, meta) {
 function createKnowledgeCenterHandler(options) {
   const {
     sendFile, proxyAuth, proxyCleaning, proxyOutline, proxyPermission, handleIncrementalBuild,
-    config, stores,
+    config, stores, moduleRegistry, modules = {},
   } = options;
 
   const {
@@ -38,10 +38,12 @@ function createKnowledgeCenterHandler(options) {
 
   const { knowledgeAssetsStore, brandIconStore } = stores;
   const templateStore = stores.templateStore || createTemplateStore();
+  const authModule = moduleRegistry?.get?.('auth') || modules.auth;
 
   // --- Auth helpers ---
 
-  function authorizeRequest(req) {
+  async function authorizeRequest(req) {
+    if (authModule?.authorize) return authModule.authorize(req);
     return new Promise(resolve => {
       const request = http.request({
         hostname: AUTH_API_HOST, port: AUTH_API_PORT,
@@ -62,6 +64,17 @@ function createKnowledgeCenterHandler(options) {
     });
   }
 
+  function dispatchAuth(req, res, targetUrl = req.url) {
+    if (!authModule?.handler) {
+      if (targetUrl === req.url) proxyAuth(req, res);
+      else proxyPermission(req, res);
+      return;
+    }
+    const originalUrl = req.url;
+    req.url = targetUrl;
+    Promise.resolve(authModule.handler(req, res)).finally(() => { req.url = originalUrl; });
+  }
+
   async function requireSession(req, res, action) {
     const session = await authorizeRequest(req);
     if (session) { await action(session); return; }
@@ -79,7 +92,7 @@ function createKnowledgeCenterHandler(options) {
   function forbidUnlessOutlineAction(res, session, action) {
     if (hasAction(session, action)) return false;
     res.writeHead(403, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
-    res.end(JSON.stringify({ success: false, error: { code: 'OUTLINE_PERMISSION_DENIED', message: '仅平台管理员可新增或删除大纲' } }));
+    res.end(JSON.stringify({ success: false, error: { code: 'OUTLINE_PERMISSION_DENIED', message: '当前账号无大纲管理权限' } }));
     return true;
   }
 
@@ -723,7 +736,7 @@ function createKnowledgeCenterHandler(options) {
     const pathname = new URL(req.url, 'http://localhost').pathname;
 
     if (pathname === '/knowledge-center/auth' || pathname.startsWith('/knowledge-center/auth/') || pathname === '/knowledge-center/api/auth' || pathname.startsWith('/knowledge-center/api/auth/')) {
-      proxyAuth(req, res); return;
+      dispatchAuth(req, res); return;
     }
     if (req.method === 'GET' && pathname === '/knowledge-center/api/platform/context') {
       requireSession(req, res, () => servePlatformContext(res)); return;
@@ -733,7 +746,7 @@ function createKnowledgeCenterHandler(options) {
       res.writeHead(405, { Allow: 'GET' }); res.end(); return;
     }
     if (pathname === '/knowledge-center/api/platform/permissions' || pathname.startsWith('/knowledge-center/api/platform/permissions/')) {
-      proxyPermission(req, res); return;
+      dispatchAuth(req, res, `/knowledge-center/api/auth/users${req.url.slice('/knowledge-center/api/platform/permissions'.length)}`); return;
     }
     if (req.method === 'GET' && pathname === '/knowledge-center/api/platform/overview') {
       requireSession(req, res, () => servePlatformProjection(res)); return;

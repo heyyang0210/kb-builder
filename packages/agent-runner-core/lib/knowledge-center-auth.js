@@ -12,17 +12,18 @@ function perfTrace(message, meta) {
 }
 
 const COOKIE_NAME = 'kc_session';
-const BUSINESS_MODULES = ['dashboard', 'assets', 'cleaning', 'outlines', 'templates', 'production'];
+const BUSINESS_MODULES = ['dashboard', 'assets', 'outlines', 'production'];
+const CLEANING_MODULES = ['cleaning'];
+const TEMPLATE_MODULES = ['templates'];
 const BUSINESS_ACTIONS = ['knowledge:read', 'knowledge:write', 'outline:read'];
-const ADMIN_MODULES = [...BUSINESS_MODULES, 'review', 'platform'];
 const ADMIN_ACTIONS = [...BUSINESS_ACTIONS, 'outline:create', 'outline:delete', 'review:manage', 'publish:manage', 'platform:manage', 'template:read', 'template:edit', 'template:manage'];
 const ASSIGNABLE_ROLES = ['KNOWLEDGE_EDITOR', 'OUTLINE_MANAGER', 'REVIEWER', 'TEMPLATE_EDITOR', 'PLATFORM_ADMIN'];
 const ROLE_DEFINITIONS = {
   KNOWLEDGE_EDITOR: { actions: ['knowledge:read', 'knowledge:write', 'outline:read'], modules: [...BUSINESS_MODULES, 'review'] },
-  OUTLINE_MANAGER: { actions: ['knowledge:read', 'knowledge:write', 'outline:read', 'outline:create', 'outline:delete'], modules: BUSINESS_MODULES },
-  REVIEWER: { actions: ['knowledge:read', 'review:manage'], modules: [...BUSINESS_MODULES, 'review'] },
-  TEMPLATE_EDITOR: { actions: ['knowledge:read', 'template:read', 'template:edit'], modules: ['templates'] },
-  PLATFORM_ADMIN: { actions: ADMIN_ACTIONS, modules: ADMIN_MODULES },
+  OUTLINE_MANAGER: { actions: ['knowledge:read', 'outline:read', 'outline:create', 'outline:delete'], modules: ['dashboard', 'assets', 'outlines'] },
+  REVIEWER: { actions: ['knowledge:read', 'review:manage'], modules: ['dashboard', 'assets', 'outlines', 'review'] },
+  TEMPLATE_EDITOR: { actions: ['knowledge:read', 'outline:read', 'template:read', 'template:edit', 'template:manage'], modules: ['dashboard', 'outlines', ...TEMPLATE_MODULES] },
+  PLATFORM_ADMIN: { actions: ADMIN_ACTIONS, modules: [...BUSINESS_MODULES, ...CLEANING_MODULES, ...TEMPLATE_MODULES, 'review', 'platform'] },
 };
 
 class AuthError extends Error {
@@ -427,6 +428,20 @@ function createKnowledgeCenterAuthService(options = {}) {
   ].filter(Boolean).join('; ');
   const clearCookie = () => `${COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${config.secureCookie ? '; Secure' : ''}`;
   const current = req => repository.session(parseCookies(req.headers.cookie)[COOKIE_NAME]);
+  const sessionProjection = req => {
+    const session = current(req);
+    if (!session) return null;
+    const projection = userProjection(session.user);
+    return {
+      authenticated: true,
+      authMethod: session.record.authMethod,
+      user: projection,
+      roles: projection.roles,
+      visibleModules: projection.visibleModules,
+      allowedActions: projection.allowedActions,
+      expiresAt: session.record.expiresAt,
+    };
+  };
 
   async function validateTicket(ticket) {
     if (!ticket || typeof ticket !== 'string' || ticket.length > 2048) throw new AuthError('CAS_TICKET_INVALID', '统一认证信息无效', 401);
@@ -453,10 +468,9 @@ function createKnowledgeCenterAuthService(options = {}) {
         return json(res, 200, { success: true, content, ...content });
       }
       if (req.method === 'GET' && pathname === '/auth/session') {
-        const session = current(req);
-        if (!session) throw new AuthError('AUTH_REQUIRED', '请登录后继续', 401);
-        const projection = userProjection(session.user);
-        return ok(res, { authenticated: true, authMethod: session.record.authMethod, user: projection, roles: projection.roles, visibleModules: projection.visibleModules, allowedActions: projection.allowedActions, expiresAt: session.record.expiresAt });
+        const projection = sessionProjection(req);
+        if (!projection) throw new AuthError('AUTH_REQUIRED', '请登录后继续', 401);
+        return ok(res, projection);
       }
       if (req.method === 'POST' && pathname === '/auth/cas/callback') {
         const body = await readBody(req);
@@ -572,7 +586,7 @@ function createKnowledgeCenterAuthService(options = {}) {
     }
   }
 
-  return { handler, repository, config };
+  return { handler, authorize: sessionProjection, repository, config };
 }
 
 module.exports = {

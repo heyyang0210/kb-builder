@@ -47,3 +47,17 @@ test('文档生产入口读取真实增量任务列表而非演示数据', async
   await expect(page.locator('#view-root')).toContainText(/增量任务|暂无|服务暂时不可用/);
   await expect(page.locator('#view-root')).not.toContainText('演示数据');
 });
+
+test('从文档生产的唯一入口跳转现有文档生成器', async ({ page }) => {
+  await page.goto(`${baseUrl}/knowledge-center/production`);
+  const generatorEntry = page.locator('a[href="/document-generation-workbench.html"]');
+  await expect(generatorEntry).toHaveCount(1);
+  await expect(generatorEntry).toContainText('文档生成工作台');
+  await expect(generatorEntry).toHaveAttribute('target', '_blank');
+  const newPagePromise = page.waitForEvent('popup');
+  await generatorEntry.click();
+  const generatorPage = await newPagePromise;
+  await expect(generatorPage).toHaveURL(`${baseUrl}/document-generation-workbench.html`);
+  await expect(generatorPage).toHaveTitle(/YashanDB 知识库文档生成器/);
+  await generatorPage.close();
+});
