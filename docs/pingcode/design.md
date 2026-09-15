@@ -113,7 +113,7 @@
 
 **决策**：登录入口只允许使用中性的 `{base_url}/wiki`，或当前下载批次所属空间的 `{base_url}/wiki/spaces/{spaceKey}`。
 
-**原因**：`config/pingcode.json` 的 `targets[0]` 可能指向任意历史空间，不能作为全局登录入口。若 YASDOC 批次复用 YASSTORAGE 的目标页触发 CAS 登录，登录完成后可能被路由到错误空间，造成下载任务访问非预期页面。
+**原因**：`config/pingcode/credentials.json` 的 `targets[0]` 可能指向任意历史空间，不能作为全局登录入口。若 YASDOC 批次复用 YASSTORAGE 的目标页触发 CAS 登录，登录完成后可能被路由到错误空间，造成下载任务访问非预期页面。
 
 **实现**：
 - `PingCodeClient` 支持显式 `login_url`；未传入时使用 `{base_url}/wiki`。
@@ -415,6 +415,6 @@ python3 tools/pingcode-cli/cli/migrate_data.py
 - 使用说明：`docs/usage.md`
 - 设计文档：`docs/design.md`
 - 实施计划：`docs/implementation-plan.md`
-- 配置文件：`config/pingcode.json`
+- 配置文件：`config/pingcode/credentials.json`
 - 测试用例：`tests/test_api_client.py`
 - 数据迁移：`cli/migrate_data.py`

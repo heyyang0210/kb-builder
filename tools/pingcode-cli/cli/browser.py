@@ -41,7 +41,7 @@ def setup_credentials(email=None, password=None):
     config['credentials'] = {'email': email, 'password': password}
     save_config(config)
     print(f"\n✓ 账号已保存：{email}")
-    print("✓ 配置文件：config/pingcode.json")
+    print("✓ 配置文件：config/pingcode/credentials.json")
     
     return config
 

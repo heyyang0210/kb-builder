@@ -20,7 +20,7 @@ ALLOWED_RESOURCE_PREFIXES = (
     "knowledge/profiles/", "knowledge/prompts/", "knowledge/templates/",
     "config/knowledge-center/branding/",
 )
-ALLOWED_RESOURCE_FILES = {"config/knowledge-center/processing.json"}
+ALLOWED_RESOURCE_FILES = {"config/knowledge-center/content-rules.json"}
 CONNECTOR_REQUIRED_SECRETS = {
     "local-upload": (),
     "pingcode": ("secret:connectors/pingcode",),
@@ -158,7 +158,7 @@ def build_context(profile, resources, env, secret_resolver=None):
 
 def load_profile(repository_root=None, registry=None, env=None, profile_id=None, secret_resolver=None):
     repository_root = Path(repository_root or Path(__file__).resolve().parents[4]).resolve()
-    registry = registry or {"yashandb": "config/knowledge-center/platform.json"}
+    registry = registry or {"yashandb": "config/knowledge-center/product.json"}
     env = os.environ if env is None else env
     explicitly_set = "KNOWLEDGE_PLATFORM_PROFILE" in env
     selected = profile_id if profile_id is not None else (env.get("KNOWLEDGE_PLATFORM_PROFILE") if explicitly_set else DEFAULT_PROFILE_ID)

@@ -13,7 +13,7 @@
     "enterpriseName": "YashanDB",
     "productName": "YashanDB 知识中心",
     "icon": {
-      "resourceRef": "config/knowledge-center/branding/default.png",
+      "resourceRef": "config/knowledge-center/branding/default-icon.png",
       "alt": "YashanDB 知识中心"
     }
   },
@@ -223,7 +223,7 @@
     {
       "id": "generation-quality",
       "version": "1.0.0",
-      "resourceRef": "config/knowledge-center/processing.json"
+      "resourceRef": "config/knowledge-center/content-rules.json"
     },
     {
       "id": "metadata-rules",

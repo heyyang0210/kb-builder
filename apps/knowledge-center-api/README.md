@@ -94,7 +94,7 @@ Health check: http://localhost:4100/api/health
 
 文档阅读页支持文档级评论：评论正文必填，可手工附加引用文本，并可新增或删除。评论默认持久化到 `data/document-comments.json`；当前平台尚无身份与权限系统，因此此阶段不区分评论所有者。
 
-知识中心管理平台统一使用 `tools/repository/restart-knowledge-center-isolated.sh` 重启文档 API、资料加工 API、认证 API 和 Web 网关。脚本先构建 PingCode Web，再成组重启并验证四个服务；任一服务失败时会回收本轮已启动进程。
+知识中心管理平台统一使用根目录 `knowledge-center.sh` 管理存储、文档 API、资料加工 API、认证 API 和 Web 网关。脚本提供 `start/stop/restart/status`，默认先构建 PingCode Web；任一服务失败时会回收本轮已启动进程。
 
 1. 点击右上角 **⚙️ 配置** 按钮
 2. 选择 Provider（推荐阿里云百炼或智谱 AI，OpenAI 在某些地区受限）
@@ -322,7 +322,7 @@ socket.emit('subscribe', { task_id: 'task_xxx' });
 
 ## 开发指南
 
-> 目录重构说明：本文早期示例中的 `agent-runner/` 树仅用于解释历史模块边界，不是当前入口。当前代码位于 `apps/knowledge-center-api/`，共享 Agent 代码位于 `packages/agent-runner-core/`，配置位于 `config/agent-runner/`，运行数据位于 `runtime/agent-runner/`；统一重启入口为 `tools/repository/restart-knowledge-center-isolated.sh`。
+> 目录重构说明：本文早期示例中的 `agent-runner/` 树仅用于解释历史模块边界，不是当前入口。当前代码位于 `apps/knowledge-center-api/`，共享 Agent 代码位于 `packages/agent-runner-core/`，配置位于 `config/agent-runner/`，运行数据位于 `runtime/agent-runner/`；统一运维入口为根目录 `knowledge-center.sh`。
 
 ### 项目结构
 
@@ -550,7 +550,7 @@ node scripts/preprocess.js run-all
 
 ### 配置文件
 
-`config/knowledge-center/processing.json` 中的 `preprocessing` 分区：
+`config/knowledge-center/content-rules.json` 中的 `preprocessing` 分区：
 
 ```json
 {

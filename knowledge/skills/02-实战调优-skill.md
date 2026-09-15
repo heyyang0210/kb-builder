@@ -27,14 +27,14 @@
 ### 生成规则
 
 1. **读取模板**：参考 `knowledge/templates/03-实战调优类模板.md`
-2. **引用资料**：按 `config/资料引用策略.md`
+2. **引用资料**：按 `config/shared/source-policy.md`
 3. **内容要求**：
    - 诊断流程必须完整：发现→定位→优化→验证
    - 每步必须有可执行的 SQL/命令
    - 必须有优化前后的数据对比
    - 真实案例必须可复现
-4. **引用溯源**：遵守 `config/引用溯源规则.md`（引用标注、覆盖率评分、可信度等级）
-5. **格式要求**：遵守 `config/全局格式规范.md`
+4. **引用溯源**：遵守 `config/shared/traceability-rules.md`（引用标注、覆盖率评分、可信度等级）
+5. **格式要求**：遵守 `config/shared/format-rules.md`
 
 ### 章节结构
 

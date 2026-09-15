@@ -1,7 +1,7 @@
 """
 配置管理模块
 
-从 config/pingcode/pingcode.json 加载配置，支持：
+从 config/pingcode/credentials.json 加载配置，支持：
 - 凭据管理（账号密码）
 - 目标页面列表
 - 下载策略配置
@@ -13,7 +13,7 @@ from typing import Optional
 
 # 默认配置文件路径（相对于项目根目录）
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_CONFIG_PATH = REPOSITORY_ROOT / 'config' / 'pingcode' / 'pingcode.json'
+DEFAULT_CONFIG_PATH = REPOSITORY_ROOT / 'config' / 'pingcode' / 'credentials.json'
 
 class PingCodeConfig:
     """PingCode 配置管理器"""

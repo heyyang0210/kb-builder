@@ -32,7 +32,7 @@ def main():
     # 加载配置
     config = PingCodeConfig()
     if not config.validate():
-        print("✗ 配置验证失败，请检查 config/pingcode.json")
+        print("✗ 配置验证失败，请检查 config/pingcode/credentials.json")
         sys.exit(1)
     
     print("=" * 60)

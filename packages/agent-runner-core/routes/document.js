@@ -12,7 +12,7 @@ const logger = require('../lib/logger');
 // ============================================
 // 多路径配置
 // ============================================
-const CONFIG_PATH = CONFIG_PATHS.runtime;
+const CONFIG_PATH = CONFIG_PATHS.service;
 
 function loadDocPathsConfig() {
   try {
@@ -33,7 +33,7 @@ function resolveRoots() {
   return config.map(entry => {
     let absPath = entry.path;
     if (!path.isAbsolute(absPath)) {
-      // runtime.json paths are repository-relative; resolving from this module
+      // service.json paths are repository-relative; resolving from this module
       // caused ../output to silently point at packages/output.
       absPath = path.resolve(REPOSITORY_ROOT, absPath);
     }

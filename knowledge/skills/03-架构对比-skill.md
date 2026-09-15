@@ -27,14 +27,14 @@
 ### 生成规则
 
 1. **读取模板**：参考 `knowledge/templates/04-架构对比类模板.md`
-2. **引用资料**：按 `config/资料引用策略.md`
+2. **引用资料**：按 `config/shared/source-policy.md`
 3. **内容要求**：
    - 必须有 Mermaid 部署拓扑图
    - 方案对比表至少包含2个方案
    - 必须有针对不同场景的选型建议
    - 必须有关键配置和监控指标
-4. **引用溯源**：遵守 `config/引用溯源规则.md`（引用标注、覆盖率评分、可信度等级）
-5. **格式要求**：遵守 `config/全局格式规范.md`
+4. **引用溯源**：遵守 `config/shared/traceability-rules.md`（引用标注、覆盖率评分、可信度等级）
+5. **格式要求**：遵守 `config/shared/format-rules.md`
 
 ### 章节结构
 

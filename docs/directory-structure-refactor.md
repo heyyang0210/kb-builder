@@ -24,7 +24,7 @@ config/{knowledge-center,pingcode,database}
 | 批次 | 内容 | 状态 | 验证证据 |
 | --- | --- | --- | --- |
 | 0 | 冻结工作区和迁移映射 | 已完成 | 执行前 `git status --short` |
-| 1 | 数据库配置契约和忽略规则 | 已完成 | `config/database/yashandb.json` 与 README；Schema 约束已迁入配置测试 |
+| 1 | 数据库配置契约和忽略规则 | 已完成 | `config/yashandb/yashandb.json` 与 README；Schema 约束已迁入配置测试 |
 | 2 | Agent Runner 应用、共享包、配置和测试迁移 | 已完成 | `apps/knowledge-center-*`、`packages/agent-runner-core` |
 | 3 | PingCode 应用、共享包、配置和测试迁移 | 已完成 | `apps/pingcode-*`、`packages/pingcode-core` |
 | 4 | 工具、运行数据和契约迁移 | 已完成 | `tools/`、`var/`、`packages/platform-contracts` |
@@ -38,7 +38,7 @@ config/{knowledge-center,pingcode,database}
 - 知识中心 Web：`apps/knowledge-center-web/frontend-server.js`
 - PingCode API：`apps/pingcode-api/app/main.py`
 - 共享核心：`packages/agent-runner-core/`、`packages/pingcode-core/`
-- 数据库连接配置：`config/database/`；密码仅由环境变量或密钥系统注入
+- 数据库连接配置：`config/yashandb/`；密码仅由环境变量或密钥系统注入
 - 运行时写入：`var/agent-runner/`、`var/pingcode/`
 
 ## 残余风险与回滚点

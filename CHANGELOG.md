@@ -11,7 +11,7 @@
 
 ### 变更
 
-- `config/资料引用策略.md`：新增 MCP 为优先级①，原优先级依次后移，新增降级策略和前置检查章节
+- `config/shared/source-policy.md`：新增 MCP 为优先级①，原优先级依次后移，新增降级策略和前置检查章节
 - `skills/00-通用生成-skill.md`：升级到 v1.1.0，新增前置检查步骤（步骤0），输入 JSON 新增 `mcp_query` 字段
 - `README.md`：新增「三、前置检查（必须）」章节，更新目录结构和快速开始步骤
 - `references/README.md`：更新目录结构和引用优先级表
@@ -47,7 +47,7 @@
 
 - `templates/README.md`：更新为指向本地模板文件
 - `outlines/README.md`：更新为指向本地大纲文件
-- `config/资料引用策略.md`：更新 Oracle 知识库路径为 `references/oracle-kb/`
+- `config/shared/source-policy.md`：更新 Oracle 知识库路径为 `references/oracle-kb/`
 - `skills/00-通用生成-skill.md`：更新外部引用路径为本地路径
 - `README.md`：移除外部依赖说明，标注仓库完全独立
 
@@ -59,9 +59,9 @@
 
 - **Skill 仓库目录结构**：创建完整的 7 个目录（skills/config/templates/outlines/examples/output/logs）
 - **共享配置**（3个文件）：
-  - `config/全局格式规范.md`：统一的文档格式约束
-  - `config/质量验证标准.md`：三层质量检查标准
-  - `config/资料引用策略.md`：参考资料引用优先级规则
+  - `config/shared/format-rules.md`：统一的文档格式约束
+  - `config/shared/quality-standards.md`：三层质量检查标准
+  - `config/shared/source-policy.md`：参考资料引用优先级规则
 - **Skill 定义**（7个文件）：
   - `skills/00-通用生成-skill.md`：入口Skill，类型判断+路由
   - `skills/01-理论机制-skill.md`：理论机制类文档生成

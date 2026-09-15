@@ -24,7 +24,7 @@ SOP版本: v1.0
 
 
 
-# 资料来源追溯（必填，评分规则详见 config/引用溯源规则.md）
+# 资料来源追溯（必填，评分规则详见 config/shared/traceability-rules.md）
 资料来源追溯:
   主要来源：[YashanDB 知识库 MCP / 特性设计文档 / Oracle 知识库]
   引用文档数量: [数字]

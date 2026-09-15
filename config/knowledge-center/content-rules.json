@@ -7,7 +7,7 @@
         "output": { "baseDir": "runtime/agent-runner/preprocessing-output/pingcode" },
         "cleaning": { "removeConfluenceMeta": true, "cleanInternalLinks": true, "handleImageRefs": true, "cleanAnchorLinks": true, "normalizeHeadings": true, "addYamlFront": true, "internalDomains": ["conf.yasdb.com", "jira.yasdb.com", "pingcode.yasdb.com"] },
         "qualityFilter": { "enabled": true, "minContentChars": 50, "borderlineMaxChars": 300, "maxHeadingRatio": 0.8, "useLlmForBorderline": false, "llmMinScore": 3 },
-        "classification": { "enabled": true, "minConfidence": 0.7, "featureListPath": "config/knowledge-center/processing.json#/features", "useLlmFallback": false },
+        "classification": { "enabled": true, "minConfidence": 0.7, "featureListPath": "config/knowledge-center/content-rules.json#/features", "useLlmFallback": false },
         "captioning": { "enabled": false, "provider": "openai-compatible", "endpoint": { "type": "official", "baseURL": "", "baseUrlEnv": "VISION_BASE_URL" }, "apiKeyEnv": "VISION_API_KEY", "model": "gpt-5.6-terra", "modelEnv": "VISION_MODEL", "request": { "reasoningEffort": "none", "maxOutputTokens": 120, "imageDetail": "low", "timeoutMs": 60000 } },
         "officeRendering": { "enabled": true, "provider": "libreoffice", "command": "libreoffice", "pdfToImageCommand": "pdftoppm", "dpi": 144, "timeoutMs": 120000 },
         "chunking": { "enabled": true, "minTokens": 500, "maxTokens": 1500, "overlapSentences": 2, "protectTables": true, "protectCodeBlocks": true },

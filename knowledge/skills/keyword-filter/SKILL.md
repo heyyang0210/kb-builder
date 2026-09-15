@@ -42,7 +42,7 @@ description: >
 
 ### 排除问题类别
 
-`issueCategory` 必须使用当前仓库 `config/filter-rules.json` 的 `issueCategories` 配置中的 ID。可选类别包括：
+`issueCategory` 必须使用当前仓库 `config/shared/filter-rules.json` 的 `issueCategories` 配置中的 ID。可选类别包括：
 
 - `generic_term`：通用词/过于宽泛
 - `duplicate_alias`：同义重复

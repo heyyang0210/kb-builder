@@ -40,7 +40,7 @@ bash scripts/pre-check-references.sh
 
 ### 检查项3：确认资料引用策略
 
-阅读 `config/资料引用策略.md`，了解当前资料引用优先级：
+阅读 `config/shared/source-policy.md`，了解当前资料引用优先级：
 
 ```
 ① YashanDB 知识库 MCP（实时查询）
@@ -67,7 +67,7 @@ bash scripts/pre-check-references.sh
 1. 运行 `bash scripts/pre-check-references.sh`
 2. 确认所有必须检查项通过
 3. 记录 MCP 可用状态（影响引用策略和降级标注）
-4. 阅读 `config/资料引用策略.md` 确认引用规则
+4. 阅读 `config/shared/source-policy.md` 确认引用规则
 
 ### 步骤1：解析输入
 
@@ -136,10 +136,10 @@ bash scripts/pre-check-references.sh
 
 1. **MCP 可用时**：优先通过 YashanDB 知识库 MCP 查询相关资料
 2. 调用对应类型的 Skill 文件
-3. 按 `config/资料引用策略.md` 引用参考资料
-4. 按 `config/全局格式规范.md` 生成文档
-5. 引用溯源：遵守 `config/引用溯源规则.md`（引用标注、覆盖率评分、可信度等级）
-5. 按 `config/质量验证标准.md` 进行自检
+3. 按 `config/shared/source-policy.md` 引用参考资料
+4. 按 `config/shared/format-rules.md` 生成文档
+5. 引用溯源：遵守 `config/shared/traceability-rules.md`（引用标注、覆盖率评分、可信度等级）
+5. 按 `config/shared/quality-standards.md` 进行自检
 
 ### 步骤4：输出文档
 
@@ -160,7 +160,7 @@ bash scripts/pre-check-references.sh
 4. **测试用例**（可执行验证）：`knowledge/references/test-cases/`
 5. **源码**（兜底）：`knowledge/references/source/`
 
-详细规则见 `config/资料引用策略.md`。
+详细规则见 `config/shared/source-policy.md`。
 
 ---
 
@@ -242,8 +242,8 @@ bash scripts/pre-check-references.sh
 ## 注意事项
 
 - **前置检查不可跳过**：每次生成前必须运行 `scripts/pre-check-references.sh`
-- 所有生成文档必须遵守 `config/全局格式规范.md`
-- 生成后必须通过 `config/质量验证标准.md` 中的结构完整性检查
+- 所有生成文档必须遵守 `config/shared/format-rules.md`
+- 生成后必须通过 `config/shared/quality-standards.md` 中的结构完整性检查
 - 兼容性类文档必须标注目标数据库和版本
 - 不要出现客户名称和特定业务表名
 - MCP 不可用时必须在文档末尾添加降级警告标注
@@ -252,7 +252,7 @@ bash scripts/pre-check-references.sh
 
 ## 步骤 5：引用溯源
 
-> 遵守 `config/引用溯源规则.md`（引用标注、覆盖率评分、可信度等级）
+> 遵守 `config/shared/traceability-rules.md`（引用标注、覆盖率评分、可信度等级）
 
 ### 5.1 核心原则
 
@@ -277,7 +277,7 @@ bash scripts/pre-check-references.sh
 
 ### 6.1 YAML 元数据
 
-YAML 元数据完整结构见 `config/全局格式规范.md` 第四章。
+YAML 元数据完整结构见 `config/shared/format-rules.md` 第四章。
 
 ### 6.2 自动评分流程
 
@@ -287,7 +287,7 @@ YAML 元数据完整结构见 `config/全局格式规范.md` 第四章。
 3. 确定可信度等级（A+/A/B+/B/C/D）
 4. 填写 YAML 元数据的"引用覆盖率分析"和"评分明细"字段
 
-详细评分规则见 `config/引用溯源规则.md` 第三章。
+详细评分规则见 `config/shared/traceability-rules.md` 第三章。
 
 ### 6.3 质量检查
 

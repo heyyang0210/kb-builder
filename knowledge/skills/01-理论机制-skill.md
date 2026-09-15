@@ -27,15 +27,15 @@
 ### 生成规则
 
 1. **读取模板**：参考 `knowledge/templates/02-理论机制类模板.md` 的章节结构
-2. **引用资料**：按 `config/资料引用策略.md` 引用参考资料
-3. **引用溯源**：遵守 `config/引用溯源规则.md`（引用标注、覆盖率评分、可信度等级）
+2. **引用资料**：按 `config/shared/source-policy.md` 引用参考资料
+3. **引用溯源**：遵守 `config/shared/traceability-rules.md`（引用标注、覆盖率评分、可信度等级）
 4. **内容要求**：
    - 核心结构图必须使用 Mermaid 语法
    - 工作原理必须分阶段、分步骤详细拆解
    - 必须包含"设计权衡"分析（为什么这样设计）
    - SQL 示例必须可执行验证
-5. **格式要求**：遵守 `config/全局格式规范.md`
-6. **自检**：按 `config/质量验证标准.md` 检查
+5. **格式要求**：遵守 `config/shared/format-rules.md`
+6. **自检**：按 `config/shared/quality-standards.md` 检查
 
 ### 章节结构
 

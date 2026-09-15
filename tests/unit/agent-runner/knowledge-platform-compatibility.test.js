@@ -79,8 +79,10 @@ describe('知识中心通用化兼容基线', () => {
   });
 
   test('共享 MCP 配置保持生产服务地址', () => {
-    const config = JSON.parse(read('config/knowledge-center/ai-services.json'));
+    const config = JSON.parse(read('config/knowledge-center/service.json'));
     expect(config.mcp.server_url).toBe('https://knowledgebase.yashandb.com/api/mcp');
+    expect(config.model.model).toBe('gpt-5.5');
+    expect(config.model.providers.deepseek.models).toEqual(expect.arrayContaining(['deepseek-chat', 'deepseek-reasoner']));
   });
 
   test('SSE、下载和预览深链均有版本化契约快照', () => {

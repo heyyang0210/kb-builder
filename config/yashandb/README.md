@@ -1,10 +1,10 @@
 # YashanDB 数据库配置
 
-本目录只保留一个 dotenv 运行配置：`yashandb.env`。Node、Python 和 Shell 入口都直接读取同一份键值，不再经过 JSON 转换。
+本目录只保留一个 dotenv 运行配置：`service.env`。首次部署从 `service.env.example` 复制生成；Node、Python 和 Shell 入口都直接读取同一份键值，不再经过 JSON 转换。
 
 当前开发测试数据库为 `172.22.69.74:1688/yashandb`，连接用户为 `regress`。密码不写入此文件，必须通过 `YASDB_PASSWORD` 注入。
 
-配置优先级为：调用方显式参数 > 进程环境变量/密钥系统 > `yashandb.env` > 代码安全默认值。
+配置优先级为：调用方显式参数 > 进程环境变量/密钥系统 > `service.env` > 代码安全默认值。
 
 不同环境直接覆盖变量，例如开发测试数据库：
 

@@ -30,9 +30,9 @@
 
 ### 运行配置迁移约束
 
-知识中心的运行配置统一位于 `config/`。目录重构时，必须同时迁移配置文件和加载入口，不能只移动代码后依赖进程当前工作目录寻找 `.env`。知识中心 Node 入口固定发现 `config/knowledge-center/.env`，调用方显式注入的环境变量优先，敏感凭证仍由环境变量或密钥系统提供。
+知识中心的配置控制面统一位于 `config/knowledge-center/`，只保留 `product.json`、`service.json`、`content-rules.json` 三份业务配置，分别回答产品是什么、服务怎样运行和内容怎样处理。目录重构时必须同时迁移配置文件、资源引用和加载入口，不能依赖进程当前工作目录寻找配置。知识中心 Node 入口固定发现 `config/knowledge-center/.env`，调用方显式注入的环境变量优先，敏感凭证仍由环境变量或密钥系统提供。
 
-GitLab 连接记录 `config/knowledge-center/state/gitlab-connections.json` 属于运行态事实源，迁移时必须保留连接 ID、项目路径、认证模式、凭证引用和手册映射；不得用空模板覆盖已有记录。
+GitLab 连接记录 `runtime/knowledge-center/gitlab-connections.json` 属于运行态事实源，迁移时必须保留连接 ID、项目路径、认证模式、凭证引用和手册映射；不得用空模板覆盖已有记录。知识资产和模板库同样位于 `runtime/knowledge-center/`，发布静态配置时不得覆盖。
 
 平台管理页的系统治理摘要必须由 `/knowledge-center/api/platform/context`、`/knowledge-center/api/platform/overview` 及 GitLab 连接验证投影派生，不能用静态“服务正常”占位值覆盖真实降级状态。终态连接验证失败、凭证缺失和模块不可用必须进入待处理事项；凭证只从环境变量或密钥系统注入，页面和日志不得显示 Token。
 
@@ -240,10 +240,10 @@ else:
 - 停止 Java 服务时，业务 API 明确返回存储不可用，不静默回写旧文件。
 ## 运行目录约束（2026-09-11）
 
-当前运行数据根为 runtime/，替代 var/；知识资产根为 knowledge/，数据库连接配置仍在 config/database/。迁移源元数据不得清空，取消等终态任务不得占用活动列表，生产 MCP 服务地址不得被本地默认值覆盖，密码与密钥仅外部注入。runtime 被 Git 忽略不代表数据可删除，持久状态必须备份。
+当前运行数据根为 runtime/，替代 var/；知识资产根为 knowledge/，数据库连接配置仍在 config/yashandb/。迁移源元数据不得清空，取消等终态任务不得占用活动列表，生产 MCP 服务地址不得被本地默认值覆盖，密码与密钥仅外部注入。runtime 被 Git 忽略不代表数据可删除，持久状态必须备份。
 ### 知识资产数据源一致性
 
-知识资产源文件 `config/knowledge-center/state/knowledge-assets.json` 与数据库 `assets/catalog` 必须在切换数据库模式前完成数量和内容摘要对账。服务启动时在数据库模式执行只读检查；发现不一致仅告警并指向受控迁移，不自动覆盖任何一侧，避免页面静默显示空列表。
+知识资产源文件 `runtime/knowledge-center/knowledge-assets.json` 与数据库 `assets/catalog` 必须在切换数据库模式前完成数量和内容摘要对账。服务启动时在数据库模式执行只读检查；发现不一致仅告警并指向受控迁移，不自动覆盖任何一侧，避免页面静默显示空列表。
 #### 连接复用与锁边界
 
 存储服务使用轻量 JDBC 连接池复用数据库会话，避免每个 HTTP 请求执行 `DriverManager.getConnection`。连接池只负责生命周期，不改变事务边界：请求结束归还连接前回滚未提交事务；`SELECT ... FOR UPDATE` 仍仅在写事务内持有至提交，以保证 CAS 正确性。`YASDB_STORAGE_POOL_MIN/MAX` 控制预热和上限。后续如需更高并发，可替换为 HikariCP 等成熟池实现并保持相同配置语义。
@@ -252,6 +252,6 @@ Node 存储访问同时提供异步 HTTP 读取路径，模板列表优先使用
 
 #### 隔离重启与 Java 编译缓存（2026-09-15）
 
-`restart-knowledge-center-isolated.sh` 将 `apps/yashandb-storage` 作为知识中心业务存储服务统一启停，但不操作 YashanDB 数据库实例。存储 Java 源码启动前编译 `Main.java` 和 `StorageSchemaDao.java` 到 `runtime/agent-runner/.runtime` 下的 SHA-256 指纹目录；有 `javac` 时优先使用，仅有 JRE 但包含 `jdk.compiler` 时通过模块调用编译器，避免使用不受 Java 17 支持的 `--source-path`。
+根目录 `knowledge-center.sh` 将 `apps/yashandb-storage` 作为知识中心业务存储服务统一启停，但不操作 YashanDB 数据库实例。存储 Java 源码启动前编译 `Main.java` 和 `StorageSchemaDao.java` 到 `runtime/agent-runner/.runtime` 下的 SHA-256 指纹目录；有 `javac` 时优先使用，仅有 JRE 但包含 `jdk.compiler` 时通过模块调用编译器，避免使用不受 Java 17 支持的 `--source-path`。
 
 重启脚本的 readiness 同时校验 PID、服务命令身份、端口监听旧进程和 HTTP 健康；不会因旧进程占端口而将新进程失败误判为就绪。已知进程可受控停止，未知占用仍保留现场并终止重启；启动任一环节失败时按反向顺序回滚已启动服务。

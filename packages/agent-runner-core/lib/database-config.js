@@ -73,8 +73,8 @@ function envOverrides(env) {
 
 function loadDatabaseConfig(options = {}) {
   const repositoryRoot = options.repositoryRoot || path.resolve(__dirname, '../../../');
-  const configRoot = options.configRoot || path.join(repositoryRoot, 'config', 'database');
-  const fileEnv = readDotenv(path.join(configRoot, 'yashandb.env'), true);
+  const configRoot = options.configRoot || path.join(repositoryRoot, 'config', 'yashandb');
+  const fileEnv = readDotenv(path.join(configRoot, 'service.env'), true);
   const loaded = envOverrides({ ...fileEnv, ...(options.env || process.env) });
   return { version: 1, jdbc: loaded.jdbc, storage: loaded.storage, expImp: loaded.expImp };
 }

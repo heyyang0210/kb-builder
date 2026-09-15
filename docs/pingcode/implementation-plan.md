@@ -121,7 +121,7 @@
 
 ### 配置
 
-- [x] `config/pingcode.json` - 配置文件
+- [x] `config/pingcode/credentials.json` - 配置文件
 
 ---
 

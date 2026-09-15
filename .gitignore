@@ -1,8 +1,10 @@
 # 环境变量（包含敏感信息）
 /runtime/
 /external/
-config/knowledge-center/gitlab-connections.json
-config/knowledge-center/knowledge-assets.json
+config/knowledge-center/.env
+config/knowledge-center/service.env
+config/yashandb/service.env
+config/pingcode/credentials.json
 config/knowledge-center/*.local.*
 config/knowledge-center/*.secret.*
 .env

@@ -41,8 +41,8 @@ def _read_dotenv(path: Path) -> dict:
 
 def load_database_config(repository_root: Path | None = None, environ: dict | None = None) -> dict:
     root = (repository_root or Path(__file__).resolve().parents[2]).resolve()
-    config_root = root / "config" / "database"
-    file_env = _read_dotenv(config_root / "yashandb.env")
+    config_root = root / "config" / "yashandb"
+    file_env = _read_dotenv(config_root / "service.env")
     env = {**file_env, **{k: v for k, v in (environ if environ is not None else os.environ).items() if v != ""}}
     jdbc, storage, exp_imp = {}, {}, {}
     mapping = {

@@ -25,8 +25,8 @@ const TEST_DATA = {
 ## 要求
 1. 使用 Skill：\`../knowledge/skills/06-兼容性差异-skill.md\`
 2. 使用模板：\`../knowledge/templates/07-兼容性差异类模板.md\`
-3. 遵守引用溯源规则：\`config/引用溯源规则.md\`
-4. 遵守全局格式规范：\`config/全局格式规范.md\`
+3. 遵守引用溯源规则：\`config/shared/traceability-rules.md\`
+4. 遵守全局格式规范：\`config/shared/format-rules.md\`
 
 ## 知识点信息
 - 名称：数值类型：NUMBER(p,s) → INTEGER / DECIMAL / NUMERIC 等

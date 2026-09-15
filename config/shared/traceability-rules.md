@@ -143,7 +143,7 @@ CHAR 是定长字符串类型，存储时会自动填充空格到指定长度 [^
 
 ## 六、完整示例
 
-YAML 元数据完整示例见 `config/全局格式规范.md` 第四章。
+YAML 元数据完整示例见 `config/shared/format-rules.md` 第四章。
 
 正文引用示例：
 

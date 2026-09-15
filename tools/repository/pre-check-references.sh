@@ -45,7 +45,7 @@ MCP_CONFIG_FILES=(
     "${CODEX_HOME}/config/mcp.json"
     "${REPO_ROOT}/.codex/mcp.json"
     "${REPO_ROOT}/mcp.json"
-    "${REPO_ROOT}/config/knowledge-center/ai-services.json"
+    "${REPO_ROOT}/config/knowledge-center/service.json"
 )
 
 for config_file in "${MCP_CONFIG_FILES[@]}"; do
@@ -136,9 +136,9 @@ echo ""
 echo -e "${BLUE}[检查4] 核心配置文件完整性${NC}"
 
 REQUIRED_CONFIGS=(
-    "config/资料引用策略.md"
-    "config/全局格式规范.md"
-    "config/质量验证标准.md"
+    "config/shared/source-policy.md"
+    "config/shared/format-rules.md"
+    "config/shared/quality-standards.md"
 )
 
 for config in "${REQUIRED_CONFIGS[@]}"; do

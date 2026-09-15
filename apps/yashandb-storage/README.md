@@ -38,7 +38,7 @@ curl http://127.0.0.1:14210/health
 
 运行时默认自动创建缺失的 `KC_*` 表，不删除、不截断已有表。生产运行期应使用只拥有 `KC_*` 对象权限的账号；DBA 账号只用于初始化和迁移。
 
-业务聚合均写入通用表 `KC_RECORD(NAMESPACE, RECORD_KEY, PAYLOAD, REVISION, DELETED)`，并通过命名空间隔离：`assets/catalog`（知识资产）、`incremental/state`（审核与发布）、`documents/metadata` 与 `documents/comments`（文档元数据和评论）、`outlines/metadata`（大纲）、`auth/state`（会话权限）以及 `templates/state`（模板）。因此不为每个 JSON 聚合重复建表，避免结构漂移；DDL 由 `sql/002_record.sql` 统一维护。
+业务聚合均写入通用表 `KC_RECORD(NAMESPACE, RECORD_KEY, PAYLOAD, REVISION, DELETED)`，并通过命名空间隔离：`assets/catalog`（知识资产）、`incremental/state`（审核与发布）、`documents/metadata` 与 `documents/comments`（文档元数据和评论）、`outlines/metadata`（大纲）、`auth/state`（会话权限）、`templates/state`（模板）以及 `gitlab-oauth/credentials`（AES-256-GCM 加密的个人 GitLab 授权）。因此不为每个 JSON 聚合重复建表，避免结构漂移；DDL 由 `sql/002_record.sql` 统一维护。
 
 SQL 迁移目录：
 

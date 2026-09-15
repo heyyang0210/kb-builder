@@ -90,7 +90,7 @@
 
 ### 完整示例
 
-详见 `config/引用溯源规则.md` 第七章。
+详见 `config/shared/traceability-rules.md` 第七章。
 
 ## 五、编写规范
 

@@ -34,7 +34,7 @@ function loadQualityConfig() {
     const runtime = global.__KNOWLEDGE_PLATFORM_PROFILE_RUNTIME__;
     const configPath = runtime
       ? require('../platform-profile/runtime-profile').getResource('qualityRules', 'generation-quality').path
-      : CONFIG_PATHS.processing;
+      : CONFIG_PATHS.contentRules;
     const configText = fs.readFileSync(configPath, 'utf-8');
     const parsed = JSON.parse(configText);
     return parsed.quality || parsed;

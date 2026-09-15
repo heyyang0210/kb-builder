@@ -28,14 +28,14 @@
 ### 生成规则
 
 1. **读取模板**：参考 `knowledge/templates/05-运维SOP类模板.md`
-2. **引用资料**：按 `config/资料引用策略.md`
+2. **引用资料**：按 `config/shared/source-policy.md`
 3. **内容要求**：
    - 每个步骤必须有：操作命令 + 预期输出 + 验证检查
    - 必须有回滚方案
    - 必须有整体验证清单
    - 必须有应急预案
-4. **引用溯源**：遵守 `config/引用溯源规则.md`（引用标注、覆盖率评分、可信度等级）
-5. **格式要求**：遵守 `config/全局格式规范.md`
+4. **引用溯源**：遵守 `config/shared/traceability-rules.md`（引用标注、覆盖率评分、可信度等级）
+5. **格式要求**：遵守 `config/shared/format-rules.md`
 
 ### 章节结构
 

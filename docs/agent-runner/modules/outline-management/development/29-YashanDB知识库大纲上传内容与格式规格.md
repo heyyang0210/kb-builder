@@ -346,7 +346,7 @@ function review(file, normalizedOutline):
 - 后端上传、持久化与 Markdown 解析：[`routes/outline.js`](../../../../routes/outline.js)
 - 现有大纲样本：[`agent-runner/outlines/outline_1783581157782_guxcaa.md`](../../../../outlines/outline_1783581157782_guxcaa.md)、`outlines/*.md`
 - 文档生成模板：[`templates/README.md`](../../../../../templates/README.md)
-- 生成文档全局规范：[`config/全局格式规范.md`](../../../../../config/全局格式规范.md)
-- 生成后质量标准：[`config/质量验证标准.md`](../../../../../config/质量验证标准.md)
+- 生成文档全局规范：[`config/shared/format-rules.md`](../../../../../config/shared/format-rules.md)
+- 生成后质量标准：[`config/shared/quality-standards.md`](../../../../../config/shared/quality-standards.md)
 
 本评分规格只评价大纲是否满足上传与文档生成准备条件，不替代生成后的事实正确性、引用覆盖率、SQL 可执行性和人工技术审核。

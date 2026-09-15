@@ -110,4 +110,4 @@ jsonschema==4.10.3
 # YashanDB 数据库连接：YASDB_JDBC_URL、YASDB_USERNAME、YASDB_PASSWORD
 # YashanDB 存储服务：YASDB_STORAGE_URL、YASDB_STORAGE_HOST、YASDB_STORAGE_PORT
 # OpenAI/模型服务：按 apps/knowledge-center-api 与 apps/pingcode-api 配置文档注入
-# YashanDB 知识库 MCP：按 config/资料引用策略.md 和相关环境配置注入
+# YashanDB 知识库 MCP：按 config/shared/source-policy.md 和相关环境配置注入

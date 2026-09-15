@@ -22,7 +22,7 @@ const DEFAULT_SYNONYM_GROUPS = [
 // 从配置文件加载同义词组
 function loadSynonymGroups() {
   try {
-    const configText = fs.readFileSync(CONFIG_PATHS.processing, 'utf-8');
+    const configText = fs.readFileSync(CONFIG_PATHS.contentRules, 'utf-8');
     const config = JSON.parse(configText).synonyms;
     if (Array.isArray(config.categories)) {
       return config.categories

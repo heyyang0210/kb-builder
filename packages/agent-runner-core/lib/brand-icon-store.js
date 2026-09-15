@@ -16,12 +16,12 @@ class BrandIconError extends Error {
 
 function createBrandIconStore(options = {}) {
   const repositoryRoot = path.resolve(options.repositoryRoot || REPOSITORY_ROOT);
-  const platformPath = path.resolve(options.platformPath || CONFIG_PATHS.platform);
+  const platformPath = path.resolve(options.platformPath || CONFIG_PATHS.product);
   const brandingRoot = path.resolve(options.brandingRoot || path.join(repositoryRoot, 'config', 'knowledge-center', 'branding'));
 
   function current() {
     const platform = readJson(platformPath);
-    const reference = platform.brand?.icon?.resourceRef || 'config/knowledge-center/branding/default.png';
+    const reference = platform.brand?.icon?.resourceRef || 'config/knowledge-center/branding/default-icon.png';
     if (typeof reference !== 'string' || path.isAbsolute(reference) || reference.includes('\\') || reference.split('/').some(part => part === '..' || part === '.')) {
       throw new BrandIconError('BRAND_ICON_PATH_FORBIDDEN', '品牌图标资源路径不合法');
     }

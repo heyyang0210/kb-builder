@@ -2,8 +2,8 @@
 set -euo pipefail
 
 REPO_ROOT="${REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
-CONFIG_DIR="${YASDB_CONFIG_DIR:-$REPO_ROOT/config/database}"
-CONFIG_FILE="$CONFIG_DIR/yashandb.env"
+CONFIG_DIR="${YASDB_CONFIG_DIR:-$REPO_ROOT/config/yashandb}"
+CONFIG_FILE="$CONFIG_DIR/service.env"
 export YASDB_CONFIG_DIR="$CONFIG_DIR"
 
 [[ -f "$CONFIG_FILE" ]] || { echo "数据库配置文件不存在：$CONFIG_FILE" >&2; return 1 2>/dev/null || exit 1; }

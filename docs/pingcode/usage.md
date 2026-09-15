@@ -124,7 +124,7 @@ playwright install chromium
 
 ### 2. 配置账号密码
 
-编辑 `config/pingcode.json`：
+编辑 `config/pingcode/credentials.json`：
 
 ```json
 {
@@ -278,7 +278,7 @@ tools/pingcode-cli/
 #### 空间级爬取流程
 
 ```
-config/pingcode.json
+config/pingcode/credentials.json
        ↓
   PingCodeConfig.load()
        ↓
@@ -393,7 +393,7 @@ client.close()
 
 ## 配置说明
 
-### config/pingcode.json
+### config/pingcode/credentials.json
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
@@ -473,7 +473,7 @@ API 客户端测试
 
 ### Q1: 登录失败怎么办？
 
-检查 `config/pingcode.json` 中的账号密码是否正确。如果是 CAS 单点登录，确保账号密码是 CAS 系统的凭据。
+检查 `config/pingcode/credentials.json` 中的账号密码是否正确。如果是 CAS 单点登录，确保账号密码是 CAS 系统的凭据。
 
 ### Q2: 下载的文件名是乱码？
 
@@ -484,7 +484,7 @@ API 客户端测试
 
 ### Q3: 如何下载其他空间的内容？
 
-在 `config/pingcode.json` 的 `targets` 数组中添加新空间：
+在 `config/pingcode/credentials.json` 的 `targets` 数组中添加新空间：
 
 ```json
 {
@@ -506,7 +506,7 @@ python3 tools/pingcode-cli/cli/space_crawl.py --space YASDOC
 
 ### Q4.1: 下载任务跳转到了错误空间或出现 Playwright 生命周期报错怎么办？
 
-如果 YASDOC 批次日志中出现 YASSTORAGE 页面，优先检查登录入口是否被 `config/pingcode.json` 的 `targets[0]` 污染。Web 下载任务应按当前批次空间登录：有 `space_key` 时使用 `{base_url}/wiki/spaces/{spaceKey}`，没有空间上下文时使用 `{base_url}/wiki`，不要使用任意目标页作为登录入口。
+如果 YASDOC 批次日志中出现 YASSTORAGE 页面，优先检查登录入口是否被 `config/pingcode/credentials.json` 的 `targets[0]` 污染。Web 下载任务应按当前批次空间登录：有 `space_key` 时使用 `{base_url}/wiki/spaces/{spaceKey}`，没有空间上下文时使用 `{base_url}/wiki`，不要使用任意目标页作为登录入口。
 
 如果出现 `It looks like you are using Playwright Sync API inside the asyncio loop` 或 `cannot schedule new futures after shutdown`，说明同步 Playwright 调用没有被稳定隔离在线程池中，或服务关闭后复用了已关闭 executor。后端应通过单 worker 线程池串行执行 PingCode API 调用，并在服务重启/关闭后重新创建 executor。
 
@@ -516,7 +516,7 @@ python3 tools/pingcode-cli/cli/space_crawl.py --space YASDOC
 
 ### Q5: 如何扩展爬取策略？
 
-修改 `config/pingcode.json` 中的 `crawl_strategy` 配置，或运行 CLI 时通过参数覆盖：
+修改 `config/pingcode/credentials.json` 中的 `crawl_strategy` 配置，或运行 CLI 时通过参数覆盖：
 
 ```bash
 python3 tools/pingcode-cli/cli/space_crawl.py --space YASSTORAGE --workers 10 --max-pages 500
@@ -579,7 +579,7 @@ python3 tools/pingcode-cli/cli/migrate_data.py
 
 - 设计文档：`docs/design.md`
 - 实施计划：`docs/implementation-plan.md`
-- 配置文件：`config/pingcode.json`
+- 配置文件：`config/pingcode/credentials.json`
 - 测试用例：`tests/test_api_client.py`
 - 数据迁移：`cli/migrate_data.py`
 - 已下载素材：`data/YASSTORAGE/`

@@ -43,7 +43,7 @@ playwright install chromium
 
 ### 2. 配置账号
 
-编辑 `config/pingcode.json`：
+编辑 `config/pingcode/credentials.json`：
 
 ```json
 {
@@ -123,7 +123,7 @@ python3 -m pip install --user --break-system-packages -r apps/pingcode-api/requi
 python3 -m uvicorn app.main:app --host 0.0.0.0 --port 3500
 ```
 
-命令需要在 `apps/pingcode-api` 目录执行。后端默认监听 `0.0.0.0:3500`，同时提供 `/api/*` 接口和 `/pingcode-materials/` 前端静态文件；可通过仓库根目录的 `start_services.sh` 启动。后端默认使用已配置的持久化浏览器会话和 `config/pingcode.json`，数据写入 `var/pingcode/web`；可通过 `PINGCODE_WEB_DATA_ROOT`、`PINGCODE_CONFIG`、`PINGCODE_PROCESSING_SKILL_ROOT` 和 `PINGCODE_PROCESSING_PROMPT_DRAFT_ROOT` 覆盖。空间树使用 PingCode 原生 `page-tree-v2` 分页接口，不再受旧的 1000 条页面接口限制。
+命令需要在 `apps/pingcode-api` 目录执行。后端默认监听 `0.0.0.0:3500`，同时提供 `/api/*` 接口和 `/pingcode-materials/` 前端静态文件；可通过仓库根目录的 `start_services.sh` 启动。后端默认使用已配置的持久化浏览器会话和 `config/pingcode/credentials.json`，数据写入 `var/pingcode/web`；可通过 `PINGCODE_WEB_DATA_ROOT`、`PINGCODE_CONFIG`、`PINGCODE_PROCESSING_SKILL_ROOT` 和 `PINGCODE_PROCESSING_PROMPT_DRAFT_ROOT` 覆盖。空间树使用 PingCode 原生 `page-tree-v2` 分页接口，不再受旧的 1000 条页面接口限制。
 
 ### 启动前端
 

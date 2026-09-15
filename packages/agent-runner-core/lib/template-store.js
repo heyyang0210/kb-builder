@@ -20,7 +20,7 @@ function createTemplateStore(options = {}) {
   const store = options.store || createAggregateStore({
     namespace: 'templates',
     key: process.env.TEMPLATE_STORE_KEY || 'state',
-    filePath: process.env.TEMPLATE_STORE_FILE || path.join(path.dirname(CONFIG_PATHS.knowledgeAssets), 'templates.json'),
+    filePath: process.env.TEMPLATE_STORE_FILE || path.join(path.dirname(CONFIG_PATHS.knowledgeAssets), 'template-library.json'),
     emptyValue: initialState(),
   });
   const listCache = new Map();

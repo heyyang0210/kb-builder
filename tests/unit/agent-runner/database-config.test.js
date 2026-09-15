@@ -5,7 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const { loadDatabaseConfig, assertNoSecrets } = require('../../../packages/agent-runner-core/lib/database-config');
 
-test('默认配置来自 config/database', () => {
+test('默认配置来自 config/yashandb', () => {
     const config = loadDatabaseConfig();
     assert.match(config.jdbc.url, /^jdbc:yasdb:/);
     assert.ok(config.storage.port > 0);
@@ -26,7 +26,7 @@ test('拒绝配置文件中的敏感字段', () => {
 
 test('可从临时 configRoot 读取统一配置', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'yasdb-config-'));
-    fs.writeFileSync(path.join(root, 'yashandb.env'), 'YASDB_JDBC_URL=jdbc:yasdb://configured/db\nYASDB_USERNAME=u\n');
+    fs.writeFileSync(path.join(root, 'service.env'), 'YASDB_JDBC_URL=jdbc:yasdb://configured/db\nYASDB_USERNAME=u\n');
     const config = loadDatabaseConfig({ configRoot: root, env: {} });
     assert.equal(config.jdbc.url, 'jdbc:yasdb://configured/db');
 });

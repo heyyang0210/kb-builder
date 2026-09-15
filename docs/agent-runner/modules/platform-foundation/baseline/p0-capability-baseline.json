@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-09-09T01:49:32.138Z",
+  "generatedAt": "2026-09-15T06:51:04.898Z",
   "purpose": "知识中心管理平台目标模式重构 P0 事实基线，只读采集，不代表目标模式已完成",
   "sourceOfTruth": "当前工作树、运行服务响应和本文件生成时的文件摘要",
   "entryPoints": [
@@ -38,19 +38,19 @@
   "services": [
     {
       "name": "统一前端网关",
-      "process": "code/code/code/apps/knowledge-center-web/frontend-server.js",
+      "process": "apps/knowledge-center-web/frontend-server.js",
       "port": 13510,
       "health": "GET /knowledge-center/"
     },
     {
       "name": "认证服务",
-      "process": "code/apps/knowledge-center-auth/auth-server.js",
+      "process": "apps/knowledge-center-auth/auth-server.js",
       "port": 14200,
       "health": "GET /knowledge-center/api/auth/config"
     },
     {
       "name": "文档生产服务",
-      "process": "code/apps/knowledge-center-api/server.js",
+      "process": "apps/knowledge-center-api/server.js",
       "port": 14110,
       "health": "GET /api/health"
     },
@@ -62,14 +62,14 @@
     },
     {
       "name": "YashanDB 存储服务",
-      "process": "code/apps/yashandb-storage",
+      "process": "apps/yashandb-storage",
       "port": null,
       "health": "待配置真实 JDBC 环境后验证"
     }
   ],
   "routeInventory": [
     {
-      "source": "code/apps/knowledge-center-api/server.js",
+      "source": "apps/knowledge-center-api/server.js",
       "status": "已由代码或真实 API 证实",
       "routes": [
         "/api/health",
@@ -77,7 +77,7 @@
       ]
     },
     {
-      "source": "code/packages/agent-runner-core/routes/*.js",
+      "source": "packages/agent-runner-core/routes/*.js",
       "status": "已由代码或真实 API 证实",
       "routes": [
         "/",
@@ -254,39 +254,39 @@
   ],
   "persistentSources": [
     {
-      "path": "config/knowledge-center/state/knowledge-assets.json",
+      "path": "runtime/knowledge-center/knowledge-assets.json",
       "status": "已由代码或真实 API 证实",
       "bytes": 54146,
-      "modifiedAt": "2026-09-02T08:11:35.559Z",
+      "modifiedAt": "2026-09-14T08:02:29.265Z",
       "sha256": "0e5db261d393fbea9823cb257b33248dbe5091f9df1664a1e72411a4b020f9c7"
     },
     {
-      "path": "agent-runner/data/document-comments.json",
+      "path": "runtime/agent-runner/data/document-comments.json",
       "status": "已由代码或真实 API 证实",
       "bytes": 36,
       "modifiedAt": "2026-08-27T08:36:08.280Z",
       "sha256": "b11e398ab118089654b4e57996f2f4709fd871b89fcbeedf1eb5979a8f302543"
     },
     {
-      "path": "agent-runner/outlines/metadata.json",
+      "path": "runtime/agent-runner/outlines/metadata.json",
       "status": "已由代码或真实 API 证实",
       "bytes": 48397,
-      "modifiedAt": "2026-09-03T10:15:51.906Z",
+      "modifiedAt": "2026-09-09T08:56:50.810Z",
       "sha256": "48f24a654ff8436e95f3680040411d8902e8555465c50a0f9f4b6f84f6cb70b1"
     },
     {
-      "path": "agent-runner/tmp/doc-processed/metadata.json",
+      "path": "runtime/agent-runner/tmp/doc-processed/metadata.json",
       "status": "已由代码或真实 API 证实",
       "bytes": 2736,
       "modifiedAt": "2026-08-17T03:59:11.780Z",
       "sha256": "3671d47547834275f4fa2a3e783aeb3fde0ce31fc961dfccbd10623fad1215f1"
     },
     {
-      "path": "agent-runner/tmp/incremental-build-state.json",
+      "path": "runtime/agent-runner/tmp/incremental-build-state.json",
       "status": "已由代码或真实 API 证实",
-      "bytes": 24504,
-      "modifiedAt": "2026-09-08T10:13:50.964Z",
-      "sha256": "422a63fdfd49dbc5778620b0affebef97514c5aba350a0ffe84150ac3d8ba6fd"
+      "bytes": 38693,
+      "modifiedAt": "2026-09-11T07:59:02.024Z",
+      "sha256": "52a95458d711ee64abf3338c140b63f75a00ed6258e1b8068ef230a86e284846"
     },
     {
       "path": "apps/pingcode-api/data/state.json",

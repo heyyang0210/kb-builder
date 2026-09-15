@@ -190,8 +190,8 @@ ${JSON.stringify(json, null, 2)}
 ## 执行要求
 1. 使用 Skill：\`${skillFile}\`
 2. 使用模板：\`${templateFile}\`
-3. 遵守 \`config/全局格式规范.md\`
-4. 按 \`config/质量验证标准.md\` 进行自检
+3. 遵守 \`config/shared/format-rules.md\`
+4. 按 \`config/shared/quality-standards.md\` 进行自检
 5. 输出保存到 \`${getOutputPath(data)}\`
 6. 在 \`logs/\` 记录生成日志
 

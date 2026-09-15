@@ -62,7 +62,7 @@ YashanDB 知识库 MCP 是实时知识查询服务，作为**最高优先级**�
 - **禁止直接复制** Oracle 知识库内容，必须改写为 YashanDB 版本
 - 保留结构和方法论，替换具体产品特性
 - 标注与 Oracle 的差异点（如有）
-- 引用格式参见 `config/资料引用策略.md`
+- 引用格式参见 `config/shared/source-policy.md`
 
 ## 前置检查
 

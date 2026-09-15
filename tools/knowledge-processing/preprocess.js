@@ -39,7 +39,7 @@ function getFlagValue(flag) {
 // === 加载配置 ===
 
 const BASE_DIR = path.resolve(__dirname, '..', '..');
-const configPath = path.join(BASE_DIR, 'config', 'knowledge-center', 'processing.json');
+const configPath = path.join(BASE_DIR, 'config', 'knowledge-center', 'content-rules.json');
 
 let config;
 try {

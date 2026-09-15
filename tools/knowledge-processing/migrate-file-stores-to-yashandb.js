@@ -16,7 +16,7 @@ function digest(value) {
 function sources() {
   const fixed = [
     ['auth', 'state', path.join(AGENT_RUNNER_RUNTIME_ROOT, 'tmp', 'knowledge-center-auth.json')],
-    ['assets', 'catalog', path.join(root, 'config', 'knowledge-center', 'state', 'knowledge-assets.json')],
+    ['assets', 'catalog', path.join(root, 'runtime', 'knowledge-center', 'knowledge-assets.json')],
     ['outlines', 'metadata', path.join(AGENT_RUNNER_RUNTIME_ROOT, 'outlines', 'metadata.json')],
     ['documents', 'metadata', path.join(AGENT_RUNNER_RUNTIME_ROOT, 'tmp', 'doc-processed', 'metadata.json')],
     ['documents', 'comments', path.join(AGENT_RUNNER_RUNTIME_ROOT, 'data', 'document-comments.json')],

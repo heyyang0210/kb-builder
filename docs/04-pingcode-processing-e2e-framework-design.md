@@ -16,7 +16,7 @@
 
 本期采用 FastAPI 进程内后台线程和现有 `JsonStore`，不引入 SQLite、独立 Worker、消息队列、容器、向量数据库或图数据库。该选择只用于尽快验证端到端框架，不代表生产可靠性设计已经完成。
 
-模型配置统一复用 YashanDB 知识库文档生成器 `config/knowledge-center/ai-services.json 的 model 分区`。密钥仅由 `agent-runner` 的 `ConfigManager` 解密并调用模型，Python 服务不读取、不复制、不记录模型密钥。
+模型配置统一复用 YashanDB 知识库文档生成器 `config/knowledge-center/service.json` 的 `model` 分区，默认使用 `gpt-5.5`，同时登记 DeepSeek 兼容模型。密钥仅由 `agent-runner` 的 `ConfigManager` 解密并调用模型，Python 服务不读取、不复制、不记录模型密钥。
 
 ## 二、模块与接口
 

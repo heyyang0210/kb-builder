@@ -1,14 +1,13 @@
 const path = require('path');
-const { AGENT_RUNNER_CONFIG_ROOT, AGENT_RUNNER_RUNTIME_ROOT } = require('./repo-paths');
+const { REPOSITORY_ROOT, AGENT_RUNNER_CONFIG_ROOT, AGENT_RUNNER_RUNTIME_ROOT } = require('./repo-paths');
 
-// 统一配置目录注册表：静态配置、平台能力清单与运行态事实分离。
+// 面向运维场景的三份配置：产品定义、服务运行、内容规则。
 const CONFIG_PATHS = Object.freeze({
-  platform: path.join(AGENT_RUNNER_CONFIG_ROOT, 'platform.json'),
-  runtime: path.join(AGENT_RUNNER_CONFIG_ROOT, 'runtime.json'),
-  aiServices: path.join(AGENT_RUNNER_CONFIG_ROOT, 'ai-services.json'),
-  processing: path.join(AGENT_RUNNER_CONFIG_ROOT, 'processing.json'),
-  knowledgeAssets: path.join(AGENT_RUNNER_CONFIG_ROOT, 'state', 'knowledge-assets.json'),
-  gitlabConnections: path.join(AGENT_RUNNER_CONFIG_ROOT, 'state', 'gitlab-connections.json'),
+  product: path.join(AGENT_RUNNER_CONFIG_ROOT, 'product.json'),
+  service: path.join(AGENT_RUNNER_CONFIG_ROOT, 'service.json'),
+  contentRules: path.join(AGENT_RUNNER_CONFIG_ROOT, 'content-rules.json'),
+  knowledgeAssets: path.join(REPOSITORY_ROOT, 'runtime', 'knowledge-center', 'knowledge-assets.json'),
+  gitlabConnections: path.join(REPOSITORY_ROOT, 'runtime', 'knowledge-center', 'gitlab-connections.json'),
   migrationRoot: path.join(AGENT_RUNNER_RUNTIME_ROOT, 'repository-migration'),
 });
 

@@ -48,7 +48,7 @@ def load_settings() -> Settings:
         os.getenv("PINGCODE_WEB_DATA_ROOT", str(REPOSITORY_ROOT / "runtime" / "pingcode" / "web"))
     ).expanduser().resolve()
     config_path = Path(
-        os.getenv("PINGCODE_CONFIG", str(CONFIG_DIR / "pingcode.json"))
+        os.getenv("PINGCODE_CONFIG", str(CONFIG_DIR / "credentials.json"))
     ).expanduser().resolve()
     origins = tuple(
         origin.strip()

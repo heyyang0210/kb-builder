@@ -15,7 +15,7 @@ const TAG_LENGTH = 16;
 
 class ConfigManager {
   constructor() {
-    this.configDir = path.dirname(CONFIG_PATHS.aiServices);
+    this.configDir = path.dirname(CONFIG_PATHS.service);
     this.encryptionKey = this._deriveKey(process.env.AGENT_RUNNER_KEY || 'default-key');
     this.cache = new Map();
     this._watchConfigDir();
@@ -121,7 +121,7 @@ class ConfigManager {
     }
 
     const section = this._section(configName);
-    const filePath = section ? CONFIG_PATHS.aiServices : path.join(this.configDir, `${configName}.json`);
+    const filePath = section ? CONFIG_PATHS.service : path.join(this.configDir, `${configName}.json`);
 
     if (!fs.existsSync(filePath)) {
       logger.debug(`Config file not found: ${filePath}`);
@@ -146,7 +146,7 @@ class ConfigManager {
 
   async save(configName, config) {
     const section = this._section(configName);
-    const filePath = section ? CONFIG_PATHS.aiServices : path.join(this.configDir, `${configName}.json`);
+    const filePath = section ? CONFIG_PATHS.service : path.join(this.configDir, `${configName}.json`);
 
     try {
       const toSave = this._encryptSensitiveFields({ ...config });
@@ -209,7 +209,7 @@ class ConfigManager {
     try {
       fs.watch(this.configDir, (eventType, filename) => {
         if (filename && filename.endsWith('.json')) {
-          if (filename === path.basename(CONFIG_PATHS.aiServices)) this.cache.clear();
+          if (filename === path.basename(CONFIG_PATHS.service)) this.cache.clear();
           else this.cache.delete(filename.replace('.json', ''));
           logger.debug(`Config cache cleared for: ${filename}`);
         }

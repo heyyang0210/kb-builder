@@ -1222,9 +1222,9 @@ npm run dev
 - 前端交互详细设计：`docs/03-pingcode-frontend-interaction-detail.md`
 - LLM 可控加工专项设计：`docs/05-pingcode-processing-llm-control-design.md`
 - 配置模板：`config/.env.example`
-- 应用配置：`config/app.yaml`
-- PingCode 配置：`config/pingcode.yaml`
-- 预处理配置：`config/preprocess.yaml`
+- 应用配置：`config/shared/application.yaml`
+- PingCode 配置：`config/pingcode/processing.yaml`
+- 预处理配置：`config/shared/preprocessing.yaml`
 - Docker 配置：`docker-compose.yml`（后续规划，当前不实施）
 - 后端代码：`backend/`
 - 前端代码：`frontend/`

@@ -61,7 +61,9 @@ if (String(process.env.KNOWLEDGE_STORAGE_MODE || 'file').toLowerCase() === 'data
   }
 }
 const brandIconStore = createBrandIconStore({
-  platformPath: process.env.KNOWLEDGE_CENTER_PLATFORM_CONFIG ? path.resolve(process.env.KNOWLEDGE_CENTER_PLATFORM_CONFIG) : CONFIG_PATHS.platform,
+  platformPath: process.env.KNOWLEDGE_CENTER_PRODUCT_CONFIG || process.env.KNOWLEDGE_CENTER_PLATFORM_CONFIG
+    ? path.resolve(process.env.KNOWLEDGE_CENTER_PRODUCT_CONFIG || process.env.KNOWLEDGE_CENTER_PLATFORM_CONFIG)
+    : CONFIG_PATHS.product,
   brandingRoot: process.env.KNOWLEDGE_CENTER_BRANDING_ROOT ? path.resolve(process.env.KNOWLEDGE_CENTER_BRANDING_ROOT) : undefined,
 });
 const INCREMENTAL_BUILD_STATE = process.env.INCREMENTAL_BUILD_STATE
@@ -75,7 +77,7 @@ const GITLAB_CONFIG_PATH = process.env.KNOWLEDGE_CENTER_GITLAB_CONFIG
   : CONFIG_PATHS.gitlabConnections;
 const GITLAB_DOCUMENT_TYPES_PATH = process.env.KNOWLEDGE_CENTER_GITLAB_DOCUMENT_TYPES
   ? path.resolve(process.env.KNOWLEDGE_CENTER_GITLAB_DOCUMENT_TYPES)
-  : CONFIG_PATHS.processing;
+  : CONFIG_PATHS.contentRules;
 
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',

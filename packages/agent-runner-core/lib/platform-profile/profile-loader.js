@@ -20,7 +20,7 @@ const ALLOWED_RESOURCE_PREFIXES = [
   'knowledge/templates/',
   'config/knowledge-center/branding/'
 ];
-const ALLOWED_RESOURCE_FILES = new Set(['config/knowledge-center/processing.json']);
+const ALLOWED_RESOURCE_FILES = new Set(['config/knowledge-center/content-rules.json']);
 const CONNECTOR_REQUIRED_SECRETS = {
   'local-upload': [],
   pingcode: ['secret:connectors/pingcode'],
@@ -203,7 +203,7 @@ function buildContext(profile, resources, env, secretResolver) {
 
 function loadProfile(options = {}) {
   const repositoryRoot = path.resolve(options.repositoryRoot || path.join(__dirname, '../../../..'));
-  const registry = options.registry || { yashandb: 'config/knowledge-center/platform.json' };
+  const registry = options.registry || { yashandb: 'config/knowledge-center/product.json' };
   const env = options.env || process.env;
   const explicitlySet = Object.prototype.hasOwnProperty.call(env, 'KNOWLEDGE_PLATFORM_PROFILE');
   const profileId = options.profileId !== undefined ? options.profileId : (explicitlySet ? env.KNOWLEDGE_PLATFORM_PROFILE : DEFAULT_PROFILE_ID);
