@@ -115,9 +115,22 @@ describe('知识资产 GitLab 阅读前端契约', () => {
   });
   test('OAuth 状态通过同源 API 读取，令牌不暴露到前端', () => {
     const api = read('apps/knowledge-center-web/frontend/knowledge-center/common/api/gitlab-api.js');
-    expect(api).toContain('/knowledge-center/api/gitlab/oauth/status');
+    expect(api).toContain('/knowledge-center/api/gitlab/oauth/accounts');
     expect(api).toContain('/knowledge-center/api/gitlab/oauth/disconnect');
     expect(api).not.toContain('accessToken');
+  });
+  test('个人设置按实例连接并使用用户可理解的状态', () => {
+    const app = read('apps/knowledge-center-web/frontend/knowledge-center/app.js');
+    for (const label of ['已连接', '未连接', '暂时不可用', '需要重新连接', '平台已停用', '最近使用']) expect(app).toContain(label);
+    expect(app).toContain('data-external-account-disconnect');
+    expect(app).toContain('loadGitLabOAuthAccounts');
+    expect(app).not.toContain('最近授权');
+    expect(app).not.toContain('Token 有效');
+    expect(app).not.toContain('正在续期');
+    expect(app).not.toContain('可用范围');
+    expect(app).not.toContain('连接由系统自动保持');
+    const styles = read('apps/knowledge-center-web/frontend/knowledge-center/styles.css');
+    expect(styles).toContain('max-height:340px;overflow-y:auto');
   });
   test('OAuth Token 使用 GitLab 要求的表单编码交换', () => {
     const oauth = read('packages/agent-runner-core/lib/gitlab-oauth.js');

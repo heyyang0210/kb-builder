@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const { loadPlatformContext, loadPlatformProjection } = require('../lib/platform-context-gateway');
 const { GitLabConnectorError, readConfig: readGitLabConfig, upsertConnection, recordVerification, setConnectionStatus, upsertMapping, findMapping, findConnection, listBranches, listTree, readFile: readGitLabFile, listCommits, sanitizeConnection, authorizeMappedRequest } = require('../lib/gitlab-connector');
-const { GitLabOAuthError, config: gitLabOAuthConfig, start: startGitLabOAuth, callback: completeGitLabOAuth, tokenForUser, status: gitLabOAuthStatus } = require('../lib/gitlab-oauth');
+const { GitLabOAuthError, config: gitLabOAuthConfig, start: startGitLabOAuth, callback: completeGitLabOAuth, tokenForUser, status: gitLabOAuthStatus, disconnect: disconnectGitLabOAuth } = require('../lib/gitlab-oauth');
 const { ASSET_STATUS_LABELS, systemAssetStatus, assetStatus, projectAsset, queryKnowledgeAssets: queryKnowledgeAssetsBase, isPlatformAdmin } = require('../lib/knowledge-asset-utils');
 const { matchCleaningEndpoint } = require('../lib/knowledge-center-cleaning-contract');
 const { createTemplateStore } = require('../lib/template-store');
@@ -426,6 +426,18 @@ function createKnowledgeCenterHandler(options) {
     return [...new Set(values)].sort((a, b) => a.length - b.length).filter((value, index, all) => !all.slice(0, index).some(parent => value.startsWith(`${parent}/`)));
   }
 
+  async function gitLabRequestForUser(session, connection, operation) {
+    const accessToken = await tokenForUser(session?.user?.id, connection);
+    try {
+      return await operation(accessToken ? { accessToken } : {});
+    } catch (error) {
+      if (error?.code !== 'GITLAB_UNAUTHORIZED' || !accessToken) throw error;
+      const refreshed = await tokenForUser(session?.user?.id, connection, { forceRefresh: true });
+      if (!refreshed) throw error;
+      return operation({ accessToken: refreshed });
+    }
+  }
+
   async function handbookRepositoryStatistics(res, session, handbookId, params) {
     requireHandbookRead(session, handbookId);
     const { mapping, connection } = findMapping(handbookId, GITLAB_CONFIG_PATH);
@@ -435,17 +447,15 @@ function createKnowledgeCenterHandler(options) {
     if (!mapping.enabledBranches.includes(ref)) throw new GitLabConnectorError('GITLAB_BRANCH_NOT_ALLOWED', '该业务版本未在手册映射中启用', 403);
     if (!roots.length) throw new GitLabConnectorError('GITLAB_LANGUAGE_NOT_MAPPED', '该语言尚未配置仓库内容路径', 404);
     const rules = repositoryDocumentRules();
-    const accessToken = tokenForUser(session?.user?.id, connection.host);
-    const requestOptions = accessToken ? { accessToken } : {};
     const chapters = new Set();
     const documents = new Set();
-    const branch = (await listBranches(connection, requestOptions)).find(item => item.name === ref);
+    const branch = (await gitLabRequestForUser(session, connection, options => listBranches(connection, options))).find(item => item.name === ref);
     if (!branch) throw new GitLabConnectorError('GITLAB_BRANCH_NOT_FOUND', 'GitLab 分支不存在', 404);
     const headSha = branch.commitSha || null;
     for (const root of roots) {
       const rootExtension = path.extname(root).toLowerCase();
       if (rules.extensions.has(rootExtension) && !rules.excludedNames.has(path.basename(root).toLowerCase())) { documents.add(root); continue; }
-      const entries = await listTree(connection, ref, root, requestOptions);
+      const entries = await gitLabRequestForUser(session, connection, options => listTree(connection, ref, root, options));
       for (const entry of entries) {
         if (entry.type === 'tree') { chapters.add(entry.path); continue; }
         const ext = path.extname(entry.path).toLowerCase();
@@ -459,10 +469,12 @@ function createKnowledgeCenterHandler(options) {
     const pathname = new URL(req.url, 'http://localhost').pathname;
     try {
       if (req.method === 'GET' && pathname === '/knowledge-center/api/gitlab/oauth/start') {
-        if (forbidUnlessPlatformAdmin(res, session)) return;
         const params = new URL(req.url, 'http://localhost').searchParams;
         const connection = findConnection(params.get('connectionId') || '', GITLAB_CONFIG_PATH);
-        const returnTo = params.get('returnTo') || '/knowledge-center/platform';
+        const projected = sanitizeConnection(connection);
+        if (projected.authMode !== 'user_oauth') throw new GitLabOAuthError('GITLAB_OAUTH_NOT_REQUIRED', '该连接由平台统一维护，无需连接个人账号', 409);
+        if (projected.managementStatus === 'disabled' || connection.mode === 'disabled') throw new GitLabOAuthError('GITLAB_CONNECTION_INACTIVE', '该 GitLab 连接已由平台停用', 409);
+        const returnTo = params.get('returnTo') || '/knowledge-center/?externalAccount=1';
         const authorizationUrl = startGitLabOAuth({ userId: session?.user?.id, connectionId: connection.id, host: connection.host, returnTo });
         res.writeHead(302, { Location: authorizationUrl, 'Cache-Control': 'no-store' }); res.end(); return;
       }
@@ -473,11 +485,25 @@ function createKnowledgeCenterHandler(options) {
       }
       if (req.method === 'GET' && pathname === '/knowledge-center/api/gitlab/oauth/status') {
         const params = new URL(req.url, 'http://localhost').searchParams;
-        let host = params.get('host') || null;
-        if (params.get('connectionId')) host = findConnection(params.get('connectionId'), GITLAB_CONFIG_PATH).host;
-        const data = gitLabOAuthStatus(session?.user?.id, host);
+        const cfg = readGitLabConfig(GITLAB_CONFIG_PATH);
+        const connection = params.get('connectionId') ? findConnection(params.get('connectionId'), GITLAB_CONFIG_PATH) : (cfg.connections || []).find(item => item.authMode === 'user_oauth') || null;
+        const data = await gitLabOAuthStatus(session?.user?.id, connection);
         res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
         res.end(JSON.stringify({ success: true, data })); return;
+      }
+      if (req.method === 'GET' && pathname === '/knowledge-center/api/gitlab/oauth/accounts') {
+        const cfg = readGitLabConfig(GITLAB_CONFIG_PATH);
+        const mappingCounts = new Map();
+        for (const mapping of cfg.mappings || []) mappingCounts.set(mapping.connectionId, (mappingCounts.get(mapping.connectionId) || 0) + 1);
+        const candidates = (cfg.connections || []).filter(item => sanitizeConnection(item).authMode === 'user_oauth');
+        const items = await Promise.all(candidates.map(async connection => {
+          const projected = sanitizeConnection(connection);
+          const disabled = projected.managementStatus === 'disabled' || connection.mode === 'disabled';
+          const account = disabled ? { connected: false, status: 'platform_disabled', updatedAt: null, lastUsedAt: null } : await gitLabOAuthStatus(session?.user?.id, connection);
+          return { connectionId: connection.id, name: projected.name, host: new URL(connection.host).host, linkedHandbookCount: mappingCounts.get(connection.id) || 0, status: account.status, connected: account.connected, updatedAt: account.updatedAt, lastUsedAt: account.lastUsedAt };
+        }));
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify({ success: true, data: { items } })); return;
       }
       if (req.method === 'GET' && pathname === '/knowledge-center/api/gitlab/oauth/config') {
         const oauth = require('../lib/gitlab-oauth');
@@ -488,12 +514,13 @@ function createKnowledgeCenterHandler(options) {
       }
       if (req.method === 'POST' && pathname === '/knowledge-center/api/gitlab/oauth/disconnect') {
         const params = new URL(req.url, 'http://localhost').searchParams;
-        const host = params.get('host') || null;
-        const data = gitLabOAuthStatus(session?.user?.id, host);
-        const oauth = require('../lib/gitlab-oauth');
-        if (typeof oauth.disconnect === 'function') oauth.disconnect(session?.user?.id, host);
+        const connectionId = String(params.get('connectionId') || '');
+        if (!connectionId) throw new GitLabOAuthError('GITLAB_CONNECTION_REQUIRED', '请选择要解除的 GitLab 连接', 400);
+        const connection = findConnection(connectionId, GITLAB_CONFIG_PATH);
+        if (sanitizeConnection(connection).authMode !== 'user_oauth') throw new GitLabOAuthError('GITLAB_OAUTH_NOT_REQUIRED', '该连接不属于个人账号', 409);
+        disconnectGitLabOAuth(session?.user?.id, connection.id);
         res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
-        res.end(JSON.stringify({ success: true, data: { ...data, connected: false } })); return;
+        res.end(JSON.stringify({ success: true, data: { connectionId, connected: false, status: 'disconnected' } })); return;
       }
       const handbookAccess = pathname.match(/^\/knowledge-center\/api\/gitlab\/handbooks\/([^/]+)\/access-status$/);
       if (handbookAccess && req.method === 'GET') {
@@ -510,7 +537,7 @@ function createKnowledgeCenterHandler(options) {
           res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
           res.end(JSON.stringify({ success: true, data: { connectionId: connection.id, connectionName: projected.name, project: projected.project, authMode: 'service_account', connected: configured, canRead: configured, nextAction: configured ? null : 'contact_admin', message: configured ? '可读取仓库内容' : '平台读取凭证尚未配置' } })); return;
         }
-        const oauthStatus = gitLabOAuthStatus(session?.user?.id, connection.host);
+        const oauthStatus = await gitLabOAuthStatus(session?.user?.id, connection);
         const oauth = gitLabOAuthConfig();
         const configured = Boolean(oauth.clientId && oauth.clientSecret && oauth.redirectUri);
         res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
@@ -580,10 +607,9 @@ function createKnowledgeCenterHandler(options) {
         }
         const connection = findConnection(connectionId, GITLAB_CONFIG_PATH);
         if ((connection.status || 'active') === 'inactive') throw new GitLabConnectorError('GITLAB_CONNECTION_INACTIVE', '已停用连接不能验证，请先重新启用', 409);
-        const accessToken = tokenForUser(session?.user?.id, connection.host);
         let data;
         try {
-          const branches = await listBranches(connection, accessToken ? { accessToken } : {});
+          const branches = await gitLabRequestForUser(session, connection, options => listBranches(connection, options));
           data = { connectionId: connection.id, status: 'verified', branchCount: branches.length, verifiedAt: new Date().toISOString() };
         } catch (error) {
           const failed = { connectionId: connection.id, status: 'failed', verifiedAt: new Date().toISOString(), error: { code: error.code || 'GITLAB_VERIFY_FAILED', message: error.message } };
@@ -617,12 +643,10 @@ function createKnowledgeCenterHandler(options) {
         if (req.method !== 'GET') { res.writeHead(405); res.end(); return; }
         const connection = findConnection(decodeURIComponent(direct[1]), GITLAB_CONFIG_PATH);
         const params = new URL(req.url, 'http://localhost').searchParams;
-        const accessToken = tokenForUser(session?.user?.id, connection.host);
-        const requestOptions = accessToken ? { accessToken } : {};
         let data;
-        if (direct[2] === 'branches') data = await listBranches(connection, requestOptions);
-        else if (direct[2] === 'tree') data = await listTree(connection, params.get('ref') || connection.defaultBranch, params.get('path') || '', requestOptions);
-        else data = await readGitLabFile(connection, params.get('ref') || connection.defaultBranch, params.get('path') || '', requestOptions);
+        if (direct[2] === 'branches') data = await gitLabRequestForUser(session, connection, options => listBranches(connection, options));
+        else if (direct[2] === 'tree') data = await gitLabRequestForUser(session, connection, options => listTree(connection, params.get('ref') || connection.defaultBranch, params.get('path') || '', options));
+        else data = await gitLabRequestForUser(session, connection, options => readGitLabFile(connection, params.get('ref') || connection.defaultBranch, params.get('path') || '', options));
         res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
         res.end(JSON.stringify({ success: true, data })); return;
       }
@@ -644,31 +668,24 @@ function createKnowledgeCenterHandler(options) {
         let data;
         if (mapped[2] === 'branches') {
           const asset = readKnowledgeAssets().handbooks.find(item => item.handbookId === mapping.handbookId);
-          const accessToken = tokenForUser(session?.user?.id, connection.host);
-          const requestOptions = accessToken ? { accessToken } : {};
           data = {
-            items: (await listBranches(connection, requestOptions)).filter(item => mapping.enabledBranches.includes(item.name)),
+            items: (await gitLabRequestForUser(session, connection, options => listBranches(connection, options))).filter(item => mapping.enabledBranches.includes(item.name)),
             defaultBranch: mapping.defaultBranch, handbookName: asset?.name || mapping.handbookId,
             connectionName: connection.name, project: connection.project,
             languages: { zh: mapping.zhPaths.length > 0, en: mapping.enPaths.length > 0 },
           };
         } else if (mapped[2] === 'commits') {
-          const accessToken = tokenForUser(session?.user?.id, connection.host);
-          const requestOptions = accessToken ? { accessToken } : {};
-          data = await listCommits(connection, ref, requestOptions);
+          data = await gitLabRequestForUser(session, connection, options => listCommits(connection, ref, options));
         } else if (mapped[2] === 'tree') {
           const requested = params.get('path') || '';
           const roots = language === 'en' ? mapping.enPaths : mapping.zhPaths;
           if (requested) authorizeMappedRequest(mapping, ref, language, requested);
           else authorizeMappedRequest(mapping, ref, language, roots[0]);
-          const accessToken = tokenForUser(session?.user?.id, connection.host);
-          const requestOptions = accessToken ? { accessToken } : {};
-          const lists = await Promise.all((requested ? [requested] : roots).map(root => listTree(connection, ref, root, requestOptions)));
+          const lists = await gitLabRequestForUser(session, connection, options => Promise.all((requested ? [requested] : roots).map(root => listTree(connection, ref, root, options))));
           data = lists.flat().filter(item => roots.some(root => item.path === root || item.path.startsWith(`${root}/`)));
         } else {
           const requested = authorizeMappedRequest(mapping, ref, language, params.get('path') || '');
-          const accessToken = tokenForUser(session?.user?.id, connection.host);
-          data = await readGitLabFile(connection, ref, requested, accessToken ? { accessToken } : {});
+          data = await gitLabRequestForUser(session, connection, options => readGitLabFile(connection, ref, requested, options));
           if (params.get('raw') === '1' && data.encoding === 'base64') {
             const media = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp' }[path.extname(requested).toLowerCase()] || 'application/octet-stream';
             res.writeHead(200, { 'Content-Type': media, 'Cache-Control': 'private, max-age=60' });

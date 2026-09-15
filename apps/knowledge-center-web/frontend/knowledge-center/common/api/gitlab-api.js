@@ -23,8 +23,10 @@ export const loadGitLabConnections = (params = new URLSearchParams()) => {
   return request(`${endpoint}${query ? `?${query}` : ''}`);
 };
 export const loadGitLabOAuthStatus = () => request('/knowledge-center/api/gitlab/oauth/status');
+export const loadGitLabOAuthAccounts = () => request('/knowledge-center/api/gitlab/oauth/accounts');
 export const loadGitLabOAuthConfig = () => request('/knowledge-center/api/gitlab/oauth/config');
-export const disconnectGitLabOAuth = () => request('/knowledge-center/api/gitlab/oauth/disconnect', { method: 'POST', headers: { Accept: 'application/json', 'Idempotency-Key': idempotencyKey('gitlab-oauth-disconnect') } });
+export const gitLabOAuthHref = connectionId => `/knowledge-center/api/gitlab/oauth/start?connectionId=${encodeURIComponent(connectionId)}&returnTo=${encodeURIComponent('/knowledge-center/?externalAccount=1')}`;
+export const disconnectGitLabOAuth = connectionId => request(`/knowledge-center/api/gitlab/oauth/disconnect?connectionId=${encodeURIComponent(connectionId)}`, { method: 'POST', headers: { Accept: 'application/json', 'Idempotency-Key': idempotencyKey('gitlab-oauth-disconnect') } });
 export const loadHandbookGitLabAccess = handbookId => request(`${handbookEndpoint}/${encodeURIComponent(handbookId)}/access-status`);
 export const handbookGitLabOAuthHref = (handbookId, returnTo) => `${handbookEndpoint}/${encodeURIComponent(handbookId)}/oauth/start?returnTo=${encodeURIComponent(returnTo)}`;
 export const saveGitLabConnection = value => request(endpoint, { method: 'PUT', headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'Idempotency-Key': idempotencyKey('gitlab-connection') }, body: JSON.stringify(value) });

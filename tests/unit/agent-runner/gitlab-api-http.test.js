@@ -23,6 +23,7 @@ describe('GitLab same-origin HTTP API', () => {
       res.end(JSON.stringify({ content: { user: { id: admin ? 'admin' : noRead ? 'no-read' : 'reader' }, roles: admin ? ['PLATFORM_ADMIN'] : ['AUTHOR'], allowedActions: admin ? ['platform:manage', 'knowledge:read'] : noRead ? [] : ['knowledge:read'] } }));
     });
     await new Promise(resolve => authServer.listen(0, '127.0.0.1', resolve));
+    process.env.KNOWLEDGE_CENTER_AUTH_HOST = '127.0.0.1';
     process.env.KNOWLEDGE_CENTER_AUTH_PORT = String(authServer.address().port);
     process.env.KNOWLEDGE_ASSETS_CONFIG = assets;
     process.env.KNOWLEDGE_CENTER_GITLAB_CONFIG = path.join(tempRoot, 'gitlab.json');
@@ -31,6 +32,8 @@ describe('GitLab same-origin HTTP API', () => {
     process.env.KNOWLEDGE_CENTER_GITLAB_OAUTH_CLIENT_SECRET = 'http-secret';
     process.env.KNOWLEDGE_CENTER_GITLAB_OAUTH_REDIRECT_URI = 'http://127.0.0.1:13510/knowledge-center/api/gitlab/oauth/callback';
     process.env.KNOWLEDGE_CENTER_GITLAB_OAUTH_DEV_HTTP = 'true';
+    process.env.KNOWLEDGE_CENTER_OAUTH_ENCRYPTION_KEY = 'http-test-encryption-key';
+    process.env.KNOWLEDGE_STORAGE_MODE = 'file';
     process.env.GITLAB_TOKEN_local_read = 'test-only-token';
     gitlabServer = http.createServer((req, res) => {
       if (req.headers['private-token'] !== 'test-only-token') { res.writeHead(401); res.end(JSON.stringify({ message: 'unauthorized' })); return; }
@@ -53,6 +56,7 @@ describe('GitLab same-origin HTTP API', () => {
     await new Promise(resolve => gitlabServer.close(resolve));
     fs.rmSync(tempRoot, { recursive: true, force: true });
     delete process.env.KNOWLEDGE_CENTER_AUTH_PORT;
+    delete process.env.KNOWLEDGE_CENTER_AUTH_HOST;
     delete process.env.KNOWLEDGE_ASSETS_CONFIG;
     delete process.env.KNOWLEDGE_CENTER_GITLAB_CONFIG;
     delete process.env.KNOWLEDGE_CENTER_GITLAB_ALLOWED_HOSTS;
@@ -60,6 +64,8 @@ describe('GitLab same-origin HTTP API', () => {
     delete process.env.KNOWLEDGE_CENTER_GITLAB_OAUTH_CLIENT_SECRET;
     delete process.env.KNOWLEDGE_CENTER_GITLAB_OAUTH_REDIRECT_URI;
     delete process.env.KNOWLEDGE_CENTER_GITLAB_OAUTH_DEV_HTTP;
+    delete process.env.KNOWLEDGE_CENTER_OAUTH_ENCRYPTION_KEY;
+    delete process.env.KNOWLEDGE_STORAGE_MODE;
     delete process.env.GITLAB_TOKEN_local_read;
   });
 
@@ -68,6 +74,20 @@ describe('GitLab same-origin HTTP API', () => {
     expect(response.status).toBe(403);
     const direct = await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections/unknown/tree`, { headers: { cookie: 'reader=1' } });
     expect(direct.status).toBe(403);
+  });
+
+  test('ordinary users can list safe personal-account projections and start only configured OAuth connections', async () => {
+    const configured = await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections`, {
+      method: 'POST', headers: { cookie: 'admin=1', 'content-type': 'application/json', 'idempotency-key': 'http-personal-account' },
+      body: JSON.stringify({ name: '公司研发 GitLab', host: gitlabUrl, project: 'cod-doc/personal', mode: 'sandbox', authMode: 'user_oauth', purpose: 'read' })
+    });
+    const connection = (await configured.json()).data;
+    const accounts = await fetch(`${baseUrl}/knowledge-center/api/gitlab/oauth/accounts`, { headers: { cookie: 'reader=1' } });
+    expect(accounts.status).toBe(200);
+    await expect(accounts.json()).resolves.toMatchObject({ data: { items: expect.arrayContaining([expect.objectContaining({ connectionId: connection.id, name: '公司研发 GitLab', status: 'disconnected' })]) } });
+    const start = await fetch(`${baseUrl}/knowledge-center/api/gitlab/oauth/start?connectionId=${encodeURIComponent(connection.id)}`, { headers: { cookie: 'reader=1' }, redirect: 'manual' });
+    expect(start.status).toBe(302);
+    expect(new URL(start.headers.get('location')).pathname).toBe('/oauth/authorize');
   });
 
   test('knowledge readers can inspect handbook access status without enumerating connections', async () => {

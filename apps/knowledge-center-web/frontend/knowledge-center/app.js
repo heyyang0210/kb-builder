@@ -1,5 +1,5 @@
 import { archiveAsset, createAsset, deleteOutline, importOutline, loadAssets, loadOutlineData, loadPlatformData, resolveAssetStatus, restoreAsset, updateAsset, updateAssetStatus, loadPlatformPermissions, updatePlatformUserPermissions } from './common/api/platform-api.js';
-import { disconnectGitLabOAuth, loadGitLabBranches, loadGitLabConnections, loadGitLabOAuthStatus, loadGitLabOAuthConfig, loadGitLabTree, loadHandbookGitLabAccess, loadHandbookRepository, loadHandbookRepositoryCommits, loadHandbookRepositoryFile, loadHandbookRepositoryMapping, loadHandbookRepositoryStatistics, loadHandbookRepositoryTree, saveGitLabConnection, saveHandbookRepositoryMapping, createGitLabConnection, updateGitLabConnection, verifyGitLabConnection, disableGitLabConnection, enableGitLabConnection, searchGitLabConnections } from './common/api/gitlab-api.js';
+import { disconnectGitLabOAuth, gitLabOAuthHref, loadGitLabBranches, loadGitLabConnections, loadGitLabOAuthAccounts, loadGitLabOAuthStatus, loadGitLabOAuthConfig, loadGitLabTree, loadHandbookGitLabAccess, loadHandbookRepository, loadHandbookRepositoryCommits, loadHandbookRepositoryFile, loadHandbookRepositoryMapping, loadHandbookRepositoryStatistics, loadHandbookRepositoryTree, saveGitLabConnection, saveHandbookRepositoryMapping, createGitLabConnection, updateGitLabConnection, verifyGitLabConnection, disableGitLabConnection, enableGitLabConnection, searchGitLabConnections } from './common/api/gitlab-api.js';
 import { addIncrementalSource, bootstrapBaseline, commentIncrementalReview, createIncrementalReview, createIncrementalRevision, createIncrementalTask, createOnlineReview, decideIncrementalReview, loadCandidateDiff, loadHandbookReviewSummary, loadIncrementalBaselines, loadIncrementalTask, loadIncrementalTasks, publishIncrementalTask, recordIncrementalEvidence, reopenIncrementalReviewComment, replyIncrementalReviewComment, resolveIncrementalReviewComment, runIncrementalChecks, saveIncrementalDraft, submitIncrementalCandidate, updateIncrementalTarget } from './common/api/incremental-api.js';
 import { addUploadFile, completeUploadFile, completeUploadSession, createUploadBatch, createUploadSession, loadCleaningWorkspace, uploadChunk } from './common/api/cleaning-api.js';
 import { bootstrapAuth, consumeRememberedTarget, performLogout, rememberCurrentTarget, startCasLogin, submitAdminLogin } from './common/auth/auth-controller.js';
@@ -443,11 +443,22 @@ function renderGitLabAccountDialog() {
     root.innerHTML = '<div class="external-account-loading" role="status">正在读取 GitLab 账号状态…</div>';
   } else if (projection.status === 'unavailable') {
     root.innerHTML = `<div class="external-account-error" role="alert"><strong>暂时无法读取账号状态</strong><p>${escapeHtml(projection.error || '请稍后重试。')}</p><button class="button secondary" type="button" data-external-account-retry>重试</button></div>`;
-  } else if (projection.connected) {
-    const updatedAt = projection.updatedAt ? new Date(projection.updatedAt).toLocaleString('zh-CN', { hour12: false }) : '本次登录期间';
-    root.innerHTML = `<section class="external-account-item"><div class="external-account-provider"><i data-lucide="git-branch" aria-hidden="true"></i><div><h3>GitLab</h3><p>用于读取你有权访问的手册仓库</p></div><span class="external-account-status connected">已连接</span></div><dl><div><dt>最近授权</dt><dd>${escapeHtml(updatedAt)}</dd></div><div><dt>权限范围</dt><dd>沿用你的 GitLab 项目权限</dd></div></dl><button class="button tertiary" type="button" data-external-account-disconnect>解除连接</button></section>`;
   } else {
-    root.innerHTML = '<section class="external-account-item"><div class="external-account-provider"><i data-lucide="git-branch" aria-hidden="true"></i><div><h3>GitLab</h3><p>当前没有已连接的个人 GitLab 账号</p></div><span class="external-account-status">未连接</span></div><p class="external-account-guidance">打开需要阅读的具体手册后，使用“连接 GitLab 账号”完成授权。</p></section>';
+    const items = projection.items || [];
+    if (!items.length) root.innerHTML = '<section class="external-account-empty"><i data-lucide="git-branch" aria-hidden="true"></i><strong>暂无可连接的 GitLab</strong><p>请联系平台管理员配置可用的仓库连接。</p></section>';
+    else root.innerHTML = `<div class="external-account-list">${items.map(item => {
+      const labels = { connected: '已连接', disconnected: '未连接', temporarily_unavailable: '暂时不可用', reauthorization_required: '需要重新连接', platform_disabled: '平台已停用' };
+      const lastUsed = item.lastUsedAt ? new Date(item.lastUsedAt).toLocaleString('zh-CN', { hour12: false }) : '';
+      const connected = item.status === 'connected';
+      const unavailable = item.status === 'temporarily_unavailable';
+      const reconnect = item.status === 'reauthorization_required';
+      const disabled = item.status === 'platform_disabled';
+      const message = unavailable ? '连接信息仍保留，请稍后重试。' : reconnect ? '原连接已失效，请重新授权。' : disabled ? '该连接已由平台管理员停用。' : '';
+      const actions = disabled ? '' : connected || unavailable
+        ? `<a class="button secondary" href="${gitLabOAuthHref(item.connectionId)}">更换</a><button class="button tertiary" type="button" data-external-account-disconnect="${escapeHtml(item.connectionId)}">解除</button>`
+        : `<a class="button primary" href="${gitLabOAuthHref(item.connectionId)}">${reconnect ? '重新连接' : '连接'}</a>`;
+      return `<section class="external-account-item"><i class="external-account-provider-icon" data-lucide="git-branch" aria-hidden="true"></i><div class="external-account-identity"><h3>${escapeHtml(item.name || 'GitLab')}</h3><p>${escapeHtml(item.host || '')}${lastUsed ? ` · 最近使用 ${escapeHtml(lastUsed)}` : ''}</p>${message ? `<p class="external-account-guidance">${message}</p>` : ''}</div><span class="external-account-status ${connected ? 'connected' : unavailable || reconnect ? 'warning' : ''}">${labels[item.status] || '未连接'}</span><div class="external-account-actions">${actions}</div></section>`;
+    }).join('')}</div>`;
   }
   window.lucide?.createIcons();
 }
@@ -456,7 +467,7 @@ async function loadGitLabAccount() {
   appState.gitlabAccountProjection = { status: 'loading' };
   renderGitLabAccountDialog();
   try {
-    appState.gitlabAccountProjection = { status: 'ok', ...await loadGitLabOAuthStatus() };
+    appState.gitlabAccountProjection = { status: 'ok', ...await loadGitLabOAuthAccounts() };
   } catch (error) {
     appState.gitlabAccountProjection = { status: 'unavailable', error: error.message };
   }
@@ -2239,9 +2250,8 @@ byId('external-account-dialog').addEventListener('click', async event => {
   disconnect.disabled = true;
   disconnect.textContent = '正在解除…';
   try {
-    await disconnectGitLabOAuth();
-    appState.gitlabAccountProjection = { status: 'ok', connected: false };
-    renderGitLabAccountDialog();
+    await disconnectGitLabOAuth(disconnect.dataset.externalAccountDisconnect);
+    await loadGitLabAccount();
   } catch (error) {
     appState.gitlabAccountProjection = { status: 'unavailable', error: error.message };
     renderGitLabAccountDialog();
@@ -2446,6 +2456,14 @@ async function bootstrap() {
   if (appState.activeView === 'repository') loadRepositoryWorkspace();
   if (appState.activeView === 'platform') loadGitLabAdmin();
   if (appState.activeView === 'templates') loadTemplateWorkspace();
+  const launchParams = new URLSearchParams(window.location.search);
+  if (launchParams.get('externalAccount') === '1') {
+    launchParams.delete('externalAccount');
+    const cleanUrl = `${window.location.pathname}${launchParams.toString() ? `?${launchParams}` : ''}`;
+    window.history.replaceState(window.history.state, document.title, cleanUrl);
+    byId('external-account-dialog').showModal();
+    loadGitLabAccount();
+  }
 }
 
 bootstrap().catch(error => {

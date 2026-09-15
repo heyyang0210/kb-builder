@@ -1,5 +1,29 @@
 # GitLab OAuth 配置指南
 
+## 个人外部账号运行契约（2026-09-15）
+
+个人设置通过 `GET /knowledge-center/api/gitlab/oauth/accounts` 读取平台已启用的 `user_oauth` GitLab 实例及当前用户连接状态。普通登录用户只能从该安全投影选择平台预配置实例，不能提交任意 GitLab 地址。连接入口为 `GET /knowledge-center/api/gitlab/oauth/start?connectionId=...`，解除连接为 `POST /knowledge-center/api/gitlab/oauth/disconnect?connectionId=...`。
+
+授权以 `userId + connectionId` 为唯一身份，密文聚合保存到 YashanDB `KC_RECORD` 的 `gitlab-oauth/credentials`。Access Token 与 Refresh Token 使用 AES-256-GCM 加密，密钥优先从 `KNOWLEDGE_CENTER_OAUTH_ENCRYPTION_KEY`（兼容已有部署时可用 `AGENT_RUNNER_KEY`）读取，不写入 JSON、日志、审计或 API 响应。开发模式为兼容既有环境可从 OAuth Client Secret 派生独立领域密钥；生产模式禁止该回退，必须显式注入专用密钥。文件存储模式仅用于隔离开发，回退文件位于 `runtime/knowledge-center/gitlab-oauth-credentials.json` 且权限为 `0600`。
+
+读取令牌采用进程内快照，避免每次仓库请求访问数据库；只有首次装载、授权完成、有效刷新、明确失效或解除连接才读写聚合。令牌进入五分钟安全窗口后自动刷新，同一账号连接使用 single-flight 防止并发刷新风暴。GitLab API 返回 401 时刷新并最多重试一次。网络错误和上游 5xx 只形成内存中的 `temporarily_unavailable` 状态并保留原授权；GitLab 明确拒绝刷新时才持久化为 `reauthorization_required`。
+
+OAuth 授权 state 的默认有效期为 8 小时，仍与发起授权的登录用户绑定、随机生成且只能消费一次；每次创建前清理过期项，并限制单进程最多保留 1000 项，避免长期运行积累。个人设置采用高信息密度实例列表，每行只保留名称、主机、状态、最近使用（有记录时）和必要操作；超过 5 个实例时列表内部滚动。前端只展示 `已连接`、`未连接`、`暂时不可用`、`需要重新连接`、`平台已停用` 等用户状态，异常时才补充一句恢复说明。正常自动刷新无提示，不显示 Token、Refresh Token、scope、权限范围或续期过程。授权回调只允许返回同源 `/knowledge-center/` 路径；个人设置默认使用 `/knowledge-center/?externalAccount=1`，回到页面后自动打开外部账号对话框并清理该参数。
+
+伪代码：
+
+```text
+tokenForUser(userId, connection):
+  record = cachedOrLoad(userId, connection.id)
+  if record.state requires reauthorization: return null
+  if access token is outside refresh window: return decrypted access token
+  singleFlight(userId + connection.id):
+    refresh with GitLab
+    on network/5xx -> keep record, expose temporarily_unavailable
+    on explicit 400/401 -> persist reauthorization_required
+    on success -> atomically persist encrypted replacement
+```
+
 > 适用对象：平台管理员
 > 预计时间：10-15 分钟
 > 配置频率：**只需配置一次**，所有用户共享
@@ -124,7 +148,7 @@ cd /data/docs/AI高效应用示例/06-YashanDB知识库Skill仓库
 
 ```bash
 cd /data/docs/AI高效应用示例/06-YashanDB知识库Skill仓库
-./agent-runner/restart-knowledge-center-isolated.sh
+./knowledge-center.sh restart
 ```
 
 ---
