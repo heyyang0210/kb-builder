@@ -3,9 +3,10 @@ import { escapeHtml } from '../../common/utils/dom.js';
 
 const ROLE_DISPLAY_NAMES = {
   PLATFORM_ADMIN: '平台管理员',
-  KNOWLEDGE_EDITOR: '知识编辑',
+  KNOWLEDGE_EDITOR: '文档编辑员',
   OUTLINE_MANAGER: '大纲管理员',
-  REVIEWER: '审核者',
+  REVIEWER: '审核管理员',
+  TEMPLATE_EDITOR: '模板管理员',
 };
 
 const CONNECTION_STATUS_LABELS = {
@@ -118,26 +119,37 @@ function resolveRoles(permissionProjection) {
   return assignable.map(roleId => ({ id: roleId, name: ROLE_DISPLAY_NAMES[roleId] || roleId }));
 }
 
-export function renderPermissionResults(permissionProjection = {}, selectedUserId = null, saveStatus = null, userSearch = '') {
+export function renderPermissionResults(permissionProjection = {}, selectedUserId = null, saveStatus = null, userSearch = '', listState = {}) {
   const users = Array.isArray(permissionProjection.users) ? permissionProjection.users : [];
   const roles = resolveRoles(permissionProjection);
-  const filteredUsers = userSearch
+  const statusFilter = listState.status || '';
+  const roleFilter = listState.role || '';
+  const pageSize = Number(listState.pageSize) || 50;
+  const page = Math.max(1, Number(listState.page) || 1);
+  const filteredUsers = users
     ? users.filter(u => {
         const term = userSearch.toLowerCase();
-        return (u.displayName || u.name || '').toLowerCase().includes(term)
+        const matchesSearch = !term || (u.displayName || u.name || '').toLowerCase().includes(term)
           || (u.loginName || '').toLowerCase().includes(term)
           || (u.id || '').toLowerCase().includes(term);
+        const matchesStatus = !statusFilter || (statusFilter === 'active' ? u.enabled !== false : u.enabled === false);
+        const matchesRole = !roleFilter || (Array.isArray(u.roles) && u.roles.map(String).includes(roleFilter));
+        return matchesSearch && matchesStatus && matchesRole;
       })
     : users;
 
-  const selectedUser = filteredUsers.find(u => u.id === selectedUserId) || filteredUsers[0];
+  const serverPagination = permissionProjection.pagination || null;
+  const totalPages = serverPagination ? Math.max(1, Number(serverPagination.totalPages) || 1) : Math.max(1, Math.ceil(filteredUsers.length / pageSize));
+  const currentPage = serverPagination ? Math.max(1, Number(serverPagination.page) || 1) : Math.min(page, totalPages);
+  const pageUsers = serverPagination ? filteredUsers : filteredUsers.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  const selectedUser = users.find(u => u.id === selectedUserId) || pageUsers[0];
   const currentRoles = selectedUser ? new Set([...(selectedUser.roles || [])].map(String)) : new Set();
   const statusText = saveStatus === 'saving' ? '正在保存…' : saveStatus === 'saved' ? '权限已保存' : saveStatus === 'error' ? '保存失败，请重试' : '';
   const statusClass = saveStatus === 'saved' ? 'permission-status-saved' : saveStatus === 'error' ? 'permission-status-error' : '';
 
   const listHtml = `<ul class="permissions-user-list" role="listbox" aria-label="用户列表">
-            ${filteredUsers.length ? filteredUsers.map(u => {
-              const isActive = u.status !== 'inactive' && u.status !== 'disabled';
+            ${pageUsers.length ? pageUsers.map(u => {
+              const isActive = u.enabled !== false && u.status !== 'inactive' && u.status !== 'disabled';
               const isSelected = selectedUser && u.id === selectedUser.id;
               return `<li class="permissions-user-item${isSelected ? ' selected' : ''}" role="option" aria-selected="${isSelected}" data-permission-user="${escapeHtml(u.id)}" tabindex="0">
                 <span class="user-dot ${isActive ? 'active' : 'inactive'}" aria-hidden="true"></span>
@@ -169,28 +181,39 @@ export function renderPermissionResults(permissionProjection = {}, selectedUserI
             </form>
           </div>` : '<div class="empty-state"><span>请调整搜索条件</span></div>';
 
-  return { listHtml, detailHtml, selectedUserId: selectedUser?.id || null };
+  const paginationHtml = totalPages > 1 ? `<nav class="permissions-pagination" aria-label="用户列表分页">
+    <span>第 ${currentPage} / ${totalPages} 页</span>
+    <button class="button link compact" type="button" data-permission-page="${currentPage - 1}" ${currentPage <= 1 ? 'disabled' : ''}>上一页</button>
+    <button class="button link compact" type="button" data-permission-page="${currentPage + 1}" ${currentPage >= totalPages ? 'disabled' : ''}>下一页</button>
+  </nav>` : '';
+  return { listHtml: `${listHtml}${paginationHtml}`, detailHtml, selectedUserId: selectedUser?.id || null, page: currentPage, total: serverPagination ? Number(serverPagination.total) || 0 : filteredUsers.length, totalPages };
 }
 
-export function renderPermissionsTab(permissionProjection = {}, selectedUserId = null, saveStatus = null, userSearch = '') {
+export function renderPermissionsTab(permissionProjection = {}, selectedUserId = null, saveStatus = null, userSearch = '', listState = {}) {
   if (permissionProjection.status === 'unavailable') {
     return `<div role="tabpanel" id="platform-panel-permissions" aria-labelledby="platform-tab-permissions">
       ${pendingState('权限服务暂不可用', '请稍后重试。')}
     </div>`;
   }
   const users = Array.isArray(permissionProjection.users) ? permissionProjection.users : [];
+  const roles = resolveRoles(permissionProjection);
   if (!users.length) {
     return `<div role="tabpanel" id="platform-panel-permissions" aria-labelledby="platform-tab-permissions">
       ${pendingState('暂无可配置用户', '用户首次通过统一认证登录后会出现在这里。')}
     </div>`;
   }
-  const results = renderPermissionResults(permissionProjection, selectedUserId, saveStatus, userSearch);
+  const results = renderPermissionResults(permissionProjection, selectedUserId, saveStatus, userSearch, listState);
 
   return `<div role="tabpanel" id="platform-panel-permissions" aria-labelledby="platform-tab-permissions">
     <div class="permissions-layout">
       <div>
         <div class="permissions-search">
           <input type="search" placeholder="搜索用户…" value="${escapeHtml(userSearch)}" data-permission-search aria-label="搜索用户">
+          <div class="permissions-filters">
+            <select data-permission-status aria-label="按账号状态筛选"><option value="">全部状态</option><option value="active" ${listState.status === 'active' ? 'selected' : ''}>已激活</option><option value="inactive" ${listState.status === 'inactive' ? 'selected' : ''}>已停用</option></select>
+            <select data-permission-role aria-label="按角色筛选"><option value="">全部角色</option>${roles.map(role => `<option value="${escapeHtml(role.id)}" ${listState.role === role.id ? 'selected' : ''}>${escapeHtml(role.name || role.id)}</option>`).join('')}</select>
+          </div>
+          <p class="permissions-count" aria-live="polite">共 ${results.total} 名用户</p>
         </div>
         <div data-permission-user-list>${results.listHtml}</div>
       </div>
@@ -459,6 +482,7 @@ export function renderPlatformAdmin({
   selectedPermissionUserId,
   permissionSaveStatus,
   permissionUserSearch,
+  permissionListState,
   platformAdmin,
   platformTab,
   gitlabListState,
@@ -471,7 +495,7 @@ export function renderPlatformAdmin({
   let tabContent;
   switch (activeTab) {
     case 'permissions':
-      tabContent = renderPermissionsTab(permissionProjection, selectedPermissionUserId, permissionSaveStatus, permissionUserSearch || '');
+      tabContent = renderPermissionsTab(permissionProjection, selectedPermissionUserId, permissionSaveStatus, permissionUserSearch || '', permissionListState || {});
       break;
 
     case 'gitlab':

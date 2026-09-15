@@ -45,7 +45,7 @@ MCP_CONFIG_FILES=(
     "${CODEX_HOME}/config/mcp.json"
     "${REPO_ROOT}/.codex/mcp.json"
     "${REPO_ROOT}/mcp.json"
-    "${REPO_ROOT}/config/knowledge-center/mcp-config.json"
+    "${REPO_ROOT}/config/knowledge-center/ai-services.json"
 )
 
 for config_file in "${MCP_CONFIG_FILES[@]}"; do

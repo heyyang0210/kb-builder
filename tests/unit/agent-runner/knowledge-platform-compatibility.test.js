@@ -79,8 +79,8 @@ describe('知识中心通用化兼容基线', () => {
   });
 
   test('共享 MCP 配置保持生产服务地址', () => {
-    const config = JSON.parse(read('config/knowledge-center/mcp-config.json'));
-    expect(config.server_url).toBe('https://knowledgebase.yashandb.com/api/mcp');
+    const config = JSON.parse(read('config/knowledge-center/ai-services.json'));
+    expect(config.mcp.server_url).toBe('https://knowledgebase.yashandb.com/api/mcp');
   });
 
   test('SSE、下载和预览深链均有版本化契约快照', () => {

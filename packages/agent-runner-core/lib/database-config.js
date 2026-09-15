@@ -13,14 +13,22 @@ function assertNoSecrets(value, location = 'config') {
   }
 }
 
-function readJson(file, required = false) {
+function readDotenv(file, required = false) {
   if (!fs.existsSync(file)) {
     if (required) throw new Error(`数据库配置文件不存在：${file}`);
     return {};
   }
-  const value = JSON.parse(fs.readFileSync(file, 'utf8'));
-  assertNoSecrets(value);
-  return value;
+  const values = {};
+  for (const rawLine of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) continue;
+    const match = line.match(/^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+    if (!match) throw new Error(`数据库配置格式错误：${file}`);
+    let value = match[2].trim();
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) value = value.slice(1, -1);
+    values[match[1]] = value;
+  }
+  return values;
 }
 
 function merge(base, override) {
@@ -66,9 +74,9 @@ function envOverrides(env) {
 function loadDatabaseConfig(options = {}) {
   const repositoryRoot = options.repositoryRoot || path.resolve(__dirname, '../../../');
   const configRoot = options.configRoot || path.join(repositoryRoot, 'config', 'database');
-  const example = readJson(path.join(configRoot, 'yashandb.example.json'), true);
-  const local = readJson(path.join(configRoot, 'yashandb.local.json'));
-  return merge(merge(example, local), envOverrides(options.env || process.env));
+  const fileEnv = readDotenv(path.join(configRoot, 'yashandb.env'), true);
+  const loaded = envOverrides({ ...fileEnv, ...(options.env || process.env) });
+  return { version: 1, jdbc: loaded.jdbc, storage: loaded.storage, expImp: loaded.expImp };
 }
 
 module.exports = { loadDatabaseConfig, assertNoSecrets };

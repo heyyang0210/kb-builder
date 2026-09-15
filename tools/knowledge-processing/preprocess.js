@@ -39,12 +39,17 @@ function getFlagValue(flag) {
 // === 加载配置 ===
 
 const BASE_DIR = path.resolve(__dirname, '..', '..');
-const configPath = path.join(BASE_DIR, 'config', 'agent-runner', 'preprocessing-config.json');
+const configPath = path.join(BASE_DIR, 'config', 'knowledge-center', 'processing.json');
 
 let config;
 try {
   const configContent = fs.readFileSync(configPath, 'utf-8');
-  config = JSON.parse(configContent);
+  const processing = JSON.parse(configContent);
+  config = processing.preprocessing;
+  if (config.pipelines?.['design-docs']?.classification && Array.isArray(processing.features)) {
+    config.pipelines['design-docs'].classification.features = processing.features;
+    delete config.pipelines['design-docs'].classification.featureListPath;
+  }
 } catch (err) {
   console.error(`配置文件加载失败: ${configPath}`, err.message);
   process.exit(1);

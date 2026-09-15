@@ -38,6 +38,8 @@ curl http://127.0.0.1:14210/health
 
 运行时默认自动创建缺失的 `KC_*` 表，不删除、不截断已有表。生产运行期应使用只拥有 `KC_*` 对象权限的账号；DBA 账号只用于初始化和迁移。
 
+业务聚合均写入通用表 `KC_RECORD(NAMESPACE, RECORD_KEY, PAYLOAD, REVISION, DELETED)`，并通过命名空间隔离：`assets/catalog`（知识资产）、`incremental/state`（审核与发布）、`documents/metadata` 与 `documents/comments`（文档元数据和评论）、`outlines/metadata`（大纲）、`auth/state`（会话权限）以及 `templates/state`（模板）。因此不为每个 JSON 聚合重复建表，避免结构漂移；DDL 由 `sql/002_record.sql` 统一维护。
+
 SQL 迁移目录：
 
 | 文件 | 用途 |
@@ -45,6 +47,7 @@ SQL 迁移目录：
 | `sql/001_schema_migration.sql` | 记录已应用的 Schema 版本 |
 | `sql/002_record.sql` | JSON/CLOB 兼容记录、摘要、revision 和软删除 |
 | `sql/003_migration_batch.sql` | 文件迁移批次与对账结果 |
+| `sql/004_record_indexes.sql` | 聚合记录命名空间读取索引 |
 
 可通过 `YASDB_STORAGE_SQL_DIR` 指定经过发布审核的 SQL 目录；服务不会执行目录之外的 SQL。
 
@@ -69,3 +72,12 @@ node ../../tools/knowledge-processing/export-yashandb-storage.js /安全目录/k
 ```
 
 脚本通过 `YASDB_EXP_*` 和 `YASDB_IMP_*` 环境变量读取连接信息；未提供密码时交互式读取，不把密码写入仓库。导出默认使用 `OWNER` 和 `ROWS=Y`，导入默认使用 `FROMUSER/TOUSER` 且不启用 `TRUNCATE`，执行前会展示数据库地址、用户和文件并要求确认。跨用户导出或导入需使用具有 DBA 权限的操作账号；目标数据库和导出数据库应使用兼容版本的 `exp/imp`。
+### JDBC 连接池
+
+存储服务启动时会预热最小连接数，并在请求间复用 JDBC 连接，避免每次 HTTP 请求重新建立 YashanDB 会话。可通过环境变量调整：
+
+- `YASDB_STORAGE_POOL_MIN`：预热连接数，默认 1；
+- `YASDB_STORAGE_POOL_MAX`：最大连接数，默认不小于 HTTP 工作线程数（通常为 8）。
+- `YASDB_STORAGE_POOL_BORROW_TIMEOUT_MS`：连接池耗尽时的最大等待时间，默认 5000ms。
+
+连接归还池前会回滚未提交事务；现有 `If-Match` CAS 和 `SELECT ... FOR UPDATE` 语义保持不变。

@@ -18,8 +18,9 @@ ALLOWED_RESOURCE_PREFIXES = (
     "packages/platform-contracts/enterprise-profile/", "knowledge/domain/", "knowledge/skills/", "packages/agent-runner-core/lib/agents/",
     "tools/knowledge-processing/pingcode-processing/skills/", "tools/knowledge-processing/pingcode-processing/metadata-rules/",
     "knowledge/profiles/", "knowledge/prompts/", "knowledge/templates/",
+    "config/knowledge-center/branding/",
 )
-ALLOWED_RESOURCE_FILES = {"config/knowledge-center/quality-config.json"}
+ALLOWED_RESOURCE_FILES = {"config/knowledge-center/processing.json"}
 CONNECTOR_REQUIRED_SECRETS = {
     "local-upload": (),
     "pingcode": ("secret:connectors/pingcode",),
@@ -102,6 +103,9 @@ def validate_semantics(profile):
 
 def collect_resource_refs(profile):
     refs = [(profile["domain"]["manifestRef"], "/domain/manifestRef")]
+    icon_ref = profile.get("brand", {}).get("icon", {}).get("resourceRef")
+    if icon_ref:
+        refs.append((icon_ref, "/brand/icon/resourceRef"))
     for collection, field in (("agents", "manifestRef"), ("skills", "manifestRef"), ("prompts", "resourceRef"), ("templates", "resourceRef"), ("qualityRules", "resourceRef")):
         refs.extend((item[field], f"/{collection}/{index}/{field}") for index, item in enumerate(profile[collection]))
     return sorted(refs, key=lambda item: item[0])
@@ -154,7 +158,7 @@ def build_context(profile, resources, env, secret_resolver=None):
 
 def load_profile(repository_root=None, registry=None, env=None, profile_id=None, secret_resolver=None):
     repository_root = Path(repository_root or Path(__file__).resolve().parents[4]).resolve()
-    registry = registry or {"yashandb": "knowledge/enterprise-profiles/yashandb/profile.json"}
+    registry = registry or {"yashandb": "config/knowledge-center/platform.json"}
     env = os.environ if env is None else env
     explicitly_set = "KNOWLEDGE_PLATFORM_PROFILE" in env
     selected = profile_id if profile_id is not None else (env.get("KNOWLEDGE_PLATFORM_PROFILE") if explicitly_set else DEFAULT_PROFILE_ID)

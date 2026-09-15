@@ -15,6 +15,7 @@
 }
 .brand { min-height: 72px; display: flex; align-items: center; gap: var(--space-3); padding: 14px 12px; border-bottom: 1px solid var(--color-navigation-border); }
 .brand-mark { width: 36px; height: 36px; flex: none; display: grid; place-items: center; border-radius: var(--radius-sm); background: var(--color-brand-subtle); color: var(--color-brand); font-weight: 800; }
+.brand-mark img { width: 100%; height: 100%; object-fit: contain; border-radius: inherit; }
 .brand-copy { min-width: 0; flex: 1; }
 .brand-copy strong, .brand-copy small { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .brand-copy small { color: var(--color-navigation-muted); font-size: 12px; }
@@ -57,8 +58,11 @@
 .sidebar-hidden .sidebar-restore { display: inline-flex; }
 .mobile-overlay { position: fixed; z-index: 8; inset: 0; background: rgb(12 14 16 / 46%); }
 .main-shell { min-width: 0; flex: 1; min-height: 0; overflow-y: auto; container-type: inline-size; }
-main { width: min(1440px, calc(100% - 32px)); margin: 0 auto; padding: var(--space-5) 0 48px; }
-body.review-view main{width:calc(100% - clamp(16px,2vw,32px));padding-top:clamp(8px,1.4vw,20px)}
+/* 所有模块采用审核工作台的接近全宽内容区，保留统一安全边距。 */
+main { width: calc(100% - clamp(16px, 2vw, 32px)); margin: 0 auto; padding: clamp(8px, 1.4vw, 20px) 0 48px; }
+/* 键盘空格激活按钮时不显示浏览器默认黑色焦点框；:focus-visible 仍提供品牌色焦点提示。 */
+button:focus { outline: none; }
+button:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 2px; box-shadow: var(--focus-ring); }
 .review-shell{display:grid;grid-template-columns:280px minmax(0,1fr);min-height:620px;border:1px solid var(--color-border);background:var(--color-surface)}
 .review-task-list{border-right:1px solid var(--color-border);padding:16px;overflow:auto}.review-task-list header{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}.review-task-list h3{margin:0;font-size:15px}
 .review-task-row{display:flex;justify-content:space-between;gap:10px;width:100%;padding:12px 10px;margin:3px 0;text-align:left;border:1px solid transparent;border-radius:4px;background:transparent;cursor:pointer}.review-task-row:hover,.review-task-row.selected{background:var(--color-brand-subtle);border-color:var(--color-brand)}.review-task-row span{min-width:0}.review-task-row strong,.review-task-row small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.review-task-row small{margin-top:4px;color:var(--color-text-secondary);font-size:12px}.review-status{font-style:normal;font-size:12px;white-space:nowrap;color:var(--color-text-secondary)}
@@ -136,7 +140,12 @@ body.review-view main{width:calc(100% - clamp(16px,2vw,32px));padding-top:clamp(
 .review-workspace:not(.review-waiting-workspace) .review-evidence-column:not(:has(details[open])) summary :is(h3,span,small){display:none}
 .review-workspace:not(.review-waiting-workspace) .review-comment-drawer summary::before{content:'＋';font-size:22px}
 .review-workspace:not(.review-waiting-workspace) .review-evidence-drawer>summary::before{content:'☷';font-size:22px}
-.review-workspace:not(.review-waiting-workspace) details[open]>summary::after{content:'×';margin-left:auto;font-size:22px}
+.review-workspace:not(.review-waiting-workspace) .review-comment-drawer details{position:relative}
+.review-workspace:not(.review-waiting-workspace) .review-comment-drawer details[open]>summary{padding-right:52px}
+.review-workspace:not(.review-waiting-workspace) .review-comment-drawer .review-panel-close{position:absolute;top:6px;right:8px;z-index:1;display:grid;place-items:center;width:36px;height:36px;min-width:36px;min-height:36px;padding:0;border:0;background:transparent;color:var(--color-text-secondary);cursor:pointer}
+.review-workspace:not(.review-waiting-workspace) .review-comment-drawer .review-panel-close:hover{color:var(--color-text)}
+.review-workspace:not(.review-waiting-workspace) .review-comment-drawer .review-panel-close:focus-visible{outline:2px solid var(--color-brand);outline-offset:2px}
+.review-workspace:not(.review-waiting-workspace) .review-comment-drawer .review-panel-close svg{width:18px;height:18px}
 .review-workspace .review-drawer-comment-item{width:100%;text-align:left;color:inherit;font:inherit}
 .review-workspace .review-drawer-comment-item:focus-visible{outline:2px solid var(--color-brand)}
 ::highlight(review-anchor){background:#fde68a;color:#17202a}
@@ -837,3 +846,24 @@ body.review-focus-mode #sidebar,body.review-focus-mode #sidebar-restore,body.rev
   line-height: 1.5;
 }
 .review-location-highlight{animation:review-location-pulse 1.8s ease-out;background:var(--color-warning-subtle)!important;box-shadow:inset 0 0 0 2px var(--color-brand)!important}@keyframes review-location-pulse{0%{background:#fde68a!important}100%{background:transparent!important}}
+/* 模板工作台：默认预览、历史折叠，窄屏历史使用覆盖式侧栏。 */
+.template-workspace{position:relative;display:flex;align-items:stretch;min-height:560px;border:1px solid var(--color-border);background:var(--color-surface)}
+.template-list{flex:0 0 240px;padding:16px;border-right:1px solid var(--color-border);overflow:auto;max-height:80vh}
+.template-list label,.template-metadata label,.template-content-label{display:grid;gap:6px;font-size:13px;color:var(--color-text-secondary)}
+.template-list input,.template-list select,.template-metadata input{width:100%;min-width:0;min-height:38px;padding:8px;border:1px solid var(--color-border);border-radius:var(--radius-sm);background:var(--color-surface);color:var(--color-text)}
+.template-filters{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}
+.template-list-item{display:grid;gap:6px;width:100%;padding:12px 8px;margin:6px 0;border:1px solid transparent;background:var(--color-surface);color:var(--color-text);text-align:left;cursor:pointer;overflow-wrap:anywhere}
+.template-list-item.active{border-color:var(--color-brand);background:var(--color-brand-subtle)}
+.template-list-item small{color:var(--color-text-secondary)}
+.template-editor{flex:1;min-width:0;padding:20px}.template-editor>header,.template-history>header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}.template-editor h3,.template-history h3{margin:0}.template-editor>header p{margin:8px 0 18px}
+.template-toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.template-toolbar [aria-pressed=true]{border-color:var(--color-brand);color:var(--color-brand);background:var(--color-brand-subtle)}.template-dropzone{margin:12px 0;padding:18px;border:1px dashed var(--color-border-strong);text-align:center;color:var(--color-text-secondary);border-radius:var(--radius-sm)}.template-dropzone button{margin:0 4px}.template-dropzone.is-dragging{border-color:var(--color-brand);background:var(--color-brand-subtle);color:var(--color-brand)}
+.template-metadata{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px}.template-description{grid-column:1/-1}
+.template-content-label{margin-top:16px}.template-content-label textarea{width:100%;min-height:340px;resize:vertical;padding:16px;border:1px solid var(--color-border);background:var(--color-surface);color:var(--color-text);font:14px/1.7 ui-monospace,monospace}
+.template-preview{min-height:320px;padding:20px 0;overflow-wrap:anywhere;line-height:1.7}.template-preview pre{padding:12px;background:var(--color-surface-subtle);overflow:auto}.template-preview table{border-collapse:collapse;display:block;overflow:auto}.template-preview th,.template-preview td{border:1px solid var(--color-border);padding:8px}.template-preview h1{font-size:24px}.template-preview h2{font-size:20px}
+.template-actions{border-top:1px solid var(--color-border);padding-top:16px;display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap}.template-actions>div{display:flex;gap:8px}.template-actions>span{font-size:12px}
+.template-history{flex:0 0 320px;max-height:80vh;overflow:auto;padding:20px;border-left:1px solid var(--color-border);background:var(--color-surface)}.template-version{padding:16px 0;border-bottom:1px solid var(--color-border)}.template-version p{font-size:12px;overflow-wrap:anywhere}.template-history-banner{display:flex;align-items:center;gap:12px;padding:12px;background:var(--color-brand-subtle);margin-bottom:16px}
+.template-message:not(:empty){padding:12px;margin-bottom:12px;background:var(--color-surface-subtle);border-left:3px solid var(--color-brand)}.template-message[role=alert]:not(:empty){border-left-color:var(--color-danger,#b42318)}
+.template-workspace button:focus-visible,.template-workspace input:focus-visible,.template-workspace select:focus-visible,.template-workspace textarea:focus-visible{outline:2px solid var(--color-brand);outline-offset:2px}.template-workspace .icon-button{min-width:44px;min-height:44px}
+@media(max-width:1100px){.template-list{flex-basis:200px}.template-history{flex-basis:280px}}
+@media(max-width:900px){.template-history{position:fixed;inset:0 0 0 auto;width:min(320px,100vw);max-height:100vh;z-index:60;box-shadow:-20px 0 80px rgb(0 0 0 / 20%)}.template-workspace{min-height:480px}}
+@media(max-width:600px){.template-workspace{display:block}.template-list{max-height:260px;border-right:0;border-bottom:1px solid var(--color-border)}.template-editor{padding:16px}.template-metadata{grid-template-columns:1fr}.template-workspace .button,.template-toolbar .button{min-height:44px}.template-actions{align-items:flex-start;flex-direction:column}.template-history-banner{flex-wrap:wrap}}

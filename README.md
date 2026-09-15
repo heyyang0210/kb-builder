@@ -39,6 +39,7 @@ npm run test:knowledge-center -- --runInBand
 
 - [目录迁移跟踪与验收](docs/directory-structure-refactor.md)
 - [知识资产导航](knowledge/README.md)
+- [DeepSeek Harness 精简手册（新手版）](docs/deepseek-harness-精简手册.md)
 - [数据库配置](config/database/README.md)
 - [工作区约束](AGENTS.md)、[Git 提交规范](git提交规范.md)
 - [提示词与复盘](prompt.md)，`prompt-log.md` 仅保留历史

@@ -44,7 +44,10 @@ class PlannerAgent extends BaseAgent {
 - 难度级别: ${kp.level || '★★'}
 `;
 
-    const templateInfo = input.template
+    const frozenContent = require('../template-generation').frozenTemplateContent(input.templateSnapshot);
+    const templateInfo = frozenContent !== null
+      ? `\n## 文档模板（任务固定版本）\n${frozenContent}`
+      : input.template
       ? `\n## 文档模板\n模板路径：${input.template}\n请参考模板结构来规划文档。`
       : '';
 
@@ -130,6 +133,11 @@ ${input.prompt}
 
     this._ensurePlanDefaults(plan, input);
     await this._applyPromptRetrievalFallback(plan, input);
+    if (require('../template-generation').frozenTemplateContent(input.templateSnapshot) !== null) {
+      // A model or legacy prompt can still propose a template file. Never retrieve it
+      // alongside a frozen database body, otherwise edits would leak into old tasks.
+      plan.retrieval_plan.reference_files = plan.retrieval_plan.reference_files.filter(reference => !/(?:^|\/)templates\//.test(String(reference)));
+    }
 
     if (isMerged) {
       // 合并模式：确保包含 document_structure 和 retrieval_plan

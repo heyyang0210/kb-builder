@@ -82,6 +82,21 @@ describe('知识资产 GitLab 阅读前端契约', () => {
     expect(app).toContain("document.addEventListener('compositionstart'");
     expect(app).toContain("document.addEventListener('compositionend'");
   });
+  test('用户权限使用中文角色名并对大量人员分页筛选', () => {
+    const admin = read('apps/knowledge-center-web/frontend/knowledge-center/modules/platform-admin/view.js');
+    const app = read('apps/knowledge-center-web/frontend/knowledge-center/app.js');
+    for (const label of ['文档编辑员', '审核管理员', '模板管理员']) expect(admin).toContain(label);
+    expect(admin).toContain('pageSize) || 50');
+    expect(admin).toContain('data-permission-status');
+    expect(admin).toContain('data-permission-role');
+    expect(admin).toContain('data-permission-page');
+    expect(app).toContain('permissionListState.page = 1');
+  });
+  test('用户权限渲染在筛选下拉框中声明角色集合', () => {
+    const admin = read('apps/knowledge-center-web/frontend/knowledge-center/modules/platform-admin/view.js');
+    expect(admin).toContain('const roles = resolveRoles(permissionProjection);');
+    expect(admin).not.toContain('renderPermissionsTab(permissionProjection, selectedUserId, saveStatus, userSearch, listState);\n\n  return');
+  });
   test('GitLab 搜索重绘后恢复光标，避免输入字符倒序', () => {
     const app = read('apps/knowledge-center-web/frontend/knowledge-center/app.js');
     expect(app).toContain('const selectionStart = gitlabSearch.selectionStart;');

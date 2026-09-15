@@ -1,0 +1,451 @@
+{
+  "connections": [
+    {
+      "id": "gitlab-891a3004-5d4d-4262-b772-5e56b7f63e36",
+      "name": "yasdoc",
+      "host": "https://git-tools.yasdb.com",
+      "project": "cod-doc/yasdoc",
+      "pathPrefix": "",
+      "defaultBranch": "master",
+      "mode": "production",
+      "credentialRef": null,
+      "updatedAt": "2026-09-11T03:48:50.530Z",
+      "lastVerification": {
+        "connectionId": "gitlab-891a3004-5d4d-4262-b772-5e56b7f63e36",
+        "status": "verified",
+        "branchCount": 25,
+        "verifiedAt": "2026-09-11T03:48:50.529Z"
+      },
+      "authMode": "user_oauth",
+      "purpose": "read_write",
+      "status": "active"
+    },
+    {
+      "id": "gitlab-bf7af4ad-4f95-4e50-aa52-dfe949adb391",
+      "name": "ympdoc",
+      "host": "https://git-tools.yasdb.com",
+      "project": "cod-doc/ympdoc",
+      "pathPrefix": "",
+      "defaultBranch": "master",
+      "mode": "production",
+      "credentialRef": null,
+      "updatedAt": "2026-09-11T03:48:53.372Z",
+      "lastVerification": {
+        "connectionId": "gitlab-bf7af4ad-4f95-4e50-aa52-dfe949adb391",
+        "status": "verified",
+        "branchCount": 8,
+        "verifiedAt": "2026-09-11T03:48:53.371Z"
+      }
+    }
+  ],
+  "mappings": [
+    {
+      "handbookId": "DB-001",
+      "connectionId": "gitlab-891a3004-5d4d-4262-b772-5e56b7f63e36",
+      "defaultBranch": "master",
+      "enabledBranches": [
+        "br23.4.10",
+        "br23.5.4",
+        "master"
+      ],
+      "zhPaths": [
+        "doc/产品文档/产品描述"
+      ],
+      "enPaths": [
+        "doc/Manuals/Product Overview"
+      ],
+      "updatedAt": "2026-09-04T02:47:16.243Z"
+    },
+    {
+      "handbookId": "DB-002",
+      "connectionId": "gitlab-891a3004-5d4d-4262-b772-5e56b7f63e36",
+      "defaultBranch": "master",
+      "enabledBranches": [
+        "master"
+      ],
+      "zhPaths": [
+        "doc/产品文档/概念手册"
+      ],
+      "enPaths": [
+        "doc/Manuals/Product Concepts"
+      ],
+      "updatedAt": "2026-09-04T02:12:45.618Z"
+    }
+  ],
+  "idempotency": [
+    {
+      "key": "test-123",
+      "at": "2026-09-03T02:45:52.338Z"
+    },
+    {
+      "key": "gitlab-connection-1788403784128-66b650d0d0bc18",
+      "at": "2026-09-03T02:49:44.133Z"
+    },
+    {
+      "key": "gitlab-connection-1788403785060-c06e470eafd08",
+      "at": "2026-09-03T02:49:45.063Z"
+    },
+    {
+      "key": "gitlab-connection-1788403859240-6d8f30ad28893",
+      "at": "2026-09-03T02:50:59.243Z"
+    },
+    {
+      "key": "gitlab-connection-1788405469117-7c3dfc9393b19",
+      "at": "2026-09-03T03:17:49.122Z"
+    },
+    {
+      "key": "gitlab-connection-1788405918364-10441e34ab1e6",
+      "at": "2026-09-03T03:25:18.369Z"
+    },
+    {
+      "key": "gitlab-mapping-1788411989772-b59e17617aef",
+      "at": "2026-09-03T05:06:29.789Z"
+    },
+    {
+      "key": "mapping-db001-yasdoc-20260903",
+      "at": "2026-09-03T05:15:57.923Z"
+    },
+    {
+      "key": "gitlab-connection-1788419452303-1cb485b2c3e5b8",
+      "at": "2026-09-03T07:10:52.308Z"
+    },
+    {
+      "key": "gitlab-mapping-1788421595191-e9233d636129e8",
+      "at": "2026-09-03T07:46:35.196Z"
+    },
+    {
+      "key": "gitlab-mapping-1788425679742-e7fca9b79e5758",
+      "at": "2026-09-03T08:54:39.747Z"
+    },
+    {
+      "key": "gitlab-connection-1788425887822-86b57790c954c",
+      "at": "2026-09-03T08:58:07.827Z"
+    },
+    {
+      "key": "gitlab-connection-1788429490607-9c7611ea348858",
+      "at": "2026-09-03T09:58:10.627Z"
+    },
+    {
+      "key": "gitlab-mapping-1788487965610-fd3ca1a30634a8",
+      "at": "2026-09-04T02:12:45.618Z"
+    },
+    {
+      "key": "gitlab-mapping-1788490036238-dd7e3bfd33396",
+      "at": "2026-09-04T02:47:16.243Z"
+    },
+    {
+      "key": "gitlab-update-gitlab-891a3004-5d4d-4262-b772-5e56b7f63e36-1789022723183-3f84e054e476f",
+      "at": "2026-09-10T06:45:23.191Z"
+    },
+    {
+      "key": "gitlab-update-gitlab-891a3004-5d4d-4262-b772-5e56b7f63e36-1789022730581-0bb10c04fba808",
+      "at": "2026-09-10T06:45:30.585Z"
+    },
+    {
+      "key": "gitlab-update-gitlab-891a3004-5d4d-4262-b772-5e56b7f63e36-1789029619097-9a296a4f8ab178",
+      "at": "2026-09-10T08:40:19.106Z"
+    },
+    {
+      "key": "gitlab-update-gitlab-891a3004-5d4d-4262-b772-5e56b7f63e36-1789032009630-0616e003d9ac3",
+      "at": "2026-09-10T09:20:09.637Z"
+    },
+    {
+      "key": "gitlab-update-gitlab-891a3004-5d4d-4262-b772-5e56b7f63e36-1789032017317-6715bee2ef83f8",
+      "at": "2026-09-10T09:20:17.322Z"
+    },
+    {
+      "key": "gitlab-update-gitlab-891a3004-5d4d-4262-b772-5e56b7f63e36-1789032025789-70d8b02890b848",
+      "at": "2026-09-10T09:20:25.794Z"
+    },
+    {
+      "key": "restore-yasdoc-service-account-20260910-1755",
+      "at": "2026-09-10T09:51:56.457Z"
+    },
+    {
+      "key": "gitlab-update-gitlab-891a3004-5d4d-4262-b772-5e56b7f63e36-1789097322601-3c0932132eb1d8",
+      "at": "2026-09-11T03:28:42.607Z"
+    },
+    {
+      "key": "gitlab-update-gitlab-891a3004-5d4d-4262-b772-5e56b7f63e36-1789097899763-eef9ff9d489148",
+      "at": "2026-09-11T03:38:19.769Z"
+    }
+  ],
+  "audit": [
+    {
+      "action": "GITLAB_CONNECTION_UPSERT",
+      "connectionId": "gitlab-891a3004-5d4d-4262-b772-5e56b7f63e36",
+      "operatorId": "usr_PumMbTSsuh95rlCQ",
+      "at": "2026-09-03T02:45:52.338Z"
+    },
+    {
+      "action": "GITLAB_CONNECTION_UPSERT",
+      "connectionId": "gitlab-891a3004-5d4d-4262-b772-5e56b7f63e36",
+      "operatorId": "usr_ASn_MlnBfy9geUzR",
+      "at": "2026-09-03T02:49:44.133Z"
+    },
+    {
+      "action": "GITLAB_CONNECTION_UPSERT",
+      "connectionId": "gitlab-891a3004-5d4d-4262-b772-5e56b7f63e36",
+      "operatorId": "usr_ASn_MlnBfy9geUzR",
+      "at": "2026-09-03T02:49:45.063Z"
+    },
+    {
+      "action": "GITLAB_CONNECTION_UPSERT",
+      "connectionId": "gitlab-891a3004-5d4d-4262-b772-5e56b7f63e36",
+      "operatorId": "usr_ASn_MlnBfy9geUzR",
+      "at": "2026-09-03T02:50:59.243Z"
+    },
+    {
+      "action": "GITLAB_CONNECTION_UPSERT",
+      "connectionId": "gitlab-891a3004-5d4d-4262-b772-5e56b7f63e36",
+      "operatorId": "usr_ASn_MlnBfy9geUzR",
+      "at": "2026-09-03T03:17:49.122Z"
+    },
+    {
+      "action": "GITLAB_CONNECTION_UPSERT",
+      "connectionId": "gitlab-bf7af4ad-4f95-4e50-aa52-dfe949adb391",
+      "operatorId": "usr_ASn_MlnBfy9geUzR",
+      "at": "2026-09-03T03:25:18.369Z"
+    },
+    {
+      "action": "GITLAB_MAPPING_UPSERT",
+      "handbookId": "DB-001",
+      "connectionId": "gitlab-891a3004-5d4d-4262-b772-5e56b7f63e36",
+      "operatorId": "usr_ASn_MlnBfy9geUzR",
+      "at": "2026-09-03T05:06:29.789Z"
+    },
+    {
+      "action": "GITLAB_MAPPING_UPSERT",
+      "handbookId": "DB-001",
+      "connectionId": "gitlab-891a3004-5d4d-4262-b772-5e56b7f63e36",
+      "operatorId": "usr_PumMbTSsuh95rlCQ",
+      "at": "2026-09-03T05:15:57.923Z"
+    },
+    {
+      "action": "GITLAB_CONNECTION_UPSERT",
+      "connectionId": "gitlab-891a3004-5d4d-4262-b772-5e56b7f63e36",
+      "operatorId": "usr_PumMbTSsuh95rlCQ",
+      "at": "2026-09-03T07:10:52.308Z"
+    },
+    {
+      "action": "GITLAB_MAPPING_UPSERT",
+      "handbookId": "DB-001",
+      "connectionId": "gitlab-891a3004-5d4d-4262-b772-5e56b7f63e36",
+      "operatorId": "usr_ASn_MlnBfy9geUzR",
+      "at": "2026-09-03T07:46:35.196Z"
+    },
+    {
+      "action": "GITLAB_MAPPING_UPSERT",
+      "handbookId": "DB-001",
+      "connectionId": "gitlab-891a3004-5d4d-4262-b772-5e56b7f63e36",
+      "operatorId": "usr_ASn_MlnBfy9geUzR",
+      "at": "2026-09-03T08:54:39.747Z"
+    },
+    {
+      "action": "GITLAB_CONNECTION_UPSERT",
+      "connectionId": "gitlab-891a3004-5d4d-4262-b772-5e56b7f63e36",
+      "operatorId": "usr_PumMbTSsuh95rlCQ",
+      "at": "2026-09-03T08:58:07.827Z"
+    },
+    {
+      "action": "GITLAB_CONNECTION_UPSERT",
+      "connectionId": "gitlab-891a3004-5d4d-4262-b772-5e56b7f63e36",
+      "operatorId": "usr_PumMbTSsuh95rlCQ",
+      "at": "2026-09-03T09:58:10.627Z"
+    },
+    {
+      "action": "GITLAB_MAPPING_UPSERT",
+      "handbookId": "DB-002",
+      "connectionId": "gitlab-891a3004-5d4d-4262-b772-5e56b7f63e36",
+      "operatorId": "usr_ASn_MlnBfy9geUzR",
+      "at": "2026-09-04T02:12:45.618Z"
+    },
+    {
+      "action": "GITLAB_MAPPING_UPSERT",
+      "handbookId": "DB-001",
+      "connectionId": "gitlab-891a3004-5d4d-4262-b772-5e56b7f63e36",
+      "operatorId": "usr_ASn_MlnBfy9geUzR",
+      "at": "2026-09-04T02:47:16.243Z"
+    },
+    {
+      "action": "GITLAB_CONNECTION_VERIFY",
+      "connectionId": "gitlab-bf7af4ad-4f95-4e50-aa52-dfe949adb391",
+      "operatorId": "usr_ASn_MlnBfy9geUzR",
+      "at": "2026-09-04T07:21:35.486Z",
+      "result": "verified"
+    },
+    {
+      "action": "GITLAB_CONNECTION_VERIFY",
+      "connectionId": "gitlab-891a3004-5d4d-4262-b772-5e56b7f63e36",
+      "operatorId": "usr_ASn_MlnBfy9geUzR",
+      "at": "2026-09-04T07:21:39.320Z",
+      "result": "verified"
+    },
+    {
+      "action": "GITLAB_CONNECTION_VERIFY",
+      "connectionId": "gitlab-891a3004-5d4d-4262-b772-5e56b7f63e36",
+      "operatorId": "usr_ASn_MlnBfy9geUzR",
+      "at": "2026-09-04T07:25:58.641Z",
+      "result": "verified"
+    },
+    {
+      "action": "GITLAB_CONNECTION_VERIFY",
+      "connectionId": "gitlab-891a3004-5d4d-4262-b772-5e56b7f63e36",
+      "operatorId": "usr_ASn_MlnBfy9geUzR",
+      "at": "2026-09-04T07:25:59.539Z",
+      "result": "verified"
+    },
+    {
+      "action": "GITLAB_CONNECTION_VERIFY",
+      "connectionId": "gitlab-891a3004-5d4d-4262-b772-5e56b7f63e36",
+      "operatorId": "usr_ASn_MlnBfy9geUzR",
+      "at": "2026-09-04T07:26:00.176Z",
+      "result": "verified"
+    },
+    {
+      "action": "GITLAB_CONNECTION_VERIFY",
+      "connectionId": "gitlab-bf7af4ad-4f95-4e50-aa52-dfe949adb391",
+      "operatorId": "usr_ASn_MlnBfy9geUzR",
+      "at": "2026-09-04T07:26:02.057Z",
+      "result": "verified"
+    },
+    {
+      "action": "GITLAB_CONNECTION_UPSERT",
+      "connectionId": "gitlab-891a3004-5d4d-4262-b772-5e56b7f63e36",
+      "operatorId": "usr_ASn_MlnBfy9geUzR",
+      "at": "2026-09-10T06:45:23.191Z"
+    },
+    {
+      "action": "GITLAB_CONNECTION_VERIFY",
+      "connectionId": "gitlab-891a3004-5d4d-4262-b772-5e56b7f63e36",
+      "operatorId": "usr_ASn_MlnBfy9geUzR",
+      "at": "2026-09-10T06:45:25.046Z",
+      "result": "failed"
+    },
+    {
+      "action": "GITLAB_CONNECTION_UPSERT",
+      "connectionId": "gitlab-891a3004-5d4d-4262-b772-5e56b7f63e36",
+      "operatorId": "usr_ASn_MlnBfy9geUzR",
+      "at": "2026-09-10T06:45:30.585Z"
+    },
+    {
+      "action": "GITLAB_CONNECTION_VERIFY",
+      "connectionId": "gitlab-891a3004-5d4d-4262-b772-5e56b7f63e36",
+      "operatorId": "usr_PumMbTSsuh95rlCQ",
+      "at": "2026-09-10T07:05:59.751Z",
+      "result": "failed"
+    },
+    {
+      "action": "GITLAB_CONNECTION_UPSERT",
+      "connectionId": "gitlab-891a3004-5d4d-4262-b772-5e56b7f63e36",
+      "operatorId": "usr_ASn_MlnBfy9geUzR",
+      "at": "2026-09-10T08:40:19.106Z"
+    },
+    {
+      "action": "GITLAB_CONNECTION_UPSERT",
+      "connectionId": "gitlab-891a3004-5d4d-4262-b772-5e56b7f63e36",
+      "operatorId": "usr_ASn_MlnBfy9geUzR",
+      "at": "2026-09-10T09:20:09.637Z"
+    },
+    {
+      "action": "GITLAB_CONNECTION_UPSERT",
+      "connectionId": "gitlab-891a3004-5d4d-4262-b772-5e56b7f63e36",
+      "operatorId": "usr_ASn_MlnBfy9geUzR",
+      "at": "2026-09-10T09:20:17.322Z"
+    },
+    {
+      "action": "GITLAB_CONNECTION_VERIFY",
+      "connectionId": "gitlab-891a3004-5d4d-4262-b772-5e56b7f63e36",
+      "operatorId": "usr_ASn_MlnBfy9geUzR",
+      "at": "2026-09-10T09:20:18.114Z",
+      "result": "failed"
+    },
+    {
+      "action": "GITLAB_CONNECTION_UPSERT",
+      "connectionId": "gitlab-891a3004-5d4d-4262-b772-5e56b7f63e36",
+      "operatorId": "usr_ASn_MlnBfy9geUzR",
+      "at": "2026-09-10T09:20:25.794Z"
+    },
+    {
+      "action": "GITLAB_CONNECTION_VERIFY",
+      "connectionId": "gitlab-891a3004-5d4d-4262-b772-5e56b7f63e36",
+      "operatorId": "usr_PumMbTSsuh95rlCQ",
+      "at": "2026-09-10T09:50:19.756Z",
+      "result": "failed"
+    },
+    {
+      "action": "GITLAB_CONNECTION_UPSERT",
+      "connectionId": "gitlab-891a3004-5d4d-4262-b772-5e56b7f63e36",
+      "operatorId": "usr_PumMbTSsuh95rlCQ",
+      "at": "2026-09-10T09:51:56.457Z"
+    },
+    {
+      "action": "GITLAB_CONNECTION_VERIFY",
+      "connectionId": "gitlab-891a3004-5d4d-4262-b772-5e56b7f63e36",
+      "operatorId": "usr_PumMbTSsuh95rlCQ",
+      "at": "2026-09-10T09:52:11.746Z",
+      "result": "failed"
+    },
+    {
+      "action": "GITLAB_CONNECTION_VERIFY",
+      "connectionId": "gitlab-891a3004-5d4d-4262-b772-5e56b7f63e36",
+      "operatorId": "usr_PumMbTSsuh95rlCQ",
+      "at": "2026-09-11T03:16:53.943Z",
+      "result": "failed"
+    },
+    {
+      "action": "GITLAB_CONNECTION_VERIFY",
+      "connectionId": "gitlab-891a3004-5d4d-4262-b772-5e56b7f63e36",
+      "operatorId": "usr_ASn_MlnBfy9geUzR",
+      "at": "2026-09-11T03:28:34.813Z",
+      "result": "failed"
+    },
+    {
+      "action": "GITLAB_CONNECTION_VERIFY",
+      "connectionId": "gitlab-891a3004-5d4d-4262-b772-5e56b7f63e36",
+      "operatorId": "usr_ASn_MlnBfy9geUzR",
+      "at": "2026-09-11T03:28:35.692Z",
+      "result": "failed"
+    },
+    {
+      "action": "GITLAB_CONNECTION_VERIFY",
+      "connectionId": "gitlab-891a3004-5d4d-4262-b772-5e56b7f63e36",
+      "operatorId": "usr_ASn_MlnBfy9geUzR",
+      "at": "2026-09-11T03:28:35.984Z",
+      "result": "failed"
+    },
+    {
+      "action": "GITLAB_CONNECTION_VERIFY",
+      "connectionId": "gitlab-891a3004-5d4d-4262-b772-5e56b7f63e36",
+      "operatorId": "usr_ASn_MlnBfy9geUzR",
+      "at": "2026-09-11T03:28:36.221Z",
+      "result": "failed"
+    },
+    {
+      "action": "GITLAB_CONNECTION_UPSERT",
+      "connectionId": "gitlab-891a3004-5d4d-4262-b772-5e56b7f63e36",
+      "operatorId": "usr_ASn_MlnBfy9geUzR",
+      "at": "2026-09-11T03:28:42.607Z"
+    },
+    {
+      "action": "GITLAB_CONNECTION_UPSERT",
+      "connectionId": "gitlab-891a3004-5d4d-4262-b772-5e56b7f63e36",
+      "operatorId": "usr_ASn_MlnBfy9geUzR",
+      "at": "2026-09-11T03:38:19.769Z"
+    },
+    {
+      "action": "GITLAB_CONNECTION_VERIFY",
+      "connectionId": "gitlab-891a3004-5d4d-4262-b772-5e56b7f63e36",
+      "operatorId": "usr_ASn_MlnBfy9geUzR",
+      "at": "2026-09-11T03:48:50.530Z",
+      "result": "verified"
+    },
+    {
+      "action": "GITLAB_CONNECTION_VERIFY",
+      "connectionId": "gitlab-bf7af4ad-4f95-4e50-aa52-dfe949adb391",
+      "operatorId": "usr_ASn_MlnBfy9geUzR",
+      "at": "2026-09-11T03:48:53.372Z",
+      "result": "verified"
+    }
+  ]
+}

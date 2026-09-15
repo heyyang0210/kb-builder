@@ -44,6 +44,7 @@ function createPlannerNode(agentManager, options = {}) {
     const input = {
       knowledgePoint: state.knowledgePoint,
       template: state.template,
+      templateSnapshot: state.inputData,
       prompt: state.prompt,
     };
 
@@ -88,6 +89,7 @@ function createPlannerRetrieverNode(agentManager, toolManager, options = {}) {
     const input = {
       knowledgePoint: state.knowledgePoint,
       template: state.template,
+      templateSnapshot: state.inputData,
       prompt: state.prompt,
     };
 
@@ -224,6 +226,7 @@ function createGeneratorNode(agentManager, options = {}) {
     const capturedDetails = [];
     const agent = agentManager.getAgent('generator');
     const input = {
+      templateSnapshot: state.inputData,
       executionPlan: state.executionPlan,
       references: state.references,
       feedback: state.feedback,

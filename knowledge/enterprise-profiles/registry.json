@@ -1,6 +1,6 @@
 {
   "defaultProfileId": "yashandb",
   "profiles": {
-    "yashandb": "knowledge/enterprise-profiles/yashandb/profile.json"
+    "yashandb": "config/knowledge-center/platform.json"
   }
 }

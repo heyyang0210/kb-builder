@@ -4,20 +4,21 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const { createAggregateStore } = require('../lib/aggregate-store');
-const { AGENT_RUNNER_CONFIG_ROOT, AGENT_RUNNER_RUNTIME_ROOT } = require('../lib/repo-paths');
+const { AGENT_RUNNER_RUNTIME_ROOT, REPOSITORY_ROOT } = require('../lib/repo-paths');
+const { CONFIG_PATHS } = require('../lib/config-registry');
 const multer = require('multer');
 const logger = require('../lib/logger');
 
 // ============================================
 // 多路径配置
 // ============================================
-const CONFIG_PATH = path.join(AGENT_RUNNER_CONFIG_ROOT, 'document-paths.json');
+const CONFIG_PATH = CONFIG_PATHS.runtime;
 
 function loadDocPathsConfig() {
   try {
     if (fs.existsSync(CONFIG_PATH)) {
       const config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
-      return config.paths || [];
+      return config.documentPaths || [];
     }
   } catch (err) {
     logger.warn('Failed to load document-paths config, using defaults');
@@ -32,7 +33,9 @@ function resolveRoots() {
   return config.map(entry => {
     let absPath = entry.path;
     if (!path.isAbsolute(absPath)) {
-      absPath = path.resolve(__dirname, '..', absPath);
+      // runtime.json paths are repository-relative; resolving from this module
+      // caused ../output to silently point at packages/output.
+      absPath = path.resolve(REPOSITORY_ROOT, absPath);
     }
     return {
       id: entry.id,
@@ -389,11 +392,12 @@ router.post('/paths', (req, res) => {
     if (!name || !pathValue) {
       return res.status(400).json({ success: false, message: '名称和路径为必填' });
     }
-    const resolvedPath = path.isAbsolute(pathValue) ? pathValue : path.resolve(__dirname, '..', pathValue);
+    const resolvedPath = path.isAbsolute(pathValue) ? pathValue : path.resolve(REPOSITORY_ROOT, pathValue);
     if (!fs.existsSync(resolvedPath) || !fs.statSync(resolvedPath).isDirectory()) {
       return res.status(400).json({ success: false, message: '路径不存在或不是目录: ' + pathValue });
     }
-    const config = fs.existsSync(CONFIG_PATH) ? JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8')) : { paths: [] };
+    const config = fs.existsSync(CONFIG_PATH) ? JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8')) : { documentPaths: [] };
+    if (!Array.isArray(config.documentPaths)) config.documentPaths = [];
     let slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''); if (!slug) slug = 'path'; const newId = slug + '-' + Date.now().toString(36);
     const entry = {
       id: newId, name,
@@ -401,7 +405,7 @@ router.post('/paths', (req, res) => {
       writable: writable !== undefined ? !!writable : false,
       description: req.body.description || ''
     };
-    config.paths.push(entry);
+    config.documentPaths.push(entry);
     fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), 'utf-8');
     logger.info('Document path added', { id: newId, name, path: pathValue });
     res.json({ success: true, data: { ...entry, absPath: resolvedPath, exists: true } });
@@ -415,10 +419,11 @@ router.delete('/paths/:id', (req, res) => {
   try {
     const { id } = req.params;
     if (id === 'output') return res.status(400).json({ success: false, message: '默认生成文档路径不可删除' });
-    const config = fs.existsSync(CONFIG_PATH) ? JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8')) : { paths: [] };
-    const idx = config.paths.findIndex(p => p.id === id);
+    const config = fs.existsSync(CONFIG_PATH) ? JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8')) : { documentPaths: [] };
+    if (!Array.isArray(config.documentPaths)) config.documentPaths = [];
+    const idx = config.documentPaths.findIndex(p => p.id === id);
     if (idx === -1) return res.status(404).json({ success: false, message: '路径不存在' });
-    const removed = config.paths.splice(idx, 1)[0];
+    const removed = config.documentPaths.splice(idx, 1)[0];
     fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), 'utf-8');
     logger.info('Document path removed', { id, name: removed.name });
     res.json({ success: true, message: '路径已移除' });

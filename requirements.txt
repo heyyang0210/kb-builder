@@ -1,0 +1,113 @@
+# YashanDB 知识库 Skill 仓库依赖与组件清单
+#
+# 生成日期：2026-09-14
+# 清单范围：主仓库 apps/packages/tools/tests/config/knowledge/docs
+# 排除范围：external/、runtime/、node_modules/、构建产物及本地运行数据
+#
+# 本文件是混合技术栈清单：只有“Python 依赖”分区中的非注释行由 pip 安装；
+# Node.js、Java/JDBC、内部组件和外部运行配置以注释形式记录，不能通过 pip 安装。
+# Python 版本以 apps/pingcode-api/requirements.txt 为准；Node.js 版本以 package.json
+# 与各工作区 package-lock.json 为准。声明版本和锁文件解析版本分别记录，避免混淆。
+
+# -----------------------------------------------------------------------------
+# Python 运行时依赖（可直接由 pip 安装）
+# -----------------------------------------------------------------------------
+fastapi==0.116.1
+uvicorn[standard]==0.35.0
+pydantic==2.11.7
+python-multipart==0.0.20
+jsonschema==4.10.3
+
+# -----------------------------------------------------------------------------
+# Node.js 运行前提
+# -----------------------------------------------------------------------------
+# Node.js >= 18.0.0（apps/knowledge-center-api）
+# npm（随 Node.js 提供）
+
+# -----------------------------------------------------------------------------
+# Node.js：根工作区 package.json / package-lock.json
+# -----------------------------------------------------------------------------
+# 运行时依赖
+# mermaid: declared ^11.16.0; locked 11.16.0
+
+# -----------------------------------------------------------------------------
+# Node.js：apps/knowledge-center-api/package.json / package-lock.json
+# -----------------------------------------------------------------------------
+# 运行时依赖（dependencies）
+# @langchain/langgraph: declared ^1.4.7; locked 1.4.7
+# adm-zip: declared ^0.6.0; locked 0.6.0
+# cheerio: declared ^1.2.0; locked 1.2.0
+# cors: declared ^2.8.5; locked 2.8.6
+# dotenv: declared ^16.3.1; locked 16.6.1
+# express: declared ^4.18.2; locked 4.22.2
+# express-rate-limit: declared ^7.1.5; locked 7.5.1
+# highlight.js: declared ^11.12.0; locked 11.12.0
+# katex: declared ^0.18.7; locked 0.18.7
+# lucide: declared ^0.468.0; locked 0.468.0
+# mammoth: declared ^1.12.0; locked 1.12.0
+# marked: declared ^18.0.11; locked 18.0.11
+# mermaid: declared ^11.17.2; locked 11.17.2
+# multer: declared ^2.2.0; locked 2.2.0
+# openai: declared ^4.20.0; locked 4.104.0
+# pdf-parse: declared ^1.1.1; locked 1.1.1
+# pptx2json: declared ^0.0.10; locked 0.0.10
+# socket.io: declared ^4.6.1; locked 4.8.3
+# tar-stream: declared ^3.2.0; locked 3.2.0
+# winston: declared ^3.11.0; locked 3.19.0
+# xlsx: declared ^0.18.5; locked 0.18.5
+#
+# 开发与测试依赖（devDependencies）
+# @playwright/test: declared ^1.61.1; locked 1.61.1
+# jest: declared ^29.7.0; locked 29.7.0
+# nodemon: declared ^3.0.2; locked 3.1.14
+# socket.io-client: declared ^4.8.3; locked 4.8.3
+
+# -----------------------------------------------------------------------------
+# Node.js：apps/pingcode-web/package.json / package-lock.json
+# -----------------------------------------------------------------------------
+# 运行时依赖（dependencies）
+# dompurify: declared ^3.4.12; locked 3.4.12
+# echarts: declared ^6.1.0; locked 6.1.0
+# lucide-vue-next: declared ^0.468.0; locked 0.468.0
+# marked: declared ^18.0.7; locked 18.0.7
+# mermaid: declared ^11.16.0; locked 11.16.0
+# monaco-editor: declared ^0.56.0; locked 0.56.0
+# vue: declared ^3.5.18; locked 3.5.40
+# vue-router: declared ^4.5.1; locked 4.6.4
+#
+# 构建与开发依赖（devDependencies）
+# @vitejs/plugin-vue: declared ^6.0.1; locked 6.0.8
+# vite: declared ^7.0.6; locked 7.3.6
+
+# -----------------------------------------------------------------------------
+# 仓库内部组件
+# -----------------------------------------------------------------------------
+# apps/knowledge-center-api
+#   Express API、Workflow Agent 执行引擎、LangGraph 工作流、OpenAI 客户端、
+#   Socket.IO 实时通信、文档/表格/演示文稿/PDF 解析与 Markdown/数学公式渲染。
+# apps/pingcode-api
+#   FastAPI 资料加工控制面；共享客户端和领域能力来自 packages/pingcode-core。
+# apps/pingcode-web
+#   Vue + Vite 前端；ECharts 图表、Mermaid 图表、Monaco Editor 编辑器。
+# packages/agent-runner-core
+#   Agent Runner 共享业务核心、路由、工作流与存储适配能力；无额外 package.json 依赖。
+# packages/pingcode-core
+#   PingCode API 客户端、抓取、下载、解析、索引和配置共享能力；由 Python 路径加载。
+# tools/knowledge-processing
+#   知识加工、迁移、导出和仓库维护脚本，依赖对应 Node.js/Python 运行时。
+
+# -----------------------------------------------------------------------------
+# Java / YashanDB 存储组件
+# -----------------------------------------------------------------------------
+# Java >= 17
+# YashanDB JDBC 驱动：com.yashandb:yashandb-jdbc:1.6.1
+# 仓库验证制品：apps/yashandb-storage/lib/yashandb-jdbc.jar
+# JDBC URL、用户名、密码、存储服务地址等通过环境变量注入，不在此文件记录凭据。
+
+# -----------------------------------------------------------------------------
+# 外部运行配置（不属于 pip/npm 依赖）
+# -----------------------------------------------------------------------------
+# YashanDB 数据库连接：YASDB_JDBC_URL、YASDB_USERNAME、YASDB_PASSWORD
+# YashanDB 存储服务：YASDB_STORAGE_URL、YASDB_STORAGE_HOST、YASDB_STORAGE_PORT
+# OpenAI/模型服务：按 apps/knowledge-center-api 与 apps/pingcode-api 配置文档注入
+# YashanDB 知识库 MCP：按 config/资料引用策略.md 和相关环境配置注入

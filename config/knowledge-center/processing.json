@@ -1,0 +1,24 @@
+{
+  "preprocessing": {
+    "engine": { "logDir": "logs/preprocessing", "snapshotDir": "preprocessing-output/_snapshots", "reportDir": "preprocessing-output/_reports", "snapshots": { "maxRetained": 10 } },
+    "pipelines": {
+      "design-docs": {
+        "source": { "inputDir": "knowledge/refs/pingcode", "filePattern": "**/*.md", "adapter": "chain", "excludePatterns": ["/_test_output/", "\\\\_test_output\\\\"] },
+        "output": { "baseDir": "runtime/agent-runner/preprocessing-output/pingcode" },
+        "cleaning": { "removeConfluenceMeta": true, "cleanInternalLinks": true, "handleImageRefs": true, "cleanAnchorLinks": true, "normalizeHeadings": true, "addYamlFront": true, "internalDomains": ["conf.yasdb.com", "jira.yasdb.com", "pingcode.yasdb.com"] },
+        "qualityFilter": { "enabled": true, "minContentChars": 50, "borderlineMaxChars": 300, "maxHeadingRatio": 0.8, "useLlmForBorderline": false, "llmMinScore": 3 },
+        "classification": { "enabled": true, "minConfidence": 0.7, "featureListPath": "config/knowledge-center/processing.json#/features", "useLlmFallback": false },
+        "captioning": { "enabled": false, "provider": "openai-compatible", "endpoint": { "type": "official", "baseURL": "", "baseUrlEnv": "VISION_BASE_URL" }, "apiKeyEnv": "VISION_API_KEY", "model": "gpt-5.6-terra", "modelEnv": "VISION_MODEL", "request": { "reasoningEffort": "none", "maxOutputTokens": 120, "imageDetail": "low", "timeoutMs": 60000 } },
+        "officeRendering": { "enabled": true, "provider": "libreoffice", "command": "libreoffice", "pdfToImageCommand": "pdftoppm", "dpi": 144, "timeoutMs": 120000 },
+        "chunking": { "enabled": true, "minTokens": 500, "maxTokens": 1500, "overlapSentences": 2, "protectTables": true, "protectCodeBlocks": true },
+        "indexing": { "maxKeywords": 15, "summaryMaxLength": 300, "useLlmForSummary": true, "llmModel": "qwen-plus", "ruleBasedSummaryFirst": true, "ruleBasedMinLength": 100, "vector": { "enabled": true, "embedding": { "provider": "hash", "dimension": 128 } }, "graph": { "enabled": true }, "evaluation": { "vectorCoverageThreshold": 0.99, "graphEvidenceThreshold": 1.0, "maxIsolatedChunkRate": 0.05 } },
+        "quality": { "enabled": true, "failOnCritical": true, "textRecallThreshold": 0.98, "mediaCoverageThreshold": 1.0, "termDictionary": "config/db-terms.json" },
+        "retrieval": { "maxCandidates": 30, "maxConfirmed": 5, "maxChunksPerDoc": 8, "relevanceThreshold": 0.3 }
+      }
+    }
+  },
+  "quality": { "keyword_extraction": { "min_base_queries": 1, "max_expanded_queries": 10, "reject_patterns": ["[A-Z]{1}[^A-Z]{0,2}[A-Z]{1}"] }, "mcp_query": { "min_success_rate": 0.5, "min_content_length": 500, "max_retries": 3 }, "document_generation": { "min_length": 500, "require_yaml": true, "require_sql_examples": true, "current_date_required": true }, "content_validation": { "min_completeness_score": 0.8, "min_accuracy_score": 0.9 } },
+  "synonyms": { "description": "MCP 查询关键词同义词扩展配置", "categories": [{ "name": "高可用", "synonyms": ["高可用", "HA", "主备", "主从", "故障切换", "容灾"] }, { "name": "备份恢复", "synonyms": ["备份", "恢复", "还原", "归档", "增量备份", "全量备份"] }, { "name": "性能调优", "synonyms": ["性能", "优化", "调优", "慢SQL", "执行计划"] }, { "name": "数据类型", "synonyms": ["数据类型", "类型映射", "数值类型", "精度", "标度"] }, { "name": "事务控制", "synonyms": ["事务", "隔离级别", "一致性", "锁", "并发控制"] }, { "name": "SQL语法", "synonyms": ["SQL", "语法", "语句", "DML", "DDL", "查询"] }, { "name": "用户权限", "synonyms": ["用户", "权限", "角色", "授权", "访问控制", "安全"] }, { "name": "存储管理", "synonyms": ["存储", "表空间", "数据文件", "空间管理", "磁盘"] }, { "name": "索引", "synonyms": ["索引", "B树索引", "位图索引", "函数索引", "索引重建"] }, { "name": "分区", "synonyms": ["分区", "范围分区", "列表分区", "哈希分区", "分区裁剪"] }, { "name": "连接管理", "synonyms": ["连接", "会话", "连接池", "长连接", "短连接"] }, { "name": "日志", "synonyms": ["日志", "redo", "undo", "归档日志", "在线日志"] }, { "name": "兼容性", "synonyms": ["兼容性", "兼容", "迁移", "适配", "Oracle兼容", "差异"] }, { "name": "监控", "synonyms": ["监控", "告警", "指标", "健康检查", "状态"] }] },
+  "features": [{ "name": "SQL引擎", "keywords": ["SQL", "查询优化", "执行计划", "优化器", "算子"] }, { "name": "事务管理", "keywords": ["事务", "提交", "回滚", "MVCC", "一致性"] }, { "name": "存储引擎", "keywords": ["存储", "页面", "段", "表空间", "数据文件"] }, { "name": "备份恢复", "keywords": ["备份", "恢复", "归档", "增量备份", "全量备份"] }, { "name": "高可用", "keywords": ["故障转移", "高可用", "主备", "TAF", "容灾"] }, { "name": "安全管理", "keywords": ["权限", "用户", "角色", "认证", "审计"] }, { "name": "运维管理", "keywords": ["监控", "诊断", "告警", "运维", "巡检"] }],
+  "gitlabDocumentTypes": { "extensions": [".md", ".markdown", ".txt", ".rst", ".html", ".htm", ".doc", ".docx", ".odt", ".pdf"], "excludedNames": ["_index.md"] }
+}

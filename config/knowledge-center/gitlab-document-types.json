@@ -1,4 +1,0 @@
-{
-  "extensions": [".md", ".markdown", ".txt", ".rst", ".html", ".htm", ".doc", ".docx", ".odt", ".pdf"],
-  "excludedNames": ["_index.md"]
-}

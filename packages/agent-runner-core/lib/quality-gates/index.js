@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const logger = require('../logger');
-const { AGENT_RUNNER_CONFIG_ROOT } = require('../repo-paths');
+const { CONFIG_PATHS } = require('../config-registry');
 
 /**
  * 质量门禁配置
@@ -34,9 +34,10 @@ function loadQualityConfig() {
     const runtime = global.__KNOWLEDGE_PLATFORM_PROFILE_RUNTIME__;
     const configPath = runtime
       ? require('../platform-profile/runtime-profile').getResource('qualityRules', 'generation-quality').path
-      : path.join(AGENT_RUNNER_CONFIG_ROOT, 'quality-config.json');
+      : CONFIG_PATHS.processing;
     const configText = fs.readFileSync(configPath, 'utf-8');
-    return JSON.parse(configText);
+    const parsed = JSON.parse(configText);
+    return parsed.quality || parsed;
   } catch {
     return DEFAULT_QUALITY_CONFIG;
   }

@@ -24,7 +24,7 @@ config/{knowledge-center,pingcode,database}
 | 批次 | 内容 | 状态 | 验证证据 |
 | --- | --- | --- | --- |
 | 0 | 冻结工作区和迁移映射 | 已完成 | 执行前 `git status --short` |
-| 1 | 数据库配置契约和忽略规则 | 已完成 | `config/database` schema、示例和 `.gitignore` |
+| 1 | 数据库配置契约和忽略规则 | 已完成 | `config/database/yashandb.json` 与 README；Schema 约束已迁入配置测试 |
 | 2 | Agent Runner 应用、共享包、配置和测试迁移 | 已完成 | `apps/knowledge-center-*`、`packages/agent-runner-core` |
 | 3 | PingCode 应用、共享包、配置和测试迁移 | 已完成 | `apps/pingcode-*`、`packages/pingcode-core` |
 | 4 | 工具、运行数据和契约迁移 | 已完成 | `tools/`、`var/`、`packages/platform-contracts` |

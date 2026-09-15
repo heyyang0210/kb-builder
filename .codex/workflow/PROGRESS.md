@@ -1,6 +1,19 @@
 # 项目进度看板
 
-> 自动更新: 2026-08-20 CST
+## 模板管理改造（项目计划初始化）
+
+- 任务总览：`.codex/workflow/tasks/TASK-TEMPLATE-EPIC.md`
+- P1：`verified`；P2：`verified`（P2 独立 API 8/8，前端工作台测试及隔离浏览器验证通过）；P3：`verified-with-boundary`（生成冻结 6/6、模板回归 22/22、浏览器回归通过、初始化 dry-run 7 项；真实共享 HTTP 与数据库迁移未执行，详见残余风险）。分别覆盖 T1-T3、T4-T7、T8-T10。
+- 已新增 `database-architect` 角色；当前为开发测试环境，数据库迁移暂不作为阻断门禁。
+
+> 自动更新: 2026-09-14 CST
+
+### 模板管理阶段门禁（2026-09-14）
+
+- P1 判定：已完成，状态更新为 `verified`。
+- 已通过：`node --test tests/unit/agent-runner/template-p1.test.js tests/unit/agent-runner/database-config.test.js`，12/12；Python 配置测试 2/2；Node/Shell 静态检查和 `git diff --check`。
+- 真实证据：隔离脚本重启后认证服务实际监听 `14200`；管理员登录、未登录 401、数据库模式列表/创建/保存/详情/版本读取、SHA-256、过期版本 409、独立 `TEMPLATE_EDITOR` 权限闭环均通过；测试聚合已清理。
+- 放行决策：P1 满足真实后端 API 和独立验收门禁，允许按任务依赖进入 P2；P3 仍需等待 P2。
 
 ## 📊 总览
 

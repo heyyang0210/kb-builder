@@ -13,6 +13,7 @@ import { renderAssets } from './modules/assets/view.js';
 import { renderCleaning } from './modules/cleaning/view.js';
 import { renderOutlines } from './modules/outlines/view.js';
 import { renderTemplates } from './modules/templates/view.js';
+import { createTemplateController } from './modules/templates/controller.js';
 import { renderProduction, renderStages } from './modules/production/view.js';
 import { renderReviewPublishing } from './modules/review-publishing/view.js';
 import { renderPermissionResults, renderPlatformAdmin } from './modules/platform-admin/view.js';
@@ -23,7 +24,7 @@ const renderers = {
   assets: renderAssets,
   cleaning: renderCleaning,
   outlines: renderOutlines,
-  templates: renderTemplates,
+  templates: args => renderTemplates({ ...args, templateUi: appState.templateUi }),
   production: renderProduction,
   review: renderReviewPublishing,
   platform: renderPlatformAdmin,
@@ -32,6 +33,7 @@ const renderers = {
 };
 
 const outlineStages = new Set(['tree', 'responsibility', 'templates', 'changes', 'publish']);
+const templateController = createTemplateController({ appState, render, canPerform });
 
 function outlineRouteState() {
   const parts = window.location.pathname.split('/').filter(Boolean);
@@ -73,7 +75,7 @@ function render() {
   });
   document.querySelector('.nav-caption.governance').hidden = !canAccessView('platform');
   const outlineView = appState.activeView === 'outlines' ? outlineRouteState() : {};
-  byId('view-root').innerHTML = renderer({ projection: appState.activeView === 'repository' ? appState.gitlabProjection : appState.projection, cleaningProjection: appState.cleaningProjection, cleaningCanWrite: canPerform('knowledge:write'), reviewProjection: appState.reviewProjection, reviewUi: appState.reviewUi, outlineProjection: appState.outlineProjection, assetCatalog: appState.assetCatalog, incrementalProjection: appState.incrementalProjection, gitlabProjection: appState.gitlabProjection, permissionProjection: appState.permissionProjection, governanceProjection: appState.platformGovernance, selectedPermissionUserId: appState.selectedPermissionUserId, permissionSaveStatus: appState.permissionSaveStatus, permissionUserSearch: appState.permissionUserSearch, gitlabVerification: appState.gitlabVerification, platformAdmin: isPlatformAdmin(), platformTab: appState.platformTab, gitlabListState: appState.gitlabListState, gitlabAddingConnection: appState.gitlabAddingConnection, gitlabEditingConnection: appState.gitlabEditingConnection, outlinePermissions: { create: canPerform('outline:create'), delete: canPerform('outline:delete') }, outlineView });
+  byId('view-root').innerHTML = renderer({ projection: appState.activeView === 'repository' ? appState.gitlabProjection : appState.projection, templateProjection: appState.templateProjection, cleaningProjection: appState.cleaningProjection, cleaningCanWrite: isPlatformAdmin(), reviewProjection: appState.reviewProjection, reviewUi: appState.reviewUi, outlineProjection: appState.outlineProjection, assetCatalog: appState.assetCatalog, incrementalProjection: appState.incrementalProjection, gitlabProjection: appState.gitlabProjection, permissionProjection: appState.permissionProjection, governanceProjection: appState.platformGovernance, selectedPermissionUserId: appState.selectedPermissionUserId, permissionSaveStatus: appState.permissionSaveStatus, permissionUserSearch: appState.permissionUserSearch, permissionListState: appState.permissionListState, gitlabVerification: appState.gitlabVerification, platformAdmin: isPlatformAdmin(), platformTab: appState.platformTab, gitlabListState: appState.gitlabListState, gitlabAddingConnection: appState.gitlabAddingConnection, gitlabEditingConnection: appState.gitlabEditingConnection, outlinePermissions: { create: canPerform('outline:create'), delete: canPerform('outline:delete') }, outlineView });
   window.lucide?.createIcons();
   if (appState.activeView === 'review') {
     const taskId = appState.reviewProjection?.detail?.task?.id;
@@ -94,6 +96,7 @@ function flushDeferredAssetRender() {
 
 function navigate(view, updateHistory = true) {
   if (!views[view]) return;
+  if (appState.activeView === 'templates' && view !== 'templates' && !templateController.canLeave()) return;
   if (!canAccessView(view)) {
     const fallback = firstAccessibleView();
     showAppNotice('当前账号没有访问该页面的权限，已返回可访问页面。');
@@ -101,7 +104,6 @@ function navigate(view, updateHistory = true) {
     return navigate(fallback, updateHistory);
   }
   appState.activeView = view;
-  if (view === 'review') enterReviewLayout();
   const targetPath = view === "platform" ? pathForView(view, { tab: appState.platformTab }) : pathForView(view);
   if (updateHistory && (window.location.pathname + window.location.search) !== targetPath) window.history.pushState({ view, tab: appState.platformTab }, '', targetPath);
   render();
@@ -115,8 +117,13 @@ function navigate(view, updateHistory = true) {
   if (view === 'review') loadReviewWorkspace();
   if (view === 'repository') loadRepositoryWorkspace();
   if (view === 'platform') loadGitLabAdmin();
+  if (view === 'templates') loadTemplateWorkspace();
   closeMobileNavigation(false);
   byId('main').focus();
+}
+
+async function loadTemplateWorkspace(selectedId) {
+  return templateController.load(selectedId);
 }
 
 function repositoryRouteState() {
@@ -137,8 +144,9 @@ function repositoryStatusFor(error) {
 
 function requireReadableGitLabAccess(access) {
   if (access?.canRead !== false) return;
-  if (access.nextAction === 'connect_gitlab') throw Object.assign(new Error(access.message || '需要连接 GitLab 账号'), { code: 'GITLAB_OAUTH_REQUIRED', status: 401 });
-  throw Object.assign(new Error(access.message || '当前仓库连接不可读取'), { code: 'GITLAB_CONNECTION_INACTIVE', status: 409 });
+  const error = Object.assign(new Error(access.message || '当前仓库连接不可读取'), { code: access.nextAction === 'connect_gitlab' ? 'GITLAB_OAUTH_REQUIRED' : 'GITLAB_CONNECTION_INACTIVE', status: access.nextAction === 'connect_gitlab' ? 401 : 409 });
+  error.connectionId = access.connectionId; error.connectionName = access.connectionName; error.project = access.project;
+  throw error;
 }
 
 async function loadRepositoryWorkspace() {
@@ -205,7 +213,7 @@ async function loadGitLabAdmin() {
     loadGitLabConnections().catch(error => ({ error })),
     loadGitLabOAuthStatus().catch(() => ({ connected: false, mode: 'unavailable' })),
     loadGitLabOAuthConfig().catch(() => ({ configured: false, devHttp: false })),
-    loadPlatformPermissions().catch(error => ({ error })),
+    loadPlatformPermissions({ q: appState.permissionUserSearch, ...appState.permissionListState }).catch(error => ({ error })),
   ]);
   appState.gitlabProjection = { ...(appState.gitlabProjection || {}), connections: gitlab.error ? [] : (gitlab?.items || gitlab?.data?.items || []), oauthStatus, oauthConfig, adminError: gitlab.error?.message };
   updatePlatformGovernance(appState.contextProjection, appState.projection, appState.gitlabProjection);
@@ -213,21 +221,23 @@ async function loadGitLabAdmin() {
   else {
     const payload = permissions?.data || permissions?.content || permissions;
     appState.permissionProjection = { ...(payload || {}), status: 'ok' };
-    if (!appState.selectedPermissionUserId && Array.isArray(payload?.users) && payload.users.length) {
-      appState.selectedPermissionUserId = payload.users[0].id;
+    if (Array.isArray(payload?.users)) {
+      const stillVisible = payload.users.some(user => user.id === appState.selectedPermissionUserId);
+      if ((!stillVisible || !appState.selectedPermissionUserId) && payload.users.length) {
+        appState.selectedPermissionUserId = payload.users[0].id;
+      } else if (!payload.users.length) {
+        appState.selectedPermissionUserId = null;
+      }
     }
   }
   if (appState.activeView === 'platform') render();
 }
 
+let permissionSearchTimer = null;
 function refreshPermissionResults(searchValue) {
   appState.permissionUserSearch = searchValue.trim();
-  const results = renderPermissionResults(appState.permissionProjection || {}, appState.selectedPermissionUserId, appState.permissionSaveStatus, appState.permissionUserSearch);
-  appState.selectedPermissionUserId = results.selectedUserId;
-  const list = byId('view-root')?.querySelector('[data-permission-user-list]');
-  const detail = byId('view-root')?.querySelector('[data-permission-user-detail]');
-  if (list) list.innerHTML = results.listHtml;
-  if (detail) detail.innerHTML = results.detailHtml;
+  clearTimeout(permissionSearchTimer);
+  permissionSearchTimer = setTimeout(() => loadGitLabAdmin(), 250);
 }
 
 let permissionSearchComposing = false;
@@ -325,7 +335,7 @@ async function loadReviewWorkspace(taskId = null) {
         appState.gitlabProjection = { status: contextConflict ? 'conflict' : 'ok', handbookId: readerHandbookId, handbookName: metadataObject.handbookName, connectionName: metadataObject.connectionName, project: metadataObject.project, languages: metadataObject.languages, branches, branch, language, tree, file, requestedPath: firstFile, contextConflict, commitSha: file?.commitId || metadataObject.commitSha, updatedAt: file?.updatedAt || metadataObject.updatedAt };
       } catch (error) {
         if (sequence !== reviewLoadSequence) return;
-        appState.gitlabProjection = { status: repositoryStatusFor(error), handbookId: readerHandbookId, branch: params.get('branch') || '', language: params.get('lang') === 'en' ? 'en' : 'zh', path: params.get('path') || '', error: { code: error.code, message: error.message, status: error.status } };
+    appState.gitlabProjection = { status: repositoryStatusFor(error), handbookId: readerHandbookId, branch: params.get('branch') || '', language: params.get('lang') === 'en' ? 'en' : 'zh', path: params.get('path') || '', connectionId: error.connectionId, connectionName: error.connectionName, project: error.project, error: { code: error.code, message: error.message, status: error.status } };
       }
     }
     const hasBaseline = onlineReviewBaselines.some(item => item?.current === true);
@@ -533,6 +543,7 @@ async function load(scopes = ['context', 'overview']) {
     updatePlatformGovernance(currentContext, currentOverview);
     if (currentContext?.context?.brand?.enterpriseName) byId('enterprise-name').textContent = currentContext.context.brand.enterpriseName;
     else if (!appState.projection) byId('enterprise-name').textContent = '企业信息暂不可用';
+    applyBrandIcon(currentContext?.context?.brand?.icon);
     updatePlatformState(currentContext, currentOverview);
     try {
       render();
@@ -551,6 +562,12 @@ async function load(scopes = ['context', 'overview']) {
       return load(nextScopes);
     }
   }
+}
+
+function applyBrandIcon(icon = {}) {
+  const url = '/knowledge-center/api/platform/brand/icon';
+  document.querySelectorAll('[data-brand-icon]').forEach(image => { image.src = url; image.alt = icon.alt || ''; image.hidden = false; image.nextElementSibling?.setAttribute('hidden', 'hidden'); image.onerror = () => { image.hidden = true; image.nextElementSibling?.removeAttribute('hidden'); }; });
+  const favicon = byId('knowledge-center-favicon'); if (favicon) favicon.href = url;
 }
 
 document.addEventListener('click', async event => {
@@ -721,6 +738,12 @@ document.addEventListener('click', async event => {
     appState.selectedPermissionUserId = permUser.dataset.permissionUser;
     appState.permissionSaveStatus = null;
     render();
+    return;
+  }
+  const permPage = event.target.closest('[data-permission-page]');
+  if (permPage) {
+    appState.permissionListState.page = Math.max(1, Number(permPage.dataset.permissionPage) || 1);
+    loadGitLabAdmin();
     return;
   }
   const outlineInfoToggle = event.target.closest('[data-outline-info-toggle]');
@@ -1830,6 +1853,7 @@ document.addEventListener('click', event => {
   render();
 });
 
+
 let reviewDirectoryDragging = false;
 document.addEventListener('pointerdown', event => {
   const handle = event.target.closest('[data-review-directory-resizer]');
@@ -2064,6 +2088,14 @@ document.addEventListener('scroll', () => {
 }, true);
 
 document.addEventListener('change', event => {
+  const permFilter = event.target.closest('[data-permission-status], [data-permission-role]');
+  if (permFilter) {
+    if (permFilter.matches('[data-permission-status]')) appState.permissionListState.status = permFilter.value;
+    else appState.permissionListState.role = permFilter.value;
+    appState.permissionListState.page = 1;
+    loadGitLabAdmin();
+    return;
+  }
   const branch = event.target.closest('[data-repository-branch]');
   if (!branch) return;
   const url = new URL(window.location.href); url.searchParams.set('branch', branch.value); url.searchParams.delete('path'); window.history.pushState({ view: 'repository' }, '', url); loadRepositoryWorkspace();
@@ -2094,6 +2126,7 @@ document.addEventListener('input', event => {
   const permSearch = event.target.closest("[data-permission-search]");
   if (permSearch) {
     if (permissionSearchComposing || event.isComposing) return;
+    appState.permissionListState.page = 1;
     refreshPermissionResults(permSearch.value);
     return;
   }
@@ -2305,13 +2338,6 @@ let sidebarWidth = Number(localStorage.getItem('knowledge-center-sidebar-width')
 let sidebarHidden = localStorage.getItem('knowledge-center-sidebar-hidden') === 'true';
 let sidebarCollapsed = localStorage.getItem('knowledge-center-sidebar-collapsed') === 'true';
 
-function enterReviewLayout() {
-  if (localStorage.getItem('knowledge-center-review-sidebar-default-applied') === 'true') return;
-  if (localStorage.getItem('knowledge-center-sidebar-user-set') !== 'true' && !sidebarHidden) sidebarCollapsed = true;
-  localStorage.setItem('knowledge-center-review-sidebar-default-applied', 'true');
-  saveSidebar();
-}
-
 function applySidebar() {
   shell.classList.toggle('sidebar-collapsed', sidebarCollapsed);
   shell.classList.toggle('sidebar-hidden', sidebarHidden);
@@ -2385,6 +2411,7 @@ if (initialView) {
 }
 
 async function bootstrap() {
+  applyBrandIcon();
   let session;
   try {
     session = await bootstrapAuth(status => { byId('auth-status').textContent = status; });
@@ -2407,7 +2434,6 @@ async function bootstrap() {
     window.history.replaceState({ view: targetView }, document.title, pathForView(targetView));
   }
   appState.activeView = targetView;
-  if (targetView === 'review') enterReviewLayout();
   applySidebar();
   syncMobileNavigationState();
   window.lucide?.createIcons();
@@ -2419,6 +2445,7 @@ async function bootstrap() {
   if (appState.activeView === 'review') loadReviewWorkspace();
   if (appState.activeView === 'repository') loadRepositoryWorkspace();
   if (appState.activeView === 'platform') loadGitLabAdmin();
+  if (appState.activeView === 'templates') loadTemplateWorkspace();
 }
 
 bootstrap().catch(error => {

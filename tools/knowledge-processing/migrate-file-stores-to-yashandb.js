@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { DatabaseRecordStore } = require('../../packages/agent-runner-core/lib/database-record-store');
+const { AGENT_RUNNER_RUNTIME_ROOT } = require('../../packages/agent-runner-core/lib/repo-paths');
 
 const root = path.resolve(__dirname, '..', '..');
 const apply = process.argv.includes('--apply');
@@ -14,14 +15,14 @@ function digest(value) {
 
 function sources() {
   const fixed = [
-    ['auth', 'state', path.join(root, 'tmp', 'knowledge-center-auth.json')],
-    ['assets', 'catalog', path.join(root, 'config', 'agent-runner', 'knowledge-assets.json')],
-    ['outlines', 'metadata', path.join(root, 'outlines', 'metadata.json')],
-    ['documents', 'metadata', path.join(root, 'tmp', 'doc-processed', 'metadata.json')],
-    ['documents', 'comments', path.join(root, 'data', 'document-comments.json')],
-    ['incremental', 'state', path.join(root, 'tmp', 'incremental-build-state.json')],
+    ['auth', 'state', path.join(AGENT_RUNNER_RUNTIME_ROOT, 'tmp', 'knowledge-center-auth.json')],
+    ['assets', 'catalog', path.join(root, 'config', 'knowledge-center', 'state', 'knowledge-assets.json')],
+    ['outlines', 'metadata', path.join(AGENT_RUNNER_RUNTIME_ROOT, 'outlines', 'metadata.json')],
+    ['documents', 'metadata', path.join(AGENT_RUNNER_RUNTIME_ROOT, 'tmp', 'doc-processed', 'metadata.json')],
+    ['documents', 'comments', path.join(AGENT_RUNNER_RUNTIME_ROOT, 'data', 'document-comments.json')],
+    ['incremental', 'state', path.join(AGENT_RUNNER_RUNTIME_ROOT, 'tmp', 'incremental-build-state.json')],
   ];
-  const workflowDir = path.join(root, 'workflows');
+  const workflowDir = path.join(AGENT_RUNNER_RUNTIME_ROOT, 'workflows');
   if (fs.existsSync(workflowDir)) {
     for (const file of fs.readdirSync(workflowDir).filter(name => name.endsWith('.json')).sort()) {
       fixed.push(['workflows', path.basename(file, '.json'), path.join(workflowDir, file)]);

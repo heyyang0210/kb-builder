@@ -1,0 +1,2 @@
+-- 聚合记录按命名空间读取；主键已覆盖完整标识，这个索引避免大表扫描聚合分区。
+CREATE INDEX IDX_KC_RECORD_NAMESPACE ON KC_RECORD (NAMESPACE, DELETED, UPDATED_AT);

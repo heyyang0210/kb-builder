@@ -254,7 +254,7 @@
   ],
   "persistentSources": [
     {
-      "path": "config/knowledge-center/knowledge-assets.json",
+      "path": "config/knowledge-center/state/knowledge-assets.json",
       "status": "已由代码或真实 API 证实",
       "bytes": 54146,
       "modifiedAt": "2026-09-02T08:11:35.559Z",

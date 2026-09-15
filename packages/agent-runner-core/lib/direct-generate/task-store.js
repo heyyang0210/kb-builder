@@ -1,6 +1,7 @@
 let ioInstance = null;
 const directTasks = new Map();
 const { getTrace } = require('../platform-profile/runtime-profile');
+const { templateMetadata } = require('../template-generation');
 
 function setDirectIO(io) {
   ioInstance = io;
@@ -58,6 +59,7 @@ function normalizeDirectDetail(detail = {}) {
 function serializeDirectTask(task) {
   return {
     task_id: task.task_id,
+    ...templateMetadata(task.inputData),
     status: task.status,
     progress: task.progress,
     current_step: task.current_step,

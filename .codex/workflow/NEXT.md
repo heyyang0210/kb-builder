@@ -196,3 +196,14 @@ GraphStore 本地契约、LocalGraphStore、write-run/outbox 和异步投影内�
 - Planner 拆解任务后更新此文件
 - 任务从 pending → in_progress 时从此文件移除
 - 新依赖解除时，将任务移入「已就绪可并行」
+# 模板管理下一步计划
+
+## 当前门禁
+
+P1 已于 2026-09-14 11:49:00 更新为 `verified`。隔离回归、真实 YashanDB JDBC/CAS、认证态模板 API 和独立 Test Engineer 验收均完成；认证服务由隔离脚本使用 `14200` 端口，非代码默认端口 `4200`。
+
+## 后续步骤
+
+1. 按 `TASK-TEMPLATE-P2.md` 开始上传草稿、历史版本和模板工作台实现；保持 P1 接口契约不变。
+2. P2 完成后执行浏览器与真实 API 联调，再评估 P3 数据初始化及生成版本固定链路。
+3. 每个任务结束同步 PROGRESS、任务卡和交接证据。

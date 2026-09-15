@@ -10,6 +10,7 @@ const YamlMetadataProcessor = require('../document/yaml-metadata-processor');
 const resultFilter = require('../retrieval/result-filter');
 const contextAssembler = require('../retrieval/context-assembler');
 const ProcessStore = require('../process-store');
+const { frozenTemplateContent, templateMetadata } = require('../template-generation');
 const RetrievalStrategy = require('../retrieval-strategy');
 const { writeDirectExecutionLog } = require('./execution-log');
 const { getBrand, getResourceByReference, getTrace } = require('../platform-profile/runtime-profile');
@@ -70,7 +71,8 @@ function formatMcpResult(data, maxResults = 8) {
 
 async function executeDirectGenerate(req, task) {
   const { prompt, knowledge_point, output_path, filename } = req.body;
-  const templatePath = req.body.template;
+  const templatePath = task.inputData?.template || req.body.template;
+  const frozenContent = frozenTemplateContent(task.inputData);
   const skillPath = req.body.skill;
   logger.info(`[direct_generate] Request body keys: ${Object.keys(req.body).join(', ')}`);
   logger.info(`[direct_generate] templatePath: ${templatePath}, skillPath: ${skillPath}`);
@@ -87,7 +89,8 @@ async function executeDirectGenerate(req, task) {
     debug: debugMode,
     output_path,
     filename: docFilename,
-    profile: getTrace()
+    profile: getTrace(),
+    ...templateMetadata(task.inputData)
   });
 
   try {
@@ -130,7 +133,9 @@ async function executeDirectGenerate(req, task) {
     const mcpQueries = reviewed.queries;
     
     // 同时获取参考文件（保留原有逻辑）
-    const { referenceFiles } = await extractDirectReferences(standardizedPrompt, templatePath, knowledge_point);
+    const extracted = await extractDirectReferences(standardizedPrompt, frozenContent === null ? templatePath : null, knowledge_point);
+    // Fixed templates must not be replaced by file-based copies found in a legacy prompt.
+    const referenceFiles = frozenContent === null ? extracted.referenceFiles : extracted.referenceFiles.filter(reference => !/(?:^|\/)templates\//.test(reference));
     
     await store.save('01-input-preparation', '03-keyword-extraction.json', {
       base_queries: plan.queries,
@@ -329,8 +334,8 @@ async function executeDirectGenerate(req, task) {
     });
 
     // 读取模板内容
-    let templateContent = '';
-    if (templatePath) {
+    let templateContent = frozenContent || '';
+    if (frozenContent === null && templatePath) {
       try {
         const reference = templatePath.replace(/^(?:\.\.\/)+/, '');
         templateContent = await fs.readFile(getResourceByReference(reference).path, 'utf-8');

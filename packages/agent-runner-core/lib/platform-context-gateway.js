@@ -28,7 +28,8 @@ function sanitizeContext(value) {
     brand: {
       enterpriseName: typeof brand.enterpriseName === 'string' ? brand.enterpriseName : '',
       platformName: typeof brand.platformName === 'string' ? brand.platformName : '',
-      productName: typeof brand.productName === 'string' ? brand.productName : ''
+      productName: typeof brand.productName === 'string' ? brand.productName : '',
+      icon: brand.icon && typeof brand.icon === 'object' ? { resourceRef: String(brand.icon.resourceRef || ''), alt: String(brand.icon.alt || '') } : null
     },
     capabilities: Array.isArray(value.capabilities) ? value.capabilities.map(item => ({ id: item.id, enabled: item.enabled === true })) : [],
     workspaces: Array.isArray(value.workspaces) ? value.workspaces.map(item => ({ id: item.id, displayName: item.displayName, basePath: item.basePath })) : [],

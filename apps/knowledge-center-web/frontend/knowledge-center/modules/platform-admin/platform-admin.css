@@ -189,6 +189,28 @@
   border-color: var(--color-brand);
   box-shadow: var(--focus-ring);
 }
+.permissions-filters {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.permissions-filters select {
+  min-height: 36px;
+  min-width: 0;
+  flex: 1;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 13px;
+}
+.permissions-count {
+  margin: 8px 2px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
 
 .permissions-user-list {
   list-style: none;
@@ -231,6 +253,20 @@
   text-align: center;
   color: var(--color-text-secondary);
   font-size: 13px;
+}
+.permissions-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 2px 0;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+@media (max-width: 720px) {
+  .permissions-layout { display: block; }
+  .permissions-detail { margin-top: var(--space-4); }
+  .permissions-filters { flex-direction: column; }
 }
 
 .permissions-detail {

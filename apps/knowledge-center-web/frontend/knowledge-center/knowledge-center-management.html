@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <base href="/knowledge-center/">
   <title>知识中心管理</title>
+  <link id="knowledge-center-favicon" rel="icon" href="/knowledge-center/api/platform/brand/icon">
   <link rel="stylesheet" href="./common/tokens.css">
   <link rel="stylesheet" href="./common/base.css">
   <link rel="stylesheet" href="./common/components.css">
@@ -28,7 +29,7 @@
   </section>
   <section id="auth-shell" class="auth-shell" aria-labelledby="auth-title" aria-busy="true" hidden>
     <div class="auth-panel">
-      <div class="auth-brand"><span class="brand-mark" aria-hidden="true"><i data-lucide="book-open-check"></i></span><div><h1 id="auth-title">知识中心管理</h1><p>企业知识资产协作与治理平台</p></div></div>
+      <div class="auth-brand"><span class="brand-mark" aria-hidden="true"><img data-brand-icon hidden alt=""><i data-lucide="book-open-check"></i></span><div><h1 id="auth-title">知识中心管理</h1><p>企业知识资产协作与治理平台</p></div></div>
       <div id="auth-status" class="auth-status" role="status" aria-live="polite">正在检查登录状态</div>
       <div id="auth-error" class="auth-error" role="alert" tabindex="-1" hidden></div>
       <button id="auth-retry" class="button secondary auth-retry" type="button" hidden>重新检查</button>
@@ -51,7 +52,7 @@
   <div class="app-shell" id="app-shell" hidden>
     <aside class="sidebar" id="sidebar" aria-label="主导航" aria-hidden="false">
       <div class="brand">
-        <span class="brand-mark" aria-hidden="true"><i data-lucide="book-open-check"></i></span>
+        <span class="brand-mark" aria-hidden="true"><img data-brand-icon hidden alt=""><i data-lucide="book-open-check"></i></span>
         <div class="brand-copy">
           <strong>知识中心管理</strong>
           <small id="enterprise-name">读取企业配置中</small>
@@ -67,12 +68,12 @@
         <p class="nav-caption">工作区</p>
         <button class="nav-item active" data-view="dashboard" aria-label="工作台" title="工作台"><i class="nav-icon" data-lucide="layout-dashboard" aria-hidden="true"></i><span class="nav-copy"><b>工作台</b><small>任务、资产与风险</small></span></button>
         <button class="nav-item" data-view="assets" aria-label="知识资产" title="知识资产"><i class="nav-icon" data-lucide="library" aria-hidden="true"></i><span class="nav-copy"><b>知识资产</b><small>手册、文档与版本</small></span></button>
-        <button class="nav-item" data-view="cleaning" aria-label="资料清洗" title="资料清洗"><i class="nav-icon" data-lucide="filter" aria-hidden="true"></i><span class="nav-copy"><b>资料清洗</b><small>批次、知识点与索引</small></span></button>
         <button class="nav-item" data-view="outlines" aria-label="大纲管理" title="大纲管理"><i class="nav-icon" data-lucide="list-tree" aria-hidden="true"></i><span class="nav-copy"><b>大纲管理</b><small>目录与责任映射</small></span></button>
         <button class="nav-item" data-view="templates" aria-label="模板管理" title="模板管理"><i class="nav-icon" data-lucide="files" aria-hidden="true"></i><span class="nav-copy"><b>模板管理</b><small>正文、版本与适用范围</small></span></button>
         <button class="nav-item" data-view="production" aria-label="文档生产" title="文档生产"><i class="nav-icon" data-lucide="workflow" aria-hidden="true"></i><span class="nav-copy"><b>文档生产</b><small>来源、策略与任务</small></span></button>
         <button class="nav-item" data-view="review" aria-label="审核与发布" title="审核与发布"><i class="nav-icon" data-lucide="badge-check" aria-hidden="true"></i><span class="nav-copy"><b>审核与发布</b><small>候选、评论与发布</small></span></button>
         <p class="nav-caption governance">治理</p>
+        <button class="nav-item" data-view="cleaning" aria-label="资料清洗" title="资料清洗"><i class="nav-icon" data-lucide="filter" aria-hidden="true"></i><span class="nav-copy"><b>资料清洗</b><small>批次、知识点与索引</small></span></button>
         <button class="nav-item" data-view="platform" aria-label="平台管理" title="平台管理"><i class="nav-icon" data-lucide="settings" aria-hidden="true"></i><span class="nav-copy"><b>平台管理</b><small>连接、权限与审计</small></span></button>
       </nav>
       <div class="sidebar-footer">

@@ -73,7 +73,7 @@ const baseline = {
     routeFacts('apps/pingcode-api/app/main.py', /@app\.(?:get|post|put|patch|delete|api_route)\(["']([^"']+)["']/g),
   ],
   persistentSources: [
-    fileFact('config/knowledge-center/knowledge-assets.json'),
+    fileFact('config/knowledge-center/state/knowledge-assets.json'),
     fileFact('runtime/agent-runner/data/document-comments.json'),
     fileFact('runtime/agent-runner/outlines/metadata.json'),
     fileFact('runtime/agent-runner/tmp/doc-processed/metadata.json'),

@@ -12,11 +12,13 @@ export const views = {
 };
 
 export const appState = {
+  templateProjection: null,
   activeView: 'dashboard', contextProjection: null, projection: null, cleaningProjection: null, outlineProjection: null, assetCatalog: null, incrementalProjection: null, reviewProjection: null, gitlabProjection: { connections: [] }, gitlabAccountProjection: null,
   outlineListState: { search: '', statusFilter: '', scrollPosition: 0 },
   selectedPermissionUserId: null,
   permissionSaveStatus: null,
   permissionUserSearch: '',
+  permissionListState: { page: 1, pageSize: 50, status: '', role: '' },
   platformTab: 'governance',
   platformGovernance: null,
   gitlabAddingConnection: false,

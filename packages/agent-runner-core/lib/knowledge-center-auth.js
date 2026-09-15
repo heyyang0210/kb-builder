@@ -4,17 +4,24 @@ const http = require('http');
 const https = require('https');
 const path = require('path');
 const { DatabaseAggregateStore } = require('./aggregate-store');
+let logger;
+try { logger = require('./logger'); } catch (_) { logger = { info() {} }; }
+
+function perfTrace(message, meta) {
+  if (process.env.PERF_TRACE === '1') logger.info(`[perf] ${message}`, meta);
+}
 
 const COOKIE_NAME = 'kc_session';
 const BUSINESS_MODULES = ['dashboard', 'assets', 'cleaning', 'outlines', 'templates', 'production'];
 const BUSINESS_ACTIONS = ['knowledge:read', 'knowledge:write', 'outline:read'];
 const ADMIN_MODULES = [...BUSINESS_MODULES, 'review', 'platform'];
-const ADMIN_ACTIONS = [...BUSINESS_ACTIONS, 'outline:create', 'outline:delete', 'review:manage', 'publish:manage', 'platform:manage'];
-const ASSIGNABLE_ROLES = ['KNOWLEDGE_EDITOR', 'OUTLINE_MANAGER', 'REVIEWER', 'PLATFORM_ADMIN'];
+const ADMIN_ACTIONS = [...BUSINESS_ACTIONS, 'outline:create', 'outline:delete', 'review:manage', 'publish:manage', 'platform:manage', 'template:read', 'template:edit', 'template:manage'];
+const ASSIGNABLE_ROLES = ['KNOWLEDGE_EDITOR', 'OUTLINE_MANAGER', 'REVIEWER', 'TEMPLATE_EDITOR', 'PLATFORM_ADMIN'];
 const ROLE_DEFINITIONS = {
   KNOWLEDGE_EDITOR: { actions: ['knowledge:read', 'knowledge:write', 'outline:read'], modules: [...BUSINESS_MODULES, 'review'] },
   OUTLINE_MANAGER: { actions: ['knowledge:read', 'knowledge:write', 'outline:read', 'outline:create', 'outline:delete'], modules: BUSINESS_MODULES },
   REVIEWER: { actions: ['knowledge:read', 'review:manage'], modules: [...BUSINESS_MODULES, 'review'] },
+  TEMPLATE_EDITOR: { actions: ['knowledge:read', 'template:read', 'template:edit'], modules: ['templates'] },
   PLATFORM_ADMIN: { actions: ADMIN_ACTIONS, modules: ADMIN_MODULES },
 };
 
@@ -462,12 +469,15 @@ function createKnowledgeCenterAuthService(options = {}) {
         return json(res, 200, { success: true, content, ...content }, { 'Set-Cookie': cookie(token) });
       }
       if (req.method === 'POST' && pathname === '/auth/admin/login') {
+        const startedAt = process.hrtime.bigint();
         const remote = req.socket.remoteAddress || 'unknown';
         const attempts = failedAdminAttempts.get(remote) || [];
         const recent = attempts.filter(at => Date.now() - at < 60_000);
         if (recent.length >= 5) throw new AuthError('ADMIN_LOGIN_RATE_LIMITED', '登录失败次数过多，请稍后再试', 429, true);
         const body = await readBody(req);
+        perfTrace('auth login body parsed', { durationMs: Number(process.hrtime.bigint() - startedAt) / 1e6 });
         const user = repository.findLocal(String(body.username || ''));
+        perfTrace('auth local user lookup', { durationMs: Number(process.hrtime.bigint() - startedAt), found: Boolean(user) });
         if (!user || !user.enabled || !verifyPassword(String(body.password || ''), user.passwordHash)) {
           recent.push(Date.now());
           failedAdminAttempts.set(remote, recent);
@@ -478,7 +488,18 @@ function createKnowledgeCenterAuthService(options = {}) {
         failedAdminAttempts.delete(remote);
         repository.audit('ADMIN_LOGIN', user.id, 'success');
         const token = repository.createSession(user, config.sessionTtlMs);
-        return ok(res, { user: userProjection(user) }, { 'Set-Cookie': cookie(token) });
+        const projection = userProjection(user);
+        perfTrace('auth login completed', { durationMs: Number(process.hrtime.bigint() - startedAt), userId: user.id });
+        // 登录响应直接携带完整会话投影，前端无需再立即 GET /session。
+        return ok(res, {
+          authenticated: true,
+          authMethod: 'admin',
+          user: projection,
+          roles: projection.roles,
+          visibleModules: projection.visibleModules,
+          allowedActions: projection.allowedActions,
+          expiresAt: new Date(Date.now() + config.sessionTtlMs).toISOString(),
+        }, { 'Set-Cookie': cookie(token) });
       }
       if (req.method === 'POST' && pathname === '/auth/logout') {
         const session = current(req);
@@ -500,7 +521,21 @@ function createKnowledgeCenterAuthService(options = {}) {
         const session = current(req);
         if (!session) throw new AuthError('AUTH_REQUIRED', '请登录后继续', 401);
         if (!session.user.roles.includes('PLATFORM_ADMIN')) throw new AuthError('PERMISSION_DENIED', '无平台管理权限', 403);
-        const users = repository.listUsers().map(user => ({
+        const query = String(url.searchParams.get('q') || '').trim().toLowerCase();
+        const status = String(url.searchParams.get('status') || '');
+        const role = String(url.searchParams.get('role') || '');
+        const paged = ['q', 'status', 'role', 'page', 'pageSize'].some(key => url.searchParams.has(key));
+        const allUsers = repository.listUsers().filter(user => {
+          const matchesQuery = !query || [user.displayName, user.loginName, user.id].some(value => String(value || '').toLowerCase().includes(query));
+          const matchesStatus = !status || (status === 'active' ? user.enabled !== false : user.enabled === false);
+          const matchesRole = !role || (Array.isArray(user.roles) && user.roles.includes(role));
+          return matchesQuery && matchesStatus && matchesRole;
+        });
+        const pageSize = Math.min(100, Math.max(1, Number(url.searchParams.get('pageSize')) || 50));
+        const totalPages = Math.max(1, Math.ceil(allUsers.length / pageSize));
+        const page = Math.min(totalPages, Math.max(1, Number(url.searchParams.get('page')) || 1));
+        const selectedUsers = paged ? allUsers.slice((page - 1) * pageSize, page * pageSize) : allUsers;
+        const users = selectedUsers.map(user => ({
           id: user.id,
           loginName: user.loginName,
           displayName: user.displayName,
@@ -509,7 +544,7 @@ function createKnowledgeCenterAuthService(options = {}) {
           roles: Array.isArray(user.roles) ? user.roles : [],
           updatedAt: user.updatedAt,
         }));
-        return ok(res, { users, assignableRoles: ASSIGNABLE_ROLES });
+        return ok(res, { users, assignableRoles: ASSIGNABLE_ROLES, ...(paged ? { pagination: { page, pageSize, total: allUsers.length, totalPages } } : {}) });
       }
       const roleMatch = pathname.match(/^\/auth\/users\/([^/]+)\/roles$/);
       if (req.method === 'PATCH' && roleMatch) {

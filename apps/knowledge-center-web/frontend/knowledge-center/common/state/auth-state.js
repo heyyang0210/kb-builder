@@ -22,6 +22,7 @@ function moduleSet() {
 
 export function canAccessView(view) {
   if (!authState.session?.authenticated) return false;
+  if (view === 'cleaning' && !isPlatformAdmin()) return false;
   const modules = moduleSet();
   if (!modules) return view !== 'platform' || authState.session.loginMethod === 'admin';
   if (view === 'repository') return modules.has('*') || modules.has('assets');

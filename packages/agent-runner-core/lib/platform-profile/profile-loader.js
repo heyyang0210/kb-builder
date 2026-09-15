@@ -17,9 +17,10 @@ const ALLOWED_RESOURCE_PREFIXES = [
   'tools/knowledge-processing/pingcode-processing/metadata-rules/',
   'knowledge/profiles/',
   'knowledge/prompts/',
-  'knowledge/templates/'
+  'knowledge/templates/',
+  'config/knowledge-center/branding/'
 ];
-const ALLOWED_RESOURCE_FILES = new Set(['config/knowledge-center/quality-config.json']);
+const ALLOWED_RESOURCE_FILES = new Set(['config/knowledge-center/processing.json']);
 const CONNECTOR_REQUIRED_SECRETS = {
   'local-upload': [],
   pingcode: ['secret:connectors/pingcode'],
@@ -117,6 +118,7 @@ function validateProfile(profile) {
 function collectResourceRefs(profile) {
   return [
     { reference: profile.domain.manifestRef, path: '/domain/manifestRef' },
+    ...(profile.brand?.icon?.resourceRef ? [{ reference: profile.brand.icon.resourceRef, path: '/brand/icon/resourceRef' }] : []),
     ...profile.agents.map((item, index) => ({ reference: item.manifestRef, path: `/agents/${index}/manifestRef` })),
     ...profile.skills.map((item, index) => ({ reference: item.manifestRef, path: `/skills/${index}/manifestRef` })),
     ...profile.prompts.map((item, index) => ({ reference: item.resourceRef, path: `/prompts/${index}/resourceRef` })),
@@ -201,7 +203,7 @@ function buildContext(profile, resources, env, secretResolver) {
 
 function loadProfile(options = {}) {
   const repositoryRoot = path.resolve(options.repositoryRoot || path.join(__dirname, '../../../..'));
-  const registry = options.registry || { yashandb: 'knowledge/enterprise-profiles/yashandb/profile.json' };
+  const registry = options.registry || { yashandb: 'config/knowledge-center/platform.json' };
   const env = options.env || process.env;
   const explicitlySet = Object.prototype.hasOwnProperty.call(env, 'KNOWLEDGE_PLATFORM_PROFILE');
   const profileId = options.profileId !== undefined ? options.profileId : (explicitlySet ? env.KNOWLEDGE_PLATFORM_PROFILE : DEFAULT_PROFILE_ID);

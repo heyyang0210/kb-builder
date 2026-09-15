@@ -75,7 +75,17 @@
       "properties": {
         "platformName": { "$ref": "#/$defs/displayName" },
         "enterpriseName": { "$ref": "#/$defs/displayName" },
-        "productName": { "$ref": "#/$defs/displayName" }
+        "productName": { "$ref": "#/$defs/displayName" },
+        "icon": { "$ref": "#/$defs/brandIcon" }
+      }
+    },
+    "brandIcon": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["resourceRef", "alt"],
+      "properties": {
+        "resourceRef": { "$ref": "#/$defs/resourceRef" },
+        "alt": { "$ref": "#/$defs/displayName" }
       }
     },
     "module": {
@@ -241,7 +251,7 @@
       "properties": {
         "exposedBrandFields": {
           "type": "array",
-          "items": { "enum": ["platformName", "enterpriseName", "productName"] },
+          "items": { "enum": ["platformName", "enterpriseName", "productName", "icon"] },
           "uniqueItems": true
         },
         "exposedCapabilityFields": {

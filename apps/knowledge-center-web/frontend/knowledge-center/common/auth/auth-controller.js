@@ -98,7 +98,12 @@ export function startCasLogin() {
 
 export async function submitAdminLogin(credentials) {
   setAuthState({ status: 'admin-login', error: null });
-  await adminLogin(credentials);
+  const session = await adminLogin(credentials);
+  // admin/login 已返回完整会话投影，避免登录成功后重复请求 /session。
+  if (session?.authenticated && session.user) {
+    setAuthState({ status: 'authenticated', session, error: null });
+    return session;
+  }
   return refreshSession();
 }
 

@@ -8,7 +8,7 @@ echo ""
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ENV_FILE="${KNOWLEDGE_CENTER_ENV_FILE:-$REPO_ROOT/config/knowledge-center/.env}"
-GITLAB_CONFIG="${KNOWLEDGE_CENTER_GITLAB_CONFIG:-$REPO_ROOT/config/knowledge-center/gitlab-connections.json}"
+GITLAB_CONFIG="${KNOWLEDGE_CENTER_GITLAB_CONFIG:-$REPO_ROOT/config/knowledge-center/state/gitlab-connections.json}"
 
 load_dotenv() {
     local file="$1" line key value

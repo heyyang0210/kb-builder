@@ -17,6 +17,7 @@ const {
 const { resolveOutputFilename } = require('../lib/direct-generate/prompt-parser');
 const { executeDirectGenerate } = require('../lib/direct-generate/direct-task-runner');
 const ProcessStore = require('../lib/process-store');
+const { freezeTemplateForRequest, persistTemplateSnapshot, templateMetadata } = require('../lib/template-generation');
 
 let workflowEngine = null;
 let ioInstance = null;
@@ -102,6 +103,7 @@ router.post('/execute', async (req, res, next) => {
       });
     }
 
+    const templateSnapshot = await freezeTemplateForRequest(req);
     if (req.body.mode === 'direct_generate') {
       logger.info('收到直写模式执行请求:', {
         prompt_length: prompt?.length || 0,
@@ -109,7 +111,9 @@ router.post('/execute', async (req, res, next) => {
         output_path,
         filename: effectiveFilename
       });
-      const task = createDirectTask({ prompt, knowledge_point, output_path, filename: effectiveFilename, template: req.body.template, debug: req.body.debug === true });
+      const task = createDirectTask({ prompt, knowledge_point, output_path, filename: effectiveFilename, template: req.body.template, ...templateSnapshot, debug: req.body.debug === true });
+      try { await persistTemplateSnapshot(task.task_id, task.inputData); }
+      catch (error) { task.status = 'failed'; task.error = error.message; throw error; }
       executeDirectGenerate(req, task).catch(err => {
         task.status = 'failed';
         task.error = err.message;
@@ -119,6 +123,7 @@ router.post('/execute', async (req, res, next) => {
       return res.json({
         success: true,
         task_id: task.task_id,
+        ...templateMetadata(task.inputData),
         message: '直写任务已启动'
       });
     }
@@ -161,6 +166,7 @@ router.post('/execute', async (req, res, next) => {
         prompt: prompt,
         knowledge_point,
         template: req.body.template,
+        ...templateSnapshot,
         output_path: output_path || '../output/',
         filename: effectiveFilename
       }
@@ -172,8 +178,9 @@ router.post('/execute', async (req, res, next) => {
 
     logger.info('Task started', { taskId, knowledge_point: knowledge_point.name });
 
-    res.json({ success: true, task_id: taskId, message: '任务已启动' });
+    res.json({ success: true, task_id: taskId, ...templateMetadata(templateSnapshot), message: '任务已启动' });
   } catch (err) {
+    if (err.status) return res.status(err.status).json({ success: false, error: { code: err.code, message: err.message } });
     next(err);
   }
 });

@@ -5,7 +5,7 @@ from pathlib import Path
 
 root = Path(__file__).resolve().parents[2]
 source = root / 'runtime/pingcode/web/spaces/positive/batches/batch_31583e4c802a4b83/pages/1d95fbc3-知识服务全景图.md'
-target = root / 'config/knowledge-center/knowledge-assets.json'
+target = root / 'config/knowledge-center/state/knowledge-assets.json'
 rows = []
 for line in source.read_text(encoding='utf-8').splitlines():
     if not line.startswith('|') or line.startswith('| ---') or '编号 | 手册名' in line:

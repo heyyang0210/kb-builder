@@ -13,6 +13,11 @@ import java.sql.*;
 import java.time.Instant;
 import java.util.HexFormat;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.lang.reflect.Proxy;
 
 public final class Main {
     private static final String DRIVER = "com.yashandb.jdbc.Driver";
@@ -23,12 +28,23 @@ public final class Main {
     private final String password = required("YASDB_PASSWORD");
     private final int maxBodyBytes = integer("YASDB_STORAGE_MAX_BODY_BYTES", DEFAULT_MAX_BODY_BYTES);
     private final Path sqlDirectory = Path.of(env("YASDB_STORAGE_SQL_DIR", "sql")).toAbsolutePath().normalize();
+    private final JdbcConnectionPool connectionPool;
+    private static boolean perfEnabled() { return "1".equals(System.getenv("PERF_TRACE")); }
+    private static void perf(String event, long started, long sqlStarted, long lockStarted) {
+        if (!perfEnabled()) return;
+        long now = System.nanoTime();
+        System.err.printf("[perf] %s connection_acquire_ms=%.3f sql_execute_ms=%.3f for_update_wait_ms=%.3f commit_ms=%.3f request_total_ms=%.3f%n",
+            event, 0d, sqlStarted > 0 ? (now - sqlStarted) / 1e6 : 0d,
+            lockStarted > 0 ? (now - lockStarted) / 1e6 : 0d, 0d, (now - started) / 1e6);
+    }
 
     public static void main(String[] args) throws Exception {
         Class.forName(DRIVER);
         Main application = new Main();
         application.migrate();
+        application.connectionPool.start();
         application.start();
+        Runtime.getRuntime().addShutdownHook(new Thread(application.connectionPool::closeAll));
     }
 
     private void start() throws IOException {
@@ -43,9 +59,16 @@ public final class Main {
         System.out.printf("YashanDB 存储服务已启动：http://%s:%d%n", host, port);
     }
 
+    private Main() throws SQLException {
+        this.connectionPool = new JdbcConnectionPool(jdbcUrl, username, password,
+            integer("YASDB_STORAGE_POOL_MAX", Math.max(4, integer("YASDB_STORAGE_THREADS", 8))),
+            integer("YASDB_STORAGE_POOL_MIN", 1));
+    }
+
     private Connection connection() throws SQLException {
-        Connection connection = DriverManager.getConnection(jdbcUrl, username, password);
-        connection.setAutoCommit(false);
+        long started = System.nanoTime();
+        Connection connection = connectionPool.borrow();
+        if (perfEnabled()) System.err.printf("[perf] connection_acquire_ms=%.3f%n", (System.nanoTime() - started) / 1e6);
         return connection;
     }
 
@@ -54,7 +77,9 @@ public final class Main {
             createTableIfMissing(connection, "KC_SCHEMA_MIGRATION", sql("001_schema_migration.sql"));
             createTableIfMissing(connection, "KC_RECORD", sql("002_record.sql"));
             createTableIfMissing(connection, "KC_MIGRATION_BATCH", sql("003_migration_batch.sql"));
+            StorageSchemaDao.createIndexIfMissing(connection, "IDX_KC_RECORD_NAMESPACE", sql("004_record_indexes.sql"));
             recordMigration(connection, "001_record_store", sha256("KC_SCHEMA_MIGRATION|KC_RECORD|KC_MIGRATION_BATCH"));
+            recordMigration(connection, "002_record_indexes", sha256("IDX_KC_RECORD_NAMESPACE|NAMESPACE,DELETED,UPDATED_AT"));
             connection.commit();
         }
     }
@@ -105,10 +130,13 @@ public final class Main {
 
     private void health(HttpExchange exchange) throws IOException {
         if (!"GET".equals(exchange.getRequestMethod())) { methodNotAllowed(exchange); return; }
+        long requestStarted = System.nanoTime();
         try (Connection connection = connection(); Statement statement = connection.createStatement(); ResultSet result = statement.executeQuery("SELECT 1 FROM DUAL")) {
+            long sqlStarted = System.nanoTime();
             result.next();
             DatabaseMetaData metadata = connection.getMetaData();
             connection.commit();
+            perf("health", requestStarted, sqlStarted, 0);
             send(exchange, 200, "{\"success\":true,\"database\":\"" + escape(metadata.getDatabaseProductName())
                 + "\",\"databaseVersion\":\"" + escape(metadata.getDatabaseProductVersion())
                 + "\",\"driver\":\"" + escape(metadata.getDriverName())
@@ -140,15 +168,18 @@ public final class Main {
     }
 
     private void getRecord(HttpExchange exchange, String namespace, String key) throws IOException {
+        long requestStarted = System.nanoTime();
         String sql = "SELECT PAYLOAD, PAYLOAD_SHA256, REVISION, DELETED, CREATED_AT, UPDATED_AT FROM KC_RECORD WHERE NAMESPACE=? AND RECORD_KEY=?";
         try (Connection connection = connection(); PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setString(1, namespace);
             statement.setString(2, key);
+            long sqlStarted = System.nanoTime();
             try (ResultSet result = statement.executeQuery()) {
                 if (!result.next()) { connection.rollback(); failure(exchange, 404, "RECORD_NOT_FOUND", "记录不存在"); return; }
                 String payload = readClob(result.getClob(1));
                 String body = recordJson(namespace, key, payload, result.getString(2), result.getLong(3), "Y".equals(result.getString(4)), result.getTimestamp(5), result.getTimestamp(6));
                 connection.commit();
+                perf("get_record", requestStarted, sqlStarted, 0);
                 send(exchange, 200, body);
             }
         } catch (Exception error) {
@@ -157,6 +188,7 @@ public final class Main {
     }
 
     private void putRecord(HttpExchange exchange, String namespace, String key) throws IOException {
+        long requestStarted = System.nanoTime();
         byte[] bytes;
         try { bytes = readBody(exchange, maxBodyBytes); }
         catch (BodyTooLarge error) { failure(exchange, 413, "PAYLOAD_TOO_LARGE", "记录内容超过限制"); return; }
@@ -167,7 +199,9 @@ public final class Main {
         String digest = sha256(payload);
         try (Connection connection = connection()) {
             long revision = upsert(connection, namespace, key, payload, digest, expected);
+            long commitStarted = System.nanoTime();
             connection.commit();
+            if (perfEnabled()) System.err.printf("[perf] put_record commit_ms=%.3f request_total_ms=%.3f%n", (System.nanoTime() - commitStarted) / 1e6, (System.nanoTime() - requestStarted) / 1e6);
             send(exchange, 200, "{\"success\":true,\"namespace\":\"" + escape(namespace) + "\",\"key\":\"" + escape(key)
                 + "\",\"revision\":" + revision + ",\"sha256\":\"" + digest + "\",\"updatedAt\":\"" + Instant.now() + "\"}");
         } catch (RevisionConflict error) {
@@ -181,6 +215,7 @@ public final class Main {
         Long current = null;
         String currentDigest = null;
         boolean currentDeleted = false;
+        long lockStarted = System.nanoTime();
         try (PreparedStatement lock = connection.prepareStatement("SELECT REVISION, PAYLOAD_SHA256, DELETED FROM KC_RECORD WHERE NAMESPACE=? AND RECORD_KEY=? FOR UPDATE")) {
             lock.setString(1, namespace); lock.setString(2, key);
             try (ResultSet result = lock.executeQuery()) {
@@ -191,6 +226,7 @@ public final class Main {
                 }
             }
         }
+        if (perfEnabled()) System.err.printf("[perf] for_update_wait_ms=%.3f%n", (System.nanoTime() - lockStarted) / 1e6);
         if (expected != null && (current == null ? expected != 0 : !expected.equals(current))) throw new RevisionConflict();
         if (current == null) {
             try (PreparedStatement insert = connection.prepareStatement("INSERT INTO KC_RECORD(NAMESPACE, RECORD_KEY, PAYLOAD, PAYLOAD_SHA256, REVISION, DELETED) VALUES (?, ?, ?, ?, 1, 'N')")) {
@@ -303,6 +339,51 @@ public final class Main {
         send(exchange, status, "{\"success\":false,\"error\":{\"code\":\"" + escape(code) + "\",\"message\":\"" + escape(message) + "\"}}");
     }
     private static void methodNotAllowed(HttpExchange exchange) throws IOException { failure(exchange, 405, "METHOD_NOT_ALLOWED", "请求方法不支持"); }
+    /** Small JDK-only pool: keeps JDBC connections alive without adding a dependency. */
+    private static final class JdbcConnectionPool {
+        private final String url, user, password;
+        private final int max, min;
+        private final long borrowTimeoutMs;
+        private final BlockingQueue<Connection> idle;
+        private int created;
+        JdbcConnectionPool(String url, String user, String password, int max, int min) {
+            this.url = url; this.user = user; this.password = password;
+            this.max = Math.max(1, max); this.min = Math.max(0, Math.min(min, this.max));
+            this.borrowTimeoutMs = Math.max(100, Long.parseLong(env("YASDB_STORAGE_POOL_BORROW_TIMEOUT_MS", "5000")));
+            this.idle = new ArrayBlockingQueue<>(this.max);
+        }
+        synchronized void start() throws SQLException {
+            while (created < min) idle.offer(newConnection());
+        }
+        private Connection newConnection() throws SQLException {
+            Connection raw = DriverManager.getConnection(url, user, password);
+            raw.setAutoCommit(false); created++;
+            return raw;
+        }
+        Connection borrow() throws SQLException {
+            Connection raw = idle.poll();
+            if (raw == null) synchronized (this) { raw = created < max ? newConnection() : null; }
+            if (raw == null) {
+                try { raw = idle.poll(borrowTimeoutMs, TimeUnit.MILLISECONDS); } catch (InterruptedException error) { Thread.currentThread().interrupt(); throw new SQLException("等待数据库连接被中断", error); }
+                if (raw == null) throw new SQLException("数据库连接池耗尽，请稍后重试");
+            }
+            final Connection leased = raw;
+            final AtomicBoolean returned = new AtomicBoolean(false);
+            return (Connection) Proxy.newProxyInstance(Connection.class.getClassLoader(), new Class[]{Connection.class}, (proxy, method, args) -> {
+                if ("close".equals(method.getName())) {
+                    if (!returned.compareAndSet(false, true)) return null;
+                    leased.rollback();
+                    if (!idle.offer(leased)) {
+                        try { leased.close(); } finally { synchronized (JdbcConnectionPool.this) { created--; } }
+                    }
+                    return null;
+                }
+                if ("isClosed".equals(method.getName())) return leased.isClosed();
+                try { return method.invoke(leased, args); } catch (java.lang.reflect.InvocationTargetException error) { throw error.getCause(); }
+            });
+        }
+        synchronized void closeAll() { idle.forEach(connection -> { try { connection.close(); } catch (Exception ignored) {} }); idle.clear(); created = 0; }
+    }
     private static final class RevisionConflict extends Exception {}
     private static final class BodyTooLarge extends Exception {}
 }

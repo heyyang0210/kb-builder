@@ -14,7 +14,7 @@ class YashanDBConfigTest(unittest.TestCase):
 
     def test_environment_overrides_defaults(self):
         config = load_database_config(
-            Path(__file__).resolve().parents[2],
+            Path(__file__).resolve().parents[3],
             {"YASDB_STORAGE_PORT": "19999", "YASDB_USERNAME": "from-env"},
         )
         self.assertEqual(19999, config["storage"]["port"])

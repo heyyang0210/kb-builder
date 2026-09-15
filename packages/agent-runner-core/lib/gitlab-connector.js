@@ -1,9 +1,9 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { AGENT_RUNNER_CONFIG_ROOT } = require('./repo-paths');
+const { CONFIG_PATHS } = require('./config-registry');
 
-const DEFAULT_CONFIG_PATH = path.join(AGENT_RUNNER_CONFIG_ROOT, 'gitlab-connections.json');
+const DEFAULT_CONFIG_PATH = CONFIG_PATHS.gitlabConnections;
 
 class GitLabConnectorError extends Error {
   constructor(code, message, status = 400, details = {}) {

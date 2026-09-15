@@ -550,7 +550,7 @@ node scripts/preprocess.js run-all
 
 ### 配置文件
 
-`config/knowledge-center/preprocessing-config.json`：
+`config/knowledge-center/processing.json` 中的 `preprocessing` 分区：
 
 ```json
 {

@@ -3,6 +3,7 @@ const AgentManager = require('./agent-manager');
 const { buildWorkflowGraph } = require('./langgraph-workflow');
 const logger = require('./logger');
 const { getTrace } = require('./platform-profile/runtime-profile');
+const { persistTemplateSnapshot, templateMetadata } = require('./template-generation');
 
 class WorkflowEngine extends EventEmitter {
   constructor(config = {}) {
@@ -49,6 +50,7 @@ class WorkflowEngine extends EventEmitter {
       profile: getTrace(),
     };
 
+    await persistTemplateSnapshot(taskId, workflow.inputData || {});
     this.workflows.set(taskId, workflow);
     logger.info(`Workflow created: ${taskId}`, { steps: steps.length });
     return taskId;
@@ -146,6 +148,7 @@ class WorkflowEngine extends EventEmitter {
 
     return {
       task_id: workflow.taskId,
+      ...templateMetadata(workflow.inputData),
       status: workflow.status,
       progress: workflow.progress,
       current_step: workflow.currentStep,

@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const logger = require('./logger');
-const { AGENT_RUNNER_CONFIG_ROOT } = require('./repo-paths');
+const { CONFIG_PATHS } = require('./config-registry');
 
 const PRODUCT_TERMS = [
   /YashanDB/ig,
@@ -22,9 +22,8 @@ const DEFAULT_SYNONYM_GROUPS = [
 // 从配置文件加载同义词组
 function loadSynonymGroups() {
   try {
-    const configPath = path.join(AGENT_RUNNER_CONFIG_ROOT, 'synonym-config.json');
-    const configText = fs.readFileSync(configPath, 'utf-8');
-    const config = JSON.parse(configText);
+    const configText = fs.readFileSync(CONFIG_PATHS.processing, 'utf-8');
+    const config = JSON.parse(configText).synonyms;
     if (Array.isArray(config.categories)) {
       return config.categories
         .filter(cat => Array.isArray(cat.synonyms) && cat.synonyms.length >= 2)

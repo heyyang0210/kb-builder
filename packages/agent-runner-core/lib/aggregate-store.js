@@ -1,7 +1,13 @@
-const { execFileSync } = require('child_process');
+const { execFileSync, execFile } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const { loadDatabaseConfig } = require('./database-config');
+let logger;
+try { logger = require('./logger'); } catch (_) { logger = { info() {} }; }
+
+function perfTrace(message, meta) {
+  if (process.env.PERF_TRACE === '1') logger.info(`[perf] ${message}`, meta);
+}
 
 class AggregateStoreError extends Error {
   constructor(code, message, status = 500, details) {
@@ -65,6 +71,8 @@ class DatabaseAggregateStore {
   }
 
   execute(args, payload) {
+    const startedAt = process.hrtime.bigint();
+    const method = args.includes('-X') ? args[args.indexOf('-X') + 1] : 'GET';
     try {
       const output = execFileSync(this.curl, args, {
         input: payload,
@@ -78,8 +86,10 @@ class DatabaseAggregateStore {
       if (parsed && parsed.success === false) {
         throw new AggregateStoreError(parsed.error?.code || 'STORAGE_REQUEST_FAILED', parsed.error?.message || '存储服务请求失败', parsed.error?.code === 'REVISION_CONFLICT' ? 409 : 503, parsed.error?.details);
       }
+      perfTrace('storage request', { namespace: this.namespace, key: this.key, method, durationMs: Number(process.hrtime.bigint() - startedAt) / 1e6 });
       return parsed;
     } catch (error) {
+      perfTrace('storage request failed', { namespace: this.namespace, key: this.key, method, durationMs: Number(process.hrtime.bigint() - startedAt) / 1e6, code: error.code || 'unknown' });
       if (error instanceof AggregateStoreError) throw error;
       const stdout = String(error.stdout || '').trim();
       let response;
@@ -91,6 +101,35 @@ class DatabaseAggregateStore {
         response?.error?.details,
       );
     }
+  }
+
+  executeAsync(args, payload) {
+    const startedAt = process.hrtime.bigint();
+    return new Promise((resolve, reject) => {
+      const child = execFile(this.curl, args, {
+      input: payload, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024,
+      timeout: this.timeoutSeconds * 1000 + 1000,
+      env: { ...process.env, LD_LIBRARY_PATH: '' },
+      }, (error, stdout) => {
+      if (error) {
+        perfTrace('storage async request failed', { namespace: this.namespace, key: this.key, durationMs: Number(process.hrtime.bigint() - startedAt) / 1e6, code: error.code || 'unknown' });
+        return reject(new AggregateStoreError('STORAGE_UNAVAILABLE', 'YashanDB 存储服务不可用', 503));
+      }
+      try {
+        const parsed = JSON.parse(stdout || '{}');
+        if (parsed?.success === false) throw new AggregateStoreError(parsed.error?.code || 'STORAGE_REQUEST_FAILED', parsed.error?.message || '存储服务请求失败', parsed.error?.code === 'REVISION_CONFLICT' ? 409 : 503);
+        perfTrace('storage async request', { namespace: this.namespace, key: this.key, durationMs: Number(process.hrtime.bigint() - startedAt) / 1e6 });
+        resolve(parsed);
+      } catch (parseError) { reject(parseError); }
+      });
+      // Node's execFile does not consume an `input` option; write explicitly for PUT requests.
+      if (payload && child.stdin) { child.stdin.write(payload); child.stdin.end(); }
+    });
+  }
+
+  async readAsync() {
+    try { const record = await this.executeAsync(['-sS', '--max-time', String(this.timeoutSeconds), this.recordUrl()]); return record.deleted ? structuredClone(this.emptyValue) : record.payload; }
+    catch (error) { if (error.code === 'RECORD_NOT_FOUND') return structuredClone(this.emptyValue); throw error; }
   }
 
   readRecord() {
@@ -124,12 +163,14 @@ class DatabaseAggregateStore {
   }
 
   transaction(mutator, retries = 3) {
+    const startedAt = process.hrtime.bigint();
     for (let attempt = 0; attempt < retries; attempt += 1) {
       const current = this.readRecord();
       const state = structuredClone(current.payload);
       const result = mutator(state);
       try {
         this.writeAtRevision(state, current.revision);
+        perfTrace('storage transaction', { namespace: this.namespace, key: this.key, attempts: attempt + 1, durationMs: Number(process.hrtime.bigint() - startedAt) / 1e6 });
         return result;
       } catch (error) {
         if (error.code !== 'REVISION_CONFLICT' || attempt === retries - 1) throw error;

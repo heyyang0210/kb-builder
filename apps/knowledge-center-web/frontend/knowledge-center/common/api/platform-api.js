@@ -4,9 +4,30 @@ const outlineEndpoint = '/knowledge-center/api/outline/governance';
 const handbooksEndpoint = '/knowledge-center/api/assets/handbooks';
 // 用户角色由认证服务统一维护；平台管理仅提供同源代理入口。
 const permissionsEndpoint = '/knowledge-center/api/auth/users';
+const templatesEndpoint = '/knowledge-center/api/templates';
+export const loadTemplates = (params = {}) => {
+  const query = new URLSearchParams(params).toString();
+  return getJson(query ? `${templatesEndpoint}?${query}` : templatesEndpoint);
+};
+export const loadTemplate = id => getJson(`${templatesEndpoint}/${encodeURIComponent(id)}`);
+export const createTemplate = payload => templateRequest('', templateJson('POST', payload));
+export const saveTemplate = (id, payload) => templateRequest(`/${encodeURIComponent(id)}/save`, templateJson('POST', payload));
+export const importTemplate = formData => templateRequest('/import', { method: 'POST', body: formData });
+export const loadTemplateVersions = id => templateRequest(`/${encodeURIComponent(id)}/versions`);
+export const loadTemplateVersion = (id, version) => templateRequest(`/${encodeURIComponent(id)}/versions/${version}`);
+export const restoreTemplateDraft = (id, version) => templateRequest(`/${encodeURIComponent(id)}/restore-draft`, templateJson('POST', { version }));
+export const updateTemplateMetadata = (id, payload) => templateRequest(`/${encodeURIComponent(id)}`, templateJson('PATCH', payload));
+export const setTemplateEnabled = (id, enabled) => templateRequest(`/${encodeURIComponent(id)}/${enabled ? 'restore' : 'disable'}`, { method: 'POST' });
+const templateJson = (method, payload) => ({ method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+async function templateRequest(suffix, options = {}) {
+  const response = await fetch(`${templatesEndpoint}${suffix}`, { cache: 'no-store', credentials: 'same-origin', ...options });
+  const result = await response.json().catch(() => null);
+  if (!response.ok || result?.success === false || !result) throw Object.assign(new Error(result?.error?.message || `模板服务响应无效（HTTP ${response.status}）`), { status: response.status, code: result?.error?.code });
+  return result;
+}
 
-async function getJson(url) {
-  const response = await fetch(url, { cache: 'no-store', credentials: 'same-origin' });
+async function getJson(url, options = {}) {
+  const response = await fetch(url, { cache: 'no-store', credentials: 'same-origin', ...options });
   if (response.status === 401) {
     window.dispatchEvent(new CustomEvent('knowledge-center:session-expired'));
     throw Object.assign(new Error('登录状态已过期'), { status: 401 });
@@ -102,8 +123,9 @@ export const restoreAsset = handbookId => assetCommand(`${handbooksEndpoint}/${e
 export const updateAssetStatus = (handbookId, changes) => assetCommand(`${handbooksEndpoint}/${encodeURIComponent(handbookId)}/status`, 'POST', changes);
 export const resolveAssetStatus = (handbookId, changes) => assetCommand(`${handbooksEndpoint}/${encodeURIComponent(handbookId)}/status/resolve`, 'POST', changes);
 
-export async function loadPlatformPermissions() {
-  return getJson(permissionsEndpoint);
+export async function loadPlatformPermissions(params = {}) {
+  const query = new URLSearchParams(params).toString();
+  return getJson(`${permissionsEndpoint}${query ? `?${query}` : ''}`);
 }
 
 export async function updatePlatformUserPermissions(userId, changes) {

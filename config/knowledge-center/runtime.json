@@ -1,0 +1,27 @@
+{
+  "server": {
+    "port": 4100,
+    "host": "localhost"
+  },
+  "security": {
+    "encryption_key_env": "AGENT_RUNNER_KEY",
+    "cors_origins": ["http://localhost:*", "http://127.0.0.1:*"],
+    "rate_limit": { "window_ms": 60000, "max_requests": 10 }
+  },
+  "logging": {
+    "level": "info",
+    "file": "logs/execution.log",
+    "max_size": "10m",
+    "max_files": 5
+  },
+  "paths": {
+    "output": "runtime/agent-runner/output",
+    "templates": "knowledge/templates",
+    "references": "knowledge/references"
+  },
+  "documentPaths": [
+    { "id": "output", "name": "生成文档", "path": "runtime/agent-runner/output", "writable": true, "description": "知识库生成器产出的文档" },
+    { "id": "ai-cognitive", "name": "AI 体系认知", "path": "../ai 体系认知", "writable": false, "description": "AI 体系认知知识文档" },
+    { "id": "knowledge-center", "name": "知识中心建设平台", "path": ".codex/知识中心建设平台", "writable": true, "description": "知识中心建设平台文档" }
+  ]
+}

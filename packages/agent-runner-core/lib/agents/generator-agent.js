@@ -17,6 +17,8 @@ class GeneratorAgent extends BaseAgent {
     const template = this.loadPromptTemplate('generator.md');
     const plan = input.executionPlan;
     const refs = input.references || '无额外参考资料';
+    const frozenContent = require('../template-generation').frozenTemplateContent(input.templateSnapshot);
+    const documentTemplate = frozenContent !== null ? `\n## 文档模板（任务固定版本）\n${frozenContent}\n` : '';
 
     const planInfo = `
 ## 执行计划
@@ -56,7 +58,7 @@ ${(plan.document_structure?.sections || []).map((s, i) =>
 
     return [
       { role: 'system', content: `你是 ${this.getEnterpriseName()} 知识库文档撰写专家，负责生成高质量的技术文档。` },
-      { role: 'user', content: `${systemPrompt}${retryHint}\n\n${planInfo}${comparisonSection}\n## 参考资料\n\n${refs}${feedbackSection}` }
+      { role: 'user', content: `${systemPrompt}${retryHint}\n\n${planInfo}${documentTemplate}${comparisonSection}\n## 参考资料\n\n${refs}${feedbackSection}` }
     ];
   }
 

@@ -38,6 +38,11 @@ load_dotenv() {
 if [[ -f "$ENV_FILE" ]]; then
   load_dotenv "$ENV_FILE"
 fi
+# 数据库存储服务与 Node/Python 入口共享 config/database 的连接参数。
+# 显式注入的环境变量优先，开发环境无需手工导出密码。
+if [[ -f "$REPO_ROOT/tools/repository/load-yashandb-env.sh" ]]; then
+  source "$REPO_ROOT/tools/repository/load-yashandb-env.sh"
+fi
 
 is_placeholder() {
   [[ "${1:-}" == \<*\> || "${1:-}" == *'<YOUR_'* || "${1:-}" == *'<PORT>'* ]]
@@ -58,6 +63,7 @@ FRONTEND_DIR="$REPO_ROOT/apps/knowledge-center-web"
 PINGCODE_API_DIR="$REPO_ROOT/apps/pingcode-api"
 PINGCODE_WEB_DIR="$REPO_ROOT/apps/pingcode-web"
 PINGCODE_CORE_DIR="$REPO_ROOT/packages/pingcode-core"
+STORAGE_DIR="$REPO_ROOT/apps/yashandb-storage"
 RUNTIME_DIR="$REPO_ROOT/runtime/agent-runner"
 LOG_DIR="${KNOWLEDGE_CENTER_LOG_DIR:-$RUNTIME_DIR/logs/knowledge-center-isolated}"
 STATE_DIR="${KNOWLEDGE_CENTER_STATE_DIR:-$RUNTIME_DIR/.runtime/knowledge-center-isolated}"
@@ -99,6 +105,7 @@ service_cwd() {
     pingcode) printf '%s' "$PINGCODE_API_DIR" ;;
     auth) printf '%s' "$AUTH_DIR" ;;
     frontend) printf '%s' "$FRONTEND_DIR" ;;
+    storage) printf '%s' "$STORAGE_DIR" ;;
     *) return 1 ;;
   esac
 }
@@ -109,6 +116,7 @@ service_pattern() {
     pingcode) printf '%s' 'uvicorn app.main:app' ;;
     auth) printf '%s' 'node auth-server.js' ;;
     frontend) printf '%s' 'node frontend-server.js' ;;
+    storage) printf '%s' 'java -cp' ;;
     *) return 1 ;;
   esac
 }
@@ -116,9 +124,12 @@ service_pattern() {
 service_url() {
   case "$1" in
     document) printf 'http://%s:%s/api/health' "$INTERNAL_HOST" "$DOCUMENT_API_PORT" ;;
-    pingcode) printf 'http://%s:%s/api/health' "$PINGCODE_HOST" "$PINGCODE_API_PORT" ;;
+    # PingCode API does not expose /api/health; platform context is its
+    # lightweight authenticated-independent readiness endpoint.
+    pingcode) printf 'http://%s:%s/api/platform/context' "$PINGCODE_HOST" "$PINGCODE_API_PORT" ;;
     auth) printf 'http://%s:%s/knowledge-center/api/auth/config' "$INTERNAL_HOST" "$AUTH_API_PORT" ;;
     frontend) printf 'http://%s:%s/knowledge-center/' "$INTERNAL_HOST" "$FRONTEND_PORT" ;;
+    storage) printf 'http://%s:%s/health' "${YASDB_STORAGE_HOST:-127.0.0.1}" "${YASDB_STORAGE_PORT:-14210}" ;;
     *) return 1 ;;
   esac
 }
@@ -132,26 +143,62 @@ process_matches() {
   tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null | grep -F -- "$expected_pattern" >/dev/null
 }
 
+service_process_matches() {
+  local service="$1" pid="$2" cmdline
+  if [[ "$service" != storage ]]; then
+    process_matches "$pid" "$(service_cwd "$service")" "$(service_pattern "$service")"
+    return
+  fi
+
+  [[ "$pid" =~ ^[0-9]+$ && -d "/proc/$pid" ]] || return 1
+  [[ "$(awk '/^State:/ {print $2}' "/proc/$pid/status" 2>/dev/null || true)" != "Z" ]] || return 1
+  cmdline="$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null || true)"
+  [[ "$cmdline" == *java* ]] || return 1
+  [[ "$cmdline" == *"$STORAGE_DIR/src/Main.java"* || "$cmdline" == *"$STORAGE_DIR/lib/yashandb-jdbc.jar"*Main* ]]
+}
+
+listener_pid() {
+  ss -ltnp "sport = :$1" 2>/dev/null | sed -n 's/.*pid=\([0-9][0-9]*\).*/\1/p' | head -n 1
+}
+
+service_port() {
+  case "$1" in
+    document) printf '%s' "$DOCUMENT_API_PORT" ;;
+    pingcode) printf '%s' "$PINGCODE_API_PORT" ;;
+    auth) printf '%s' "$AUTH_API_PORT" ;;
+    frontend) printf '%s' "$FRONTEND_PORT" ;;
+    storage) printf '%s' "${YASDB_STORAGE_PORT:-14210}" ;;
+    *) return 1 ;;
+  esac
+}
+
 http_ready() {
   curl -fsS --connect-timeout 1 --max-time 3 "$1" >/dev/null 2>&1
 }
 
+process_alive() {
+  local pid="$1"
+  [[ "$pid" =~ ^[0-9]+$ && -d "/proc/$pid" ]] || return 1
+  [[ "$(awk '/^State:/ {print $2}' "/proc/$pid/status" 2>/dev/null || true)" != "Z" ]]
+}
+
 validate_environment() {
   local command_name directory
-  for command_name in "$NODE_BIN" "$NPM_BIN" "$PYTHON_BIN" curl ss setsid; do
+  for command_name in "$NODE_BIN" "$NPM_BIN" "$PYTHON_BIN" curl ss setsid java sha256sum; do
     if [[ "$command_name" == */* ]]; then
       [[ -x "$command_name" ]] || { echo "错误：命令不可执行：$command_name" >&2; return 1; }
     else
       command -v "$command_name" >/dev/null 2>&1 || { echo "错误：缺少命令：$command_name" >&2; return 1; }
     fi
   done
-  for directory in "$DOCUMENT_DIR" "$AUTH_DIR" "$FRONTEND_DIR" "$PINGCODE_API_DIR" "$PINGCODE_WEB_DIR" "$PINGCODE_CORE_DIR"; do
+  for directory in "$DOCUMENT_DIR" "$AUTH_DIR" "$FRONTEND_DIR" "$PINGCODE_API_DIR" "$PINGCODE_WEB_DIR" "$PINGCODE_CORE_DIR" "$STORAGE_DIR"; do
     [[ -d "$directory" ]] || { echo "错误：目录不存在：$directory" >&2; return 1; }
   done
   [[ -f "$DOCUMENT_DIR/server.js" ]] || { echo "错误：文档 API 入口不存在" >&2; return 1; }
   [[ -f "$AUTH_DIR/auth-server.js" ]] || { echo "错误：认证 API 入口不存在" >&2; return 1; }
   [[ -f "$FRONTEND_DIR/frontend-server.js" ]] || { echo "错误：Web 网关入口不存在" >&2; return 1; }
   [[ -f "$PINGCODE_API_DIR/app/main.py" ]] || { echo "错误：资料加工 API 入口不存在" >&2; return 1; }
+  [[ -f "$STORAGE_DIR/start.sh" ]] || { echo "错误：YashanDB 存储服务入口不存在" >&2; return 1; }
 }
 
 build_frontend() {
@@ -163,23 +210,21 @@ build_frontend() {
 }
 
 stop_service() {
-  local name="$1" file pid cwd pattern deadline
+  local name="$1" file pid deadline
   file="$(pid_file "$name")"
   [[ -f "$file" ]] || return 0
   pid="$(tr -d '[:space:]' <"$file" 2>/dev/null || true)"
-  cwd="$(service_cwd "$name")"
-  pattern="$(service_pattern "$name")"
-  if ! process_matches "$pid" "$cwd" "$pattern"; then
+  if ! service_process_matches "$name" "$pid"; then
     echo "警告：移除失效 PID 记录，不停止未知进程：$name ${pid:-空}" >&2
     rm -f "$file"
     return 0
   fi
   kill -- "-$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
   deadline=$((SECONDS + STOP_TIMEOUT))
-  while process_matches "$pid" "$cwd" "$pattern" && (( SECONDS < deadline )); do
+  while service_process_matches "$name" "$pid" && (( SECONDS < deadline )); do
     sleep 1
   done
-  if process_matches "$pid" "$cwd" "$pattern"; then
+  if service_process_matches "$name" "$pid"; then
     echo "错误：$name 未在 ${STOP_TIMEOUT}s 内退出，拒绝强制终止" >&2
     return 1
   fi
@@ -189,20 +234,40 @@ stop_service() {
 
 stop_all() {
   local failed=0 name
-  for name in frontend auth pingcode document; do
+  for name in frontend auth pingcode document storage; do
     stop_service "$name" || failed=1
   done
   return "$failed"
 }
 
 assert_port_available() {
-  local port="$1" listener
+  local port="$1" listener service pid
   listener="$(ss -ltnp "sport = :$port" 2>/dev/null || true)"
   if grep -q LISTEN <<<"$listener"; then
+    pid="$(sed -n 's/.*pid=\([0-9][0-9]*\).*/\1/p' <<<"$listener" | head -n 1)"
+    for service in document pingcode auth frontend storage; do
+      if [[ -n "$pid" ]] && service_process_matches "$service" "$pid"; then
+        printf '%s\n' "$pid" >"$(pid_file "$service")"
+        echo "检测到 $service 的遗留进程（pid=$pid），先执行受控停止"
+        stop_service "$service"
+        return 0
+      fi
+    done
     echo "错误：端口 $port 已被未知进程占用，保留现场并停止重启" >&2
     ss -ltnp "sport = :$port" >&2 || true
     return 1
   fi
+}
+
+reconcile_known_services() {
+  local service port pid
+  for service in frontend auth pingcode document storage; do
+    port="$(service_port "$service")"
+    pid="$(listener_pid "$port")"
+    if [[ -n "$pid" ]] && service_process_matches "$service" "$pid"; then
+      printf '%s\n' "$pid" >"$(pid_file "$service")"
+    fi
+  done
 }
 
 start_service() {
@@ -218,23 +283,25 @@ start_service() {
 }
 
 wait_ready() {
-  local name="$1" url="$2" deadline pid cwd pattern
+  local name="$1" url="$2" deadline pid port owner
   deadline=$((SECONDS + START_TIMEOUT))
   pid="$(cat "$(pid_file "$name")")"
-  cwd="$(service_cwd "$name")"
-  pattern="$(service_pattern "$name")"
+  port="$(service_port "$name")"
   while (( SECONDS < deadline )); do
-    if http_ready "$url"; then
+    if ! process_alive "$pid"; then
+      echo "错误：$name 进程已退出：$LOG_DIR/$name.log" >&2
+      tail -n 40 "$LOG_DIR/$name.log" >&2 || true
+      return 1
+    fi
+    owner="$(listener_pid "$port")"
+    if service_process_matches "$name" "$pid" && [[ "$owner" == "$pid" ]] && http_ready "$url"; then
       echo "$name 已就绪：$url"
       return 0
-    fi
-    if ! process_matches "$pid" "$cwd" "$pattern"; then
-      echo "错误：$name 进程已退出：$LOG_DIR/$name.log" >&2
-      return 1
     fi
     sleep 1
   done
   echo "错误：$name 在 ${START_TIMEOUT}s 内未就绪：$LOG_DIR/$name.log" >&2
+  tail -n 40 "$LOG_DIR/$name.log" >&2 || true
   return 1
 }
 
@@ -249,11 +316,13 @@ restart_platform() {
   local token
   validate_environment
   build_frontend
+  reconcile_known_services
   stop_all
   assert_port_available "$FRONTEND_PORT"
   assert_port_available "$AUTH_API_PORT"
   assert_port_available "$DOCUMENT_API_PORT"
   assert_port_available "$PINGCODE_API_PORT"
+  assert_port_available "${YASDB_STORAGE_PORT:-14210}"
 
   token="$OUTLINE_INTERNAL_TOKEN"
   if [[ -z "$token" ]]; then
@@ -261,6 +330,10 @@ restart_platform() {
   fi
 
   STARTED_SERVICES=()
+  start_service storage "$STORAGE_DIR" "$LOG_DIR/storage.log" \
+    env KNOWLEDGE_CENTER_RUNTIME_DIR="$RUNTIME_DIR" "$STORAGE_DIR/start.sh"
+  wait_ready storage "$(service_url storage)" || { rollback_started; return 1; }
+
   start_service document "$DOCUMENT_DIR" "$LOG_DIR/document.log" \
     env NODE_PATH="$NODE_MODULE_PATH" PORT="$DOCUMENT_API_PORT" HOST="$INTERNAL_HOST" \
     KNOWLEDGE_CENTER_OUTLINE_INTERNAL_TOKEN="$token" "$NODE_BIN" server.js
@@ -278,7 +351,7 @@ restart_platform() {
   wait_ready auth "$(service_url auth)" || { rollback_started; return 1; }
 
   start_service frontend "$FRONTEND_DIR" "$LOG_DIR/frontend.log" \
-    env NODE_PATH="$NODE_MODULE_PATH" PORT="$FRONTEND_PORT" DOCUMENT_API_HOST="$INTERNAL_HOST" DOCUMENT_API_PORT="$DOCUMENT_API_PORT" \
+    env NODE_PATH="$NODE_MODULE_PATH" PORT="$FRONTEND_PORT" KNOWLEDGE_STORAGE_MODE="${KNOWLEDGE_STORAGE_MODE:-database}" YASDB_PASSWORD="${YASDB_PASSWORD:-}" YASDB_STORAGE_URL="${YASDB_STORAGE_URL:-http://127.0.0.1:14210}" YASDB_STORAGE_HOST="${YASDB_STORAGE_HOST:-127.0.0.1}" YASDB_STORAGE_PORT="${YASDB_STORAGE_PORT:-14210}" YASDB_STORAGE_TIMEOUT_MS="${YASDB_STORAGE_TIMEOUT_MS:-15000}" DOCUMENT_API_HOST="$INTERNAL_HOST" DOCUMENT_API_PORT="$DOCUMENT_API_PORT" \
     PINGCODE_API_HOST="$PINGCODE_HOST" PINGCODE_API_PORT="$PINGCODE_API_PORT" KNOWLEDGE_CENTER_AUTH_HOST="$INTERNAL_HOST" \
     KNOWLEDGE_CENTER_AUTH_PORT="$AUTH_API_PORT" KNOWLEDGE_CENTER_OUTLINE_INTERNAL_TOKEN="$token" "$NODE_BIN" frontend-server.js
   wait_ready frontend "$(service_url frontend)" || { rollback_started; return 1; }
@@ -289,13 +362,13 @@ restart_platform() {
 }
 
 status_platform() {
-  local failed=0 name pid cwd pattern url
-  for name in document pingcode auth frontend; do
+  local failed=0 name pid url port owner
+  for name in document pingcode auth frontend storage; do
     pid="$(cat "$(pid_file "$name")" 2>/dev/null || true)"
-    cwd="$(service_cwd "$name")"
-    pattern="$(service_pattern "$name")"
     url="$(service_url "$name")"
-    if process_matches "$pid" "$cwd" "$pattern" && http_ready "$url"; then
+    port="$(service_port "$name")"
+    owner="$(listener_pid "$port")"
+    if service_process_matches "$name" "$pid" && [[ "$owner" == "$pid" ]] && http_ready "$url"; then
       echo "$name: running pid=$pid url=$url"
     else
       echo "$name: stopped-or-unhealthy url=$url"

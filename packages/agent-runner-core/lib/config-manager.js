@@ -6,7 +6,8 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const logger = require('./logger');
-const { AGENT_RUNNER_CONFIG_ROOT } = require('./repo-paths');
+const { CONFIG_PATHS } = require('./config-registry');
+const { readJson, writeJsonAtomic } = require('./json-config');
 
 const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 16;
@@ -14,7 +15,7 @@ const TAG_LENGTH = 16;
 
 class ConfigManager {
   constructor() {
-    this.configDir = AGENT_RUNNER_CONFIG_ROOT;
+    this.configDir = path.dirname(CONFIG_PATHS.aiServices);
     this.encryptionKey = this._deriveKey(process.env.AGENT_RUNNER_KEY || 'default-key');
     this.cache = new Map();
     this._watchConfigDir();
@@ -112,12 +113,15 @@ class ConfigManager {
     return result;
   }
 
+  _section(configName) { return { 'model-config': 'model', 'mcp-config': 'mcp', 'agent-presets': 'agentPresets' }[configName] || null; }
+
   async load(configName) {
     if (this.cache.has(configName)) {
       return this.cache.get(configName);
     }
 
-    const filePath = path.join(this.configDir, `${configName}.json`);
+    const section = this._section(configName);
+    const filePath = section ? CONFIG_PATHS.aiServices : path.join(this.configDir, `${configName}.json`);
 
     if (!fs.existsSync(filePath)) {
       logger.debug(`Config file not found: ${filePath}`);
@@ -126,7 +130,9 @@ class ConfigManager {
 
     try {
       const content = fs.readFileSync(filePath, 'utf-8');
-      const config = JSON.parse(content);
+      const payload = JSON.parse(content);
+      const config = section ? payload[section] : payload;
+      if (!config) return null;
       const decrypted = this._decryptSensitiveFields(config);
       Object.assign(config, decrypted);
       this.cache.set(configName, config);
@@ -139,11 +145,13 @@ class ConfigManager {
   }
 
   async save(configName, config) {
-    const filePath = path.join(this.configDir, `${configName}.json`);
+    const section = this._section(configName);
+    const filePath = section ? CONFIG_PATHS.aiServices : path.join(this.configDir, `${configName}.json`);
 
     try {
       const toSave = this._encryptSensitiveFields({ ...config });
-      fs.writeFileSync(filePath, JSON.stringify(toSave, null, 2), 'utf-8');
+      if (section) { const payload = readJson(filePath); payload[section] = toSave; writeJsonAtomic(filePath, payload); }
+      else writeJsonAtomic(filePath, toSave);
       this.cache.set(configName, config);
       logger.info(`Config saved: ${configName}`);
       return true;
@@ -201,9 +209,9 @@ class ConfigManager {
     try {
       fs.watch(this.configDir, (eventType, filename) => {
         if (filename && filename.endsWith('.json')) {
-          const configName = filename.replace('.json', '');
-          this.cache.delete(configName);
-          logger.debug(`Config cache cleared for: ${configName}`);
+          if (filename === path.basename(CONFIG_PATHS.aiServices)) this.cache.clear();
+          else this.cache.delete(filename.replace('.json', ''));
+          logger.debug(`Config cache cleared for: ${filename}`);
         }
       });
     } catch (err) {

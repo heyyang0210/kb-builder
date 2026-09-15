@@ -5,9 +5,13 @@ require('../../packages/agent-runner-core/lib/runtime-env').loadRuntimeEnv();
 const { createProxy } = require('../../packages/agent-runner-core/lib/proxy-utils');
 const { validateCleaningResponse, ensureSuccessEnvelope } = require('../../packages/agent-runner-core/lib/knowledge-center-runtime-contract');
 const { createAggregateStore, DatabaseIncrementalStore } = require('../../packages/agent-runner-core/lib/aggregate-store');
+const crypto = require('crypto');
 const { createIncrementalBuildHandler } = require('../../packages/agent-runner-core/lib/incremental-build-service');
 const { createKnowledgeCenterHandler } = require('../../packages/agent-runner-core/routes/knowledge-center');
-const { REPOSITORY_ROOT, AGENT_RUNNER_CONFIG_ROOT, AGENT_RUNNER_RUNTIME_ROOT } = require('../../packages/agent-runner-core/lib/repo-paths');
+const { REPOSITORY_ROOT, AGENT_RUNNER_RUNTIME_ROOT } = require('../../packages/agent-runner-core/lib/repo-paths');
+const { CONFIG_PATHS } = require('../../packages/agent-runner-core/lib/config-registry');
+const { createBrandIconStore } = require('../../packages/agent-runner-core/lib/brand-icon-store');
+const { createTemplateStore } = require('../../packages/agent-runner-core/lib/template-store');
 
 const PORT = Number(process.env.PORT || 3500);
 const HOST = '0.0.0.0';
@@ -32,11 +36,33 @@ const AUTH_API_PORT = Number(process.env.KNOWLEDGE_CENTER_AUTH_PORT || 4200);
 const OUTLINE_INTERNAL_TOKEN = process.env.KNOWLEDGE_CENTER_OUTLINE_INTERNAL_TOKEN || '';
 const KNOWLEDGE_ASSETS_CONFIG = process.env.KNOWLEDGE_ASSETS_CONFIG
   ? path.resolve(process.env.KNOWLEDGE_ASSETS_CONFIG)
-  : path.join(AGENT_RUNNER_CONFIG_ROOT, 'knowledge-assets.json');
+  : CONFIG_PATHS.knowledgeAssets;
 const knowledgeAssetsStore = createAggregateStore({
   namespace: 'assets', key: 'catalog',
   filePath: KNOWLEDGE_ASSETS_CONFIG,
   emptyValue: { version: 1, handbooks: [], audits: [] },
+});
+const templateStore = createTemplateStore({});
+
+// 数据库模式下在启动阶段核对迁移源，避免文件源与数据库聚合不一致时静默展示空列表。
+if (String(process.env.KNOWLEDGE_STORAGE_MODE || 'file').toLowerCase() === 'database' && fs.existsSync(KNOWLEDGE_ASSETS_CONFIG)) {
+  try {
+    const source = JSON.parse(fs.readFileSync(KNOWLEDGE_ASSETS_CONFIG, 'utf8'));
+    const stored = knowledgeAssetsStore.read();
+    const sourceHash = crypto.createHash('sha256').update(JSON.stringify(source)).digest('hex');
+    const storedHash = crypto.createHash('sha256').update(JSON.stringify(stored)).digest('hex');
+    if (sourceHash !== storedHash || (source.handbooks || []).length !== (stored.handbooks || []).length) {
+      console.warn(`[assets-consistency] 文件源与数据库聚合不一致：file=${source.handbooks?.length || 0}, database=${stored.handbooks?.length || 0}；请执行受控迁移。`);
+    } else {
+      console.info(`[assets-consistency] 手册资产校验通过：${stored.handbooks?.length || 0} 条。`);
+    }
+  } catch (error) {
+    console.warn(`[assets-consistency] 启动校验失败：${error.message}`);
+  }
+}
+const brandIconStore = createBrandIconStore({
+  platformPath: process.env.KNOWLEDGE_CENTER_PLATFORM_CONFIG ? path.resolve(process.env.KNOWLEDGE_CENTER_PLATFORM_CONFIG) : CONFIG_PATHS.platform,
+  brandingRoot: process.env.KNOWLEDGE_CENTER_BRANDING_ROOT ? path.resolve(process.env.KNOWLEDGE_CENTER_BRANDING_ROOT) : undefined,
 });
 const INCREMENTAL_BUILD_STATE = process.env.INCREMENTAL_BUILD_STATE
   ? path.resolve(__dirname, process.env.INCREMENTAL_BUILD_STATE)
@@ -46,10 +72,10 @@ const incrementalRepository = String(process.env.KNOWLEDGE_STORAGE_MODE || 'file
 const handleIncrementalBuild = createIncrementalBuildHandler({ repository: incrementalRepository, repositoryPath: INCREMENTAL_BUILD_STATE });
 const GITLAB_CONFIG_PATH = process.env.KNOWLEDGE_CENTER_GITLAB_CONFIG
   ? path.resolve(process.env.KNOWLEDGE_CENTER_GITLAB_CONFIG)
-  : path.join(AGENT_RUNNER_CONFIG_ROOT, 'gitlab-connections.json');
+  : CONFIG_PATHS.gitlabConnections;
 const GITLAB_DOCUMENT_TYPES_PATH = process.env.KNOWLEDGE_CENTER_GITLAB_DOCUMENT_TYPES
   ? path.resolve(process.env.KNOWLEDGE_CENTER_GITLAB_DOCUMENT_TYPES)
-  : path.join(AGENT_RUNNER_CONFIG_ROOT, 'gitlab-document-types.json');
+  : CONFIG_PATHS.processing;
 
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -189,7 +215,7 @@ const handleKnowledgeCenter = createKnowledgeCenterHandler({
     AUTH_API_HOST, AUTH_API_PORT,
     GITLAB_CONFIG_PATH, GITLAB_DOCUMENT_TYPES_PATH,
   },
-  stores: { knowledgeAssetsStore },
+  stores: { knowledgeAssetsStore, templateStore, brandIconStore },
 });
 
 // --- Main server ---

@@ -6,6 +6,14 @@ const { GitLabConnectorError, readConfig: readGitLabConfig, upsertConnection, re
 const { GitLabOAuthError, config: gitLabOAuthConfig, start: startGitLabOAuth, callback: completeGitLabOAuth, tokenForUser, status: gitLabOAuthStatus } = require('../lib/gitlab-oauth');
 const { ASSET_STATUS_LABELS, systemAssetStatus, assetStatus, projectAsset, queryKnowledgeAssets: queryKnowledgeAssetsBase, isPlatformAdmin } = require('../lib/knowledge-asset-utils');
 const { matchCleaningEndpoint } = require('../lib/knowledge-center-cleaning-contract');
+const { createTemplateStore } = require('../lib/template-store');
+const { readTemplateUpload } = require('../lib/template-import');
+let logger;
+try { logger = require('../lib/logger'); } catch (_) { logger = { info() {} }; }
+
+function perfTrace(message, meta) {
+  if (process.env.PERF_TRACE === '1') logger.info(`[perf] ${message}`, meta);
+}
 
 /**
  * Knowledge center route handler factory.
@@ -28,7 +36,8 @@ function createKnowledgeCenterHandler(options) {
     GITLAB_CONFIG_PATH, GITLAB_DOCUMENT_TYPES_PATH,
   } = config;
 
-  const { knowledgeAssetsStore } = stores;
+  const { knowledgeAssetsStore, brandIconStore } = stores;
+  const templateStore = stores.templateStore || createTemplateStore();
 
   // --- Auth helpers ---
 
@@ -82,10 +91,86 @@ function createKnowledgeCenterHandler(options) {
   }
 
   function forbidUnlessCleaningAction(res, session, action) {
-    if (hasAction(session, action)) return false;
+    if (isPlatformAdmin(session)) return false;
     res.writeHead(403, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
-    res.end(JSON.stringify({ success: false, error: { code: 'CLEANING_PERMISSION_DENIED', message: action === 'knowledge:write' ? '没有资料加工写入权限' : '没有资料加工查看权限', retryable: false } }));
+    res.end(JSON.stringify({ success: false, error: { code: 'PLATFORM_ADMIN_REQUIRED', message: '仅平台管理员可访问资料清洗治理能力', retryable: false } }));
     return true;
+  }
+
+  function forbidUnlessTemplateAction(res, session, action) {
+    if (hasAction(session, action) || isPlatformAdmin(session)) return false;
+    res.writeHead(403, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify({ success: false, error: { code: 'TEMPLATE_PERMISSION_DENIED', message: `没有${action === 'template:read' ? '模板读取' : action === 'template:edit' ? '模板编辑' : '模板管理'}权限` } }));
+    return true;
+  }
+
+  function templateResponse(res, content, status = 200) { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify({ success: true, data: content })); }
+
+  function sendBrandIcon(res) {
+    try {
+      const icon = brandIconStore.current();
+      res.writeHead(200, { 'Content-Type': icon.mimeType, 'Content-Length': icon.buffer.length, 'Cache-Control': 'public, max-age=300', 'ETag': `"${icon.fingerprint.slice(7)}"`, 'X-Content-Type-Options': 'nosniff' });
+      res.end(icon.buffer);
+    } catch (error) {
+      res.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
+      res.end(JSON.stringify({ success: false, error: { code: error.code || 'BRAND_ICON_UNAVAILABLE', message: '品牌图标暂不可用' } }));
+    }
+  }
+
+  async function handleTemplates(req, res, session) {
+    const parsed = new URL(req.url, 'http://localhost'); const parts = parsed.pathname.split('/').filter(Boolean); const id = parts[3] ? decodeURIComponent(parts[3]) : null;
+    const startedAt = process.hrtime.bigint();
+    perfTrace('template request start', { method: req.method, path: parsed.pathname, id });
+    try {
+      const action = req.method === 'GET' ? 'template:read' : req.method === 'DELETE' || ['disable', 'restore'].includes(parts[4]) ? 'template:manage' : 'template:edit';
+      if (forbidUnlessTemplateAction(res, session, action)) return;
+      if (req.method === 'POST' && parts.length === 4 && parts[3] === 'import') {
+        const { batch, files } = await readTemplateUpload(req);
+        const drafts = files.map(upload => {
+          try {
+            if (upload.error) throw upload.error;
+            return { ...templateStore.importDraft(upload, session), clientIndex: upload.clientIndex, warnings: upload.warnings };
+          } catch (error) {
+            if (!batch && files.length === 1) throw error;
+            return { draft: false, clientIndex: upload.clientIndex, sourceFilename: upload.sourceFilename, error: { code: error.code || 'TEMPLATE_ERROR', message: error.message } };
+          }
+        });
+        const templates = [];
+        for (const draft of drafts.filter(item => item.draft)) {
+          try {
+            templates.push(templateStore.create({ ...draft, sourceType: 'upload' }, session));
+          } catch (error) {
+            const target = drafts.find(item => item.clientIndex === draft.clientIndex);
+            target.error = { code: error.code || 'TEMPLATE_CREATE_FAILED', message: error.message }; target.draft = false;
+          }
+        }
+        return templateResponse(res, { drafts, templates });
+      }
+      if (req.method === 'PATCH' || req.method === 'POST' && (!id || ['save', 'validate', 'restore-draft'].includes(parts[4]))) {
+        try {
+          if (!/^application\/json(?:\s*;|$)/i.test(req.headers['content-type'] || '')) throw new Error();
+          if (req.body === undefined) req.body = await readJsonBody(req);
+          if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body) || !Object.keys(req.body).length) throw new Error();
+        } catch (_) { throw Object.assign(new Error('请提供有效的 JSON 对象及 application/json 请求类型'), { status: 400, code: 'TEMPLATE_INVALID_JSON' }); }
+      }
+      if (req.method === 'GET' && !id) {
+        const result = await (templateStore.listAsync ? templateStore.listAsync(Object.fromEntries(parsed.searchParams.entries())) : templateStore.list(Object.fromEntries(parsed.searchParams.entries())));
+        perfTrace('template list completed', { count: result.length, durationMs: Number(process.hrtime.bigint() - startedAt) / 1e6 });
+        return templateResponse(res, result);
+      }
+      if (id && !templateStore.get(id)) throw Object.assign(new Error('模板不存在'), { status: 404, code: 'TEMPLATE_NOT_FOUND' });
+      if (req.method === 'GET' && id && parts.length === 6 && parts[4] === 'versions' && /^\d+$/.test(parts[5])) { const item = templateStore.get(id); const version = item?.versions.find(v => v.version === Number(parts[5])); if (!version) throw Object.assign(new Error('历史版本不存在'), { status: 404, code: 'TEMPLATE_VERSION_NOT_FOUND' }); return templateResponse(res, version); }
+      if (req.method === 'GET' && id && parts[4] === 'versions') { if (forbidUnlessTemplateAction(res, session, 'template:read')) return; const item = templateStore.get(id); if (!item) return templateResponse(res, { message: '模板不存在' }, 404); return templateResponse(res, item.versions || []); }
+      if (req.method === 'GET' && id && !parts[4]) return templateResponse(res, templateStore.get(id));
+      if (req.method === 'PATCH' && id && !parts[4]) return templateResponse(res, templateStore.updateMetadata(id, req.body, session));
+      if (req.method === 'DELETE' && id && !parts[4]) return templateResponse(res, templateStore.remove(id, session));
+      if (req.method === 'POST' && !id) { if (forbidUnlessTemplateAction(res, session, 'template:edit')) return; return templateResponse(res, templateStore.create(req.body || {}, session), 201); }
+      if (req.method === 'POST' && id && parts[4] === 'validate') { if (forbidUnlessTemplateAction(res, session, 'template:edit')) return; return templateResponse(res, templateStore.validateContent(req.body?.content)); }
+      if (req.method === 'POST' && id && parts[4] === 'save') { if (forbidUnlessTemplateAction(res, session, 'template:edit')) return; return templateResponse(res, templateStore.save(id, req.body || {}, session)); }
+      if (req.method === 'POST' && id && parts[4] === 'restore-draft') { if (forbidUnlessTemplateAction(res, session, 'template:edit')) return; return templateResponse(res, templateStore.restoreDraft(id, req.body?.version, session)); }
+      if (req.method === 'POST' && id && ['disable', 'restore'].includes(parts[4])) { if (forbidUnlessTemplateAction(res, session, 'template:manage')) return; return templateResponse(res, templateStore.disable(id, session, parts[4] === 'restore')); }
+      res.writeHead(405); res.end();
+    } catch (error) { res.writeHead(error.status || 500, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify({ success: false, error: { code: error.code || 'TEMPLATE_ERROR', message: error.message } })); }
   }
 
   function requireHandbookRead(session, handbookId) {
@@ -329,7 +414,8 @@ function createKnowledgeCenterHandler(options) {
 
   function repositoryDocumentRules() {
     try {
-      const value = JSON.parse(fs.readFileSync(GITLAB_DOCUMENT_TYPES_PATH, 'utf8'));
+      const payload = JSON.parse(fs.readFileSync(GITLAB_DOCUMENT_TYPES_PATH, 'utf8'));
+      const value = payload.gitlabDocumentTypes || payload;
       return { extensions: new Set((value.extensions || []).map(String)), excludedNames: new Set((value.excludedNames || []).map(String)) };
     } catch (_error) {
       throw new GitLabConnectorError('GITLAB_DOCUMENT_TYPES_UNAVAILABLE', '仓库文档类型配置不可用', 503);
@@ -417,18 +503,18 @@ function createKnowledgeCenterHandler(options) {
         const projected = sanitizeConnection(connection);
         if (projected.managementStatus === 'disabled' || connection.mode === 'disabled') {
           res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
-          res.end(JSON.stringify({ success: true, data: { authMode: projected.authMode, connected: false, canRead: false, nextAction: 'contact_admin', message: '仓库连接暂不可用' } })); return;
+          res.end(JSON.stringify({ success: true, data: { connectionId: connection.id, connectionName: projected.name, project: projected.project, authMode: projected.authMode, connected: false, canRead: false, nextAction: 'contact_admin', message: '仓库连接暂不可用' } })); return;
         }
         if (projected.authMode === 'service_account') {
           const configured = Boolean(connection.credentialRef);
           res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
-          res.end(JSON.stringify({ success: true, data: { authMode: 'service_account', connected: configured, canRead: configured, nextAction: configured ? null : 'contact_admin', message: configured ? '可读取仓库内容' : '平台读取凭证尚未配置' } })); return;
+          res.end(JSON.stringify({ success: true, data: { connectionId: connection.id, connectionName: projected.name, project: projected.project, authMode: 'service_account', connected: configured, canRead: configured, nextAction: configured ? null : 'contact_admin', message: configured ? '可读取仓库内容' : '平台读取凭证尚未配置' } })); return;
         }
         const oauthStatus = gitLabOAuthStatus(session?.user?.id, connection.host);
         const oauth = gitLabOAuthConfig();
         const configured = Boolean(oauth.clientId && oauth.clientSecret && oauth.redirectUri);
         res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
-        res.end(JSON.stringify({ success: true, data: { authMode: 'user_oauth', connected: oauthStatus.connected, canRead: oauthStatus.connected, nextAction: oauthStatus.connected ? null : (configured ? 'connect_gitlab' : 'contact_admin'), message: oauthStatus.connected ? 'GitLab 账号已连接' : (configured ? '需要连接 GitLab 账号' : 'GitLab OAuth 尚未配置') } })); return;
+        res.end(JSON.stringify({ success: true, data: { connectionId: connection.id, connectionName: projected.name, project: projected.project, authMode: 'user_oauth', connected: oauthStatus.connected, canRead: oauthStatus.connected, nextAction: oauthStatus.connected ? null : (configured ? 'connect_gitlab' : 'contact_admin'), message: oauthStatus.connected ? 'GitLab 账号已连接' : (configured ? '需要连接 GitLab 账号' : 'GitLab OAuth 尚未配置') } })); return;
       }
       const handbookOAuthStart = pathname.match(/^\/knowledge-center\/api\/gitlab\/handbooks\/([^/]+)\/oauth\/start$/);
       if (handbookOAuthStart && req.method === 'GET') {
@@ -608,6 +694,10 @@ function createKnowledgeCenterHandler(options) {
     if (req.method === 'GET' && pathname === '/knowledge-center/api/platform/context') {
       requireSession(req, res, () => servePlatformContext(res)); return;
     }
+    if (pathname === '/knowledge-center/api/platform/brand/icon') {
+      if (req.method === 'GET') { sendBrandIcon(res); return; }
+      res.writeHead(405, { Allow: 'GET' }); res.end(); return;
+    }
     if (pathname === '/knowledge-center/api/platform/permissions' || pathname.startsWith('/knowledge-center/api/platform/permissions/')) {
       proxyPermission(req, res); return;
     }
@@ -683,6 +773,9 @@ function createKnowledgeCenterHandler(options) {
     }
     if (req.method === 'GET' && (pathname === '/knowledge-center/api/outline/governance' || pathname.startsWith('/knowledge-center/api/outline/governance/'))) {
       requireSession(req, res, session => { if (!forbidUnlessOutlineAction(res, session, 'outline:read')) proxyOutline(req, res); }); return;
+    }
+    if (pathname === '/knowledge-center/api/templates' || pathname.startsWith('/knowledge-center/api/templates/')) {
+      requireSession(req, res, session => handleTemplates(req, res, session)); return;
     }
     if (req.method === 'POST' && (pathname === '/knowledge-center/api/outline/import' || pathname === '/knowledge-center/api/outline/handbooks')) {
       requireSession(req, res, session => { if (!forbidUnlessOutlineAction(res, session, 'outline:create')) proxyOutline(req, res); }); return;

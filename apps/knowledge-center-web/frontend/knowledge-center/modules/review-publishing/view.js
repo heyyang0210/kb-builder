@@ -135,7 +135,15 @@ function reviewAuthorizationState(projection, task) {
   const handbookId = task?.handbookId || projection?.handbookId || '';
   const returnTo = `${window.location.pathname}${window.location.search}${window.location.hash}`;
   const href = `/knowledge-center/api/gitlab/handbooks/${encodeURIComponent(handbookId)}/oauth/start?returnTo=${encodeURIComponent(returnTo)}`;
-  return `<section class="review-reader-state review-gitlab-auth" role="alert"><i data-lucide="git-branch" aria-hidden="true"></i><h3>GitLab 账号尚未连接</h3><p>连接账号后可读取本手册仓库正文；当前审核事项和已加载的审核意见不会丢失。</p><a class="button primary" href="${esc(href)}">连接 GitLab 账号</a></section>`;
+  const repo = projection?.connectionName || projection?.project || '';
+  return `<section class="review-reader-state review-gitlab-auth" role="alert"><i data-lucide="git-branch" aria-hidden="true"></i><h3>需要连接 GitLab 仓库</h3><p>${repo ? `当前内容来源：${esc(repo)}。` : ''}连接后即可读取本手册的完整正文，审核事项和意见不会丢失。</p><a class="button primary" href="${esc(href)}">连接 GitLab 账号并读取</a></section>`;
+}
+
+function repositoryConnectionState(projection, task) {
+  const handbookId = task?.handbookId || projection?.handbookId || '';
+  const href = `/knowledge-center/assets?handbookId=${encodeURIComponent(handbookId)}`;
+  const message = projection?.error?.message || '当前手册尚未关联可读取的 GitLab 仓库。';
+  return `<section class="review-reader-state review-gitlab-auth" role="alert"><i data-lucide="git-branch" aria-hidden="true"></i><h3>GitLab 仓库未连接</h3><p>${esc(message)}请先配置对应仓库和文档映射。</p><a class="button primary" href="${href}">连接对应 GitLab 仓库</a></section>`;
 }
 
 function commentForm(task, reviewId, scope = 'review') {
@@ -185,6 +193,7 @@ function reader(projection, task, ui = {}) {
   else if (isWaitingForReview && file?.content) content = `<div class="review-reader-repository"><strong class="review-reader-source-label">当前显示仓库正文</strong>${renderDb(file.content, file.path)}</div>`;
   else if (file?.content) content = renderDb(file.content, file.path);
   else if (needsAuthorization) content = reviewAuthorizationState(projection, task);
+  else if (['GITLAB_MAPPING_NOT_FOUND', 'GITLAB_LANGUAGE_NOT_MAPPED', 'GITLAB_CONNECTION_INACTIVE', 'GITLAB_CREDENTIAL_UNAVAILABLE', 'GITLAB_CONNECTOR_DISABLED'].includes(projection?.error?.code)) content = repositoryConnectionState(projection, task);
   else if (snapshot) content = `<div class="review-reader-fallback"><strong>仓库阅读不可用，当前显示候选快照</strong>${renderDb(snapshot, '')}</div>`;
   else if (isWaitingForReview) content = `<section class="review-reader-state" role="status"><h3>仓库正文尚未加载</h3><p>${esc(projection?.error?.message || '正在读取手册仓库内容，请稍候刷新。如果持续无法加载，请检查 GitLab 连接状态和手册映射配置。')}</p><button class="button secondary" type="button" data-review-reader-refresh>刷新阅读</button></section>`;
   else content = `<section class="review-reader-state" role="alert"><h3>${esc(readerError(projection))}</h3><p>${esc(projection?.error?.message || '当前没有可阅读的文档快照。')}</p></section>`;
@@ -282,7 +291,7 @@ function opinions(task, review) {
   const revision = task?.capabilities?.canRevise === true ? `<button class="button secondary" type="button" data-review-revision="${esc(idOf(task))}">创建修订任务</button>` : '';
   const threadPermission = canManageThread
     ? '当前账号可以回复、标记已处理和重新打开意见。'
-    : '当前账号仅可查看意见。任务处于审核中且具备知识编辑或审核管理权限时，才可回复或标记已处理。';
+    : '当前账号仅可查看意见。任务处于审核中且具备文档编辑员或审核管理员权限时，才可回复或标记已处理。';
   return `<section class="review-step-panel review-opinions-panel"><header><div><h3>审核意见与决定</h3><p>按意见处理进度逐项确认；AI 结果仅作为可核对依据，不直接改变审核结论。</p></div><span>${comments.length} 条意见</span></header><p class="review-thread-permission ${canManageThread ? 'enabled' : ''}">${threadPermission}</p>${comments.length ? `<label class="review-opinion-filter">查看<select data-review-opinion-filter><option value="all">全部意见</option><option value="open">未处理意见</option><option value="blocker">阻断意见</option></select></label>` : ''}<div class="review-opinions">${records}</div><div class="review-ai-note"><strong>审核原则</strong><p>数据库语法、参数依赖、版本适配和错误码准确性必须由具备领域责任的审核人确认。</p></div><div class="review-decision-bar"><span>${blockers ? `尚有 ${blockers} 条阻断意见未处理，不能审核通过` : unresolved ? `尚有 ${unresolved} 条未处理意见` : '没有未处理意见'}</span><div>${revision}${canReview && review?.status === 'pending' ? `<details class="review-return"><summary>退回修改</summary><form data-review-decision-form data-task-id="${esc(idOf(task))}" data-review-id="${esc(review?.id || '')}"><label>退回原因<textarea name="comment" required placeholder="请说明需要修改的内容"></textarea></label><button class="button tertiary" type="submit">确认退回</button></form></details><button class="button primary" data-review-decision="approve" data-task-id="${esc(idOf(task))}" data-review-id="${esc(review?.id || '')}" ${blockers ? 'disabled aria-disabled="true" title="请先处理全部阻断意见"' : ''}>审核通过</button>` : ''}${canPublish && ['approved', 'pending_publish'].includes(rawStatus(task)) ? `<button class="button primary" data-review-publish="${esc(idOf(task))}">确认发布</button>` : ''}</div></div></section>`;
 }
 
@@ -312,7 +321,7 @@ function detail(task, tasks, allTasks, step, projection, diffData, ui) {
         ? `<div class="review-drawer-fulltext-form"><p class="review-drawer-hint">全文意见（兼容模式）：</p>${commentForm(task, review.id, 'reader')}</div>`
     : '';
   const commentDrawer = (review?.id)
-    ? `<section class="review-evidence-card review-comment-drawer"><details data-review-comment-drawer><summary title="提出意见" aria-label="提出意见"><h3>提出意见</h3><small>${drawerComments.length ? `${drawerComments.length} 条已有意见` : '选中文字精准定位'}</small></summary><button type="button" class="button secondary compact" data-review-panel-close aria-label="关闭意见侧栏">关闭</button>${drawerCommentsList}${drawerForm}</details></section>`
+    ? `<section class="review-evidence-card review-comment-drawer"><details data-review-comment-drawer><summary title="提出意见" aria-label="提出意见"><h3>提出意见</h3><small>${drawerComments.length ? `${drawerComments.length} 条已有意见` : '选中文字精准定位'}</small></summary><button type="button" class="icon-button review-panel-close" data-review-panel-close aria-label="关闭意见侧栏" title="关闭意见侧栏"><i data-lucide="x" aria-hidden="true"></i></button>${drawerCommentsList}${drawerForm}</details></section>`
     : '';
   const evidenceCards = evidence(task, current);
   const evidenceDrawer = `<details class="review-evidence-drawer"><summary title="审核依据" aria-label="审核依据"><span>审核依据</span><small>角色 · 检查 · 血缘</small></summary><div class="review-evidence-content"><button type="button" class="button secondary compact" data-review-panel-close aria-label="关闭审核依据侧栏">关闭</button>${evidenceCards}</div></details>`;

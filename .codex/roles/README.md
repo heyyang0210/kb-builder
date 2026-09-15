@@ -29,6 +29,7 @@
 | `independent-reviewer` | Independent Reviewer | 独立质疑记录与审查结论 | 待审产物、任务状态、最终裁决 |
 | `doc-writer` | Doc Writer | 文档表达、同步与导航质量 | 产品/架构决策、验收 |
 | `reporter` | Reporter | 进度、风险和下一步投影 | 任务事实、计划、验收和风险裁决 |
+| `database-architect` | Database Architect | YashanDB 表结构、DDL、索引和性能设计 | 产品审批、业务实现、验收和风险接受 |
 
 ## 公共输入与结果
 
