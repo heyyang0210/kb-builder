@@ -1,6 +1,6 @@
 # YashanDB 知识中心
 
-知识资产管理、文档生成、资料加工与审核发布平台。仓库按可部署应用和共享能力组织，数据库连接配置集中在 `config/database/`，密码与 Token 由环境变量或密钥系统注入。
+知识资产管理、文档生成、资料加工与审核发布平台。仓库按可部署应用和共享能力组织，数据库连接配置集中在 `config/yashandb/`，密码与 Token 由环境变量或密钥系统注入。
 
 ## 从哪里开始
 
@@ -21,12 +21,13 @@
 ## 启动与检查
 
 ```bash
-bash tools/repository/restart-knowledge-center-isolated.sh restart
-bash tools/repository/restart-knowledge-center-isolated.sh status
-bash tools/repository/restart-knowledge-center-isolated.sh stop
+./knowledge-center.sh start
+./knowledge-center.sh status
+./knowledge-center.sh restart
+./knowledge-center.sh stop
 ```
 
-默认页面：`http://192.168.130.180:13510/knowledge-center/`。本地配置入口为 `config/knowledge-center/.env`；启动参数、依赖与环境覆盖见[启动设计](docs/agent-runner/overview/service-startup-and-restart-design.md)。
+默认页面：`http://192.168.130.180:13510/knowledge-center/`。根目录 `knowledge-center.sh` 是平台唯一权威运维入口；本地配置入口为 `config/knowledge-center/.env`，启动参数、依赖与环境覆盖见[启动设计](docs/agent-runner/overview/service-startup-and-restart-design.md)。
 
 ```bash
 npm run check:node
@@ -40,7 +41,7 @@ npm run test:knowledge-center -- --runInBand
 - [目录迁移跟踪与验收](docs/directory-structure-refactor.md)
 - [知识资产导航](knowledge/README.md)
 - [DeepSeek Harness 精简手册（新手版）](docs/deepseek-harness-精简手册.md)
-- [数据库配置](config/database/README.md)
+- [数据库配置](config/yashandb/README.md)
 - [工作区约束](AGENTS.md)、[Git 提交规范](git提交规范.md)
 - [提示词与复盘](prompt.md)，`prompt-log.md` 仅保留历史
 - [迁移前完整使用文档（历史路径）](docs/archive/root-layout/README.before-runtime.md)

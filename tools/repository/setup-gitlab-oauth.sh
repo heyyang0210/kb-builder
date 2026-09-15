@@ -105,14 +105,14 @@ if [[ "$RESTART" =~ ^[Yy]$ ]]; then
     echo ""
     echo "🔄 正在重启服务..."
     cd "$REPO_ROOT"
-    "$REPO_ROOT/tools/repository/restart-knowledge-center-isolated.sh"
+    "$REPO_ROOT/knowledge-center.sh" restart
     echo ""
     echo "✅ 服务已重启"
 else
     echo ""
     echo "📋 稍后请手动重启服务："
     echo "   cd $REPO_ROOT"
-    echo "   $REPO_ROOT/tools/repository/restart-knowledge-center-isolated.sh"
+    echo "   $REPO_ROOT/knowledge-center.sh restart"
 fi
 
 echo ""
