@@ -113,6 +113,21 @@
   background: var(--color-danger-subtle);
   color: #76251e;
 }
+.notice-success {
+  border-color: #a8d8bd;
+  background: var(--color-success-subtle);
+  color: var(--color-success);
+}
+.notice-warning {
+  border-color: #ead48a;
+  background: var(--color-warning-subtle);
+  color: var(--color-warning);
+}
+.notice-danger {
+  border-color: #e7b3ae;
+  background: var(--color-danger-subtle);
+  color: #76251e;
+}
 .notice p { margin: 3px 0 0; }
 @media (max-width: 900px) {
   .button { min-height: 44px; }

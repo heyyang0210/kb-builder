@@ -20,11 +20,20 @@ test('大纲列表与详情独立，返回后恢复筛选', async ({ page }) => 
   await expect(page).toHaveURL(/q=/);
   await page.locator('[data-outline-row]:visible [data-outline-id]').first().click();
   await expect(page).toHaveURL(/\/knowledge-center\/outlines\/[^?]+\?q=/);
-  await expect(page.getByRole('tab', { name: /1\s*目录/ })).toHaveAttribute('aria-selected', 'true');
-  await page.getByRole('tab', { name: /2\s*责任/ }).click();
-  await expect(page).toHaveURL(/stage=responsibility/);
+  await expect(page.getByRole('tab', { name: /1\s*目录与分工/ })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('.outline-directory-workspace')).toBeVisible();
+  await expect(page.locator('[data-outline-document]').first()).toHaveAttribute('aria-current', 'page');
+  await expect(page.locator('[data-outline-document-panel]:visible')).toContainText('页面归属');
+  const secondDocument = page.locator('[data-outline-document]').nth(1);
+  if (await secondDocument.count()) {
+    await secondDocument.click();
+    await expect(page).toHaveURL(/document=/);
+    await expect(page.locator('[data-outline-document-panel]:visible')).toContainText('正文内容尚未接入');
+  }
+  await page.getByRole('tab', { name: /2\s*预览与发布/ }).click();
+  await expect(page).toHaveURL(/stage=publish/);
   await page.reload();
-  await expect(page.getByRole('tab', { name: /2\s*责任/ })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('tab', { name: /2\s*预览与发布/ })).toHaveAttribute('aria-selected', 'true');
   await page.getByRole('button', { name: '手册信息' }).click();
   await expect(page.getByRole('heading', { name: '手册信息' })).toBeVisible();
   await page.getByRole('button', { name: '关闭手册信息' }).click();

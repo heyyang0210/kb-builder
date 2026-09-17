@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { createAggregateStore } = require('./aggregate-store');
 const { AGENT_RUNNER_RUNTIME_ROOT } = require('./repo-paths');
+const { createDomainStore } = require('./domain-store');
 
 /** File-backed repository used by outline routes until the database adapter is ready. */
 class OutlineRepository {
@@ -10,10 +11,11 @@ class OutlineRepository {
     this.metadataPath = path.join(rootDir, 'metadata.json');
     this.lockPath = `${this.metadataPath}.lock`;
     this.store = createAggregateStore({ namespace: 'outlines', key: 'metadata', filePath: this.metadataPath, emptyValue: { outlines: [] } });
+    this.domainStore = createDomainStore();
   }
 
   read() {
-    if (process.env.KNOWLEDGE_STORAGE_MODE === 'database') return this.store.read();
+    if (process.env.KNOWLEDGE_STORAGE_MODE === 'database') return this.domainStore.readOutlines();
     if (!fs.existsSync(this.metadataPath)) return { outlines: [] };
     try {
       const parsed = JSON.parse(fs.readFileSync(this.metadataPath, 'utf8'));
@@ -29,7 +31,7 @@ class OutlineRepository {
   }
 
   write(metadata) {
-    if (process.env.KNOWLEDGE_STORAGE_MODE === 'database') return this.store.write(metadata);
+    if (process.env.KNOWLEDGE_STORAGE_MODE === 'database') return this.domainStore.writeOutlinesSnapshot(metadata);
     fs.mkdirSync(this.rootDir, { recursive: true });
     let lockFd;
     try {
@@ -52,6 +54,12 @@ class OutlineRepository {
   }
 
   update(mutator) {
+    if (process.env.KNOWLEDGE_STORAGE_MODE === 'database') {
+      const current = this.read();
+      const next = mutator(structuredClone(current)) || current;
+      this.write(next);
+      return next;
+    }
     fs.mkdirSync(this.rootDir, { recursive: true });
     let lockFd;
     try {

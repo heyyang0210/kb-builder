@@ -1,0 +1,77 @@
+{
+  "techDomains": [
+    {
+      "id": "domain-performance",
+      "code": "performance",
+      "name": "性能调优",
+      "leader": { "id": "perf-leader", "name": "性能调优负责人" },
+      "members": [
+        { "id": "perf-member-1", "name": "性能调优成员一" },
+        { "id": "perf-member-2", "name": "性能调优成员二" }
+      ]
+    },
+    {
+      "id": "domain-compatibility",
+      "code": "compatibility",
+      "name": "兼容性",
+      "leader": { "id": "compat-leader", "name": "兼容性负责人" },
+      "members": [
+        { "id": "compat-member-1", "name": "兼容性成员一" }
+      ]
+    },
+    {
+      "id": "domain-ha",
+      "code": "high-availability",
+      "name": "高可用技术",
+      "leader": { "id": "ha-leader", "name": "高可用技术负责人" },
+      "members": [
+        { "id": "ha-member-1", "name": "高可用技术成员一" }
+      ]
+    },
+    {
+      "id": "domain-shared-cluster-storage-ai",
+      "code": "shared-cluster-storage-ai",
+      "name": "共享集群/存储/AI 多模",
+      "leader": { "id": "cluster-leader", "name": "共享集群负责人" },
+      "members": [
+        { "id": "cluster-member-1", "name": "共享集群成员一" }
+      ]
+    },
+    {
+      "id": "domain-poc-support",
+      "code": "poc-system-support",
+      "name": "POC 系统支持",
+      "leader": { "id": "poc-leader", "name": "POC 系统支持负责人" },
+      "members": [
+        { "id": "poc-member-1", "name": "POC 系统支持成员一" }
+      ]
+    },
+    {
+      "id": "domain-operations",
+      "code": "production-operations",
+      "name": "生产运维",
+      "leader": { "id": "ops-leader", "name": "生产运维负责人" },
+      "members": [
+        { "id": "ops-member-1", "name": "生产运维成员一" }
+      ]
+    },
+    {
+      "id": "domain-training-knowledge-center",
+      "code": "training-knowledge-center",
+      "name": "培训&知识中心",
+      "leader": { "id": "training-leader", "name": "培训知识中心负责人" },
+      "members": [
+        { "id": "training-member-1", "name": "培训知识中心成员一" }
+      ]
+    },
+    {
+      "id": "domain-platform-tools",
+      "code": "platform-tools",
+      "name": "平台&工具",
+      "leader": { "id": "tools-leader", "name": "平台工具负责人" },
+      "members": [
+        { "id": "tools-member-1", "name": "平台工具成员一" }
+      ]
+    }
+  ]
+}

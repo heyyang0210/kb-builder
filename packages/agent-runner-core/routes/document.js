@@ -219,7 +219,15 @@ function getMetadataFilePath() {
   return path.join(outputRoot.absPath, 'metadata.json');
 }
 
+const documentIndexAggregateStore = createAggregateStore({
+  namespace: 'documents',
+  key: 'index',
+  filePath: path.join(__dirname, '..', 'output', 'metadata.json'),
+  emptyValue: { documents: [], versions: {} },
+});
+
 async function loadMetadata() {
+  if (process.env.KNOWLEDGE_STORAGE_MODE === 'database') return documentIndexAggregateStore.read();
   await acquireLock('metadata');
   try {
     const metaFile = getMetadataFilePath();
@@ -237,6 +245,7 @@ async function loadMetadata() {
 }
 
 async function saveMetadata(metadata) {
+  if (process.env.KNOWLEDGE_STORAGE_MODE === 'database') { documentIndexAggregateStore.write(metadata); return; }
   await acquireLock('metadata');
   try {
     const metaFile = getMetadataFilePath();

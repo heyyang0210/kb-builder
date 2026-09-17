@@ -37,21 +37,24 @@ describe('知识资产工作台前端契约', () => {
     for (const label of ['大纲管理', '文档生产', '审核与发布']) expect(view()).toContain(label);
   });
 
-  test('手册名称是唯一查看入口，操作栏不重复列表事实', () => {
+  test('点击手册名称打开操作栏，列表不再提供独立管理列', () => {
     const actionPanel = view().split('function renderActionPanel')[1].split('function renderPagination')[0];
     expect(view()).not.toContain('>查看</button>');
     expect(view()).not.toContain('asset-detail-facts');
     expect(view()).toContain('aria-label="当前手册操作"');
-    expect(view()).not.toContain('<th>管理</th>');
+    expect(view()).not.toContain('<th>操作</th>');
+    expect(view()).not.toContain('data-handbook-manage');
+    expect(view()).toContain('class="asset-name"');
+    expect(view()).toContain('data-asset-id');
+    expect(view()).toContain('/knowledge-center/assets?handbookId=');
     expect(actionPanel).not.toContain('A：');
     expect(actionPanel).not.toContain('B：');
   });
 
   test('操作入口同级展示，关闭使用 Lucide 图标', () => {
     expect(view()).not.toContain('>文档工作<');
-    expect(view()).not.toContain('>手册管理<');
     expect((view().match(/class="asset-action-row"/g) || []).length).toBeGreaterThanOrEqual(5);
-    expect(view()).toContain('class="asset-name-link"');
+    expect(view()).toContain('class="asset-name"');
     expect(view()).toContain('data-lucide="x"');
     expect(view()).not.toContain('asset-detail-close" type="button" data-asset-detail-close aria-label="关闭手册操作" title="关闭手册操作">×');
     const css = read('apps/knowledge-center-web/frontend/knowledge-center/styles.css');

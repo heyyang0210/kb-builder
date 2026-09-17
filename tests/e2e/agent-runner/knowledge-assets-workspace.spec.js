@@ -30,7 +30,8 @@ test('管理员看到必要字段、单一更新时间和真实服务端分页',
   await expect(root.locator('.asset-page-intro .asset-context-label')).toHaveCount(0);
   await expect(root.getByRole('button', { name: '新增手册' })).toHaveCSS('color', 'rgb(3, 105, 161)');
   await expect(root.getByRole('link', { name: '已停用资产' })).toBeVisible();
-  await expect(root.getByRole('columnheader', { name: '管理' })).toHaveCount(0);
+  await expect(root.getByRole('columnheader', { name: '操作' })).toBeVisible();
+  await expect(root.getByRole('link', { name: '管理', exact: true }).first()).toBeVisible();
   await expect(root.getByRole('button', { name: '查看', exact: true })).toHaveCount(0);
   await expect(root.getByText('手册发布')).toHaveCount(0);
   await expect(root.getByText('包含已归档')).toHaveCount(0);
@@ -143,6 +144,20 @@ test('管理手册集中展示基本信息、责任人、状态与停用能力',
   await expect(dialog.getByLabel('变更原因')).toBeVisible();
   await expect(dialog.getByRole('button', { name: '停用手册' })).toBeVisible();
   await dialog.getByRole('button', { name: '取消' }).click();
+});
+
+test('手册名称打开操作栏，大纲和手册管理保持独立入口', async ({ page }) => {
+  await page.goto(`${baseUrl}/knowledge-center/assets`);
+  const nameLink = page.locator('tbody tr').first().locator('.asset-name');
+  const handbookId = await nameLink.getAttribute('data-asset-id');
+  expect(handbookId).toBeTruthy();
+  await nameLink.click();
+  await expect(page).toHaveURL(new RegExp(`/knowledge-center/assets\\?handbookId=${handbookId}`));
+  await expect(page.getByRole('button', { name: /管理手册/ })).toBeVisible();
+  await expect(page.getByRole('link', { name: '大纲管理', exact: true })).toBeVisible();
+  await page.getByRole('link', { name: '大纲管理', exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/knowledge-center/outlines/${handbookId}`));
+  await expect(page.getByRole('link', { name: '手册管理', exact: true })).toHaveCount(0);
 });
 
 test('仓库映射配置默认分支和可切换分支并使用平台配色', async ({ page }) => {

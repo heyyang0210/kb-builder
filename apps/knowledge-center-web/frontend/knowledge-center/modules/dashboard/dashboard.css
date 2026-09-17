@@ -58,6 +58,44 @@
 }
 .dashboard-section-heading h3 { margin: 0; font-size: 17px; }
 .dashboard-section-heading span { color: var(--color-text-tertiary); font-size: 12px; }
+.domain-task-summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+.domain-task-summary-card { display: grid; gap: 0; border: 1px solid var(--color-border); background: var(--color-surface); }
+.domain-task-summary-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--color-border); }
+.domain-task-summary-heading h4 { margin: 3px 0 0; font-size: 16px; }
+.domain-task-eyebrow { color: var(--color-text-tertiary); font-size: 11px; font-weight: 700; }
+.domain-task-summary-state { flex: 0 0 auto; color: var(--color-text-secondary); font-size: 11px; text-align: right; }
+.domain-task-summary-metrics, .domain-task-dialog-metrics { display: grid; grid-template-columns: minmax(0, 1.4fr) repeat(3, minmax(70px, 1fr)); margin: 0; }
+.domain-task-summary-metrics > div, .domain-task-dialog-metrics > div { min-width: 0; padding: 12px 14px; border-bottom: 1px solid var(--color-border); }
+.domain-task-summary-metrics > div + div, .domain-task-dialog-metrics > div + div { border-left: 1px solid var(--color-border); }
+.domain-task-summary-metrics dt, .domain-task-dialog-metrics dt { color: var(--color-text-tertiary); font-size: 11px; }
+.domain-task-summary-metrics dd, .domain-task-dialog-metrics dd { margin: 4px 0 0; color: var(--color-text); font-size: 14px; font-weight: 650; overflow-wrap: anywhere; }
+.domain-task-summary-metrics dd.is-pending, .domain-task-dialog-metrics dd.is-pending { color: var(--color-warning-text, #92400e); }
+.domain-task-summary-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; }
+.domain-task-summary-footer > span { min-width: 0; color: var(--color-text-secondary); font-size: 12px; }
+.domain-task-summary-footer .button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; flex: 0 0 auto; white-space: nowrap; }
+.domain-task-summary-footer .button svg { width: 15px; height: 15px; }
+.domain-task-dialog { width: min(860px, calc(100% - 32px)); max-width: 860px; max-height: calc(100dvh - 32px); padding: 0; border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); box-shadow: 0 18px 48px rgb(12 14 16 / 22%); }
+.domain-task-dialog::backdrop { background: rgb(12 14 16 / 46%); }
+.domain-task-dialog-shell { display: flex; flex-direction: column; max-height: calc(100dvh - 32px); }
+.domain-task-dialog-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 18px 20px 14px; border-bottom: 1px solid var(--color-border); }
+.domain-task-dialog-header h2 { margin: 3px 0 4px; font-size: 20px; }
+.domain-task-dialog-header p { margin: 0; color: var(--color-text-secondary); font-size: 13px; }
+.domain-task-dialog-close { flex: 0 0 auto; width: 36px; height: 36px; min-width: 36px; min-height: 36px; border-color: transparent; border-radius: var(--radius-sm); background: transparent; color: var(--color-text-secondary); }
+.domain-task-dialog-close:hover, .domain-task-dialog-close:focus-visible { background: var(--color-surface-strong); color: var(--color-text); }
+.domain-task-dialog-close svg { width: 16px; height: 16px; }
+.domain-task-dialog-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.domain-task-dialog-metrics > div { border-bottom: 1px solid var(--color-border); }
+.domain-task-dialog-content { min-height: 0; overflow: auto; }
+.domain-task-dialog-list { margin: 0; padding: 0; list-style: none; }
+.domain-task-dialog-list li { display: grid; grid-template-columns: minmax(0, 1fr) minmax(72px, 100px) minmax(200px, 260px); align-items: center; gap: 14px; padding: 12px 20px; border-bottom: 1px solid var(--color-border); }
+.domain-task-item-title { display: grid; gap: 3px; min-width: 0; }
+.domain-task-item-title strong { overflow-wrap: anywhere; }
+.domain-task-item-title small, .domain-task-item-state { color: var(--color-text-secondary); font-size: 12px; overflow-wrap: anywhere; }
+.domain-task-item-state { text-align: center; }
+.domain-task-assignee { display: grid; gap: 5px; color: var(--color-text-secondary); font-size: 12px; }
+.domain-task-assignee select { width: 100%; min-height: 36px; padding: 6px 8px; border: 1px solid var(--color-border-strong); background: var(--color-surface); color: inherit; font: inherit; }
+.domain-task-dialog-footer { display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding: 12px 20px; border-top: 1px solid var(--color-border); }
+.domain-task-status { min-height: 18px; margin-right: auto; color: var(--color-text-secondary); font-size: 12px; }
 .asset-summary {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -95,6 +133,18 @@
   .task-summary-item strong { margin-top: 0; }
   .task-summary-item small { display: none; }
   .dashboard-section-heading { align-items: flex-start; flex-direction: column; gap: var(--space-1); }
+  .domain-task-summary-heading, .domain-task-summary-footer { align-items: flex-start; flex-direction: column; }
+  .domain-task-summary-state { text-align: left; }
+  .domain-task-summary-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .domain-task-summary-metrics > div:nth-child(3) { border-left: 0; }
+  .domain-task-summary-metrics > div:nth-child(n + 3) { border-top: 1px solid var(--color-border); }
+  .domain-task-summary-footer .button { width: 100%; }
+  .domain-task-dialog { width: calc(100% - 20px); max-height: calc(100dvh - 20px); }
+  .domain-task-dialog-shell { max-height: calc(100dvh - 20px); }
+  .domain-task-dialog-header, .domain-task-dialog-footer { padding-left: 14px; padding-right: 14px; }
+  .domain-task-dialog-list li { grid-template-columns: 1fr; gap: 8px; padding: 12px 14px; }
+  .domain-task-item-state { text-align: left; }
+  .domain-task-assignee select { min-height: 40px; }
 }
 @container (max-width: 820px) {
   .dashboard-header { align-items: flex-start; flex-direction: column; }

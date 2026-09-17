@@ -63,7 +63,7 @@ class DatabaseAggregateStore {
     const config = loadDatabaseConfig();
     this.baseUrl = new URL(options.baseUrl || config.storage?.url || 'http://127.0.0.1:14210');
     this.timeoutSeconds = Math.max(1, Math.ceil(Number(options.timeoutMs || config.storage?.timeoutMs || 15000) / 1000));
-    this.curl = options.curl || process.env.KNOWLEDGE_STORAGE_CURL || '/usr/bin/curl';
+    this.curl = options.curl || process.env.KNOWLEDGE_STORAGE_CURL || (process.platform === 'win32' ? 'curl.exe' : '/usr/bin/curl');
   }
 
   recordUrl() {

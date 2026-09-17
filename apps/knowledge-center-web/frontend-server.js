@@ -12,6 +12,7 @@ const { REPOSITORY_ROOT, AGENT_RUNNER_RUNTIME_ROOT } = require('../../packages/a
 const { CONFIG_PATHS } = require('../../packages/agent-runner-core/lib/config-registry');
 const { createBrandIconStore } = require('../../packages/agent-runner-core/lib/brand-icon-store');
 const { createTemplateStore } = require('../../packages/agent-runner-core/lib/template-store');
+const { createDomainStore } = require('../../packages/agent-runner-core/lib/domain-store');
 
 const PORT = Number(process.env.PORT || 3500);
 const HOST = '0.0.0.0';
@@ -21,6 +22,12 @@ const PINGCODE_ROOT = path.join(REPOSITORY_ROOT, 'apps', 'pingcode-web', 'dist')
 const PINGCODE_PREFIX = '/pingcode-materials';
 const KNOWLEDGE_CENTER_PREFIX = '/knowledge-center';
 const KNOWLEDGE_CENTER_ROOT = path.join(ROOT, 'knowledge-center');
+const OUTLINE_TEMPLATE_PATH = process.env.KNOWLEDGE_CENTER_OUTLINE_TEMPLATE_PATH
+  ? path.resolve(process.env.KNOWLEDGE_CENTER_OUTLINE_TEMPLATE_PATH)
+  : path.join(REPOSITORY_ROOT, '大纲模板.xlsx');
+const OUTLINE_SAMPLE_PATH = process.env.KNOWLEDGE_CENTER_OUTLINE_SAMPLE_PATH
+  ? path.resolve(process.env.KNOWLEDGE_CENTER_OUTLINE_SAMPLE_PATH)
+  : path.join(REPOSITORY_ROOT, '基本数据库管理手册大纲示例.xlsx');
 // Keep the directory URL stable while using a descriptive source filename.
 // This avoids relying on an ambiguous generic index.html in the platform bundle.
 const KNOWLEDGE_CENTER_ENTRY = 'knowledge-center-management.html';
@@ -37,11 +44,12 @@ const OUTLINE_INTERNAL_TOKEN = process.env.KNOWLEDGE_CENTER_OUTLINE_INTERNAL_TOK
 const KNOWLEDGE_ASSETS_CONFIG = process.env.KNOWLEDGE_ASSETS_CONFIG
   ? path.resolve(process.env.KNOWLEDGE_ASSETS_CONFIG)
   : CONFIG_PATHS.knowledgeAssets;
-const knowledgeAssetsStore = createAggregateStore({
-  namespace: 'assets', key: 'catalog',
-  filePath: KNOWLEDGE_ASSETS_CONFIG,
-  emptyValue: { version: 1, handbooks: [], audits: [] },
-});
+const knowledgeAssetsStore = String(process.env.KNOWLEDGE_STORAGE_MODE || 'file').toLowerCase() === 'database'
+  ? (() => {
+      const domainStore = createDomainStore();
+      return { read: () => domainStore.readHandbooks(), write: payload => domainStore.writeHandbooksSnapshot(payload) };
+    })()
+  : createAggregateStore({ namespace: 'assets', key: 'catalog', filePath: KNOWLEDGE_ASSETS_CONFIG, emptyValue: { version: 1, handbooks: [], audits: [] } });
 const templateStore = createTemplateStore({});
 
 // 数据库模式下在启动阶段核对迁移源，避免文件源与数据库聚合不一致时静默展示空列表。
@@ -210,6 +218,7 @@ const handleKnowledgeCenter = createKnowledgeCenterHandler({
   KNOWLEDGE_ASSETS_CONFIG_PATH: KNOWLEDGE_ASSETS_CONFIG,
   config: {
     KNOWLEDGE_CENTER_PREFIX, KNOWLEDGE_CENTER_ROOT, KNOWLEDGE_CENTER_ENTRY,
+    OUTLINE_TEMPLATE_PATH, OUTLINE_SAMPLE_PATH,
     PINGCODE_PREFIX, PINGCODE_ROOT,
     DOCUMENT_API_HOST, DOCUMENT_API_PORT,
     PINGCODE_API_HOST, PINGCODE_API_PORT,

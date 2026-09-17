@@ -35,7 +35,7 @@ classes_dir="${runtime_root}/.runtime/yashandb-storage/classes/${source_fingerpr
 if [[ ! -f "${classes_dir}/Main.class" || ! -f "${classes_dir}/StorageSchemaDao.class" ]]; then
   mkdir -p "${classes_dir}"
   if command -v javac >/dev/null 2>&1; then
-    javac -cp "${jdbc_jar}" -d "${classes_dir}" "${source_files[@]}"
+    javac -encoding UTF-8 -cp "${jdbc_jar}" -d "${classes_dir}" "${source_files[@]}"
   elif java --list-modules 2>/dev/null | grep -q '^jdk.compiler@'; then
     java -m jdk.compiler/com.sun.tools.javac.Main \
       -cp "${jdbc_jar}" -d "${classes_dir}" "${source_files[@]}"
@@ -45,4 +45,11 @@ if [[ ! -f "${classes_dir}/Main.class" || ! -f "${classes_dir}/StorageSchemaDao.
   fi
 fi
 
-exec java -cp "${jdbc_jar}:${classes_dir}" Main
+classpath_separator=:
+if [[ "$(uname -s)" == MINGW* || "$(uname -s)" == MSYS* || "$(uname -s)" == CYGWIN* ]]; then
+  jdbc_jar="$(cygpath -w "${jdbc_jar}")"
+  classes_dir="$(cygpath -w "${classes_dir}")"
+  classpath_separator=';'
+fi
+
+exec java -cp "${jdbc_jar}${classpath_separator}${classes_dir}" Main

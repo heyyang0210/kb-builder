@@ -22,5 +22,82 @@ function renderDashboardLegacy({ projection }) {
 }
 
 export function renderDashboard(args) {
-  return renderDashboardLegacy(args).replace('<span class="dashboard-kicker">负责人工作台</span>', '').replace('<h2>知识中心总览</h2><p>优先查看风险、整体进度和可接续事项。暂不可用的内容会明确标注，不使用示例记录替代。</p>', '<h2>工作台</h2>');
+  const domainTasks = args.domainBuildTaskProjection;
+  const tasks = Array.isArray(domainTasks?.tasks) ? domainTasks.tasks : [];
+  const assignedCount = task => (task.items || []).filter(item => item.assigneeId || item.assigneeName).length;
+  const statusText = status => ({
+    pending: '待开始',
+    assigned: '已分派',
+    in_progress: '建设中',
+    completed: '已完成',
+    published: '已完成',
+  }[status] || '待开始');
+  const peopleForTask = task => {
+    const people = [
+      { id: task.domainLeaderId, name: task.domainLeaderName },
+      ...(Array.isArray(task.domainMembers) ? task.domainMembers : []),
+    ].filter(person => person?.id);
+    return [...new Map(people.map(person => [String(person.id), person])).values()];
+  };
+  const assigneeOptions = (task, item) => [
+    '<option value="">待分派</option>',
+    ...peopleForTask(task).map(person => `<option value="${escapeHtml(person.id)}"${String(person.id) === String(item.assigneeId || '') ? ' selected' : ''}>${escapeHtml(person.name || person.id)}</option>`),
+  ].join('');
+  const taskSummary = task => {
+    const total = Array.isArray(task.items) ? task.items.length : 0;
+    const assigned = assignedCount(task);
+    const pending = Math.max(total - assigned, 0);
+    const taskId = String(task.id || '');
+    const dialogId = `domain-task-dialog-${taskId.replace(/[^a-zA-Z0-9_-]/g, '-') || 'unknown'}`;
+    return `<article class="domain-task-summary-card">
+      <div class="domain-task-summary-heading">
+        <div><span class="domain-task-eyebrow">技术领域</span><h4>${escapeHtml(task.techDomainName || task.techDomainId || '技术领域')}</h4></div>
+        <span class="domain-task-summary-state">${pending ? '有待分派页面' : '已完成初始分派'}</span>
+      </div>
+      <dl class="domain-task-summary-metrics">
+        <div><dt>领域负责人</dt><dd>${escapeHtml(task.domainLeaderName || '待配置负责人')}</dd></div>
+        <div><dt>页面总数</dt><dd>${total}</dd></div>
+        <div><dt>已分派</dt><dd>${assigned}</dd></div>
+        <div><dt>待分派</dt><dd class="${pending ? 'is-pending' : ''}">${pending}</dd></div>
+      </dl>
+      <footer class="domain-task-summary-footer">
+        <span>${pending ? '请进入领域明细继续细分责任人。' : '页面均已有当前责任人。'}</span>
+        <button class="button tertiary compact" type="button" data-domain-task-open="${escapeHtml(taskId)}" aria-controls="${escapeHtml(dialogId)}">
+          ${icon('list-tree')}查看页面任务
+        </button>
+      </footer>
+    </article>`;
+  };
+  const taskDialog = task => {
+    const total = Array.isArray(task.items) ? task.items.length : 0;
+    const assigned = assignedCount(task);
+    const pending = Math.max(total - assigned, 0);
+    const taskId = String(task.id || '');
+    const dialogId = `domain-task-dialog-${taskId.replace(/[^a-zA-Z0-9_-]/g, '-') || 'unknown'}`;
+    return `<dialog class="domain-task-dialog" id="${escapeHtml(dialogId)}" data-domain-task-dialog="${escapeHtml(taskId)}" data-domain-task aria-labelledby="${escapeHtml(dialogId)}-title">
+      <div class="domain-task-dialog-shell">
+        <header class="domain-task-dialog-header">
+          <div><span class="domain-task-eyebrow">领域建设任务</span><h2 id="${escapeHtml(dialogId)}-title">${escapeHtml(task.techDomainName || task.techDomainId || '技术领域')}</h2><p>负责人：${escapeHtml(task.domainLeaderName || '待配置负责人')} · ${total} 个页面</p></div>
+          <button class="icon-button domain-task-dialog-close" type="button" data-domain-task-close aria-label="关闭领域任务明细" title="关闭"><i data-lucide="x" aria-hidden="true"></i></button>
+        </header>
+        <dl class="domain-task-dialog-metrics">
+          <div><dt>页面总数</dt><dd>${total}</dd></div>
+          <div><dt>已分派</dt><dd>${assigned}</dd></div>
+          <div><dt>待分派</dt><dd class="${pending ? 'is-pending' : ''}">${pending}</dd></div>
+        </dl>
+        <div class="domain-task-dialog-content">
+          ${total ? `<ul class="domain-task-dialog-list">${(task.items || []).map(item => `<li>
+            <div class="domain-task-item-title"><strong>${escapeHtml(item.documentTitle || item.title || item.documentId || '未命名页面')}</strong><small>${escapeHtml(item.documentId || '')}</small></div>
+            <span class="domain-task-item-state">${escapeHtml(statusText(item.status))}</span>
+            <label class="domain-task-assignee"><span>页面责任人</span><select data-domain-task-assignee data-task-id="${escapeHtml(taskId)}" data-item-id="${escapeHtml(item.id)}">${assigneeOptions(task, item)}</select></label>
+          </li>`).join('')}</ul>` : '<p class="muted">当前领域暂无页面建设任务。</p>'}
+        </div>
+        <footer class="domain-task-dialog-footer"><span class="domain-task-status" role="status"></span><button class="button tertiary" type="button" data-domain-task-close>关闭</button></footer>
+      </div>
+    </dialog>`;
+  };
+  const taskMarkup = domainTasks?.status === 'unavailable'
+    ? '<section class="dashboard-section"><div class="dashboard-section-heading"><h3>领域建设任务</h3></div><p class="muted">领域建设任务暂不可用。</p></section>'
+    : `<section class="dashboard-section domain-build-tasks"><div class="dashboard-section-heading"><h3>领域建设任务</h3><span>${tasks.length} 个技术领域任务</span></div>${tasks.length ? `<div class="domain-task-summary-grid">${tasks.map(taskSummary).join('')}</div>${tasks.map(taskDialog).join('')}` : '<p class="muted">发布大纲后，这里会显示技术领域建设任务。</p>'}</section>`;
+  return `${renderDashboardLegacy(args).replace('<span class="dashboard-kicker">负责人工作台</span>', '').replace('<h2>知识中心总览</h2><p>优先查看风险、整体进度和可接续事项。暂不可用的内容会明确标注，不使用示例记录替代。</p>', '<h2>工作台</h2>')}${taskMarkup}`;
 }

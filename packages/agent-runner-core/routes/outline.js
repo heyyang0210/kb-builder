@@ -1,13 +1,14 @@
-const express = require('express');
+﻿const express = require('express');
 const router = express.Router();
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
-const { buildCatalog, buildImpactProjection, buildResponsibilityProjection, normalizeOutline, validateCandidate, nodesFromContent, parseOutlineFile } = require('./outline-management');
+const { createDomainStore } = require('../lib/domain-store');
+const { assignmentsFromContent, buildCatalog, buildImpactProjection, buildOutlineGovernance, buildResponsibilityProjection, normalizeImportedTechDomains, normalizeOutline, publishFileGovernance, readTechDomainConfig, saveFileGovernance, validateCandidate, nodesFromContent, parseOutlineFile } = require('./outline-management');
 const { OutlineRepository } = require('../lib/outline-repository');
-const { AGENT_RUNNER_RUNTIME_ROOT } = require('../lib/repo-paths');
 const repository = new OutlineRepository(process.env.OUTLINE_REPOSITORY_DIR ? path.resolve(process.env.OUTLINE_REPOSITORY_DIR) : undefined);
+const handbookDomainStore = createDomainStore();
 
 // Configure multer for file uploads
 const storage = multer.diskStorage({
@@ -29,10 +30,10 @@ const upload = multer({
   limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
   fileFilter: (req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();
-    if (['.json', '.md', '.csv'].includes(ext)) {
+    if (['.xlsx'].includes(ext)) {
       cb(null, true);
     } else {
-      cb(new Error('只支持 JSON、Markdown、CSV 格式'));
+      cb(new Error('当前大纲导入只支持 XLSX 模板'));
     }
   }
 });
@@ -42,7 +43,7 @@ function readMetadata() {
   // Legacy source files live in the repository-level outlines directory. They
   // are projected read-only until an operator creates a governed candidate.
   if (metadata.outlines.length === 0 && process.env.KNOWLEDGE_STORAGE_MODE !== 'database') {
-    const sourceDir = path.join(AGENT_RUNNER_RUNTIME_ROOT, 'outlines');
+    const sourceDir = path.join(__dirname, '..', '..', 'outlines');
     if (fs.existsSync(sourceDir)) {
       const files = fs.readdirSync(sourceDir).filter(name => /\.(md|json|csv)$/i.test(name) && name !== 'README.md' && !name.includes('设计思路'));
       metadata.outlines = files.map((name, index) => {
@@ -90,12 +91,12 @@ function remember(metadata, key, status, body) {
   metadata.idempotency[key] = { status, body, createdAt: new Date().toISOString() };
 }
 
-function parseBodyContent(body, filePath) {
+function parseBodyContent(body, filePath, fallbackTitle) {
   if (body && body.content) {
     try { return typeof body.content === 'string' ? JSON.parse(body.content) : body.content; } catch (_) { /* fallback */ }
   }
   if (filePath) {
-    try { return parseOutlineFile(filePath); } catch (_) { /* caller validates */ }
+    try { return parseOutlineFile(filePath, { fallbackTitle }); } catch (_) { /* caller validates */ }
   }
   return null;
 }
@@ -106,14 +107,58 @@ function fileFingerprint(filePath, content) {
 }
 function isConfirmed(value) { return value === true || value === 'true' || value === '1'; }
 function removeUploadedFile(file) { if (file?.path) { try { fs.unlinkSync(file.path); } catch (_) {} } }
-function candidateDetail(candidate) { return { ...normalizeOutline(candidate), content: candidate.content, nodes: nodesFromContent(candidate.content, candidate.id) }; }
+function handbookConfigPath() {
+  return process.env.KNOWLEDGE_ASSETS_CONFIG
+    ? path.resolve(process.env.KNOWLEDGE_ASSETS_CONFIG)
+    : path.join(__dirname, '..', 'config', 'knowledge-assets.json');
+}
+function knownHandbookIds() {
+  if (String(process.env.KNOWLEDGE_STORAGE_MODE || '').toLowerCase() === 'database') {
+    const payload = handbookDomainStore.readHandbooks();
+    const handbooks = Array.isArray(payload?.handbooks) ? payload.handbooks : [];
+    return new Set(handbooks.map(item => String(item.handbookId || item.id)).filter(Boolean));
+  }
+  const filePath = handbookConfigPath();
+  if (!fs.existsSync(filePath)) return new Set();
+  const payload = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  const handbooks = Array.isArray(payload?.handbooks) ? payload.handbooks : [];
+  return new Set(handbooks.map(item => String(item.handbookId || item.id)).filter(Boolean));
+}
+function knownHandbooks() {
+  if (String(process.env.KNOWLEDGE_STORAGE_MODE || '').toLowerCase() === 'database') {
+    const payload = handbookDomainStore.readHandbooks();
+    return Array.isArray(payload?.handbooks) ? payload.handbooks : [];
+  }
+  const filePath = handbookConfigPath();
+  if (!fs.existsSync(filePath)) return [];
+  const payload = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  return Array.isArray(payload?.handbooks) ? payload.handbooks : [];
+}
+function requireExistingHandbook(handbookId) {
+  const normalized = String(handbookId || '').trim();
+  if (!normalized) throw Object.assign(new Error('导入必须指定所属手册'), { status: 422, code: 'OUTLINE_HANDBOOK_REQUIRED' });
+  if (!knownHandbookIds().has(normalized)) throw Object.assign(new Error('所属手册不存在，请先在知识资产中创建手册'), { status: 404, code: 'OUTLINE_HANDBOOK_NOT_FOUND' });
+  return normalized;
+}
+function handbookName(handbookId) {
+  const handbook = knownHandbooks().find(item => String(item.handbookId || item.id || item.code) === String(handbookId));
+  return String(handbook?.name || handbook?.title || handbookId || '未命名手册').trim();
+}
+function outlineNodes(outline) {
+  if (outline && Array.isArray(outline.nodes) && outline.nodes.length) {
+    return outline.nodes;
+  }
+  return nodesFromContent(outline?.content, outline?.id);
+}
+function candidateDetail(candidate) { return { ...normalizeOutline(candidate), content: candidate.content, nodes: outlineNodes(candidate) }; }
 
 function createCandidate({ name, content, productId, businessVersionTags, handbookId, sourceType = 'manual', file }) {
   const now = new Date().toISOString();
   const id = `outline_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const assignments = assignmentsFromContent(content, id);
   return {
     id,
-    handbookId: handbookId || `handbook_${id}`,
+    handbookId,
     name: name || '未命名手册',
     type: 'db',
     file: file || null,
@@ -127,8 +172,9 @@ function createCandidate({ name, content, productId, businessVersionTags, handbo
     created_at: now,
     updated_at: now,
     parserVersion: 'governance-v1',
-    ruleVersion: 'governance-v1'
-    , editVersion: 1
+    ruleVersion: 'governance-v1',
+    editVersion: 1,
+    governance: assignments.length ? { assignments, tasks: [] } : undefined
   };
 }
 
@@ -176,13 +222,7 @@ router.post('/upload', upload.single('file'), async (req, res) => {
     outlineData.state = 'draft';
 
     // Save metadata
-    const metadataPath = path.join(AGENT_RUNNER_RUNTIME_ROOT, 'outlines', 'metadata.json');
-    let metadata = { outlines: [] };
-    
-    if (fs.existsSync(metadataPath)) {
-      metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'));
-    }
-    
+    const metadata = readMetadata();
     metadata.outlines.push(outlineData);
     writeMetadata(metadata);
 
@@ -211,10 +251,13 @@ router.post('/handbooks', (req, res) => {
   const metadata = repository.read();
   const key = requestKey(req);
   if (replay(metadata, key, res)) return;
+  let handbookId;
+  try { handbookId = requireExistingHandbook(body.handbookId); }
+  catch (error) { return res.status(error.status || 422).json({ success: false, error: { code: error.code || 'OUTLINE_HANDBOOK_REQUIRED', message: error.message } }); }
   const content = parseBodyContent(body);
   const result = validateCandidate({ content, productId: body.productId, businessVersionTags: body.businessVersionTags });
   if (!result.passed) return res.status(422).json({ success: false, error: { code: 'OUTLINE_PREFLIGHT_FAILED', message: '大纲预检未通过', details: result.errors } });
-  const candidate = createCandidate({ name: body.name, content, productId: body.productId, businessVersionTags: body.businessVersionTags, handbookId: body.handbookId });
+  const candidate = createCandidate({ name: body.name, content, productId: body.productId, businessVersionTags: body.businessVersionTags, handbookId });
   candidate.sourceFingerprint = fileFingerprint(null, content);
   metadata.outlines.push(candidate); const response = { success: true, data: candidateDetail(candidate) }; remember(metadata, key, 201, response); writeMetadata(metadata);
   res.status(201).json(response);
@@ -224,34 +267,53 @@ router.post('/handbooks', (req, res) => {
 router.post('/import', upload.fields([{ name: 'file', maxCount: 1 }, { name: 'files', maxCount: 20 }]), (req, res) => {
   try {
     const files = [...(req.files?.file || []), ...(req.files?.files || [])];
+    let handbookId;
+    try { handbookId = requireExistingHandbook(req.body?.handbookId); }
+    catch (error) {
+      files.forEach(removeUploadedFile);
+      return res.status(error.status || 422).json({ success: false, error: { code: error.code || 'OUTLINE_HANDBOOK_REQUIRED', message: error.message } });
+    }
     let tags = req.body && req.body.businessVersionTags;
     if (typeof tags === 'string') { try { tags = JSON.parse(tags); } catch (_) { tags = []; } }
     const metadata = repository.read(); const key = requestKey(req);
     if (replay(metadata, key, res)) return;
-    const inputs = files.length ? files.map(file => ({ file, content: parseBodyContent({}, file.path) })) : [{ file: null, content: parseBodyContent(req.body) }];
+    const name = handbookName(handbookId);
+    const inputs = files.length
+      ? files.map(file => ({
+          file,
+          content: parseBodyContent({}, file.path, name)
+        }))
+      : [{ file: null, content: parseBodyContent(req.body) }];
     const results = [];
     for (const input of inputs) {
-      const check = validateCandidate({ content: input.content, productId: req.body?.productId, businessVersionTags: tags, requireGovernance: false });
       const fileName = input.file?.originalname || null;
+      try {
+        input.content = normalizeImportedTechDomains(input.content, readTechDomainConfig());
+      } catch (error) {
+        removeUploadedFile(input.file);
+        results.push({ fileName, status: 'failed', error: { code: error.code || 'INVALID_TECH_DOMAIN_ASSIGNMENT', message: error.message, details: error.details } });
+        continue;
+      }
+      const check = validateCandidate({ content: input.content, productId: req.body?.productId, businessVersionTags: tags, requireGovernance: false });
       if (!check.passed) { removeUploadedFile(input.file); results.push({ fileName, status: 'failed', error: { code: 'OUTLINE_PREFLIGHT_FAILED', message: '大纲预检未通过', details: check.errors } }); continue; }
       const fingerprint = fileFingerprint(input.file?.path, input.content);
       const duplicate = metadata.outlines.find(item => item.sourceFingerprint === fingerprint);
       if (duplicate && !isConfirmed(req.body?.confirmDuplicate)) { removeUploadedFile(input.file); results.push({ fileName, status: 'duplicate_confirmation_required', duplicateOf: { id: duplicate.id, handbookId: duplicate.handbookId, name: duplicate.name }, fingerprint }); continue; }
-      const inferredName = input.content?.title || (fileName && fileName.replace(/\.[^.]+$/, '')) || '未命名手册';
-      const candidate = createCandidate({ name: (inputs.length === 1 ? req.body?.name : null) || inferredName, content: input.content, productId: req.body?.productId, businessVersionTags: tags, handbookId: inputs.length === 1 ? req.body?.handbookId : null, sourceType: 'import', file: input.file?.filename });
+      const candidate = createCandidate({ name, content: input.content, productId: req.body?.productId, businessVersionTags: tags, handbookId, sourceType: 'import', file: input.file?.filename });
+      candidate.sourceFileName = fileName;
       candidate.sourceFingerprint = fingerprint; metadata.outlines.push(candidate); results.push({ fileName, status: 'imported', data: candidateDetail(candidate) });
     }
     const imported = results.filter(item => item.status === 'imported'); const summary = { total: results.length, imported: imported.length, failed: results.length - imported.length };
     const first = imported[0]?.data; const response = { success: imported.length > 0, data: { ...(inputs.length === 1 && first ? first : {}), items: results, summary } };
     const status = imported.length === results.length ? 201 : imported.length ? 207 : results.some(item => item.status === 'duplicate_confirmation_required') ? 409 : 422;
     remember(metadata, key, status, response); writeMetadata(metadata); res.status(status).json(response);
-  } catch (error) { res.status(400).json({ success: false, error: { code: 'OUTLINE_IMPORT_FAILED', message: error.message } }); }
+  } catch (error) { res.status(error.status || 400).json({ success: false, error: { code: error.code || 'OUTLINE_IMPORT_FAILED', message: error.message } }); }
 });
 
 router.get('/versions/:id', (req, res) => {
   const outline = readMetadata().outlines.find(item => item.id === req.params.id || item.outlineStructureVersion === req.params.id);
   if (!outline) return res.status(404).json({ success: false, error: { code: 'OUTLINE_NOT_FOUND', message: '大纲版本不存在' } });
-  res.json({ success: true, data: { ...normalizeOutline(outline), nodes: nodesFromContent(outline.content, outline.id), content: outline.content } });
+  res.json({ success: true, data: { ...normalizeOutline(outline), nodes: outlineNodes(outline), content: outline.content } });
 });
 
 router.patch('/candidates/:id/nodes', (req, res) => {
@@ -264,7 +326,7 @@ router.patch('/candidates/:id/nodes', (req, res) => {
     return res.status(409).json({ success: false, error: { code: 'OUTLINE_EDIT_CONFLICT', message: '候选版本已被其他操作更新', details: { expected: outline.editVersion || 1, received: req.body.editVersion } } });
   }
   if (req.body && req.body.content) outline.content = typeof req.body.content === 'string' ? JSON.parse(req.body.content) : req.body.content;
-  outline.updated_at = new Date().toISOString(); outline.editVersion = Number(outline.editVersion || 1) + 1; outline.kp_count = countKnowledgePoints(outline.content);
+  outline.updated_at = new Date().toISOString(); outline.editVersion = Number(outline.editVersion || 1) + 1; outline.kp_count = countKnowledgePoints(outline);
   writeMetadata(metadata); res.json({ success: true, data: normalizeOutline(outline) });
 });
 
@@ -292,6 +354,117 @@ router.post('/versions/:id/publish', (req, res) => {
   writeMetadata(metadata); res.json({ success: true, data: normalizeOutline(outline) });
 });
 
+function findOutlineForGovernance(id) {
+  return readMetadata().outlines.find(item => item.id === id);
+}
+
+router.get('/governance/:id/governance', (req, res) => {
+  try {
+    if (String(process.env.KNOWLEDGE_STORAGE_MODE || '').toLowerCase() === 'database') {
+      const data = handbookDomainStore.readOutlineGovernance(req.params.id);
+      return res.json({ success: true, data, generatedAt: new Date().toISOString() });
+    }
+    const outline = findOutlineForGovernance(req.params.id);
+    if (!outline) return res.status(404).json({ success: false, error: { code: 'OUTLINE_NOT_FOUND', message: '大纲不存在' } });
+    return res.json({ success: true, data: buildOutlineGovernance(outline), generatedAt: new Date().toISOString() });
+  } catch (error) {
+    return res.status(error.status || 503).json({ success: false, error: { code: error.code || 'OUTLINE_GOVERNANCE_FAILED', message: error.message || '大纲治理数据不可用', details: error.details } });
+  }
+});
+
+router.put('/governance/:id/governance', (req, res) => {
+  try {
+    if (String(process.env.KNOWLEDGE_STORAGE_MODE || '').toLowerCase() === 'database') {
+      const data = handbookDomainStore.writeOutlineGovernance(req.params.id, req.body || {});
+      return res.json({ success: true, data, message: '目录说明和责任分工已保存', generatedAt: new Date().toISOString() });
+    }
+    const metadata = readMetadata();
+    const outline = metadata.outlines.find(item => item.id === req.params.id);
+    if (!outline) return res.status(404).json({ success: false, error: { code: 'OUTLINE_NOT_FOUND', message: '大纲不存在' } });
+    saveFileGovernance(outline, req.body || {});
+    writeMetadata(metadata);
+    return res.json({ success: true, data: buildOutlineGovernance(outline), message: '目录说明和责任分工已保存', generatedAt: new Date().toISOString() });
+  } catch (error) {
+    return res.status(error.status || 422).json({ success: false, error: { code: error.code || 'OUTLINE_GOVERNANCE_SAVE_FAILED', message: error.message || '大纲治理数据保存失败', details: error.details } });
+  }
+});
+
+router.post('/governance/:id/publish', (req, res) => {
+  try {
+    if (String(process.env.KNOWLEDGE_STORAGE_MODE || '').toLowerCase() === 'database') {
+      const data = handbookDomainStore.publishOutline(req.params.id, req.body || {});
+      return res.json({ success: true, data, message: '大纲已发布，领域建设任务已生成', generatedAt: new Date().toISOString() });
+    }
+    const metadata = readMetadata();
+    const outline = metadata.outlines.find(item => item.id === req.params.id);
+    if (!outline) return res.status(404).json({ success: false, error: { code: 'OUTLINE_NOT_FOUND', message: '大纲不存在' } });
+    publishFileGovernance(outline, req.body || {});
+    metadata.outlines.forEach(item => {
+      if (item.handbookId === outline.handbookId && item.id !== outline.id && item.state === 'published') item.state = 'superseded';
+    });
+    writeMetadata(metadata);
+    return res.json({ success: true, data: buildOutlineGovernance(outline), message: '大纲已发布，领域建设任务已生成', generatedAt: new Date().toISOString() });
+  } catch (error) {
+    return res.status(error.status || 422).json({ success: false, error: { code: error.code || 'OUTLINE_PUBLISH_FAILED', message: error.message || '大纲发布失败', details: error.details } });
+  }
+});
+
+router.get('/tech-domains', (req, res) => {
+  try {
+    if (String(process.env.KNOWLEDGE_STORAGE_MODE || '').toLowerCase() === 'database') {
+      return res.json({ success: true, data: handbookDomainStore.readTechDomains(), generatedAt: new Date().toISOString() });
+    }
+    return res.json({ success: true, data: { techDomains: readTechDomainConfig() }, generatedAt: new Date().toISOString() });
+  } catch (error) {
+    return res.status(error.status || 503).json({ success: false, error: { code: error.code || 'TECH_DOMAIN_FAILED', message: error.message || '技术领域信息不可用' } });
+  }
+});
+
+router.get('/build-tasks', (req, res) => {
+  try {
+    if (String(process.env.KNOWLEDGE_STORAGE_MODE || '').toLowerCase() === 'database') {
+      return res.json({ success: true, data: handbookDomainStore.readBuildTasks(req.query || {}), generatedAt: new Date().toISOString() });
+    }
+    const tasks = readMetadata().outlines.flatMap(outline => outline.governance?.tasks || []);
+    return res.json({ success: true, data: { tasks, generatedAt: new Date().toISOString() }, generatedAt: new Date().toISOString() });
+  } catch (error) {
+    return res.status(error.status || 503).json({ success: false, error: { code: error.code || 'BUILD_TASK_FAILED', message: error.message || '领域建设任务不可用' } });
+  }
+});
+
+router.get('/build-tasks/:id', (req, res) => {
+  try {
+    if (String(process.env.KNOWLEDGE_STORAGE_MODE || '').toLowerCase() === 'database') {
+      return res.json({ success: true, data: handbookDomainStore.readBuildTask(req.params.id), generatedAt: new Date().toISOString() });
+    }
+    const task = readMetadata().outlines.flatMap(outline => outline.governance?.tasks || []).find(item => item.id === req.params.id);
+    if (!task) return res.status(404).json({ success: false, error: { code: 'BUILD_TASK_NOT_FOUND', message: '领域建设任务不存在' } });
+    return res.json({ success: true, data: task, generatedAt: new Date().toISOString() });
+  } catch (error) {
+    return res.status(error.status || 503).json({ success: false, error: { code: error.code || 'BUILD_TASK_FAILED', message: error.message || '领域建设任务不可用' } });
+  }
+});
+
+router.patch('/build-tasks/:taskId/items/:itemId', (req, res) => {
+  try {
+    if (String(process.env.KNOWLEDGE_STORAGE_MODE || '').toLowerCase() === 'database') {
+      return res.json({ success: true, data: handbookDomainStore.updateBuildTaskItem(req.params.taskId, req.params.itemId, req.body || {}), message: '页面建设责任人已更新', generatedAt: new Date().toISOString() });
+    }
+    const metadata = readMetadata();
+    const task = metadata.outlines.flatMap(outline => outline.governance?.tasks || []).find(item => item.id === req.params.taskId);
+    const item = task?.items?.find(entry => entry.id === req.params.itemId);
+    if (!item) return res.status(404).json({ success: false, error: { code: 'BUILD_TASK_ITEM_NOT_FOUND', message: '任务页面不存在' } });
+    const assignee = req.body?.assignee || {};
+    item.assigneeId = req.body?.assigneeId || assignee.id || null;
+    item.assigneeName = req.body?.assigneeName || assignee.name || null;
+    item.status = req.body?.status || (item.assigneeId ? 'assigned' : 'unassigned');
+    writeMetadata(metadata);
+    return res.json({ success: true, data: task, message: '页面建设责任人已更新', generatedAt: new Date().toISOString() });
+  } catch (error) {
+    return res.status(error.status || 422).json({ success: false, error: { code: error.code || 'BUILD_TASK_ITEM_FAILED', message: error.message || '页面责任人更新失败', details: error.details } });
+  }
+});
+
 // Governance read models. These endpoints only project persisted outline facts;
 // they never create a second source of business state.
 router.get('/catalog/products', (req, res) => {
@@ -315,7 +488,23 @@ router.get('/governance/:id', (req, res) => {
   try {
     const outline = readMetadata().outlines.find(item => item.id === req.params.id);
     if (!outline) return res.status(404).json({ success: false, error: { code: 'OUTLINE_NOT_FOUND', message: '大纲不存在' } });
-    res.json({ success: true, data: { ...normalizeOutline(outline), nodes: nodesFromContent(outline.content, outline.id), responsibility: buildResponsibilityProjection(outline), impact: buildImpactProjection(outline) }, generatedAt: new Date().toISOString() });
+    const governance = String(process.env.KNOWLEDGE_STORAGE_MODE || '').toLowerCase() === 'database'
+      ? handbookDomainStore.readOutlineGovernance(req.params.id)
+      : buildOutlineGovernance(outline);
+    const normalized = normalizeOutline(outline);
+    const detail = {
+      ...normalized,
+      handbookId: governance.manualId || normalized.handbookId,
+      state: governance.state || normalized.state,
+      editVersion: governance.editVersion ?? normalized.editVersion,
+      nodes: String(process.env.KNOWLEDGE_STORAGE_MODE || '').toLowerCase() === 'database'
+        ? (Array.isArray(governance.nodes) ? governance.nodes : outlineNodes(outline))
+        : outlineNodes(outline),
+      governance,
+      responsibility: governance,
+      impact: buildImpactProjection({ ...outline, governance })
+    };
+    res.json({ success: true, data: detail, generatedAt: new Date().toISOString() });
   } catch (error) { res.status(500).json({ success: false, error: { code: 'OUTLINE_DETAIL_FAILED', message: error.message } }); }
 });
 
@@ -354,7 +543,10 @@ router.get('/governance/:id/responsibility', (req, res) => {
   try {
     const outline = readMetadata().outlines.find(item => item.id === req.params.id);
     if (!outline) return res.status(404).json({ success: false, error: { code: 'OUTLINE_NOT_FOUND', message: '大纲不存在' } });
-    res.json({ success: true, data: buildResponsibilityProjection(outline), generatedAt: new Date().toISOString() });
+    const governance = String(process.env.KNOWLEDGE_STORAGE_MODE || '').toLowerCase() === 'database'
+      ? handbookDomainStore.readOutlineGovernance(req.params.id)
+      : buildOutlineGovernance(outline);
+    res.json({ success: true, data: governance, generatedAt: new Date().toISOString() });
   } catch (error) { res.status(500).json({ success: false, error: { code: 'RESPONSIBILITY_FAILED', message: error.message } }); }
 });
 
@@ -374,21 +566,14 @@ router.post('/preflight', (req, res) => {
 // GET /api/outline/list - List all outlines
 router.get('/list', (req, res) => {
   try {
-    const metadataPath = path.join(AGENT_RUNNER_RUNTIME_ROOT, 'outlines', 'metadata.json');
-    
-    if (!fs.existsSync(metadataPath)) {
-      return res.json({ success: true, data: [] });
-    }
-    
-    const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'));
-    // Enrich outlines with parsed content if missing
+    const metadata = readMetadata();
     metadata.outlines.forEach(outline => {
       if (!outline.content && outline.file) {
-        const filePath = path.join(AGENT_RUNNER_RUNTIME_ROOT, 'outlines', outline.file);
+        const filePath = path.join(__dirname, '..', 'outlines', outline.file);
         if (fs.existsSync(filePath)) {
           try {
             outline.content = parseMarkdownOutline(filePath);
-            outline.kp_count = countKnowledgePoints(outline.content);
+            outline.kp_count = countKnowledgePoints(outline);
           } catch(e) { /* skip unparseable files */ }
         }
       }
@@ -402,13 +587,7 @@ router.get('/list', (req, res) => {
 // GET /api/outline/:id - Get outline by ID
 router.get('/:id', (req, res) => {
   try {
-    const metadataPath = path.join(AGENT_RUNNER_RUNTIME_ROOT, 'outlines', 'metadata.json');
-    
-    if (!fs.existsSync(metadataPath)) {
-      return res.status(404).json({ success: false, message: '大纲不存在' });
-    }
-    
-    const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'));
+    const metadata = readMetadata();
     const outline = metadata.outlines.find(o => o.id === req.params.id);
     
     if (!outline) {
@@ -424,13 +603,7 @@ router.get('/:id', (req, res) => {
 // DELETE /api/outline/:id - Delete outline
 router.delete('/:id', (req, res) => {
   try {
-    const metadataPath = path.join(AGENT_RUNNER_RUNTIME_ROOT, 'outlines', 'metadata.json');
-    
-    if (!fs.existsSync(metadataPath)) {
-      return res.status(404).json({ success: false, message: '大纲不存在' });
-    }
-    
-    const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'));
+    const metadata = readMetadata();
     const outlineIndex = metadata.outlines.findIndex(o => o.id === req.params.id);
     
     if (outlineIndex === -1) {
@@ -439,15 +612,16 @@ router.delete('/:id', (req, res) => {
     
     const outline = metadata.outlines[outlineIndex];
     
-    // Delete file
-        const filePath = path.join(AGENT_RUNNER_RUNTIME_ROOT, 'outlines', outline.file);
-    if (fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
+    if (process.env.KNOWLEDGE_STORAGE_MODE !== 'database' && outline.file) {
+      const filePath = path.join(__dirname, '..', 'outlines', outline.file);
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
     }
     
     // Remove from metadata
     metadata.outlines.splice(outlineIndex, 1);
-    fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2));
+    writeMetadata(metadata);
     
     res.json({ success: true, message: '大纲已删除' });
   } catch (err) {
@@ -459,25 +633,27 @@ const parseMarkdownOutline = parseOutlineFile;
 
 // Helper function to count knowledge points
 function countKnowledgePoints(outline) {
+  const nodes = outlineNodes(outline);
+  if (nodes.length) {
+    return nodes.filter(node => node.kind === 'document').length;
+  }
   let count = 0;
-  // New format: parts -> chapters -> kps
   if (outline.parts) {
     outline.parts.forEach(part => {
       if (part.chapters) {
         part.chapters.forEach(chapter => {
-          if (chapter.kps) {
-            count += chapter.kps.length;
-          }
+          if (chapter.documents) count += chapter.documents.length;
+          else if (chapter.kps) count += chapter.kps.length;
+          else if (chapter.knowledgePoints) count += chapter.knowledgePoints.length;
         });
       }
     });
   }
-  // Old format: chapters -> kps
   if (outline.chapters) {
     outline.chapters.forEach(chapter => {
-      if (chapter.kps) {
-        count += chapter.kps.length;
-      }
+      if (chapter.documents) count += chapter.documents.length;
+      else if (chapter.kps) count += chapter.kps.length;
+      else if (chapter.knowledgePoints) count += chapter.knowledgePoints.length;
     });
   }
   return count;
@@ -499,12 +675,7 @@ router.post('/generate-prompts', (req, res) => {
     }
 
     // Load outline
-    const metadataPath = path.join(AGENT_RUNNER_RUNTIME_ROOT, 'outlines', 'metadata.json');
-    if (!fs.existsSync(metadataPath)) {
-      return res.status(404).json({ success: false, message: '大纲不存在' });
-    }
-
-    const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'));
+    const metadata = readMetadata();
     const outline = metadata.outlines.find(o => o.id === outline_id);
 
     if (!outline) {
@@ -513,7 +684,7 @@ router.post('/generate-prompts', (req, res) => {
 
     // Parse content if missing
     if (!outline.content) {
-        const filePath = path.join(AGENT_RUNNER_RUNTIME_ROOT, 'outlines', outline.file);
+      const filePath = path.join(__dirname, '..', 'outlines', outline.file);
       if (fs.existsSync(filePath)) {
         try {
           outline.content = parseMarkdownOutline(filePath);
@@ -570,7 +741,7 @@ router.post('/generate-prompts', (req, res) => {
     // Save prompts to files if requested
     let saved_files = [];
     if (options.save_to_file) {
-      const outputDir = path.join(AGENT_RUNNER_RUNTIME_ROOT, 'prompts', 'from-outline', outline_id);
+      const outputDir = path.join(__dirname, '..', 'prompts', 'from-outline', outline_id);
       if (!fs.existsSync(outputDir)) {
         fs.mkdirSync(outputDir, { recursive: true });
       }
@@ -613,7 +784,8 @@ function extractKnowledgePoints(outlineContent, selectedKps) {
     const chapter = part.chapters.find(c => c.name === selected.chapter);
     if (!chapter) continue;
 
-    const kp = chapter.kps.find(k => k.id === selected.kp_id);
+    const leaves = [...(chapter.documents || []), ...(chapter.kps || []), ...(chapter.knowledgePoints || [])];
+    const kp = leaves.find(k => k.id === selected.kp_id || k.documentId === selected.kp_id);
     if (!kp) continue;
 
     result.push({

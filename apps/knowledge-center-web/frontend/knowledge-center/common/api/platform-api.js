@@ -40,6 +40,22 @@ async function getJson(url, options = {}) {
   return response.json();
 }
 
+function normalizeOutlineError(error = {}) {
+  const code = error.code || error.payload?.error?.code;
+  const status = error.status || error.payload?.error?.status;
+  const message = String(error.message || error.payload?.error?.message || '').trim();
+  if (code === 'OUTLINE_NOT_FOUND' || status === 404) return '候选大纲不存在，可能已被删除或当前页面数据已过期，请刷新大纲列表。';
+  if (code === 'OUTLINE_GATEWAY_REQUIRED' || code === 'OUTLINE_AUTH_NOT_CONFIGURED') return '大纲权限网关配置异常，请重启知识中心服务后重试。';
+  if (code === 'PUBLISHED_CONTENT_LOCKED') return '已发布大纲只能调整技术领域，不能修改内容说明。';
+  if (code === 'PUBLISHED_ASSIGNMENT_REQUIRED') return '已发布大纲不能取消页面的全部技术领域分工。';
+  if (code === 'OUTLINE_IMMUTABLE') return '当前大纲版本不可修改或删除，请刷新后重试。';
+  if (code === 'OUTLINE_VERSION_CONFLICT' || code === 'OUTLINE_EDIT_CONFLICT' || code === 'OUTLINE_GOVERNANCE_CONFLICT') return '大纲数据已被更新，请刷新页面后重试。';
+  if (code === 'INVALID_DOMAIN_PAYLOAD') return '技术领域分工数据不合法，请刷新后重试。';
+  if (code === 'OUTLINE_SERVICE_UNAVAILABLE' || code === 'DOCUMENT_API_UNAVAILABLE' || status === 502 || status === 503) return '大纲服务暂时不可用，请确认文档服务已启动后重试。';
+  if (message.toLowerCase() === 'failed to fetch' || error.name === 'TypeError') return '无法连接大纲服务，请确认知识中心和文档服务已启动后重试。';
+  return message || '大纲操作失败，请稍后重试。';
+}
+
 export async function loadPlatformData(scopes = ['context', 'overview']) {
   const requested = new Set(scopes);
   const loadContext = requested.has('context') || requested.has('all');
@@ -62,16 +78,26 @@ export async function loadPlatformData(scopes = ['context', 'overview']) {
 export async function loadOutlineData(handbookId = null) {
   try {
     const list = await getJson(`${outlineEndpoint}/list`);
-    const items = Array.isArray(list?.data) ? list.data : [];
-    if (!items.length) return { status: 'ok', items: [], asOf: list?.generatedAt || new Date().toISOString() };
-    if (!handbookId) return { status: 'ok', items, detail: null, selectedId: null, asOf: list?.generatedAt || new Date().toISOString() };
-    const selected = handbookId ? items.find(item => String(item.handbookId || item.id || item.outlineId) === String(handbookId)) : null;
-    if (handbookId && !selected) return { status: 'not_found', items, selectedId: handbookId, asOf: list?.generatedAt || new Date().toISOString() };
-    const selectedId = selected?.id || selected?.outlineId || selected?.handbookId || items[0]?.id || items[0]?.outlineId;
+    const allItems = Array.isArray(list?.data) ? list.data : [];
+    if (!handbookId) return { status: 'ok', items: allItems, detail: null, selectedId: null, asOf: list?.generatedAt || new Date().toISOString() };
+    const handbooksResponse = await getJson(`${handbooksEndpoint}?page=1&pageSize=100`);
+    const handbooksPayload = handbooksResponse?.data || handbooksResponse || {};
+    const handbooks = Array.isArray(handbooksPayload.items) ? handbooksPayload.items : Array.isArray(handbooksPayload.handbooks) ? handbooksPayload.handbooks : [];
+    const handbook = handbooks.find(item => String(item.handbookId || item.id) === String(handbookId)) || null;
+    if (!handbook) return { status: 'not_found', items: [], selectedId: handbookId, asOf: list?.generatedAt || new Date().toISOString() };
+    const items = allItems.filter(item => String(item.handbookId || item.manualId) === String(handbookId));
+    if (!items.length) return { status: 'empty', items: [], handbook, selectedId: null, asOf: list?.generatedAt || new Date().toISOString() };
+    const selected = [...items].sort((left, right) => {
+      const leftPublished = String(left.state || left.status).toLowerCase() === 'published' ? 1 : 0;
+      const rightPublished = String(right.state || right.status).toLowerCase() === 'published' ? 1 : 0;
+      if (leftPublished !== rightPublished) return rightPublished - leftPublished;
+      return new Date(right.updated_at || right.updatedAt || 0).getTime() - new Date(left.updated_at || left.updatedAt || 0).getTime();
+    })[0];
+    const selectedId = selected?.id || selected?.outlineId;
     const detail = selectedId ? await getJson(`${outlineEndpoint}/${encodeURIComponent(selectedId)}`) : null;
-    return { status: 'ok', items, detail: detail?.data || null, selectedId: selectedId || null, asOf: detail?.generatedAt || list?.generatedAt || new Date().toISOString() };
+    return { status: 'ok', items, handbook, detail: detail?.data || null, selectedId: selectedId || null, asOf: detail?.generatedAt || list?.generatedAt || new Date().toISOString() };
   } catch (error) {
-    return { status: error?.status === 403 ? 'forbidden' : 'unavailable', items: [], error: { message: error?.message || '大纲服务暂不可用' } };
+    return { status: error?.status === 403 ? 'forbidden' : 'unavailable', items: [], error: { message: normalizeOutlineError(error), code: error?.code } };
   }
 }
 
@@ -88,12 +114,42 @@ export async function importOutline(formData) {
 }
 
 export async function deleteOutline(outlineId) {
-  const response = await fetch(`${outlineEndpoint}/${encodeURIComponent(outlineId)}`, { method: 'DELETE', credentials: 'same-origin', headers: { Accept: 'application/json' } });
+  let response;
+  try {
+    response = await fetch(`${outlineEndpoint}/${encodeURIComponent(outlineId)}`, { method: 'DELETE', credentials: 'same-origin', headers: { Accept: 'application/json' } });
+  } catch (error) {
+    throw Object.assign(new Error(normalizeOutlineError(error)), { code: 'OUTLINE_SERVICE_UNAVAILABLE', cause: error });
+  }
   if (response.status === 401) throw Object.assign(new Error('登录状态已过期'), { status: 401 });
   const result = await response.json().catch(() => null);
-  if (!response.ok) throw Object.assign(new Error(result?.error?.message || result?.message || `删除失败（HTTP ${response.status}）`), { status: response.status, payload: result });
+  if (!response.ok) {
+    const error = { message: result?.error?.message || result?.message, code: result?.error?.code, status: response.status, payload: result };
+    throw Object.assign(new Error(normalizeOutlineError(error)), error);
+  }
   return result;
 }
+
+async function outlineMutation(url, method, payload) {
+  let response;
+  try {
+    response = await fetch(url, { method, credentials: 'same-origin', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify(payload || {}) });
+  } catch (error) {
+    throw Object.assign(new Error(normalizeOutlineError(error)), { code: 'OUTLINE_SERVICE_UNAVAILABLE', cause: error });
+  }
+  const result = await response.json().catch(() => null);
+  if (!response.ok) {
+    const error = { message: result?.error?.message || result?.message, code: result?.error?.code, status: response.status, payload: result };
+    throw Object.assign(new Error(normalizeOutlineError(error)), error);
+  }
+  return result?.data || result;
+}
+
+export const saveOutlineGovernance = (outlineId, payload) => outlineMutation(`${outlineEndpoint}/${encodeURIComponent(outlineId)}/governance`, 'PUT', payload);
+export const publishOutlineGovernance = (outlineId, payload = {}) => outlineMutation(`${outlineEndpoint}/${encodeURIComponent(outlineId)}/publish`, 'POST', payload);
+export async function loadTechDomains() { const result = await getJson('/knowledge-center/api/outline/tech-domains'); return result?.data || result; }
+export async function loadDomainBuildTasks() { const result = await getJson('/knowledge-center/api/outline/build-tasks'); return result?.data || result; }
+export async function loadDomainBuildTask(taskId) { const result = await getJson(`/knowledge-center/api/outline/build-tasks/${encodeURIComponent(taskId)}`); return result?.data || result; }
+export const updateDomainBuildTaskItem = (taskId, itemId, payload) => outlineMutation(`/knowledge-center/api/outline/build-tasks/${encodeURIComponent(taskId)}/items/${encodeURIComponent(itemId)}`, 'PATCH', payload);
 
 export async function updateAsset(handbookId, changes) {
   const response = await fetch(`${handbooksEndpoint}/${encodeURIComponent(handbookId)}`, {
