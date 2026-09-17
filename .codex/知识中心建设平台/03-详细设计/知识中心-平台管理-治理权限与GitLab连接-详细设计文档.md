@@ -153,7 +153,7 @@ GET  /knowledge-center/api/gitlab/handbooks/{handbookId}/oauth/start?returnTo=
 POST /knowledge-center/api/gitlab/oauth/disconnect
 ```
 
-前端修改前后简图、业务判断顺序和返回位置规则见 `知识中心-知识资产-GitLab个人授权入口-前端详细设计文档.md`。
+个人授权的业务判断顺序和返回位置规则见 `知识中心-知识资产-详细设计文档.md`。
 
 ## 7. 响应式、无障碍与验收
 
@@ -169,11 +169,3 @@ POST /knowledge-center/api/gitlab/oauth/disconnect
 6. 非管理员写接口返回 403；页面不显示写操作。
 7. 不展示 Token、Cookie、CAS Ticket 或凭证正文。
 8. 执行 Markdown 链接检查、`git diff --check`、前端契约和响应式测试。
-
-## 8. 实施记录
-
-平台管理已实现三个标签页、GitLab 多连接列表与详情、添加/编辑/验证/停用/重新启用流程。连接接口支持 `POST`、`PATCH` 和状态命令，并在每次读取时根据当前映射配置计算 `linkedHandbookCount`。因此知识资产新增或调整手册映射后，平台管理下次加载会自动得到最新关联数量，不产生第二份映射数据。
-
-实现文件：`agent-runner/frontend/knowledge-center/modules/platform-admin/view.js`、`agent-runner/frontend/knowledge-center/styles.css`、`agent-runner/frontend/knowledge-center/app.js`、`agent-runner/frontend/knowledge-center/common/api/gitlab-api.js`、`agent-runner/routes/knowledge-center.js`、`agent-runner/lib/gitlab-connector.js`。
-
-验证证据：GitLab 相关 Jest `38/38` 通过；Chromium Playwright `6/6` 通过；Node 语法检查通过。真实 GitLab 内容读取仍受当前用户 OAuth 授权状态约束。

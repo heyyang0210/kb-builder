@@ -19,11 +19,11 @@
 
 | 阶段 | 目标 | 工期 | 依赖 | 退出门禁 | 开发设计 |
 |---|---|---:|---|---|---|
-| P1 | 基线与规范副本 | 1 日 | 无 | M1：副本无阻断、格式 20/20、总分 ≥80，真实上传 `kp_count > 0` | `agent-runner/docs/modules/outline-management/development/39-管理员手册大纲兼容阶段一-基线与规范副本设计.md` |
-| P2 | 统一解析与结构化诊断 | 2 日 | M1、方案二审批 | M2：两类 Markdown 归一化稳定，诊断可定位，零静默丢失 | `agent-runner/docs/modules/outline-management/development/40-管理员手册大纲兼容阶段二-统一解析与结构化诊断设计.md` |
-| P3 | 安全上传与真实 API 回归 | 1 日 | M2 | M3：0 知识点被阻断、失败无残留、既有格式不回归 | `agent-runner/docs/modules/outline-management/development/41-管理员手册大纲兼容阶段三-安全上传与真实API验收设计.md` |
-| P4 | 预检、差异确认与正式上传 | 3 日 | M3、方案三审批 | M4：预检无副作用，确认有效，预览树与落库树一致 | `agent-runner/docs/modules/outline-management/development/42-管理员手册大纲兼容阶段四-预检差异确认与正式上传设计.md` |
-| P5 | 评分建议与持续治理 | 3 日 | M4 | M5：评分可复现，建议有证据，指标可统计，规则可回退 | `agent-runner/docs/modules/outline-management/development/43-管理员手册大纲兼容阶段五-评分建议与持续治理设计.md` |
+| P1 | 基线与规范副本 | 1 日 | 无 | M1：副本无阻断、格式 20/20、总分 ≥80，真实上传 `kp_count > 0` | 当前契约见统一详细设计 |
+| P2 | 统一解析与结构化诊断 | 2 日 | M1、方案二审批 | M2：两类 Markdown 归一化稳定，诊断可定位，零静默丢失 | 当前契约见统一详细设计 |
+| P3 | 安全上传与真实 API 回归 | 1 日 | M2 | M3：0 知识点被阻断、失败无残留、既有格式不回归 | 当前契约见统一详细设计 |
+| P4 | 预检、差异确认与正式上传 | 3 日 | M3、方案三审批 | M4：预检无副作用，确认有效，预览树与落库树一致 | 当前契约见统一详细设计 |
+| P5 | 评分建议与持续治理 | 3 日 | M4 | M5：评分可复现，建议有证据，指标可统计，规则可回退 | 当前契约见统一详细设计 |
 
 阶段任务卡见 `../../tasks/outline-management/TASK-OUTLINE-EVOLUTION-P1.md` 至 `TASK-OUTLINE-EVOLUTION-P5.md`。
 
@@ -55,7 +55,7 @@ Project Manager 准备影响摘要，Architect 评估产品和技术影响，Pro
 ## 5. 依赖与并发边界
 
 - 上游需求：`.codex/requirements/modules/outline-management/REQ-OUTLINE-COMPATIBILITY.md`。
-- 上游设计：`agent-runner/docs/modules/outline-management/overview/outline-management-overview-design.md` 和 `development/29-YashanDB知识库大纲上传内容与格式规格.md`。
+- 上游设计：`.codex/知识中心建设平台/02-概要设计/知识中心-大纲管理-工作台与治理-概要设计文档.md` 和 `.codex/知识中心建设平台/03-详细设计/知识中心-大纲管理-详细设计文档.md`。
 - P1 至 P5 为阶段级串行依赖，下一阶段可提前准备研究和测试设计，但不得绕过退出门禁实施。
 - Doc Writer 独占 P1 规范副本与映射报告；Backend Worker 独占 P2/P3 后端模块；Frontend Worker 独占 P4 界面；Test Engineer 独占 fixtures 和验收报告。
 - 共享路由、统一 AST Schema、规则配置和同一文档必须串行修改，任务卡需声明文件所有权。

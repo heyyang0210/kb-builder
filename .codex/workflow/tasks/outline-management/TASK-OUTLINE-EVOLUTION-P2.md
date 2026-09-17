@@ -24,7 +24,7 @@
 
 ## 文件归属
 
-- Architecture Designer 独占：`agent-runner/docs/modules/outline-management/development/40-管理员手册大纲兼容阶段二-统一解析与结构化诊断设计.md`。
+- Architecture Designer 维护：`.codex/知识中心建设平台/03-详细设计/知识中心-大纲管理-详细设计文档.md`。
 - Backend Worker 独占：新解析/归一化模块和版本化规则配置。
 - Test Engineer 独占：对应 fixtures、单元和契约测试。
 - 正式上传路由接入留给 P3，避免与 P2 并发修改公共路由。
@@ -47,5 +47,4 @@
 
 - `.codex/requirements/modules/outline-management/REQ-OUTLINE-COMPATIBILITY.md`
 - `.codex/workflow/modules/outline-management/PLAN.md`
-- `agent-runner/docs/modules/outline-management/development/40-管理员手册大纲兼容阶段二-统一解析与结构化诊断设计.md`
-- `agent-runner/docs/modules/outline-management/development/29-YashanDB知识库大纲上传内容与格式规格.md`
+- `.codex/知识中心建设平台/03-详细设计/知识中心-大纲管理-详细设计文档.md`

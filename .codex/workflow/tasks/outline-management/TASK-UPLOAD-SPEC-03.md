@@ -14,7 +14,7 @@
 围绕大纲上传规格设计可重复的验证矩阵，优先使用现有 `agent-runner` 测试框架和真实后端 API。覆盖扩展名、大小边界、JSON/Markdown/CSV 解析、空/损坏文件、缺失层级、重复 ID、CSV 逗号/引号等边界，并验证归一化结果与 `kp_count`。同时规划评分器未来接入所需的 fixture 格式，但本任务不实现评分器或修改生产接口。
 
 ## 参考文档
-- `agent-runner/docs/modules/outline-management/development/29-YashanDB知识库大纲上传内容与格式规格.md`（由 TASK-UPLOAD-SPEC-01 产出）
+- `.codex/知识中心建设平台/03-详细设计/知识中心-大纲管理-详细设计文档.md`（当前已合并）
 - `agent-runner/frontend/js/components/OutlineUploader.js`
 - `agent-runner/routes/outline.js`
 - `agent-runner/tests/api.test.js`

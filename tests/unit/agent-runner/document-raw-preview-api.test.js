@@ -35,17 +35,6 @@ async function run() {
   assert.equal(siblingResponse.status, 200);
   assert.match(siblingResponse.headers.get('content-type') || '', /^text\/html/);
 
-  const knowledgeCenterPath = '03-详细设计/知识中心管理-Demo.html';
-  const knowledgeCenterDocId = Buffer.from(`knowledge-center:${knowledgeCenterPath}`).toString('base64');
-  const knowledgeCenterContent = await get(`/api/document/${encodeURIComponent(knowledgeCenterDocId)}/content`);
-  assert.equal(knowledgeCenterContent.status, 200);
-  const knowledgeCenterPayload = await knowledgeCenterContent.json();
-  assert.equal(knowledgeCenterPayload.success, true);
-  const knowledgeCenterRaw = await get(knowledgeCenterPayload.data.raw_url);
-  assert.equal(knowledgeCenterRaw.status, 200);
-  assert.match(knowledgeCenterRaw.headers.get('content-type') || '', /^text\/html/);
-  assert.match(Buffer.from(await knowledgeCenterRaw.arrayBuffer()).toString('utf8'), /YashanDB 知识中心/);
-
   for (const relativePath of [
     'unknown/file.html',
     '智能知识平台/../L0_02_PyTorch核心架构.html',

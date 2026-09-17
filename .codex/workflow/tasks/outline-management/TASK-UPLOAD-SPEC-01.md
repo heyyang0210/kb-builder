@@ -18,7 +18,7 @@
 ## 参考文档
 - `agent-runner/frontend/js/components/OutlineUploader.js`
 - `agent-runner/routes/outline.js`
-- `agent-runner/docs/modules/outline-management/overview/outline-management-overview-design.md`
+- `.codex/知识中心建设平台/02-概要设计/知识中心-大纲管理-工作台与治理-概要设计文档.md`
 - `agent-runner/docs/17-新功能模块设计.md`
 - `agent-runner/docs/33-通用素材上传映射下载与加工平台概要设计.md`
 - `outlines/README.md`
@@ -32,7 +32,7 @@
 - [ ] 文档包含适用版本、更新日期、相对路径交叉引用；如目录 README 需要同步，列出同步项。
 
 ## 变更文件
-- `agent-runner/docs/modules/outline-management/development/29-YashanDB知识库大纲上传内容与格式规格.md`（新增）
+- `.codex/知识中心建设平台/03-详细设计/知识中心-大纲管理-详细设计文档.md`（当前已合并）
 - `agent-runner/docs/modules/outline-management/README.md`（同步索引）
 
 ## 执行日志

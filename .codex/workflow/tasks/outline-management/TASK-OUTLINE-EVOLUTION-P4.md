@@ -24,7 +24,7 @@
 
 ## 文件归属
 
-- Architecture Designer 独占：`agent-runner/docs/modules/outline-management/development/42-管理员手册大纲兼容阶段四-预检差异确认与正式上传设计.md`。
+- Architecture Designer 维护：`.codex/知识中心建设平台/03-详细设计/知识中心-大纲管理-详细设计文档.md`。
 - Backend Worker 独占：预检/确认后端模块、路由和配置。
 - Frontend Worker 独占：上传预检、差异与确认相关前端文件。
 - Test Engineer 独占：API/界面测试和 fixtures；公共文件接入按顺序串行。
@@ -47,4 +47,4 @@
 
 - `.codex/requirements/modules/outline-management/REQ-OUTLINE-COMPATIBILITY.md`
 - `.codex/workflow/modules/outline-management/PLAN.md`
-- `agent-runner/docs/modules/outline-management/development/42-管理员手册大纲兼容阶段四-预检差异确认与正式上传设计.md`
+- `.codex/知识中心建设平台/03-详细设计/知识中心-大纲管理-详细设计文档.md`

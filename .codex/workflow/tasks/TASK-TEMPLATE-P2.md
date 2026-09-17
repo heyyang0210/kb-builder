@@ -4,7 +4,7 @@
 - 分配: backend-worker, frontend-worker, test-engineer, doc-writer
 - 依赖: TASK-TEMPLATE-P1
 - 覆盖: T4、T5、T6、T7
-- 设计: `docs/agent-runner/modules/platform-foundation/development/template-management-database-design.md`
+- 设计: `.codex/知识中心建设平台/03-详细设计/知识中心-模板管理-详细设计文档.md`
 
 ## 验收
 

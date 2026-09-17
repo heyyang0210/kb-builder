@@ -16,7 +16,7 @@
 建议至少定义：格式与解析（阻断项）、层级完整性、标识稳定性、知识点描述可生成性、领域覆盖与重复、难度/目标人群元数据、模板映射准备度、证据与版本信息等维度；每项给出权重、检查方法、阈值、证据字段、严重级别（阻断/高/中/低）和修改建议模板。规则、权重和阈值应作为版本化配置草案记录，不能在代码中新增硬编码。
 
 ## 参考文档
-- `agent-runner/docs/modules/outline-management/development/29-YashanDB知识库大纲上传内容与格式规格.md`（由 TASK-UPLOAD-SPEC-01 产出）
+- `.codex/知识中心建设平台/03-详细设计/知识中心-大纲管理-详细设计文档.md`（当前已合并）
 - `outlines/README.md`
 - `templates/模板设计思路.md`
 - `config/全局格式规范.md`
@@ -31,7 +31,7 @@
 - [ ] 明确评分仅评价大纲是否满足上传及生成准备条件，不替代生成后事实性/引用质量校验。
 
 ## 变更文件
-- `agent-runner/docs/modules/outline-management/development/29-YashanDB知识库大纲上传内容与格式规格.md`（补充评分与建议章节）
+- `.codex/知识中心建设平台/03-详细设计/知识中心-大纲管理-详细设计文档.md`（当前已合并）
 - `config/outline-quality-rubric.yaml`（可选，仅在设计文档确认需要机器执行时新增；否则留在文档示例中）
 
 ## 执行日志

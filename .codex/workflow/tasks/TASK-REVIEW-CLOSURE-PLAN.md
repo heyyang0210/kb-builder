@@ -44,7 +44,7 @@ TASK-REVIEW-TST-01
 - 状态: draft
 - 依赖: Project Manager 准入
 - 可并行: 是
-- allowedFiles: `.codex/知识中心建设平台/03-详细设计/知识中心-文档生产-审核与发布-评审闭环前端详细设计文档.md`、`agent-runner/docs/modules/document-management/` 下新增评审契约文档、该任务卡
+- allowedFiles: `.codex/知识中心建设平台/03-详细设计/知识中心-文档生产-详细设计文档.md`、`agent-runner/docs/modules/document-management/` 下新增评审契约文档、该任务卡
 - approvalRequired: needs_decision
 - approvalReason: 确认自审策略、阻断规则、全文意见兼容模式及未实现 P1 能力边界
 - 交付: 冻结 comment/thread/reply/resolution/operation link/anchor relocation 字段、状态迁移、错误码、幂等键、并发版本和 capabilities 规则；明确产品展示 `YashanDB` 与内部 `handbookId` 分离。
@@ -89,7 +89,7 @@ TASK-REVIEW-TST-01
 - 状态: draft
 - 依赖: TASK-REVIEW-ARCH-01、TASK-REVIEW-BE-01、TASK-REVIEW-FE-01
 - 可并行: 否（实现产物稳定后）
-- allowedFiles: `.codex/知识中心建设平台/03-详细设计/知识中心-文档生产-审核与发布-评审闭环前端详细设计文档.md`、`.codex/知识中心建设平台/03-详细设计/README.md`、`prompt.md`
+- allowedFiles: `.codex/知识中心建设平台/03-详细设计/知识中心-文档生产-详细设计文档.md`、`.codex/知识中心建设平台/03-详细设计/README.md`、`prompt.md`
 - approvalRequired: needs_decision（仅记录未决策项，不代替审批）
 - 交付: 记录实际实现与设计差异、接口字段、状态机、产品展示口径、E2E 门禁命令和未实现边界；更新目录 README 与 prompt 单一入口。
 - 验收: 文档链接有效、无“已完成”伪描述；实现/测试证据与代码一致。
@@ -113,8 +113,8 @@ TASK-REVIEW-TST-01
 
 ## 参考文档
 
-- `.codex/知识中心建设平台/03-详细设计/知识中心-文档生产-审核与发布-评审闭环前端详细设计文档.md`
-- `.codex/知识中心建设平台/03-详细设计/知识中心-文档生产-审核与发布-详细设计文档.md`
+- `.codex/知识中心建设平台/03-详细设计/知识中心-文档生产-详细设计文档.md`
+- `.codex/知识中心建设平台/03-详细设计/知识中心-文档生产-详细设计文档.md`
 - `agent-runner/docs/39-Role-Contract-v1与角色治理设计.md`
 - `agent-runner/docs/40-Task-Routing-Contract-v1与最小角色路径设计.md`
 - `agent-runner/docs/41-Approval-Boundary-v1人工审批边界.md`

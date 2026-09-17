@@ -31,7 +31,7 @@ docs/agent-runner/
 | [Task Routing Contract v1 与最小执行路径](./40-Task-Routing-Contract-v1与最小角色路径设计.md) | 直接处理、标准开发、治理任务和按需上下文装载 |
 | [Approval Boundary v1 人工审批边界](./41-Approval-Boundary-v1人工审批边界.md) | 默认授权、必须审批、不确定项判断和最小审批记录的单一事实源 |
 
-服务基础设施设计见 [服务启动与重启设计](./overview/service-startup-and-restart-design.md)。
+知识中心管理平台的服务基础设施设计已归档到 [知识中心建设平台](../../.codex/知识中心建设平台/03-详细设计/知识中心-平台-详细设计文档.md)；本目录只保留 Agent Runner 自身设计。
 
 ## 模块地图
 

@@ -124,7 +124,7 @@
 
 ### 6.1 TASK-KPG-01 验收证据
 
-- 设计文档：`agent-runner/docs/modules/platform-foundation/overview/知识中心建设平台通用化总体架构设计.md`。
+- 设计文档：`.codex/知识中心建设平台/02-概要设计/知识中心-平台-通用化目标架构-概要设计文档.md`。
 - 开发设计：`agent-runner/docs/modules/platform-foundation/development/enterprise-profile-v1配置与运行上下文设计.md`。
 - 独立审查：Architect、Backend Worker、Test Engineer 均完成只读审查。
 - 真实探测：4100/8001 健康接口和 3500 两个旧入口及代理均返回 200；`/knowledge-center/` 返回 404，与尚未实施状态一致。

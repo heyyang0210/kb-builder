@@ -24,7 +24,7 @@
 
 ## 文件归属
 
-- Architecture Designer 独占：`agent-runner/docs/modules/outline-management/development/43-管理员手册大纲兼容阶段五-评分建议与持续治理设计.md`。
+- Architecture Designer 维护：`.codex/知识中心建设平台/03-详细设计/知识中心-大纲管理-详细设计文档.md`。
 - Backend Worker 独占：评分服务、规则和建议模板配置。
 - Frontend Worker 独占：评分报告展示文件。
 - Test Engineer 独占：标注样本、稳定性和真实 API 回归；Reporter 只更新项目报告文件。
@@ -48,5 +48,4 @@
 
 - `.codex/requirements/modules/outline-management/REQ-OUTLINE-COMPATIBILITY.md`
 - `.codex/workflow/modules/outline-management/PLAN.md`
-- `agent-runner/docs/modules/outline-management/development/43-管理员手册大纲兼容阶段五-评分建议与持续治理设计.md`
-- `agent-runner/docs/modules/outline-management/development/29-YashanDB知识库大纲上传内容与格式规格.md`
+- `.codex/知识中心建设平台/03-详细设计/知识中心-大纲管理-详细设计文档.md`

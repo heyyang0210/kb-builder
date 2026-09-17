@@ -25,7 +25,7 @@
 ## 文件归属
 
 - Doc Writer 独占：新增规范副本、映射报告及其所在目录 README。
-- Architecture Designer 独占：`agent-runner/docs/modules/outline-management/development/39-管理员手册大纲兼容阶段一-基线与规范副本设计.md`。
+- Architecture Designer 维护：`.codex/知识中心建设平台/03-详细设计/知识中心-大纲管理-详细设计文档.md`。
 - Test Engineer 独占：P1 验收记录和隔离测试数据。
 - 禁止修改原文件 `outlines/yashan数据库管理员手册知识点大纲.md` 和业务代码。
 
@@ -47,5 +47,4 @@
 
 - `.codex/requirements/modules/outline-management/REQ-OUTLINE-COMPATIBILITY.md`
 - `.codex/workflow/modules/outline-management/PLAN.md`
-- `agent-runner/docs/modules/outline-management/development/39-管理员手册大纲兼容阶段一-基线与规范副本设计.md`
-- `agent-runner/docs/modules/outline-management/development/29-YashanDB知识库大纲上传内容与格式规格.md`
+- `.codex/知识中心建设平台/03-详细设计/知识中心-大纲管理-详细设计文档.md`

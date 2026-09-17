@@ -4,7 +4,7 @@
 - 分配: architect, backend-worker, test-engineer
 - 依赖: 无
 - 覆盖: T1、T2、T3
-- 设计: `docs/agent-runner/modules/platform-foundation/development/template-management-database-design.md`
+- 设计: `.codex/知识中心建设平台/03-详细设计/知识中心-模板管理-详细设计文档.md`
 
 ## 验收
 

@@ -1,7 +1,7 @@
 # 模板管理改造任务总览（T1-T10）
 
 状态：in_progress（P1 verified；P2/P3 pending）
-依据：`docs/agent-runner/modules/platform-foundation/development/template-management-database-design.md`
+依据：`.codex/知识中心建设平台/03-详细设计/知识中心-模板管理-详细设计文档.md`
 
 ## 目标
 

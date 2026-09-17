@@ -24,7 +24,7 @@
 
 ## 文件归属
 
-- Architecture Designer 独占：`agent-runner/docs/modules/outline-management/development/41-管理员手册大纲兼容阶段三-安全上传与真实API验收设计.md`。
+- Architecture Designer 维护：`.codex/知识中心建设平台/03-详细设计/知识中心-大纲管理-详细设计文档.md`。
 - Backend Worker 独占：上传路由及持久化边界相关后端文件。
 - Test Engineer 独占：测试矩阵、fixtures 和真实 API 验收报告。
 - Frontend 文件不在本阶段范围。
@@ -47,5 +47,5 @@
 
 - `.codex/requirements/modules/outline-management/REQ-OUTLINE-COMPATIBILITY.md`
 - `.codex/workflow/modules/outline-management/PLAN.md`
-- `agent-runner/docs/modules/outline-management/development/41-管理员手册大纲兼容阶段三-安全上传与真实API验收设计.md`
-- `agent-runner/docs/modules/outline-management/overview/outline-management-overview-design.md`
+- `.codex/知识中心建设平台/03-详细设计/知识中心-大纲管理-详细设计文档.md`
+- `.codex/知识中心建设平台/02-概要设计/知识中心-大纲管理-工作台与治理-概要设计文档.md`

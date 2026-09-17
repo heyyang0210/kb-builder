@@ -423,8 +423,8 @@ git diff --check
 | GitLab E2E | `agent-runner/tests/e2e/knowledge-center-gitlab.spec.js` |
 | 审核 E2E | `agent-runner/tests/e2e/knowledge-center-review-publishing.spec.js` |
 | 审核基线夹具 | `agent-runner/tests/fixtures/review-e2e-incremental-state.json` |
-| 审核详细设计 | `03-详细设计/知识中心-文档生产-审核与发布-详细设计文档.md` |
-| GitLab 授权设计 | `03-详细设计/知识中心-知识资产-GitLab个人授权入口-前端详细设计文档.md` |
+| 审核详细设计 | `03-详细设计/知识中心-文档生产-详细设计文档.md` |
+| GitLab 授权设计 | `03-详细设计/知识中心-知识资产-详细设计文档.md` |
 | 风险清单 | `07-决策与风险/知识中心-文档生产-增量构建P0-风险清单文档.md` |
 
 ## 11. 接手人首次执行清单
