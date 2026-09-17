@@ -96,6 +96,7 @@ prompt-log.md
 # Playwright E2E 测试报告（构建产物）
 tests/e2e/reports/
 tests/e2e/screenshots/
+test-results/
 
 # 知识加工和大纲生成中间产物
 
