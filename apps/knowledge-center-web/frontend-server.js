@@ -19,8 +19,12 @@ const { PlatformModuleRegistry } = require('../../packages/agent-runner-core/lib
 const PORT = Number(process.env.PORT || 3500);
 const HOST = '0.0.0.0';
 const PUBLIC_HOST = process.env.KNOWLEDGE_CENTER_PUBLIC_HOST || 'localhost';
-const ROOT = path.join(__dirname, 'frontend');
-const PINGCODE_ROOT = path.join(REPOSITORY_ROOT, 'apps', 'pingcode-web', 'dist');
+const ROOT = process.env.KNOWLEDGE_CENTER_FRONTEND_ROOT
+  ? path.resolve(process.env.KNOWLEDGE_CENTER_FRONTEND_ROOT)
+  : path.join(__dirname, 'frontend');
+const PINGCODE_ROOT = process.env.PINGCODE_WEB_DIST_DIR
+  ? path.resolve(process.env.PINGCODE_WEB_DIST_DIR)
+  : path.join(REPOSITORY_ROOT, 'apps', 'pingcode-web', 'dist');
 const PINGCODE_PREFIX = '/pingcode-materials';
 const KNOWLEDGE_CENTER_PREFIX = '/knowledge-center';
 const KNOWLEDGE_CENTER_ROOT = path.join(ROOT, 'knowledge-center');

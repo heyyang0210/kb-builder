@@ -8,17 +8,17 @@
 
 - Java 17 或更高版本。
 - YashanDB JDBC Jar；当前验证制品为 `com.yashandb:yashandb-jdbc:1.6.1`。
-- 通过环境变量提供连接信息，密码不得写入仓库。
-- Windows 可通过 Git Bash 执行 `start.sh`；脚本固定以 UTF-8 编译 Java 源码，并自动转换 Windows classpath。
+- 通过部署环境配置或环境变量提供连接信息；生产凭证不得进入 SQL、日志或迁移报告。
+- Windows 可通过 Git Bash 执行统一构建和 `start.sh`；构建脚本固定以 UTF-8 编译 Java 源码，启动脚本只运行预编译 class 并自动转换 Windows classpath。
 
 ```bash
 export YASDB_JDBC_URL='jdbc:yasdb://数据库地址:端口/数据库名'
 export YASDB_USERNAME='应用账号'
 export YASDB_PASSWORD='由密钥系统注入'
-export YASDB_JDBC_JAR='/受控路径/yashandb-jdbc.jar'
 export YASDB_STORAGE_HOST='127.0.0.1'
 export YASDB_STORAGE_PORT='14210'
 
+../../tools/repository/build-knowledge-center.sh
 ./start.sh
 ```
 
@@ -98,11 +98,12 @@ node ../../tools/knowledge-processing/migrate-manuals-to-target-yashandb.js --ap
 - `/v1/domain/build-tasks` 从已发布大纲的当前责任项实时投影，`PATCH` 改派直接更新责任项，不依赖旧建设任务表。
 # 启动入口说明
 
-`start.sh` 是本模块的启动入口，负责启动 YashanDB 业务存储 HTTP 服务（默认端口 `14210`），不启动或停止 YashanDB 数据库实例，也不默认执行迁移。数据库 JDBC 地址、用户名和密码由 `config/database/` 统一配置，环境变量可覆盖配置；SQL 目录默认为本模块的 `sql/`。
+`start.sh` 是本模块的启动入口，负责启动 YashanDB 业务存储 HTTP 服务（默认端口 `14210`），不编译源码，不启动或停止 YashanDB 数据库实例，也不默认执行迁移。数据库 JDBC 地址、用户名和密码由 `config/database/` 统一配置，环境变量可覆盖配置；class、JDBC 和 SQL 默认从 `runtime/build/knowledge-center/current/java/` 读取。
 
 常用操作：
 
 ```bash
+tools/repository/build-knowledge-center.sh
 apps/yashandb-storage/start.sh
 ```
 

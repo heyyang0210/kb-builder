@@ -1,4 +1,4 @@
-import rules from './rules/yashandb.json' with { type: 'json' };
+import rules from './rules/yashandb-rules.js';
 
 const categories = Object.entries(rules.categories).flatMap(([contentType, entries]) => entries.map(entry => ({ ...entry, contentType })));
 const esc = value => String(value ?? '').replace(/[&<>\"']/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[char]));

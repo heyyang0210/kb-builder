@@ -1,10 +1,17 @@
 const fs = require('fs');
+const http = require('http');
+const os = require('os');
 const path = require('path');
+const { createKnowledgeCenterHandler, KnowledgeCenterConfigError } = require('../../../packages/agent-runner-core/routes/knowledge-center');
 const root = path.resolve(__dirname, '../../..');
 const read = relative => fs.readFileSync(path.join(root, relative), 'utf8');
 
 describe('知识中心大纲管理前端契约', () => {
   const view = () => read('apps/knowledge-center-web/frontend/knowledge-center/modules/outlines/view.js');
+  test('大纲详细设计归档到知识中心建设平台', () => {
+    expect(fs.existsSync(path.join(root, '.codex/知识中心建设平台/03-详细设计/知识中心-大纲管理-详细设计文档.md'))).toBe(true);
+    expect(fs.existsSync(path.join(root, 'docs/agent-runner/modules/outline-management/development/44-知识中心大纲统一解析展示与管理员增删权限设计.md'))).toBe(false);
+  });
   test('分别展示产品、业务版本标签和大纲版本', () => {
     expect(view()).toContain('productId');
     expect(view()).toContain('businessVersionTags');
@@ -188,5 +195,68 @@ describe('知识中心大纲管理前端契约', () => {
     expect(server).toContain('OUTLINE_SAMPLE_UNAVAILABLE');
     expect(gateway).toContain('KNOWLEDGE_CENTER_OUTLINE_SAMPLE_PATH');
     expect(read('tools/repository/generate-database-outline-sample.js')).toContain("const headers = ['一级目录', '二级目录', '三级目录', '页面', '内容说明', '技术领域分工'];");
+  });
+
+  test('模板与样例路径显式注入路由模块且下载不会击穿平台进程', async () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'knowledge-center-outline-download-'));
+    const templatePath = path.join(fixtureRoot, 'template.xlsx');
+    const samplePath = path.join(fixtureRoot, 'sample.xlsx');
+    fs.writeFileSync(templatePath, 'template');
+    fs.writeFileSync(samplePath, 'sample');
+    const handler = createKnowledgeCenterHandler({
+      config: {
+        KNOWLEDGE_CENTER_PREFIX: '/knowledge-center', KNOWLEDGE_CENTER_ROOT: fixtureRoot, KNOWLEDGE_CENTER_ENTRY: 'index.html',
+        OUTLINE_TEMPLATE_PATH: templatePath, OUTLINE_SAMPLE_PATH: samplePath,
+        PINGCODE_PREFIX: '/pingcode', PINGCODE_ROOT: fixtureRoot,
+      },
+      stores: { knowledgeAssetsStore: { read: () => ({ handbooks: [] }), write() {} }, brandIconStore: {} },
+      moduleRegistry: { get: () => ({ authorize: async () => ({ allowedActions: ['outline:read'], user: { id: 'outline-reader' } }) }) },
+      sendFile() {}, proxyAuth() {}, proxyCleaning() {}, proxyOutline() {}, proxyPermission() {}, handleIncrementalBuild() {},
+    });
+    const server = http.createServer(handler);
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    try {
+      for (const [suffix, expected] of [['template', 'template'], ['sample', 'sample']]) {
+        const response = await fetch(`http://127.0.0.1:${server.address().port}/knowledge-center/api/outline/${suffix}`);
+        expect(response.status).toBe(200);
+        expect(await response.text()).toBe(expected);
+      }
+      fs.unlinkSync(templatePath);
+      const missingTemplate = await fetch(`http://127.0.0.1:${server.address().port}/knowledge-center/api/outline/template`);
+      expect(missingTemplate.status).toBe(404);
+      const remainingSample = await fetch(`http://127.0.0.1:${server.address().port}/knowledge-center/api/outline/sample`);
+      expect(remainingSample.status).toBe(200);
+    } finally {
+      await new Promise(resolve => server.close(resolve));
+      fs.rmSync(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
+  test('模板或样例启动配置不合法时拒绝创建路由工厂', () => {
+    const options = {
+      config: { KNOWLEDGE_CENTER_PREFIX: '/knowledge-center', KNOWLEDGE_CENTER_ROOT: os.tmpdir(), KNOWLEDGE_CENTER_ENTRY: 'index.html' },
+      stores: { knowledgeAssetsStore: { read: () => ({ handbooks: [] }), write() {} }, brandIconStore: {} },
+      moduleRegistry: { get: () => ({ authorize: async () => ({ allowedActions: ['outline:read'], user: { id: 'outline-reader' } }) }) },
+      sendFile() {}, proxyAuth() {}, proxyCleaning() {}, proxyOutline() {}, proxyPermission() {}, handleIncrementalBuild() {},
+    };
+    expect(() => createKnowledgeCenterHandler(options)).toThrow(KnowledgeCenterConfigError);
+    expect(() => createKnowledgeCenterHandler(options)).toThrow('OUTLINE_TEMPLATE_PATH 缺失');
+    options.config.OUTLINE_TEMPLATE_PATH = path.join(root, '大纲模板.xlsx');
+    expect(() => createKnowledgeCenterHandler(options)).toThrow('OUTLINE_SAMPLE_PATH 缺失');
+    options.config.OUTLINE_SAMPLE_PATH = 'sample.xlsx';
+    expect(() => createKnowledgeCenterHandler(options)).toThrow('OUTLINE_SAMPLE_PATH 必须为绝对路径');
+    options.config.OUTLINE_SAMPLE_PATH = path.join(root, 'prompt.md');
+    expect(() => createKnowledgeCenterHandler(options)).toThrow('OUTLINE_SAMPLE_PATH 必须指向 .xlsx 文件');
+    options.config.OUTLINE_SAMPLE_PATH = path.join(root, 'missing.xlsx');
+    expect(() => createKnowledgeCenterHandler(options)).toThrow('OUTLINE_SAMPLE_PATH 不存在或不可读');
+    const directoryFixture = fs.mkdtempSync(path.join(os.tmpdir(), 'outline-directory-'));
+    const workbookDirectory = path.join(directoryFixture, 'sample.xlsx');
+    fs.mkdirSync(workbookDirectory);
+    options.config.OUTLINE_SAMPLE_PATH = workbookDirectory;
+    try {
+      expect(() => createKnowledgeCenterHandler(options)).toThrow('OUTLINE_SAMPLE_PATH 必须指向普通文件');
+    } finally {
+      fs.rmSync(directoryFixture, { recursive: true, force: true });
+    }
   });
 });

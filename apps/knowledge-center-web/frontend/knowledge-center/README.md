@@ -83,12 +83,12 @@ GitLab 阅读路由为 `/knowledge-center/assets/:handbookId/repository`。平�
 
 大纲管理通过同源受保护接口 `/knowledge-center/api/outline/governance/list` 和 `/knowledge-center/api/outline/governance/:id` 读取真实列表与详情；网关校验会话后代理到文档生成服务，不依赖平台总览投影是否包含大纲分区。
 
-认证实现位于 `packages/agent-runner-core/lib/knowledge-center-auth.js`，由 13510 平台内核直接挂载；`apps/knowledge-center-auth/auth-server.js` 仅保留为独立契约测试和兼容启动入口，不作为隔离平台的必需进程。Storage 的无 HTTP 目标架构和迁移门禁见 `docs/agent-runner/modules/platform-foundation/development/platform-kernel-module-boundary-design.md`。
+认证实现位于 `packages/agent-runner-core/lib/knowledge-center-auth.js`，由 13510 平台内核直接挂载；`apps/knowledge-center-auth/auth-server.js` 仅保留为独立契约测试和兼容启动入口，不作为隔离平台的必需进程。Storage 的无 HTTP 目标架构和迁移门禁见 [平台内核与模块边界详细设计](../../../../../.codex/知识中心建设平台/03-详细设计/知识中心-平台-详细设计文档.md)。
 
 公共目录准入规则和后续模块结构参见：
 
 ```text
-.codex/知识中心建设平台/03-详细设计/知识中心-前端-模块化与视觉系统-详细设计文档.md
+.codex/知识中心建设平台/03-详细设计/知识中心-前端-详细设计文档.md
 ```
 
 没有真实业务数据的页面只能展示明确的不可用状态，不得增加演示业务数据。

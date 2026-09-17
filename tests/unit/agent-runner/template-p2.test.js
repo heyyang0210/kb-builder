@@ -1,8 +1,14 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
+const path = require('node:path');
 const { createKnowledgeCenterHandler } = require('../../../packages/agent-runner-core/routes/knowledge-center');
 const { createTemplateStore } = require('../../../packages/agent-runner-core/lib/template-store');
+const root = path.resolve(__dirname, '../../..');
+const outlineWorkbookConfig = {
+  OUTLINE_TEMPLATE_PATH: path.join(root, '大纲模板.xlsx'),
+  OUTLINE_SAMPLE_PATH: path.join(root, '基本数据库管理手册大纲示例.xlsx'),
+};
 
 // Real HTTP route and domain implementation. Authentication and aggregate
 // persistence are deliberately isolated doubles, not JDBC acceptance evidence.
@@ -27,7 +33,7 @@ async function setup(t) {
     },
   };
   const handler = createKnowledgeCenterHandler({
-    config: { KNOWLEDGE_CENTER_PREFIX: '/knowledge-center', KNOWLEDGE_CENTER_ROOT: '/tmp', KNOWLEDGE_CENTER_ENTRY: 'index.html', PINGCODE_PREFIX: '/pingcode', PINGCODE_ROOT: '/tmp', DOCUMENT_API_HOST: '127.0.0.1', DOCUMENT_API_PORT: 1, PINGCODE_API_HOST: '127.0.0.1', PINGCODE_API_PORT: 1, PLATFORM_CONTEXT_TIMEOUT_MS: 1000, AUTH_API_HOST: '127.0.0.1', AUTH_API_PORT: auth.address().port, GITLAB_CONFIG_PATH: '/tmp/not-used', GITLAB_DOCUMENT_TYPES_PATH: '/tmp/not-used' },
+    config: { KNOWLEDGE_CENTER_PREFIX: '/knowledge-center', KNOWLEDGE_CENTER_ROOT: '/tmp', KNOWLEDGE_CENTER_ENTRY: 'index.html', ...outlineWorkbookConfig, PINGCODE_PREFIX: '/pingcode', PINGCODE_ROOT: '/tmp', DOCUMENT_API_HOST: '127.0.0.1', DOCUMENT_API_PORT: 1, PINGCODE_API_HOST: '127.0.0.1', PINGCODE_API_PORT: 1, PLATFORM_CONTEXT_TIMEOUT_MS: 1000, AUTH_API_HOST: '127.0.0.1', AUTH_API_PORT: auth.address().port, GITLAB_CONFIG_PATH: '/tmp/not-used', GITLAB_DOCUMENT_TYPES_PATH: '/tmp/not-used' },
     stores: { knowledgeAssetsStore: { read: () => ({ handbooks: [] }), write() {} }, templateStore: createTemplateStore({ store }) },
     sendFile(_path, res) { res.writeHead(404); res.end(); }, proxyAuth() {}, proxyCleaning() {}, proxyOutline() {}, proxyPermission() {}, handleIncrementalBuild() {},
   });

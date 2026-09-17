@@ -12,7 +12,7 @@
 | tests/ | unit、contract、integration、e2e |
 | config/ | knowledge-center、pingcode、database 集中配置 |
 | knowledge/ | 大纲、模板、Skill、提示词、领域与参考资料 |
-| docs/ | 当前设计、使用说明及历史资料 |
+| docs/ | 历史设计文档、使用说明及历史资料 |
 | external/ | FastGPT 与 yas-ai-helper 独立工程，不参与主仓库默认构建 |
 | runtime/ | 持久状态、日志、缓存、导出和本地迁移记录，不进 Git |
 
@@ -21,13 +21,18 @@
 ## 启动与检查
 
 ```bash
+npm run build
 ./knowledge-center.sh start
 ./knowledge-center.sh status
 ./knowledge-center.sh restart
 ./knowledge-center.sh stop
 ```
 
-默认页面：`http://192.168.130.180:13510/knowledge-center/`。根目录 `knowledge-center.sh` 是平台唯一权威运维入口；本地配置入口为 `config/knowledge-center/.env`，启动参数、依赖与环境覆盖见[启动设计](docs/agent-runner/overview/service-startup-and-restart-design.md)。
+唯一构建脚本为 `tools/repository/build-knowledge-center.sh`，`npm run build` 只调用该入口。默认产物位于可重建的 `runtime/build/knowledge-center/current/`，详见[统一可重复构建设计](.codex/知识中心建设平台/03-详细设计/知识中心-平台-详细设计文档.md)。
+
+默认页面：`http://192.168.130.180:13510/knowledge-center/`。根目录 `knowledge-center.sh` 是平台唯一权威运维入口，`start/restart` 默认先执行统一构建；本地配置入口为 `config/knowledge-center/.env`，启动参数、依赖与环境覆盖见[启动设计](.codex/知识中心建设平台/03-详细设计/知识中心-平台-详细设计文档.md)。
+
+`restart` 会先构建再停止旧服务；构建失败时保留旧服务。脚本会预检端口、超时和产物摘要，只强制回收经过工作目录与命令行确认的本仓库进程，失败时输出组件状态和日志位置。
 
 ```bash
 npm run check:node

@@ -15,6 +15,35 @@ function perfTrace(message, meta) {
   if (process.env.PERF_TRACE === '1') logger.info(`[perf] ${message}`, meta);
 }
 
+class KnowledgeCenterConfigError extends Error {
+  constructor(key, reason) {
+    super(`知识中心启动配置无效：${key} ${reason}`);
+    this.code = 'KNOWLEDGE_CENTER_CONFIG_INVALID';
+    this.key = key;
+  }
+}
+
+function validateOutlineWorkbookPath(key, filePath) {
+  if (typeof filePath !== 'string' || !filePath.trim()) {
+    throw new KnowledgeCenterConfigError(key, '缺失');
+  }
+  if (!path.isAbsolute(filePath)) {
+    throw new KnowledgeCenterConfigError(key, '必须为绝对路径');
+  }
+  if (path.extname(filePath).toLowerCase() !== '.xlsx') {
+    throw new KnowledgeCenterConfigError(key, '必须指向 .xlsx 文件');
+  }
+  try {
+    if (!fs.statSync(filePath).isFile()) {
+      throw new KnowledgeCenterConfigError(key, '必须指向普通文件');
+    }
+    fs.accessSync(filePath, fs.constants.R_OK);
+  } catch (error) {
+    if (error instanceof KnowledgeCenterConfigError) throw error;
+    throw new KnowledgeCenterConfigError(key, '不存在或不可读');
+  }
+}
+
 /**
  * Knowledge center route handler factory.
  * Encapsulates auth checks, asset management, GitLab integration, platform context,
@@ -28,6 +57,7 @@ function createKnowledgeCenterHandler(options) {
 
   const {
     KNOWLEDGE_CENTER_PREFIX, KNOWLEDGE_CENTER_ROOT, KNOWLEDGE_CENTER_ENTRY,
+    OUTLINE_TEMPLATE_PATH, OUTLINE_SAMPLE_PATH,
     PINGCODE_PREFIX, PINGCODE_ROOT,
     DOCUMENT_API_HOST, DOCUMENT_API_PORT,
     PINGCODE_API_HOST, PINGCODE_API_PORT,
@@ -37,6 +67,8 @@ function createKnowledgeCenterHandler(options) {
   } = config;
 
   const { knowledgeAssetsStore, brandIconStore } = stores;
+  validateOutlineWorkbookPath('OUTLINE_TEMPLATE_PATH', OUTLINE_TEMPLATE_PATH);
+  validateOutlineWorkbookPath('OUTLINE_SAMPLE_PATH', OUTLINE_SAMPLE_PATH);
   const templateStore = stores.templateStore || createTemplateStore();
   const authModule = moduleRegistry?.get?.('auth') || modules.auth;
 
@@ -856,4 +888,4 @@ function createKnowledgeCenterHandler(options) {
   };
 }
 
-module.exports = { createKnowledgeCenterHandler };
+module.exports = { createKnowledgeCenterHandler, KnowledgeCenterConfigError };

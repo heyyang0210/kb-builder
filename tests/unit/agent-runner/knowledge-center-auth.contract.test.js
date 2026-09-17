@@ -147,6 +147,20 @@ describe('知识中心认证 HTTP 契约（真实服务 + CAS 协议桩）', () 
     expect(operations).toContain('status --verbose');
   });
 
+  test('入口模块不依赖 JSON import attributes 且 vendor 不声明缺失的 source map', () => {
+    const root = path.resolve(__dirname, '../../..');
+    const enhancer = fs.readFileSync(path.join(root, 'apps/knowledge-center-web/frontend/knowledge-center/common/markdown/database-enhancer.js'), 'utf8');
+    const rules = fs.readFileSync(path.join(root, 'apps/knowledge-center-web/frontend/knowledge-center/common/markdown/rules/yashandb-rules.js'), 'utf8');
+    const lucide = fs.readFileSync(path.join(root, 'apps/knowledge-center-web/frontend/knowledge-center/common/vendor/lucide.min.js'), 'utf8');
+    const marked = fs.readFileSync(path.join(root, 'apps/knowledge-center-web/frontend/knowledge-center/common/vendor/marked.esm.js'), 'utf8');
+
+    expect(enhancer).toContain("import rules from './rules/yashandb-rules.js'");
+    expect(enhancer).not.toMatch(/\bwith\s*\{\s*type\s*:/);
+    expect(rules).toContain('export default rules');
+    expect(lucide).not.toContain('sourceMappingURL=lucide.min.js.map');
+    expect(marked).not.toContain('sourceMappingURL=marked.esm.js.map');
+  });
+
   test('入口模块未完成初始化时会退出无限加载并显示重新加载按钮', () => {
     const root = path.resolve(__dirname, '../../..');
     const html = fs.readFileSync(path.join(root, 'apps/knowledge-center-web/frontend/knowledge-center/knowledge-center-management.html'), 'utf8');

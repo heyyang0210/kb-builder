@@ -65,6 +65,16 @@ PINGCODE_WEB_DIR="$REPO_ROOT/apps/pingcode-web"
 PINGCODE_CORE_DIR="$REPO_ROOT/packages/pingcode-core"
 STORAGE_DIR="$REPO_ROOT/apps/yashandb-storage"
 RUNTIME_DIR="$REPO_ROOT/runtime/agent-runner"
+BUILD_SCRIPT="$REPO_ROOT/tools/repository/build-knowledge-center.sh"
+BUILD_ROOT_REL="${KNOWLEDGE_CENTER_BUILD_ROOT:-runtime/build/knowledge-center}"
+case "$BUILD_ROOT_REL" in
+  /*|[A-Za-z]:*|\\*|//*) echo "错误：KNOWLEDGE_CENTER_BUILD_ROOT 必须是仓库内相对路径" >&2; exit 2 ;;
+esac
+[[ "$BUILD_ROOT_REL" == runtime/build/* && "$BUILD_ROOT_REL" != *"/../"* && "$BUILD_ROOT_REL" != ../* && "$BUILD_ROOT_REL" != */.. ]] || {
+  echo "错误：KNOWLEDGE_CENTER_BUILD_ROOT 必须位于 runtime/build/ 且不得包含 .." >&2
+  exit 2
+}
+BUILD_DIR="$REPO_ROOT/$BUILD_ROOT_REL/current"
 LOG_DIR="${KNOWLEDGE_CENTER_LOG_DIR:-$RUNTIME_DIR/logs/knowledge-center-isolated}"
 STATE_DIR="${KNOWLEDGE_CENTER_STATE_DIR:-$RUNTIME_DIR/.runtime/knowledge-center-isolated}"
 
@@ -176,7 +186,8 @@ service_process_matches() {
   [[ "$(awk '/^State:/ {print $2}' "/proc/$pid/status" 2>/dev/null || true)" != "Z" ]] || return 1
   cmdline="$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null || true)"
   [[ "$cmdline" == *java* ]] || return 1
-  [[ "$cmdline" == *"$STORAGE_DIR/src/Main.java"* || "$cmdline" == *"$STORAGE_DIR/lib/yashandb-jdbc.jar"*Main* ]]
+  [[ "$cmdline" == *"$BUILD_DIR/java/lib/yashandb-jdbc.jar"*Main* \
+    || "$cmdline" == *"$STORAGE_DIR/lib/yashandb-jdbc.jar"*"$RUNTIME_DIR/.runtime/yashandb-storage/classes/"*Main* ]]
 }
 
 listener_pid() {
@@ -204,8 +215,45 @@ process_alive() {
   [[ "$(awk '/^State:/ {print $2}' "/proc/$pid/status" 2>/dev/null || true)" != "Z" ]]
 }
 
+validate_positive_integer() {
+  local name="$1" value="$2"
+  [[ "$value" =~ ^[1-9][0-9]*$ ]] || {
+    echo "错误：$name 必须为正整数，当前值：$value" >&2
+    return 1
+  }
+}
+
+validate_port_configuration() {
+  local name value
+  local -A owners=()
+  for name in FRONTEND_PORT DOCUMENT_API_PORT PINGCODE_API_PORT YASDB_STORAGE_PORT; do
+    case "$name" in
+      FRONTEND_PORT) value="$FRONTEND_PORT" ;;
+      DOCUMENT_API_PORT) value="$DOCUMENT_API_PORT" ;;
+      PINGCODE_API_PORT) value="$PINGCODE_API_PORT" ;;
+      YASDB_STORAGE_PORT) value="${YASDB_STORAGE_PORT:-14210}" ;;
+    esac
+    [[ "$value" =~ ^[0-9]+$ ]] && (( value >= 1 && value <= 65535 )) || {
+      echo "错误：$name 必须是 1-65535 的端口，当前值：$value" >&2
+      return 1
+    }
+    [[ -z "${owners[$value]:-}" ]] || {
+      echo "错误：端口 $value 同时分配给 ${owners[$value]} 和 $name" >&2
+      return 1
+    }
+    owners[$value]="$name"
+  done
+}
+
 validate_environment() {
   local command_name directory
+  validate_positive_integer KNOWLEDGE_CENTER_STOP_TIMEOUT "$STOP_TIMEOUT" || return 1
+  validate_positive_integer KNOWLEDGE_CENTER_START_TIMEOUT "$START_TIMEOUT" || return 1
+  validate_port_configuration || return 1
+  [[ -n "$INTERNAL_HOST" && -n "$PUBLIC_HOST" && -n "$PINGCODE_HOST" ]] || {
+    echo "错误：服务监听地址不能为空" >&2
+    return 1
+  }
   for command_name in "$NODE_BIN" "$NPM_BIN" "$PYTHON_BIN" curl ss setsid java sha256sum; do
     if [[ "$command_name" == */* ]]; then
       [[ -x "$command_name" ]] || { echo "错误：命令不可执行：$command_name" >&2; return 1; }
@@ -220,18 +268,30 @@ validate_environment() {
   [[ -f "$FRONTEND_DIR/frontend-server.js" ]] || { echo "错误：Web 网关入口不存在" >&2; return 1; }
   [[ -f "$PINGCODE_API_DIR/app/main.py" ]] || { echo "错误：资料加工 API 入口不存在" >&2; return 1; }
   [[ -f "$STORAGE_DIR/start.sh" ]] || { echo "错误：YashanDB 存储服务入口不存在" >&2; return 1; }
+  [[ -x "$BUILD_SCRIPT" ]] || { echo "错误：统一构建脚本不存在或不可执行：tools/repository/build-knowledge-center.sh" >&2; return 1; }
 }
 
-build_frontend() {
-  echo "构建 PingCode Web..."
-  if ! "$NPM_BIN" --prefix "$PINGCODE_WEB_DIR" run build >"$LOG_DIR/pingcode-web-build.log" 2>&1; then
-    echo "错误：PingCode Web 构建失败：$LOG_DIR/pingcode-web-build.log" >&2
+validate_build_artifact() {
+  [[ -f "$BUILD_DIR/manifest.json" ]] || { echo "错误：缺少统一构建清单，请先执行 $BUILD_SCRIPT" >&2; return 1; }
+  [[ -f "$BUILD_DIR/manifest.sha256" ]] || { echo "错误：缺少统一构建摘要，请先执行 $BUILD_SCRIPT" >&2; return 1; }
+  (cd "$BUILD_DIR" && sha256sum -c manifest.sha256 >/dev/null) || { echo "错误：统一构建产物摘要校验失败" >&2; return 1; }
+  [[ -f "$BUILD_DIR/web/platform/knowledge-center/knowledge-center-management.html" ]] || { echo "错误：知识中心 Web 构建产物不完整" >&2; return 1; }
+  [[ -f "$BUILD_DIR/web/pingcode/index.html" ]] || { echo "错误：PingCode Web 构建产物不完整" >&2; return 1; }
+  [[ -f "$BUILD_DIR/java/classes/Main.class" ]] || { echo "错误：YashanDB Storage 构建产物不完整" >&2; return 1; }
+}
+
+build_platform() {
+  echo "构建知识中心统一产物..."
+  if ! KNOWLEDGE_CENTER_BUILD_ROOT="$BUILD_ROOT_REL" "$BUILD_SCRIPT" >"$LOG_DIR/knowledge-center-build.log" 2>&1; then
+    echo "错误：知识中心构建失败：$LOG_DIR/knowledge-center-build.log" >&2
+    tail -n 40 "$LOG_DIR/knowledge-center-build.log" >&2 || true
     return 1
   fi
+  validate_build_artifact || return 1
 }
 
 stop_service() {
-  local name="$1" file pid deadline
+  local name="$1" file pid deadline force_deadline
   file="$(pid_file "$name")"
   [[ -f "$file" ]] || return 0
   pid="$(tr -d '[:space:]' <"$file" 2>/dev/null || true)"
@@ -246,8 +306,16 @@ stop_service() {
     sleep 1
   done
   if service_process_matches "$name" "$pid"; then
-    echo "错误：$name 未在 ${STOP_TIMEOUT}s 内退出，拒绝强制终止" >&2
-    return 1
+    echo "警告：$name 未在 ${STOP_TIMEOUT}s 内退出，对已确认的本仓库进程执行强制终止" >&2
+    kill -KILL -- "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
+    force_deadline=$((SECONDS + 3))
+    while service_process_matches "$name" "$pid" && (( SECONDS < force_deadline )); do
+      sleep 1
+    done
+    if service_process_matches "$name" "$pid"; then
+      echo "错误：$name 强制终止后仍然存活，保留 PID 记录以便诊断：$file" >&2
+      return 1
+    fi
   fi
   rm -f "$file"
   echo "$name 已停止"
@@ -272,6 +340,12 @@ assert_port_available() {
         printf '%s\n' "$pid" >"$(pid_file "$service")"
         echo "检测到 $service 的遗留进程（pid=$pid），先执行受控停止"
         stop_service "$service"
+        listener="$(ss -ltnp "sport = :$port" 2>/dev/null || true)"
+        if grep -q LISTEN <<<"$listener"; then
+          echo "错误：已停止 $service，但端口 $port 仍被占用" >&2
+          ss -ltnp "sport = :$port" >&2 || true
+          return 1
+        fi
         return 0
       fi
     done
@@ -295,6 +369,8 @@ reconcile_known_services() {
 start_service() {
   local name="$1" cwd="$2" logfile="$3"
   shift 3
+  (( $# > 0 )) || { echo "错误：$name 缺少启动命令" >&2; return 1; }
+  [[ -d "$cwd" ]] || { echo "错误：$name 工作目录不存在：$cwd" >&2; return 1; }
   (
     # 子服务不得继承平台运维锁，否则主脚本退出后锁仍会被长期持有。
     exec 9>&-
@@ -338,15 +414,19 @@ rollback_started() {
 
 start_platform() {
   local token
-  validate_environment
-  if (( NO_BUILD == 0 )); then build_frontend; fi
+  validate_environment || return 1
+  if (( NO_BUILD == 0 )); then
+    build_platform || return 1
+  else
+    validate_build_artifact || return 1
+  fi
   reconcile_known_services
   # 14200 是旧认证服务端口。认证模块已并入平台进程，启动时受控清理遗留实例。
-  stop_service auth
-  assert_port_available "$FRONTEND_PORT"
-  assert_port_available "$DOCUMENT_API_PORT"
-  assert_port_available "$PINGCODE_API_PORT"
-  assert_port_available "${YASDB_STORAGE_PORT:-14210}"
+  stop_service auth || return 1
+  assert_port_available "$FRONTEND_PORT" || return 1
+  assert_port_available "$DOCUMENT_API_PORT" || return 1
+  assert_port_available "$PINGCODE_API_PORT" || return 1
+  assert_port_available "${YASDB_STORAGE_PORT:-14210}" || return 1
 
   token="$OUTLINE_INTERNAL_TOKEN"
   if [[ -z "$token" ]]; then
@@ -355,25 +435,28 @@ start_platform() {
 
   STARTED_SERVICES=()
   start_service storage "$STORAGE_DIR" "$LOG_DIR/storage.log" \
-    env KNOWLEDGE_CENTER_RUNTIME_DIR="$RUNTIME_DIR" "$STORAGE_DIR/start.sh"
+    env KNOWLEDGE_CENTER_RUNTIME_DIR="$RUNTIME_DIR" KNOWLEDGE_CENTER_BUILD_ROOT="$BUILD_ROOT_REL" \
+    YASDB_STORAGE_CLASSES_DIR="$BUILD_DIR/java/classes" YASDB_JDBC_JAR="$BUILD_DIR/java/lib/yashandb-jdbc.jar" \
+    YASDB_STORAGE_SQL_DIR="$BUILD_DIR/java/sql" "$STORAGE_DIR/start.sh" || return 1
   wait_ready storage "$(service_url storage)" || { rollback_started; return 1; }
 
   start_service document "$DOCUMENT_DIR" "$LOG_DIR/document.log" \
     env NODE_PATH="$NODE_MODULE_PATH" PORT="$DOCUMENT_API_PORT" HOST="$INTERNAL_HOST" \
     KNOWLEDGE_CENTER_AUTH_HOST="$INTERNAL_HOST" KNOWLEDGE_CENTER_AUTH_PORT="$FRONTEND_PORT" \
-    KNOWLEDGE_CENTER_OUTLINE_INTERNAL_TOKEN="$token" "$NODE_BIN" server.js
+    KNOWLEDGE_CENTER_OUTLINE_INTERNAL_TOKEN="$token" "$NODE_BIN" server.js || { rollback_started; return 1; }
   wait_ready document "$(service_url document)" || { rollback_started; return 1; }
 
   start_service pingcode "$PINGCODE_API_DIR" "$LOG_DIR/pingcode.log" \
     env PYTHONPATH="$PYTHON_MODULE_PATH" PINGCODE_WEB_PORT="$PINGCODE_API_PORT" PINGCODE_WEB_HOST="$PINGCODE_HOST" \
-    "$PYTHON_BIN" -m uvicorn app.main:app --host "$PINGCODE_HOST" --port "$PINGCODE_API_PORT"
+    "$PYTHON_BIN" -m uvicorn app.main:app --host "$PINGCODE_HOST" --port "$PINGCODE_API_PORT" || { rollback_started; return 1; }
   wait_ready pingcode "$(service_url pingcode)" || { rollback_started; return 1; }
 
   start_service frontend "$FRONTEND_DIR" "$LOG_DIR/frontend.log" \
     env NODE_PATH="$NODE_MODULE_PATH" PORT="$FRONTEND_PORT" KNOWLEDGE_STORAGE_MODE="${KNOWLEDGE_STORAGE_MODE:-database}" YASDB_PASSWORD="${YASDB_PASSWORD:-}" YASDB_STORAGE_URL="${YASDB_STORAGE_URL:-http://127.0.0.1:14210}" YASDB_STORAGE_HOST="${YASDB_STORAGE_HOST:-127.0.0.1}" YASDB_STORAGE_PORT="${YASDB_STORAGE_PORT:-14210}" YASDB_STORAGE_TIMEOUT_MS="${YASDB_STORAGE_TIMEOUT_MS:-15000}" DOCUMENT_API_HOST="$INTERNAL_HOST" DOCUMENT_API_PORT="$DOCUMENT_API_PORT" \
     PINGCODE_API_HOST="$PINGCODE_HOST" PINGCODE_API_PORT="$PINGCODE_API_PORT" \
     KNOWLEDGE_CENTER_SERVICE_URL="http://$PUBLIC_HOST:$FRONTEND_PORT/knowledge-center/" KNOWLEDGE_CENTER_COOKIE_SECURE=false \
-    KNOWLEDGE_CENTER_OUTLINE_INTERNAL_TOKEN="$token" "$NODE_BIN" frontend-server.js
+    KNOWLEDGE_CENTER_FRONTEND_ROOT="$BUILD_DIR/web/platform" PINGCODE_WEB_DIST_DIR="$BUILD_DIR/web/pingcode" \
+    KNOWLEDGE_CENTER_OUTLINE_INTERNAL_TOKEN="$token" "$NODE_BIN" frontend-server.js || { rollback_started; return 1; }
   wait_ready frontend "$(service_url frontend)" || { rollback_started; return 1; }
 
   echo "知识中心管理平台已启动：http://$PUBLIC_HOST:$FRONTEND_PORT/knowledge-center/"
@@ -382,13 +465,26 @@ start_platform() {
 }
 
 restart_platform() {
-  validate_environment
+  validate_environment || return 1
   if (( NO_BUILD == 0 )); then
-    build_frontend
+    build_platform || return 1
     NO_BUILD=1
   fi
-  stop_all
-  start_platform
+  stop_all || return 1
+  start_platform || return 1
+}
+
+print_failure_summary() {
+  echo "知识中心操作失败。" >&2
+  if validate_port_configuration >/dev/null 2>&1 \
+    && [[ -n "$INTERNAL_HOST" && -n "$PUBLIC_HOST" && -n "$PINGCODE_HOST" ]]; then
+    echo "当前组件状态：" >&2
+    status_platform 1>&2 || true
+  else
+    echo "当前配置无法安全计算组件状态；未基于非法端口执行健康判断。" >&2
+  fi
+  echo "日志目录：$LOG_DIR" >&2
+  echo "构建日志：$LOG_DIR/knowledge-center-build.log" >&2
 }
 
 status_platform() {
@@ -431,31 +527,34 @@ case "$ACTION" in
     echo "  stop     停止知识中心平台服务，不操作 YashanDB 数据库实例"
     echo "  restart  停止后重新启动全部平台服务"
     echo "  status   显示统一平台状态，不暴露内部诊断端点"
-    echo "  --no-build  启动/重启时跳过 PingCode Web 构建"
+    echo "  --no-build  启动/重启时复用已有统一构建产物"
     echo "  --verbose   status 时显示内部组件、PID 和诊断端点"
     ;;
   start)
     acquire_operation_lock
+    validate_environment || { print_failure_summary; exit 1; }
     reconcile_known_services
     stop_service auth
     if platform_healthy; then
       echo "知识中心管理平台已在运行：http://$PUBLIC_HOST:$FRONTEND_PORT/knowledge-center/"
       exit 0
     fi
-    stop_all
-    start_platform
+    stop_all || { print_failure_summary; exit 1; }
+    start_platform || { print_failure_summary; exit 1; }
     ;;
   restart)
     acquire_operation_lock
-    restart_platform
+    restart_platform || { print_failure_summary; exit 1; }
     ;;
   status)
     status_platform
     ;;
   stop)
     acquire_operation_lock
+    validate_positive_integer KNOWLEDGE_CENTER_STOP_TIMEOUT "$STOP_TIMEOUT"
+    validate_port_configuration
     reconcile_known_services
-    stop_all
+    stop_all || { print_failure_summary; exit 1; }
     ;;
   *)
     echo "用法：$0 {start|stop|restart|status} [--no-build]" >&2

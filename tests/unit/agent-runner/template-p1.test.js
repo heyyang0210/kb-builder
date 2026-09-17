@@ -2,8 +2,14 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('http');
 const crypto = require('crypto');
+const path = require('path');
 const { createKnowledgeCenterHandler } = require('../../../packages/agent-runner-core/routes/knowledge-center');
 const { createTemplateStore } = require('../../../packages/agent-runner-core/lib/template-store');
+const root = path.resolve(__dirname, '../../..');
+const outlineWorkbookConfig = {
+  OUTLINE_TEMPLATE_PATH: path.join(root, '大纲模板.xlsx'),
+  OUTLINE_SAMPLE_PATH: path.join(root, '基本数据库管理手册大纲示例.xlsx'),
+};
 
 function fixture() {
   const auth = http.createServer((req, res) => {
@@ -20,7 +26,7 @@ async function setup() {
   let state = { schemaVersion: 1, templates: [], audits: [] };
   const store = { read: () => structuredClone(state), transaction(mutator) { const draft = structuredClone(state); const result = mutator(draft); state = draft; return structuredClone(result); } };
   const templateStore = createTemplateStore({ store });
-  const handler = createKnowledgeCenterHandler({ config: { KNOWLEDGE_CENTER_PREFIX:'/knowledge-center', KNOWLEDGE_CENTER_ROOT:'/tmp', KNOWLEDGE_CENTER_ENTRY:'index.html', PINGCODE_PREFIX:'/pingcode', PINGCODE_ROOT:'/tmp', DOCUMENT_API_HOST:'127.0.0.1', DOCUMENT_API_PORT:1, PINGCODE_API_HOST:'127.0.0.1', PINGCODE_API_PORT:1, PLATFORM_CONTEXT_TIMEOUT_MS:1000, AUTH_API_HOST:'127.0.0.1', AUTH_API_PORT:auth.address().port, GITLAB_CONFIG_PATH:'/tmp/x', GITLAB_DOCUMENT_TYPES_PATH:'/tmp/x' }, stores: { knowledgeAssetsStore: { read:()=>({handbooks:[]}), write(){} }, templateStore }, sendFile(_p,res){res.writeHead(404);res.end();}, proxyAuth(){}, proxyCleaning(){}, proxyOutline(){}, proxyPermission(){}, handleIncrementalBuild(){} });
+  const handler = createKnowledgeCenterHandler({ config: { KNOWLEDGE_CENTER_PREFIX:'/knowledge-center', KNOWLEDGE_CENTER_ROOT:'/tmp', KNOWLEDGE_CENTER_ENTRY:'index.html', ...outlineWorkbookConfig, PINGCODE_PREFIX:'/pingcode', PINGCODE_ROOT:'/tmp', DOCUMENT_API_HOST:'127.0.0.1', DOCUMENT_API_PORT:1, PINGCODE_API_HOST:'127.0.0.1', PINGCODE_API_PORT:1, PLATFORM_CONTEXT_TIMEOUT_MS:1000, AUTH_API_HOST:'127.0.0.1', AUTH_API_PORT:auth.address().port, GITLAB_CONFIG_PATH:'/tmp/x', GITLAB_DOCUMENT_TYPES_PATH:'/tmp/x' }, stores: { knowledgeAssetsStore: { read:()=>({handbooks:[]}), write(){} }, templateStore }, sendFile(_p,res){res.writeHead(404);res.end();}, proxyAuth(){}, proxyCleaning(){}, proxyOutline(){}, proxyPermission(){}, handleIncrementalBuild(){} });
   const server = http.createServer((req,res)=>handler(req,res)); await new Promise(r=>server.listen(0,r));
   const close = () => Promise.all([new Promise(r=>server.close(r)), new Promise(r=>auth.close(r))]);
   return { base:`http://127.0.0.1:${server.address().port}`, close, snapshot: store.read };
