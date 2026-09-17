@@ -209,3 +209,14 @@
 ## 2026-09-16 10:02:00
 - 根因：Windows JDK 默认按 GBK 编译 UTF-8 Java 源码，Git Bash 调用 Windows Java 时又使用 Unix 冒号 classpath，分别导致不可映射字符和 `ClassNotFoundException: Main`。
 - 修复：YashanDB 存储启动脚本显式使用 UTF-8 编译；在 MSYS、MINGW 和 Cygwin 环境通过 `cygpath` 转换 JDBC 与 classes 路径，并使用 Windows 分号 classpath。账号、密码、JDBC 驱动和运行日志继续只保存在忽略的本地配置与运行目录。
+
+## 提示词-20260917-001：纠正远端选择并完成 GitLab 分支变基
+
+- 时间：2026-09-17 11:40:20 Asia/Shanghai；发起角色：用户；类型：Git 维护 / 纠偏。
+- 原始提示词摘要：用户要求将远端最新代码通过交互式 rebase 合入本地 `feat/knowledge-platform-generalization`；随后指出目标远端是 GitLab `heyang`，不是 GitHub `origin`。
+- 目标：以 `heyang/feat/knowledge-platform-generalization` 为真实基线，保留远端新增的大纲管理能力和本地两个提交，不推送远端，不发生功能回退。
+- 事实与纠偏：仓库同时配置 `origin` 和 `heyang`。此前只按字面命令 fetch/rebase `origin`，其服务器分支停在 `683e0bc`，因而 rebase 实际无变化；`heyang` 同名分支已到 `c982c4d`，包含 `5725b97` 的大纲管理迁移。未先核对 remote URL 和服务器 SHA 就宣称“远端最新代码已合入”，结论错误。
+- 执行：用户确认后 fetch `heyang`，将本地 `2/2` 分叉提交交互式变基到 `c982c4d`。冲突解决同时保留远端固定六列 XLSX、模板和示例下载、技术领域分工与大纲工作区，以及本地平台认证、模块注册、`OUTLINE_MANAGER` 权限和文档生成器语义化入口；未整侧覆盖。
+- 结果：本地功能提交重写为 `2f9bf8e`，GitLab MR 设计提交重写为 `03cf82b`，均位于 `c982c4d` 之上；本地相对 `heyang` 领先两个提交。
+- 验证：291 个 Node 文件语法通过；权限、模块注册、大纲视图和兼容基线 38 项通过；资产与工作台 15 项通过；临时注入声明版本 `xlsx@0.18.5` 后大纲服务 30 项通过；差异空白、冲突标记和提交序列检查通过。临时依赖目录已删除。
+- 可复用经验：存在多个 remote 时，“远端”必须通过 remote URL、服务器分支 SHA 和目标代码托管平台共同确认；remote 名称与用户口中的远端不一致时，应在变基前交互确认。
