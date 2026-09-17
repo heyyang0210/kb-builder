@@ -1,7 +1,19 @@
 # YashanDB 存储 SQL
 
-本目录保存存储服务实际使用的迁移脚本。当前模板管理和个人 GitLab OAuth 授权继续使用 `KC_RECORD` 聚合（命名空间、键、JSON/CLOB 载荷、修订号和软删除），不会额外创建未被运行时代码使用的重复业务表。OAuth 聚合使用 `gitlab-oauth/credentials`，其中令牌字段在进入存储服务前已经由业务层使用 AES-256-GCM 加密。
+本目录保存存储服务实际执行的版本化迁移。`Main.migrate()` 自动发现文件名符合 `NNN_*.sql` 的脚本，按文件名升序执行，并在 `KC_SCHEMA_MIGRATION` 中记录文件名和 SHA-256；已执行脚本不得原地修改，摘要不一致时服务拒绝启动。
 
-执行顺序由 `Main.migrate()` 明确调用 `001_schema_migration.sql` 至 `016_manual_build_task_items.sql`。其中 `001` 至 `004` 提供聚合记录和索引，`005` 至 `016` 提供手册、大纲、文档、技术领域和建设任务关系模型；脚本可重复执行，已存在对象不会被破坏。模板初始化使用 `tools/repository/initialize-templates.cjs`，默认 dry-run，传入 `--apply` 才写入开发数据库。
+## 当前迁移
 
-运行时模板版本通过聚合事务进行乐观 CAS，历史正文不可变。生产凭证由环境变量注入，不写入 SQL 或日志。
+| 文件 | 内容 |
+| --- | --- |
+| `001_schema_migration.sql` | Schema 迁移版本与摘要 |
+| `002_record.sql` | 兼容聚合记录 |
+| `003_migration_batch.sql` | 数据迁移批次与对账结果 |
+| `004_record_indexes.sql` | 聚合记录查询索引 |
+| `005_manuals.sql` | 手册、大纲、技术领域和责任映射目标模型，共 12 张业务表、15 个显式业务索引、0 个物理外键（唯一约束索引不重复创建） |
+
+手册与大纲采用稳定主体和版本分离模型：一本手册恰好对应一个 `KC_MANUAL_OUTLINE` 主体，大纲主体可以拥有多个 `KC_MANUAL_OUTLINE_VERSION`。大纲主体不重复保存手册的产品和名称，展示时通过 `MANUAL_ID` 获取。所有内部主键、模块内关联键以及权威目录 ID 均使用 `BIGINT`；内部主键由 `KC_BUSINESS_ID_SEQ` 自动生成。
+
+跨表归属、删除保护和发布一致性由 Repository 事务与巡检保证，不使用物理外键。CAS、组织和产品目录仍是权威源；业务表只保存稳定 ID。历史数据分阶段迁移期间 `KC_MANUAL.ORG_UNIT_ID` 可以为空，负责人没有稳定 CAS ID 时不写 `KC_MANUAL_OWNER`。
+
+生产凭证只通过运行时环境变量注入，不得写入 SQL、配置文件、迁移报告或日志。

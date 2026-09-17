@@ -37,9 +37,9 @@ export YASDB_STORAGE_URL=http://127.0.0.1:14210
 curl http://127.0.0.1:14210/health
 ```
 
-运行时默认自动创建缺失的 `KC_*` 表，不删除、不截断已有表。生产运行期应使用只拥有 `KC_*` 对象权限的账号；DBA 账号只用于初始化和迁移。
+运行时按 `NNN_*.sql` 自动发现迁移，按编号执行并校验 SHA-256；已执行脚本摘要变化时拒绝启动。建表、索引和业务导入均使用业务账号，服务不会自动删除或截断已有表。
 
-业务聚合均写入通用表 `KC_RECORD(NAMESPACE, RECORD_KEY, PAYLOAD, REVISION, DELETED)`，并通过命名空间隔离：`assets/catalog`（知识资产）、`incremental/state`（审核与发布）、`documents/metadata` 与 `documents/comments`（文档元数据和评论）、`outlines/metadata`（大纲）、`auth/state`（会话权限）、`templates/state`（模板）以及 `gitlab-oauth/credentials`（AES-256-GCM 加密的个人 GitLab 授权）。因此不为每个 JSON 聚合重复建表，避免结构漂移；DDL 由 `sql/002_record.sql` 统一维护。
+模板、认证等尚未关系化的兼容聚合继续写入 `KC_RECORD`。手册和大纲已切换到 `KC_MANUAL`、`KC_MANUAL_OUTLINE` 及其版本、节点、责任映射表，不再把核心业务事实写入 JSON/CLOB 聚合。
 
 SQL 迁移目录：
 
@@ -49,6 +49,7 @@ SQL 迁移目录：
 | `sql/002_record.sql` | JSON/CLOB 兼容记录、摘要、revision 和软删除 |
 | `sql/003_migration_batch.sql` | 文件迁移批次与对账结果 |
 | `sql/004_record_indexes.sql` | 聚合记录命名空间读取索引 |
+| `sql/005_manuals.sql` | 手册与大纲目标模型：12 张业务表、15 个显式业务索引、0 个物理外键（唯一约束索引不重复创建） |
 
 可通过 `YASDB_STORAGE_SQL_DIR` 指定经过发布审核的 SQL 目录；服务不会执行目录之外的 SQL。
 
@@ -61,7 +62,14 @@ node ../../tools/knowledge-processing/migrate-file-stores-to-yashandb.js
 node ../../tools/knowledge-processing/export-yashandb-storage.js /安全目录/knowledge-center-export.json
 ```
 
-迁移脚本默认只导入已登记的 JSON 源，不删除源文件。切换 `KNOWLEDGE_STORAGE_MODE=database` 前必须完成回读摘要对账。
+75 本历史手册迁移使用：
+
+```bash
+node ../../tools/knowledge-processing/migrate-manuals-to-target-yashandb.js
+node ../../tools/knowledge-processing/migrate-manuals-to-target-yashandb.js --apply
+```
+
+脚本默认 dry-run，以 `runtime/knowledge-center/knowledge-assets.json` 为源；`--apply` 通过真实手册 API 写入，并回读手册和大纲数量。迁移报告位于 `runtime/yashandb-migration/`。
 
 ## exp/imp 数据库迁移脚本
 
@@ -82,6 +90,12 @@ node ../../tools/knowledge-processing/export-yashandb-storage.js /安全目录/k
 - `YASDB_STORAGE_POOL_BORROW_TIMEOUT_MS`：连接池耗尽时的最大等待时间，默认 5000ms。
 
 连接归还池前会回滚未提交事务；现有 `If-Match` CAS 和 `SELECT ... FOR UPDATE` 语义保持不变。
+
+### 大纲与建设任务存储契约
+
+- `/v1/domain/outlines` 对外使用手册 `MANUAL_CODE`、大纲版本 `SOURCE_REF` 和节点 `NODE_KEY`；表间关联仅使用 BIGINT 内部键。
+- 大纲快照导入与技术领域责任分工在同一数据库事务内写入。
+- `/v1/domain/build-tasks` 从已发布大纲的当前责任项实时投影，`PATCH` 改派直接更新责任项，不依赖旧建设任务表。
 # 启动入口说明
 
 `start.sh` 是本模块的启动入口，负责启动 YashanDB 业务存储 HTTP 服务（默认端口 `14210`），不启动或停止 YashanDB 数据库实例，也不默认执行迁移。数据库 JDBC 地址、用户名和密码由 `config/database/` 统一配置，环境变量可覆盖配置；SQL 目录默认为本模块的 `sql/`。

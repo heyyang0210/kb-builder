@@ -28,11 +28,13 @@ import java.sql.Statement;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
@@ -43,6 +45,7 @@ import java.lang.reflect.Proxy;
 public final class Main {
     private static final String DRIVER = "com.yashandb.jdbc.Driver";
     private static final int DEFAULT_MAX_BODY_BYTES = 16 * 1024 * 1024;
+    private static final Pattern MIGRATION_FILE = Pattern.compile("^[0-9]{3}_[a-z0-9_]+\\.sql$");
 
     private final String jdbcUrl = required("YASDB_JDBC_URL");
     private final String username = required("YASDB_USERNAME");
@@ -99,38 +102,126 @@ public final class Main {
     }
 
     private void migrate() throws SQLException {
+        List<Path> migrations = migrationFiles();
+        if (migrations.isEmpty()) throw new SQLException("数据库迁移目录中没有 NNN_*.sql 文件：" + sqlDirectory);
         try (Connection connection = connection()) {
-            createTableIfMissing(connection, "KC_SCHEMA_MIGRATION", sql("001_schema_migration.sql"));
-            createTableIfMissing(connection, "KC_RECORD", sql("002_record.sql"));
-            createTableIfMissing(connection, "KC_MIGRATION_BATCH", sql("003_migration_batch.sql"));
-            StorageSchemaDao.createIndexIfMissing(connection, "IDX_KC_RECORD_NAMESPACE", sql("004_record_indexes.sql"));
-            createTableIfMissing(connection, "MANUALS", sql("005_manuals.sql"));
-            createTableIfMissing(connection, "DEPARTMENTS", sql("006_departments.sql"));
-            createTableIfMissing(connection, "TECH_DOMAINS", sql("007_tech_domains.sql"));
-            createTableIfMissing(connection, "PERSONNEL_DOMAINS", sql("008_personnel_domains.sql"));
-            createTableIfMissing(connection, "MANUAL_OUTLINE_VERSIONS", sql("009_manual_outline_versions.sql"));
-            createTableIfMissing(connection, "MANUAL_OUTLINE_NODES", sql("010_manual_outline_nodes.sql"));
-            createTableIfMissing(connection, "MANUAL_DOCUMENTS", sql("011_manual_documents.sql"));
-            createTableIfMissing(connection, "MANUAL_DOCUMENT_SECTIONS", sql("012_manual_document_sections.sql"));
-            createTableIfMissing(connection, "TECH_DOMAIN_PERSONNEL", sql("013_tech_domain_personnel.sql"));
-            createTableIfMissing(connection, "MANUAL_OUTLINE_NODE_DOMAINS", sql("014_manual_outline_node_domains.sql"));
-            createTableIfMissing(connection, "MANUAL_BUILD_TASKS", sql("015_manual_build_tasks.sql"));
-            createTableIfMissing(connection, "MANUAL_BUILD_TASK_ITEMS", sql("016_manual_build_task_items.sql"));
+            for (int index = 0; index < migrations.size(); index++) {
+                Path file = migrations.get(index);
+                String version = file.getFileName().toString().replaceFirst("\\.sql$", "");
+                String ddl = readSql(file);
+                String checksum = sha256(ddl);
+                boolean migrationTableExists = tableExists(connection, "KC_SCHEMA_MIGRATION");
+                if (!migrationTableExists && index != 0) {
+                    throw new SQLException("首个迁移未创建 KC_SCHEMA_MIGRATION：" + migrations.get(0).getFileName());
+                }
+                if (migrationTableExists && migrationApplied(connection, version, checksum)) continue;
+                try {
+                    executeSqlScript(connection, ddl, file.getFileName().toString());
+                    if (!tableExists(connection, "KC_SCHEMA_MIGRATION")) {
+                        throw new SQLException("迁移未创建 KC_SCHEMA_MIGRATION：" + file.getFileName());
+                    }
+                    recordMigration(connection, version, checksum);
+                    connection.commit();
+                } catch (SQLException error) {
+                    connection.rollback();
+                    throw error;
+                }
+            }
             seedTechDomains(connection);
-            backfillBuildTaskAssignees(connection);
-            recordMigration(connection, "001_record_store", sha256("KC_SCHEMA_MIGRATION|KC_RECORD|KC_MIGRATION_BATCH"));
-            recordMigration(connection, "002_record_indexes", sha256("IDX_KC_RECORD_NAMESPACE|NAMESPACE,DELETED,UPDATED_AT"));
-            recordMigration(connection, "003_manual_outline_domain", sha256(
-                "MANUALS|DEPARTMENTS|TECH_DOMAINS|PERSONNEL_DOMAINS|MANUAL_OUTLINE_VERSIONS|MANUAL_OUTLINE_NODES|MANUAL_DOCUMENTS|MANUAL_DOCUMENT_SECTIONS"
-            ));
-            recordMigration(connection, "004_outline_governance_tasks", sha256(
-                "TECH_DOMAIN_PERSONNEL|MANUAL_OUTLINE_NODE_DOMAINS|MANUAL_BUILD_TASKS|MANUAL_BUILD_TASK_ITEMS"
-            ));
-            recordMigration(connection, "005_build_task_leader_assignment", sha256(
-                "MANUAL_BUILD_TASK_ITEMS.ASSIGNEE_ID|MANUAL_BUILD_TASK_ITEMS.ASSIGNEE_NAME|MANUAL_BUILD_TASK_ITEMS.STATUS|MANUAL_BUILD_TASK_ITEMS.ASSIGNED_AT"
-            ));
             connection.commit();
         }
+    }
+
+    private List<Path> migrationFiles() throws SQLException {
+        try (var files = Files.list(sqlDirectory)) {
+            return files.filter(Files::isRegularFile)
+                .filter(file -> MIGRATION_FILE.matcher(file.getFileName().toString()).matches())
+                .sorted(Comparator.comparing(file -> file.getFileName().toString()))
+                .toList();
+        } catch (IOException error) {
+            throw new SQLException("读取数据库迁移目录失败：" + sqlDirectory, error);
+        }
+    }
+
+    private String readSql(Path file) throws SQLException {
+        try {
+            return Files.readString(file, StandardCharsets.UTF_8);
+        } catch (IOException error) {
+            throw new SQLException("读取数据库迁移 SQL 失败：" + file, error);
+        }
+    }
+
+    private boolean tableExists(Connection connection, String table) throws SQLException {
+        try (PreparedStatement query = connection.prepareStatement("SELECT COUNT(*) FROM USER_TABLES WHERE TABLE_NAME = ?")) {
+            query.setString(1, table);
+            try (ResultSet result = query.executeQuery()) {
+                result.next();
+                return result.getLong(1) > 0;
+            }
+        }
+    }
+
+    private boolean migrationApplied(Connection connection, String version, String checksum) throws SQLException {
+        try (PreparedStatement query = connection.prepareStatement("SELECT CHECKSUM FROM KC_SCHEMA_MIGRATION WHERE VERSION_ID = ?")) {
+            query.setString(1, version);
+            try (ResultSet result = query.executeQuery()) {
+                if (!result.next()) return false;
+                if (!checksum.equals(result.getString(1).trim())) {
+                    throw new SQLException("数据库迁移摘要不一致：" + version);
+                }
+                return true;
+            }
+        }
+    }
+
+    private void executeSqlScript(Connection connection, String script, String filename) throws SQLException {
+        List<String> statements = splitSqlStatements(script);
+        if (statements.isEmpty()) throw new SQLException("数据库迁移脚本为空：" + filename);
+        try (Statement statement = connection.createStatement()) {
+            for (String sql : statements) statement.execute(sql);
+        } catch (SQLException error) {
+            throw new SQLException("执行数据库迁移失败：" + filename + "：" + error.getMessage(), error);
+        }
+    }
+
+    static List<String> splitSqlStatements(String script) throws SQLException {
+        List<String> statements = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        boolean singleQuoted = false;
+        boolean doubleQuoted = false;
+        boolean lineComment = false;
+        boolean blockComment = false;
+        for (int index = 0; index < script.length(); index++) {
+            char ch = script.charAt(index);
+            char next = index + 1 < script.length() ? script.charAt(index + 1) : '\0';
+            if (lineComment) {
+                if (ch == '\n') { lineComment = false; current.append(ch); }
+                continue;
+            }
+            if (blockComment) {
+                if (ch == '*' && next == '/') { blockComment = false; index++; }
+                continue;
+            }
+            if (!singleQuoted && !doubleQuoted && ch == '-' && next == '-') { lineComment = true; index++; continue; }
+            if (!singleQuoted && !doubleQuoted && ch == '/' && next == '*') { blockComment = true; index++; continue; }
+            if (!doubleQuoted && ch == '\'' && (index == 0 || script.charAt(index - 1) != '\\')) {
+                if (singleQuoted && next == '\'') { current.append(ch).append(next); index++; continue; }
+                singleQuoted = !singleQuoted;
+            } else if (!singleQuoted && ch == '"') {
+                doubleQuoted = !doubleQuoted;
+            }
+            if (!singleQuoted && !doubleQuoted && ch == ';') {
+                String sql = current.toString().trim();
+                if (!sql.isEmpty()) statements.add(sql);
+                current.setLength(0);
+            } else {
+                current.append(ch);
+            }
+        }
+        if (singleQuoted || doubleQuoted || blockComment) throw new SQLException("数据库迁移 SQL 存在未闭合字符串或注释");
+        String tail = current.toString().trim();
+        if (!tail.isEmpty()) statements.add(tail);
+        return statements;
     }
 
     private void seedTechDomains(Connection connection) throws SQLException {
@@ -147,118 +238,22 @@ public final class Main {
                 if (domainId == null) {
                     continue;
                 }
-                try (PreparedStatement query = connection.prepareStatement("SELECT ID FROM TECH_DOMAINS WHERE ID = ?")) {
-                    query.setString(1, domainId);
+                try (PreparedStatement query = connection.prepareStatement("SELECT TECH_DOMAIN_ID FROM KC_TECH_DOMAIN WHERE DOMAIN_CODE = ?")) {
+                    query.setString(1, code);
                     try (ResultSet result = query.executeQuery()) {
                         if (!result.next()) {
-                            try (PreparedStatement insert = connection.prepareStatement("INSERT INTO TECH_DOMAINS(ID, CODE, NAME) VALUES (?, ?, ?)")) {
-                                insert.setString(1, domainId);
-                                insert.setString(2, code);
-                                insert.setString(3, name);
+                            try (PreparedStatement insert = connection.prepareStatement("INSERT INTO KC_TECH_DOMAIN(DOMAIN_CODE, DOMAIN_NAME, STATE, CREATED_BY, UPDATED_BY) VALUES (?, ?, 'ACTIVE', 'system:seed', 'system:seed')")) {
+                                insert.setString(1, code);
+                                insert.setString(2, name);
                                 insert.executeUpdate();
                             }
                         }
                     }
                 }
-                Map<String, Object> leader = domain.get("leader") instanceof Map<?, ?> map ? castMap(map) : null;
-                if (leader != null) {
-                    seedTechDomainPerson(connection, domainId, leader, "leader");
-                }
-                for (Map<String, Object> member : listOfMaps(domain.get("members"))) {
-                    seedTechDomainPerson(connection, domainId, member, "member");
-                }
+                // 人员 ID 必须来自 CAS/企业目录；种子文件中的演示人员不进入目标业务表。
             }
         } catch (JsonParseException | IOException error) {
             throw new SQLException("技术领域种子配置读取失败：" + techDomainSeedFile, error);
-        }
-    }
-
-    private void seedTechDomainPerson(Connection connection, String domainId, Map<String, Object> person, String role) throws SQLException {
-        String personId = coalesce(person.get("id"), person.get("personId"));
-        String personName = coalesce(person.get("name"), person.get("personName"), personId);
-        if (personId == null) {
-            return;
-        }
-        String id = "domain-person_" + sha256(domainId + "|" + personId).substring(0, 16);
-        try (PreparedStatement query = connection.prepareStatement("SELECT ID FROM TECH_DOMAIN_PERSONNEL WHERE DOMAIN_ID = ? AND PERSON_ID = ?")) {
-            query.setString(1, domainId);
-            query.setString(2, personId);
-            try (ResultSet result = query.executeQuery()) {
-                if (result.next()) {
-                    try (PreparedStatement update = connection.prepareStatement("UPDATE TECH_DOMAIN_PERSONNEL SET PERSON_NAME=?, ROLE_CODE=?, STATUS='active', UPDATED_AT=CURRENT_TIMESTAMP WHERE DOMAIN_ID=? AND PERSON_ID=?")) {
-                        update.setString(1, personName);
-                        update.setString(2, role);
-                        update.setString(3, domainId);
-                        update.setString(4, personId);
-                        update.executeUpdate();
-                    }
-                    return;
-                }
-            }
-        }
-        try (PreparedStatement insert = connection.prepareStatement(
-            "INSERT INTO TECH_DOMAIN_PERSONNEL(ID, DOMAIN_ID, PERSON_ID, PERSON_NAME, ROLE_CODE, STATUS) VALUES (?, ?, ?, ?, ?, 'active')")) {
-            insert.setString(1, id);
-            insert.setString(2, domainId);
-            insert.setString(3, personId);
-            insert.setString(4, personName);
-            insert.setString(5, role);
-            insert.executeUpdate();
-        }
-    }
-
-    private void backfillBuildTaskAssignees(Connection connection) throws SQLException {
-        List<Map<String, Object>> pending = new ArrayList<>();
-        String sql = "SELECT I.ID, T.DOMAIN_LEADER_ID, T.DOMAIN_LEADER_NAME FROM MANUAL_BUILD_TASK_ITEMS I JOIN MANUAL_BUILD_TASKS T ON T.ID = I.TASK_ID WHERE I.ASSIGNEE_ID IS NULL AND T.DOMAIN_LEADER_ID IS NOT NULL";
-        try (PreparedStatement query = connection.prepareStatement(sql); ResultSet result = query.executeQuery()) {
-            while (result.next()) {
-                pending.add(mapOf(
-                    "itemId", result.getString(1),
-                    "leaderId", result.getString(2),
-                    "leaderName", result.getString(3)
-                ));
-            }
-        }
-        for (Map<String, Object> item : pending) {
-            try (PreparedStatement update = connection.prepareStatement(
-                "UPDATE MANUAL_BUILD_TASK_ITEMS SET ASSIGNEE_ID=?, ASSIGNEE_NAME=?, STATUS='assigned', ASSIGNED_AT=?, UPDATED_AT=CURRENT_TIMESTAMP WHERE ID=? AND ASSIGNEE_ID IS NULL")) {
-                update.setString(1, String.valueOf(item.get("leaderId")));
-                update.setString(2, item.get("leaderName") == null ? null : String.valueOf(item.get("leaderName")));
-                update.setString(3, Instant.now().toString());
-                update.setString(4, String.valueOf(item.get("itemId")));
-                update.executeUpdate();
-            }
-        }
-    }
-
-    private String sql(String filename) throws SQLException {
-        Path file = sqlDirectory.resolve(filename).normalize();
-        if (!file.startsWith(sqlDirectory) || !Files.isRegularFile(file)) {
-            throw new SQLException("找不到数据库迁移 SQL：" + file);
-        }
-        try {
-            return Files.readString(file, StandardCharsets.UTF_8);
-        } catch (IOException error) {
-            throw new SQLException("读取数据库迁移 SQL 失败：" + file, error);
-        }
-    }
-
-    private void createTableIfMissing(Connection connection, String table, String ddl) throws SQLException {
-        try (PreparedStatement query = connection.prepareStatement("SELECT COUNT(*) FROM USER_TABLES WHERE TABLE_NAME = ?")) {
-            query.setString(1, table);
-            try (ResultSet result = query.executeQuery()) {
-                result.next();
-                if (result.getLong(1) > 0) {
-                    return;
-                }
-            }
-        }
-        try (Statement statement = connection.createStatement()) {
-            String executable = ddl.trim();
-            if (executable.endsWith(";")) {
-                executable = executable.substring(0, executable.length() - 1).trim();
-            }
-            statement.execute(executable);
         }
     }
 
@@ -715,13 +710,33 @@ public final class Main {
         for (Map<String, Object> handbook : handbooks) {
             upsertManual(connection, handbook, payload);
         }
+        recordManualMigrationBatch(connection, payload, handbooks);
         return projectHandbooks(connection);
+    }
+
+    private void recordManualMigrationBatch(Connection connection, Map<String, Object> payload, List<Map<String, Object>> handbooks) throws SQLException {
+        Map<String, Object> source = asMapOrEmpty(payload.get("source"));
+        String sourceSha = coalesce(source.get("sha256"));
+        if (!"knowledge-assets-json".equals(source.get("type")) || sourceSha == null) return;
+        String batchId = "MANUAL-" + sourceSha.substring(0, Math.min(32, sourceSha.length()));
+        try (PreparedStatement query = connection.prepareStatement("SELECT BATCH_ID FROM KC_MIGRATION_BATCH WHERE BATCH_ID=?")) {
+            query.setString(1, batchId);
+            try (ResultSet result = query.executeQuery()) { if (result.next()) return; }
+        }
+        try (PreparedStatement insert = connection.prepareStatement(
+            "INSERT INTO KC_MIGRATION_BATCH(BATCH_ID, SOURCE_KIND, STATUS, RECORD_COUNT, SOURCE_SHA256, RESULT_SHA256, COMPLETED_AT) VALUES (?, 'MANUAL_JSON', 'COMPLETED', ?, ?, ?, CURRENT_TIMESTAMP)")) {
+            insert.setString(1, batchId);
+            insert.setLong(2, handbooks.size());
+            insert.setString(3, sourceSha);
+            insert.setString(4, sha256(Json.stringify(handbooks)));
+            insert.executeUpdate();
+        }
     }
 
     private Map<String, Object> projectTechDomains(Connection connection) throws SQLException {
         List<Map<String, Object>> domains = new ArrayList<>();
         Map<String, Map<String, Object>> byId = new LinkedHashMap<>();
-        String domainSql = "SELECT ID, CODE, NAME FROM TECH_DOMAINS ORDER BY NAME, ID";
+        String domainSql = "SELECT TECH_DOMAIN_ID, DOMAIN_CODE, DOMAIN_NAME FROM KC_TECH_DOMAIN WHERE STATE='ACTIVE' ORDER BY DOMAIN_NAME, TECH_DOMAIN_ID";
         try (PreparedStatement statement = connection.prepareStatement(domainSql); ResultSet result = statement.executeQuery()) {
             while (result.next()) {
                 Map<String, Object> domain = new LinkedHashMap<>();
@@ -734,7 +749,7 @@ public final class Main {
                 byId.put(result.getString(1), domain);
             }
         }
-        String personnelSql = "SELECT DOMAIN_ID, PERSON_ID, PERSON_NAME, ROLE_CODE, STATUS FROM TECH_DOMAIN_PERSONNEL WHERE STATUS = 'active' ORDER BY PERSON_NAME, PERSON_ID";
+        String personnelSql = "SELECT TECH_DOMAIN_ID, PRINCIPAL_ID, MEMBER_ROLE FROM KC_TECH_DOMAIN_MEMBER WHERE STATE = 'ACTIVE' ORDER BY PRINCIPAL_ID";
         try (PreparedStatement statement = connection.prepareStatement(personnelSql); ResultSet result = statement.executeQuery()) {
             while (result.next()) {
                 Map<String, Object> domain = byId.get(result.getString(1));
@@ -743,10 +758,10 @@ public final class Main {
                 }
                 Map<String, Object> person = mapOf(
                     "id", result.getString(2),
-                    "name", result.getString(3),
-                    "role", result.getString(4)
+                    "name", result.getString(2),
+                    "role", result.getString(3).toLowerCase()
                 );
-                if ("leader".equals(result.getString(4))) {
+                if ("LEADER".equals(result.getString(3))) {
                     domain.put("leader", person);
                 } else {
                     @SuppressWarnings("unchecked")
@@ -759,18 +774,24 @@ public final class Main {
     }
 
     private Map<String, Object> outlineHeader(Connection connection, String outlineId) throws SQLException {
-        String sql = "SELECT ID, MANUAL_ID, STATE, EDIT_VERSION FROM MANUAL_OUTLINE_VERSIONS WHERE ID = ?";
+        String sql = "SELECT V.OUTLINE_VERSION_ID, M.MANUAL_CODE, V.STATE, V.ROW_VERSION, O.OUTLINE_ID, "
+            + "COALESCE(V.SOURCE_REF, TO_CHAR(V.OUTLINE_VERSION_ID)) "
+            + "FROM KC_MANUAL_OUTLINE_VERSION V JOIN KC_MANUAL_OUTLINE O ON O.OUTLINE_ID=V.OUTLINE_ID "
+            + "JOIN KC_MANUAL M ON M.MANUAL_ID=O.MANUAL_ID WHERE V.OUTLINE_VERSION_ID = ?";
+        long internalId = resolveOutlineVersionId(connection, outlineId);
         try (PreparedStatement statement = connection.prepareStatement(sql)) {
-            statement.setString(1, outlineId);
+            statement.setLong(1, internalId);
             try (ResultSet result = statement.executeQuery()) {
                 if (!result.next()) {
                     throw new SQLException("OUTLINE_NOT_FOUND");
                 }
                 return mapOf(
-                    "id", result.getString(1),
+                    "internalId", result.getLong(1),
+                    "id", result.getString(6),
                     "manualId", result.getString(2),
                     "state", result.getString(3),
-                    "editVersion", result.getLong(4)
+                    "editVersion", result.getLong(4),
+                    "outlineSubjectId", result.getLong(5)
                 );
             }
         }
@@ -778,9 +799,12 @@ public final class Main {
 
     private Map<String, List<String>> explicitNodeDomains(Connection connection, String outlineId) throws SQLException {
         Map<String, List<String>> assignments = new LinkedHashMap<>();
-        String sql = "SELECT NODE_ID, TECH_DOMAIN_ID FROM MANUAL_OUTLINE_NODE_DOMAINS WHERE OUTLINE_VERSION_ID = ? ORDER BY NODE_ID, TECH_DOMAIN_ID";
+        String sql = "SELECT N.NODE_KEY, I.TECH_DOMAIN_ID FROM KC_MANUAL_OUTLINE_RESP_ITEM I "
+            + "JOIN KC_MANUAL_OUTLINE_NODE N ON N.OUTLINE_NODE_ID=I.OUTLINE_NODE_ID "
+            + "WHERE I.RESP_VERSION_ID=(SELECT CURRENT_RESP_VERSION_ID FROM KC_MANUAL_OUTLINE_VERSION WHERE OUTLINE_VERSION_ID=?) "
+            + "ORDER BY N.SORT_NO, I.DOMAIN_ROLE DESC, I.TECH_DOMAIN_ID";
         try (PreparedStatement statement = connection.prepareStatement(sql)) {
-            statement.setString(1, outlineId);
+            statement.setLong(1, resolveOutlineVersionId(connection, outlineId));
             try (ResultSet result = statement.executeQuery()) {
                 while (result.next()) {
                     assignments.computeIfAbsent(result.getString(1), ignored -> new ArrayList<>()).add(result.getString(2));
@@ -833,28 +857,19 @@ public final class Main {
                 "techDomainIds", domainIds
             ));
         }
-        List<Map<String, Object>> tasks = projectBuildTasksForOutline(connection, outlineId);
-        Map<String, Map<String, Object>> taskItemsByKey = new LinkedHashMap<>();
-        for (Map<String, Object> task : tasks) {
-            for (Map<String, Object> item : listOfMaps(task.get("items"))) {
-                String key = coalesce(item.get("documentId")) + "|" + coalesce(item.get("techDomainId"));
-                taskItemsByKey.put(key, item);
-            }
-        }
         List<Map<String, Object>> ownedEffective = new ArrayList<>();
         for (Map<String, Object> item : effective) {
             Map<String, Object> owned = new LinkedHashMap<>(item);
             List<Map<String, Object>> ownerships = new ArrayList<>();
             for (Object domainValue : listValues(item.get("techDomainIds"))) {
                 String domainId = String.valueOf(domainValue);
-                Map<String, Object> taskItem = taskItemsByKey.get(coalesce(item.get("documentId")) + "|" + domainId);
                 Map<String, Object> ownership = new LinkedHashMap<>();
                 ownership.put("techDomainId", domainId);
                 ownership.put("techDomainName", techDomainName(connection, domainId));
-                ownership.put("taskId", taskItem == null ? null : taskItem.get("taskId"));
-                ownership.put("assigneeId", taskItem == null ? null : taskItem.get("assigneeId"));
-                ownership.put("assigneeName", taskItem == null ? null : taskItem.get("assigneeName"));
-                ownership.put("status", taskItem == null ? "not_published" : taskItem.get("status"));
+                ownership.put("taskId", null);
+                ownership.put("assigneeId", null);
+                ownership.put("assigneeName", null);
+                ownership.put("status", "pending_binding");
                 ownerships.add(ownership);
             }
             owned.put("ownerships", ownerships);
@@ -870,7 +885,7 @@ public final class Main {
         body.put("assignments", assignments);
         body.put("effectiveDocumentAssignments", ownedEffective);
         body.put("techDomains", projectTechDomains(connection).get("techDomains"));
-        body.put("tasks", tasks);
+        body.put("tasks", projectBuildTasksForOutline(connection, outlineId));
         body.put("summary", mapOf(
             "totalDocuments", documents,
             "assignedDocuments", assignedDocuments,
@@ -926,8 +941,9 @@ public final class Main {
 
     private Map<String, Object> saveOutlineGovernance(Connection connection, String outlineId, Map<String, Object> payload) throws SQLException {
         Map<String, Object> header = outlineHeader(connection, outlineId);
-        boolean published = "published".equals(header.get("state"));
-        if ("superseded".equals(header.get("state"))) {
+        long internalOutlineId = ((Number) header.get("internalId")).longValue();
+        boolean published = "PUBLISHED".equals(header.get("state"));
+        if ("SUPERSEDED".equals(header.get("state")) || "ARCHIVED".equals(header.get("state"))) {
             throw new SQLException("OUTLINE_IMMUTABLE");
         }
         if (payload.containsKey("editVersion") && Long.parseLong(String.valueOf(payload.get("editVersion"))) != ((Number) header.get("editVersion")).longValue()) {
@@ -984,59 +1000,92 @@ public final class Main {
             for (Map<String, Object> item : descriptions) {
                 String nodeId = coalesce(item.get("nodeId"));
             String description = item.get("description") == null ? "" : String.valueOf(item.get("description"));
-                try (PreparedStatement update = connection.prepareStatement("UPDATE MANUAL_OUTLINE_NODES SET DESCRIPTION = ?, UPDATED_AT = CURRENT_TIMESTAMP WHERE ID = ? AND OUTLINE_VERSION_ID = ?")) {
+                try (PreparedStatement update = connection.prepareStatement("UPDATE KC_MANUAL_OUTLINE_NODE SET NODE_DESCRIPTION = ?, UPDATED_BY=?, UPDATED_AT = CURRENT_TIMESTAMP WHERE NODE_KEY = ? AND OUTLINE_VERSION_ID = ?")) {
                     update.setCharacterStream(1, new StringReader(description));
-                    update.setString(2, nodeId);
-                    update.setString(3, outlineId);
-                    update.executeUpdate();
-                }
-                try (PreparedStatement update = connection.prepareStatement("UPDATE MANUAL_DOCUMENTS SET SUMMARY = ?, UPDATED_AT = CURRENT_TIMESTAMP WHERE OUTLINE_VERSION_ID = ? AND OUTLINE_NODE_ID = ?")) {
-                    update.setCharacterStream(1, new StringReader(description));
-                    update.setString(2, outlineId);
+                    update.setString(2, coalesce(payload.get("assignedBy"), "system:api"));
                     update.setString(3, nodeId);
+                    update.setLong(4, internalOutlineId);
                     update.executeUpdate();
                 }
             }
         }
         if (payload.containsKey("assignments")) {
-            try (PreparedStatement delete = connection.prepareStatement("DELETE FROM MANUAL_OUTLINE_NODE_DOMAINS WHERE OUTLINE_VERSION_ID = ?")) {
-                delete.setString(1, outlineId);
-                delete.executeUpdate();
-            }
-            for (Map<String, Object> assignment : assignments) {
-                String nodeId = coalesce(assignment.get("nodeId"));
-                for (Object domainValue : listValues(assignment.get("techDomainIds"))) {
-                    String domainId = String.valueOf(domainValue);
-                    String id = "node-domain_" + sha256(outlineId + "|" + nodeId + "|" + domainId).substring(0, 16);
-                    try (PreparedStatement insert = connection.prepareStatement(
-                        "INSERT INTO MANUAL_OUTLINE_NODE_DOMAINS(ID, MANUAL_ID, OUTLINE_VERSION_ID, NODE_ID, TECH_DOMAIN_ID, ASSIGNMENT_SOURCE, ASSIGNED_BY) VALUES (?, ?, ?, ?, ?, 'explicit', ?)")) {
-                        insert.setString(1, id);
-                        insert.setString(2, String.valueOf(header.get("manualId")));
-                        insert.setString(3, outlineId);
-                        insert.setString(4, nodeId);
-                        insert.setString(5, domainId);
-                        insert.setString(6, coalesce(payload.get("assignedBy")));
-                        insert.executeUpdate();
-                    }
-                }
-            }
-            if (published) {
-                synchronizeBuildTasks(connection, String.valueOf(header.get("manualId")), outlineId, effectiveAssignments(nodes, assignments), Instant.now().toString());
-            }
+            replaceResponsibilityItems(connection, internalOutlineId, effectiveAssignments(nodes, assignments), coalesce(payload.get("assignedBy"), "system:api"));
         }
-        try (PreparedStatement update = connection.prepareStatement("UPDATE MANUAL_OUTLINE_VERSIONS SET EDIT_VERSION = EDIT_VERSION + 1, UPDATED_AT = CURRENT_TIMESTAMP WHERE ID = ?")) {
-            update.setString(1, outlineId);
+        try (PreparedStatement update = connection.prepareStatement("UPDATE KC_MANUAL_OUTLINE_VERSION SET ROW_VERSION = ROW_VERSION + 1, UPDATED_BY=?, UPDATED_AT = CURRENT_TIMESTAMP WHERE OUTLINE_VERSION_ID = ?")) {
+            update.setString(1, coalesce(payload.get("assignedBy"), "system:api"));
+            update.setLong(2, internalOutlineId);
             update.executeUpdate();
         }
         return projectOutlineGovernance(connection, outlineId);
     }
 
+    private void replaceResponsibilityItems(Connection connection, long outlineId, List<Map<String, Object>> effective, String actor) throws SQLException {
+        long respVersionId = ensureResponsibilityVersion(connection, outlineId, actor);
+        try (PreparedStatement delete = connection.prepareStatement("DELETE FROM KC_MANUAL_OUTLINE_RESP_ITEM WHERE RESP_VERSION_ID=?")) {
+            delete.setLong(1, respVersionId);
+            delete.executeUpdate();
+        }
+        for (Map<String, Object> item : effective) {
+            long nodeId = resolveOutlineNodeId(connection, outlineId, String.valueOf(item.get("nodeId")));
+            List<Object> domains = listValues(item.get("techDomainIds"));
+            for (int index = 0; index < domains.size(); index++) {
+                String domainId = String.valueOf(domains.get(index));
+                Long ownerId = techDomainLeaderId(connection, Long.parseLong(domainId));
+                try (PreparedStatement insert = connection.prepareStatement(
+                    "INSERT INTO KC_MANUAL_OUTLINE_RESP_ITEM(RESP_VERSION_ID, OUTLINE_NODE_ID, TECH_DOMAIN_ID, DOMAIN_ROLE, OWNER_PRINCIPAL_ID, BINDING_STATUS, CREATED_BY, UPDATED_BY) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")) {
+                    insert.setLong(1, respVersionId);
+                    insert.setLong(2, nodeId);
+                    insert.setLong(3, Long.parseLong(domainId));
+                    insert.setString(4, index == 0 ? "PRIMARY" : "COLLABORATOR");
+                    if (ownerId == null) insert.setNull(5, java.sql.Types.BIGINT); else insert.setLong(5, ownerId);
+                    insert.setString(6, ownerId == null ? "PENDING" : "BOUND");
+                    insert.setString(7, actor);
+                    insert.setString(8, actor);
+                    insert.executeUpdate();
+                }
+            }
+        }
+        try (PreparedStatement update = connection.prepareStatement("UPDATE KC_MANUAL_OUTLINE_RESP_VERSION SET MAPPING_SHA256=?, ROW_VERSION=ROW_VERSION+1, UPDATED_BY=?, UPDATED_AT=CURRENT_TIMESTAMP WHERE RESP_VERSION_ID=?")) {
+            update.setString(1, sha256(Json.stringify(effective)));
+            update.setString(2, actor);
+            update.setLong(3, respVersionId);
+            update.executeUpdate();
+        }
+    }
+
+    private long ensureResponsibilityVersion(Connection connection, long outlineId, String actor) throws SQLException {
+        try (PreparedStatement query = connection.prepareStatement("SELECT CURRENT_RESP_VERSION_ID FROM KC_MANUAL_OUTLINE_VERSION WHERE OUTLINE_VERSION_ID=? FOR UPDATE")) {
+            query.setLong(1, outlineId);
+            try (ResultSet result = query.executeQuery()) {
+                if (!result.next()) throw new SQLException("OUTLINE_NOT_FOUND");
+                long current = result.getLong(1);
+                if (!result.wasNull()) return current;
+            }
+        }
+        long versionNo = 1L;
+        try (PreparedStatement query = connection.prepareStatement("SELECT COALESCE(MAX(VERSION_NO),0)+1 FROM KC_MANUAL_OUTLINE_RESP_VERSION WHERE OUTLINE_VERSION_ID=?")) {
+            query.setLong(1, outlineId);
+            try (ResultSet result = query.executeQuery()) { result.next(); versionNo = result.getLong(1); }
+        }
+        long id = nextBusinessId(connection);
+        try (PreparedStatement insert = connection.prepareStatement("INSERT INTO KC_MANUAL_OUTLINE_RESP_VERSION(RESP_VERSION_ID, OUTLINE_VERSION_ID, VERSION_NO, STATE, MAPPING_SHA256, CREATED_BY, UPDATED_BY) VALUES (?, ?, ?, 'DRAFT', ?, ?, ?)")) {
+            insert.setLong(1, id); insert.setLong(2, outlineId); insert.setLong(3, versionNo);
+            insert.setString(4, sha256("[]")); insert.setString(5, actor); insert.setString(6, actor); insert.executeUpdate();
+        }
+        try (PreparedStatement update = connection.prepareStatement("UPDATE KC_MANUAL_OUTLINE_VERSION SET CURRENT_RESP_VERSION_ID=? WHERE OUTLINE_VERSION_ID=?")) {
+            update.setLong(1, id); update.setLong(2, outlineId); update.executeUpdate();
+        }
+        return id;
+    }
+
     private Map<String, Object> publishOutline(Connection connection, String outlineId, Map<String, Object> payload) throws SQLException {
         Map<String, Object> header = outlineHeader(connection, outlineId);
-        if ("published".equals(header.get("state"))) {
+        long internalOutlineId = ((Number) header.get("internalId")).longValue();
+        if ("PUBLISHED".equals(header.get("state"))) {
             return projectOutlineGovernance(connection, outlineId);
         }
-        if ("superseded".equals(header.get("state"))) {
+        if ("SUPERSEDED".equals(header.get("state")) || "ARCHIVED".equals(header.get("state"))) {
             throw new SQLException("OUTLINE_IMMUTABLE");
         }
         if (payload.containsKey("editVersion") && Long.parseLong(String.valueOf(payload.get("editVersion"))) != ((Number) header.get("editVersion")).longValue()) {
@@ -1045,196 +1094,97 @@ public final class Main {
         Map<String, Object> governance = projectOutlineGovernance(connection, outlineId);
         List<Map<String, Object>> effective = listOfMaps(governance.get("effectiveDocumentAssignments"));
         List<Map<String, Object>> missing = new ArrayList<>();
-        Set<String> domainIds = new java.util.LinkedHashSet<>();
         for (Map<String, Object> item : effective) {
             List<Object> values = listValues(item.get("techDomainIds"));
             if (values.isEmpty()) {
                 missing.add(mapOf("nodeId", item.get("nodeId"), "documentId", item.get("documentId"), "title", item.get("title")));
-            } else {
-                for (Object value : values) domainIds.add(String.valueOf(value));
             }
         }
         if (!missing.isEmpty()) {
             throw new GovernanceValidationException("OUTLINE_RESPONSIBILITY_REQUIRED", "发布前必须完成所有 document 的技术领域分工", 422, mapOf("missingDocuments", missing));
         }
-        try (PreparedStatement update = connection.prepareStatement("UPDATE MANUAL_OUTLINE_VERSIONS SET STATE = 'superseded', UPDATED_AT = CURRENT_TIMESTAMP WHERE MANUAL_ID = ? AND ID <> ? AND STATE = 'published'")) {
-            update.setString(1, String.valueOf(header.get("manualId")));
-            update.setString(2, outlineId);
+        String actor = coalesce(payload.get("principalId"), payload.get("publishedBy"), "system:api");
+        long subjectId = ((Number) header.get("outlineSubjectId")).longValue();
+        try (PreparedStatement update = connection.prepareStatement("UPDATE KC_MANUAL_OUTLINE_VERSION SET STATE='SUPERSEDED', UPDATED_BY=?, UPDATED_AT=CURRENT_TIMESTAMP WHERE OUTLINE_ID=? AND OUTLINE_VERSION_ID<>? AND STATE='PUBLISHED'")) {
+            update.setString(1, actor);
+            update.setLong(2, subjectId);
+            update.setLong(3, internalOutlineId);
             update.executeUpdate();
         }
-        String publishedAt = Instant.now().toString();
-        try (PreparedStatement update = connection.prepareStatement("UPDATE MANUAL_OUTLINE_VERSIONS SET STATE = 'published', PUBLISHED_AT = ?, UPDATED_AT = CURRENT_TIMESTAMP WHERE ID = ?")) {
-            update.setString(1, publishedAt);
-            update.setString(2, outlineId);
+        Timestamp publishedAt = Timestamp.from(Instant.now());
+        try (PreparedStatement update = connection.prepareStatement("UPDATE KC_MANUAL_OUTLINE_VERSION SET STATE='PUBLISHED', PUBLISHED_BY=?, PUBLISHED_AT=?, PUBLISH_REQUEST_ID=?, PUBLISH_REASON=?, UPDATED_BY=?, UPDATED_AT=CURRENT_TIMESTAMP WHERE OUTLINE_VERSION_ID=?")) {
+            update.setString(1, actor);
+            update.setTimestamp(2, publishedAt);
+            update.setString(3, coalesce(payload.get("requestId"), payload.get("idempotencyKey")));
+            update.setString(4, coalesce(payload.get("reason")));
+            update.setString(5, actor);
+            update.setLong(6, internalOutlineId);
             update.executeUpdate();
         }
-        for (String domainId : domainIds) {
-            Map<String, Object> domain = domainPersonnel(connection, domainId);
-            String taskId = "build-task_" + sha256(outlineId + "|" + domainId).substring(0, 16);
-            upsertBuildTask(connection, taskId, String.valueOf(header.get("manualId")), outlineId, domainId, domain, publishedAt);
-            for (Map<String, Object> item : effective) {
-                if (!listValues(item.get("techDomainIds")).contains(domainId)) continue;
-                String documentId = String.valueOf(item.get("documentId"));
-                String nodeId = String.valueOf(item.get("nodeId"));
-                String itemId = "build-item_" + sha256(taskId + "|" + documentId + "|" + domainId).substring(0, 16);
-                upsertBuildTaskItem(connection, itemId, taskId, String.valueOf(header.get("manualId")), documentId, nodeId, domainId);
-            }
+        try (PreparedStatement update = connection.prepareStatement("UPDATE KC_MANUAL_OUTLINE_RESP_VERSION SET STATE='PUBLISHED', PUBLISHED_BY=?, PUBLISHED_AT=?, UPDATED_BY=?, UPDATED_AT=CURRENT_TIMESTAMP WHERE RESP_VERSION_ID=(SELECT CURRENT_RESP_VERSION_ID FROM KC_MANUAL_OUTLINE_VERSION WHERE OUTLINE_VERSION_ID=?)")) {
+            update.setString(1, actor); update.setTimestamp(2, publishedAt); update.setString(3, actor); update.setLong(4, internalOutlineId); update.executeUpdate();
         }
-        try (PreparedStatement update = connection.prepareStatement("UPDATE MANUALS SET CURRENT_OUTLINE_VERSION_ID = ?, UPDATED_AT = CURRENT_TIMESTAMP WHERE ID = ?")) {
-            update.setString(1, outlineId);
-            update.setString(2, String.valueOf(header.get("manualId")));
+        try (PreparedStatement update = connection.prepareStatement("UPDATE KC_MANUAL_OUTLINE SET CURRENT_OUTLINE_VERSION_ID=?, UPDATED_BY=?, UPDATED_AT=CURRENT_TIMESTAMP WHERE OUTLINE_ID=?")) {
+            update.setLong(1, internalOutlineId);
+            update.setString(2, actor);
+            update.setLong(3, subjectId);
             update.executeUpdate();
         }
         return projectOutlineGovernance(connection, outlineId);
     }
 
     private boolean techDomainExists(Connection connection, String domainId) throws SQLException {
-        try (PreparedStatement statement = connection.prepareStatement("SELECT ID FROM TECH_DOMAINS WHERE ID = ?")) {
-            statement.setString(1, domainId);
+        long numericId;
+        try {
+            numericId = Long.parseLong(domainId);
+        } catch (NumberFormatException error) {
+            return false;
+        }
+        try (PreparedStatement statement = connection.prepareStatement("SELECT TECH_DOMAIN_ID FROM KC_TECH_DOMAIN WHERE TECH_DOMAIN_ID = ? AND STATE='ACTIVE'")) {
+            statement.setLong(1, numericId);
             try (ResultSet result = statement.executeQuery()) {
                 return result.next();
             }
         }
     }
 
-    private Map<String, Object> domainPersonnel(Connection connection, String domainId) throws SQLException {
-        Map<String, Object> result = mapOf("leader", null, "members", new ArrayList<>());
-        String sql = "SELECT PERSON_ID, PERSON_NAME, ROLE_CODE FROM TECH_DOMAIN_PERSONNEL WHERE DOMAIN_ID = ? AND STATUS = 'active' ORDER BY PERSON_NAME, PERSON_ID";
-        try (PreparedStatement statement = connection.prepareStatement(sql)) {
-            statement.setString(1, domainId);
-            try (ResultSet rows = statement.executeQuery()) {
-                while (rows.next()) {
-                    Map<String, Object> person = mapOf("id", rows.getString(1), "name", rows.getString(2), "role", rows.getString(3));
-                    if ("leader".equals(rows.getString(3))) {
-                        result.put("leader", person);
-                    } else {
-                        @SuppressWarnings("unchecked")
-                        List<Object> members = (List<Object>) result.get("members");
-                        members.add(person);
-                    }
-                }
-            }
-        }
-        return result;
-    }
-
-    private void upsertBuildTask(Connection connection, String taskId, String manualId, String outlineId, String domainId, Map<String, Object> domain, String publishedAt) throws SQLException {
-        Map<String, Object> leader = domain.get("leader") instanceof Map<?, ?> map ? castMap(map) : Map.of();
-        String leaderId = coalesce(leader.get("id"));
-        String leaderName = coalesce(leader.get("name"));
-        try (PreparedStatement query = connection.prepareStatement("SELECT ID FROM MANUAL_BUILD_TASKS WHERE ID = ?")) {
-            query.setString(1, taskId);
-            try (ResultSet result = query.executeQuery()) {
-                if (result.next()) {
-                    try (PreparedStatement update = connection.prepareStatement("UPDATE MANUAL_BUILD_TASKS SET DOMAIN_LEADER_ID=?, DOMAIN_LEADER_NAME=?, STATE='open', PUBLISHED_AT=?, UPDATED_AT=CURRENT_TIMESTAMP WHERE ID=?")) {
-                        update.setString(1, leaderId);
-                        update.setString(2, leaderName);
-                        update.setString(3, publishedAt);
-                        update.setString(4, taskId);
-                        update.executeUpdate();
-                    }
-                    return;
-                }
-            }
-        }
-        try (PreparedStatement insert = connection.prepareStatement(
-            "INSERT INTO MANUAL_BUILD_TASKS(ID, MANUAL_ID, OUTLINE_VERSION_ID, TECH_DOMAIN_ID, DOMAIN_LEADER_ID, DOMAIN_LEADER_NAME, STATE, PUBLISHED_AT) VALUES (?, ?, ?, ?, ?, ?, 'open', ?)")) {
-            insert.setString(1, taskId);
-            insert.setString(2, manualId);
-            insert.setString(3, outlineId);
-            insert.setString(4, domainId);
-            insert.setString(5, leaderId);
-            insert.setString(6, leaderName);
-            insert.setString(7, publishedAt);
-            insert.executeUpdate();
-        }
-    }
-
-    private void upsertBuildTaskItem(Connection connection, String itemId, String taskId, String manualId, String documentId, String nodeId, String domainId) throws SQLException {
-        try (PreparedStatement query = connection.prepareStatement("SELECT ID FROM MANUAL_BUILD_TASK_ITEMS WHERE ID = ?")) {
-            query.setString(1, itemId);
-            try (ResultSet result = query.executeQuery()) {
-                if (result.next()) return;
-            }
-        }
-        Map<String, Object> personnel = domainPersonnel(connection, domainId);
-        Map<String, Object> leader = personnel.get("leader") instanceof Map<?, ?> map ? castMap(map) : Map.of();
-        String leaderId = coalesce(leader.get("id"));
-        String leaderName = coalesce(leader.get("name"));
-        try (PreparedStatement insert = connection.prepareStatement(
-            "INSERT INTO MANUAL_BUILD_TASK_ITEMS(ID, TASK_ID, MANUAL_ID, DOCUMENT_ID, OUTLINE_NODE_ID, TECH_DOMAIN_ID, ASSIGNEE_ID, ASSIGNEE_NAME, STATUS, ASSIGNED_AT) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
-            insert.setString(1, itemId);
-            insert.setString(2, taskId);
-            insert.setString(3, manualId);
-            insert.setString(4, documentId);
-            insert.setString(5, nodeId);
-            insert.setString(6, domainId);
-            insert.setString(7, leaderId);
-            insert.setString(8, leaderName);
-            insert.setString(9, leaderId == null ? "unassigned" : "assigned");
-            insert.setString(10, leaderId == null ? null : Instant.now().toString());
-            insert.executeUpdate();
-        }
-    }
-
-    private void synchronizeBuildTasks(Connection connection, String manualId, String outlineId, List<Map<String, Object>> effective, String publishedAt) throws SQLException {
-        Set<String> requiredItems = new java.util.HashSet<>();
-        for (Map<String, Object> item : effective) {
-            String documentId = String.valueOf(item.get("documentId"));
-            for (Object domainValue : listValues(item.get("techDomainIds"))) {
-                String domainId = String.valueOf(domainValue);
-                requiredItems.add(documentId + "|" + domainId);
-                Map<String, Object> domain = domainPersonnel(connection, domainId);
-                String taskId = "build-task_" + sha256(outlineId + "|" + domainId).substring(0, 16);
-                upsertBuildTask(connection, taskId, manualId, outlineId, domainId, domain, publishedAt);
-                String itemId = "build-item_" + sha256(taskId + "|" + documentId + "|" + domainId).substring(0, 16);
-                upsertBuildTaskItem(connection, itemId, taskId, manualId, documentId, String.valueOf(item.get("nodeId")), domainId);
-            }
-        }
-        List<Map<String, Object>> currentItems = new ArrayList<>();
+    private Long techDomainLeaderId(Connection connection, long domainId) throws SQLException {
         try (PreparedStatement query = connection.prepareStatement(
-            "SELECT I.ID, I.DOCUMENT_ID, I.TECH_DOMAIN_ID FROM MANUAL_BUILD_TASK_ITEMS I JOIN MANUAL_BUILD_TASKS T ON T.ID = I.TASK_ID WHERE T.OUTLINE_VERSION_ID = ?")) {
-            query.setString(1, outlineId);
+            "SELECT PRINCIPAL_ID FROM KC_TECH_DOMAIN_MEMBER WHERE TECH_DOMAIN_ID=? AND MEMBER_ROLE='LEADER' AND STATE='ACTIVE' ORDER BY PRINCIPAL_ID")) {
+            query.setLong(1, domainId);
             try (ResultSet result = query.executeQuery()) {
-                while (result.next()) {
-                    currentItems.add(mapOf(
-                        "id", result.getString(1),
-                        "key", result.getString(2) + "|" + result.getString(3)
-                    ));
-                }
-            }
-        }
-        for (Map<String, Object> item : currentItems) {
-            if (!requiredItems.contains(String.valueOf(item.get("key")))) {
-                try (PreparedStatement delete = connection.prepareStatement("DELETE FROM MANUAL_BUILD_TASK_ITEMS WHERE ID = ?")) {
-                    delete.setString(1, String.valueOf(item.get("id")));
-                    delete.executeUpdate();
-                }
-            }
-        }
-        try (PreparedStatement query = connection.prepareStatement(
-            "SELECT T.ID FROM MANUAL_BUILD_TASKS T WHERE T.OUTLINE_VERSION_ID = ? AND NOT EXISTS (SELECT 1 FROM MANUAL_BUILD_TASK_ITEMS I WHERE I.TASK_ID = T.ID)")) {
-            query.setString(1, outlineId);
-            List<String> emptyTasks = new ArrayList<>();
-            try (ResultSet result = query.executeQuery()) {
-                while (result.next()) {
-                    emptyTasks.add(result.getString(1));
-                }
-            }
-            for (String taskId : emptyTasks) {
-                try (PreparedStatement delete = connection.prepareStatement("DELETE FROM MANUAL_BUILD_TASKS WHERE ID = ?")) {
-                    delete.setString(1, taskId);
-                    delete.executeUpdate();
-                }
+                return result.next() ? result.getLong(1) : null;
             }
         }
     }
 
     private List<Map<String, Object>> projectBuildTasksForOutline(Connection connection, String outlineId) throws SQLException {
+        return projectBuildTasks(connection, resolveOutlineVersionId(connection, outlineId));
+    }
+
+    private Map<String, Object> projectBuildTasks(Connection connection) throws SQLException {
+        return mapOf("tasks", projectBuildTasks(connection, null), "generatedAt", Instant.now().toString());
+    }
+
+    private Map<String, Object> projectBuildTask(Connection connection, String taskId) throws SQLException {
+        for (Map<String, Object> task : projectBuildTasks(connection, null)) {
+            if (taskId.equals(task.get("id"))) return task;
+        }
+        return null;
+    }
+
+    private List<Map<String, Object>> projectBuildTasks(Connection connection, Long onlyOutlineVersionId) throws SQLException {
         List<Map<String, Object>> tasks = new ArrayList<>();
-        try (PreparedStatement statement = connection.prepareStatement(
-            "SELECT ID, MANUAL_ID, OUTLINE_VERSION_ID, TECH_DOMAIN_ID, DOMAIN_LEADER_ID, DOMAIN_LEADER_NAME, STATE, PUBLISHED_AT, CREATED_AT, UPDATED_AT FROM MANUAL_BUILD_TASKS WHERE OUTLINE_VERSION_ID = ? ORDER BY CREATED_AT, ID")) {
-            statement.setString(1, outlineId);
+        String sql = "SELECT DISTINCT V.OUTLINE_VERSION_ID, COALESCE(V.SOURCE_REF, TO_CHAR(V.OUTLINE_VERSION_ID)), "
+            + "M.MANUAL_CODE, I.TECH_DOMAIN_ID, D.DOMAIN_NAME, V.PUBLISHED_AT, V.CREATED_AT, V.UPDATED_AT "
+            + "FROM KC_MANUAL_OUTLINE_VERSION V JOIN KC_MANUAL_OUTLINE O ON O.OUTLINE_ID=V.OUTLINE_ID "
+            + "JOIN KC_MANUAL M ON M.MANUAL_ID=O.MANUAL_ID "
+            + "JOIN KC_MANUAL_OUTLINE_RESP_ITEM I ON I.RESP_VERSION_ID=V.CURRENT_RESP_VERSION_ID "
+            + "JOIN KC_TECH_DOMAIN D ON D.TECH_DOMAIN_ID=I.TECH_DOMAIN_ID WHERE V.STATE='PUBLISHED' "
+            + (onlyOutlineVersionId == null ? "" : "AND V.OUTLINE_VERSION_ID=? ")
+            + "ORDER BY V.UPDATED_AT DESC, V.OUTLINE_VERSION_ID, I.TECH_DOMAIN_ID";
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            if (onlyOutlineVersionId != null) statement.setLong(1, onlyOutlineVersionId);
             try (ResultSet result = statement.executeQuery()) {
                 while (result.next()) tasks.add(projectBuildTaskRow(connection, result));
             }
@@ -1242,60 +1192,53 @@ public final class Main {
         return tasks;
     }
 
-    private Map<String, Object> projectBuildTasks(Connection connection) throws SQLException {
-        List<Map<String, Object>> tasks = new ArrayList<>();
-        try (PreparedStatement statement = connection.prepareStatement(
-            "SELECT ID, MANUAL_ID, OUTLINE_VERSION_ID, TECH_DOMAIN_ID, DOMAIN_LEADER_ID, DOMAIN_LEADER_NAME, STATE, PUBLISHED_AT, CREATED_AT, UPDATED_AT FROM MANUAL_BUILD_TASKS ORDER BY UPDATED_AT DESC, ID")) {
+    private String techDomainName(Connection connection, String domainId) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement("SELECT DOMAIN_NAME FROM KC_TECH_DOMAIN WHERE TECH_DOMAIN_ID = ?")) {
+            statement.setString(1, domainId);
             try (ResultSet result = statement.executeQuery()) {
-                while (result.next()) tasks.add(projectBuildTaskRow(connection, result));
-            }
-        }
-        return mapOf("tasks", tasks, "generatedAt", Instant.now().toString());
-    }
-
-    private Map<String, Object> projectBuildTask(Connection connection, String taskId) throws SQLException {
-        try (PreparedStatement statement = connection.prepareStatement(
-            "SELECT ID, MANUAL_ID, OUTLINE_VERSION_ID, TECH_DOMAIN_ID, DOMAIN_LEADER_ID, DOMAIN_LEADER_NAME, STATE, PUBLISHED_AT, CREATED_AT, UPDATED_AT FROM MANUAL_BUILD_TASKS WHERE ID = ?")) {
-            statement.setString(1, taskId);
-            try (ResultSet result = statement.executeQuery()) {
-                return result.next() ? projectBuildTaskRow(connection, result) : null;
+                return result.next() ? result.getString(1) : domainId;
             }
         }
     }
 
     private Map<String, Object> projectBuildTaskRow(Connection connection, ResultSet result) throws SQLException {
+        long outlineVersionId = result.getLong(1);
+        String externalOutlineId = result.getString(2);
+        String domainId = result.getString(4);
+        String taskId = buildTaskId(externalOutlineId, domainId);
+        Map<String, Object> personnel = domainPersonnel(connection, domainId);
+        Map<String, Object> leader = personnel.get("leader") instanceof Map<?, ?> value ? castMap(value) : Map.of();
         Map<String, Object> task = new LinkedHashMap<>();
-        task.put("id", result.getString(1));
-        task.put("manualId", result.getString(2));
-        task.put("outlineVersionId", result.getString(3));
-        task.put("techDomainId", result.getString(4));
-        task.put("techDomainName", techDomainName(connection, result.getString(4)));
-        task.put("domainLeaderId", result.getString(5));
-        task.put("domainLeaderName", result.getString(6));
-        Map<String, Object> personnel = domainPersonnel(connection, result.getString(4));
+        task.put("id", taskId);
+        task.put("manualId", result.getString(3));
+        task.put("outlineVersionId", externalOutlineId);
+        task.put("techDomainId", domainId);
+        task.put("techDomainName", result.getString(5));
+        task.put("domainLeaderId", leader.get("id"));
+        task.put("domainLeaderName", leader.get("name"));
         task.put("domainMembers", personnel.get("members"));
-        task.put("state", result.getString(7));
-        task.put("publishedAt", result.getString(8));
-        task.put("createdAt", timestampToString(result.getTimestamp(9)));
-        task.put("updatedAt", timestampToString(result.getTimestamp(10)));
+        task.put("state", "open");
+        task.put("publishedAt", timestampToString(result.getTimestamp(6)));
+        task.put("createdAt", timestampToString(result.getTimestamp(7)));
+        task.put("updatedAt", timestampToString(result.getTimestamp(8)));
         List<Map<String, Object>> items = new ArrayList<>();
-        String itemSql = "SELECT ID, DOCUMENT_ID, OUTLINE_NODE_ID, TECH_DOMAIN_ID, ASSIGNEE_ID, ASSIGNEE_NAME, STATUS, ASSIGNED_BY, ASSIGNED_AT FROM MANUAL_BUILD_TASK_ITEMS WHERE TASK_ID = ? ORDER BY CREATED_AT, ID";
+        String itemSql = "SELECT I.RESP_ITEM_ID, N.NODE_KEY, N.NODE_TITLE, I.OWNER_PRINCIPAL_ID, I.BINDING_STATUS, I.UPDATED_BY, I.UPDATED_AT "
+            + "FROM KC_MANUAL_OUTLINE_RESP_ITEM I JOIN KC_MANUAL_OUTLINE_NODE N ON N.OUTLINE_NODE_ID=I.OUTLINE_NODE_ID "
+            + "JOIN KC_MANUAL_OUTLINE_VERSION V ON V.CURRENT_RESP_VERSION_ID=I.RESP_VERSION_ID "
+            + "WHERE V.OUTLINE_VERSION_ID=? AND I.TECH_DOMAIN_ID=? ORDER BY N.SORT_NO, I.RESP_ITEM_ID";
         try (PreparedStatement statement = connection.prepareStatement(itemSql)) {
-            statement.setString(1, result.getString(1));
+            statement.setLong(1, outlineVersionId);
+            statement.setLong(2, Long.parseLong(domainId));
             try (ResultSet rows = statement.executeQuery()) {
                 while (rows.next()) {
+                    String nodeKey = rows.getString(2);
+                    String assigneeId = rows.getString(4);
                     items.add(mapOf(
-                        "id", rows.getString(1),
-                        "taskId", result.getString(1),
-                        "documentId", rows.getString(2),
-                        "documentTitle", documentTitle(connection, result.getString(2), rows.getString(2), rows.getString(3)),
-                        "outlineNodeId", rows.getString(3),
-                        "techDomainId", rows.getString(4),
-                        "assigneeId", rows.getString(5),
-                        "assigneeName", rows.getString(6),
-                        "status", rows.getString(7),
-                        "assignedBy", rows.getString(8),
-                        "assignedAt", rows.getString(9)
+                        "id", buildTaskItemId(taskId, nodeKey, domainId), "taskId", taskId,
+                        "documentId", nodeKey, "documentTitle", rows.getString(3), "outlineNodeId", nodeKey,
+                        "techDomainId", domainId, "assigneeId", assigneeId, "assigneeName", assigneeId,
+                        "status", "BOUND".equals(rows.getString(5)) ? "assigned" : "unassigned",
+                        "assignedBy", rows.getString(6), "assignedAt", timestampToString(rows.getTimestamp(7))
                     ));
                 }
             }
@@ -1304,53 +1247,49 @@ public final class Main {
         return task;
     }
 
-    private String documentTitle(Connection connection, String manualId, String documentId, String outlineNodeId) throws SQLException {
+    private Map<String, Object> domainPersonnel(Connection connection, String domainId) throws SQLException {
+        Map<String, Object> value = mapOf("leader", null, "members", new ArrayList<>());
         try (PreparedStatement statement = connection.prepareStatement(
-            "SELECT TITLE FROM MANUAL_DOCUMENTS WHERE MANUAL_ID = ? AND ID = ?")) {
-            statement.setString(1, manualId);
-            statement.setString(2, documentId);
-            try (ResultSet result = statement.executeQuery()) {
-                if (result.next() && result.getString(1) != null && !result.getString(1).isBlank()) {
-                    return result.getString(1);
+            "SELECT PRINCIPAL_ID, MEMBER_ROLE FROM KC_TECH_DOMAIN_MEMBER WHERE TECH_DOMAIN_ID=? AND STATE='ACTIVE' ORDER BY MEMBER_ROLE, PRINCIPAL_ID")) {
+            statement.setLong(1, Long.parseLong(domainId));
+            try (ResultSet rows = statement.executeQuery()) {
+                while (rows.next()) {
+                    Map<String, Object> person = mapOf("id", rows.getString(1), "name", rows.getString(1), "role", rows.getString(2).toLowerCase());
+                    if ("LEADER".equals(rows.getString(2))) value.put("leader", person);
+                    else {
+                        @SuppressWarnings("unchecked")
+                        List<Object> members = (List<Object>) value.get("members");
+                        members.add(person);
+                    }
                 }
             }
         }
-        try (PreparedStatement statement = connection.prepareStatement(
-            "SELECT TITLE FROM MANUAL_OUTLINE_NODES WHERE ID = ?")) {
-            statement.setString(1, outlineNodeId);
-            try (ResultSet result = statement.executeQuery()) {
-                return result.next() ? result.getString(1) : documentId;
-            }
-        }
+        return value;
     }
 
-    private String techDomainName(Connection connection, String domainId) throws SQLException {
-        try (PreparedStatement statement = connection.prepareStatement("SELECT NAME FROM TECH_DOMAINS WHERE ID = ?")) {
-            statement.setString(1, domainId);
-            try (ResultSet result = statement.executeQuery()) {
-                return result.next() ? result.getString(1) : domainId;
-            }
-        }
+    private String buildTaskId(String outlineId, String domainId) {
+        return "build-task_" + sha256(outlineId + "|" + domainId).substring(0, 16);
+    }
+
+    private String buildTaskItemId(String taskId, String nodeKey, String domainId) {
+        return "build-item_" + sha256(taskId + "|" + nodeKey + "|" + domainId).substring(0, 16);
     }
 
     private Map<String, Object> updateBuildTaskItem(Connection connection, String taskId, String itemId, Map<String, Object> payload) throws SQLException {
-        String domainId;
-        try (PreparedStatement query = connection.prepareStatement("SELECT TECH_DOMAIN_ID FROM MANUAL_BUILD_TASK_ITEMS WHERE ID = ? AND TASK_ID = ?")) {
-            query.setString(1, itemId);
-            query.setString(2, taskId);
-            try (ResultSet result = query.executeQuery()) {
-                if (!result.next()) throw new SQLException("BUILD_TASK_ITEM_NOT_FOUND");
-                domainId = result.getString(1);
-            }
-        }
+        Map<String, Object> task = projectBuildTask(connection, taskId);
+        if (task == null) throw new SQLException("BUILD_TASK_NOT_FOUND");
+        Map<String, Object> selected = null;
+        for (Map<String, Object> item : listOfMaps(task.get("items"))) if (itemId.equals(item.get("id"))) selected = item;
+        if (selected == null) throw new SQLException("BUILD_TASK_ITEM_NOT_FOUND");
+        String domainId = String.valueOf(task.get("techDomainId"));
         Map<String, Object> assignee = payload.get("assignee") instanceof Map<?, ?> map ? castMap(map) : Map.of();
         String assigneeId = coalesce(payload.get("assigneeId"), assignee.get("id"));
         String assigneeName = coalesce(payload.get("assigneeName"), assignee.get("name"));
         String status = coalesce(payload.get("status"), assigneeId == null ? "unassigned" : "assigned");
         if (assigneeId != null) {
-            try (PreparedStatement query = connection.prepareStatement("SELECT PERSON_NAME FROM TECH_DOMAIN_PERSONNEL WHERE DOMAIN_ID = ? AND PERSON_ID = ? AND STATUS = 'active'")) {
-                query.setString(1, domainId);
-                query.setString(2, assigneeId);
+            try (PreparedStatement query = connection.prepareStatement("SELECT PRINCIPAL_ID FROM KC_TECH_DOMAIN_MEMBER WHERE TECH_DOMAIN_ID=? AND PRINCIPAL_ID=? AND STATE='ACTIVE'")) {
+                query.setLong(1, Long.parseLong(domainId));
+                query.setLong(2, Long.parseLong(assigneeId));
                 try (ResultSet result = query.executeQuery()) {
                     if (!result.next()) throw new GovernanceValidationException("BUILD_TASK_ASSIGNEE_INVALID", "只能分配给当前技术领域的负责人或成员", 422, mapOf("techDomainId", domainId, "assigneeId", assigneeId));
                     if (assigneeName == null) assigneeName = result.getString(1);
@@ -1360,13 +1299,15 @@ public final class Main {
             assigneeName = null;
         }
         try (PreparedStatement update = connection.prepareStatement(
-            "UPDATE MANUAL_BUILD_TASK_ITEMS SET ASSIGNEE_ID=?, ASSIGNEE_NAME=?, STATUS=?, ASSIGNED_AT=?, UPDATED_AT=CURRENT_TIMESTAMP WHERE ID=? AND TASK_ID=?")) {
-            update.setString(1, assigneeId);
-            update.setString(2, assigneeName);
-            update.setString(3, status);
-            update.setString(4, assigneeId == null ? null : Instant.now().toString());
-            update.setString(5, itemId);
-            update.setString(6, taskId);
+            "UPDATE KC_MANUAL_OUTLINE_RESP_ITEM SET OWNER_PRINCIPAL_ID=?, BINDING_STATUS=?, UPDATED_BY=?, UPDATED_AT=CURRENT_TIMESTAMP "
+                + "WHERE RESP_ITEM_ID=(SELECT I.RESP_ITEM_ID FROM KC_MANUAL_OUTLINE_RESP_ITEM I JOIN KC_MANUAL_OUTLINE_NODE N ON N.OUTLINE_NODE_ID=I.OUTLINE_NODE_ID "
+                + "JOIN KC_MANUAL_OUTLINE_VERSION V ON V.CURRENT_RESP_VERSION_ID=I.RESP_VERSION_ID WHERE COALESCE(V.SOURCE_REF, TO_CHAR(V.OUTLINE_VERSION_ID))=? AND N.NODE_KEY=? AND I.TECH_DOMAIN_ID=?)")) {
+            if (assigneeId == null) update.setNull(1, java.sql.Types.BIGINT); else update.setLong(1, Long.parseLong(assigneeId));
+            update.setString(2, assigneeId == null ? "PENDING" : "BOUND");
+            update.setString(3, coalesce(payload.get("assignedBy"), "system:api"));
+            update.setString(4, String.valueOf(task.get("outlineVersionId")));
+            update.setString(5, String.valueOf(selected.get("outlineNodeId")));
+            update.setLong(6, Long.parseLong(domainId));
             update.executeUpdate();
         }
         return projectBuildTask(connection, taskId);
@@ -1378,7 +1319,11 @@ public final class Main {
         body.put("generatedAt", Instant.now().toString());
         body.put("handbooks", new ArrayList<>());
         body.put("audits", new ArrayList<>());
-        String sql = "SELECT ID, CODE, TITLE, PRODUCT_ID, OWNER_A_ID, OWNER_A_NAME, OWNER_B_ID, OWNER_B_NAME, DEPARTMENT_ID, CURRENT_OUTLINE_VERSION_ID, STATUS, ARCHIVED_AT, ASSET_VERSION, SUMMARY, LEGACY_PAYLOAD, CREATED_AT, UPDATED_AT FROM MANUALS ORDER BY CREATED_AT, ID";
+        String sql = "SELECT M.MANUAL_ID, M.MANUAL_CODE, M.MANUAL_NAME, M.PRODUCT_ID, M.ORG_UNIT_ID, "
+            + "O.CURRENT_OUTLINE_VERSION_ID, M.STATE, M.ARCHIVED_AT, M.ROW_VERSION, M.SUMMARY, "
+            + "M.MANUAL_KIND, M.IS_EXTERNALLY_VISIBLE, M.CREATED_AT, M.UPDATED_AT "
+            + "FROM KC_MANUAL M LEFT JOIN KC_MANUAL_OUTLINE O ON O.MANUAL_ID = M.MANUAL_ID "
+            + "ORDER BY M.CREATED_AT, M.MANUAL_ID";
         try (PreparedStatement statement = connection.prepareStatement(sql); ResultSet result = statement.executeQuery()) {
             @SuppressWarnings("unchecked")
             List<Object> handbooks = (List<Object>) body.get("handbooks");
@@ -1391,52 +1336,65 @@ public final class Main {
 
     private Map<String, Object> projectHandbook(Connection connection, ResultSet result) throws SQLException {
         try {
-            Map<String, Object> legacy = asMapOrEmpty(readClobOrNull(result.getClob(15)));
-            Map<String, Object> handbook = new LinkedHashMap<>(legacy);
-            handbook.put("handbookId", result.getString(1));
-            handbook.put("id", result.getString(1));
+            Map<String, Object> handbook = new LinkedHashMap<>();
+            handbook.put("handbookId", result.getString(2));
+            handbook.put("id", result.getString(2));
+            handbook.put("manualId", result.getLong(1));
             handbook.put("code", result.getString(2));
-            handbook.put("name", coalesce(result.getString(3), handbook.get("name"), result.getString(2)));
+            handbook.put("name", coalesce(result.getString(3), result.getString(2)));
             handbook.put("title", handbook.get("name"));
-            handbook.put("productId", coalesce(result.getString(4), handbook.get("productId")));
-            handbook.put("productType", coalesce(result.getString(4), handbook.get("productType")));
-            handbook.put("ownerA", ownerObject(result.getString(5), result.getString(6), handbook.get("ownerA")));
-            handbook.put("ownerB", ownerObject(result.getString(7), result.getString(8), handbook.get("ownerB")));
-            handbook.put("departmentId", coalesce(result.getString(9), handbook.get("departmentId")));
-            handbook.put("currentOutlineVersionId", coalesce(result.getString(10), handbook.get("currentOutlineVersionId")));
-            handbook.put("outline", outlineSummary(result.getString(10), handbook.get("outline")));
-            handbook.put("status", coalesce(result.getString(11), handbook.get("status")));
+            handbook.put("productId", result.getLong(4));
+            handbook.put("productType", productType(result.getLong(4)));
+            handbook.put("ownerA", manualOwner(connection, result.getLong(1), "PRIMARY"));
+            handbook.put("ownerB", manualOwner(connection, result.getLong(1), "DEPUTY"));
+            handbook.put("departmentId", result.getString(5));
+            handbook.put("orgUnitId", result.getString(5));
+            String currentOutlineId = externalOutlineId(connection, result.getString(6));
+            handbook.put("currentOutlineVersionId", currentOutlineId);
+            handbook.put("outline", outlineSummary(currentOutlineId, null));
+            handbook.put("status", result.getString(7).toLowerCase());
             handbook.put("sourceStatus", handbook.get("status"));
-            handbook.put("archivedAt", result.getString(12));
-            handbook.put("assetVersion", result.getLong(13));
-            handbook.put("summary", coalesce(readClobOrNull(result.getClob(14)), handbook.get("summary")));
-            handbook.put("documentSummary", documentSummary(connection, result.getString(1), handbook.get("documentSummary")));
-            handbook.put("legacyPayload", legacy);
-            handbook.put("createdAt", timestampToString(result.getTimestamp(16)));
-            handbook.put("updatedAt", timestampToString(result.getTimestamp(17)));
+            handbook.put("archivedAt", timestampToString(result.getTimestamp(8)));
+            handbook.put("assetVersion", result.getLong(9));
+            handbook.put("summary", readClobOrNull(result.getClob(10)));
+            handbook.put("isAtomic", "ATOMIC".equals(result.getString(11)));
+            handbook.put("externalVisible", "Y".equals(result.getString(12)));
+            handbook.put("documentSummary", mapOf("total", 0L, "published", 0L, "inProgress", 0L, "runningTasks", 0L));
+            handbook.put("createdAt", timestampToString(result.getTimestamp(13)));
+            handbook.put("updatedAt", timestampToString(result.getTimestamp(14)));
             return handbook;
         } catch (Exception error) {
             throw new SQLException("读取手册投影失败", error);
         }
     }
 
+    private Map<String, Object> manualOwner(Connection connection, long manualId, String role) throws SQLException {
+        try (PreparedStatement query = connection.prepareStatement(
+            "SELECT PRINCIPAL_ID FROM KC_MANUAL_OWNER WHERE MANUAL_ID = ? AND OWNER_ROLE = ?")) {
+            query.setLong(1, manualId);
+            query.setString(2, role);
+            try (ResultSet result = query.executeQuery()) {
+                if (!result.next()) return null;
+                String principalId = result.getString(1);
+                return mapOf("userId", principalId, "id", principalId, "displayName", principalId, "bindingStatus", "bound");
+            }
+        }
+    }
+
     private Map<String, Object> saveOutlinesSnapshot(Connection connection, Map<String, Object> payload) throws SQLException, JsonParseException {
         List<Map<String, Object>> outlines = listOfMaps(payload.get("outlines"));
-        Set<String> activeIds = new java.util.HashSet<>();
-        Set<String> handbookIds = new java.util.HashSet<>();
+        Set<Long> manualIds = new java.util.HashSet<>();
         for (Map<String, Object> outline : outlines) {
             validateOutlineSnapshot(outline);
             String outlineId = outlineId(outline);
             String handbookId = handbookIdFromOutline(outline, outlineId);
-            requireExistingManual(connection, handbookId);
-            activeIds.add(outlineId);
-            handbookIds.add(handbookId);
-            upsertOutlineVersion(connection, handbookId, outlineId, outline, payload);
-            rebuildOutlineChildren(connection, handbookId, outlineId, outline);
-            replaceOutlineAssignmentsFromSnapshot(connection, handbookId, outlineId, outline);
+            long manualId = requireExistingManual(connection, handbookId);
+            long outlineVersionId = upsertOutlineVersion(connection, manualId, outlineId, outline, payload);
+            manualIds.add(manualId);
+            rebuildOutlineChildren(connection, outlineVersionId, outlineId, outline);
+            replaceOutlineAssignmentsFromSnapshot(connection, outlineVersionId, outlineId, outline, coalesce(payload.get("principalId"), payload.get("updatedBy"), "system:api"));
         }
-        removeMissingOutlineVersions(connection, activeIds);
-        updateCurrentOutlinePointers(connection, handbookIds);
+        updateCurrentOutlinePointers(connection, manualIds);
         return projectOutlines(connection);
     }
 
@@ -1444,7 +1402,14 @@ public final class Main {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("outlines", new ArrayList<>());
         body.put("generatedAt", Instant.now().toString());
-        String sql = "SELECT ID, MANUAL_ID, VERSION_CODE, NAME, STATE, BASE_VERSION_ID, SOURCE_TYPE, SOURCE_FINGERPRINT, PARSER_VERSION, RULE_VERSION, EDIT_VERSION, PUBLISHED_AT, LEGACY_PAYLOAD, CREATED_AT, UPDATED_AT FROM MANUAL_OUTLINE_VERSIONS ORDER BY CREATED_AT, ID";
+        String sql = "SELECT O.OUTLINE_ID, M.MANUAL_CODE, M.MANUAL_NAME, "
+            + "CASE WHEN O.CURRENT_OUTLINE_VERSION_ID IS NULL THEN 'DRAFT' ELSE 'ACTIVE' END, O.CURRENT_OUTLINE_VERSION_ID, "
+            + "V.OUTLINE_VERSION_ID, V.VERSION_CODE, M.MANUAL_NAME, V.STATE, V.BASE_OUTLINE_VERSION_ID, "
+            + "V.SOURCE_TYPE, V.SOURCE_SHA256, V.PARSER_VERSION, V.RULE_VERSION, V.ROW_VERSION, "
+            + "V.PUBLISHED_AT, O.CREATED_AT, O.UPDATED_AT, V.SOURCE_REF "
+            + "FROM KC_MANUAL_OUTLINE O JOIN KC_MANUAL M ON M.MANUAL_ID=O.MANUAL_ID "
+            + "LEFT JOIN KC_MANUAL_OUTLINE_VERSION V ON V.OUTLINE_ID = O.OUTLINE_ID "
+            + "ORDER BY O.CREATED_AT, O.OUTLINE_ID, V.CREATED_AT, V.OUTLINE_VERSION_ID";
         try (PreparedStatement statement = connection.prepareStatement(sql); ResultSet result = statement.executeQuery()) {
             @SuppressWarnings("unchecked")
             List<Object> outlines = (List<Object>) body.get("outlines");
@@ -1457,27 +1422,29 @@ public final class Main {
 
     private Map<String, Object> projectOutline(Connection connection, ResultSet result) throws SQLException {
         try {
-            Map<String, Object> wrapper = asMapOrEmpty(readClobOrNull(result.getClob(13)));
-            Map<String, Object> outline = wrapper.containsKey("outline") && wrapper.get("outline") instanceof Map<?, ?> ? castMap(wrapper.get("outline")) : wrapper;
-            Map<String, Object> body = new LinkedHashMap<>(outline);
-            body.put("id", result.getString(1));
+            Map<String, Object> body = new LinkedHashMap<>();
+            String internalVersionId = result.getString(6);
+            String versionId = result.getString(19) == null ? internalVersionId : result.getString(19);
+            body.put("id", versionId == null ? result.getString(1) : versionId);
+            body.put("outlineId", versionId == null ? result.getString(1) : versionId);
             body.put("handbookId", result.getString(2));
             body.put("manualId", result.getString(2));
-            body.put("name", handbookTitle(connection, result.getString(2), result.getString(4), body.get("name")));
-            body.put("outlineStructureVersion", coalesce(result.getString(3), body.get("outlineStructureVersion")));
-            body.put("state", coalesce(result.getString(5), body.get("state"), "draft"));
-            body.put("baseVersionId", coalesce(result.getString(6), body.get("baseVersionId")));
-            body.put("sourceType", coalesce(result.getString(7), body.get("sourceType")));
-            body.put("sourceFingerprint", coalesce(result.getString(8), body.get("sourceFingerprint")));
-            body.put("parserVersion", coalesce(result.getString(9), body.get("parserVersion")));
-            body.put("ruleVersion", coalesce(result.getString(10), body.get("ruleVersion")));
-            body.put("editVersion", result.getLong(11));
-            body.put("published_at", result.getString(12));
-            body.put("created_at", timestampToString(result.getTimestamp(14)));
-            body.put("updated_at", timestampToString(result.getTimestamp(15)));
-            List<Map<String, Object>> nodes = outlineNodes(connection, result.getString(1));
+            body.put("name", result.getString(3));
+            body.put("currentOutlineVersionId", externalOutlineId(connection, result.getString(5)));
+            body.put("outlineStructureVersion", result.getString(7));
+            body.put("versionName", result.getString(8));
+            body.put("state", (internalVersionId == null ? result.getString(4) : result.getString(9)).toLowerCase());
+            body.put("baseVersionId", externalOutlineId(connection, result.getString(10)));
+            body.put("sourceType", result.getString(11));
+            body.put("sourceFingerprint", result.getString(12));
+            body.put("parserVersion", result.getString(13));
+            body.put("ruleVersion", result.getString(14));
+            body.put("editVersion", versionId == null ? result.getLong(15) : result.getLong(15));
+            body.put("published_at", timestampToString(result.getTimestamp(16)));
+            body.put("created_at", timestampToString(result.getTimestamp(17)));
+            body.put("updated_at", timestampToString(result.getTimestamp(18)));
+            List<Map<String, Object>> nodes = internalVersionId == null ? new ArrayList<>() : outlineNodes(connection, Long.parseLong(internalVersionId));
             body.put("nodes", nodes);
-            body.put("legacyPayload", wrapper);
             body.put("kp_count", countNodesByKind(nodes, "document"));
             return body;
         } catch (Exception error) {
@@ -1485,41 +1452,29 @@ public final class Main {
         }
     }
 
-    private String handbookTitle(Connection connection, String handbookId, String outlineName, Object legacyName) throws SQLException {
-        try (PreparedStatement query = connection.prepareStatement("SELECT TITLE FROM MANUALS WHERE ID = ?")) {
-            query.setString(1, handbookId);
-            try (ResultSet result = query.executeQuery()) {
-                if (result.next()) {
-                    String title = result.getString(1);
-                    if (title != null && !title.isBlank()) return title;
-                }
-            }
-        }
-        return coalesce(outlineName, legacyName, handbookId);
-    }
-
     private Map<String, Object> deleteOutline(Connection connection, String outlineId) throws SQLException {
-        String sql = "SELECT MANUAL_ID, STATE FROM MANUAL_OUTLINE_VERSIONS WHERE ID = ? FOR UPDATE";
-        String manualId;
+        String sql = "SELECT O.MANUAL_ID, V.STATE FROM KC_MANUAL_OUTLINE_VERSION V JOIN KC_MANUAL_OUTLINE O ON O.OUTLINE_ID=V.OUTLINE_ID WHERE V.OUTLINE_VERSION_ID = ? FOR UPDATE";
+        long internalOutlineId = resolveOutlineVersionId(connection, outlineId);
+        long manualId;
         String state;
         try (PreparedStatement statement = connection.prepareStatement(sql)) {
-            statement.setString(1, outlineId);
+            statement.setLong(1, internalOutlineId);
             try (ResultSet result = statement.executeQuery()) {
                 if (!result.next()) {
                     throw new SQLException("OUTLINE_NOT_FOUND");
                 }
-                manualId = result.getString(1);
+                manualId = result.getLong(1);
                 state = result.getString(2);
             }
         } catch (SQLException error) {
             throw error;
         }
-        if ("published".equals(state) || "superseded".equals(state)) {
+        if ("PUBLISHED".equals(state) || "SUPERSEDED".equals(state)) {
             throw new SQLException("OUTLINE_IMMUTABLE");
         }
-        deleteOutlineChildren(connection, outlineId);
-        try (PreparedStatement delete = connection.prepareStatement("DELETE FROM MANUAL_OUTLINE_VERSIONS WHERE ID = ?")) {
-            delete.setString(1, outlineId);
+        deleteOutlineChildren(connection, internalOutlineId);
+        try (PreparedStatement delete = connection.prepareStatement("DELETE FROM KC_MANUAL_OUTLINE_VERSION WHERE OUTLINE_VERSION_ID = ?")) {
+            delete.setLong(1, internalOutlineId);
             delete.executeUpdate();
         }
         updateCurrentOutlinePointer(connection, manualId);
@@ -1527,44 +1482,115 @@ public final class Main {
     }
 
     private void upsertManual(Connection connection, Map<String, Object> handbook, Map<String, Object> snapshot) throws SQLException, JsonParseException {
-        String manualId = handbookId(handbook);
-        String code = coalesce(handbook.get("code"), manualId);
+        String sourceId = handbookId(handbook);
+        String code = coalesce(handbook.get("code"), sourceId);
         String title = coalesce(handbook.get("title"), handbook.get("name"), code);
-        String productId = coalesce(handbook.get("productId"), handbook.get("productType"));
+        long productId = productId(handbook.get("productId"), handbook.get("productType"));
         Map<String, Object> ownerA = asMapOrEmpty(handbook.get("ownerA"));
         Map<String, Object> ownerB = asMapOrEmpty(handbook.get("ownerB"));
-        String ownerAId = coalesce(ownerA.get("userId"), ownerA.get("id"));
-        String ownerAName = coalesce(ownerA.get("displayName"), ownerA.get("name"));
-        String ownerBId = coalesce(ownerB.get("userId"), ownerB.get("id"));
-        String ownerBName = coalesce(ownerB.get("displayName"), ownerB.get("name"));
-        String departmentId = coalesce(handbook.get("departmentId"));
-        String currentOutlineVersionId = coalesce(handbook.get("currentOutlineVersionId"), outlineIdFromHandbook(handbook));
-        String status = coalesce(handbook.get("status"), handbook.get("sourceStatus"), "created");
+        Long ownerAId = optionalNumericId(ownerA.get("userId"), ownerA.get("id"));
+        Long ownerBId = optionalNumericId(ownerB.get("userId"), ownerB.get("id"));
+        Long departmentId = optionalNumericId(handbook.get("orgUnitId"), handbook.get("departmentId"));
+        String status = manualState(coalesce(handbook.get("status"), handbook.get("sourceStatus"), "DRAFT"));
         String archivedAt = coalesce(handbook.get("archivedAt"));
         String summary = coalesce(handbook.get("summary"));
-        String legacyPayload = Json.stringify(new LinkedHashMap<>(handbook));
-        try (PreparedStatement query = connection.prepareStatement("SELECT ASSET_VERSION FROM MANUALS WHERE ID = ? FOR UPDATE")) {
-            query.setString(1, manualId);
+        String actor = coalesce(snapshot.get("principalId"), snapshot.get("updatedBy"), "system:api");
+        String manualKind = Boolean.TRUE.equals(handbook.get("isAtomic")) ? "ATOMIC" : "COMPOSITE";
+        String visible = Boolean.TRUE.equals(handbook.get("externalVisible")) ? "Y" : "N";
+        long manualId = 0L;
+        try (PreparedStatement query = connection.prepareStatement("SELECT MANUAL_ID, ROW_VERSION FROM KC_MANUAL WHERE PRODUCT_ID=? AND MANUAL_CODE=? FOR UPDATE")) {
+            query.setLong(1, productId);
+            query.setString(2, code);
             try (ResultSet result = query.executeQuery()) {
                 if (result.next()) {
-                    long version = result.getLong(1) + 1;
+                    manualId = result.getLong(1);
+                    long version = result.getLong(2) + 1;
                     try (PreparedStatement update = connection.prepareStatement(
-                        "UPDATE MANUALS SET CODE=?, TITLE=?, PRODUCT_ID=?, OWNER_A_ID=?, OWNER_A_NAME=?, OWNER_B_ID=?, OWNER_B_NAME=?, DEPARTMENT_ID=?, CURRENT_OUTLINE_VERSION_ID=?, STATUS=?, ARCHIVED_AT=?, ASSET_VERSION=?, SUMMARY=?, LEGACY_PAYLOAD=?, UPDATED_AT=CURRENT_TIMESTAMP WHERE ID=?")) {
+                        "UPDATE KC_MANUAL SET MANUAL_CODE=?, MANUAL_NAME=?, PRODUCT_ID=?, ORG_UNIT_ID=?, MANUAL_KIND=?, IS_EXTERNALLY_VISIBLE=?, STATE=?, ARCHIVED_AT=?, ROW_VERSION=?, SUMMARY=?, UPDATED_BY=?, UPDATED_AT=CURRENT_TIMESTAMP WHERE MANUAL_ID=?")) {
                         update.setString(1, code);
                         update.setString(2, title);
-                        update.setString(3, productId);
-                        update.setString(4, ownerAId);
-                        update.setString(5, ownerAName);
-                        update.setString(6, ownerBId);
-                        update.setString(7, ownerBName);
-                        update.setString(8, departmentId);
-                        update.setString(9, currentOutlineVersionId);
-                        update.setString(10, status);
-                        update.setString(11, archivedAt);
-                        update.setLong(12, version);
-                        update.setCharacterStream(13, new StringReader(summary == null ? "" : summary));
-                        update.setCharacterStream(14, new StringReader(legacyPayload));
-                        update.setString(15, manualId);
+                        update.setLong(3, productId);
+                        if (departmentId == null) update.setNull(4, java.sql.Types.BIGINT); else update.setLong(4, departmentId);
+                        update.setString(5, manualKind);
+                        update.setString(6, visible);
+                        update.setString(7, status);
+                        update.setTimestamp(8, archivedAt == null ? null : Timestamp.from(Instant.parse(archivedAt)));
+                        update.setLong(9, version);
+                        update.setCharacterStream(10, new StringReader(summary == null ? "" : summary));
+                        update.setString(11, actor);
+                        update.setLong(12, manualId);
+                        update.executeUpdate();
+                    }
+                    replaceManualOwners(connection, manualId, ownerAId, ownerBId, actor);
+                    ensureManualOutline(connection, manualId, actor);
+                    return;
+                }
+            }
+        }
+        try (PreparedStatement insert = connection.prepareStatement(
+            "INSERT INTO KC_MANUAL(MANUAL_CODE, MANUAL_NAME, PRODUCT_ID, ORG_UNIT_ID, MANUAL_KIND, IS_EXTERNALLY_VISIBLE, STATE, SUMMARY, ARCHIVED_AT, CREATED_BY, UPDATED_BY) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
+            insert.setString(1, code);
+            insert.setString(2, title);
+            insert.setLong(3, productId);
+            if (departmentId == null) insert.setNull(4, java.sql.Types.BIGINT); else insert.setLong(4, departmentId);
+            insert.setString(5, manualKind);
+            insert.setString(6, visible);
+            insert.setString(7, status);
+            insert.setCharacterStream(8, new StringReader(summary == null ? "" : summary));
+            insert.setTimestamp(9, archivedAt == null ? null : Timestamp.from(Instant.parse(archivedAt)));
+            insert.setString(10, actor);
+            insert.setString(11, actor);
+            insert.executeUpdate();
+        }
+        try (PreparedStatement query = connection.prepareStatement("SELECT MANUAL_ID FROM KC_MANUAL WHERE PRODUCT_ID=? AND MANUAL_CODE=?")) {
+            query.setLong(1, productId); query.setString(2, code);
+            try (ResultSet result = query.executeQuery()) { if (!result.next()) throw new SQLException("MANUAL_INSERT_FAILED"); manualId = result.getLong(1); }
+        }
+        replaceManualOwners(connection, manualId, ownerAId, ownerBId, actor);
+        ensureManualOutline(connection, manualId, actor);
+    }
+
+    private String manualState(String value) {
+        String normalized = value == null ? "DRAFT" : value.trim().toUpperCase();
+        return switch (normalized) {
+            case "IMPORTED", "CREATED", "ASSET_CREATED", "ACTIVE" -> "ACTIVE";
+            case "FROZEN" -> "FROZEN";
+            case "ARCHIVED" -> "ARCHIVED";
+            default -> "DRAFT";
+        };
+    }
+
+    private void replaceManualOwners(Connection connection, long manualId, Long primary, Long deputy, String actor) throws SQLException {
+        try (PreparedStatement delete = connection.prepareStatement("DELETE FROM KC_MANUAL_OWNER WHERE MANUAL_ID = ?")) {
+            delete.setLong(1, manualId);
+            delete.executeUpdate();
+        }
+        insertManualOwner(connection, manualId, "PRIMARY", primary, actor);
+        if (deputy != null && !deputy.equals(primary)) insertManualOwner(connection, manualId, "DEPUTY", deputy, actor);
+    }
+
+    private void insertManualOwner(Connection connection, long manualId, String role, Long principalId, String actor) throws SQLException {
+        if (principalId == null) return;
+        try (PreparedStatement insert = connection.prepareStatement(
+            "INSERT INTO KC_MANUAL_OWNER(MANUAL_ID, OWNER_ROLE, PRINCIPAL_ID, CREATED_BY, UPDATED_BY) VALUES (?, ?, ?, ?, ?)")) {
+            insert.setLong(1, manualId);
+            insert.setString(2, role);
+            insert.setLong(3, principalId);
+            insert.setString(4, actor);
+            insert.setString(5, actor);
+            insert.executeUpdate();
+        }
+    }
+
+    private void ensureManualOutline(Connection connection, long manualId, String actor) throws SQLException {
+        try (PreparedStatement query = connection.prepareStatement("SELECT OUTLINE_ID FROM KC_MANUAL_OUTLINE WHERE MANUAL_ID = ?")) {
+            query.setLong(1, manualId);
+            try (ResultSet result = query.executeQuery()) {
+                if (result.next()) {
+                    try (PreparedStatement update = connection.prepareStatement(
+                        "UPDATE KC_MANUAL_OUTLINE SET UPDATED_BY=?, UPDATED_AT=CURRENT_TIMESTAMP WHERE MANUAL_ID=?")) {
+                        update.setString(1, actor);
+                        update.setLong(2, manualId);
                         update.executeUpdate();
                     }
                     return;
@@ -1572,114 +1598,193 @@ public final class Main {
             }
         }
         try (PreparedStatement insert = connection.prepareStatement(
-            "INSERT INTO MANUALS(ID, CODE, TITLE, PRODUCT_ID, OWNER_A_ID, OWNER_A_NAME, OWNER_B_ID, OWNER_B_NAME, DEPARTMENT_ID, CURRENT_OUTLINE_VERSION_ID, STATUS, ARCHIVED_AT, ASSET_VERSION, SUMMARY, LEGACY_PAYLOAD, LEGACY_AUDITS) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
-            insert.setString(1, manualId);
-            insert.setString(2, code);
-            insert.setString(3, title);
-            insert.setString(4, productId);
-            insert.setString(5, ownerAId);
-            insert.setString(6, ownerAName);
-            insert.setString(7, ownerBId);
-            insert.setString(8, ownerBName);
-            insert.setString(9, departmentId);
-            insert.setString(10, currentOutlineVersionId);
-            insert.setString(11, status);
-            insert.setString(12, archivedAt);
-            insert.setLong(13, 1L);
-            insert.setCharacterStream(14, new StringReader(summary == null ? "" : summary));
-            insert.setCharacterStream(15, new StringReader(legacyPayload));
-            insert.setCharacterStream(16, new StringReader("[]"));
+            "INSERT INTO KC_MANUAL_OUTLINE(MANUAL_ID, CREATED_BY, UPDATED_BY) VALUES (?, ?, ?)")) {
+            insert.setLong(1, manualId);
+            insert.setString(2, actor);
+            insert.setString(3, actor);
             insert.executeUpdate();
         }
     }
 
-    private void requireExistingManual(Connection connection, String handbookId) throws SQLException {
+    private long requireExistingManual(Connection connection, String handbookId) throws SQLException {
         if (handbookId == null || handbookId.isBlank()) {
             throw new SQLException("OUTLINE_HANDBOOK_REQUIRED");
         }
-        try (PreparedStatement query = connection.prepareStatement("SELECT ID FROM MANUALS WHERE ID = ?")) {
+        try (PreparedStatement query = connection.prepareStatement("SELECT MANUAL_ID FROM KC_MANUAL WHERE MANUAL_CODE = ?")) {
             query.setString(1, handbookId);
             try (ResultSet result = query.executeQuery()) {
                 if (!result.next()) {
                     throw new SQLException("OUTLINE_HANDBOOK_NOT_FOUND");
                 }
+                return result.getLong(1);
             }
         }
     }
 
-    private void upsertOutlineVersion(Connection connection, String handbookId, String outlineId, Map<String, Object> outline, Map<String, Object> snapshot) throws SQLException {
+    private long nextBusinessId(Connection connection) throws SQLException {
+        try (PreparedStatement query = connection.prepareStatement("SELECT KC_BUSINESS_ID_SEQ.NEXTVAL FROM DUAL");
+             ResultSet result = query.executeQuery()) {
+            if (!result.next()) throw new SQLException("BUSINESS_ID_UNAVAILABLE");
+            return result.getLong(1);
+        }
+    }
+
+    private long outlineSubjectId(Connection connection, long manualId) throws SQLException {
+        try (PreparedStatement query = connection.prepareStatement("SELECT OUTLINE_ID FROM KC_MANUAL_OUTLINE WHERE MANUAL_ID=?")) {
+            query.setLong(1, manualId);
+            try (ResultSet result = query.executeQuery()) {
+                if (!result.next()) throw new SQLException("OUTLINE_SUBJECT_NOT_FOUND");
+                return result.getLong(1);
+            }
+        }
+    }
+
+    private long resolveOutlineVersionId(Connection connection, String outlineId) throws SQLException {
+        if (outlineId == null || outlineId.isBlank()) throw new SQLException("OUTLINE_NOT_FOUND");
+        try (PreparedStatement query = connection.prepareStatement("SELECT OUTLINE_VERSION_ID FROM KC_MANUAL_OUTLINE_VERSION WHERE SOURCE_REF=?")) {
+            query.setString(1, outlineId);
+            try (ResultSet result = query.executeQuery()) {
+                if (result.next()) return result.getLong(1);
+            }
+        }
+        try {
+            long internalId = Long.parseLong(outlineId);
+            try (PreparedStatement query = connection.prepareStatement("SELECT OUTLINE_VERSION_ID FROM KC_MANUAL_OUTLINE_VERSION WHERE OUTLINE_VERSION_ID=?")) {
+                query.setLong(1, internalId);
+                try (ResultSet result = query.executeQuery()) {
+                    if (result.next()) return internalId;
+                }
+            }
+        } catch (NumberFormatException ignored) {
+            // 公共 API 允许非数字业务 ID，仅数字形式才兼容旧内部 ID。
+        }
+        throw new SQLException("OUTLINE_NOT_FOUND");
+    }
+
+    private Long optionalOutlineVersionId(Connection connection, String outlineId) throws SQLException {
+        return outlineId == null || outlineId.isBlank() ? null : resolveOutlineVersionId(connection, outlineId);
+    }
+
+    private String externalOutlineId(Connection connection, String internalId) throws SQLException {
+        if (internalId == null || internalId.isBlank()) return null;
+        try (PreparedStatement query = connection.prepareStatement("SELECT COALESCE(SOURCE_REF, TO_CHAR(OUTLINE_VERSION_ID)) FROM KC_MANUAL_OUTLINE_VERSION WHERE OUTLINE_VERSION_ID=?")) {
+            query.setLong(1, Long.parseLong(internalId));
+            try (ResultSet result = query.executeQuery()) {
+                return result.next() ? result.getString(1) : internalId;
+            }
+        }
+    }
+
+    private long resolveOutlineNodeId(Connection connection, long outlineVersionId, String nodeKey) throws SQLException {
+        try (PreparedStatement query = connection.prepareStatement("SELECT OUTLINE_NODE_ID FROM KC_MANUAL_OUTLINE_NODE WHERE OUTLINE_VERSION_ID=? AND NODE_KEY=?")) {
+            query.setLong(1, outlineVersionId);
+            query.setString(2, nodeKey);
+            try (ResultSet result = query.executeQuery()) {
+                if (!result.next()) throw new SQLException("INVALID_DOMAIN_PAYLOAD");
+                return result.getLong(1);
+            }
+        }
+    }
+
+    private long upsertOutlineVersion(Connection connection, long manualId, String outlineId, Map<String, Object> outline, Map<String, Object> snapshot) throws SQLException {
         String versionCode = coalesce(outline.get("outlineStructureVersion"), outlineId);
-        String name = handbookTitle(connection, handbookId, null, null);
-        String state = coalesce(outline.get("state"), "draft");
-        String baseVersionId = coalesce(outline.get("baseVersionId"));
-        String sourceType = coalesce(outline.get("sourceType"), "manual");
+        String state = outlineState(coalesce(outline.get("state"), "DRAFT"));
+        Long baseVersionId = optionalOutlineVersionId(connection, coalesce(outline.get("baseVersionId")));
+        String sourceType = outlineSourceType(coalesce(outline.get("sourceType"), "MANUAL"));
         String sourceFingerprint = coalesce(outline.get("sourceFingerprint"));
         String parserVersion = coalesce(outline.get("parserVersion"));
         String ruleVersion = coalesce(outline.get("ruleVersion"));
         String publishedAt = coalesce(outline.get("published_at"), outline.get("publishedAt"));
-        String legacyPayload = Json.stringify(new LinkedHashMap<>(outline));
-        try (PreparedStatement query = connection.prepareStatement("SELECT EDIT_VERSION FROM MANUAL_OUTLINE_VERSIONS WHERE ID = ? FOR UPDATE")) {
+        String actor = coalesce(snapshot.get("principalId"), snapshot.get("updatedBy"), "system:api");
+        long subjectId = outlineSubjectId(connection, manualId);
+        String structureSha = sha256(Json.stringify(outline.get("content") == null ? Map.of() : outline.get("content")));
+        try (PreparedStatement query = connection.prepareStatement("SELECT OUTLINE_VERSION_ID, ROW_VERSION FROM KC_MANUAL_OUTLINE_VERSION WHERE SOURCE_REF = ? FOR UPDATE")) {
             query.setString(1, outlineId);
             try (ResultSet result = query.executeQuery()) {
                 if (result.next()) {
-                    long editVersion = result.getLong(1) + 1;
+                    long internalId = result.getLong(1);
+                    long editVersion = result.getLong(2) + 1;
                     try (PreparedStatement update = connection.prepareStatement(
-                        "UPDATE MANUAL_OUTLINE_VERSIONS SET MANUAL_ID=?, VERSION_CODE=?, NAME=?, STATE=?, BASE_VERSION_ID=?, SOURCE_TYPE=?, SOURCE_FINGERPRINT=?, PARSER_VERSION=?, RULE_VERSION=?, EDIT_VERSION=?, PUBLISHED_AT=?, LEGACY_PAYLOAD=?, UPDATED_AT=CURRENT_TIMESTAMP WHERE ID=?")) {
-                        update.setString(1, handbookId);
+                        "UPDATE KC_MANUAL_OUTLINE_VERSION SET OUTLINE_ID=?, VERSION_CODE=?, STATE=?, BASE_OUTLINE_VERSION_ID=?, SOURCE_TYPE=?, SOURCE_SHA256=?, PARSER_VERSION=?, RULE_VERSION=?, STRUCTURE_SHA256=?, ROW_VERSION=?, PUBLISHED_BY=?, PUBLISHED_AT=?, UPDATED_BY=?, UPDATED_AT=CURRENT_TIMESTAMP WHERE OUTLINE_VERSION_ID=?")) {
+                        update.setLong(1, subjectId);
                         update.setString(2, versionCode);
-                        update.setString(3, name);
-                        update.setString(4, state);
-                        update.setString(5, baseVersionId);
-                        update.setString(6, sourceType);
-                        update.setString(7, sourceFingerprint);
-                        update.setString(8, parserVersion);
-                        update.setString(9, ruleVersion);
+                        update.setString(3, state);
+                        if (baseVersionId == null) update.setNull(4, java.sql.Types.BIGINT); else update.setLong(4, baseVersionId);
+                        update.setString(5, sourceType);
+                        update.setString(6, sourceFingerprint);
+                        update.setString(7, parserVersion);
+                        update.setString(8, ruleVersion);
+                        update.setString(9, structureSha);
                         update.setLong(10, editVersion);
-                        update.setString(11, publishedAt);
-                        update.setCharacterStream(12, new StringReader(legacyPayload));
-                        update.setString(13, outlineId);
+                        update.setString(11, "PUBLISHED".equals(state) ? actor : null);
+                        update.setTimestamp(12, "PUBLISHED".equals(state) ? (publishedAt == null ? Timestamp.from(Instant.now()) : Timestamp.from(Instant.parse(publishedAt))) : null);
+                        update.setString(13, actor);
+                        update.setLong(14, internalId);
                         update.executeUpdate();
                     }
-                    return;
+                    return internalId;
                 }
             }
         }
         try (PreparedStatement insert = connection.prepareStatement(
-            "INSERT INTO MANUAL_OUTLINE_VERSIONS(ID, MANUAL_ID, VERSION_CODE, NAME, STATE, BASE_VERSION_ID, SOURCE_TYPE, SOURCE_FINGERPRINT, PARSER_VERSION, RULE_VERSION, EDIT_VERSION, PUBLISHED_AT, LEGACY_PAYLOAD) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
-            insert.setString(1, outlineId);
-            insert.setString(2, handbookId);
+            "INSERT INTO KC_MANUAL_OUTLINE_VERSION(OUTLINE_VERSION_ID, OUTLINE_ID, VERSION_CODE, STATE, BASE_OUTLINE_VERSION_ID, SOURCE_TYPE, SOURCE_REF, SOURCE_SHA256, PARSER_VERSION, RULE_VERSION, STRUCTURE_SHA256, PUBLISHED_BY, PUBLISHED_AT, CREATED_BY, UPDATED_BY) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
+            long internalId = nextBusinessId(connection);
+            insert.setLong(1, internalId);
+            insert.setLong(2, subjectId);
             insert.setString(3, versionCode);
-            insert.setString(4, name);
-            insert.setString(5, state);
-            insert.setString(6, baseVersionId);
-            insert.setString(7, sourceType);
+            insert.setString(4, state);
+            if (baseVersionId == null) insert.setNull(5, java.sql.Types.BIGINT); else insert.setLong(5, baseVersionId);
+            insert.setString(6, sourceType);
+            insert.setString(7, outlineId);
             insert.setString(8, sourceFingerprint);
             insert.setString(9, parserVersion);
             insert.setString(10, ruleVersion);
-            insert.setLong(11, 1L);
-            insert.setString(12, publishedAt);
-            insert.setCharacterStream(13, new StringReader(legacyPayload));
+            insert.setString(11, structureSha);
+            insert.setString(12, "PUBLISHED".equals(state) ? actor : null);
+            insert.setTimestamp(13, "PUBLISHED".equals(state) ? (publishedAt == null ? Timestamp.from(Instant.now()) : Timestamp.from(Instant.parse(publishedAt))) : null);
+            insert.setString(14, actor);
+            insert.setString(15, actor);
             insert.executeUpdate();
+            return internalId;
         }
     }
 
-    private void rebuildOutlineChildren(Connection connection, String handbookId, String outlineId, Map<String, Object> outline) throws SQLException {
-        deleteOutlineChildren(connection, outlineId);
+    private String outlineState(String value) {
+        String normalized = value == null ? "DRAFT" : value.trim().toUpperCase();
+        return switch (normalized) {
+            case "READY" -> "READY";
+            case "PUBLISHED" -> "PUBLISHED";
+            case "SUPERSEDED" -> "SUPERSEDED";
+            case "ARCHIVED" -> "ARCHIVED";
+            default -> "DRAFT";
+        };
+    }
+
+    private String outlineSourceType(String value) {
+        String normalized = value == null ? "MANUAL" : value.trim().toUpperCase();
+        return switch (normalized) {
+            case "IMPORT", "REVERSE_EXTRACT", "MIGRATION" -> normalized;
+            default -> "MANUAL";
+        };
+    }
+
+    private void rebuildOutlineChildren(Connection connection, long outlineVersionId, String externalOutlineId, Map<String, Object> outline) throws SQLException {
+        deleteOutlineChildren(connection, outlineVersionId);
         Map<String, Object> content = asMapOrEmpty(outline.get("content"));
         List<Map<String, Object>> parts = listOfMaps(content.get("parts"));
         long order = 0;
         for (int partIndex = 0; partIndex < parts.size(); partIndex++) {
             Map<String, Object> part = parts.get(partIndex);
             String partTitle = coalesce(part.get("part"), part.get("name"), part.get("title"), "未命名部分");
-            String partId = stableNodeId(outlineId, "part", String.valueOf(partIndex + 1), partTitle);
-            insertOutlineNode(connection, partId, handbookId, outlineId, null, "directory", null, partTitle, coalesce(part.get("description"), part.get("desc")), 1, String.valueOf(partIndex + 1), ++order);
-            order = insertDocuments(connection, handbookId, outlineId, partId, listOfMaps(part.get("documents")), 2, String.valueOf(partIndex + 1), order);
-            order = insertDirectories(connection, handbookId, outlineId, partId, listOfMaps(part.get("chapters")), 2, String.valueOf(partIndex + 1), order);
-            order = insertDirectories(connection, handbookId, outlineId, partId, listOfMaps(part.get("children")), 2, String.valueOf(partIndex + 1), order);
+            String partId = stableNodeId(externalOutlineId, "part", String.valueOf(partIndex + 1), partTitle);
+            long partInternalId = insertOutlineNode(connection, partId, outlineVersionId, null, "directory", partTitle, coalesce(part.get("description"), part.get("desc")), 1, ++order);
+            order = insertDocuments(connection, outlineVersionId, externalOutlineId, partInternalId, listOfMaps(part.get("documents")), 2, String.valueOf(partIndex + 1), order);
+            order = insertDirectories(connection, outlineVersionId, externalOutlineId, partInternalId, listOfMaps(part.get("chapters")), 2, String.valueOf(partIndex + 1), order);
+            order = insertDirectories(connection, outlineVersionId, externalOutlineId, partInternalId, listOfMaps(part.get("children")), 2, String.valueOf(partIndex + 1), order);
         }
     }
 
-    private void replaceOutlineAssignmentsFromSnapshot(Connection connection, String handbookId, String outlineId, Map<String, Object> outline) throws SQLException {
+    private void replaceOutlineAssignmentsFromSnapshot(Connection connection, long outlineVersionId, String outlineId, Map<String, Object> outline, String actor) throws SQLException {
         Object governanceValue = outline.get("governance");
         List<Map<String, Object>> assignments = governanceValue instanceof Map<?, ?> governance
             ? listOfMaps(castMap(governance).get("assignments"))
@@ -1734,31 +1839,10 @@ public final class Main {
                 }
             }
         }
-        try (PreparedStatement delete = connection.prepareStatement("DELETE FROM MANUAL_OUTLINE_NODE_DOMAINS WHERE OUTLINE_VERSION_ID = ?")) {
-            delete.setString(1, outlineId);
-            delete.executeUpdate();
+        for (Map<String, Object> assignment : resolvedAssignments) for (Object domainValue : listValues(assignment.get("techDomainIds"))) {
+            if (!techDomainExists(connection, String.valueOf(domainValue))) throw new SQLException("INVALID_DOMAIN_PAYLOAD");
         }
-        for (Map<String, Object> assignment : resolvedAssignments) {
-            String nodeId = coalesce(assignment.get("nodeId"), assignment.get("outlineNodeId"));
-            if (nodeId == null) continue;
-            for (Object domainValue : listValues(assignment.get("techDomainIds"))) {
-                String domainId = String.valueOf(domainValue);
-                if (!techDomainExists(connection, domainId)) {
-                    throw new SQLException("INVALID_DOMAIN_PAYLOAD");
-                }
-                String id = "node-domain_" + sha256(outlineId + "|" + nodeId + "|" + domainId).substring(0, 16);
-                try (PreparedStatement insert = connection.prepareStatement(
-                    "INSERT INTO MANUAL_OUTLINE_NODE_DOMAINS(ID, MANUAL_ID, OUTLINE_VERSION_ID, NODE_ID, TECH_DOMAIN_ID, ASSIGNMENT_SOURCE, ASSIGNED_BY) VALUES (?, ?, ?, ?, ?, 'explicit', ?)")) {
-                    insert.setString(1, id);
-                    insert.setString(2, handbookId);
-                    insert.setString(3, outlineId);
-                    insert.setString(4, nodeId);
-                    insert.setString(5, domainId);
-                    insert.setString(6, null);
-                    insert.executeUpdate();
-                }
-            }
-        }
+        if (!resolvedAssignments.isEmpty()) replaceResponsibilityItems(connection, outlineVersionId, effectiveAssignments(outlineNodes(connection, outlineVersionId), resolvedAssignments), actor);
     }
 
     private List<Map<String, Object>> assignmentsFromContent(Object content, String outlineId) {
@@ -1785,7 +1869,7 @@ public final class Main {
 
     private void collectContentAssignments(List<Map<String, Object>> assignments, Object value) {
         for (Map<String, Object> document : listOfMaps(value)) {
-            String nodeId = coalesce(document.get("nodeId"), document.get("outlineNodeId"));
+            String nodeId = coalesce(document.get("nodeId"), document.get("outlineNodeId"), document.get("stableId"));
             String sourceId = coalesce(document.get("id"), document.get("documentId"), document.get("code"));
             Object domains = document.get("techDomainIds");
             if (nodeId == null && sourceId != null) {
@@ -1797,20 +1881,20 @@ public final class Main {
         }
     }
 
-    private long insertDirectories(Connection connection, String handbookId, String outlineId, String parentId, List<Map<String, Object>> directories, int level, String parentPath, long order) throws SQLException {
+    private long insertDirectories(Connection connection, long outlineVersionId, String externalOutlineId, long parentId, List<Map<String, Object>> directories, int level, String parentPath, long order) throws SQLException {
         for (int directoryIndex = 0; directoryIndex < directories.size(); directoryIndex++) {
             Map<String, Object> directory = directories.get(directoryIndex);
             String title = coalesce(directory.get("name"), directory.get("title"), "未命名章节");
             String path = parentPath + "." + (directoryIndex + 1);
-            String nodeId = stableNodeId(outlineId, level == 2 ? "chapter" : "section", path, title);
-            insertOutlineNode(connection, nodeId, handbookId, outlineId, parentId, "directory", null, title, coalesce(directory.get("description"), directory.get("desc")), level, path, ++order);
-            order = insertDocuments(connection, handbookId, outlineId, nodeId, leafDocuments(directory), level + 1, path, order);
-            order = insertDirectories(connection, handbookId, outlineId, nodeId, listOfMaps(directory.get("children")), level + 1, path, order);
+            String nodeId = stableNodeId(externalOutlineId, level == 2 ? "chapter" : "section", path, title);
+            long internalNodeId = insertOutlineNode(connection, nodeId, outlineVersionId, parentId, "directory", title, coalesce(directory.get("description"), directory.get("desc")), level, ++order);
+            order = insertDocuments(connection, outlineVersionId, externalOutlineId, internalNodeId, leafDocuments(directory), level + 1, path, order);
+            order = insertDirectories(connection, outlineVersionId, externalOutlineId, internalNodeId, listOfMaps(directory.get("children")), level + 1, path, order);
         }
         return order;
     }
 
-    private long insertDocuments(Connection connection, String handbookId, String outlineId, String parentId, List<Map<String, Object>> documents, int level, String parentPath, long order) throws SQLException {
+    private long insertDocuments(Connection connection, long outlineVersionId, String externalOutlineId, long parentId, List<Map<String, Object>> documents, int level, String parentPath, long order) throws SQLException {
         for (int documentIndex = 0; documentIndex < documents.size(); documentIndex++) {
             Map<String, Object> document = documents.get(documentIndex);
             String sourceId = coalesce(document.get("id"), document.get("documentId"), document.get("code"), String.valueOf(documentIndex + 1));
@@ -1818,92 +1902,55 @@ public final class Main {
             int documentLevel = document.get("outlineLevel") instanceof Number value
                 ? value.intValue()
                 : level;
-            String documentId = stableNodeId(outlineId, "document", path, sourceId);
+            String documentId = coalesce(document.get("nodeId"), document.get("outlineNodeId"), document.get("stableId"), stableNodeId(externalOutlineId, "document", path, sourceId));
             String documentTitle = coalesce(document.get("name"), document.get("title"), "未命名文档");
             String documentDesc = coalesce(document.get("desc"), document.get("description"), document.get("body"), documentTitle);
-            insertOutlineNode(connection, documentId, handbookId, outlineId, parentId, "document", sourceId, documentTitle, documentDesc, documentLevel, path, ++order);
-            insertDocument(connection, handbookId, outlineId, documentId, document, order);
+            insertOutlineNode(connection, documentId, outlineVersionId, parentId, "document", documentTitle, documentDesc, documentLevel, ++order);
         }
         return order;
     }
 
-    private void insertOutlineNode(Connection connection, String id, String handbookId, String outlineVersionId, String parentId, String nodeType, String sourceId, String title, String description, int level, String outlinePath, long order) throws SQLException {
+    private long insertOutlineNode(Connection connection, String nodeKey, long outlineVersionId, Long parentId, String nodeType, String title, String description, int level, long order) throws SQLException {
+        long id = nextBusinessId(connection);
         try (PreparedStatement insert = connection.prepareStatement(
-            "INSERT INTO MANUAL_OUTLINE_NODES(ID, MANUAL_ID, OUTLINE_VERSION_ID, PARENT_ID, NODE_TYPE, SOURCE_ID, TITLE, DESCRIPTION, OUTLINE_LEVEL, OUTLINE_PATH, ORDER_INDEX) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
-            insert.setString(1, id);
-            insert.setString(2, handbookId);
-            insert.setString(3, outlineVersionId);
-            insert.setString(4, parentId);
-            insert.setString(5, nodeType);
-            insert.setString(6, sourceId);
-            insert.setString(7, title);
-            insert.setCharacterStream(8, new StringReader(description == null ? "" : description));
-            insert.setLong(9, level);
-            insert.setString(10, outlinePath);
-            insert.setLong(11, order);
-            insert.executeUpdate();
-        }
-    }
-
-    private void insertDocument(Connection connection, String handbookId, String outlineVersionId, String outlineNodeId, Map<String, Object> document, long order) throws SQLException {
-        // Document rows belong to an outline node. Keep the source page number as
-        // DOCUMENT_CODE so repeated imports can create independent candidates.
-        String documentId = outlineNodeId;
-        String documentCode = coalesce(document.get("code"), document.get("documentId"), document.get("id"), outlineNodeId);
-        String title = coalesce(document.get("name"), document.get("title"), "未命名文档");
-        String summary = coalesce(document.get("desc"), document.get("description"), document.get("body"), title);
-        String ownerId = coalesce(document.get("ownerId"));
-        String status = coalesce(document.get("status"), "draft");
-        String legacyPayload = Json.stringify(document);
-        try (PreparedStatement insert = connection.prepareStatement(
-            "INSERT INTO MANUAL_DOCUMENTS(ID, MANUAL_ID, OUTLINE_VERSION_ID, OUTLINE_NODE_ID, DOCUMENT_CODE, TITLE, SUMMARY, OWNER_ID, STATUS, LEGACY_PAYLOAD) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
-            insert.setString(1, documentId);
-            insert.setString(2, handbookId);
-            insert.setString(3, outlineVersionId);
-            insert.setString(4, outlineNodeId);
-            insert.setString(5, documentCode);
+            "INSERT INTO KC_MANUAL_OUTLINE_NODE(OUTLINE_NODE_ID, OUTLINE_VERSION_ID, NODE_KEY, PARENT_NODE_ID, NODE_TYPE, NODE_TITLE, NODE_DESCRIPTION, LEVEL_NO, SORT_NO, IS_REQUIRED, CREATED_BY, UPDATED_BY) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Y', 'system:api', 'system:api')")) {
+            insert.setLong(1, id);
+            insert.setLong(2, outlineVersionId);
+            insert.setString(3, nodeKey);
+            if (parentId == null) insert.setNull(4, java.sql.Types.BIGINT); else insert.setLong(4, parentId);
+            insert.setString(5, "document".equalsIgnoreCase(nodeType) ? "DOCUMENT" : "DIRECTORY");
             insert.setString(6, title);
-            insert.setCharacterStream(7, new StringReader(summary));
-            insert.setString(8, ownerId);
-            insert.setString(9, status);
-            insert.setCharacterStream(10, new StringReader(legacyPayload));
+            insert.setCharacterStream(7, new StringReader(description == null ? "" : description));
+            insert.setLong(8, level);
+            insert.setLong(9, order);
             insert.executeUpdate();
         }
-        try (PreparedStatement insert = connection.prepareStatement(
-            "INSERT INTO MANUAL_DOCUMENT_SECTIONS(ID, MANUAL_ID, DOCUMENT_ID, TITLE, BODY, TECH_DOMAIN_ID, OWNER_ID, STATUS, VERSION, ORDER_INDEX, PLANNED_END_DATE, FINISHED_AT) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
-            insert.setString(1, documentId + ":section:1");
-            insert.setString(2, handbookId);
-            insert.setString(3, documentId);
-            insert.setString(4, title);
-            insert.setCharacterStream(5, new StringReader(summary));
-            insert.setString(6, coalesce(document.get("techDomainId")));
-            insert.setString(7, ownerId);
-            insert.setString(8, status);
-            insert.setLong(9, 1L);
-            insert.setLong(10, order);
-            insert.setString(11, coalesce(document.get("plannedEndDate")));
-            insert.setString(12, coalesce(document.get("finishedAt")));
-            insert.executeUpdate();
-        }
+        return id;
     }
 
     private List<Map<String, Object>> outlineNodes(Connection connection, String outlineVersionId) throws SQLException {
+        return outlineNodes(connection, resolveOutlineVersionId(connection, outlineVersionId));
+    }
+
+    private List<Map<String, Object>> outlineNodes(Connection connection, long outlineVersionId) throws SQLException {
         List<Map<String, Object>> nodes = new ArrayList<>();
-        String sql = "SELECT ID, PARENT_ID, NODE_TYPE, SOURCE_ID, TITLE, DESCRIPTION, OUTLINE_LEVEL, OUTLINE_PATH, ORDER_INDEX FROM MANUAL_OUTLINE_NODES WHERE OUTLINE_VERSION_ID = ? ORDER BY ORDER_INDEX, ID";
+        String sql = "SELECT N.NODE_KEY, P.NODE_KEY, N.NODE_TYPE, N.NODE_KEY, N.NODE_TITLE, N.NODE_DESCRIPTION, N.LEVEL_NO, N.SORT_NO "
+            + "FROM KC_MANUAL_OUTLINE_NODE N LEFT JOIN KC_MANUAL_OUTLINE_NODE P ON P.OUTLINE_NODE_ID=N.PARENT_NODE_ID "
+            + "WHERE N.OUTLINE_VERSION_ID = ? ORDER BY N.SORT_NO, N.OUTLINE_NODE_ID";
         try (PreparedStatement statement = connection.prepareStatement(sql)) {
-            statement.setString(1, outlineVersionId);
+            statement.setLong(1, outlineVersionId);
             try (ResultSet result = statement.executeQuery()) {
                 while (result.next()) {
                     Map<String, Object> node = new LinkedHashMap<>();
                     node.put("id", result.getString(1));
                     node.put("parentId", result.getString(2));
-                    node.put("kind", result.getString(3));
+                    node.put("kind", result.getString(3).toLowerCase());
                     node.put("sourceId", result.getString(4));
                     node.put("title", result.getString(5));
                     node.put("description", readClobOrNull(result.getClob(6)));
                     node.put("level", result.getLong(7));
-                    node.put("path", result.getString(8));
-                    node.put("order", result.getLong(9));
+                    node.put("path", null);
+                    node.put("order", result.getLong(8));
                     nodes.add(node);
                 }
             }
@@ -1932,81 +1979,55 @@ public final class Main {
         return documents;
     }
 
-    private void deleteOutlineChildren(Connection connection, String outlineId) throws SQLException {
-        List<String> documentIds = new ArrayList<>();
-        try (PreparedStatement query = connection.prepareStatement("SELECT ID FROM MANUAL_DOCUMENTS WHERE OUTLINE_VERSION_ID = ?")) {
-            query.setString(1, outlineId);
-            try (ResultSet result = query.executeQuery()) {
-                while (result.next()) {
-                    documentIds.add(result.getString(1));
-                }
-            }
+    private void deleteOutlineChildren(Connection connection, long outlineId) throws SQLException {
+        try (PreparedStatement delete = connection.prepareStatement(
+            "DELETE FROM KC_MANUAL_OUTLINE_RESP_ITEM WHERE RESP_VERSION_ID IN (SELECT RESP_VERSION_ID FROM KC_MANUAL_OUTLINE_RESP_VERSION WHERE OUTLINE_VERSION_ID=?)")) {
+            delete.setLong(1, outlineId);
+            delete.executeUpdate();
         }
-        for (String documentId : documentIds) {
-            try (PreparedStatement delete = connection.prepareStatement("DELETE FROM MANUAL_DOCUMENT_SECTIONS WHERE DOCUMENT_ID = ?")) {
-                delete.setString(1, documentId);
+        String[] tables = {
+            "KC_MANUAL_OUTLINE_RESP_VERSION",
+            "KC_MANUAL_OUTLINE_CHECK_RUN", "KC_MANUAL_OUTLINE_CHANGE",
+            "KC_MANUAL_OUTLINE_VERSION_TAG", "KC_MANUAL_OUTLINE_NODE"
+        };
+        for (String table : tables) {
+            try (PreparedStatement delete = connection.prepareStatement("DELETE FROM " + table + " WHERE OUTLINE_VERSION_ID = ?")) {
+                delete.setLong(1, outlineId);
                 delete.executeUpdate();
             }
         }
-        try (PreparedStatement delete = connection.prepareStatement("DELETE FROM MANUAL_DOCUMENTS WHERE OUTLINE_VERSION_ID = ?")) {
-            delete.setString(1, outlineId);
-            delete.executeUpdate();
-        }
-        try (PreparedStatement delete = connection.prepareStatement("DELETE FROM MANUAL_OUTLINE_NODES WHERE OUTLINE_VERSION_ID = ?")) {
-            delete.setString(1, outlineId);
-            delete.executeUpdate();
+    }
+
+    private void updateCurrentOutlinePointers(Connection connection, Set<Long> manualIds) throws SQLException {
+        for (long manualId : manualIds) {
+            updateCurrentOutlinePointer(connection, manualId);
         }
     }
 
-    private void removeMissingOutlineVersions(Connection connection, Set<String> activeIds) throws SQLException {
-        List<String> existing = new ArrayList<>();
-        try (PreparedStatement query = connection.prepareStatement("SELECT ID FROM MANUAL_OUTLINE_VERSIONS")) {
-            try (ResultSet result = query.executeQuery()) {
-                while (result.next()) {
-                    existing.add(result.getString(1));
-                }
-            }
-        }
-        for (String id : existing) {
-            if (!activeIds.contains(id)) {
-                deleteOutlineChildren(connection, id);
-                try (PreparedStatement delete = connection.prepareStatement("DELETE FROM MANUAL_OUTLINE_VERSIONS WHERE ID = ?")) {
-                    delete.setString(1, id);
-                    delete.executeUpdate();
-                }
-            }
-        }
-    }
-
-    private void updateCurrentOutlinePointers(Connection connection, Set<String> handbookIds) throws SQLException {
-        for (String handbookId : handbookIds) {
-            updateCurrentOutlinePointer(connection, handbookId);
-        }
-    }
-
-    private void updateCurrentOutlinePointer(Connection connection, String handbookId) throws SQLException {
-        String outlineId = null;
-        try (PreparedStatement query = connection.prepareStatement("SELECT ID FROM MANUAL_OUTLINE_VERSIONS WHERE MANUAL_ID = ? AND STATE = 'published' ORDER BY UPDATED_AT DESC")) {
-            query.setString(1, handbookId);
+    private void updateCurrentOutlinePointer(Connection connection, long manualId) throws SQLException {
+        long subjectId = outlineSubjectId(connection, manualId);
+        Long outlineId = null;
+        try (PreparedStatement query = connection.prepareStatement("SELECT OUTLINE_VERSION_ID FROM KC_MANUAL_OUTLINE_VERSION WHERE OUTLINE_ID = ? AND STATE = 'PUBLISHED' ORDER BY UPDATED_AT DESC")) {
+            query.setLong(1, subjectId);
             try (ResultSet result = query.executeQuery()) {
                 if (result.next()) {
-                    outlineId = result.getString(1);
+                    outlineId = result.getLong(1);
                 }
             }
         }
         if (outlineId == null) {
-            try (PreparedStatement query = connection.prepareStatement("SELECT ID FROM MANUAL_OUTLINE_VERSIONS WHERE MANUAL_ID = ? ORDER BY UPDATED_AT DESC")) {
-                query.setString(1, handbookId);
+            try (PreparedStatement query = connection.prepareStatement("SELECT OUTLINE_VERSION_ID FROM KC_MANUAL_OUTLINE_VERSION WHERE OUTLINE_ID = ? ORDER BY UPDATED_AT DESC")) {
+                query.setLong(1, subjectId);
                 try (ResultSet result = query.executeQuery()) {
                     if (result.next()) {
-                        outlineId = result.getString(1);
+                        outlineId = result.getLong(1);
                     }
                 }
             }
         }
-        try (PreparedStatement update = connection.prepareStatement("UPDATE MANUALS SET CURRENT_OUTLINE_VERSION_ID = ?, UPDATED_AT = CURRENT_TIMESTAMP WHERE ID = ?")) {
-            update.setString(1, outlineId);
-            update.setString(2, handbookId);
+        try (PreparedStatement update = connection.prepareStatement("UPDATE KC_MANUAL_OUTLINE SET CURRENT_OUTLINE_VERSION_ID = ?, UPDATED_BY='system:api', UPDATED_AT = CURRENT_TIMESTAMP WHERE MANUAL_ID = ?")) {
+            if (outlineId == null) update.setNull(1, java.sql.Types.BIGINT); else update.setLong(1, outlineId);
+            update.setLong(2, manualId);
             update.executeUpdate();
         }
     }
@@ -2026,38 +2047,6 @@ public final class Main {
             }
         }
         return count;
-    }
-
-    private Map<String, Object> documentSummary(Connection connection, String handbookId, Object fallback) throws SQLException {
-        Map<String, Object> summary = asMapOrEmpty(fallback);
-        long total = 0L;
-        long published = 0L;
-        long inProgress = 0L;
-        long runningTasks = 0L;
-        String sql = "SELECT STATUS, COUNT(*) FROM MANUAL_DOCUMENTS WHERE MANUAL_ID = ? GROUP BY STATUS";
-        try (PreparedStatement statement = connection.prepareStatement(sql)) {
-            statement.setString(1, handbookId);
-            try (ResultSet result = statement.executeQuery()) {
-                while (result.next()) {
-                    String status = result.getString(1);
-                    long count = result.getLong(2);
-                    total += count;
-                    if ("published".equalsIgnoreCase(status)) {
-                        published += count;
-                    } else {
-                        inProgress += count;
-                        if ("running".equalsIgnoreCase(status) || "processing".equalsIgnoreCase(status)) {
-                            runningTasks += count;
-                        }
-                    }
-                }
-            }
-        }
-        summary.put("total", total);
-        summary.put("published", published);
-        summary.put("inProgress", inProgress);
-        summary.put("runningTasks", runningTasks);
-        return summary;
     }
 
     private long countNodesByKind(List<Map<String, Object>> nodes, String kind) {
@@ -2290,6 +2279,37 @@ public final class Main {
             }
         }
         return null;
+    }
+
+    private static Long optionalNumericId(Object... values) throws SQLException {
+        String value = coalesce(values);
+        if (value == null) return null;
+        try {
+            return Long.parseLong(value);
+        } catch (NumberFormatException error) {
+            throw new SQLException("ID 必须是数字：" + value);
+        }
+    }
+
+    private static long productId(Object productId, Object productType) throws SQLException {
+        Long numeric = optionalNumericId(productId);
+        if (numeric != null) return numeric;
+        String type = coalesce(productType);
+        if ("DB".equalsIgnoreCase(type) || "YashanDB".equalsIgnoreCase(type)) return 1L;
+        if ("YMP".equalsIgnoreCase(type)) return 2L;
+        if ("YCM".equalsIgnoreCase(type)) return 3L;
+        if ("YDC".equalsIgnoreCase(type)) return 4L;
+        throw new SQLException("未识别的产品 ID 或产品形态");
+    }
+
+    private static String productType(long productId) {
+        return switch ((int) productId) {
+            case 1 -> "DB";
+            case 2 -> "YMP";
+            case 3 -> "YCM";
+            case 4 -> "YDC";
+            default -> String.valueOf(productId);
+        };
     }
 
     private static String stableNodeId(String outlineId, String kind, String path, String title) {
