@@ -9,6 +9,7 @@
 - Java 17 或更高版本。
 - YashanDB JDBC Jar；当前验证制品为 `com.yashandb:yashandb-jdbc:1.6.1`。
 - 通过环境变量提供连接信息，密码不得写入仓库。
+- Windows 可通过 Git Bash 执行 `start.sh`；脚本固定以 UTF-8 编译 Java 源码，并自动转换 Windows classpath。
 
 ```bash
 export YASDB_JDBC_URL='jdbc:yasdb://数据库地址:端口/数据库名'

@@ -97,7 +97,10 @@ function secureEqual(left, right) {
 }
 
 function requireOutlineMutationGateway(req, res, next) {
-  const protectedMutation = (req.method === 'POST' && (req.path === '/import' || req.path === '/handbooks')) || req.method === 'DELETE';
+  const protectedMutation = (req.method === 'POST' && (req.path === '/import' || req.path === '/handbooks' || /^\/governance\/[^/]+\/publish$/.test(req.path)))
+    || (req.method === 'PUT' && /^\/governance\/[^/]+\/governance$/.test(req.path))
+    || (req.method === 'PATCH' && /^\/build-tasks\/[^/]+\/items\/[^/]+$/.test(req.path))
+    || req.method === 'DELETE';
   if (!protectedMutation) return next();
   if (!outlineInternalToken) return res.status(503).json({ success: false, error: { code: 'OUTLINE_AUTH_NOT_CONFIGURED', message: '大纲写入鉴权尚未配置' } });
   if (!secureEqual(req.get('x-knowledge-center-internal-token'), outlineInternalToken)) {

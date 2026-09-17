@@ -180,6 +180,23 @@ function createKnowledgeCenterHandler(options) {
     assetById(readKnowledgeAssets(), handbookId);
   }
 
+  function serveOutlineWorkbook(res, filePath, filename, unavailableCode) {
+    fs.readFile(filePath, (error, content) => {
+      if (error) {
+        res.writeHead(error.code === 'ENOENT' ? 404 : 503, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify({ success: false, error: { code: unavailableCode, message: '大纲工作簿暂不可用' } }));
+        return;
+      }
+      res.writeHead(200, {
+        'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`,
+        'Content-Length': content.length,
+        'Cache-Control': 'no-store',
+      });
+      res.end(content);
+    });
+  }
+
   // --- File path helpers ---
 
   function knowledgeCenterFilePath(requestUrl) {
@@ -788,8 +805,19 @@ function createKnowledgeCenterHandler(options) {
       });
       return;
     }
-    if (req.method === 'GET' && (pathname === '/knowledge-center/api/outline/governance' || pathname.startsWith('/knowledge-center/api/outline/governance/'))) {
+    if (req.method === 'GET' && pathname === '/knowledge-center/api/outline/template') {
+      requireSession(req, res, session => { if (!forbidUnlessOutlineAction(res, session, 'outline:read')) serveOutlineWorkbook(res, OUTLINE_TEMPLATE_PATH, '大纲模板.xlsx', 'OUTLINE_TEMPLATE_UNAVAILABLE'); }); return;
+    }
+    if (req.method === 'GET' && pathname === '/knowledge-center/api/outline/sample') {
+      requireSession(req, res, session => { if (!forbidUnlessOutlineAction(res, session, 'outline:read')) serveOutlineWorkbook(res, OUTLINE_SAMPLE_PATH, '基本数据库管理手册大纲示例.xlsx', 'OUTLINE_SAMPLE_UNAVAILABLE'); }); return;
+    }
+    if (req.method === 'GET' && (pathname === '/knowledge-center/api/outline/governance' || pathname.startsWith('/knowledge-center/api/outline/governance/') || pathname === '/knowledge-center/api/outline/tech-domains' || pathname === '/knowledge-center/api/outline/build-tasks' || pathname.startsWith('/knowledge-center/api/outline/build-tasks/'))) {
       requireSession(req, res, session => { if (!forbidUnlessOutlineAction(res, session, 'outline:read')) proxyOutline(req, res); }); return;
+    }
+    if ((req.method === 'PUT' && /^\/knowledge-center\/api\/outline\/governance\/[^/]+\/governance$/.test(pathname)) ||
+        (req.method === 'POST' && /^\/knowledge-center\/api\/outline\/governance\/[^/]+\/publish$/.test(pathname)) ||
+        (req.method === 'PATCH' && /^\/knowledge-center\/api\/outline\/build-tasks\/[^/]+\/items\/[^/]+$/.test(pathname))) {
+      requireSession(req, res, session => { if (!forbidUnlessOutlineAction(res, session, 'outline:create')) proxyOutline(req, res); }); return;
     }
     if (pathname === '/knowledge-center/api/templates' || pathname.startsWith('/knowledge-center/api/templates/')) {
       requireSession(req, res, session => handleTemplates(req, res, session)); return;

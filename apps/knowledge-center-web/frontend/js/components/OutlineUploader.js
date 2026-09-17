@@ -5,7 +5,7 @@
 class OutlineUploader {
   constructor(options = {}) {
     this.options = {
-      accept: '.json,.md,.csv',
+      accept: '.xlsx',
       maxSize: 10 * 1024 * 1024,
       productId: null,
       businessVersionTags: [],
@@ -48,7 +48,7 @@ class OutlineUploader {
   
   _validateFile(file) {
     const ext = file.name.split('.').pop().toLowerCase();
-    const validExts = ['json', 'md', 'csv'];
+    const validExts = ['xlsx'];
     return validExts.includes(ext) && file.size <= this.options.maxSize;
   }
   

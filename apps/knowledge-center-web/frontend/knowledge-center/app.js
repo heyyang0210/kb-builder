@@ -1,4 +1,4 @@
-import { archiveAsset, createAsset, deleteOutline, importOutline, loadAssets, loadOutlineData, loadPlatformData, resolveAssetStatus, restoreAsset, updateAsset, updateAssetStatus, loadPlatformPermissions, updatePlatformUserPermissions } from './common/api/platform-api.js';
+import { archiveAsset, createAsset, deleteOutline, importOutline, loadAssets, loadOutlineData, loadPlatformData, publishOutlineGovernance, resolveAssetStatus, restoreAsset, saveOutlineGovernance, updateAsset, updateAssetStatus, updateDomainBuildTaskItem, loadDomainBuildTasks as fetchDomainBuildTasks, loadPlatformPermissions, updatePlatformUserPermissions } from './common/api/platform-api.js';
 import { disconnectGitLabOAuth, gitLabOAuthHref, loadGitLabBranches, loadGitLabConnections, loadGitLabOAuthAccounts, loadGitLabOAuthStatus, loadGitLabOAuthConfig, loadGitLabTree, loadHandbookGitLabAccess, loadHandbookRepository, loadHandbookRepositoryCommits, loadHandbookRepositoryFile, loadHandbookRepositoryMapping, loadHandbookRepositoryStatistics, loadHandbookRepositoryTree, saveGitLabConnection, saveHandbookRepositoryMapping, createGitLabConnection, updateGitLabConnection, verifyGitLabConnection, disableGitLabConnection, enableGitLabConnection, searchGitLabConnections } from './common/api/gitlab-api.js';
 import { addIncrementalSource, bootstrapBaseline, commentIncrementalReview, createIncrementalReview, createIncrementalRevision, createIncrementalTask, createOnlineReview, decideIncrementalReview, loadCandidateDiff, loadHandbookReviewSummary, loadIncrementalBaselines, loadIncrementalTask, loadIncrementalTasks, publishIncrementalTask, recordIncrementalEvidence, reopenIncrementalReviewComment, replyIncrementalReviewComment, resolveIncrementalReviewComment, runIncrementalChecks, saveIncrementalDraft, submitIncrementalCandidate, updateIncrementalTarget } from './common/api/incremental-api.js';
 import { addUploadFile, completeUploadFile, completeUploadSession, createUploadBatch, createUploadSession, loadCleaningWorkspace, uploadChunk } from './common/api/cleaning-api.js';
@@ -32,23 +32,26 @@ const renderers = {
   repository: renderRepository,
 };
 
-const outlineStages = new Set(['tree', 'responsibility', 'templates', 'changes', 'publish']);
+const outlineStages = new Set(['directory', 'publish']);
 const templateController = createTemplateController({ appState, render, canPerform });
 
 function outlineRouteState() {
   const parts = window.location.pathname.split('/').filter(Boolean);
-  const handbookId = parts[1] === 'outlines' ? parts[2] || null : null;
   const parameters = new URLSearchParams(window.location.search);
+  const handbookId = parts[1] === 'outlines' ? (parts[2] || parameters.get('handbookId') || null) : null;
   const requestedStage = parameters.get('stage');
   return {
     handbookId,
     isDetail: Boolean(handbookId),
-    activeStage: outlineStages.has(requestedStage) ? requestedStage : 'tree',
+    activeStage: outlineStages.has(requestedStage) ? requestedStage : 'directory',
+    documentId: parameters.get('document') || null,
+    filterUnassigned: parameters.get('unassigned') === 'true',
     listState: { search: parameters.get('q') || appState.outlineListState.search, status: parameters.get('status') || appState.outlineListState.statusFilter },
   };
 }
 
 let assetRenderDeferred = false;
+let openDomainTaskId = null;
 
 function render() {
   if (appState.activeView === 'assets' && document.querySelector('.asset-dialog[open]')) {
@@ -75,8 +78,12 @@ function render() {
   });
   document.querySelector('.nav-caption.governance').hidden = !canAccessView('platform');
   const outlineView = appState.activeView === 'outlines' ? outlineRouteState() : {};
-  byId('view-root').innerHTML = renderer({ projection: appState.activeView === 'repository' ? appState.gitlabProjection : appState.projection, templateProjection: appState.templateProjection, cleaningProjection: appState.cleaningProjection, cleaningCanWrite: isPlatformAdmin(), reviewProjection: appState.reviewProjection, reviewUi: appState.reviewUi, outlineProjection: appState.outlineProjection, assetCatalog: appState.assetCatalog, incrementalProjection: appState.incrementalProjection, gitlabProjection: appState.gitlabProjection, permissionProjection: appState.permissionProjection, governanceProjection: appState.platformGovernance, selectedPermissionUserId: appState.selectedPermissionUserId, permissionSaveStatus: appState.permissionSaveStatus, permissionUserSearch: appState.permissionUserSearch, permissionListState: appState.permissionListState, gitlabVerification: appState.gitlabVerification, platformAdmin: isPlatformAdmin(), platformTab: appState.platformTab, gitlabListState: appState.gitlabListState, gitlabAddingConnection: appState.gitlabAddingConnection, gitlabEditingConnection: appState.gitlabEditingConnection, outlinePermissions: { create: canPerform('outline:create'), delete: canPerform('outline:delete') }, outlineView });
+  byId('view-root').innerHTML = renderer({ projection: appState.activeView === 'repository' ? appState.gitlabProjection : appState.projection, templateProjection: appState.templateProjection, cleaningProjection: appState.cleaningProjection, cleaningCanWrite: isPlatformAdmin(), reviewProjection: appState.reviewProjection, reviewUi: appState.reviewUi, outlineProjection: appState.outlineProjection, assetCatalog: appState.assetCatalog, incrementalProjection: appState.incrementalProjection, domainBuildTaskProjection: appState.domainBuildTaskProjection, gitlabProjection: appState.gitlabProjection, permissionProjection: appState.permissionProjection, governanceProjection: appState.platformGovernance, selectedPermissionUserId: appState.selectedPermissionUserId, permissionSaveStatus: appState.permissionSaveStatus, permissionUserSearch: appState.permissionUserSearch, permissionListState: appState.permissionListState, gitlabVerification: appState.gitlabVerification, platformAdmin: isPlatformAdmin(), platformTab: appState.platformTab, gitlabListState: appState.gitlabListState, gitlabAddingConnection: appState.gitlabAddingConnection, gitlabEditingConnection: appState.gitlabEditingConnection, outlinePermissions: { create: canPerform('outline:create'), delete: canPerform('outline:delete') }, outlineView });
   window.lucide?.createIcons();
+  if (appState.activeView === 'dashboard' && openDomainTaskId) {
+    const dialog = [...document.querySelectorAll('[data-domain-task-dialog]')].find(item => item.dataset.domainTaskDialog === String(openDomainTaskId));
+    if (dialog && !dialog.open) dialog.showModal();
+  }
   if (appState.activeView === 'review') {
     const taskId = appState.reviewProjection?.detail?.task?.id;
     if (taskId && appState.reviewUi.sidebarTask !== taskId) { appState.reviewUi.sidebarTask = taskId; appState.reviewUi.sidebarPanel = ''; }
@@ -174,6 +181,15 @@ async function loadOutlines() {
   const { handbookId } = outlineRouteState();
   appState.outlineProjection = await loadOutlineData(handbookId);
   if (appState.activeView === 'outlines') render();
+}
+
+async function loadDomainBuildTasksWorkspace() {
+  try {
+    appState.domainBuildTaskProjection = { status: 'ok', ...(await fetchDomainBuildTasks()) };
+  } catch (error) {
+    appState.domainBuildTaskProjection = { status: 'unavailable', tasks: [], error: { message: error.message } };
+  }
+  if (appState.activeView === 'dashboard') render();
 }
 
 const assetBranchPreferenceKey = handbookId => `knowledge-center:asset-branch:${handbookId}`;
@@ -795,11 +811,104 @@ document.addEventListener('click', async event => {
     document.querySelector(`[data-outline-tab="${outlineStageTarget.dataset.outlineStageTarget}"]`)?.click();
     return;
   }
-  const outlineTreeControl = event.target.closest('[data-outline-tree-expand]');
-  if (outlineTreeControl) {
-    const expanded = outlineTreeControl.dataset.outlineTreeExpand === 'true';
-    document.querySelectorAll('[data-outline-panel="tree"] details').forEach(item => { item.open = expanded; });
-    outlineTreeControl.closest('.outline-tree-toolbar')?.querySelectorAll('button').forEach(button => button.setAttribute('aria-pressed', String(button === outlineTreeControl)));
+  const outlineTreeToggle = event.target.closest('[data-outline-tree-toggle]');
+  if (outlineTreeToggle) {
+    const expanded = outlineTreeToggle.dataset.outlineTreeExpanded !== 'true';
+    document.querySelectorAll('[data-outline-panel="directory"] details').forEach(item => { item.open = expanded; });
+    outlineTreeToggle.dataset.outlineTreeExpanded = String(expanded);
+    outlineTreeToggle.setAttribute('aria-label', expanded ? '收起全部目录' : '展开全部目录');
+    outlineTreeToggle.title = expanded ? '收起全部目录' : '展开全部目录';
+    outlineTreeToggle.innerHTML = `<i data-lucide="${expanded ? 'chevrons-up' : 'chevrons-down'}" aria-hidden="true"></i>`;
+    window.lucide?.createIcons();
+    return;
+  }
+  const outlineUnassignedFilter = event.target.closest('[data-outline-unassigned-filter]');
+  if (outlineUnassignedFilter) {
+    const currentlyFiltered = outlineUnassignedFilter.dataset.outlineUnassignedFilter === 'true';
+    const url = new URL(window.location.href);
+    if (currentlyFiltered) url.searchParams.delete('unassigned');
+    else url.searchParams.set('unassigned', 'true');
+    url.searchParams.delete('document');
+    window.history.replaceState({ ...window.history.state, unassigned: !currentlyFiltered }, document.title, `${url.pathname}${url.search}`);
+    appState.outlineProjection = null;
+    loadOutlines();
+    return;
+  }
+  const outlineTemplateHelp = event.target.closest('[data-outline-template-help]');
+  if (outlineTemplateHelp) {
+    const panel = document.querySelector('[data-outline-template-help-panel]');
+    if (panel) { panel.hidden = false; panel.querySelector('[data-outline-template-help-close]')?.focus(); }
+    return;
+  }
+  const outlineTemplateHelpClose = event.target.closest('[data-outline-template-help-close]');
+  if (outlineTemplateHelpClose) {
+    const panel = outlineTemplateHelpClose.closest('[data-outline-template-help-panel]');
+    if (panel) panel.hidden = true;
+    panel?.previousElementSibling?.querySelector('[data-outline-template-help]')?.focus();
+    return;
+  }
+  const outlineGovernanceSave = event.target.closest('[data-outline-governance-save]');
+  if (outlineGovernanceSave) {
+    const outline = appState.outlineProjection?.detail;
+    const outlineId = outline?.id || appState.outlineProjection?.selectedId;
+    if (!outlineId) return;
+    const container = outlineGovernanceSave.closest('[data-outline-panel]');
+    const status = container?.querySelector('.outline-governance-status');
+    const descriptions = [...document.querySelectorAll('[data-outline-description]')].map(input => ({ nodeId: input.dataset.outlineDescription, description: input.value }));
+    const existingAssignments = outline.governance?.assignments || outline.responsibility?.assignments || [];
+    const documentAssignments = [...document.querySelectorAll('[data-outline-domain-group]')].map(group => ({
+      nodeId: String(group.dataset.outlineDomainGroup || ''),
+      techDomainIds: [...group.querySelectorAll('[data-outline-domain-node]:checked')].map(input => String(input.value)),
+    })).filter(item => item.nodeId);
+    const documentNodeIds = new Set(documentAssignments.map(item => item.nodeId));
+    const assignments = [...existingAssignments.filter(item => !documentNodeIds.has(String(item.nodeId))), ...documentAssignments];
+    outlineGovernanceSave.disabled = true;
+    if (status) status.textContent = '正在保存…';
+    try {
+      await saveOutlineGovernance(outlineId, { editVersion: outline.editVersion, governanceVersion: outline.governance?.governanceVersion || outline.responsibility?.governanceVersion, descriptions, assignments });
+      if (status) status.textContent = '目录说明和责任分工已保存。';
+      appState.outlineProjection = null;
+      await loadOutlines();
+    } catch (error) {
+      if (status) status.textContent = error.message || '保存失败，请稍后重试。';
+      outlineGovernanceSave.disabled = false;
+    }
+    return;
+  }
+  const outlinePublish = event.target.closest('[data-outline-publish]');
+  if (outlinePublish) {
+    const outline = appState.outlineProjection?.detail;
+    const outlineId = outline?.id || appState.outlineProjection?.selectedId;
+    if (!outlineId || outlinePublish.disabled) return;
+    const status = outlinePublish.closest('[data-outline-panel]')?.querySelector('.outline-governance-status');
+    outlinePublish.disabled = true;
+    if (status) status.textContent = '正在发布并生成建设任务…';
+    try {
+      await publishOutlineGovernance(outlineId, { editVersion: outline?.editVersion });
+      if (status) status.textContent = '大纲已发布，领域建设任务已生成。';
+      showAppNotice('大纲已发布，领域建设任务已生成。', { title: '发布完成', tone: 'success' });
+      appState.outlineProjection = null;
+      await loadOutlines();
+    } catch (error) {
+      if (status) status.textContent = error.message || '发布失败，请先完成责任分工。';
+      outlinePublish.disabled = false;
+    }
+    return;
+  }
+  const outlineDocument = event.target.closest('[data-outline-document]');
+  if (outlineDocument) {
+    const selectedId = outlineDocument.dataset.outlineDocument;
+    document.querySelectorAll('[data-outline-document]').forEach(button => {
+      const selected = button === outlineDocument;
+      button.classList.toggle('is-selected', selected);
+      if (selected) button.setAttribute('aria-current', 'page'); else button.removeAttribute('aria-current');
+    });
+    document.querySelectorAll('[data-outline-document-panel]').forEach(panel => { panel.hidden = panel.dataset.outlineDocumentPanel !== selectedId; });
+    let group = outlineDocument.closest('details');
+    while (group) { group.open = true; group = group.parentElement?.closest('details'); }
+    const url = new URL(window.location.href);
+    url.searchParams.set('document', selectedId);
+    window.history.replaceState({ ...window.history.state, document: selectedId }, document.title, `${url.pathname}${url.search}`);
     return;
   }
   const outlineDelete = event.target.closest('[data-outline-delete]');
@@ -817,7 +926,10 @@ document.addEventListener('click', async event => {
       if (outlineRouteState().isDetail) window.history.replaceState({ view: 'outlines' }, document.title, '/knowledge-center/outlines');
       await loadOutlines();
     } catch (error) {
-      showAppNotice(error.message || '删除失败，请稍后重试');
+      showAppNotice(error.message || '删除失败，请稍后重试', {
+        title: '删除失败',
+        tone: 'danger',
+      });
       outlineDelete.disabled = false;
       outlineDelete.textContent = originalText;
       window.lucide?.createIcons();
@@ -933,6 +1045,18 @@ document.addEventListener('click', async event => {
   }
   const navigation = event.target.closest('[data-view]');
   if (navigation) return navigate(navigation.dataset.view);
+  const domainTaskOpen = event.target.closest('[data-domain-task-open]');
+  if (domainTaskOpen) {
+    openDomainTaskId = domainTaskOpen.dataset.domainTaskOpen;
+    const dialog = [...document.querySelectorAll('[data-domain-task-dialog]')].find(item => item.dataset.domainTaskDialog === openDomainTaskId);
+    if (dialog) dialog.showModal();
+    return;
+  }
+  if (event.target.closest('[data-domain-task-close]')) {
+    openDomainTaskId = null;
+    event.target.closest('dialog')?.close();
+    return;
+  }
   if (event.target.closest('[data-incremental-create-open]')) { document.querySelector('[data-incremental-create-dialog]')?.showModal(); return; }
   if (event.target.closest('[data-incremental-dialog-close]')) { event.target.closest('dialog')?.close(); return; }
   const baselineLoader = event.target.closest('[data-incremental-load-baselines]');
@@ -1131,9 +1255,29 @@ document.addEventListener('click', async event => {
 
 document.addEventListener('close', event => {
   if (event.target.matches?.('.asset-dialog')) flushDeferredAssetRender();
+  if (event.target.matches?.('[data-domain-task-dialog]')) openDomainTaskId = null;
 }, true);
 
 document.addEventListener('change', async event => {
+  const taskAssignee = event.target.closest('[data-domain-task-assignee]');
+  if (taskAssignee) {
+    const taskId = taskAssignee.dataset.taskId;
+    const itemId = taskAssignee.dataset.itemId;
+    const status = taskAssignee.closest('[data-domain-task]')?.querySelector('.domain-task-status');
+    taskAssignee.disabled = true;
+    try {
+      await updateDomainBuildTaskItem(taskId, itemId, {
+        assigneeId: taskAssignee.value || null,
+        assigneeName: taskAssignee.value ? taskAssignee.selectedOptions[0]?.textContent || null : null,
+      });
+      if (status) status.textContent = '页面责任人已更新。';
+      await loadDomainBuildTasksWorkspace();
+    } catch (error) {
+      if (status) status.textContent = error.message || '页面责任人更新失败。';
+      taskAssignee.disabled = false;
+    }
+    return;
+  }
   const assetBranch = event.target.closest('[data-asset-branch]');
   if (assetBranch) {
     const item = appState.assetCatalog?.items?.find(entry => String(entry.handbookId) === assetBranch.dataset.assetBranch);
@@ -1757,6 +1901,7 @@ document.addEventListener('submit', async event => {
   if (!form) return;
   event.preventDefault();
   const files = Array.from(form.elements.file?.files || []);
+  const handbookId = String(form.dataset.handbookId || '').trim();
   const status = form.querySelector('[data-outline-import-status]');
   const results = form.querySelector('[data-outline-import-results]');
   const submit = form.querySelector('button[type="submit"]');
@@ -1772,6 +1917,7 @@ document.addEventListener('submit', async event => {
       results?.appendChild(row);
       const payload = new FormData();
       payload.append('file', file);
+      payload.append('handbookId', handbookId);
       try {
         let response;
         try {
@@ -1779,7 +1925,7 @@ document.addEventListener('submit', async event => {
         } catch (error) {
           const duplicate = error?.payload?.data?.items?.find(item => item.status === 'duplicate_confirmation_required');
           if (!duplicate || !window.confirm(`文件“${file.name}”已有候选版本，是否仍然导入？`)) throw error;
-          const retry = new FormData(); retry.append('file', file); retry.append('confirmDuplicate', 'true');
+          const retry = new FormData(); retry.append('file', file); retry.append('handbookId', handbookId); retry.append('confirmDuplicate', 'true');
           response = await importOutline(retry);
         }
         const candidate = response?.data || {};
@@ -2449,6 +2595,7 @@ async function bootstrap() {
   window.lucide?.createIcons();
   render();
   load();
+  loadDomainBuildTasksWorkspace();
   if (appState.activeView === 'outlines') loadOutlines();
   if (appState.activeView === 'assets') loadAssetCatalog();
   if (appState.activeView === 'production') loadIncrementalWorkspace();
