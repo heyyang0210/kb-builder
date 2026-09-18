@@ -8,6 +8,7 @@ const { ASSET_STATUS_LABELS, systemAssetStatus, assetStatus, projectAsset, query
 const { matchCleaningEndpoint } = require('../lib/knowledge-center-cleaning-contract');
 const { createTemplateStore } = require('../lib/template-store');
 const { readTemplateUpload } = require('../lib/template-import');
+const { previewPersonnelImport, readPersonnelUpload, templateWorkbook } = require('../lib/personnel-import');
 let logger;
 try { logger = require('../lib/logger'); } catch (_) { logger = { info() {} }; }
 
@@ -66,7 +67,7 @@ function createKnowledgeCenterHandler(options) {
     GITLAB_CONFIG_PATH, GITLAB_DOCUMENT_TYPES_PATH,
   } = config;
 
-  const { knowledgeAssetsStore, brandIconStore } = stores;
+  const { knowledgeAssetsStore, brandIconStore, domainStore } = stores;
   validateOutlineWorkbookPath('OUTLINE_TEMPLATE_PATH', OUTLINE_TEMPLATE_PATH);
   validateOutlineWorkbookPath('OUTLINE_SAMPLE_PATH', OUTLINE_SAMPLE_PATH);
   const templateStore = stores.templateStore || createTemplateStore();
@@ -225,6 +226,13 @@ function createKnowledgeCenterHandler(options) {
     assetById(readKnowledgeAssets(), handbookId);
   }
 
+  async function requireHandbookReadAsync(session, handbookId) {
+    if (!hasAction(session, 'knowledge:read')) throw new GitLabConnectorError('HANDBOOK_READ_FORBIDDEN', '没有权限查看此手册', 403);
+    const visible = session?.visibleHandbookIds || session?.user?.visibleHandbookIds;
+    if (Array.isArray(visible) && !visible.map(String).includes(String(handbookId))) throw new GitLabConnectorError('HANDBOOK_READ_FORBIDDEN', '没有权限查看此手册', 403);
+    return assetById(await readKnowledgeAssetsAsync(), handbookId);
+  }
+
   function serveOutlineWorkbook(res, filePath, filename, unavailableCode) {
     fs.readFile(filePath, (error, content) => {
       if (error) {
@@ -263,9 +271,27 @@ function createKnowledgeCenterHandler(options) {
     return payload;
   }
 
+  async function readKnowledgeAssetsAsync() {
+    const payload = knowledgeAssetsStore.readAsync ? await knowledgeAssetsStore.readAsync() : knowledgeAssetsStore.read();
+    if (!payload.generatedAt && fs.existsSync(options.KNOWLEDGE_ASSETS_CONFIG_PATH)) {
+      payload.generatedAt = fs.statSync(options.KNOWLEDGE_ASSETS_CONFIG_PATH).mtime.toISOString();
+    }
+    return payload;
+  }
+
+  let reviewAssetsCache = null;
+  async function readReviewAssetsAsync() {
+    const now = Date.now();
+    if (reviewAssetsCache && now - reviewAssetsCache.loadedAt < 5000) return reviewAssetsCache.payload;
+    const payload = await readKnowledgeAssetsAsync();
+    reviewAssetsCache = { loadedAt: now, payload };
+    return payload;
+  }
+
   function writeKnowledgeAssets(payload) {
     payload.generatedAt = new Date().toISOString();
     knowledgeAssetsStore.write(payload);
+    reviewAssetsCache = null;
   }
 
   function queryKnowledgeAssets(payload, searchParams, admin) {
@@ -282,9 +308,19 @@ function createKnowledgeCenterHandler(options) {
   }
 
   function ownerValue(value, required = false) {
-    const displayName = typeof value === 'string' ? value.trim() : String(value?.displayName || '').trim();
-    if (required && !displayName) throw new Error('A 角为必填项');
-    return { displayName: displayName || null, userId: value?.userId || null, bindingStatus: displayName ? (value?.userId ? 'bound' : 'pending') : 'unassigned' };
+    if (value == null || value === '') {
+      if (required) throw new Error('A 角为必填项');
+      return null;
+    }
+    if (typeof value !== 'object') throw new Error('责任人必须从人员列表中选择');
+    const principalId = Number(value.principalId ?? value.userId ?? value.id);
+    const displayName = String(value.displayName || '').trim();
+    if (!Number.isSafeInteger(principalId) || principalId <= 0 || !displayName) throw new Error('责任人信息不完整，请重新选择');
+    return { principalId, userId: principalId, id: principalId, displayName, bindingStatus: 'bound' };
+  }
+
+  function validateOwnerPair(ownerA, ownerB) {
+    if (ownerA && ownerB && Number(ownerA.principalId) === Number(ownerB.principalId)) throw new Error('A 角和 B 角不能是同一人');
   }
 
   function nextHandbookId(payload, productId) {
@@ -318,9 +354,11 @@ function createKnowledgeCenterHandler(options) {
       const product = payload.handbooks.find(entry => String(entry.productId || entry.productType) === productId);
       const productName = product?.productName || product?.productType;
       if (!productName) throw new Error('产品不存在或未配置产品名称');
+      const ownerA = ownerValue(body.ownerA, true); const ownerB = ownerValue(body.ownerB);
+      validateOwnerPair(ownerA, ownerB);
       const item = {
         handbookId: nextHandbookId(payload, productName), productId, productName, productType: productName, name,
-        ownerA: ownerValue(body.ownerA, true), ownerB: ownerValue(body.ownerB),
+        ownerA, ownerB,
         externalVisible: Boolean(body.externalVisible), summary: String(body.summary || '').trim(),
         outline: { outlineId: null, outlineVersion: null, bindingStatus: 'not_created' },
         documentSummary: { total: null, published: null, inProgress: null }, sourceStatus: 'created',
@@ -347,6 +385,7 @@ function createKnowledgeCenterHandler(options) {
       if (Object.hasOwn(changes, 'name')) { const name = String(changes.name || '').trim(); if (!name) throw new Error('手册名称不能为空'); item.name = name; }
       if (Object.hasOwn(changes, 'ownerA')) item.ownerA = ownerValue(changes.ownerA, true);
       if (Object.hasOwn(changes, 'ownerB')) item.ownerB = ownerValue(changes.ownerB);
+      validateOwnerPair(item.ownerA, item.ownerB);
       item.assetVersion = Number(item.assetVersion || 1) + 1;
       auditAsset(payload, 'ASSET_UPDATED', handbookId, session, { before, after: { name: item.name, ownerA: item.ownerA, ownerB: item.ownerB } });
       writeKnowledgeAssets(payload);
@@ -765,6 +804,88 @@ function createKnowledgeCenterHandler(options) {
     } catch (error) { sendGitLabError(res, error); }
   }
 
+  async function serveReviewBootstrap(req, res, session) {
+    const startedAt = process.hrtime.bigint();
+    try {
+      const service = handleIncrementalBuild?.service;
+      if (!service) throw Object.assign(new Error('审核服务暂不可用'), { code: 'REVIEW_SERVICE_UNAVAILABLE', status: 503 });
+      const params = new URL(req.url, 'http://localhost').searchParams;
+      const handbookId = String(params.get('handbookId') || '');
+      const requestedTaskId = String(params.get('taskId') || '');
+      const step = params.get('step') || 'read';
+      const review = service.reviewBootstrap(session, { handbookId, taskId: requestedTaskId });
+      const selectedId = requestedTaskId || review.items[0]?.id || '';
+      const assetProjection = review.detail
+        ? { items: [] }
+        : await readReviewAssetsAsync().then(payload => queryKnowledgeAssets(payload, new URLSearchParams({ pageSize: '100' }), isPlatformAdmin(session)));
+      const reviewHandbooks = (assetProjection.items || []).filter(item => item.repositoryMapped);
+      const resolvedHandbookId = review.readerHandbookId || reviewHandbooks[0]?.handbookId || '';
+      const diff = selectedId && step === 'diff' ? service.getCandidateDiff(session, selectedId) : null;
+      const totalMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
+      res.writeHead(200, {
+        'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store',
+        'Server-Timing': `review-bootstrap;dur=${totalMs.toFixed(3)}`,
+      });
+      res.end(JSON.stringify({ success: true, data: { items: review.items, allItems: review.allItems, detail: review.detail ? { task: review.detail } : null, handbookId: resolvedHandbookId, reviewHandbooks, onlineReviewBaselines: review.baselines, onlineReviewBaselineError: null, diff } }));
+    } catch (error) {
+      res.writeHead(error.status || 500, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+      res.end(JSON.stringify({ success: false, error: { code: error.code || 'REVIEW_BOOTSTRAP_FAILED', message: error.message || '审核工作区读取失败' } }));
+    }
+  }
+
+  async function serveReviewRepositoryContext(req, res, session) {
+    const startedAt = process.hrtime.bigint();
+    try {
+      const params = new URL(req.url, 'http://localhost').searchParams;
+      const handbookId = String(params.get('handbookId') || '');
+      if (!handbookId) throw new GitLabConnectorError('HANDBOOK_REQUIRED', '必须指定手册', 400);
+      const assetPromise = requireHandbookReadAsync(session, handbookId);
+      const { mapping, connection } = findMapping(handbookId, GITLAB_CONFIG_PATH);
+      const metadataStartedAt = process.hrtime.bigint();
+      const projected = sanitizeConnection(connection);
+      const language = params.get('language') === 'en' ? 'en' : 'zh';
+      const roots = language === 'en' ? mapping.enPaths : mapping.zhPaths;
+      if (!roots.length) throw new GitLabConnectorError('GITLAB_LANGUAGE_NOT_MAPPED', '该语言尚未配置仓库内容路径', 404);
+      const metadataMs = Number(process.hrtime.bigint() - metadataStartedAt) / 1e6;
+      const branchesStartedAt = process.hrtime.bigint();
+      const [asset, allBranches] = await Promise.all([
+        assetPromise,
+        gitLabRequestForUser(session, connection, options => listBranches(connection, options)),
+      ]);
+      const branchesMs = Number(process.hrtime.bigint() - branchesStartedAt) / 1e6;
+      const branches = allBranches.filter(item => mapping.enabledBranches.includes(item.name));
+      const branch = params.get('branch') || mapping.defaultBranch || branches[0]?.name || '';
+      if (!mapping.enabledBranches.includes(branch)) throw new GitLabConnectorError('GITLAB_BRANCH_NOT_ALLOWED', '该业务版本未在手册映射中启用', 403);
+      const treeStartedAt = process.hrtime.bigint();
+      const lists = await gitLabRequestForUser(session, connection, options => Promise.all(roots.map(root => listTree(connection, branch, root, options))));
+      const tree = lists.flat().filter(item => roots.some(root => item.path === root || item.path.startsWith(`${root}/`)));
+      const treeMs = Number(process.hrtime.bigint() - treeStartedAt) / 1e6;
+      const preferred = params.get('path') || params.get('preferredPath') || tree.find(item => item.type !== 'tree' && /\.md$/i.test(item.path || item.name))?.path || '';
+      let file = null;
+      let fileMs = 0;
+      if (preferred) {
+        const requested = authorizeMappedRequest(mapping, branch, language, preferred);
+        const fileStartedAt = process.hrtime.bigint();
+        file = await gitLabRequestForUser(session, connection, options => readGitLabFile(connection, branch, requested, options));
+        fileMs = Number(process.hrtime.bigint() - fileStartedAt) / 1e6;
+      }
+      const totalMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
+      const data = {
+        status: 'ok', handbookId, handbookName: asset?.name || handbookId,
+        connectionName: projected.name, project: projected.project,
+        languages: { zh: mapping.zhPaths.length > 0, en: mapping.enPaths.length > 0 },
+        branches, branch, language, tree, file, requestedPath: preferred,
+        commitSha: file?.commitId || branches.find(item => item.name === branch)?.commitSha || null,
+        updatedAt: file?.updatedAt || null,
+      };
+      res.writeHead(200, {
+        'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store',
+        'Server-Timing': `metadata;dur=${metadataMs.toFixed(3)}, branches;dur=${branchesMs.toFixed(3)}, tree;dur=${treeMs.toFixed(3)}, file;dur=${fileMs.toFixed(3)}, repository-context;dur=${totalMs.toFixed(3)}`,
+      });
+      res.end(JSON.stringify({ success: true, data }));
+    } catch (error) { sendGitLabError(res, error); }
+  }
+
   // --- Main request handler ---
 
   return function handleKnowledgeCenterRequest(req, res) {
@@ -783,8 +904,97 @@ function createKnowledgeCenterHandler(options) {
     if (pathname === '/knowledge-center/api/platform/permissions' || pathname.startsWith('/knowledge-center/api/platform/permissions/')) {
       dispatchAuth(req, res, `/knowledge-center/api/auth/users${req.url.slice('/knowledge-center/api/platform/permissions'.length)}`); return;
     }
+    if (pathname === '/knowledge-center/api/platform/principals/template') {
+      requireSession(req, res, session => {
+        if (forbidUnlessPlatformAdmin(res, session)) return;
+        if (req.method !== 'GET') { res.writeHead(405, { Allow: 'GET' }); res.end(); return; }
+        try {
+          const buffer = templateWorkbook();
+          res.writeHead(200, {
+            'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'Content-Disposition': 'attachment; filename="knowledge-center-personnel-template.xlsx"',
+            'Content-Length': buffer.length,
+            'Cache-Control': 'no-store',
+          });
+          res.end(buffer);
+        } catch (_) {
+          res.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ success: false, error: { code: 'PERSONNEL_TEMPLATE_UNAVAILABLE', message: '人员导入模板暂不可用' } }));
+        }
+      }); return;
+    }
+    if (pathname === '/knowledge-center/api/platform/principals/import') {
+      requireSession(req, res, async session => {
+        if (forbidUnlessPlatformAdmin(res, session)) return;
+        if (req.method !== 'POST') { res.writeHead(405, { Allow: 'POST' }); res.end(); return; }
+        try {
+          const upload = await readPersonnelUpload(req);
+          const mode = new URL(req.url, 'http://localhost').searchParams.get('mode') || 'preview';
+          const directory = await domainStore.readPrincipalsAsync();
+          const preview = previewPersonnelImport(upload.items, directory.items || []);
+          if (mode === 'preview') {
+            res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+            res.end(JSON.stringify({ success: true, data: { filename: upload.filename, sourceSha256: upload.sourceSha256, ...preview } }));
+            return;
+          }
+          if (mode !== 'apply') throw Object.assign(new Error('人员导入模式无效'), { code: 'PERSONNEL_IMPORT_MODE_INVALID', status: 422 });
+          if (preview.summary.conflict > 0) throw Object.assign(new Error(`存在 ${preview.summary.conflict} 条冲突，请修正 Excel 后重新预检`), { code: 'PERSONNEL_IMPORT_CONFLICT', status: 409 });
+          const data = await domainStore.importPrincipals({ ...upload, actor: session.user?.id || 'system:import' });
+          res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+          res.end(JSON.stringify({ success: true, data: { directory: data, importSummary: preview.summary } }));
+        } catch (error) {
+          res.writeHead(error.status || 422, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+          res.end(JSON.stringify({ success: false, error: { code: error.code || 'PERSONNEL_IMPORT_FAILED', message: error.message || '人员导入失败' } }));
+        }
+      }); return;
+    }
+    if (pathname.startsWith('/knowledge-center/api/platform/principals/') && pathname.length > '/knowledge-center/api/platform/principals/'.length) {
+      requireSession(req, res, async session => {
+        if (forbidUnlessPlatformAdmin(res, session)) return;
+        if (req.method !== 'PATCH') { res.writeHead(405, { Allow: 'PATCH' }); res.end(); return; }
+        try {
+          const principalId = pathname.slice('/knowledge-center/api/platform/principals/'.length);
+          const body = await readJsonBody(req);
+          const data = await domainStore.updatePrincipal(principalId, { ...body, actor: session.user?.id || 'system:api' });
+          res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+          res.end(JSON.stringify({ success: true, data }));
+        } catch (error) {
+          res.writeHead(error.status || 503, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+          res.end(JSON.stringify({ success: false, error: { code: error.code || 'PERSONNEL_UPDATE_FAILED', message: error.message || '人员更新失败' } }));
+        }
+      }); return;
+    }
+    if (pathname === '/knowledge-center/api/platform/principals') {
+      requireSession(req, res, async session => {
+        if (forbidUnlessPlatformAdmin(res, session)) return;
+        try {
+          if (req.method === 'GET') {
+            const params = new URL(req.url, 'http://localhost').searchParams;
+            const data = await domainStore.readPrincipalsAsync({ q: params.get('q') || '', state: params.get('state') || '', bindingStatus: params.get('bindingStatus') || '' });
+            res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+            res.end(JSON.stringify({ success: true, data })); return;
+          }
+          if (req.method === 'POST') {
+            const body = await readJsonBody(req);
+            const data = await domainStore.createPrincipal({ ...body, actor: session.user?.id || 'system:api' });
+            res.writeHead(201, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+            res.end(JSON.stringify({ success: true, data })); return;
+          }
+          res.writeHead(405, { Allow: 'GET, POST' }); res.end();
+        } catch (error) {
+          res.writeHead(error.status || 503, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+          res.end(JSON.stringify({ success: false, error: { code: error.code || 'PERSONNEL_SERVICE_UNAVAILABLE', message: error.message || '人员服务暂不可用' } }));
+        }
+      }); return;
+    }
     if (req.method === 'GET' && pathname === '/knowledge-center/api/platform/overview') {
       requireSession(req, res, () => servePlatformProjection(res)); return;
+    }
+    if (req.method === 'GET' && pathname === '/knowledge-center/api/review/bootstrap') {
+      requireSession(req, res, session => serveReviewBootstrap(req, res, session)); return;
+    }
+    if (req.method === 'GET' && pathname === '/knowledge-center/api/review/repository-context') {
+      requireSession(req, res, session => serveReviewRepositoryContext(req, res, session)); return;
     }
     if (pathname.startsWith('/knowledge-center/api/cleaning/')) {
       const endpoint = matchCleaningEndpoint(req.method, pathname);
@@ -807,10 +1017,10 @@ function createKnowledgeCenterHandler(options) {
       requireSession(req, res, () => serveKnowledgeAssetsCatalog(res)); return;
     }
     if (pathname === '/knowledge-center/api/assets/handbooks') {
-      requireSession(req, res, session => {
+      requireSession(req, res, async session => {
         if (req.method === 'GET') {
           try {
-            const data = queryKnowledgeAssets(readKnowledgeAssets(), new URL(req.url, 'http://localhost').searchParams, isPlatformAdmin(session));
+            const data = queryKnowledgeAssets(await readKnowledgeAssetsAsync(), new URL(req.url, 'http://localhost').searchParams, isPlatformAdmin(session));
             res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
             res.end(JSON.stringify({ success: true, data }));
           } catch (_error) {
@@ -885,7 +1095,7 @@ function createKnowledgeCenterHandler(options) {
     if (pathname === KNOWLEDGE_CENTER_PREFIX || pathname.startsWith(`${KNOWLEDGE_CENTER_PREFIX}/`)) {
       const filePath = knowledgeCenterFilePath(req.url);
       if (!filePath) { res.writeHead(400); res.end('Bad Request'); return; }
-      sendFile(filePath, res); return;
+      sendFile(filePath, res, req); return;
     }
     return false;
   };

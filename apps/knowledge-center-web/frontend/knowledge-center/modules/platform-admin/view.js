@@ -19,13 +19,14 @@ const CONNECTION_STATUS_LABELS = {
 
 const TAB_LABELS = {
   governance: '系统治理',
+  principals: '人员管理',
   permissions: '用户权限',
   gitlab: 'GitLab 仓库',
 };
 
 /* ---- 标签页导航 ---- */
 function renderTabs(activeTab) {
-  const tabs = ['governance', 'permissions', 'gitlab'];
+  const tabs = ['governance', 'principals', 'permissions', 'gitlab'];
   return `<nav class="platform-tabs" role="tablist" aria-label="平台管理分区">
     ${tabs.map(tab => `<button class="platform-tab" role="tab" type="button"
       data-platform-tab="${tab}"
@@ -111,6 +112,81 @@ function renderGovernanceTab(governanceProjection = {}, projection = {}) {
 }
 
 /* ---- 用户权限标签页 ---- */
+export function renderPrincipalsTab(projection = {}, listState = {}) {
+  if (projection.status === 'unavailable') return `<div role="tabpanel" id="platform-panel-principals" aria-labelledby="platform-tab-principals">${pendingState('人员服务暂不可用', projection.error || '请稍后重试。')}</div>`;
+  const items = Array.isArray(projection.items) ? projection.items : [];
+  const search = String(listState.search || '').trim().toLowerCase();
+  const bindingStatus = listState.bindingStatus || '';
+  const state = listState.state || '';
+  const filtered = items.filter(item => {
+    const matchesSearch = !search || String(item.displayName || '').toLowerCase().includes(search) || String(item.casLoginName || '').toLowerCase().includes(search);
+    const matchesBinding = !bindingStatus || (bindingStatus === 'BOUND' ? Boolean(item.casLoginName) : !item.casLoginName);
+    const matchesState = !state || item.state === state;
+    return matchesSearch && matchesBinding && matchesState;
+  });
+  const summary = projection.summary || {
+    total: items.length,
+    bound: items.filter(item => item.casLoginName).length,
+    pending: items.filter(item => !item.casLoginName).length,
+    inactive: items.filter(item => item.state === 'INACTIVE').length,
+  };
+  const rows = filtered.length ? filtered.map(item => `<tr>
+    <td><strong>${escapeHtml(item.displayName || '-')}</strong></td>
+    <td>${escapeHtml(item.casLoginName || '—')}</td>
+    <td><span class="status-badge ${item.casLoginName ? 'ok' : 'warning'}">${item.casLoginName ? '已绑定' : '待绑定'}</span></td>
+    <td><span class="principal-state ${item.state === 'INACTIVE' ? 'inactive' : 'active'}">${item.state === 'INACTIVE' ? '已停用' : '启用'}</span></td>
+    <td>${Number(item.manualReferenceCount || 0)}</td>
+    <td>${item.lastLoginAt ? escapeHtml(new Date(item.lastLoginAt).toLocaleString('zh-CN', { hour12: false })) : '—'}</td>
+    <td><div class="principal-row-actions">
+      <button class="button link compact" type="button" data-principal-edit="${escapeHtml(item.principalId)}">编辑</button>
+      <button class="button link compact" type="button" data-principal-toggle="${escapeHtml(item.principalId)}">${item.state === 'INACTIVE' ? '启用' : '停用'}</button>
+    </div></td>
+  </tr>`).join('') : `<tr><td colspan="7"><div class="principal-empty"><strong>没有匹配的人员</strong><span>请调整搜索词或清除筛选条件。</span><button class="button tertiary" type="button" data-principal-clear-filters>清除筛选</button></div></td></tr>`;
+  return `<div role="tabpanel" id="platform-panel-principals" aria-labelledby="platform-tab-principals">
+    <header class="principal-page-header">
+      <div><h2>人员管理</h2><p>管理知识中心可选责任人及其 CAS 账号绑定。</p></div>
+      <div class="principal-header-actions">
+        <button class="button secondary" type="button" data-principal-open-import>Excel 批量导入</button>
+        <button class="button primary" type="button" data-principal-open-create>+  新增人员</button>
+      </div>
+    </header>
+    <div class="principal-summary" aria-label="人员统计">
+      <div><span>全部人员</span><strong>${Number(summary.total || 0)}</strong></div>
+      <div><span>已绑定 CAS</span><strong>${Number(summary.bound || 0)}</strong></div>
+      <div><span>待绑定</span><strong>${Number(summary.pending || 0)}</strong></div>
+      <div><span>已停用</span><strong>${Number(summary.inactive || 0)}</strong></div>
+    </div>
+    <section class="governance-recent-ops principal-directory">
+      <div class="principal-toolbar">
+        <label class="principal-search"><span class="sr-only">搜索人员</span><input type="search" value="${escapeHtml(listState.search || '')}" placeholder="搜索姓名或 CAS 登录名…" data-principal-search></label>
+        <select data-principal-binding-filter aria-label="按 CAS 绑定状态筛选"><option value="">全部绑定状态</option><option value="BOUND" ${bindingStatus === 'BOUND' ? 'selected' : ''}>已绑定</option><option value="PENDING" ${bindingStatus === 'PENDING' ? 'selected' : ''}>待绑定</option></select>
+        <select data-principal-state-filter aria-label="按使用状态筛选"><option value="">全部使用状态</option><option value="ACTIVE" ${state === 'ACTIVE' ? 'selected' : ''}>启用</option><option value="INACTIVE" ${state === 'INACTIVE' ? 'selected' : ''}>已停用</option></select>
+        <span class="principal-result-count" aria-live="polite">共 ${filtered.length} 人</span>
+      </div>
+      <div class="principal-table-wrap"><table class="governance-ops-table principal-table"><thead><tr><th>姓名</th><th>CAS 登录名</th><th>CAS 绑定状态</th><th>使用状态</th><th>手册责任</th><th>最近登录</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table></div>
+    </div>
+    <dialog class="principal-dialog" data-principal-editor-dialog>
+      <form method="dialog" data-principal-editor-form>
+        <header><div><h2 data-principal-dialog-title>新增人员</h2><p>人员可在手册和大纲中被选为责任人。</p></div><button class="icon-button" type="button" data-principal-dialog-close aria-label="关闭">×</button></header>
+        <input type="hidden" name="principalId"><input type="hidden" name="rowVersion">
+        <label><span>姓名 *</span><input name="displayName" required maxlength="128" autocomplete="off"></label>
+        <label><span>CAS 登录名</span><input name="casLoginName" maxlength="128" autocomplete="off"><small data-principal-login-help>可留空，首次登录时自动绑定。</small></label>
+        <fieldset><legend>使用状态</legend><label><input type="radio" name="state" value="ACTIVE" checked> 启用</label><label><input type="radio" name="state" value="INACTIVE"> 停用</label></fieldset>
+        <footer><span data-principal-form-status role="status"></span><button class="button tertiary" type="button" data-principal-dialog-close>取消</button><button class="button primary" type="submit">确认新增</button></footer>
+      </form>
+    </dialog>
+    <dialog class="principal-dialog principal-import-dialog" data-principal-import-dialog>
+      <form data-principal-import-form>
+        <header><div><h2>Excel 批量导入</h2><p>先预检变更和冲突，确认后才写入数据库。</p></div><button class="icon-button" type="button" data-principal-dialog-close aria-label="关闭">×</button></header>
+        <div class="principal-import-guide"><a class="button tertiary" href="/knowledge-center/api/platform/principals/template" download="知识中心人员导入模板.xlsx">下载 Excel 模板</a><span>表头：姓名、CAS登录名、状态；单次最多 1000 人。</span></div>
+        <label><span>选择 Excel 文件</span><input name="file" type="file" accept=".xlsx" required></label>
+        <div class="principal-import-preview" data-principal-import-preview hidden></div>
+        <footer><span data-principal-import-status role="status"></span><button class="button tertiary" type="button" data-principal-dialog-close>取消</button><button class="button secondary" type="submit" data-principal-import-preview-button>预检文件</button><button class="button primary" type="button" data-principal-import-apply hidden>确认导入</button></footer>
+      </form>
+    </dialog>
+  </div>`;
+}
+
 function resolveRoles(permissionProjection) {
   if (Array.isArray(permissionProjection.roles) && permissionProjection.roles.length) {
     return permissionProjection.roles.map(role => typeof role === 'string' ? { id: role, name: ROLE_DISPLAY_NAMES[role] || role } : role);
@@ -478,6 +554,8 @@ export function renderPlatformAdmin({
   projection,
   gitlabProjection,
   permissionProjection,
+  principalProjection,
+  principalListState,
   governanceProjection,
   selectedPermissionUserId,
   permissionSaveStatus,
@@ -494,6 +572,9 @@ export function renderPlatformAdmin({
 
   let tabContent;
   switch (activeTab) {
+    case 'principals':
+      tabContent = renderPrincipalsTab(principalProjection || {}, principalListState || {});
+      break;
     case 'permissions':
       tabContent = renderPermissionsTab(permissionProjection, selectedPermissionUserId, permissionSaveStatus, permissionUserSearch || '', permissionListState || {});
       break;

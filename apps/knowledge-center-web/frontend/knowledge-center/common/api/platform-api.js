@@ -4,6 +4,7 @@ const outlineEndpoint = '/knowledge-center/api/outline/governance';
 const handbooksEndpoint = '/knowledge-center/api/assets/handbooks';
 // 用户角色由认证服务统一维护；平台管理仅提供同源代理入口。
 const permissionsEndpoint = '/knowledge-center/api/auth/users';
+const principalsEndpoint = '/knowledge-center/api/platform/principals';
 const templatesEndpoint = '/knowledge-center/api/templates';
 export const loadTemplates = (params = {}) => {
   const query = new URLSearchParams(params).toString();
@@ -193,4 +194,40 @@ export async function updatePlatformUserPermissions(userId, changes) {
   const result = await response.json().catch(() => null);
   if (!response.ok) throw Object.assign(new Error(result?.error?.message || `权限保存失败（HTTP ${response.status}）`), { status: response.status });
   return result?.data || result;
+}
+
+export async function loadPrincipals(params = {}) {
+  const query = new URLSearchParams(params).toString();
+  const result = await getJson(`${principalsEndpoint}${query ? `?${query}` : ''}`);
+  return result?.data || result;
+}
+
+export async function createPrincipal(payload) {
+  const response = await fetch(principalsEndpoint, {
+    method: 'POST', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const result = await response.json().catch(() => null);
+  if (!response.ok) throw Object.assign(new Error(result?.error?.message || `人员新增失败（HTTP ${response.status}）`), { status: response.status, code: result?.error?.code });
+  return result?.data;
+}
+
+export async function updatePrincipal(principalId, payload) {
+  const response = await fetch(`${principalsEndpoint}/${encodeURIComponent(principalId)}`, {
+    method: 'PATCH', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const result = await response.json().catch(() => null);
+  if (!response.ok) throw Object.assign(new Error(result?.error?.message || `人员更新失败（HTTP ${response.status}）`), { status: response.status, code: result?.error?.code });
+  return result?.data;
+}
+
+export async function importPrincipals(file, mode = 'preview') {
+  const body = new FormData(); body.append('file', file);
+  const response = await fetch(`${principalsEndpoint}/import?mode=${encodeURIComponent(mode)}`, { method: 'POST', credentials: 'same-origin', body });
+  const result = await response.json().catch(() => null);
+  if (!response.ok) throw Object.assign(new Error(result?.error?.message || `人员导入失败（HTTP ${response.status}）`), { status: response.status, code: result?.error?.code });
+  return result?.data;
 }

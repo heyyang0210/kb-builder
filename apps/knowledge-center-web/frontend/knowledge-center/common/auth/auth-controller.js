@@ -54,15 +54,14 @@ async function refreshSession() {
 export async function bootstrapAuth(onStatus = () => {}) {
   setAuthState({ status: 'checking', error: null });
   onStatus('正在检查登录状态');
-  try {
-    const config = await getAuthConfig();
-    setAuthState({ config });
-  } catch (error) {
-    setAuthState({ config: null, error });
-  }
-
   const ticket = casTicket();
   if (ticket) {
+    try {
+      const config = await getAuthConfig();
+      setAuthState({ config });
+    } catch (error) {
+      setAuthState({ config: null, error });
+    }
     setAuthState({ status: 'callback' });
     onStatus('正在验证统一认证信息');
     try {
@@ -77,7 +76,19 @@ export async function bootstrapAuth(onStatus = () => {}) {
   }
 
   try {
-    return await refreshSession();
+    const [configResult, sessionResult] = await Promise.allSettled([getAuthConfig(), getSession()]);
+    setAuthState({
+      config: configResult.status === 'fulfilled' ? configResult.value : null,
+      ...(configResult.status === 'rejected' ? { error: configResult.reason } : {}),
+    });
+    if (sessionResult.status === 'rejected') throw sessionResult.reason;
+    const session = sessionResult.value;
+    if (!session.authenticated) {
+      clearSession();
+      return null;
+    }
+    setAuthState({ status: 'authenticated', session, error: null });
+    return session;
   } catch (error) {
     if (error.status === 401) {
       setAuthState({ status: 'anonymous', session: null, error: null });

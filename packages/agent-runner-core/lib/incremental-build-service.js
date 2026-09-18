@@ -358,6 +358,37 @@ class IncrementalBuildService {
     return tasks.map(task => this.project(task, session, true));
   }
 
+  reviewBootstrap(session, query = {}) {
+    requireAction(session, 'knowledge:read');
+    const state = this.repository.read();
+    let tasks = state.tasks.filter(task => this.canRead(session, task));
+    if (query.handbookId) tasks = tasks.filter(item => item.handbookId === query.handbookId);
+    tasks = tasks.sort((a, b) => String(b.updatedAt || b.createdAt).localeCompare(String(a.updatedAt || a.createdAt)));
+    const allItems = tasks.map(task => this.project(task, session, true));
+    const activeItems = allItems.filter(item => ['under_review', 'review_pending', 'approved', 'pending_publish'].includes(item?.state || item?.status));
+    let detail = null;
+    if (query.taskId) {
+      const task = this.task(state, query.taskId);
+      this.requireReadable(session, task);
+      detail = this.project(task, session);
+    } else if (activeItems[0]?.id) {
+      const task = this.task(state, activeItems[0].id);
+      this.requireReadable(session, task);
+      detail = this.project(task, session);
+    }
+    const items = query.taskId && detail && !activeItems.some(item => String(item.id) === String(query.taskId))
+      ? [detail, ...activeItems]
+      : activeItems;
+    const readerHandbookId = detail?.handbookId || query.handbookId || '';
+    const visible = session?.visibleHandbookIds || session?.user?.visibleHandbookIds || null;
+    const baselines = !detail && readerHandbookId
+      ? this.baselines.list(state, { handbookId: readerHandbookId })
+        .filter(item => !visible || visible.includes(item.handbookId))
+        .map(item => ({ id: item.id, handbookId: item.handbookId, businessVersion: item.businessVersion, current: item.current === true, contentDigest: item.contentDigest || null, publishedAt: item.publishedAt || null }))
+      : [];
+    return { items, allItems, detail, readerHandbookId, baselines };
+  }
+
   listHandbookReviewSummary(session, handbookId, query = {}) {
     requireAction(session, 'knowledge:read');
     required(handbookId, 'handbookId', '必须指定手册');
@@ -917,7 +948,7 @@ function sendJson(res, status, body) {
 
 function createIncrementalBuildHandler(options = {}) {
   const service = options.service || new IncrementalBuildService(options.repository || new FileIncrementalBuildRepository(options.repositoryPath));
-  return async function handle(req, res, session) {
+  const handle = async function handle(req, res, session) {
     try {
       const url = new URL(req.url, 'http://localhost');
       const relative = url.pathname.replace(/^\/knowledge-center\/api\/incremental-tasks\/?/, '');
@@ -960,6 +991,8 @@ function createIncrementalBuildHandler(options = {}) {
       sendJson(res, known ? error.status : 500, { success: false, error: { code: known ? error.code : 'INCREMENTAL_BUILD_FAILED', message: known ? error.message : '增量构建处理失败', ...(error.details ? { details: error.details } : {}) } });
     }
   };
+  handle.service = service;
+  return handle;
 }
 
 module.exports = {

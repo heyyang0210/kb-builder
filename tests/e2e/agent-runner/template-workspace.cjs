@@ -43,24 +43,28 @@ async function fixture() {
   if (process.env.TEMPLATE_TEST_DEBUG) { page.on('console', message => console.log('browser:', message.type(), message.text())); page.on('response', response => { if (response.status() >= 400) console.log('http:', response.status(), response.url()); }); }
   page.on('dialog', dialog => dialog.accept());
   const errors = []; page.on('pageerror', error => errors.push(error.message));
+  let templateGets = [];
+  page.on('request', request => {
+    const target = new URL(request.url());
+    if (request.method() === 'GET' && target.pathname.startsWith('/knowledge-center/api/templates')) templateGets.push(`${target.pathname}${target.search}`);
+  });
   const unique = `P2浏览器-${Date.now()}`;
   try {
     if (process.env.TEMPLATE_TEST_LOGIN_PASSWORD) await context.request.post(`${url}/knowledge-center/api/auth/admin/login`, { data: { username: process.env.TEMPLATE_TEST_LOGIN_USERNAME || 'admin', password: process.env.TEMPLATE_TEST_LOGIN_PASSWORD } });
     await page.goto(`${url}/knowledge-center/templates`);
     await page.locator('[data-template-new]').waitFor();
     await page.locator('[data-template-new]').click();
+    await page.locator('[data-template-create-blank]').click();
     await page.locator('[data-template-field="name"]').fill(unique);
     await page.locator('[data-template-field="type"]').fill('测试类型');
     await page.locator('[data-template-field="description"]').fill('隔离浏览器测试');
-    await page.locator('[data-template-mode="edit"]').click();
     await page.locator('[data-template-content]').fill('# 浏览器初始正文\n\n|项目|说明|\n|---|---|\n|SQL|示例|');
-    await page.locator('[data-template-mode="preview"]').click();
-    assert.equal(await page.locator('.template-preview table').count(), 1);
     await page.locator('[data-template-save]').click();
     await page.locator('[data-template-status]').filter({ hasText: '保存成功' }).waitFor();
+    assert.equal(await page.locator('.template-preview table').count(), 1);
     const id = await page.locator('.template-list-item.active').getAttribute('data-template-id');
     assert.equal(await page.locator('.template-history').count(), 0);
-    await page.locator('[data-template-mode="edit"]').click();
+    await page.locator('[data-template-edit]').click();
     await page.locator('[data-template-content]').fill('# 第二版本正文');
     await page.locator('[data-template-save]').click();
     await page.locator('[data-template-status]').filter({ hasText: '当前版本 v2' }).waitFor();
@@ -71,32 +75,45 @@ async function fixture() {
     assert.equal(await page.locator('[data-template-content]').count(), 0);
     await page.locator('[data-template-restore="1"]').click();
     await page.locator('[data-template-status]').filter({ hasText: '历史内容已载入草稿' }).waitFor();
+    await page.locator('[data-template-history-close]').click();
+    await page.locator('[data-template-edit]').click();
     await page.locator('[data-template-save]').click();
     await page.locator('[data-template-status]').filter({ hasText: '当前版本 v3' }).waitFor();
     await page.reload();
     await page.locator(`[data-template-id="${id}"]`).click();
     assert.match(await page.locator('.template-preview').innerText(), /初始正文/);
     // A concurrent writer produces 409; the editor must retain its draft.
-    await page.locator('[data-template-mode="edit"]').click();
+    await page.locator('[data-template-edit]').click();
     await page.locator('[data-template-content]').fill('# 冲突仍保留的草稿');
     const concurrent = await context.request.post(`${url}/knowledge-center/api/templates/${id}/save`, { data: { baseVersion: 3, content: '# 其他窗口内容' } }); assert.equal(concurrent.status(), 200);
     await page.locator('[data-template-save]').click();
     await page.locator('[data-template-status]').filter({ hasText: '其他用户更新' }).waitFor();
     assert.equal(await page.locator('[data-template-content]').inputValue(), '# 冲突仍保留的草稿');
+    await page.locator('[data-template-cancel]').click();
     const templateDir = path.join(root, 'knowledge/templates');
     const uploadFiles = ['01-通用基础模板.md', '07-兼容性差异类模板.md'].map(name => ({ name, mimeType: 'text/markdown', buffer: fs.readFileSync(path.join(templateDir, name)) }));
     const chooser = page.waitForEvent('filechooser');
-    await page.locator('[data-template-dropzone]').click();
+    await page.locator('[data-template-new]').click();
+    await page.locator('[data-template-create-upload]').click();
     await (await chooser).setFiles(uploadFiles);
     await page.locator('[data-template-status]').filter({ hasText: '模板上传成功：已保存 2 个 Markdown 模板' }).waitFor();
     assert.equal(await page.locator('.template-list-item').count(), 4);
     const importedId = await page.locator('.template-list-item.active').getAttribute('data-template-id');
     const stored = await context.request.get(`${url}/knowledge-center/api/templates/${importedId}`);
     assert.equal((await stored.json()).data.current.content, uploadFiles[0].buffer.toString('utf8'));
+    templateGets = [];
     await page.reload();
+    await page.locator('.template-preview').filter({ hasText: '初始正文' }).waitFor();
+    assert.equal(await page.getByText('暂无正文，请进入 Markdown 编辑或上传文档。', { exact: true }).count(), 0);
+    assert.equal(templateGets.filter(value => value === '/knowledge-center/api/templates?summary=1').length, 1);
+    assert.equal(templateGets.filter(value => /^\/knowledge-center\/api\/templates\/[^/?]+$/.test(value)).length, 1);
+    templateGets = [];
     await page.locator(`[data-template-id="${importedId}"]`).click();
     await page.waitForFunction(id => document.querySelector('.template-list-item.active')?.dataset.templateId === id, importedId);
     assert.match(await page.locator('.template-preview').innerText(), /通用/);
+    assert.equal(await page.getByText('暂无正文，请进入 Markdown 编辑或上传文档。', { exact: true }).count(), 0);
+    assert.equal(templateGets.filter(value => value === '/knowledge-center/api/templates?summary=1').length, 1);
+    assert.equal(templateGets.filter(value => /^\/knowledge-center\/api\/templates\/[^/?]+$/.test(value)).length, 1);
     // 中文输入法回归：组词期间输入框节点和焦点必须保持，提交中文后再筛选。
     const ime = page.locator('[data-template-search]');
     const unfilteredCount = await page.locator('.template-list-item').count();
@@ -118,32 +135,41 @@ async function fixture() {
       el.dispatchEvent(new InputEvent('input', { bubbles: true, data: '通用' }));
     });
     assert.equal(await ime.inputValue(), '通用');
+    await page.waitForFunction(() => document.querySelectorAll('.template-list-item').length === 1);
     assert.deepEqual(await page.locator('.template-list-item strong').allTextContents(), ['01-通用基础模板']);
     assert.equal(await ime.evaluate(el => el === window.__imeSearchNode && document.activeElement === el), true);
     await ime.fill('');
+    await page.waitForFunction(expected => document.querySelectorAll('.template-list-item').length === expected, unfilteredCount);
     assert.equal(await page.locator('.template-list-item').count(), unfilteredCount);
     // 非 IME 的整段输入（粘贴等）与中英文混合查询仍能即时筛选。
     await ime.evaluate(el => {
       el.value = '兼容性差异';
       el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertFromPaste', data: el.value }));
     });
+    await page.waitForFunction(() => document.querySelectorAll('.template-list-item').length === 1);
     assert.deepEqual(await page.locator('.template-list-item strong').allTextContents(), ['07-兼容性差异类模板']);
     await page.locator('[data-template-search]').fill(unique);
+    await page.waitForFunction(() => document.querySelectorAll('.template-list-item').length === 1);
     assert.equal(await page.locator('.template-list-item').count(), 1);
     await page.locator(`[data-template-id="${id}"]`).click();
     for (const width of [1440, 768, 375]) {
       await page.setViewportSize({ width, height: 900 });
+      await page.waitForFunction(expected => matchMedia(`(max-width: ${expected}px)`).matches, width);
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1));
+      if (width <= 600 && !(await page.locator('[data-template-workspace]').evaluate(node => node.classList.contains('template-list-collapsed')))) {
+        await page.locator('[data-template-list-toggle]').click();
+        await page.locator('[data-template-workspace].template-list-collapsed').waitFor();
+      }
       await page.locator('[data-template-history]').click();
       assert.ok(await page.locator('.template-history').isVisible());
-      if (width <= 900) assert.ok((await page.locator('.template-history').boundingBox()).width <= 320);
+      if (width <= 900) assert.ok((await page.locator('.template-history').boundingBox()).width <= 360);
       await page.screenshot({ path: `/tmp/template-workspace-${width}.png`, fullPage: true });
       await page.keyboard.press('Escape'); assert.equal(await page.locator('.template-history').count(), 0);
     }
     if (local) {
       const readonly = await browser.newContext(); await readonly.addCookies([{ name: 'role', value: 'read-only', url }]);
       const reader = await readonly.newPage(); await reader.goto(`${url}/knowledge-center/templates`); await reader.locator('.template-list-item').first().waitFor();
-      assert.equal(await reader.locator('[data-template-save],[data-template-upload],[data-template-mode="edit"]').count(), 0); await readonly.close();
+      assert.equal(await reader.locator('[data-template-save],[data-template-upload],[data-template-edit]').count(), 0); await readonly.close();
     }
     assert.deepEqual(errors, []);
     console.log('PASS: create/preview/save/history/restore/refresh/conflict draft/upload/search/narrow drawer/keyboard/read-only. Screenshots: /tmp/template-workspace-{1440,768,375}.png');

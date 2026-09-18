@@ -48,10 +48,14 @@ const OUTLINE_INTERNAL_TOKEN = process.env.KNOWLEDGE_CENTER_OUTLINE_INTERNAL_TOK
 const KNOWLEDGE_ASSETS_CONFIG = process.env.KNOWLEDGE_ASSETS_CONFIG
   ? path.resolve(process.env.KNOWLEDGE_ASSETS_CONFIG)
   : CONFIG_PATHS.knowledgeAssets;
+const domainStore = createDomainStore();
 const knowledgeAssetsStore = String(process.env.KNOWLEDGE_STORAGE_MODE || 'file').toLowerCase() === 'database'
   ? (() => {
-      const domainStore = createDomainStore();
-      return { read: () => domainStore.readHandbooks(), write: payload => domainStore.writeHandbooksSnapshot(payload) };
+      return {
+        read: () => domainStore.readHandbooks(),
+        readAsync: () => domainStore.readHandbooksAsync(),
+        write: payload => domainStore.writeHandbooksSnapshot(payload),
+      };
     })()
   : createAggregateStore({ namespace: 'assets', key: 'catalog', filePath: KNOWLEDGE_ASSETS_CONFIG, emptyValue: { version: 1, handbooks: [], audits: [] } });
 const templateStore = createTemplateStore({});
@@ -106,6 +110,13 @@ const authModule = createKnowledgeCenterAuthService({
   // permission request. Enable database-backed auth only after an async
   // adapter is available for this process.
   repository: undefined,
+  principalDirectory: {
+    upsertCas: info => domainStore.syncCasPrincipal({
+      casLoginName: String(info.user || info.uid || '').trim(),
+      displayName: String(info.cn || info.user || info.uid || '').trim(),
+      actor: 'system:cas',
+    }),
+  },
 });
 const usingDefaultAdmin = !process.env.KNOWLEDGE_CENTER_ADMIN_USERNAME && !process.env.KNOWLEDGE_CENTER_ADMIN_PASSWORD;
 const usingDefaultEditor = !process.env.KNOWLEDGE_CENTER_KNOWLEDGE_EDITOR_USERNAME && !process.env.KNOWLEDGE_CENTER_KNOWLEDGE_EDITOR_PASSWORD;
@@ -126,7 +137,7 @@ const MIME_TYPES = {
   '.map': 'application/json; charset=utf-8',
 };
 
-function sendFile(filePath, res) {
+function sendFile(filePath, res, req) {
   const ext = path.extname(filePath);
   const contentType = MIME_TYPES[ext] || 'application/octet-stream';
   fs.readFile(filePath, (err, content) => {
@@ -134,7 +145,14 @@ function sendFile(filePath, res) {
       if (err.code === 'ENOENT') { res.writeHead(404); res.end('Not Found'); }
       else { res.writeHead(500); res.end('Server Error'); }
     } else {
-      res.writeHead(200, { 'Content-Type': contentType });
+      const etag = `"${crypto.createHash('sha1').update(content).digest('hex')}"`;
+      const cacheControl = ext === '.html' ? 'no-cache' : 'private, max-age=0, must-revalidate';
+      if (ext !== '.html' && req?.headers?.['if-none-match'] === etag) {
+        res.writeHead(304, { ETag: etag, 'Cache-Control': cacheControl });
+        res.end();
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': contentType, 'Cache-Control': cacheControl, ETag: etag });
       res.end(content);
     }
   });
@@ -241,7 +259,7 @@ const handleKnowledgeCenter = createKnowledgeCenterHandler({
     PLATFORM_CONTEXT_TIMEOUT_MS,
     GITLAB_CONFIG_PATH, GITLAB_DOCUMENT_TYPES_PATH,
   },
-  stores: { knowledgeAssetsStore, templateStore, brandIconStore },
+  stores: { knowledgeAssetsStore, templateStore, brandIconStore, domainStore },
   moduleRegistry: platformModules,
 });
 
@@ -278,7 +296,7 @@ const server = http.createServer((req, res) => {
       res.writeHead(400); res.end('Bad Request'); return;
     }
     const filePath = path.extname(candidate) ? candidate : path.join(PINGCODE_ROOT, 'index.html');
-    sendFile(filePath, res);
+    sendFile(filePath, res, req);
     return;
   }
 
@@ -298,7 +316,7 @@ const server = http.createServer((req, res) => {
     return;
   }
   const filePath = path.join(ROOT, pathname === '/' ? '/document-generation-workbench.html' : pathname);
-  sendFile(filePath, res);
+  sendFile(filePath, res, req);
 });
 
 if (require.main === module) {

@@ -58,6 +58,26 @@ describe('knowledge center unified build contract', () => {
     expect(storageScript).toContain('Main "$@"');
   });
 
+  test('业务表按四个稳定业务边界共享主键序列', () => {
+    const migration = read('apps/yashandb-storage/sql/009_consolidate_business_sequences.sql');
+    const targetDdl = read('.codex/知识中心建设平台/03-详细设计/知识中心-手册与大纲管理-目标表结构.sql');
+
+    for (const sequence of [
+      'KC_MANUAL_SEQ',
+      'KC_OUTLINE_SEQ',
+      'KC_RESPONSIBILITY_SEQ'
+    ]) {
+      expect(migration).toContain(`CREATE SEQUENCE ${sequence}`);
+      expect(targetDdl).toContain(`CREATE SEQUENCE ${sequence}`);
+    }
+    expect(migration).toContain('CREATE SEQUENCE KC_PRINCIPAL_SEQ');
+    expect(migration).toContain('DROP SEQUENCE KC_BUSINESS_ID_SEQ');
+    expect(migration).toContain('DROP SEQUENCE KC_MANUAL_ID_SEQ');
+    expect(storageMain).not.toContain('KC_BUSINESS_ID_SEQ.NEXTVAL');
+    expect(storageMain).toContain('KC_OUTLINE_SEQ');
+    expect(storageMain).toContain('KC_RESPONSIBILITY_SEQ');
+  });
+
   test('restricts artifacts to a repository-relative runtime build path', () => {
     expect(buildScript).toContain('[[ "$value" == runtime/build/* ]]');
     expect(buildScript).toContain('/*|[A-Za-z]:*|\\\\*|//*');

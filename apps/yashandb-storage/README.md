@@ -49,6 +49,8 @@ curl http://127.0.0.1:14210/health
 
 `KC_MANUAL.PRODUCT_NAME` 保存手册列表所需的产品名称快照（`DB / YMP / YCM / YDC`），Storage 直接投影该字段；`PRODUCT_ID` 保留给产品主数据校验和联合查询，不在读取链路中转换展示名。
 
+手册列表投影由 `HandbookProjectionRepository` 集中维护命名 SQL、结果行 DTO 和查询计时，使用单条联表查询同时读取当前大纲业务 ID 和主/协同负责人，禁止按手册逐条查询负责人或大纲版本。响应通过 `Server-Timing` 输出 JDBC 连接获取、SQL 执行、行映射、JSON 序列化和 Storage 总耗时，`PERF_TRACE=1` 时同步写入性能日志。知识资产与审核刷新关键路径中的手册只读调用由 Node 使用原生异步 HTTP，不能通过同步子进程阻塞平台事件循环。
+
 SQL 迁移目录：
 
 | 文件 | 用途 |
@@ -58,6 +60,9 @@ SQL 迁移目录：
 | `sql/003_migration_batch.sql` | 文件迁移批次与对账结果 |
 | `sql/004_record_indexes.sql` | 聚合记录命名空间读取索引 |
 | `sql/005_manuals.sql` | 手册与大纲目标模型：12 张业务表、15 个显式业务索引、0 个物理外键（唯一约束索引不重复创建） |
+| `sql/007_create_platform_principal.sql` | 本地人员主数据和手册责任人姓名快照 |
+| `sql/008_split_business_id_sequences.sql` | 为各业务表分配独立数字主键序列，切断对公共序列的新增依赖 |
+| `sql/009_consolidate_business_sequences.sql` | 将主键生成器收敛为 4 个业务边界序列，并清理旧序列 |
 
 可通过 `YASDB_STORAGE_SQL_DIR` 指定经过发布审核的 SQL 目录；服务不会执行目录之外的 SQL。
 

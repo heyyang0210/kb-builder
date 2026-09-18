@@ -12,6 +12,7 @@
 | HTML 安全边界 | `markdown-renderer.gate.test.js` | 仅允许经过校验的空 `span` 锚点；事件、样式、脚本、危险协议及其他 HTML 必须转义或降级 |
 | 共享一致性 | `knowledge-center-incremental-view.test.js` | 知识资产仓库阅读与审核阅读复用同一个 `safeMarkdown` 渲染器 |
 | 产品筛选业务语义 | `knowledge-assets-product-filter.gate.test.js` | 内部数字产品 ID 只用于查询，筛选项直接显示 `PRODUCT_NAME` 的 `DB / YMP / YCM / YDC`，且 URL 字符串 ID 可正确筛选 |
+| 模板摘要与详情边界 | `knowledge-center-performance.gate.test.js` + `tests/e2e/agent-runner/template-workspace.cjs` | 列表不带正文，只为选中模板读取一次详情；真实 Markdown 上传后即时和刷新均显示正文，禁止 N+1 |
 
 ## 执行方式
 
@@ -19,6 +20,8 @@
 cd agent-runner
 npx jest tests/知识中心管理平台门禁/markdown-renderer.gate.test.js tests/knowledge-center-incremental-view.test.js --runInBand
 npx jest tests/知识中心管理平台门禁/knowledge-assets-product-filter.gate.test.js --runInBand
+npm run test:knowledge-center -- --runInBand tests/unit/agent-runner/知识中心管理平台门禁/knowledge-center-performance.gate.test.js
+NODE_PATH=runtime/agent-runner/node_modules node tests/e2e/agent-runner/template-workspace.cjs
 ```
 
 涉及 Markdown 渲染器、知识资产阅读或审核阅读的变更，必须执行上述命令；涉及真实页面交互时还需执行审核与发布 Playwright E2E。

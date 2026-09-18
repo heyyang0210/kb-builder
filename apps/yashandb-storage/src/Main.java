@@ -32,6 +32,7 @@ import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Executors;
@@ -53,6 +54,8 @@ public final class Main {
     private final SchemaMigrationManager schemaMigrations = new SchemaMigrationManager(sqlDirectory);
     private final Path techDomainSeedFile = Path.of(env("YASDB_TECH_DOMAINS_SEED_FILE", sqlDirectory.resolve("tech-domains.seed.json").toString())).toAbsolutePath().normalize();
     private final JdbcConnectionPool connectionPool;
+    private final HandbookProjectionRepository handbookProjectionRepository = new HandbookProjectionRepository();
+    private final PrincipalRepository principalRepository = new PrincipalRepository();
     private static boolean perfEnabled() { return "1".equals(System.getenv("PERF_TRACE")); }
     private static void perf(String event, long started, long sqlStarted, long lockStarted) {
         if (!perfEnabled()) return;
@@ -91,6 +94,7 @@ public final class Main {
         server.createContext("/health", this::health);
         server.createContext("/v1/records", this::records);
         server.createContext("/v1/domain/handbooks", this::domainHandbooks);
+        server.createContext("/v1/domain/principals", this::domainPrincipals);
         server.createContext("/v1/domain/outlines", this::domainOutlines);
         server.createContext("/v1/domain/tech-domains", this::techDomains);
         server.createContext("/v1/domain/build-tasks", this::buildTasks);
@@ -393,9 +397,21 @@ public final class Main {
         String path = exchange.getRequestURI().getRawPath();
         try {
             if ("GET".equals(exchange.getRequestMethod()) && "/v1/domain/handbooks".equals(path)) {
+                long requestStarted = System.nanoTime();
+                long connectionStarted = System.nanoTime();
                 try (Connection connection = connection()) {
-                    sendJson(exchange, 200, projectHandbooks(connection));
+                    double connectionMs = (System.nanoTime() - connectionStarted) / 1e6;
+                    Map<String, Double> timings = new LinkedHashMap<>();
+                    Map<String, Object> projection = projectHandbooks(connection, timings);
                     connection.commit();
+                    long serializationStarted = System.nanoTime();
+                    String body = Json.stringify(projection);
+                    double serializationMs = (System.nanoTime() - serializationStarted) / 1e6;
+                    double totalMs = (System.nanoTime() - requestStarted) / 1e6;
+                    exchange.getResponseHeaders().set("Server-Timing", String.format(Locale.ROOT,
+                        "db-connection;dur=%.3f, db-query;dur=%.3f, row-mapping;dur=%.3f, json-serialization;dur=%.3f, storage-total;dur=%.3f",
+                        connectionMs, timings.getOrDefault("queryMs", 0d), timings.getOrDefault("mappingMs", 0d), serializationMs, totalMs));
+                    send(exchange, 200, body);
                 }
                 return;
             }
@@ -413,6 +429,95 @@ public final class Main {
             failure(exchange, 400, "INVALID_JSON", error.getMessage());
         } catch (SQLException error) {
             failure(exchange, 503, "DATABASE_UNAVAILABLE", "手册领域读写失败");
+        }
+    }
+
+    private void domainPrincipals(HttpExchange exchange) throws IOException {
+        String path = exchange.getRequestURI().getRawPath();
+        try (Connection connection = connection()) {
+            if ("GET".equals(exchange.getRequestMethod()) && "/v1/domain/principals".equals(path)) {
+                Map<String, String> query = queryParameters(exchange.getRequestURI().getRawQuery());
+                Map<String, Object> data = principalRepository.list(connection, query.get("q"), query.get("state"), query.get("bindingStatus"));
+                connection.commit();
+                sendJson(exchange, 200, mapOf("success", true, "data", data));
+                return;
+            }
+            if ("POST".equals(exchange.getRequestMethod()) && "/v1/domain/principals".equals(path)) {
+                Map<String, Object> payload = readJsonObject(exchange);
+                Map<String, Object> data = principalRepository.create(connection,
+                    coalesce(payload.get("displayName")), coalesce(payload.get("casLoginName")),
+                    coalesce(payload.get("state"), "ACTIVE"), coalesce(payload.get("actor"), "system:api"));
+                connection.commit();
+                sendJson(exchange, 201, mapOf("success", true, "data", data));
+                return;
+            }
+            if ("POST".equals(exchange.getRequestMethod()) && "/v1/domain/principals/import".equals(path)) {
+                Map<String, Object> payload = readJsonObject(exchange);
+                String sourceSha = coalesce(payload.get("sourceSha256"));
+                if (sourceSha == null || !sourceSha.matches("[0-9a-fA-F]{64}")) throw new SQLException("PERSONNEL_SOURCE_SHA_REQUIRED");
+                String batchId = "PERSONNEL-" + sourceSha.substring(0, 32).toLowerCase(Locale.ROOT);
+                try (PreparedStatement query = connection.prepareStatement("SELECT STATUS FROM KC_MIGRATION_BATCH WHERE BATCH_ID=?")) {
+                    query.setString(1, batchId);
+                    try (ResultSet result = query.executeQuery()) {
+                        if (result.next()) {
+                            if (!"COMPLETED".equals(result.getString(1))) throw new SQLException("PERSONNEL_IMPORT_INCOMPLETE");
+                            Map<String, Object> data = principalRepository.list(connection, null, null, null);
+                            connection.commit();
+                            sendJson(exchange, 200, mapOf("success", true, "data", data, "idempotent", true));
+                            return;
+                        }
+                    }
+                }
+                List<Map<String, Object>> items = listOfMaps(payload.get("items"));
+                if (items.isEmpty()) throw new SQLException("PERSONNEL_IMPORT_EMPTY");
+                if (items.size() > 1000) throw new SQLException("PERSONNEL_IMPORT_TOO_LARGE");
+                String actor = coalesce(payload.get("actor"), "system:import");
+                for (Map<String, Object> item : items) principalRepository.importPerson(connection,
+                    coalesce(item.get("displayName")), coalesce(item.get("casLoginName")), coalesce(item.get("state"), "ACTIVE"), actor);
+                try (PreparedStatement insert = connection.prepareStatement(
+                    "INSERT INTO KC_MIGRATION_BATCH(BATCH_ID, SOURCE_KIND, STATUS, RECORD_COUNT, SOURCE_SHA256, RESULT_SHA256, COMPLETED_AT) "
+                        + "VALUES (?, 'PERSONNEL_FILE', 'COMPLETED', ?, ?, ?, CURRENT_TIMESTAMP)")) {
+                    insert.setString(1, batchId); insert.setLong(2, items.size()); insert.setString(3, sourceSha);
+                    insert.setString(4, sha256(Json.stringify(items))); insert.executeUpdate();
+                }
+                Map<String, Object> data = principalRepository.list(connection, null, null, null);
+                connection.commit();
+                sendJson(exchange, 200, mapOf("success", true, "data", data, "idempotent", false));
+                return;
+            }
+            if ("POST".equals(exchange.getRequestMethod()) && "/v1/domain/principals/cas-login".equals(path)) {
+                Map<String, Object> payload = readJsonObject(exchange);
+                Map<String, Object> data = principalRepository.syncCasLogin(connection,
+                    coalesce(payload.get("casLoginName")), coalesce(payload.get("displayName")),
+                    coalesce(payload.get("actor"), "system:cas"));
+                connection.commit();
+                sendJson(exchange, 200, mapOf("success", true, "data", data));
+                return;
+            }
+            if ("PATCH".equals(exchange.getRequestMethod()) && path.startsWith("/v1/domain/principals/")
+                && path.length() > "/v1/domain/principals/".length()) {
+                long principalId;
+                try { principalId = Long.parseLong(decode(path.substring("/v1/domain/principals/".length()))); }
+                catch (NumberFormatException error) { throw new SQLException("PERSONNEL_NOT_FOUND"); }
+                Map<String, Object> payload = readJsonObject(exchange);
+                long expectedRowVersion;
+                try { expectedRowVersion = Long.parseLong(coalesce(payload.get("rowVersion"))); }
+                catch (Exception error) { throw new SQLException("PERSONNEL_VERSION_REQUIRED"); }
+                Map<String, Object> data = principalRepository.update(connection, principalId,
+                    coalesce(payload.get("displayName")), coalesce(payload.get("casLoginName")),
+                    coalesce(payload.get("state"), "ACTIVE"), expectedRowVersion,
+                    coalesce(payload.get("actor"), "system:api"));
+                connection.commit();
+                sendJson(exchange, 200, mapOf("success", true, "data", data));
+                return;
+            }
+            methodNotAllowed(exchange);
+        } catch (JsonParseException error) {
+            failure(exchange, 400, "INVALID_JSON", error.getMessage());
+        } catch (SQLException error) {
+            String code = coalesce(error.getMessage(), "PERSONNEL_OPERATION_FAILED");
+            int status = code.endsWith("NOT_FOUND") ? 404 : code.contains("CONFLICT") || code.endsWith("IMMUTABLE") ? 409 : code.endsWith("REQUIRED") || code.endsWith("INVALID") || code.endsWith("EMPTY") || code.endsWith("TOO_LARGE") ? 422 : 503;
+            failure(exchange, status, code, personnelErrorMessage(code));
         }
     }
 
@@ -952,7 +1057,7 @@ public final class Main {
             query.setLong(1, outlineId);
             try (ResultSet result = query.executeQuery()) { result.next(); versionNo = result.getLong(1); }
         }
-        long id = nextBusinessId(connection);
+        long id = nextTableId(connection, "KC_RESPONSIBILITY_SEQ");
         try (PreparedStatement insert = connection.prepareStatement("INSERT INTO KC_MANUAL_OUTLINE_RESP_VERSION(RESP_VERSION_ID, OUTLINE_VERSION_ID, VERSION_NO, STATE, MAPPING_SHA256, CREATED_BY, UPDATED_BY) VALUES (?, ?, ?, 'DRAFT', ?, ?, ?)")) {
             insert.setLong(1, id); insert.setLong(2, outlineId); insert.setLong(3, versionNo);
             insert.setString(4, sha256("[]")); insert.setString(5, actor); insert.setString(6, actor); insert.executeUpdate();
@@ -1198,72 +1303,73 @@ public final class Main {
     }
 
     private Map<String, Object> projectHandbooks(Connection connection) throws SQLException {
+        return projectHandbooks(connection, null);
+    }
+
+    private Map<String, Object> projectHandbooks(Connection connection, Map<String, Double> timings) throws SQLException {
+        long projectionStarted = System.nanoTime();
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("version", 1L);
         body.put("generatedAt", Instant.now().toString());
         body.put("handbooks", new ArrayList<>());
         body.put("audits", new ArrayList<>());
-        String sql = "SELECT M.MANUAL_ID, M.MANUAL_CODE, M.MANUAL_NAME, M.PRODUCT_ID, M.PRODUCT_NAME, M.ORG_UNIT_ID, "
-            + "O.CURRENT_OUTLINE_VERSION_ID, M.STATE, M.ARCHIVED_AT, M.ROW_VERSION, M.SUMMARY, "
-            + "M.MANUAL_KIND, M.IS_EXTERNALLY_VISIBLE, M.CREATED_AT, M.UPDATED_AT "
-            + "FROM KC_MANUAL M LEFT JOIN KC_MANUAL_OUTLINE O ON O.MANUAL_ID = M.MANUAL_ID "
-            + "ORDER BY M.CREATED_AT, M.MANUAL_ID";
-        try (PreparedStatement statement = connection.prepareStatement(sql); ResultSet result = statement.executeQuery()) {
-            @SuppressWarnings("unchecked")
-            List<Object> handbooks = (List<Object>) body.get("handbooks");
-            while (result.next()) {
-                handbooks.add(projectHandbook(connection, result));
-            }
+        HandbookProjectionRepository.Projection projection = handbookProjectionRepository.list(connection);
+        @SuppressWarnings("unchecked")
+        List<Object> handbooks = (List<Object>) body.get("handbooks");
+        for (HandbookProjectionRepository.HandbookRow row : projection.rows()) {
+            handbooks.add(projectHandbook(row));
+        }
+        if (timings != null) {
+            timings.put("queryMs", projection.queryMs());
+            timings.put("mappingMs", projection.mappingMs());
+        }
+        if (perfEnabled()) {
+            System.err.printf("[perf] handbooks_projection rows=%d db_query_ms=%.3f row_mapping_ms=%.3f total_ms=%.3f%n",
+                handbooks.size(), projection.queryMs(), projection.mappingMs(), (System.nanoTime() - projectionStarted) / 1e6);
         }
         return body;
     }
 
-    private Map<String, Object> projectHandbook(Connection connection, ResultSet result) throws SQLException {
+    private Map<String, Object> projectHandbook(HandbookProjectionRepository.HandbookRow row) throws SQLException {
         try {
             Map<String, Object> handbook = new LinkedHashMap<>();
-            handbook.put("handbookId", result.getString(2));
-            handbook.put("id", result.getString(2));
-            handbook.put("manualId", result.getLong(1));
-            handbook.put("code", result.getString(2));
-            handbook.put("name", coalesce(result.getString(3), result.getString(2)));
+            handbook.put("handbookId", row.manualCode());
+            handbook.put("id", row.manualCode());
+            handbook.put("manualId", row.manualId());
+            handbook.put("code", row.manualCode());
+            handbook.put("name", coalesce(row.manualName(), row.manualCode()));
             handbook.put("title", handbook.get("name"));
-            handbook.put("productId", result.getLong(4));
-            handbook.put("productName", result.getString(5));
-            handbook.put("productType", result.getString(5));
-            handbook.put("ownerA", manualOwner(connection, result.getLong(1), "PRIMARY"));
-            handbook.put("ownerB", manualOwner(connection, result.getLong(1), "DEPUTY"));
-            handbook.put("departmentId", result.getString(6));
-            handbook.put("orgUnitId", result.getString(6));
-            String currentOutlineId = externalOutlineId(connection, result.getString(7));
+            handbook.put("productId", row.productId());
+            handbook.put("productName", row.productName());
+            handbook.put("productType", row.productName());
+            handbook.put("ownerA", ownerProjection(row.primaryOwnerId(), row.primaryOwnerName()));
+            handbook.put("ownerB", ownerProjection(row.deputyOwnerId(), row.deputyOwnerName()));
+            handbook.put("departmentId", row.orgUnitId());
+            handbook.put("orgUnitId", row.orgUnitId());
+            String currentOutlineId = row.currentOutlineExternalId();
             handbook.put("currentOutlineVersionId", currentOutlineId);
             handbook.put("outline", outlineSummary(currentOutlineId, null));
-            handbook.put("status", result.getString(8).toLowerCase());
+            handbook.put("status", row.state().toLowerCase());
             handbook.put("sourceStatus", handbook.get("status"));
-            handbook.put("archivedAt", timestampToString(result.getTimestamp(9)));
-            handbook.put("assetVersion", result.getLong(10));
-            handbook.put("summary", readClobOrNull(result.getClob(11)));
-            handbook.put("isAtomic", "ATOMIC".equals(result.getString(12)));
-            handbook.put("externalVisible", "Y".equals(result.getString(13)));
+            handbook.put("archivedAt", timestampToString(row.archivedAt()));
+            handbook.put("assetVersion", row.rowVersion());
+            handbook.put("summary", row.summary());
+            handbook.put("isAtomic", "ATOMIC".equals(row.manualKind()));
+            handbook.put("externalVisible", row.externallyVisible());
             handbook.put("documentSummary", mapOf("total", 0L, "published", 0L, "inProgress", 0L, "runningTasks", 0L));
-            handbook.put("createdAt", timestampToString(result.getTimestamp(14)));
-            handbook.put("updatedAt", timestampToString(result.getTimestamp(15)));
+            handbook.put("createdAt", timestampToString(row.createdAt()));
+            handbook.put("updatedAt", timestampToString(row.updatedAt()));
             return handbook;
         } catch (Exception error) {
             throw new SQLException("读取手册投影失败", error);
         }
     }
 
-    private Map<String, Object> manualOwner(Connection connection, long manualId, String role) throws SQLException {
-        try (PreparedStatement query = connection.prepareStatement(
-            "SELECT PRINCIPAL_ID FROM KC_MANUAL_OWNER WHERE MANUAL_ID = ? AND OWNER_ROLE = ?")) {
-            query.setLong(1, manualId);
-            query.setString(2, role);
-            try (ResultSet result = query.executeQuery()) {
-                if (!result.next()) return null;
-                String principalId = result.getString(1);
-                return mapOf("userId", principalId, "id", principalId, "displayName", principalId, "bindingStatus", "bound");
-            }
-        }
+    private Map<String, Object> ownerProjection(String principalId, String principalName) {
+        return principalId == null ? null : mapOf(
+            "principalId", principalId, "userId", principalId, "id", principalId,
+            "displayName", coalesce(principalName, principalId), "bindingStatus", "bound"
+        );
     }
 
     private Map<String, Object> saveOutlinesSnapshot(Connection connection, Map<String, Object> payload) throws SQLException, JsonParseException {
@@ -1460,13 +1566,18 @@ public final class Main {
 
     private void insertManualOwner(Connection connection, long manualId, String role, Long principalId, String actor) throws SQLException {
         if (principalId == null) return;
+        Map<String, Object> principal = principalRepository.findById(connection, principalId);
+        if (principal == null || !"ACTIVE".equals(principal.get("state"))) throw new SQLException("MANUAL_OWNER_INVALID");
+        String principalName = String.valueOf(principal.get("displayName"));
         try (PreparedStatement insert = connection.prepareStatement(
-            "INSERT INTO KC_MANUAL_OWNER(MANUAL_ID, OWNER_ROLE, PRINCIPAL_ID, CREATED_BY, UPDATED_BY) VALUES (?, ?, ?, ?, ?)")) {
+            "INSERT INTO KC_MANUAL_OWNER(MANUAL_ID, OWNER_ROLE, PRINCIPAL_ID, PRINCIPAL_NAME, PRINCIPAL_NAME_SYNCED_AT, CREATED_BY, UPDATED_BY) "
+                + "VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)")) {
             insert.setLong(1, manualId);
             insert.setString(2, role);
             insert.setLong(3, principalId);
-            insert.setString(4, actor);
+            insert.setString(4, principalName);
             insert.setString(5, actor);
+            insert.setString(6, actor);
             insert.executeUpdate();
         }
     }
@@ -1510,10 +1621,17 @@ public final class Main {
         }
     }
 
-    private long nextBusinessId(Connection connection) throws SQLException {
-        try (PreparedStatement query = connection.prepareStatement("SELECT KC_BUSINESS_ID_SEQ.NEXTVAL FROM DUAL");
+    private long nextTableId(Connection connection, String sequenceName) throws SQLException {
+        Set<String> allowedSequences = Set.of(
+            "KC_OUTLINE_SEQ",
+            "KC_RESPONSIBILITY_SEQ"
+        );
+        if (!allowedSequences.contains(sequenceName)) {
+            throw new SQLException("ID_SEQUENCE_NOT_ALLOWED");
+        }
+        try (PreparedStatement query = connection.prepareStatement("SELECT " + sequenceName + ".NEXTVAL FROM DUAL");
              ResultSet result = query.executeQuery()) {
-            if (!result.next()) throw new SQLException("BUSINESS_ID_UNAVAILABLE");
+            if (!result.next()) throw new SQLException("TABLE_ID_UNAVAILABLE");
             return result.getLong(1);
         }
     }
@@ -1617,7 +1735,7 @@ public final class Main {
         }
         try (PreparedStatement insert = connection.prepareStatement(
             "INSERT INTO KC_MANUAL_OUTLINE_VERSION(OUTLINE_VERSION_ID, OUTLINE_ID, VERSION_CODE, STATE, BASE_OUTLINE_VERSION_ID, SOURCE_TYPE, SOURCE_REF, SOURCE_SHA256, PARSER_VERSION, RULE_VERSION, STRUCTURE_SHA256, PUBLISHED_BY, PUBLISHED_AT, CREATED_BY, UPDATED_BY) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
-            long internalId = nextBusinessId(connection);
+            long internalId = nextTableId(connection, "KC_OUTLINE_SEQ");
             insert.setLong(1, internalId);
             insert.setLong(2, subjectId);
             insert.setString(3, versionCode);
@@ -1800,7 +1918,7 @@ public final class Main {
     }
 
     private long insertOutlineNode(Connection connection, String nodeKey, long outlineVersionId, Long parentId, String nodeType, String title, String description, int level, long order) throws SQLException {
-        long id = nextBusinessId(connection);
+        long id = nextTableId(connection, "KC_OUTLINE_SEQ");
         try (PreparedStatement insert = connection.prepareStatement(
             "INSERT INTO KC_MANUAL_OUTLINE_NODE(OUTLINE_NODE_ID, OUTLINE_VERSION_ID, NODE_KEY, PARENT_NODE_ID, NODE_TYPE, NODE_TITLE, NODE_DESCRIPTION, LEVEL_NO, SORT_NO, IS_REQUIRED, CREATED_BY, UPDATED_BY) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Y', 'system:api', 'system:api')")) {
             insert.setLong(1, id);
@@ -2136,6 +2254,39 @@ public final class Main {
 
     private static String decode(String value) {
         return URLDecoder.decode(value, StandardCharsets.UTF_8);
+    }
+
+    private static Map<String, String> queryParameters(String rawQuery) {
+        Map<String, String> values = new LinkedHashMap<>();
+        if (rawQuery == null || rawQuery.isBlank()) return values;
+        for (String pair : rawQuery.split("&")) {
+            if (pair.isBlank()) continue;
+            int separator = pair.indexOf('=');
+            String key = decode(separator < 0 ? pair : pair.substring(0, separator));
+            String value = decode(separator < 0 ? "" : pair.substring(separator + 1));
+            values.put(key, value);
+        }
+        return values;
+    }
+
+    private static String personnelErrorMessage(String code) {
+        return switch (code) {
+            case "PERSONNEL_NAME_REQUIRED" -> "姓名为必填项";
+            case "CAS_LOGIN_NAME_REQUIRED" -> "CAS 登录名为必填项";
+            case "CAS_LOGIN_NAME_CONFLICT", "CAS_LOGIN_BIND_CONFLICT" -> "CAS 登录名已绑定其他人员";
+            case "CAS_LOGIN_NAME_IMMUTABLE" -> "已绑定的 CAS 登录名不允许换绑";
+            case "PERSONNEL_STATE_INVALID" -> "人员状态只允许 ACTIVE 或 INACTIVE";
+            case "PERSONNEL_BINDING_STATUS_INVALID" -> "CAS 绑定状态只允许 BOUND 或 PENDING";
+            case "PERSONNEL_NOT_FOUND" -> "人员不存在";
+            case "PERSONNEL_VERSION_REQUIRED" -> "人员更新必须携带版本号";
+            case "PERSONNEL_VERSION_CONFLICT" -> "人员信息已被其他操作修改，请刷新后重试";
+            case "PERSONNEL_SOURCE_SHA_REQUIRED" -> "人员导入必须携带源文件 SHA-256";
+            case "PERSONNEL_IMPORT_EMPTY" -> "人员导入文件没有有效数据";
+            case "PERSONNEL_IMPORT_TOO_LARGE" -> "单次最多导入 1000 人";
+            case "PERSONNEL_IMPORT_INCOMPLETE" -> "同一导入批次存在未完成记录，请先检查批次";
+            case "MANUAL_OWNER_INVALID" -> "责任人不存在或已停用";
+            default -> "人员目录读写失败";
+        };
     }
 
     private static String escape(String value) {

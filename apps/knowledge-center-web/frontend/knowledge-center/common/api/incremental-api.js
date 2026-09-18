@@ -54,6 +54,13 @@ export function loadIncrementalBaselines(handbookId, businessVersion = '') {
 export const loadIncrementalTask = taskId => request(`${endpoint}/${encodeURIComponent(taskId)}`);
 export const loadCandidateDiff = taskId => request(`${endpoint}/${encodeURIComponent(taskId)}/diff`);
 export const loadHandbookReviewSummary = handbookId => request(`${endpoint}/handbooks/${encodeURIComponent(handbookId)}/review-summary`);
+export function loadReviewBootstrap({ handbookId = '', taskId = '', step = 'read' } = {}) {
+  const query = new URLSearchParams();
+  if (handbookId) query.set('handbookId', handbookId);
+  if (taskId) query.set('taskId', taskId);
+  if (step) query.set('step', step);
+  return request(`/knowledge-center/api/review/bootstrap?${query}`);
+}
 export const createIncrementalTask = body => request(endpoint, { method: 'POST', body: JSON.stringify(body) });
 export const createOnlineReview = body => request(`${endpoint}/online-reviews`, { method: 'POST', body: JSON.stringify(body) });
 export const bootstrapBaseline = body => request(`${endpoint}/bootstrap-baseline`, { method: 'POST', body: JSON.stringify(body) });

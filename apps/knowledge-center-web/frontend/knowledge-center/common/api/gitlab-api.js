@@ -41,6 +41,13 @@ export const loadHandbookRepositoryStatistics = (handbookId, branch, language = 
 export const loadHandbookRepositoryTree = (handbookId, branch, language, path = '') => request(`${handbookEndpoint}/${encodeURIComponent(handbookId)}/tree?ref=${encodeURIComponent(branch)}&language=${encodeURIComponent(language)}&path=${encodeURIComponent(path)}`);
 export const loadHandbookRepositoryFile = (handbookId, branch, language, path) => request(`${handbookEndpoint}/${encodeURIComponent(handbookId)}/file?ref=${encodeURIComponent(branch)}&language=${encodeURIComponent(language)}&path=${encodeURIComponent(path)}`);
 export const loadHandbookRepositoryCommits = (handbookId, branch) => request(`${handbookEndpoint}/${encodeURIComponent(handbookId)}/commits?ref=${encodeURIComponent(branch)}`);
+export function loadReviewRepositoryContext(handbookId, { branch = '', language = 'zh', path = '', preferredPath = '' } = {}) {
+  const query = new URLSearchParams({ handbookId, language });
+  if (branch) query.set('branch', branch);
+  if (path) query.set('path', path);
+  if (preferredPath) query.set('preferredPath', preferredPath);
+  return request(`/knowledge-center/api/review/repository-context?${query}`);
+}
 export const loadHandbookRepositoryMapping = handbookId => request(`/knowledge-center/api/gitlab/mappings/${encodeURIComponent(handbookId)}`);
 export const saveHandbookRepositoryMapping = (handbookId, value) => request(`/knowledge-center/api/gitlab/mappings/${encodeURIComponent(handbookId)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'Idempotency-Key': idempotencyKey('gitlab-mapping') }, body: JSON.stringify(value) });
 

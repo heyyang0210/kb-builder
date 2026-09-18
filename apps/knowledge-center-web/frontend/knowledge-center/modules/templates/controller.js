@@ -11,10 +11,12 @@ export function createTemplateController({ appState, render, canPerform }) {
   let lastSearch = null;
   const selected = () => appState.templateProjection?.selected;
   const draft = () => ui.drafts[ui.draftKey];
+  const hasContent = item => typeof item?.current?.content === 'string';
   function ensureDraft(item) {
     if (!item) return;
+    if (!hasContent(item)) throw new Error('模板详情未返回正文，请刷新后重试。');
     ui.draftKey = item.id;
-    ui.drafts[item.id] ||= { name: item.name, type: item.type, description: item.description, content: item.current?.content || '', baseVersion: item.currentVersion, dirty: false };
+    ui.drafts[item.id] ||= { name: item.name, type: item.type, description: item.description, content: item.current.content, baseVersion: item.currentVersion, dirty: false };
   }
   function failure(error) { ui.error = error.message; ui.notice = ''; render(); document.querySelector('[data-template-status]')?.focus(); }
   async function load(id) {
@@ -25,10 +27,11 @@ export function createTemplateController({ appState, render, canPerform }) {
       if (ticket !== request) return;
       const items = result.data || [];
       const target = id || (ui.draftKey !== 'new' && ui.draftKey) || items.find(item => item.status === 'active')?.id || items[0]?.id;
-      // 列表已携带 current 正文；首次进入直接复用，避免刷新时重复慢速存储请求。
+      // summary=1 只提供列表元数据；仅非摘要对象才能直接作为选中详情使用。
       const listed = items.find(item => item.id === target);
-      const detail = target ? (await api.loadTemplate(target)).data : null;
+      const detail = !target ? null : hasContent(listed) ? listed : (await api.loadTemplate(target)).data;
       if (ticket !== request) return;
+      if (target && !hasContent(detail)) throw new Error('模板详情未返回正文，请刷新后重试。');
       appState.templateProjection = { items, selected: detail };
       if (id || ui.draftKey !== 'new') ensureDraft(detail);
       ui.historyVersion = null; ui.versions = detail?.versions || [];

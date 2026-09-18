@@ -61,6 +61,33 @@ class DomainStore {
     }
   }
 
+  async requestAsync(method, pathname, body, extraHeaders = {}) {
+    const target = new URL(pathname, this.baseUrl).toString();
+    const headers = { ...extraHeaders };
+    if (body !== undefined) headers['Content-Type'] = 'application/json; charset=utf-8';
+    try {
+      const response = await fetch(target, {
+        method,
+        headers,
+        body: body === undefined ? undefined : JSON.stringify(body),
+        signal: AbortSignal.timeout(this.timeoutSeconds * 1000),
+      });
+      const parsed = JSON.parse(await response.text() || '{}');
+      if (!response.ok || parsed?.success === false) {
+        throw new DomainStoreError(
+          parsed?.error?.code || 'DOMAIN_REQUEST_FAILED',
+          parsed?.error?.message || '领域存储请求失败',
+          parsed?.error?.status || response.status || this.statusForCode(parsed?.error?.code),
+          parsed?.error?.details,
+        );
+      }
+      return parsed;
+    } catch (error) {
+      if (error instanceof DomainStoreError) throw error;
+      throw new DomainStoreError('DOMAIN_UNAVAILABLE', 'YashanDB 领域存储服务不可用', 503, { cause: error.message });
+    }
+  }
+
   statusForCode(code) {
     if (code === 'OUTLINE_NOT_FOUND' || code === 'ASSET_NOT_FOUND') return 404;
     if (code === 'BUILD_TASK_NOT_FOUND' || code === 'BUILD_TASK_ITEM_NOT_FOUND') return 404;
@@ -74,8 +101,39 @@ class DomainStore {
     return result.data || result;
   }
 
+  async readHandbooksAsync() {
+    const result = await this.requestAsync('GET', '/v1/domain/handbooks');
+    return result.data || result;
+  }
+
   writeHandbooksSnapshot(payload) {
     const result = this.request('PUT', '/v1/domain/handbooks/snapshot', payload);
+    return result.data || result;
+  }
+
+  async readPrincipalsAsync(query = {}) {
+    const queryString = new URLSearchParams(Object.entries(query).filter(([, value]) => value !== undefined && value !== null && value !== '')).toString();
+    const result = await this.requestAsync('GET', `/v1/domain/principals${queryString ? `?${queryString}` : ''}`);
+    return result.data || result;
+  }
+
+  async createPrincipal(payload) {
+    const result = await this.requestAsync('POST', '/v1/domain/principals', payload);
+    return result.data || result;
+  }
+
+  async updatePrincipal(principalId, payload) {
+    const result = await this.requestAsync('PATCH', `/v1/domain/principals/${encodeURIComponent(principalId)}`, payload);
+    return result.data || result;
+  }
+
+  async importPrincipals(payload) {
+    const result = await this.requestAsync('POST', '/v1/domain/principals/import', payload);
+    return result.data || result;
+  }
+
+  async syncCasPrincipal(payload) {
+    const result = await this.requestAsync('POST', '/v1/domain/principals/cas-login', payload);
     return result.data || result;
   }
 

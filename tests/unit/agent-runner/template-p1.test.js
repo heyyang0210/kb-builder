@@ -61,6 +61,19 @@ test('template P1 permissions, save, conflict and validation', async t => {
   assert.deepEqual(competing.map(r => r.status).sort(),[200,409]);
 });
 
+test('template summary excludes content while detail preserves the current body and hash', async t => {
+  const s = await setup(); t.after(s.close);
+  const content = '# 通用基础模板\n\n刷新后仍需显示的正文';
+  const created = await request(s.base,'/knowledge-center/api/templates',{method:'POST',headers:{cookie:'edit'},body:JSON.stringify({id:'summary-detail',name:'摘要详情契约',content})});
+  assert.equal(created.status, 201);
+  const summary = await request(s.base,'/knowledge-center/api/templates?summary=1',{headers:{cookie:'read'}});
+  const listed = summary.body.data.find(item => item.id === 'summary-detail');
+  assert.equal(Object.hasOwn(listed.current, 'content'), false);
+  const detail = await request(s.base,'/knowledge-center/api/templates/summary-detail',{headers:{cookie:'read'}});
+  assert.equal(detail.body.data.current.content, content);
+  assert.equal(detail.body.data.current.contentHash, `sha256:${crypto.createHash('sha256').update(content).digest('hex')}`);
+});
+
 test('malformed JSON is rejected', async t => { const s=await setup(); t.after(s.close); const r=await request(s.base,'/knowledge-center/api/templates',{method:'POST',headers:{cookie:'edit'},body:'{bad'}); assert.equal(r.status,400); });
 
 test('non-JSON media type is rejected', async t => { const s=await setup(); t.after(s.close); const r=await request(s.base,'/knowledge-center/api/templates',{method:'POST',headers:{cookie:'edit','content-type':'text/plain'},body:'{}'}); assert.equal(r.status,400); });

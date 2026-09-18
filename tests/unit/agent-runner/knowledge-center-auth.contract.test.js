@@ -189,6 +189,7 @@ describe('知识中心认证 HTTP 契约（真实服务 + CAS 协议桩）', () 
   let server;
   let base;
   let businessCookie;
+  const principalSyncs = [];
 
   beforeAll(async () => {
     cas = await startCasStub();
@@ -203,6 +204,12 @@ describe('知识中心认证 HTTP 契约（真实服务 + CAS 协议桩）', () 
       adminUsername: 'admin',
       adminPassword: 'admin',
       repository: 'memory',
+      principalDirectory: {
+        upsertCas: async info => {
+          principalSyncs.push({ casLoginName: info.user, displayName: info.cn?.[0] || info.user });
+          return { principalId: 101 };
+        },
+      },
     });
     if (typeof app !== 'function') throw new Error('auth service must expose a Node (req,res) handler');
     server = http.createServer(app);
@@ -240,6 +247,8 @@ describe('知识中心认证 HTTP 契约（真实服务 + CAS 协议桩）', () 
     expect(probe.status).toBe(200);
     const session = await jsonRequest(base, 'GET', AUTH_PATH('session'), null, { cookie: businessCookie });
     expect(session.data.content.allowedActions).toEqual(expect.arrayContaining(['outline:read']));
+    expect(session.data.content.principalId).toBe(101);
+    expect(principalSyncs).toEqual(expect.arrayContaining([{ casLoginName: 'alice', displayName: 'Alice' }]));
     expect(session.data.content.allowedActions).not.toEqual(expect.arrayContaining(['outline:create', 'outline:delete']));
     const adminProbe = await jsonRequest(base, 'GET', ADMIN_PROBE, null, { cookie: businessCookie });
     expect(adminProbe.status).toBe(403);

@@ -10,18 +10,35 @@
   <link rel="stylesheet" href="./common/base.css">
   <link rel="stylesheet" href="./common/components.css">
   <link rel="stylesheet" href="./styles.css">
-  <link rel="stylesheet" href="./modules/dashboard/dashboard.css">
-  <link rel="stylesheet" href="./modules/outlines/outlines.css">
-  <link rel="stylesheet" href="./modules/production/production.css">
+  <link rel="stylesheet" data-href="./modules/dashboard/dashboard.css" data-route-style="dashboard" media="not all">
+  <link rel="stylesheet" data-href="./modules/outlines/outlines.css" data-route-style="outlines" media="not all">
+  <link rel="stylesheet" data-href="./modules/production/production.css" data-route-style="production stages" media="not all">
   <link rel="stylesheet" href="./modules/repository/repository.css">
   <link rel="stylesheet" href="./modules/auth/login.css">
-  <link rel="stylesheet" href="./modules/platform-admin/platform-admin.css">
-  <link rel="stylesheet" href="./common/vendor/katex.min.css">
+  <link rel="stylesheet" data-href="./modules/platform-admin/platform-admin.css" data-route-style="platform" media="not all">
+  <link rel="stylesheet" data-href="./common/vendor/katex.min.css" data-route-style="production repository" media="not all">
+  <script>
+    (() => {
+      const segment = location.pathname.split('/').filter(Boolean)[1] || 'dashboard';
+      document.querySelectorAll('[data-route-style]').forEach(link => {
+        if (link.dataset.routeStyle.split(/\s+/).includes(segment)) {
+          link.href = link.dataset.href;
+          link.media = 'all';
+        }
+      });
+    })();
+  </script>
 </head>
 <body>
+  <script>if (location.pathname === '/knowledge-center/review' || location.pathname.startsWith('/knowledge-center/review/')) document.body.classList.add('review-boot-route');</script>
   <section id="auth-loading" class="auth-loading" aria-live="polite">
     <span class="auth-loading-mark" aria-hidden="true"></span>
     <p>正在检查登录状态</p>
+    <div class="review-early-shell" data-review-static-shell aria-label="审核与发布正在初始化">
+      <div class="review-early-head"></div>
+      <div class="review-early-grid"><i></i><i></i><i></i></div>
+    </div>
+    <script>if (document.body.classList.contains('review-boot-route')) requestAnimationFrame(() => performance.mark('review-static-shell-painted'));</script>
     <div id="auth-bootstrap-fallback" class="auth-bootstrap-fallback" hidden role="alert">
       <p>页面初始化未完成，请重新加载。</p>
       <button id="auth-bootstrap-retry" class="button secondary" type="button" onclick="window.location.reload()">重新加载</button>
@@ -106,7 +123,6 @@
     </div>
     <div id="external-account-content" class="external-account-content" aria-live="polite"></div>
   </dialog>
-  <script src="./common/vendor/lucide.min.js"></script>
   <script id="auth-bootstrap-watchdog">
     window.setTimeout(function () {
       var loading = document.getElementById('auth-loading');

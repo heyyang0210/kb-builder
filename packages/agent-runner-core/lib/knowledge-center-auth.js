@@ -203,7 +203,7 @@ class FileAuthRepository {
     return this.state.users.find(item => item.identitySource === 'local' && item.loginName === username);
   }
 
-  upsertCas(info) {
+  upsertCas(info, principalId = null) {
     const subject = first(info.uid) || first(info.user);
     if (!subject) throw new AuthError('CAS_SUBJECT_MISSING', '统一认证未返回稳定用户标识', 401);
     let user = this.state.users.find(item => item.identitySource === 'cas' && item.enterpriseSubject === subject);
@@ -219,6 +219,7 @@ class FileAuthRepository {
         employeeNo: first(info.employeeNumber),
         enabled: true,
         roles: ['KNOWLEDGE_EDITOR'],
+        principalId,
         createdAt: now,
         updatedAt: now,
       };
@@ -228,6 +229,7 @@ class FileAuthRepository {
       user.displayName = first(info.cn) || user.displayName;
       user.email = first(info.mail) || user.email;
       user.employeeNo = first(info.employeeNumber) || user.employeeNo;
+      if (principalId != null) user.principalId = principalId;
       user.updatedAt = now;
     }
     this.save();
@@ -350,6 +352,7 @@ function userProjection(user) {
     roles,
     visibleModules,
     allowedActions,
+    principalId: user.principalId || null,
   };
 }
 
@@ -414,6 +417,7 @@ function createKnowledgeCenterAuthService(options = {}) {
     : options.repository === 'database'
       ? new DatabaseAuthRepository()
     : options.repository || new FileAuthRepository(options.repositoryPath || path.join(process.cwd(), 'tmp', 'knowledge-center-auth.json'));
+  const principalDirectory = options.principalDirectory;
   repository.ensureAdmin(config.adminUsername, config.adminPassword);
   repository.ensureBuiltinUser(config.knowledgeEditorUsername, config.knowledgeEditorPassword, 'KNOWLEDGE_EDITOR');
   const failedAdminAttempts = new Map();
@@ -439,6 +443,7 @@ function createKnowledgeCenterAuthService(options = {}) {
       roles: projection.roles,
       visibleModules: projection.visibleModules,
       allowedActions: projection.allowedActions,
+      principalId: projection.principalId,
       expiresAt: session.record.expiresAt,
     };
   };
@@ -476,7 +481,8 @@ function createKnowledgeCenterAuthService(options = {}) {
         const body = await readBody(req);
         if (body.service || body.serviceUrl) throw new AuthError('CAS_SERVICE_MISMATCH', 'CAS service 由服务端固定配置', 400);
         const info = await validateTicket(body.ticket);
-        const user = repository.upsertCas(info);
+        const principal = principalDirectory?.upsertCas ? await principalDirectory.upsertCas(info) : null;
+        const user = repository.upsertCas(info, principal?.principalId || principal?.id || null);
         if (!user.enabled) throw new AuthError('USER_DISABLED', '当前账号无法访问平台', 403);
         const token = repository.createSession(user, config.sessionTtlMs);
         const content = { firstLogin: user.createdAt === user.updatedAt, user: userProjection(user) };
@@ -491,7 +497,7 @@ function createKnowledgeCenterAuthService(options = {}) {
         const body = await readBody(req);
         perfTrace('auth login body parsed', { durationMs: Number(process.hrtime.bigint() - startedAt) / 1e6 });
         const user = repository.findLocal(String(body.username || ''));
-        perfTrace('auth local user lookup', { durationMs: Number(process.hrtime.bigint() - startedAt), found: Boolean(user) });
+        perfTrace('auth local user lookup', { durationMs: Number(process.hrtime.bigint() - startedAt) / 1e6, found: Boolean(user) });
         if (!user || !user.enabled || !verifyPassword(String(body.password || ''), user.passwordHash)) {
           recent.push(Date.now());
           failedAdminAttempts.set(remote, recent);
@@ -503,7 +509,7 @@ function createKnowledgeCenterAuthService(options = {}) {
         repository.audit('ADMIN_LOGIN', user.id, 'success');
         const token = repository.createSession(user, config.sessionTtlMs);
         const projection = userProjection(user);
-        perfTrace('auth login completed', { durationMs: Number(process.hrtime.bigint() - startedAt), userId: user.id });
+        perfTrace('auth login completed', { durationMs: Number(process.hrtime.bigint() - startedAt) / 1e6, userId: user.id });
         // 登录响应直接携带完整会话投影，前端无需再立即 GET /session。
         return ok(res, {
           authenticated: true,
@@ -557,6 +563,7 @@ function createKnowledgeCenterAuthService(options = {}) {
           enabled: user.enabled,
           roles: Array.isArray(user.roles) ? user.roles : [],
           updatedAt: user.updatedAt,
+          principalId: user.principalId || null,
         }));
         return ok(res, { users, assignableRoles: ASSIGNABLE_ROLES, ...(paged ? { pagination: { page, pageSize, total: allUsers.length, totalPages } } : {}) });
       }

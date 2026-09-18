@@ -16,6 +16,8 @@ export const appState = {
   activeView: 'dashboard', contextProjection: null, projection: null, cleaningProjection: null, outlineProjection: null, assetCatalog: null, incrementalProjection: null, domainBuildTaskProjection: null, reviewProjection: null, gitlabProjection: { connections: [] }, gitlabAccountProjection: null,
   outlineListState: { search: '', statusFilter: '', scrollPosition: 0 },
   selectedPermissionUserId: null,
+  principalProjection: null,
+  principalListState: { search: '', bindingStatus: '', state: '' },
   permissionSaveStatus: null,
   permissionUserSearch: '',
   permissionListState: { page: 1, pageSize: 50, status: '', role: '' },
