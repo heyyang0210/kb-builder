@@ -8,8 +8,7 @@ function personnelError(code, message, status = 422) {
   return Object.assign(new Error(message), { code, status });
 }
 
-function templateWorkbook() {
-  const XLSX = require('xlsx');
+function templateWorkbook(XLSX = require('xlsx')) {
   const rows = [HEADERS, ['张三', 'zhangsan', 'ACTIVE'], ['李四', '', 'ACTIVE']];
   const workbook = XLSX.utils.book_new();
   const sheet = XLSX.utils.aoa_to_sheet(rows);
@@ -18,8 +17,7 @@ function templateWorkbook() {
   return XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
 }
 
-function parseWorkbook(buffer) {
-  const XLSX = require('xlsx');
+function parseWorkbook(buffer, XLSX = require('xlsx')) {
   let workbook;
   try { workbook = XLSX.read(buffer, { type: 'buffer', cellDates: false }); }
   catch (_) { throw personnelError('PERSONNEL_FILE_INVALID', '无法解析 Excel 文件'); }
