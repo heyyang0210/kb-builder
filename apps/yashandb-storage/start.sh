@@ -39,6 +39,27 @@ fi
 YASDB_PASSWORD="${YASDB_PASSWORD:-}"
 export YASDB_PASSWORD
 
+if [[ "${1:-}" == migrate ]]; then
+  migration_source_metadata="${YASDB_STORAGE_SQL_DIR}/migration-source.properties"
+  [[ -f "$migration_source_metadata" ]] || {
+    echo "拒绝执行迁移：构建产物缺少迁移来源证据，请先重新构建" >&2
+    exit 1
+  }
+  migration_source_dirty="$(sed -n 's/^sourceDirty=//p' "$migration_source_metadata")"
+  migration_source_revision="$(sed -n 's/^sourceRevision=//p' "$migration_source_metadata")"
+  migration_source_expected_sha="$(sed -n 's/^aggregateSha256=//p' "$migration_source_metadata")"
+  migration_source_actual_sha="$({
+    find "$YASDB_STORAGE_SQL_DIR" -maxdepth 1 -type f \
+      \( -name '[0-9][0-9][0-9]_*.sql' -o -name 'migration-aliases.properties' \) -print0 \
+      | sort -z | xargs -0 sha256sum
+  } | sha256sum | awk '{print $1}')"
+  [[ "$migration_source_dirty" == false && -n "$migration_source_revision" && "$migration_source_revision" != unknown \
+    && -n "$migration_source_expected_sha" && "$migration_source_actual_sha" == "$migration_source_expected_sha" ]] || {
+    echo "拒绝执行迁移：SQL 必须来自已提交的 Git 版本，当前构建包含未提交迁移变更" >&2
+    exit 1
+  }
+fi
+
 classpath_separator=:
 if [[ "$(uname -s)" == MINGW* || "$(uname -s)" == MSYS* || "$(uname -s)" == CYGWIN* ]]; then
   jdbc_jar="$(cygpath -w "${jdbc_jar}")"

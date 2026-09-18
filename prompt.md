@@ -1,5 +1,51 @@
 # prompt
 
+## 提示词-20260918-021：补齐迁移聚合摘要执行前校验
+
+- 时间：2026-09-18 17:37:19 Asia/Shanghai；发起角色：用户；类型：代码审查修复 / 迁移门禁 / Git 提交。
+- 完整原始提示词：
+
+  > 根据git提交规范.md，提交代码
+- 修复：根据审查意见，在 `start.sh migrate` 连库前按与构建阶段一致的文件集合和排序重算迁移聚合 SHA-256，与 `migration-source.properties` 中的记录比对；同步补充契约回归检查。
+- 验证：语法检查、构建和实际服务健康验收均应通过；未修改数据库迁移记录。
+
+## 提示词-20260918-020：从根因修复 007 迁移摘要冲突
+
+- 时间：2026-09-18 17:16:52 Asia/Shanghai；发起角色：用户；类型：数据库迁移故障定位 / 根因修复 / 真实后端验收。
+- 完整原始提示词：
+
+  > ```swift
+  > hey@cod-heyang:/data/docs/AI高效应用示例/06-YashanDB知识库Skill仓库$ ./knowledge-center.sh stop
+  > frontend 已停止
+  > pingcode 已停止
+  > document 已停止
+  > storage 已停止
+  > hey@cod-heyang:/data/docs/AI高效应用示例/06-YashanDB知识库Skill仓库$ ./knowledge-center.sh start
+  > 构建知识中心统一产物...
+  > 错误：storage 进程已退出：/data/docs/AI高效应用示例/06-YashanDB知识库Skill仓库/runtime/agent-runner/logs/knowledge-center-isolated/storage.log
+  > Exception in thread "main" java.sql.SQLException: 数据库迁移摘要不一致：007_create_platform_principal
+  > 	at migration.SchemaMigrationManager.migrationApplied(SchemaMigrationManager.java:175)
+  > 	at migration.SchemaMigrationManager.verify(SchemaMigrationManager.java:74)
+  > 	at Main.verifyMigrations(Main.java:130)
+  > 	at Main.main(Main.java:84)
+  > 警告：移除失效 PID 记录，不停止未知进程：storage 877382
+  > 知识中心操作失败。
+  > 当前组件状态：
+  > 知识中心管理平台：部分组件异常
+  > 访问地址：http://192.168.130.180:13510/knowledge-center/
+  > 内部组件：0/4 正常（认证作为平台内置模块运行）
+  > 详细诊断：./knowledge-center.sh status --verbose
+  > 日志目录：/data/docs/AI高效应用示例/06-YashanDB知识库Skill仓库/runtime/agent-runner/logs/knowledge-center-isolated
+  > 构建日志：/data/docs/AI高效应用示例/06-YashanDB知识库Skill仓库/runtime/agent-runner/logs/knowledge-center-isolated/knowledge-center-build.log
+  > ```
+  >
+  > stop，start，出现上述报错，定位直接原因和根因，从根因解决这个问题
+- 直接原因：数据库 `KC_SCHEMA_MIGRATION` 中 007 登记摘要为 `423ef742…`，当前 Git 文件摘要为 `336a3600…`，启动校验按设计拒绝继续。
+- 根因：007 在 2026-09-18 15:49:27 从含末尾空行的未提交工作树执行，16:41:11 才提交不含该字节的版本；本机 `service.env` 又将 `YASDB_STORAGE_SQL_DIR` 指向源码目录，绕过了统一构建产物边界。既有流程记录了产物摘要，但未禁止脏迁移源落库，导致数据库与 Git 事实分叉。
+- 修复：以真实已执行字节为准恢复 007；移除本机与示例配置中指向源码 SQL 目录的覆盖；构建产物增加迁移来源 revision、脏状态和聚合摘要；`start.sh migrate` 在连库执行前拒绝未提交 SQL/别名变更；增加 007 固定摘要回归门禁。
+- 数据边界：本次只读查询数据库迁移记录，不修改 `KC_SCHEMA_MIGRATION` 或业务数据；不用人工更新摘要掩盖字节差异。
+- 验证：007 文件摘要恢复为数据库登记的 `423ef742…`；未提交迁移源执行 `start.sh migrate` 在连库前被拒绝；完整执行 `knowledge-center.sh stop && knowledge-center.sh start` 成功，Storage、Document、PingCode、Frontend 4/4 就绪，Storage 健康检查和人员域 API 返回 HTTP 200。
+
 ## 提示词-20260918-019：修复未提交变更的审查问题并提交
 
 - 时间：2026-09-18 17:07:26 Asia/Shanghai；发起角色：用户；类型：代码审查修复 / 仓库整理 / Git 提交。
@@ -7,7 +53,7 @@
 
   > 修复上述问题，并根据git提交规范.md，提交代码
 - 路由：修复范围已由审查结论明确，改动局部、可回退，按直接处理执行。
-- 修复：还原已执行 `007_create_platform_principal.sql` 的空白变更，保持迁移摘要不变；将存储盘点记录编号更正为 `018`；清理误落入单元测试目录的 Playwright HTML 报告，并扩展忽略规则覆盖嵌套路径。
+- 修复：当时按 Git HEAD 还原 `007_create_platform_principal.sql` 的空白变更；后续真实数据库查询证明落库版本实际包含该末尾空行，该判断已由 `提示词-20260918-020` 纠正；同时将存储盘点记录编号更正为 `018`，清理误落入单元测试目录的 Playwright HTML 报告，并扩展忽略规则覆盖嵌套路径。
 - 验证：确认 007 工作树摘要与 HEAD 一致；检查提示词编号、生成产物忽略规则、Markdown 引用和 Git 差异空白。
 
 ## 提示词-20260918-017：平台人员管理工作台实施与交接

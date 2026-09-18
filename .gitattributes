@@ -1,0 +1,2 @@
+# 007 已按实际落库字节记录 SHA-256，必须保留末尾空行。
+apps/yashandb-storage/sql/007_create_platform_principal.sql whitespace=-blank-at-eof

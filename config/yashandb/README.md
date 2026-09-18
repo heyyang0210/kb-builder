@@ -4,6 +4,8 @@
 
 当前开发测试数据库为 `172.22.69.74:1688/yashandb`，连接用户为 `regress`。密码不写入此文件，必须通过 `YASDB_PASSWORD` 注入。
 
+`YASDB_STORAGE_SQL_DIR` 默认不在 `service.env` 中配置，存储服务固定消费 `runtime/build/knowledge-center/current/java/sql/` 的统一构建产物。只有受控发布流程才可显式指定其他 SQL 目录，且该目录必须包含构建生成的 `migration-source.properties`；不得指向 `apps/yashandb-storage/sql/` 源码目录执行迁移。
+
 配置优先级为：调用方显式参数 > 进程环境变量/密钥系统 > `service.env` > 代码安全默认值。
 
 不同环境直接覆盖变量，例如开发测试数据库：

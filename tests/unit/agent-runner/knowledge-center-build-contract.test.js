@@ -16,6 +16,7 @@ describe('knowledge center unified build contract', () => {
   const storageMain = read('apps/yashandb-storage/src/Main.java');
   const schemaMigrationManager = read('apps/yashandb-storage/src/migration/SchemaMigrationManager.java');
   const pingcodeViteConfig = read('apps/pingcode-web/vite.config.js');
+  const yashandbEnvExample = read('config/yashandb/service.env.example');
 
   test('keeps exactly one repository build script', () => {
     const buildScripts = fs.readdirSync(path.join(repoRoot, 'tools/repository'))
@@ -41,6 +42,7 @@ describe('knowledge center unified build contract', () => {
       .filter((name) => /^\d{3}_[a-z0-9_]+\.sql$/.test(name))
       .sort();
     const migration = read('apps/yashandb-storage/sql/006_add_manual_product_name.sql');
+    const principalMigration = read('apps/yashandb-storage/sql/007_create_platform_principal.sql');
     const aliases = read('apps/yashandb-storage/sql/migration-aliases.properties');
     const storageRules = read('apps/yashandb-storage/AGENTS.md');
 
@@ -49,13 +51,21 @@ describe('knowledge center unified build contract', () => {
     expect(aliases).toContain('006_add_manual_product_name=006_manual_product_name');
     expect(crypto.createHash('sha256').update(migration).digest('hex'))
       .toBe('1a65c173e2f18a5a487d21105333496c7e193a99b754cc030ed07a06d23e21aa');
-    expect(storageRules.trimEnd().split('\n')).toHaveLength(14);
+    expect(crypto.createHash('sha256').update(principalMigration).digest('hex'))
+      .toBe('423ef742fe0e7727a374b2b39ff944cd823519a71dd7afc8076991fba751de9f');
+    expect(storageRules.trimEnd().split('\n')).toHaveLength(15);
     expect(storageRules).toContain('NNN_<action>_<object>.sql');
     expect(schemaMigrationManager).toContain('aliases.getOrDefault(version, List.of())');
     expect(storageMain).toContain('schemaMigrations.migrate(connection);');
     expect(storageMain).not.toContain('migrationAliases(');
     expect(storageMain).toContain('application.verifyMigrations();');
     expect(storageScript).toContain('Main "$@"');
+    expect(buildScript).toContain('migration_source_dirty=false');
+    expect(buildScript).toContain('migration-source.properties');
+    expect(storageScript).toContain('拒绝执行迁移：SQL 必须来自已提交的 Git 版本');
+    expect(storageScript).toContain('migration_source_actual_sha');
+    expect(storageScript).toContain('migration_source_expected_sha');
+    expect(yashandbEnvExample).not.toContain('YASDB_STORAGE_SQL_DIR=apps/yashandb-storage/sql');
   });
 
   test('业务表按四个稳定业务边界共享主键序列', () => {

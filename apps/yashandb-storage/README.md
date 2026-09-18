@@ -26,6 +26,7 @@ export YASDB_STORAGE_PORT='14210'
 ```
 
 `./start.sh migrate` 显式执行待应用迁移并退出；`./start.sh` 只校验迁移版本、别名和摘要，存在待执行版本时拒绝启动服务。
+显式迁移还会校验构建产物中的 `migration-source.properties`：SQL 和版本别名必须来自已提交的 Git revision，否则在连接数据库前拒绝执行。这防止脏工作树中的 SQL 先落库、后续提交又改变文件字节而导致启动摘要冲突。
 迁移文件发现、历史别名兼容、摘要校验和 SQL 执行由 `src/migration/SchemaMigrationManager.java` 集中维护，业务入口只负责编排连接和服务生命周期。
 
 业务服务切换到数据库模式前，需先启动本服务并确认健康检查成功：
@@ -64,7 +65,7 @@ SQL 迁移目录：
 | `sql/008_split_business_id_sequences.sql` | 为各业务表分配独立数字主键序列，切断对公共序列的新增依赖 |
 | `sql/009_consolidate_business_sequences.sql` | 将主键生成器收敛为 4 个业务边界序列，并清理旧序列 |
 
-可通过 `YASDB_STORAGE_SQL_DIR` 指定经过发布审核的 SQL 目录；服务不会执行目录之外的 SQL。
+默认 SQL 目录是统一构建产物 `runtime/build/knowledge-center/current/java/sql/`。可通过 `YASDB_STORAGE_SQL_DIR` 指定其他经发布审核的 SQL 目录，但显式迁移要求该目录同时携带 `migration-source.properties`；禁止将该变量指向 `apps/yashandb-storage/sql/` 工作树源码目录。服务不会执行目录之外的 SQL。
 
 ## 数据迁移和导出
 

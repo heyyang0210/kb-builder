@@ -50,6 +50,16 @@ source_dirty=false
 if [[ -n "$(git status --porcelain --untracked-files=normal -- . ':(exclude)runtime/**')" ]]; then
   source_dirty=true
 fi
+migration_source_dirty=false
+if ! git diff --quiet HEAD -- 'apps/yashandb-storage/sql/*.sql' apps/yashandb-storage/sql/migration-aliases.properties \
+  || [[ -n "$(git ls-files --others --exclude-standard -- 'apps/yashandb-storage/sql/*.sql' apps/yashandb-storage/sql/migration-aliases.properties)" ]]; then
+  migration_source_dirty=true
+fi
+migration_source_sha256="$({
+  find apps/yashandb-storage/sql -maxdepth 1 -type f \
+    \( -name '[0-9][0-9][0-9]_*.sql' -o -name 'migration-aliases.properties' \) -print0 \
+    | sort -z | xargs -0 sha256sum
+} | sha256sum | awk '{print $1}')"
 node_version="$(node --version)"
 npm_version="$(npm --version)"
 python_version="$(python3 --version 2>&1 | awk '{print $2}')"
@@ -142,6 +152,11 @@ tar -cf - -C apps/knowledge-center-web/frontend . | tar -xf - -C "$stage_rel/web
 echo "[5/6] 编译 YashanDB Storage"
 cp "$jdbc_source_rel" "$stage_rel/java/lib/yashandb-jdbc.jar"
 cp -R apps/yashandb-storage/sql/. "$stage_rel/java/sql/"
+{
+  printf 'sourceRevision=%s\n' "$source_revision"
+  printf 'sourceDirty=%s\n' "$migration_source_dirty"
+  printf 'aggregateSha256=%s\n' "$migration_source_sha256"
+} > "$stage_rel/java/sql/migration-source.properties"
 java_compile_args=(
   -encoding UTF-8
   -cp "$stage_rel/java/lib/yashandb-jdbc.jar"
@@ -165,6 +180,8 @@ node - \
   "$stage_rel/manifest.json" \
   "$source_revision" \
   "$source_dirty" \
+  "$migration_source_dirty" \
+  "$migration_source_sha256" \
   "$source_fingerprint" \
   "$current_rel" \
   "$node_version" \
@@ -177,13 +194,15 @@ const manifest = {
   schemaVersion: 1,
   sourceRevision: process.argv[3],
   sourceDirty: process.argv[4] === 'true',
-  sourceFingerprint: process.argv[5],
-  outputPath: process.argv[6],
+  migrationSourceDirty: process.argv[5] === 'true',
+  migrationSourceSha256: process.argv[6],
+  sourceFingerprint: process.argv[7],
+  outputPath: process.argv[8],
   toolchain: {
-    node: process.argv[7],
-    npm: process.argv[8],
-    python: process.argv[9],
-    javaCompiler: process.argv[10]
+    node: process.argv[9],
+    npm: process.argv[10],
+    python: process.argv[11],
+    javaCompiler: process.argv[12]
   },
   components: {
     platformWeb: "web/platform",
