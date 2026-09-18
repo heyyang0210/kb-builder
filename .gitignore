@@ -94,7 +94,7 @@ prompt.md
 prompt-log.md
 
 # Playwright E2E 测试报告（构建产物）
-tests/e2e/reports/
+**/tests/e2e/reports/
 tests/e2e/screenshots/
 test-results/
 
@@ -110,6 +110,7 @@ REFACTORING_SUMMARY.md
 YashanDB 知识加工平台构建方案.html
 gitlab-multi-repo-designs.html
 test_svg.html
+AI工程师进阶之路.md
 
 # 独立维护的外部仓库
 
