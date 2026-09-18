@@ -15,6 +15,7 @@ const outputFile = path.resolve(
 );
 const apply = process.argv.includes('--apply');
 const productTypes = new Set(['DB', 'YMP', 'YCM', 'YDC']);
+const productIds = Object.freeze({ DB: 1, YMP: 2, YCM: 3, YDC: 4 });
 
 function clean(value) {
   return String(value ?? '')
@@ -117,7 +118,8 @@ function handbookPayload(rows, source) {
         code: row.code,
         name: row.name,
         title: row.name,
-        productId: productType,
+        productId: productIds[productType],
+        productName: productType,
         productType,
         ownerA: row.ownerAName ? { displayName: row.ownerAName } : null,
         ownerB: row.ownerBName ? { displayName: row.ownerBName } : null,

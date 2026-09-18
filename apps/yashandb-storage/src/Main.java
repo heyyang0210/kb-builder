@@ -1,5 +1,6 @@
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
+import migration.SchemaMigrationManager;
 
 import java.io.BufferedWriter;
 import java.io.ByteArrayOutputStream;
@@ -28,13 +29,11 @@ import java.sql.Statement;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.regex.Pattern;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
@@ -45,13 +44,13 @@ import java.lang.reflect.Proxy;
 public final class Main {
     private static final String DRIVER = "com.yashandb.jdbc.Driver";
     private static final int DEFAULT_MAX_BODY_BYTES = 16 * 1024 * 1024;
-    private static final Pattern MIGRATION_FILE = Pattern.compile("^[0-9]{3}_[a-z0-9_]+\\.sql$");
 
     private final String jdbcUrl = required("YASDB_JDBC_URL");
     private final String username = required("YASDB_USERNAME");
     private final String password = required("YASDB_PASSWORD");
     private final int maxBodyBytes = integer("YASDB_STORAGE_MAX_BODY_BYTES", DEFAULT_MAX_BODY_BYTES);
     private final Path sqlDirectory = Path.of(env("YASDB_STORAGE_SQL_DIR", "sql")).toAbsolutePath().normalize();
+    private final SchemaMigrationManager schemaMigrations = new SchemaMigrationManager(sqlDirectory);
     private final Path techDomainSeedFile = Path.of(env("YASDB_TECH_DOMAINS_SEED_FILE", sqlDirectory.resolve("tech-domains.seed.json").toString())).toAbsolutePath().normalize();
     private final JdbcConnectionPool connectionPool;
     private static boolean perfEnabled() { return "1".equals(System.getenv("PERF_TRACE")); }
@@ -64,9 +63,22 @@ public final class Main {
     }
 
     public static void main(String[] args) throws Exception {
+        String command = args.length == 0 ? "serve" : args[0];
+        if (args.length > 1 || !("serve".equals(command) || "migrate".equals(command))) {
+            throw new IllegalArgumentException("用法：Main [serve|migrate]");
+        }
         Class.forName(DRIVER);
         Main application = new Main();
-        application.migrate();
+        if ("migrate".equals(command)) {
+            try {
+                application.migrate();
+                System.out.println("数据库迁移已完成");
+            } finally {
+                application.connectionPool.closeAll();
+            }
+            return;
+        }
+        application.verifyMigrations();
         application.connectionPool.start();
         application.start();
         Runtime.getRuntime().addShutdownHook(new Thread(application.connectionPool::closeAll));
@@ -102,126 +114,17 @@ public final class Main {
     }
 
     private void migrate() throws SQLException {
-        List<Path> migrations = migrationFiles();
-        if (migrations.isEmpty()) throw new SQLException("数据库迁移目录中没有 NNN_*.sql 文件：" + sqlDirectory);
         try (Connection connection = connection()) {
-            for (int index = 0; index < migrations.size(); index++) {
-                Path file = migrations.get(index);
-                String version = file.getFileName().toString().replaceFirst("\\.sql$", "");
-                String ddl = readSql(file);
-                String checksum = sha256(ddl);
-                boolean migrationTableExists = tableExists(connection, "KC_SCHEMA_MIGRATION");
-                if (!migrationTableExists && index != 0) {
-                    throw new SQLException("首个迁移未创建 KC_SCHEMA_MIGRATION：" + migrations.get(0).getFileName());
-                }
-                if (migrationTableExists && migrationApplied(connection, version, checksum)) continue;
-                try {
-                    executeSqlScript(connection, ddl, file.getFileName().toString());
-                    if (!tableExists(connection, "KC_SCHEMA_MIGRATION")) {
-                        throw new SQLException("迁移未创建 KC_SCHEMA_MIGRATION：" + file.getFileName());
-                    }
-                    recordMigration(connection, version, checksum);
-                    connection.commit();
-                } catch (SQLException error) {
-                    connection.rollback();
-                    throw error;
-                }
-            }
+            schemaMigrations.migrate(connection);
             seedTechDomains(connection);
             connection.commit();
         }
     }
 
-    private List<Path> migrationFiles() throws SQLException {
-        try (var files = Files.list(sqlDirectory)) {
-            return files.filter(Files::isRegularFile)
-                .filter(file -> MIGRATION_FILE.matcher(file.getFileName().toString()).matches())
-                .sorted(Comparator.comparing(file -> file.getFileName().toString()))
-                .toList();
-        } catch (IOException error) {
-            throw new SQLException("读取数据库迁移目录失败：" + sqlDirectory, error);
+    private void verifyMigrations() throws SQLException {
+        try (Connection connection = connection()) {
+            schemaMigrations.verify(connection);
         }
-    }
-
-    private String readSql(Path file) throws SQLException {
-        try {
-            return Files.readString(file, StandardCharsets.UTF_8);
-        } catch (IOException error) {
-            throw new SQLException("读取数据库迁移 SQL 失败：" + file, error);
-        }
-    }
-
-    private boolean tableExists(Connection connection, String table) throws SQLException {
-        try (PreparedStatement query = connection.prepareStatement("SELECT COUNT(*) FROM USER_TABLES WHERE TABLE_NAME = ?")) {
-            query.setString(1, table);
-            try (ResultSet result = query.executeQuery()) {
-                result.next();
-                return result.getLong(1) > 0;
-            }
-        }
-    }
-
-    private boolean migrationApplied(Connection connection, String version, String checksum) throws SQLException {
-        try (PreparedStatement query = connection.prepareStatement("SELECT CHECKSUM FROM KC_SCHEMA_MIGRATION WHERE VERSION_ID = ?")) {
-            query.setString(1, version);
-            try (ResultSet result = query.executeQuery()) {
-                if (!result.next()) return false;
-                if (!checksum.equals(result.getString(1).trim())) {
-                    throw new SQLException("数据库迁移摘要不一致：" + version);
-                }
-                return true;
-            }
-        }
-    }
-
-    private void executeSqlScript(Connection connection, String script, String filename) throws SQLException {
-        List<String> statements = splitSqlStatements(script);
-        if (statements.isEmpty()) throw new SQLException("数据库迁移脚本为空：" + filename);
-        try (Statement statement = connection.createStatement()) {
-            for (String sql : statements) statement.execute(sql);
-        } catch (SQLException error) {
-            throw new SQLException("执行数据库迁移失败：" + filename + "：" + error.getMessage(), error);
-        }
-    }
-
-    static List<String> splitSqlStatements(String script) throws SQLException {
-        List<String> statements = new ArrayList<>();
-        StringBuilder current = new StringBuilder();
-        boolean singleQuoted = false;
-        boolean doubleQuoted = false;
-        boolean lineComment = false;
-        boolean blockComment = false;
-        for (int index = 0; index < script.length(); index++) {
-            char ch = script.charAt(index);
-            char next = index + 1 < script.length() ? script.charAt(index + 1) : '\0';
-            if (lineComment) {
-                if (ch == '\n') { lineComment = false; current.append(ch); }
-                continue;
-            }
-            if (blockComment) {
-                if (ch == '*' && next == '/') { blockComment = false; index++; }
-                continue;
-            }
-            if (!singleQuoted && !doubleQuoted && ch == '-' && next == '-') { lineComment = true; index++; continue; }
-            if (!singleQuoted && !doubleQuoted && ch == '/' && next == '*') { blockComment = true; index++; continue; }
-            if (!doubleQuoted && ch == '\'' && (index == 0 || script.charAt(index - 1) != '\\')) {
-                if (singleQuoted && next == '\'') { current.append(ch).append(next); index++; continue; }
-                singleQuoted = !singleQuoted;
-            } else if (!singleQuoted && ch == '"') {
-                doubleQuoted = !doubleQuoted;
-            }
-            if (!singleQuoted && !doubleQuoted && ch == ';') {
-                String sql = current.toString().trim();
-                if (!sql.isEmpty()) statements.add(sql);
-                current.setLength(0);
-            } else {
-                current.append(ch);
-            }
-        }
-        if (singleQuoted || doubleQuoted || blockComment) throw new SQLException("数据库迁移 SQL 存在未闭合字符串或注释");
-        String tail = current.toString().trim();
-        if (!tail.isEmpty()) statements.add(tail);
-        return statements;
     }
 
     private void seedTechDomains(Connection connection) throws SQLException {
@@ -254,25 +157,6 @@ public final class Main {
             }
         } catch (JsonParseException | IOException error) {
             throw new SQLException("技术领域种子配置读取失败：" + techDomainSeedFile, error);
-        }
-    }
-
-    private void recordMigration(Connection connection, String version, String checksum) throws SQLException {
-        try (PreparedStatement query = connection.prepareStatement("SELECT CHECKSUM FROM KC_SCHEMA_MIGRATION WHERE VERSION_ID = ?")) {
-            query.setString(1, version);
-            try (ResultSet result = query.executeQuery()) {
-                if (result.next()) {
-                    if (!checksum.equals(result.getString(1).trim())) {
-                        throw new SQLException("数据库迁移摘要不一致：" + version);
-                    }
-                    return;
-                }
-            }
-        }
-        try (PreparedStatement insert = connection.prepareStatement("INSERT INTO KC_SCHEMA_MIGRATION(VERSION_ID, CHECKSUM) VALUES (?, ?)")) {
-            insert.setString(1, version);
-            insert.setString(2, checksum);
-            insert.executeUpdate();
         }
     }
 
@@ -1319,7 +1203,7 @@ public final class Main {
         body.put("generatedAt", Instant.now().toString());
         body.put("handbooks", new ArrayList<>());
         body.put("audits", new ArrayList<>());
-        String sql = "SELECT M.MANUAL_ID, M.MANUAL_CODE, M.MANUAL_NAME, M.PRODUCT_ID, M.ORG_UNIT_ID, "
+        String sql = "SELECT M.MANUAL_ID, M.MANUAL_CODE, M.MANUAL_NAME, M.PRODUCT_ID, M.PRODUCT_NAME, M.ORG_UNIT_ID, "
             + "O.CURRENT_OUTLINE_VERSION_ID, M.STATE, M.ARCHIVED_AT, M.ROW_VERSION, M.SUMMARY, "
             + "M.MANUAL_KIND, M.IS_EXTERNALLY_VISIBLE, M.CREATED_AT, M.UPDATED_AT "
             + "FROM KC_MANUAL M LEFT JOIN KC_MANUAL_OUTLINE O ON O.MANUAL_ID = M.MANUAL_ID "
@@ -1344,24 +1228,25 @@ public final class Main {
             handbook.put("name", coalesce(result.getString(3), result.getString(2)));
             handbook.put("title", handbook.get("name"));
             handbook.put("productId", result.getLong(4));
-            handbook.put("productType", productType(result.getLong(4)));
+            handbook.put("productName", result.getString(5));
+            handbook.put("productType", result.getString(5));
             handbook.put("ownerA", manualOwner(connection, result.getLong(1), "PRIMARY"));
             handbook.put("ownerB", manualOwner(connection, result.getLong(1), "DEPUTY"));
-            handbook.put("departmentId", result.getString(5));
-            handbook.put("orgUnitId", result.getString(5));
-            String currentOutlineId = externalOutlineId(connection, result.getString(6));
+            handbook.put("departmentId", result.getString(6));
+            handbook.put("orgUnitId", result.getString(6));
+            String currentOutlineId = externalOutlineId(connection, result.getString(7));
             handbook.put("currentOutlineVersionId", currentOutlineId);
             handbook.put("outline", outlineSummary(currentOutlineId, null));
-            handbook.put("status", result.getString(7).toLowerCase());
+            handbook.put("status", result.getString(8).toLowerCase());
             handbook.put("sourceStatus", handbook.get("status"));
-            handbook.put("archivedAt", timestampToString(result.getTimestamp(8)));
-            handbook.put("assetVersion", result.getLong(9));
-            handbook.put("summary", readClobOrNull(result.getClob(10)));
-            handbook.put("isAtomic", "ATOMIC".equals(result.getString(11)));
-            handbook.put("externalVisible", "Y".equals(result.getString(12)));
+            handbook.put("archivedAt", timestampToString(result.getTimestamp(9)));
+            handbook.put("assetVersion", result.getLong(10));
+            handbook.put("summary", readClobOrNull(result.getClob(11)));
+            handbook.put("isAtomic", "ATOMIC".equals(result.getString(12)));
+            handbook.put("externalVisible", "Y".equals(result.getString(13)));
             handbook.put("documentSummary", mapOf("total", 0L, "published", 0L, "inProgress", 0L, "runningTasks", 0L));
-            handbook.put("createdAt", timestampToString(result.getTimestamp(13)));
-            handbook.put("updatedAt", timestampToString(result.getTimestamp(14)));
+            handbook.put("createdAt", timestampToString(result.getTimestamp(14)));
+            handbook.put("updatedAt", timestampToString(result.getTimestamp(15)));
             return handbook;
         } catch (Exception error) {
             throw new SQLException("读取手册投影失败", error);
@@ -1485,7 +1370,9 @@ public final class Main {
         String sourceId = handbookId(handbook);
         String code = coalesce(handbook.get("code"), sourceId);
         String title = coalesce(handbook.get("title"), handbook.get("name"), code);
-        long productId = productId(handbook.get("productId"), handbook.get("productType"));
+        long productId = productId(handbook.get("productId"));
+        String productName = coalesce(handbook.get("productName"));
+        if (productName == null) throw new SQLException("PRODUCT_NAME_REQUIRED");
         Map<String, Object> ownerA = asMapOrEmpty(handbook.get("ownerA"));
         Map<String, Object> ownerB = asMapOrEmpty(handbook.get("ownerB"));
         Long ownerAId = optionalNumericId(ownerA.get("userId"), ownerA.get("id"));
@@ -1506,19 +1393,20 @@ public final class Main {
                     manualId = result.getLong(1);
                     long version = result.getLong(2) + 1;
                     try (PreparedStatement update = connection.prepareStatement(
-                        "UPDATE KC_MANUAL SET MANUAL_CODE=?, MANUAL_NAME=?, PRODUCT_ID=?, ORG_UNIT_ID=?, MANUAL_KIND=?, IS_EXTERNALLY_VISIBLE=?, STATE=?, ARCHIVED_AT=?, ROW_VERSION=?, SUMMARY=?, UPDATED_BY=?, UPDATED_AT=CURRENT_TIMESTAMP WHERE MANUAL_ID=?")) {
+                        "UPDATE KC_MANUAL SET MANUAL_CODE=?, MANUAL_NAME=?, PRODUCT_ID=?, PRODUCT_NAME=?, ORG_UNIT_ID=?, MANUAL_KIND=?, IS_EXTERNALLY_VISIBLE=?, STATE=?, ARCHIVED_AT=?, ROW_VERSION=?, SUMMARY=?, UPDATED_BY=?, UPDATED_AT=CURRENT_TIMESTAMP WHERE MANUAL_ID=?")) {
                         update.setString(1, code);
                         update.setString(2, title);
                         update.setLong(3, productId);
-                        if (departmentId == null) update.setNull(4, java.sql.Types.BIGINT); else update.setLong(4, departmentId);
-                        update.setString(5, manualKind);
-                        update.setString(6, visible);
-                        update.setString(7, status);
-                        update.setTimestamp(8, archivedAt == null ? null : Timestamp.from(Instant.parse(archivedAt)));
-                        update.setLong(9, version);
-                        update.setCharacterStream(10, new StringReader(summary == null ? "" : summary));
-                        update.setString(11, actor);
-                        update.setLong(12, manualId);
+                        update.setString(4, productName);
+                        if (departmentId == null) update.setNull(5, java.sql.Types.BIGINT); else update.setLong(5, departmentId);
+                        update.setString(6, manualKind);
+                        update.setString(7, visible);
+                        update.setString(8, status);
+                        update.setTimestamp(9, archivedAt == null ? null : Timestamp.from(Instant.parse(archivedAt)));
+                        update.setLong(10, version);
+                        update.setCharacterStream(11, new StringReader(summary == null ? "" : summary));
+                        update.setString(12, actor);
+                        update.setLong(13, manualId);
                         update.executeUpdate();
                     }
                     replaceManualOwners(connection, manualId, ownerAId, ownerBId, actor);
@@ -1528,18 +1416,19 @@ public final class Main {
             }
         }
         try (PreparedStatement insert = connection.prepareStatement(
-            "INSERT INTO KC_MANUAL(MANUAL_CODE, MANUAL_NAME, PRODUCT_ID, ORG_UNIT_ID, MANUAL_KIND, IS_EXTERNALLY_VISIBLE, STATE, SUMMARY, ARCHIVED_AT, CREATED_BY, UPDATED_BY) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
+            "INSERT INTO KC_MANUAL(MANUAL_CODE, MANUAL_NAME, PRODUCT_ID, PRODUCT_NAME, ORG_UNIT_ID, MANUAL_KIND, IS_EXTERNALLY_VISIBLE, STATE, SUMMARY, ARCHIVED_AT, CREATED_BY, UPDATED_BY) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
             insert.setString(1, code);
             insert.setString(2, title);
             insert.setLong(3, productId);
-            if (departmentId == null) insert.setNull(4, java.sql.Types.BIGINT); else insert.setLong(4, departmentId);
-            insert.setString(5, manualKind);
-            insert.setString(6, visible);
-            insert.setString(7, status);
-            insert.setCharacterStream(8, new StringReader(summary == null ? "" : summary));
-            insert.setTimestamp(9, archivedAt == null ? null : Timestamp.from(Instant.parse(archivedAt)));
-            insert.setString(10, actor);
+            insert.setString(4, productName);
+            if (departmentId == null) insert.setNull(5, java.sql.Types.BIGINT); else insert.setLong(5, departmentId);
+            insert.setString(6, manualKind);
+            insert.setString(7, visible);
+            insert.setString(8, status);
+            insert.setCharacterStream(9, new StringReader(summary == null ? "" : summary));
+            insert.setTimestamp(10, archivedAt == null ? null : Timestamp.from(Instant.parse(archivedAt)));
             insert.setString(11, actor);
+            insert.setString(12, actor);
             insert.executeUpdate();
         }
         try (PreparedStatement query = connection.prepareStatement("SELECT MANUAL_ID FROM KC_MANUAL WHERE PRODUCT_ID=? AND MANUAL_CODE=?")) {
@@ -2291,25 +2180,10 @@ public final class Main {
         }
     }
 
-    private static long productId(Object productId, Object productType) throws SQLException {
+    private static long productId(Object productId) throws SQLException {
         Long numeric = optionalNumericId(productId);
         if (numeric != null) return numeric;
-        String type = coalesce(productType);
-        if ("DB".equalsIgnoreCase(type) || "YashanDB".equalsIgnoreCase(type)) return 1L;
-        if ("YMP".equalsIgnoreCase(type)) return 2L;
-        if ("YCM".equalsIgnoreCase(type)) return 3L;
-        if ("YDC".equalsIgnoreCase(type)) return 4L;
-        throw new SQLException("未识别的产品 ID 或产品形态");
-    }
-
-    private static String productType(long productId) {
-        return switch ((int) productId) {
-            case 1 -> "DB";
-            case 2 -> "YMP";
-            case 3 -> "YCM";
-            case 4 -> "YDC";
-            default -> String.valueOf(productId);
-        };
+        throw new SQLException("产品 ID 必须是数字");
     }
 
     private static String stableNodeId(String outlineId, String kind, String path, String title) {

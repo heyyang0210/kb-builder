@@ -315,8 +315,11 @@ function createKnowledgeCenterHandler(options) {
       const productId = String(body.productId || '').trim();
       if (!name || !productId) throw new Error('手册名称和产品为必填项');
       const payload = readKnowledgeAssets();
+      const product = payload.handbooks.find(entry => String(entry.productId || entry.productType) === productId);
+      const productName = product?.productName || product?.productType;
+      if (!productName) throw new Error('产品不存在或未配置产品名称');
       const item = {
-        handbookId: nextHandbookId(payload, productId), productId, productType: productId, name,
+        handbookId: nextHandbookId(payload, productName), productId, productName, productType: productName, name,
         ownerA: ownerValue(body.ownerA, true), ownerB: ownerValue(body.ownerB),
         externalVisible: Boolean(body.externalVisible), summary: String(body.summary || '').trim(),
         outline: { outlineId: null, outlineVersion: null, bindingStatus: 'not_created' },

@@ -46,4 +46,4 @@ if [[ "$(uname -s)" == MINGW* || "$(uname -s)" == MSYS* || "$(uname -s)" == CYGW
   classpath_separator=';'
 fi
 
-exec java -cp "${jdbc_jar}${classpath_separator}${classes_dir}" Main
+exec java -cp "${jdbc_jar}${classpath_separator}${classes_dir}" Main "$@"

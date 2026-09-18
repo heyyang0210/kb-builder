@@ -134,6 +134,7 @@ java_compile_args=(
   -d "$stage_rel/java/classes"
   apps/yashandb-storage/src/Main.java
   apps/yashandb-storage/src/StorageSchemaDao.java
+  apps/yashandb-storage/src/migration/SchemaMigrationManager.java
 )
 if [[ "$java_compiler" == javac ]]; then
   javac "${java_compile_args[@]}"

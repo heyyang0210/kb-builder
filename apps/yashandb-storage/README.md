@@ -1,5 +1,7 @@
 # YashanDB 存储服务
 
+数据库结构和迁移变更必须遵循 [YashanDB Storage 变更约束](./AGENTS.md)。
+
 该服务是当前过渡期的 JDBC 运行组件，提供记录读写、乐观并发、Schema 初始化和完整导出。长期目标是将同一数据访问契约作为平台内核 Storage 模块直接调用，业务请求不再经过 HTTP 中转；在 Node/YashanDB 直接适配器和回退验证完成前，14210 仍由运维脚本管理，不得提前删除。
 
 详细设计见 [YashanDB 数据存储与迁移开发设计](../../docs/modules/platform-foundation/development/yashandb-storage-and-migration-design.md)。
@@ -19,8 +21,12 @@ export YASDB_STORAGE_HOST='127.0.0.1'
 export YASDB_STORAGE_PORT='14210'
 
 ../../tools/repository/build-knowledge-center.sh
+./start.sh migrate
 ./start.sh
 ```
+
+`./start.sh migrate` 显式执行待应用迁移并退出；`./start.sh` 只校验迁移版本、别名和摘要，存在待执行版本时拒绝启动服务。
+迁移文件发现、历史别名兼容、摘要校验和 SQL 执行由 `src/migration/SchemaMigrationManager.java` 集中维护，业务入口只负责编排连接和服务生命周期。
 
 业务服务切换到数据库模式前，需先启动本服务并确认健康检查成功：
 
@@ -37,9 +43,11 @@ export YASDB_STORAGE_URL=http://127.0.0.1:14210
 curl http://127.0.0.1:14210/health
 ```
 
-运行时按 `NNN_*.sql` 自动发现迁移，按编号执行并校验 SHA-256；已执行脚本摘要变化时拒绝启动。建表、索引和业务导入均使用业务账号，服务不会自动删除或截断已有表。
+迁移器按 `NNN_<action>_<object>.sql` 自动发现版本，显式迁移时按编号执行并校验 SHA-256；已执行脚本摘要变化时拒绝迁移或启动。历史文件改名通过 `sql/migration-aliases.properties` 兼容，只有数字版本和摘要均一致时才视为已执行。建表、索引和业务导入均使用业务账号，服务不会自动删除或截断已有表。
 
 模板、认证等尚未关系化的兼容聚合继续写入 `KC_RECORD`。手册和大纲已切换到 `KC_MANUAL`、`KC_MANUAL_OUTLINE` 及其版本、节点、责任映射表，不再把核心业务事实写入 JSON/CLOB 聚合。
+
+`KC_MANUAL.PRODUCT_NAME` 保存手册列表所需的产品名称快照（`DB / YMP / YCM / YDC`），Storage 直接投影该字段；`PRODUCT_ID` 保留给产品主数据校验和联合查询，不在读取链路中转换展示名。
 
 SQL 迁移目录：
 

@@ -36,6 +36,8 @@ function projectAsset(item, admin, repositoryMapping = false) {
   return {
     handbookId: item.handbookId, name: item.name,
     productId: item.productId || item.productType || null,
+    productName: item.productName || item.productType || null,
+    productDisplayName: item.productName || item.productType || null,
     ownerA: item.ownerA || null, ownerB: item.ownerB || null,
     status, systemStatus: sysStatus, manualStatus: item.manualStatus?.value || null,
     statusConflict: Boolean(item.manualStatus?.value && item.manualStatus.value !== sysStatus && item.manualStatus.acknowledgedSystemStatus !== sysStatus),
@@ -73,10 +75,17 @@ function queryKnowledgeAssets(payload, searchParams, admin, gitlabConfigPath) {
     return (!q || `${item.name} ${item.handbookId}`.toLowerCase().includes(q))
       && (!owner || owners.includes(owner))
       && (!status || item.status === status)
-      && (!productId || item.productId === productId);
+      && (!productId || String(item.productId) === productId);
   });
   const start = (page - 1) * pageSize;
-  const products = [...new Set(payload.handbooks.map(item => item.productId || item.productType).filter(Boolean))].map(id => ({ id, name: id }));
+  const productsById = new Map();
+  for (const item of payload.handbooks) {
+    const id = item.productId || item.productType;
+    if (id === undefined || id === null || id === '') continue;
+    const key = String(id);
+    if (!productsById.has(key)) productsById.set(key, { id: key, name: item.productName || item.productType || key });
+  }
+  const products = [...productsById.values()];
   return { items: filtered.slice(start, start + pageSize), page, pageSize, total: filtered.length, statistics, products, generatedAt: payload.generatedAt || null };
 }
 

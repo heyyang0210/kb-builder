@@ -11,12 +11,14 @@
 | 文档锚点 | `markdown-renderer.gate.test.js` | `<span id="YFS" name="YFS"></span>` 渲染为可跳转锚点，不作为正文文本显示 |
 | HTML 安全边界 | `markdown-renderer.gate.test.js` | 仅允许经过校验的空 `span` 锚点；事件、样式、脚本、危险协议及其他 HTML 必须转义或降级 |
 | 共享一致性 | `knowledge-center-incremental-view.test.js` | 知识资产仓库阅读与审核阅读复用同一个 `safeMarkdown` 渲染器 |
+| 产品筛选业务语义 | `knowledge-assets-product-filter.gate.test.js` | 内部数字产品 ID 只用于查询，筛选项直接显示 `PRODUCT_NAME` 的 `DB / YMP / YCM / YDC`，且 URL 字符串 ID 可正确筛选 |
 
 ## 执行方式
 
 ```bash
 cd agent-runner
 npx jest tests/知识中心管理平台门禁/markdown-renderer.gate.test.js tests/knowledge-center-incremental-view.test.js --runInBand
+npx jest tests/知识中心管理平台门禁/knowledge-assets-product-filter.gate.test.js --runInBand
 ```
 
 涉及 Markdown 渲染器、知识资产阅读或审核阅读的变更，必须执行上述命令；涉及真实页面交互时还需执行审核与发布 Playwright E2E。

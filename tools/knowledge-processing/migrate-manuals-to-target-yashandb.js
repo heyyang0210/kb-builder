@@ -60,6 +60,7 @@ function loadSource() {
       name,
       title: name,
       productId,
+      productName: productType,
       productType,
       orgUnitId: null,
       departmentId: null,

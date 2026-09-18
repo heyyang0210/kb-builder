@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const childProcess = require('child_process');
+const crypto = require('crypto');
 
 const repoRoot = path.resolve(__dirname, '../../..');
 const read = (relativePath) => fs.readFileSync(path.join(repoRoot, relativePath), 'utf8');
@@ -12,6 +13,8 @@ describe('knowledge center unified build contract', () => {
   const buildScript = read(buildScriptPath);
   const platformScript = read('knowledge-center.sh');
   const storageScript = read('apps/yashandb-storage/start.sh');
+  const storageMain = read('apps/yashandb-storage/src/Main.java');
+  const schemaMigrationManager = read('apps/yashandb-storage/src/migration/SchemaMigrationManager.java');
   const pingcodeViteConfig = read('apps/pingcode-web/vite.config.js');
 
   test('keeps exactly one repository build script', () => {
@@ -25,10 +28,34 @@ describe('knowledge center unified build contract', () => {
   test('centralizes Vite and Java compilation in the build script', () => {
     expect(buildScript).toContain('npm run build');
     expect(buildScript).toContain('java_compile_args=(');
+    expect(buildScript).toContain('apps/yashandb-storage/src/migration/SchemaMigrationManager.java');
     expect(buildScript).toContain('jdk.compiler/com.sun.tools.javac.Main');
     expect(platformScript).not.toContain('npm run build --');
     expect(storageScript).not.toMatch(/\bjavac\b/);
     expect(platformScript).toContain('sha256sum -c manifest.sha256');
+  });
+
+  test('版本化管理 YashanDB 结构迁移并兼容 006 历史名称', () => {
+    const sqlDirectory = path.join(repoRoot, 'apps/yashandb-storage/sql');
+    const migrationNames = fs.readdirSync(sqlDirectory)
+      .filter((name) => /^\d{3}_[a-z0-9_]+\.sql$/.test(name))
+      .sort();
+    const migration = read('apps/yashandb-storage/sql/006_add_manual_product_name.sql');
+    const aliases = read('apps/yashandb-storage/sql/migration-aliases.properties');
+    const storageRules = read('apps/yashandb-storage/AGENTS.md');
+
+    expect(migrationNames).toContain('006_add_manual_product_name.sql');
+    expect(migrationNames).not.toContain('006_manual_product_name.sql');
+    expect(aliases).toContain('006_add_manual_product_name=006_manual_product_name');
+    expect(crypto.createHash('sha256').update(migration).digest('hex'))
+      .toBe('1a65c173e2f18a5a487d21105333496c7e193a99b754cc030ed07a06d23e21aa');
+    expect(storageRules.trimEnd().split('\n')).toHaveLength(14);
+    expect(storageRules).toContain('NNN_<action>_<object>.sql');
+    expect(schemaMigrationManager).toContain('aliases.getOrDefault(version, List.of())');
+    expect(storageMain).toContain('schemaMigrations.migrate(connection);');
+    expect(storageMain).not.toContain('migrationAliases(');
+    expect(storageMain).toContain('application.verifyMigrations();');
+    expect(storageScript).toContain('Main "$@"');
   });
 
   test('restricts artifacts to a repository-relative runtime build path', () => {
