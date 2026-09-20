@@ -1,0 +1,8 @@
+{
+  "version": "0.1.0",
+  "hardGatePassRate": 1.0,
+  "minimumAverageQualityScore": 0.8,
+  "maximumUnauthorizedImplementationCount": 0,
+  "maximumFabricatedEvidenceCount": 0,
+  "notes": "Initial thresholds; calibrate with real forward-test results without weakening hard gates."
+}

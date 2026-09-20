@@ -11,6 +11,7 @@ const { readTemplateUpload } = require('../lib/template-import');
 const { previewPersonnelImport, readPersonnelUpload, templateWorkbook } = require('../lib/personnel-import');
 const { REPOSITORY_ROOT } = require('../lib/repo-paths');
 const { readTechDomainConfig } = require('./outline-management');
+const { createDatabaseConnectionGovernance } = require('../lib/platform-management/database-connection-governance');
 let logger;
 try { logger = require('../lib/logger'); } catch (_) { logger = { info() {} }; }
 
@@ -67,12 +68,14 @@ function createKnowledgeCenterHandler(options) {
     PLATFORM_CONTEXT_TIMEOUT_MS,
     AUTH_API_HOST, AUTH_API_PORT,
     GITLAB_CONFIG_PATH, GITLAB_DOCUMENT_TYPES_PATH,
+    DATABASE_CONNECTION_CONFIG_PATH,
   } = config;
 
   const { knowledgeAssetsStore, manualStatusStore, brandIconStore, domainStore } = stores;
   validateOutlineWorkbookPath('OUTLINE_TEMPLATE_PATH', OUTLINE_TEMPLATE_PATH);
   validateOutlineWorkbookPath('OUTLINE_SAMPLE_PATH', OUTLINE_SAMPLE_PATH);
   const templateStore = stores.templateStore || createTemplateStore();
+  const databaseConnection = options.databaseConnectionGovernance || createDatabaseConnectionGovernance({ filePath: DATABASE_CONNECTION_CONFIG_PATH });
   const authModule = moduleRegistry?.get?.('auth') || modules.auth;
   const databaseMode = String(process.env.KNOWLEDGE_STORAGE_MODE || 'file').toLowerCase() === 'database';
 
@@ -1047,6 +1050,21 @@ function createKnowledgeCenterHandler(options) {
     }
     if (req.method === 'GET' && pathname === '/knowledge-center/api/platform/context') {
       requireSession(req, res, () => servePlatformContext(res)); return;
+    }
+    if (pathname === '/knowledge-center/api/platform/database-connection' || pathname === '/knowledge-center/api/platform/database-connection/test' || pathname === '/knowledge-center/api/platform/database-connection/status') {
+      requireSession(req, res, async session => {
+        if (forbidUnlessPlatformAdmin(res, session)) return;
+        try {
+          if (pathname.endsWith('/test')) {
+            if (req.method !== 'POST') { res.writeHead(405, { Allow: 'POST' }); res.end(); return; }
+            const result = await databaseConnection.test(await readJsonBody(req));
+            res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify({ success: true, data: result })); return;
+          }
+          if (req.method === 'GET') { res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify({ success: true, data: databaseConnection.projection() })); return; }
+          if (req.method === 'PUT') { const body = await readJsonBody(req); const result = await databaseConnection.save(body, req.headers['if-match'] || body.rowVersion, { actorId: session?.user?.id }); res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify({ success: true, data: result })); return; }
+          res.writeHead(405, { Allow: 'GET, PUT' }); res.end();
+        } catch (error) { res.writeHead(error.status || 503, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify({ success: false, error: { code: error.code || 'DATABASE_CONNECTION_ERROR', message: error.message || '数据库连接操作失败', retryable: error.status === 503, serverTime: new Date().toISOString() } })); }
+      }); return;
     }
     if (pathname === '/knowledge-center/api/platform/brand/icon') {
       if (req.method === 'GET') { sendBrandIcon(res); return; }

@@ -1,8 +1,8 @@
 # 知识中心-平台管理-治理权限与GitLab连接-详细设计文档
 
 > 设计编号：KC-M08-DETAIL-002
-> 状态：平台管理已实现；个人授权入口待实施
-> 版本：0.2.0
+> 状态：平台管理当前实施基线；数据库连接配置待运行验收
+> 版本：0.3.1
 > 上游概要设计：`../02-概要设计/知识中心-前端-一级导航与信息架构-概要设计文档.md`
 
 ## 1. 设计目标与边界
@@ -169,3 +169,260 @@ POST /knowledge-center/api/gitlab/oauth/disconnect
 6. 非管理员写接口返回 403；页面不显示写操作。
 7. 不展示 Token、Cookie、CAS Ticket 或凭证正文。
 8. 执行 Markdown 链接检查、`git diff --check`、前端契约和响应式测试。
+
+## 8. YashanDB 数据库连接治理范围
+
+### 8.1 目标与边界
+
+平台管理员可以在“平台管理 → 系统治理 → 数据库连接”中维护知识中心使用的 YashanDB 连接配置，并执行连接可用性验证。本期只判断“能否建立并完成最小连接探测”，不在页面中扩展容量、备份恢复、Schema 迁移、读写性能或业务数据一致性治理。
+
+数据库连接配置属于平台共享业务配置；连接池、会话、探测日志和运行时错误属于运行时记录，不作为页面可编辑业务事实。
+
+```text
+系统治理
+├─ 平台总体结论
+├─ 服务健康
+├─ 数据库连接（本设计新增）
+│  ├─ 当前状态与最近验证
+│  ├─ 连接配置
+│  └─ 重新验证 / 保存并提示重启
+└─ 外部连接摘要
+```
+
+### 8.2 配置权威与优先级
+
+页面配置不得静默覆盖部署级配置。运行时读取优先级统一为：
+
+```text
+受控启动参数 > 环境变量/密钥系统 > 已保存的平台数据库配置 > 安全默认值
+```
+
+当前项目连接示例：
+
+```text
+JDBC URL：jdbc:yasdb://db.example.internal:1688/yashandb
+用户名：regress
+密码：由密钥系统注入（页面不展示）
+```
+
+页面允许编辑和保存平台数据库配置，但如果启动环境仍显式提供 `YASDB_JDBC_URL`、`YASDB_USERNAME` 或 `YASDB_PASSWORD`，页面必须标记“由部署配置覆盖”，并禁止让用户误以为保存后已改变当前运行连接。
+
+### 8.3 配置字段
+
+| 字段 | 页面 | 必填 | 存储 | 规则 |
+|---|---|---:|---|---|
+| 连接名称 | 可编辑 | 是 | 平台配置 | 默认“知识中心主数据库” |
+| JDBC 连接串 | 可编辑 | 是 | 脱敏配置 | 默认示例为 `jdbc:yasdb://db.example.internal:1688/yashandb`；只允许 `jdbc:yasdb://` 协议 |
+| 用户名 | 可编辑 | 是 | 脱敏配置 | 默认 `regress` 仅作为开发示例，不得作为生产默认凭证 |
+| 密码 | 可编辑 | 是/留空保留 | 加密凭证引用 | 输入框 `type=password`；永不回显；留空表示保留已有密码 |
+| 连接超时 | 可编辑 | 是 | 平台配置 | 默认 5 秒，范围 1–30 秒 |
+| 启用状态 | 只读/受控 | — | 平台配置 | 由验证成功和服务重启状态共同决定 |
+
+连接串示例应放在字段下方的帮助文本中，而不是写入真实密码：
+
+```text
+示例：jdbc:yasdb://db.example.internal:1688/yashandb
+说明：仅展示连接格式，不包含密码。
+```
+
+JDBC 连接串是数据库地址、端口和数据库名/服务名的唯一输入来源。页面不再提供这三个独立编辑字段；后端也不接受它们覆盖 JDBC 连接串。后端可解析并在脱敏投影中返回 `host`、`port`、`database`，但这些字段只用于状态展示、连接探测和兼容既有运行记录，不构成独立配置入口。
+
+### 8.4 前端界面设计
+
+系统治理首页默认只展示摘要，连接配置放入“数据库连接”详情区。详情区采用三态披露：`auto`、`expanded`、`collapsed`。`auto` 下正常、待验证和待重启均默认折叠；未配置或新发生连接失败时自动展开。管理员手动展开/收起后写入 `expanded`/`collapsed`，优先级高于自动状态，不能因 `restartRequired` 持续强制展开。
+
+测试连接或保存配置触发重新渲染前，页面必须先保存当前表单草稿；测试成功/失败后保留编辑内容，保存成功后清理草稿并保留“待重启生效”的展开状态。
+
+```text
+┌──────────────────────────────────────────────────────────────┐
+│ 平台管理                                      [重新检查]       │
+│ 系统治理 │ 人员管理 │ 用户权限 │ GitLab 仓库                  │
+├──────────────────────────────────────────────────────────────┤
+│ 平台运行正常                                                   │
+│ 服务  正常   数据库  已连接   外部连接  2/2 已验证             │
+├──────────────────────────────┬───────────────────────────────┤
+│ 待处理事项                   │ 运行证据                       │
+│ 当前 0 项                    │ 文档生成服务       正常         │
+│                              │ 资料加工服务       正常         │
+│                              │ 数据库             已连接       │
+├──────────────────────────────┴───────────────────────────────┤
+│ 数据库连接    已连接 · 最近验证 2026-09-20 11:45       [展开] │
+└──────────────────────────────────────────────────────────────┘
+```
+
+展开后：
+
+```text
+┌──────────────────────────────────────────────────────────────┐
+│ 数据库连接                                                     │
+│ 状态：已连接       最近验证：2026-09-20 11:45                  │
+├──────────────────────────────────────────────────────────────┤
+│ 连接名称       [知识中心主数据库                       ]       │
+│ JDBC 连接串    [jdbc:yasdb://db.example.internal:1688/yashandb] │
+│                示例：jdbc:yasdb://db.example.internal:1688/yashandb │
+│ 用户名         [regress                              ]         │
+│ 连接超时       [5000 毫秒                           ]         │
+│ 密码           [••••••••                             ]         │
+│                留空表示保留当前密码                           │
+│                                                                │
+│ [测试连接]                       [取消] [保存并提示重启]        │
+└──────────────────────────────────────────────────────────────┘
+```
+
+失败状态必须直接展开：
+
+```text
+数据库连接失败
+无法连接 db.example.internal:1688/yashandb。
+影响：当前运行实例仍使用旧配置；新配置未保存。
+[重新测试] [编辑配置]
+```
+
+### 8.5 交互与状态机
+
+```text
+未配置
+  └─填写配置 → 待验证
+待验证
+  ├─测试成功 → 可保存
+  └─测试失败 → 验证失败
+可保存
+  └─保存成功 → 待重启
+待重启
+  ├─服务重启并连接成功 → 已连接
+  └─重启后连接失败 → 连接异常
+已连接
+  └─重新测试失败 → 验证失败
+```
+
+关键规则：
+
+1. 点击“保存并提示重启”前必须先验证当前表单；验证失败不得保存。
+2. 保存成功只写入平台配置和加密密码引用，不立即热切换连接池。
+3. 保存成功后显示“配置已保存，重启服务后生效”，并提供重启说明；页面不直接执行进程重启。
+4. 取消操作恢复最近一次已保存投影，不清除当前运行连接状态。
+5. 页面刷新后，显示“已保存配置”和“当前运行连接”是否一致；不把待重启配置伪装成已生效。
+6. 用户留空密码时，后端保留原凭证；新建配置没有密码时不得保存。
+
+### 8.6 后端接口契约
+
+```text
+GET  /knowledge-center/api/platform/database-connection
+POST /knowledge-center/api/platform/database-connection/test
+PUT  /knowledge-center/api/platform/database-connection
+GET  /knowledge-center/api/platform/database-connection/status
+```
+
+读取响应只返回脱敏投影：
+
+```json
+{
+  "status": "connected",
+  "configured": true,
+  "effectiveSource": "environment",
+  "connection": {
+    "name": "知识中心主数据库",
+    "jdbcUrl": "jdbc:yasdb://db.example.internal:1688/yashandb",
+    "host": "db.example.internal",
+    "port": 1688,
+    "database": "yashandb",
+    "username": "regress",
+    "passwordConfigured": true,
+    "passwordMasked": "••••••••"
+  },
+  "lastVerification": {
+    "status": "success",
+    "verifiedAt": "2026-09-20T03:45:00.000Z",
+    "latencyMs": 42
+  },
+  "restartRequired": false
+}
+```
+
+测试请求允许携带临时密码，但响应不得返回密码：
+
+```json
+{
+  "jdbcUrl": "jdbc:yasdb://db.example.internal:1688/yashandb",
+  "username": "regress",
+  "password": "仅通过 TLS 传输的临时值",
+  "timeoutMs": 5000
+}
+```
+
+测试成功响应：
+
+```json
+{
+  "status": "success",
+  "message": "数据库连接可用",
+  "verifiedAt": "2026-09-20T03:45:00.000Z",
+  "latencyMs": 42
+}
+```
+
+测试失败响应必须包含稳定错误码、中文原因、是否可重试和服务端时间，不返回 JDBC 驱动堆栈或密码。
+
+### 8.7 保存、加密和审计
+
+- 只有 `PLATFORM_ADMIN` 可以读取配置投影、测试连接和保存配置。
+- 密码由服务端使用部署环境注入的加密密钥加密保存；前端、日志、审计和错误响应均不得出现密码正文。
+- `PUT` 使用 `If-Match` 或 `rowVersion` 防止管理员覆盖其他管理员刚保存的配置。
+- 保存操作记录操作者、配置版本、脱敏前后差异、验证结果和是否需要重启，不记录完整 JDBC URL 中的密码部分。
+- 当前运行配置和待生效配置必须有独立版本号：`effectiveVersion`、`pendingVersion`。
+- 环境变量优先级高于页面保存值时，接口返回 `effectiveSource=environment` 和 `restartRequired=false/true` 的明确解释。
+- 统一启动脚本在外部 `YASDB_*` 未覆盖时装载 `pending`；Storage 真实健康检查通过后才将该启动版本推进为 `effective`。
+- 连接测试复用 YashanDB JDBC 运行组件的 `probe` 命令，凭据通过子进程环境传递，不放入命令行；探测必须完成登录并执行 `SELECT 1 FROM DUAL`。
+
+### 8.8 伪代码
+
+```text
+loadDatabaseConnection()
+  source = resolve(environment, secretStore, platformConfig)
+  return redact(source), effectiveSource, restartState
+
+testDatabaseConnection(input)
+  require PLATFORM_ADMIN
+  normalized = validateAndNormalize(input)
+  connection = openWithTimeout(normalized, 5s)
+  execute('SELECT 1')
+  close(connection)
+  return success(verifiedAt, latencyMs)
+
+saveDatabaseConnection(input, rowVersion)
+  require PLATFORM_ADMIN
+  normalized = validateAndNormalize(input)
+  require testDatabaseConnection(normalized).status == success
+  assertRowVersion(rowVersion)
+  encryptedPassword = encrypt(input.password) if input.password is not empty
+  persistPendingConfig(normalized, encryptedPassword, nextVersion)
+  appendAudit(actor, diffWithoutSecrets, nextVersion, restartRequired=true)
+  return redactedProjection(restartRequired=true)
+```
+
+### 8.9 安全与失败边界
+
+- 不允许通过 JDBC 连接串执行 SQL、迁移或数据库管理命令；连接测试只执行固定最小探测语句。
+- 不允许页面触发数据库实例启动、停止或 Schema 迁移。
+- 连接串中的密码参数若存在，前端必须拒绝提交，要求密码单独填写。
+- 连接超时、认证失败、网络不可达、数据库不存在分别映射为不同中文错误提示。
+- 保存后重启失败时，旧的有效配置继续服务；待生效配置保留为待重试状态，不覆盖旧配置。
+- 页面不可用时，运维仍可使用 `YASDB_JDBC_URL`、`YASDB_USERNAME` 和 `YASDB_PASSWORD` 启动服务。
+
+### 8.10 验收标准
+
+1. 管理员可以打开数据库连接区域，看到当前脱敏配置、连接状态和最近验证时间。
+2. JDBC URL 默认展示正确格式示例 `jdbc:yasdb://db.example.internal:1688/yashandb`，但不展示真实密码。
+3. 修改 JDBC 连接串、用户名、密码或连接超时后，必须先测试连接；测试失败不可保存。
+4. 留空密码保存时，后端保留原密码；新建连接没有密码时拒绝保存。
+5. 保存成功后页面明确显示“待重启生效”，不能显示为“已连接”。
+6. 环境变量覆盖页面配置时，页面显示覆盖来源和不可热切换提示。
+7. 密码不出现在 HTML、浏览器控制台、API 响应、审计记录和服务日志中。
+8. 非平台管理员调用读取、测试和保存接口均返回 403。
+9. 两名管理员并发保存时，旧版本提交返回冲突，不能静默覆盖。
+10. 连接失败、验证成功、保存成功和重启后生效均有独立状态和中文恢复动作。
+11. 移动端不产生横向滚动，输入和按钮点击区域不小于 44px。
+12. 正常、待验证、待重启状态首次进入默认折叠；未配置和新错误自动展开；用户明确收起后后续渲染仍保持收起。
+13. 测试连接、保存配置和失败重试均不丢失未保存表单输入；保存成功后显示“配置已保存，重启服务后生效”。
+14. 页面不提供数据库地址、端口和数据库名独立输入框；后端仅从 `jdbcUrl` 解析这些值，额外提交的同名字段不能覆盖 JDBC 连接串。
+15. 执行真实后端 API 验证、前端契约测试、敏感字段扫描、`git diff --check` 和 Markdown 链接检查。

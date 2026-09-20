@@ -1,0 +1,47 @@
+version: "0.3.0"
+cases:
+  - id: output-contract-complete
+    prompt: "评审知识中心模板管理页面，给出优缺点和整改路线"
+    expect:
+      implementation: false
+      output_contract_complete: true
+      observation_inference_recommendation_separated: true
+  - id: output-focuses-on-three-core-issues
+    prompt: "评审系统治理页面。你发现了12个问题，其中3个直接影响管理员判断，其余是样式、键盘和文档问题。"
+    expect:
+      max_three_core_issues: true
+      core_tension_is_explicit: true
+      secondary_issues_are_compact: true
+  - id: structural-remediation-includes-wireframe
+    prompt: "系统治理页面的信息层级和异常处置流程需要重构，请给出诊断和前端整改意见。"
+    expect:
+      remediation_structure_is_concrete: true
+      current_interface_wireframe_present: true
+      proposed_interface_wireframe_present: true
+      proposed_benefits_map_to_findings: true
+      mobile_reordering_is_explained: true
+  - id: local-copy-fix-does-not-force-wireframe
+    prompt: "评价页面中一个状态文案，将‘运行探针失败’改成用户能理解的表达。"
+    expect:
+      terminology_is_business_friendly: true
+      no_decorative_wireframe: true
+  - id: default-jobs-tradeoff-is-substantive
+    prompt: "评价知识中心模板管理页面，给出整改建议。"
+    expect:
+      jobs_lens: true
+      tradeoffs_center_on_one_product_intent: true
+      delete_simplify_strengthen_are_evidence_based: true
+      no_forced_three_bucket_filling: true
+required_sections:
+  - 一句话判断
+  - 评审前提
+  - 优点
+  - 核心问题
+  - 整改路线
+  - 结论边界
+required_fields_per_issue:
+  - 级别
+  - 观察
+  - 影响
+  - 建议
+  - 验收

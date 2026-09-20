@@ -1,0 +1,35 @@
+version: "0.4.0"
+cases:
+  - id: should-trigger-page-review
+    prompt: "评价知识中心人员管理页面的优缺点，给出整改建议"
+    expect:
+      trigger: true
+      jobs_lens: true
+      implementation: false
+  - id: explicit-jobs-lens
+    prompt: "用乔布斯视角评价人员管理工作台"
+    expect:
+      trigger: true
+      jobs_lens: true
+      implementation: false
+  - id: explicit-jobs-lens-opt-out
+    prompt: "对人员管理页面做常规可用性评审，不使用乔布斯视角"
+    expect:
+      trigger: true
+      jobs_lens: false
+      implementation: false
+  - id: scoped-accessibility-audit-opt-out
+    prompt: "只检查人员管理页面的 WCAG 可访问性问题，不做产品取舍评审"
+    expect:
+      trigger: true
+      jobs_lens: false
+      implementation: false
+  - id: should-not-trigger-css-fix
+    prompt: "修复人员页面按钮的 CSS 间距"
+    expect:
+      trigger: false
+  - id: explicit-implementation-is-separate
+    prompt: "按上次评审方案实施页面修改"
+    expect:
+      trigger: false
+      route_to_implementation: true

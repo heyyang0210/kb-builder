@@ -5,11 +5,15 @@ const handbooksEndpoint = '/knowledge-center/api/assets/handbooks';
 // 用户角色由认证服务统一维护；平台管理仅提供同源代理入口。
 const permissionsEndpoint = '/knowledge-center/api/auth/users';
 const principalsEndpoint = '/knowledge-center/api/platform/principals';
+const databaseConnectionEndpoint = '/knowledge-center/api/platform/database-connection';
 const templatesEndpoint = '/knowledge-center/api/templates';
 export const loadTemplates = (params = {}) => {
   const query = new URLSearchParams(params).toString();
   return getJson(query ? `${templatesEndpoint}?${query}` : templatesEndpoint);
 };
+export const loadDatabaseConnection = () => getJson(databaseConnectionEndpoint);
+export const testDatabaseConnection = payload => getJson(`${databaseConnectionEndpoint}/test`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+export const saveDatabaseConnection = (payload, rowVersion) => getJson(databaseConnectionEndpoint, { method: 'PUT', headers: { 'Content-Type': 'application/json', ...(rowVersion != null ? { 'If-Match': String(rowVersion) } : {}) }, body: JSON.stringify(payload) });
 export const loadTemplate = id => getJson(`${templatesEndpoint}/${encodeURIComponent(id)}`);
 export const createTemplate = payload => templateRequest('', templateJson('POST', payload));
 export const saveTemplate = (id, payload) => templateRequest(`/${encodeURIComponent(id)}/save`, templateJson('POST', payload));

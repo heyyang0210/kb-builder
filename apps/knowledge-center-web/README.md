@@ -6,6 +6,8 @@
 
 网关拆分路由时，入口解析的运行路径必须通过 `createKnowledgeCenterHandler` 的 `config` 显式注入。大纲模板和样例分别使用 `OUTLINE_TEMPLATE_PATH` 与 `OUTLINE_SAMPLE_PATH`；两者必须是存在、可读的绝对 `.xlsx` 普通文件，否则路由工厂以 `KNOWLEDGE_CENTER_CONFIG_INVALID` 拒绝启动。启动后的文件读取失败只返回 `404/503`，不得导致 13510 网关进程退出。
 
+平台管理的 YashanDB 连接治理默认使用 `runtime/agent-runner/knowledge-center/database-connection-config.json`，可通过 `KNOWLEDGE_CENTER_DATABASE_CONNECTION_CONFIG` 指定其他运行目录文件。网关只保存加密的待生效配置并返回脱敏投影；真实 JDBC 探测由统一构建中的 Storage 组件执行，生效版本由根目录启动脚本在 Storage 健康后推进。
+
 浏览器端源码由网关直接作为 ES Module 提供，不使用未经转换的 JSON import attributes。数据库 Markdown 规则通过普通 JavaScript 模块加载，避免部分浏览器在登录初始化前因 `Unexpected token 'with'` 中止入口模块；未随包发布 `.map` 的 vendor 文件不得保留 `sourceMappingURL` 声明。
 
 ```bash

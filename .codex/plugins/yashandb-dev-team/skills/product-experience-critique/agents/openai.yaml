@@ -1,0 +1,6 @@
+interface:
+  display_name: "知识中心产品体验评审"
+  short_description: "默认采用乔布斯产品视角，结合设计与证据聚焦诊断页面"
+  default_prompt: "使用 $product-experience-critique 评审知识中心页面，默认采用乔布斯产品视角，从项目设计档案动态发现相关约束，聚焦最多三个核心问题；说明删除、简化和强化的取舍，需要重构时对照展示当前界面和建议界面简图。"
+policy:
+  allow_implicit_invocation: true

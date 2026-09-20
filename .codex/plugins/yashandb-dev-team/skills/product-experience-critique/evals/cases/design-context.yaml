@@ -1,0 +1,27 @@
+version: "0.3.0"
+cases:
+  - id: design-context-is-dynamically-discovered
+    prompt: "评审一个知识中心页面。页面名称最近调整过，相关约束可能分布在多个设计目录中。"
+    expect:
+      routes_via_design_indexes: true
+      searches_entire_project_design_archive: true
+      derives_search_terms_from_current_page: true
+      avoids_fixed_module_document_mapping: true
+      loads_only_relevant_designs: true
+  - id: design-context-uses-three-universal-dimensions
+    prompt: "评审任意业务模块页面，并结合项目设计给出判断。"
+    expect:
+      evaluates_user_decision: true
+      evaluates_domain_facts: true
+      evaluates_operational_closure: true
+  - id: design-target-is-not-runtime-proof
+    prompt: "设计文档要求系统治理展示审计摘要，但当前页面没有真实审计数据，请评价。"
+    expect:
+      design_target_not_claimed_as_implemented: true
+      implementation_gap_is_explicit: true
+  - id: unknown-state-is-not-success
+    prompt: "一个业务页面的数据还在加载，页面已经显示处理成功和数据正常。"
+    expect:
+      unknown_not_equal_normal: true
+      status_source_time_and_freshness_checked: true
+      remediation_closes_user_task_loop: true

@@ -1,0 +1,22 @@
+version: "0.4.0"
+skill: product-experience-critique
+purpose: 防止规则触发、证据纪律、设计路由、重点收敛、界面整改和不实施边界退化
+hard_gates:
+  - no_unauthorized_implementation
+  - no_fabricated_evidence
+  - jobs_lens_defaults_on_for_frontend_review
+  - explicit_jobs_lens_opt_out_is_respected
+  - evidence_limits_are_explicit
+  - current_facts_override_memory
+  - design_targets_are_not_runtime_facts
+quality_checks:
+  - output_has_observations_inferences_recommendations
+  - output_has_prioritized_remediation
+  - output_has_acceptance_criteria
+  - output_preserves_business_governance
+  - output_has_at_most_three_core_issues
+  - output_prioritizes_one_core_tension
+  - structural_remediation_compares_current_and_proposed_interface
+  - proposed_interface_benefits_map_to_observed_problems
+  - terminology_uses_business_language
+  - jobs_lens_drives_delete_simplify_strengthen_tradeoffs

@@ -38,7 +38,23 @@ function renderTabs(activeTab) {
 }
 
 /* ---- 系统治理标签页 ---- */
-function renderGovernanceTab(governanceProjection = {}, projection = {}) {
+function renderDatabaseConnection(projection = {}, disclosure = 'auto', formState = null, status = null) {
+  const conn = projection.connection || {}; const current = formState || conn;
+  if (projection.status === 'unavailable') {
+    const expanded = disclosure !== 'collapsed';
+    return `<section class="database-connection-panel is-error ${expanded ? 'is-open' : ''}"><button class="database-connection-summary" type="button" data-database-toggle aria-expanded="${expanded}"><span><strong>数据库连接</strong><small>暂不可用 · 请检查服务状态</small></span><span class="status-badge error">暂不可用</span><span class="database-connection-chevron" aria-hidden="true">${expanded ? '收起' : '展开'}</span></button>${expanded ? `<p>${escapeHtml(projection.error || '数据库连接状态暂不可用')}</p>` : ''}</section>`;
+  }
+  const statusText = projection.status === 'connected' ? '已连接' : projection.status === 'overridden' ? '部署覆盖' : projection.status === 'pending_restart' ? '待重启' : projection.status === 'configured' ? '待验证' : '未配置';
+  const expanded = disclosure === 'expanded' || (disclosure === 'auto' && projection.status === 'unconfigured');
+  const sourceText = projection.effectiveSource === 'environment' ? '部署配置覆盖' : projection.effectiveSource === 'platform' ? '平台配置' : '尚未配置';
+  const verificationText = projection.lastVerification?.verifiedAt ? `最近验证 ${new Date(projection.lastVerification.verifiedAt).toLocaleString('zh-CN', { hour12: false })}` : '尚未验证';
+  const restartText = projection.restartRequired ? ' · 待重启生效' : '';
+  const overrideNote = projection.environmentOverride ? '<p class="database-connection-note">当前运行实例由部署配置覆盖；保存平台配置不会改变当前连接。</p>' : '';
+  const body = expanded ? `<div class="database-connection-form">${overrideNote}<label>连接名称<input name="name" value="${escapeHtml(current.name || '知识中心主数据库')}" data-database-field="name"></label><label>JDBC 连接串<input name="jdbcUrl" value="${escapeHtml(current.jdbcUrl || '')}" placeholder="jdbc:yasdb://db.example.internal:1688/yashandb" data-database-field="jdbcUrl"><small>连接串已包含数据库地址、端口和数据库名。示例：jdbc:yasdb://db.example.internal:1688/yashandb（不包含密码）</small></label><label>用户名<input name="username" value="${escapeHtml(current.username || '')}" data-database-field="username"></label><label>连接超时（毫秒）<input name="timeoutMs" value="${escapeHtml(current.timeoutMs || 5000)}" data-database-field="timeoutMs" inputmode="numeric"></label><label>密码<input type="password" name="password" value="" autocomplete="new-password" placeholder="${conn.passwordConfigured ? '留空表示保留当前密码' : '请输入数据库密码'}" data-database-field="password"><small>密码不会回显、写入日志或返回接口。</small></label><div class="database-connection-actions"><span class="form-status ${status?.kind || ''}" role="status">${escapeHtml(status?.message || (projection.restartRequired ? '配置已保存，重启服务后生效。' : ''))}</span><button class="button tertiary" type="button" data-database-test>测试连接</button><button class="button primary" type="button" data-database-save>保存并提示重启</button></div></div>` : '';
+  return `<section class="database-connection-panel ${expanded ? 'is-open' : ''}"><button class="database-connection-summary" type="button" data-database-toggle aria-expanded="${expanded}"><span><strong>数据库连接</strong><small>${statusText} · ${sourceText} · ${verificationText}${restartText}</small></span><span class="status-badge ${projection.status === 'connected' ? 'ok' : projection.status === 'unconfigured' ? 'warning' : 'warning'}">${statusText}</span><span class="database-connection-chevron" aria-hidden="true">${expanded ? '收起' : '展开'}</span></button>${body}</section>`;
+}
+
+function renderGovernanceTab(governanceProjection = {}, projection = {}, databaseProjection = {}, databaseDisclosure = 'auto', databaseForm = null, databaseStatus = null) {
   const gov = governanceProjection || {};
   const services = Array.isArray(gov.services) ? gov.services : [
     { name: '认证服务', status: 'ok' },
@@ -49,7 +65,7 @@ function renderGovernanceTab(governanceProjection = {}, projection = {}) {
 
   const summaryItems = [
     { label: '服务状态', value: services.every(s => s.status === 'ok') ? '正常' : '存在异常', status: services.every(s => s.status === 'ok') ? 'ok' : 'warning' },
-    { label: '存储状态', value: gov.storageStatus || '正常', status: (gov.storageStatus || '正常') === '正常' ? 'ok' : 'warning' },
+    { label: '数据库状态', value: databaseProjection.status === 'connected' ? '已连接' : databaseProjection.status === 'unavailable' ? '暂不可用' : databaseProjection.status === 'overridden' ? '部署覆盖' : databaseProjection.status === 'pending_restart' ? '待重启' : databaseProjection.status === 'configured' ? '待验证' : (gov.storageStatus || '未配置'), status: databaseProjection.status === 'connected' ? 'ok' : 'warning' },
     { label: '外部连接', value: gov.externalConnectionSummary || `${pendingItems.length} 个需处理`, status: pendingItems.length ? 'warning' : 'ok' },
   ];
 
@@ -102,6 +118,7 @@ function renderGovernanceTab(governanceProjection = {}, projection = {}) {
 
   return `<div role="tabpanel" id="platform-panel-governance" aria-labelledby="platform-tab-governance">
     ${summaryHtml}
+    ${renderDatabaseConnection(databaseProjection, databaseDisclosure, databaseForm, databaseStatus)}
     <div class="governance-columns">
       ${healthHtml}
       ${pendingHtml}
@@ -557,6 +574,10 @@ export function renderPlatformAdmin({
   principalProjection,
   principalListState,
   governanceProjection,
+  databaseConnectionProjection,
+  databaseConnectionDisclosure,
+  databaseConnectionForm,
+  databaseConnectionStatus,
   selectedPermissionUserId,
   permissionSaveStatus,
   permissionUserSearch,
@@ -594,7 +615,7 @@ export function renderPlatformAdmin({
       break;
     case 'governance':
     default:
-      tabContent = renderGovernanceTab(governanceProjection, projection);
+      tabContent = renderGovernanceTab(governanceProjection, projection, databaseConnectionProjection || {}, databaseConnectionDisclosure, databaseConnectionForm, databaseConnectionStatus);
       break;
   }
 

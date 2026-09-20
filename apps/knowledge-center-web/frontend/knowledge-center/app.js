@@ -1,4 +1,4 @@
-import { archiveAsset, createAsset, createPrincipal, deleteOutline, importOutline, importPrincipals, loadAssets, loadOutlineData, loadPlatformData, loadPrincipals, publishOutlineGovernance, resolveAssetStatus, restoreAsset, saveOutlineGovernance, updateAsset, updateAssetStatus, updateDomainBuildTaskItem, loadDomainBuildTasks as fetchDomainBuildTasks, loadPlatformPermissions, updatePlatformUserPermissions, updatePrincipal } from './common/api/platform-api.js';
+import { archiveAsset, createAsset, createPrincipal, deleteOutline, importOutline, importPrincipals, loadAssets, loadOutlineData, loadPlatformData, loadPrincipals, publishOutlineGovernance, resolveAssetStatus, restoreAsset, saveOutlineGovernance, updateAsset, updateAssetStatus, updateDomainBuildTaskItem, loadDomainBuildTasks as fetchDomainBuildTasks, loadPlatformPermissions, updatePlatformUserPermissions, updatePrincipal, loadDatabaseConnection, testDatabaseConnection, saveDatabaseConnection } from './common/api/platform-api.js';
 import { disconnectGitLabOAuth, gitLabOAuthHref, loadGitLabBranches, loadGitLabConnections, loadGitLabOAuthAccounts, loadGitLabOAuthStatus, loadGitLabOAuthConfig, loadGitLabTree, loadHandbookGitLabAccess, loadHandbookRepository, loadHandbookRepositoryCommits, loadHandbookRepositoryFile, loadHandbookRepositoryMapping, loadHandbookRepositoryStatistics, loadHandbookRepositoryTree, loadReviewRepositoryContext, saveGitLabConnection, saveHandbookRepositoryMapping, createGitLabConnection, updateGitLabConnection, verifyGitLabConnection, disableGitLabConnection, enableGitLabConnection, searchGitLabConnections } from './common/api/gitlab-api.js';
 import { addIncrementalSource, bootstrapBaseline, commentIncrementalReview, createIncrementalReview, createIncrementalRevision, createIncrementalTask, createOnlineReview, decideIncrementalReview, loadCandidateDiff, loadHandbookReviewSummary, loadIncrementalBaselines, loadIncrementalTask, loadIncrementalTasks, loadReviewBootstrap, publishIncrementalTask, recordIncrementalEvidence, reopenIncrementalReviewComment, replyIncrementalReviewComment, resolveIncrementalReviewComment, runIncrementalChecks, saveIncrementalDraft, submitIncrementalCandidate, updateIncrementalTarget } from './common/api/incremental-api.js';
 import { bootstrapAuth, consumeRememberedTarget, performLogout, rememberCurrentTarget, startCasLogin, submitAdminLogin } from './common/auth/auth-controller.js';
@@ -119,7 +119,7 @@ function render() {
   });
   document.querySelector('.nav-caption.governance').hidden = !canAccessView('platform');
   const outlineView = appState.activeView === 'outlines' ? outlineRouteState() : {};
-  byId('view-root').innerHTML = renderer({ projection: appState.activeView === 'repository' ? appState.gitlabProjection : appState.projection, templateProjection: appState.templateProjection, cleaningProjection: appState.cleaningProjection, cleaningCanWrite: isPlatformAdmin(), reviewProjection: appState.reviewProjection, reviewUi: appState.reviewUi, outlineProjection: appState.outlineProjection, assetCatalog: appState.assetCatalog, principalProjection: appState.principalProjection, principalListState: appState.principalListState, incrementalProjection: appState.incrementalProjection, domainBuildTaskProjection: appState.domainBuildTaskProjection, gitlabProjection: appState.gitlabProjection, permissionProjection: appState.permissionProjection, governanceProjection: appState.platformGovernance, selectedPermissionUserId: appState.selectedPermissionUserId, permissionSaveStatus: appState.permissionSaveStatus, permissionUserSearch: appState.permissionUserSearch, permissionListState: appState.permissionListState, gitlabVerification: appState.gitlabVerification, platformAdmin: isPlatformAdmin(), platformTab: appState.platformTab, gitlabListState: appState.gitlabListState, gitlabAddingConnection: appState.gitlabAddingConnection, gitlabEditingConnection: appState.gitlabEditingConnection, outlinePermissions: { create: canPerform('outline:create'), delete: canPerform('outline:delete') }, outlineView });
+  byId('view-root').innerHTML = renderer({ projection: appState.activeView === 'repository' ? appState.gitlabProjection : appState.projection, templateProjection: appState.templateProjection, cleaningProjection: appState.cleaningProjection, cleaningCanWrite: isPlatformAdmin(), reviewProjection: appState.reviewProjection, reviewUi: appState.reviewUi, outlineProjection: appState.outlineProjection, assetCatalog: appState.assetCatalog, principalProjection: appState.principalProjection, principalListState: appState.principalListState, incrementalProjection: appState.incrementalProjection, domainBuildTaskProjection: appState.domainBuildTaskProjection, gitlabProjection: appState.gitlabProjection, permissionProjection: appState.permissionProjection, governanceProjection: appState.platformGovernance, databaseConnectionProjection: appState.databaseConnectionProjection, databaseConnectionDisclosure: appState.databaseConnectionDisclosure, databaseConnectionForm: appState.databaseConnectionForm, databaseConnectionStatus: appState.databaseConnectionStatus, selectedPermissionUserId: appState.selectedPermissionUserId, permissionSaveStatus: appState.permissionSaveStatus, permissionUserSearch: appState.permissionUserSearch, permissionListState: appState.permissionListState, gitlabVerification: appState.gitlabVerification, platformAdmin: isPlatformAdmin(), platformTab: appState.platformTab, gitlabListState: appState.gitlabListState, gitlabAddingConnection: appState.gitlabAddingConnection, gitlabEditingConnection: appState.gitlabEditingConnection, outlinePermissions: { create: canPerform('outline:create'), delete: canPerform('outline:delete') }, outlineView });
   window.lucide?.createIcons();
   if (appState.activeView === 'dashboard' && openDomainTaskId) {
     const dialog = [...document.querySelectorAll('[data-domain-task-dialog]')].find(item => item.dataset.domainTaskDialog === String(openDomainTaskId));
@@ -322,6 +322,16 @@ async function loadGitLabAdmin() {
     }
   }
   appState.principalProjection = principals.error ? { status: 'unavailable', error: principals.error.message, items: [] } : { ...(principals?.data || principals || {}), status: 'ok' };
+  if (appState.activeView === 'platform') render();
+}
+
+async function loadDatabaseConnectionAdmin() {
+  try {
+    const result = await loadDatabaseConnection();
+    appState.databaseConnectionProjection = result?.data || result;
+    if (appState.databaseConnectionProjection?.status === 'unconfigured' || appState.databaseConnectionProjection?.status === 'unavailable') appState.databaseConnectionDisclosure = 'auto';
+  }
+  catch (error) { appState.databaseConnectionProjection = { status: 'unavailable', error: error.message }; appState.databaseConnectionDisclosure = 'expanded'; }
   if (appState.activeView === 'platform') render();
 }
 
@@ -810,8 +820,29 @@ document.addEventListener('click', async event => {
       window.history.pushState({ view: "platform", tab }, "", pathForView("platform", { tab }));
       render();
       if (tab === "gitlab" && !appState.gitlabProjection?.connections?.length) loadGitLabAdmin();
+      if (tab === "governance" && !appState.databaseConnectionProjection) loadDatabaseConnectionAdmin();
     }
     return;
+  }
+  const databaseToggle = event.target.closest('[data-database-toggle]');
+  if (databaseToggle) { appState.databaseConnectionDisclosure = databaseToggle.getAttribute('aria-expanded') === 'true' ? 'collapsed' : 'expanded'; render(); return; }
+  const databaseTest = event.target.closest('[data-database-test]');
+  if (databaseTest) {
+    const panel = databaseTest.closest('.database-connection-panel'); const payload = Object.fromEntries([...panel.querySelectorAll('[data-database-field]')].map(input => [input.dataset.databaseField, input.value]));
+    appState.databaseConnectionForm = payload; appState.databaseConnectionDisclosure = 'expanded';
+    appState.databaseConnectionStatus = { kind: 'pending', message: '正在测试数据库连接…' }; render();
+    try { const result = await testDatabaseConnection(payload); const data = result?.data || result; appState.databaseConnectionStatus = { kind: 'success', message: data.message || '数据库连接可用' }; }
+    catch (error) { appState.databaseConnectionStatus = { kind: 'error', message: error.message || '数据库连接失败' }; appState.databaseConnectionDisclosure = 'expanded'; }
+    render(); return;
+  }
+  const databaseSave = event.target.closest('[data-database-save]');
+  if (databaseSave) {
+    const panel = databaseSave.closest('.database-connection-panel'); const payload = Object.fromEntries([...panel.querySelectorAll('[data-database-field]')].map(input => [input.dataset.databaseField, input.value]));
+    appState.databaseConnectionForm = payload; appState.databaseConnectionDisclosure = 'expanded';
+    appState.databaseConnectionStatus = { kind: 'pending', message: '正在验证并保存…' }; render();
+    try { const result = await saveDatabaseConnection(payload, appState.databaseConnectionProjection?.rowVersion); appState.databaseConnectionProjection = result?.data || result; appState.databaseConnectionForm = null; appState.databaseConnectionStatus = { kind: 'success', message: '配置已保存，重启服务后生效。' }; appState.databaseConnectionDisclosure = 'expanded'; }
+    catch (error) { appState.databaseConnectionStatus = { kind: 'error', message: error.message || '数据库配置保存失败' }; appState.databaseConnectionDisclosure = 'expanded'; }
+    render(); return;
   }
   /* ---- GitLab 连接选择 ---- */
   const gitlabConn = event.target.closest("[data-gitlab-connection]");
@@ -2807,7 +2838,7 @@ async function bootstrap() {
   if (appState.activeView === 'production') loadIncrementalWorkspace();
   if (appState.activeView === 'review') await loadReviewWorkspace().finally(() => load(['context']));
   if (appState.activeView === 'repository') loadRepositoryWorkspace();
-  if (appState.activeView === 'platform') loadGitLabAdmin();
+  if (appState.activeView === 'platform') { loadGitLabAdmin(); loadDatabaseConnectionAdmin(); }
   if (appState.activeView === 'templates') loadTemplateWorkspace();
   const launchParams = new URLSearchParams(window.location.search);
   if (launchParams.get('externalAccount') === '1') {

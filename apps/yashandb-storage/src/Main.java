@@ -67,11 +67,20 @@ public final class Main {
 
     public static void main(String[] args) throws Exception {
         String command = args.length == 0 ? "serve" : args[0];
-        if (args.length > 1 || !("serve".equals(command) || "migrate".equals(command))) {
-            throw new IllegalArgumentException("用法：Main [serve|migrate]");
+        if (args.length > 1 || !("serve".equals(command) || "migrate".equals(command) || "probe".equals(command))) {
+            throw new IllegalArgumentException("用法：Main [serve|migrate|probe]");
         }
         Class.forName(DRIVER);
         Main application = new Main();
+        if ("probe".equals(command)) {
+            try {
+                application.probe();
+                System.out.println("{\"success\":true}");
+            } finally {
+                application.connectionPool.closeAll();
+            }
+            return;
+        }
         if ("migrate".equals(command)) {
             try {
                 application.migrate();
@@ -115,6 +124,17 @@ public final class Main {
         Connection connection = connectionPool.borrow();
         if (perfEnabled()) System.err.printf("[perf] connection_acquire_ms=%.3f%n", (System.nanoTime() - started) / 1e6);
         return connection;
+    }
+
+    private void probe() throws SQLException {
+        try (Connection connection = connection(); Statement statement = connection.createStatement()) {
+            statement.setQueryTimeout(Math.max(1, integer("YASDB_PROBE_QUERY_TIMEOUT_SECONDS", 5)));
+            try (ResultSet result = statement.executeQuery("SELECT 1 FROM DUAL")) {
+                if (!result.next() || result.getInt(1) != 1) {
+                    throw new SQLException("数据库最小探测未返回预期结果");
+                }
+            }
+        }
     }
 
     private void migrate() throws SQLException {

@@ -1,0 +1,21 @@
+{
+  "name": "yashandb-dev-team",
+  "version": "0.1.0",
+  "description": "YashanDB 知识中心项目的受控开发与产品体验能力插件",
+  "author": {
+    "name": "YashanDB Knowledge Center Team"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "YashanDB 知识中心开发团队",
+    "shortDescription": "为知识中心提供受控开发、评审和证据闭环能力",
+    "longDescription": "服务于当前 YashanDB 知识中心项目的本地 Codex 插件，通过项目专用 Skills 固化产品体验评审、变更交付和验证方法。",
+    "developerName": "YashanDB Knowledge Center Team",
+    "category": "Productivity",
+    "capabilities": ["Review", "Interactive"],
+    "defaultPrompt": [
+      "评审知识中心页面的产品体验并给出整改建议。",
+      "用乔布斯视角评审当前页面，但不要直接修改。"
+    ]
+  }
+}

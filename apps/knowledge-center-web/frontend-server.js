@@ -97,6 +97,9 @@ const handleIncrementalBuild = createIncrementalBuildHandler({ repository: incre
 const GITLAB_CONFIG_PATH = process.env.KNOWLEDGE_CENTER_GITLAB_CONFIG
   ? path.resolve(process.env.KNOWLEDGE_CENTER_GITLAB_CONFIG)
   : CONFIG_PATHS.gitlabConnections;
+const DATABASE_CONNECTION_CONFIG_PATH = process.env.KNOWLEDGE_CENTER_DATABASE_CONNECTION_CONFIG
+  ? path.resolve(process.env.KNOWLEDGE_CENTER_DATABASE_CONNECTION_CONFIG)
+  : path.join(AGENT_RUNNER_RUNTIME_ROOT, 'knowledge-center', 'database-connection-config.json');
 const GITLAB_DOCUMENT_TYPES_PATH = process.env.KNOWLEDGE_CENTER_GITLAB_DOCUMENT_TYPES
   ? path.resolve(process.env.KNOWLEDGE_CENTER_GITLAB_DOCUMENT_TYPES)
   : CONFIG_PATHS.contentRules;
@@ -264,6 +267,7 @@ const handleKnowledgeCenter = createKnowledgeCenterHandler({
     PINGCODE_API_HOST, PINGCODE_API_PORT,
     PLATFORM_CONTEXT_TIMEOUT_MS,
     GITLAB_CONFIG_PATH, GITLAB_DOCUMENT_TYPES_PATH,
+    DATABASE_CONNECTION_CONFIG_PATH,
   },
   stores: { knowledgeAssetsStore, manualStatusStore, templateStore, brandIconStore, domainStore },
   moduleRegistry: platformModules,

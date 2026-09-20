@@ -1,0 +1,14 @@
+version: "0.1.0"
+cases:
+  - id: memory-is-not-a-template
+    memory: memory/cases/personnel-management.md
+    prompt: "评审一个大纲管理页面，页面主要任务是导入和发布"
+    expect:
+      must_adapt_pattern: true
+      forbidden_behavior: "机械要求新增弹窗"
+  - id: current-design-overrides-memory
+    memory: memory/cases/personnel-management.md
+    prompt: "当前设计明确要求常驻新增表单，请按有效设计评审"
+    expect:
+      must_follow_current_design: true
+      must_note_tradeoff: true
