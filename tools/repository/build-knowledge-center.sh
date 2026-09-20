@@ -53,14 +53,28 @@ fi
 node_version="$(node --version)"
 npm_version="$(npm --version)"
 python_version="$(python3 --version 2>&1 | awk '{print $2}')"
+pingcode_vite_node_options="${KNOWLEDGE_CENTER_VITE_NODE_OPTIONS:---max-old-space-size=1536}"
+fingerprint_inputs=(
+  package.json
+  package-lock.json
+  apps/knowledge-center-api
+  apps/knowledge-center-web/frontend
+  apps/knowledge-center-web/frontend-server.js
+  apps/pingcode-api
+  apps/pingcode-web
+  apps/yashandb-storage/src
+  apps/yashandb-storage/sql
+  packages/agent-runner-core
+  packages/pingcode-core
+  packages/platform-contracts
+  tools/repository/build-knowledge-center.sh
+)
+for fingerprint_input in "${fingerprint_inputs[@]}"; do
+  [[ -e "$fingerprint_input" ]] || fail "构建指纹输入不存在：$fingerprint_input"
+done
 
 source_fingerprint="$({
-  find \
-    package.json package-lock.json \
-    apps/knowledge-center-api apps/knowledge-center-web/frontend apps/knowledge-center-web/frontend-server.js \
-    apps/pingcode-api apps/pingcode-web apps/yashandb-storage/src apps/yashandb-storage/sql \
-    packages/agent-runner-core packages/pingcode-core packages/platform-config packages/platform-contracts \
-    tools/repository/build-knowledge-center.sh \
+  find "${fingerprint_inputs[@]}" \
     -type f \
     ! -path '*/node_modules/*' \
     ! -path '*/dist/*' \
@@ -119,7 +133,7 @@ tar -cf - \
   npm ci --ignore-scripts --no-audit --no-fund
   # 运行配置可以使用 NODE_ENV=development，但发布构建必须固定为 production。
   # 否则 Vue 会把组件绝对文件名写入 chunk，破坏可重复构建并泄漏开发机路径。
-  NODE_ENV=production npm run build -- --outDir ../../web/pingcode --emptyOutDir
+  NODE_ENV=production NODE_OPTIONS="$pingcode_vite_node_options" npm run build -- --outDir ../../web/pingcode --emptyOutDir
 )
 
 echo "[4/6] 准备知识中心静态前端"

@@ -58,6 +58,12 @@ const knowledgeAssetsStore = String(process.env.KNOWLEDGE_STORAGE_MODE || 'file'
       };
     })()
   : createAggregateStore({ namespace: 'assets', key: 'catalog', filePath: KNOWLEDGE_ASSETS_CONFIG, emptyValue: { version: 1, handbooks: [], audits: [] } });
+const manualStatusStore = createAggregateStore({
+  namespace: 'assets',
+  key: 'manual-status-overrides',
+  filePath: path.join(AGENT_RUNNER_RUNTIME_ROOT, 'tmp', 'knowledge-center-manual-status.json'),
+  emptyValue: { version: 1, statuses: {}, audits: [] },
+});
 const templateStore = createTemplateStore({});
 
 // 数据库模式下在启动阶段核对迁移源，避免文件源与数据库聚合不一致时静默展示空列表。
@@ -259,7 +265,7 @@ const handleKnowledgeCenter = createKnowledgeCenterHandler({
     PLATFORM_CONTEXT_TIMEOUT_MS,
     GITLAB_CONFIG_PATH, GITLAB_DOCUMENT_TYPES_PATH,
   },
-  stores: { knowledgeAssetsStore, templateStore, brandIconStore, domainStore },
+  stores: { knowledgeAssetsStore, manualStatusStore, templateStore, brandIconStore, domainStore },
   moduleRegistry: platformModules,
 });
 

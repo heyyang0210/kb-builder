@@ -90,7 +90,27 @@ describe('knowledge center unified build contract', () => {
     expect(pingcodeViteConfig).toContain("loadEnv(mode, process.cwd(), 'PINGCODE_WEB_')");
     expect(pingcodeViteConfig).not.toContain("loadEnv(mode, process.cwd(), '')");
     expect(buildScript).toContain('grep -R -I -F -l "$repo_root" "$stage_rel"');
-    expect(buildScript).toContain('NODE_ENV=production npm run build');
+    expect(buildScript).toContain('NODE_ENV=production NODE_OPTIONS="$pingcode_vite_node_options" npm run build');
+    expect(buildScript).toContain('KNOWLEDGE_CENTER_VITE_NODE_OPTIONS');
+    expect(buildScript).toContain('NODE_OPTIONS="$pingcode_vite_node_options"');
+  });
+
+  test('build fingerprint only scans existing repository inputs', () => {
+    expect(buildScript).toContain('fingerprint_inputs=(');
+    expect(buildScript).toContain('构建指纹输入不存在');
+    expect(buildScript).not.toContain('packages/platform-config');
+
+    const match = buildScript.match(/fingerprint_inputs=\(\n([\s\S]*?)\n\)/);
+    expect(match).not.toBeNull();
+    const trackedInputs = match[1]
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith('#'));
+
+    expect(trackedInputs.length).toBeGreaterThan(0);
+    for (const relativePath of trackedInputs) {
+      expect(fs.existsSync(path.join(repoRoot, relativePath))).toBe(true);
+    }
   });
 
   test('validates restart inputs and only force-stops owned repository processes', () => {

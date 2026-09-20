@@ -148,6 +148,27 @@ describe('大纲治理投影', () => {
     }
   });
 
+  test('XLSX 解析忽略模板中的隐藏技术领域辅助表', () => {
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([
+      ['一级目录', '二级目录', '三级目录', '页面', '内容说明', '技术领域分工'],
+      ['基础', '', '', '兼容性概述', '说明兼容性范围', '兼容性']
+    ]), '大纲模板');
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([['技术领域名称'], ['兼容性']]), '技术领域');
+    workbook.Workbook = { Sheets: [{ name: '大纲模板', Hidden: 0 }, { name: '技术领域', Hidden: 1 }] };
+    const filePath = path.join(os.tmpdir(), `outline-hidden-domain-${process.pid}-${Date.now()}.xlsx`);
+    XLSX.writeFile(workbook, filePath);
+    try {
+      const parsed = parseXlsxOutlineFile(filePath, '隐藏辅助表模板');
+      expect(parsed.parts[0].documents[0]).toEqual(expect.objectContaining({
+        name: '兼容性概述',
+        techDomainIds: ['兼容性']
+      }));
+    } finally {
+      fs.rmSync(filePath, { force: true });
+    }
+  });
+
   test('六列表格支持目录兼页面并使用稳定来源编号', () => {
     const filePath = writeWorkbook([
       ['一级目录', '二级目录', '三级目录', '页面', '内容说明', '技术领域分工'],

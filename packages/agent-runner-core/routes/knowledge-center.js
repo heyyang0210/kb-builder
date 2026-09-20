@@ -9,6 +9,8 @@ const { matchCleaningEndpoint } = require('../lib/knowledge-center-cleaning-cont
 const { createTemplateStore } = require('../lib/template-store');
 const { readTemplateUpload } = require('../lib/template-import');
 const { previewPersonnelImport, readPersonnelUpload, templateWorkbook } = require('../lib/personnel-import');
+const { REPOSITORY_ROOT } = require('../lib/repo-paths');
+const { readTechDomainConfig } = require('./outline-management');
 let logger;
 try { logger = require('../lib/logger'); } catch (_) { logger = { info() {} }; }
 
@@ -67,11 +69,12 @@ function createKnowledgeCenterHandler(options) {
     GITLAB_CONFIG_PATH, GITLAB_DOCUMENT_TYPES_PATH,
   } = config;
 
-  const { knowledgeAssetsStore, brandIconStore, domainStore } = stores;
+  const { knowledgeAssetsStore, manualStatusStore, brandIconStore, domainStore } = stores;
   validateOutlineWorkbookPath('OUTLINE_TEMPLATE_PATH', OUTLINE_TEMPLATE_PATH);
   validateOutlineWorkbookPath('OUTLINE_SAMPLE_PATH', OUTLINE_SAMPLE_PATH);
   const templateStore = stores.templateStore || createTemplateStore();
   const authModule = moduleRegistry?.get?.('auth') || modules.auth;
+  const databaseMode = String(process.env.KNOWLEDGE_STORAGE_MODE || 'file').toLowerCase() === 'database';
 
   // --- Auth helpers ---
 
@@ -250,6 +253,97 @@ function createKnowledgeCenterHandler(options) {
     });
   }
 
+  function workbookPackage(name) {
+    return require(require.resolve(name, { paths: [path.join(REPOSITORY_ROOT, 'apps', 'knowledge-center-api'), REPOSITORY_ROOT] }));
+  }
+
+  function configuredTechDomainNames() {
+    let payload = null;
+    const databaseMode = String(process.env.KNOWLEDGE_STORAGE_MODE || 'file').toLowerCase() === 'database';
+    try {
+      payload = domainStore?.readTechDomains ? domainStore.readTechDomains() : null;
+    } catch (error) {
+      if (databaseMode) throw Object.assign(new Error('数据库技术领域配置暂不可用'), { code: error.code || 'TECH_DOMAINS_UNAVAILABLE' });
+    }
+    if (databaseMode && !payload) throw Object.assign(new Error('数据库技术领域配置暂不可用'), { code: 'TECH_DOMAINS_UNAVAILABLE' });
+    const domains = Array.isArray(payload?.techDomains) ? payload.techDomains
+      : Array.isArray(payload?.items) ? payload.items
+      : Array.isArray(payload) ? payload
+      : readTechDomainConfig();
+    return [...new Set(domains.map(domain => String(domain?.name || domain?.displayName || domain?.code || domain?.id || '').trim()).filter(Boolean))];
+  }
+
+  function addWorksheetDataValidation(buffer, domainCount) {
+    if (!domainCount) return buffer;
+    const AdmZip = workbookPackage('adm-zip');
+    const zip = new AdmZip(buffer);
+    const worksheetEntry = zip.getEntry('xl/worksheets/sheet1.xml');
+    const workbookEntry = zip.getEntry('xl/workbook.xml');
+    if (!worksheetEntry || !workbookEntry) return buffer;
+    const definedName = `<definedName name="TECH_DOMAIN_OPTIONS">'技术领域'!$A$2:$A$${domainCount + 1}</definedName>`;
+    let workbookXml = workbookEntry.getData().toString('utf8');
+    if (workbookXml.includes('</definedNames>')) {
+      workbookXml = workbookXml.replace('</definedNames>', `${definedName}</definedNames>`);
+    } else {
+      workbookXml = workbookXml.replace('</workbook>', `<definedNames>${definedName}</definedNames></workbook>`);
+    }
+    const validationXml = '<dataValidations count="1"><dataValidation type="list" allowBlank="1" showErrorMessage="1" errorTitle="技术领域分工不合法" error="请从下拉列表中选择数据库已规划的技术领域名称。" sqref="F2:F1000"><formula1>TECH_DOMAIN_OPTIONS</formula1></dataValidation></dataValidations>';
+    let worksheetXml = worksheetEntry.getData().toString('utf8');
+    if (worksheetXml.includes('<dataValidations')) {
+      worksheetXml = worksheetXml.replace(/<dataValidations[\s\S]*?<\/dataValidations>/, validationXml);
+    } else if (worksheetXml.includes('<pageMargins')) {
+      worksheetXml = worksheetXml.replace('<pageMargins', `${validationXml}<pageMargins`);
+    } else {
+      worksheetXml = worksheetXml.replace('</worksheet>', `${validationXml}</worksheet>`);
+    }
+    zip.updateFile('xl/workbook.xml', Buffer.from(workbookXml, 'utf8'));
+    zip.updateFile('xl/worksheets/sheet1.xml', Buffer.from(worksheetXml, 'utf8'));
+    return zip.toBuffer();
+  }
+
+  function outlineTemplateWorkbookBuffer() {
+    const XLSX = workbookPackage('xlsx');
+    const headers = ['一级目录', '二级目录', '三级目录', '页面', '内容说明', '技术领域分工'];
+    const domainNames = configuredTechDomainNames();
+    const workbook = XLSX.utils.book_new();
+    const sheet = XLSX.utils.aoa_to_sheet([headers]);
+    sheet['!cols'] = [{ wch: 24 }, { wch: 24 }, { wch: 24 }, { wch: 32 }, { wch: 68 }, { wch: 22 }];
+    XLSX.utils.book_append_sheet(workbook, sheet, '大纲模板');
+    const domainSheet = XLSX.utils.aoa_to_sheet([['技术领域名称'], ...domainNames.map(name => [name])]);
+    domainSheet['!cols'] = [{ wch: 24 }];
+    XLSX.utils.book_append_sheet(workbook, domainSheet, '技术领域');
+    workbook.Workbook = workbook.Workbook || {};
+    workbook.Workbook.Sheets = workbook.SheetNames.map(name => ({ name, Hidden: name === '技术领域' ? 1 : 0 }));
+    const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx', compression: true });
+    return addWorksheetDataValidation(buffer, domainNames.length);
+  }
+
+  function sendWorkbookBuffer(res, content, filename) {
+    res.writeHead(200, {
+      'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`,
+      'Content-Length': content.length,
+      'Cache-Control': 'no-store',
+    });
+    res.end(content);
+  }
+
+  function serveOutlineTemplateWorkbook(res) {
+    fs.access(OUTLINE_TEMPLATE_PATH, fs.constants.R_OK, error => {
+      if (error) {
+        res.writeHead(error.code === 'ENOENT' ? 404 : 503, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify({ success: false, error: { code: 'OUTLINE_TEMPLATE_UNAVAILABLE', message: '大纲工作簿暂不可用' } }));
+        return;
+      }
+      try {
+        sendWorkbookBuffer(res, outlineTemplateWorkbookBuffer(), '大纲模板.xlsx');
+      } catch (templateError) {
+        res.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify({ success: false, error: { code: templateError.code || 'OUTLINE_TEMPLATE_UNAVAILABLE', message: '大纲模板暂不可用' } }));
+      }
+    });
+  }
+
   // --- File path helpers ---
 
   function knowledgeCenterFilePath(requestUrl) {
@@ -268,7 +362,7 @@ function createKnowledgeCenterHandler(options) {
     if (!payload.generatedAt && fs.existsSync(options.KNOWLEDGE_ASSETS_CONFIG_PATH)) {
       payload.generatedAt = fs.statSync(options.KNOWLEDGE_ASSETS_CONFIG_PATH).mtime.toISOString();
     }
-    return payload;
+    return applyManualStatusOverrides(payload);
   }
 
   async function readKnowledgeAssetsAsync() {
@@ -276,7 +370,7 @@ function createKnowledgeCenterHandler(options) {
     if (!payload.generatedAt && fs.existsSync(options.KNOWLEDGE_ASSETS_CONFIG_PATH)) {
       payload.generatedAt = fs.statSync(options.KNOWLEDGE_ASSETS_CONFIG_PATH).mtime.toISOString();
     }
-    return payload;
+    return applyManualStatusOverrides(payload);
   }
 
   let reviewAssetsCache = null;
@@ -289,9 +383,66 @@ function createKnowledgeCenterHandler(options) {
   }
 
   function writeKnowledgeAssets(payload) {
+    persistManualStatusOverrides(payload);
     payload.generatedAt = new Date().toISOString();
     knowledgeAssetsStore.write(payload);
     reviewAssetsCache = null;
+  }
+
+  function writeAssetStatusPayload(payload) {
+    if (databaseMode) {
+      persistManualStatusOverrides(payload);
+      reviewAssetsCache = null;
+      return;
+    }
+    writeKnowledgeAssets(payload);
+  }
+
+  function manualStatusKey(handbook) {
+    return String(handbook?.handbookId || handbook?.id || handbook?.code || '').trim();
+  }
+
+  function readManualStatusOverrides() {
+    if (!manualStatusStore) return { version: 1, statuses: {}, audits: [] };
+    const payload = manualStatusStore.read();
+    return {
+      version: Number(payload?.version || 1),
+      statuses: payload?.statuses && typeof payload.statuses === 'object' && !Array.isArray(payload.statuses) ? payload.statuses : {},
+      audits: Array.isArray(payload?.audits) ? payload.audits : [],
+    };
+  }
+
+  function writeManualStatusOverrides(payload) {
+    if (!manualStatusStore) return;
+    manualStatusStore.write({ version: Number(payload.version || 1), statuses: payload.statuses || {}, audits: payload.audits || [], updatedAt: new Date().toISOString() });
+  }
+
+  function applyManualStatusOverrides(payload) {
+    if (!databaseMode || !manualStatusStore || !Array.isArray(payload?.handbooks)) return payload;
+    const overrides = readManualStatusOverrides().statuses;
+    return {
+      ...payload,
+      handbooks: payload.handbooks.map(item => {
+        const key = manualStatusKey(item);
+        const override = key ? overrides[key] : null;
+        return override ? { ...item, manualStatus: override.manualStatus || null, assetVersion: Number(override.assetVersion || item.assetVersion || 1) } : item;
+      }),
+    };
+  }
+
+  function persistManualStatusOverrides(payload) {
+    if (!databaseMode || !manualStatusStore || !Array.isArray(payload?.handbooks)) return;
+    const overrides = readManualStatusOverrides();
+    for (const item of payload.handbooks) {
+      const key = manualStatusKey(item);
+      if (!key) continue;
+      if (item.manualStatus) {
+        overrides.statuses[key] = { manualStatus: item.manualStatus, assetVersion: Number(item.assetVersion || 1), updatedAt: new Date().toISOString() };
+      } else if (overrides.statuses[key]) {
+        overrides.statuses[key] = { manualStatus: null, assetVersion: Number(item.assetVersion || overrides.statuses[key].assetVersion || 1), updatedAt: new Date().toISOString() };
+      }
+    }
+    writeManualStatusOverrides(overrides);
   }
 
   function queryKnowledgeAssets(payload, searchParams, admin) {
@@ -415,7 +566,7 @@ function createKnowledgeCenterHandler(options) {
       item.manualStatus = { value: targetStatus, reason, updatedBy: session?.user?.id || null, updatedAt: new Date().toISOString() };
       item.assetVersion = currentVersion + 1;
       auditAsset(payload, 'ASSET_STATUS_CHANGED', handbookId, session, { before, after: targetStatus, reason, systemStatus: systemAssetStatus(item) });
-      writeKnowledgeAssets(payload);
+      writeAssetStatusPayload(payload);
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
       res.end(JSON.stringify({ success: true, data: projectAsset(item, true) }));
     } catch (error) {
@@ -440,7 +591,7 @@ function createKnowledgeCenterHandler(options) {
       else item.manualStatus = { ...item.manualStatus, reason: String(body.reason).trim(), updatedBy: session?.user?.id || null, updatedAt: new Date().toISOString(), acknowledgedSystemStatus: systemAssetStatus(item) };
       item.assetVersion = currentVersion + 1;
       auditAsset(payload, 'ASSET_STATUS_CONFLICT_RESOLVED', handbookId, session, { action, before, after: assetStatus(item), reason: body.reason || null });
-      writeKnowledgeAssets(payload);
+      writeAssetStatusPayload(payload);
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
       res.end(JSON.stringify({ success: true, data: projectAsset(item, true) }));
     } catch (error) {
@@ -1064,7 +1215,7 @@ function createKnowledgeCenterHandler(options) {
       return;
     }
     if (req.method === 'GET' && pathname === '/knowledge-center/api/outline/template') {
-      requireSession(req, res, session => { if (!forbidUnlessOutlineAction(res, session, 'outline:read')) serveOutlineWorkbook(res, OUTLINE_TEMPLATE_PATH, '大纲模板.xlsx', 'OUTLINE_TEMPLATE_UNAVAILABLE'); }); return;
+      requireSession(req, res, session => { if (!forbidUnlessOutlineAction(res, session, 'outline:read')) serveOutlineTemplateWorkbook(res); }); return;
     }
     if (req.method === 'GET' && pathname === '/knowledge-center/api/outline/sample') {
       requireSession(req, res, session => { if (!forbidUnlessOutlineAction(res, session, 'outline:read')) serveOutlineWorkbook(res, OUTLINE_SAMPLE_PATH, '基本数据库管理手册大纲示例.xlsx', 'OUTLINE_SAMPLE_UNAVAILABLE'); }); return;

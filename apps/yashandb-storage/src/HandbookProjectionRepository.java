@@ -13,7 +13,7 @@ import java.util.List;
 final class HandbookProjectionRepository {
     static final String LIST_SQL = "SELECT M.MANUAL_ID, M.MANUAL_CODE, M.MANUAL_NAME, M.PRODUCT_ID, M.PRODUCT_NAME, M.ORG_UNIT_ID, "
         + "COALESCE(V.SOURCE_REF, TO_CHAR(O.CURRENT_OUTLINE_VERSION_ID)) AS CURRENT_OUTLINE_EXTERNAL_ID, "
-        + "M.STATE, M.ARCHIVED_AT, M.ROW_VERSION, M.SUMMARY, M.MANUAL_KIND, M.IS_EXTERNALLY_VISIBLE, "
+        + "M.STATE, V.STATE AS CURRENT_OUTLINE_STATE, M.ARCHIVED_AT, M.ROW_VERSION, M.SUMMARY, M.MANUAL_KIND, M.IS_EXTERNALLY_VISIBLE, "
         + "M.CREATED_AT, M.UPDATED_AT, P.PRINCIPAL_ID AS PRIMARY_OWNER_ID, P.PRINCIPAL_NAME AS PRIMARY_OWNER_NAME, "
         + "D.PRINCIPAL_ID AS DEPUTY_OWNER_ID, D.PRINCIPAL_NAME AS DEPUTY_OWNER_NAME "
         + "FROM KC_MANUAL M LEFT JOIN KC_MANUAL_OUTLINE O ON O.MANUAL_ID = M.MANUAL_ID "
@@ -30,10 +30,10 @@ final class HandbookProjectionRepository {
             while (result.next()) {
                 rows.add(new HandbookRow(
                     result.getLong(1), result.getString(2), result.getString(3), result.getLong(4), result.getString(5),
-                    result.getString(6), result.getString(7), result.getString(8), result.getTimestamp(9), result.getLong(10),
-                    readClobOrNull(result.getClob(11)), result.getString(12), "Y".equals(result.getString(13)),
-                    result.getTimestamp(14), result.getTimestamp(15), result.getString(16), result.getString(17),
-                    result.getString(18), result.getString(19)
+                    result.getString(6), result.getString(7), result.getString(8), result.getString(9), result.getTimestamp(10),
+                    result.getLong(11), readClobOrNull(result.getClob(12)), result.getString(13), "Y".equals(result.getString(14)),
+                    result.getTimestamp(15), result.getTimestamp(16), result.getString(17), result.getString(18),
+                    result.getString(19), result.getString(20)
                 ));
             }
             return new Projection(rows, (queryCompleted - queryStarted) / 1e6, (System.nanoTime() - queryCompleted) / 1e6);
@@ -55,7 +55,7 @@ final class HandbookProjectionRepository {
 
     record HandbookRow(
         long manualId, String manualCode, String manualName, long productId, String productName, String orgUnitId,
-        String currentOutlineExternalId, String state, Timestamp archivedAt, long rowVersion, String summary,
+        String currentOutlineExternalId, String state, String currentOutlineState, Timestamp archivedAt, long rowVersion, String summary,
         String manualKind, boolean externallyVisible, Timestamp createdAt, Timestamp updatedAt,
         String primaryOwnerId, String primaryOwnerName, String deputyOwnerId, String deputyOwnerName
     ) {}

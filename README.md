@@ -28,7 +28,7 @@ npm run build
 ./knowledge-center.sh stop
 ```
 
-唯一构建脚本为 `tools/repository/build-knowledge-center.sh`，`npm run build` 只调用该入口。默认产物位于可重建的 `runtime/build/knowledge-center/current/`，详见[统一可重复构建设计](.codex/知识中心建设平台/03-详细设计/知识中心-平台-详细设计文档.md)。
+唯一构建脚本为 `tools/repository/build-knowledge-center.sh`，`npm run build` 只调用该入口。默认产物位于可重建的 `runtime/build/knowledge-center/current/`，详见[统一可重复构建设计](.codex/知识中心建设平台/03-详细设计/知识中心-平台-详细设计文档.md)。构建指纹只覆盖当前真实存在的源码输入并在扫描前校验；PingCode Vite 构建默认使用 `KNOWLEDGE_CENTER_VITE_NODE_OPTIONS=--max-old-space-size=1536`，压缩构建测试机建议配置约 8GiB 内存。
 
 默认页面：`http://192.168.130.180:13510/knowledge-center/`。根目录 `knowledge-center.sh` 是平台唯一权威运维入口，`start/restart` 默认先执行统一构建；本地配置入口为 `config/knowledge-center/.env`，启动参数、依赖与环境覆盖见[启动设计](.codex/知识中心建设平台/03-详细设计/知识中心-平台-详细设计文档.md)。
 

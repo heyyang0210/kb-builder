@@ -1348,7 +1348,7 @@ public final class Main {
             handbook.put("orgUnitId", row.orgUnitId());
             String currentOutlineId = row.currentOutlineExternalId();
             handbook.put("currentOutlineVersionId", currentOutlineId);
-            handbook.put("outline", outlineSummary(currentOutlineId, null));
+            handbook.put("outline", outlineSummary(currentOutlineId, row.currentOutlineState(), null));
             handbook.put("status", row.state().toLowerCase());
             handbook.put("sourceStatus", handbook.get("status"));
             handbook.put("archivedAt", timestampToString(row.archivedAt()));
@@ -1855,34 +1855,45 @@ public final class Main {
     private List<Map<String, Object>> assignmentsFromContent(Object content, String outlineId) {
         List<Map<String, Object>> assignments = new ArrayList<>();
         Map<String, Object> value = asMapOrEmpty(content);
-        for (Map<String, Object> part : listOfMaps(value.get("parts"))) {
-            collectContentAssignments(assignments, part.get("documents"));
-            for (Map<String, Object> chapter : listOfMaps(part.get("chapters"))) {
-                collectContentAssignmentsRecursive(assignments, chapter);
+        List<Map<String, Object>> parts = listOfMaps(value.get("parts"));
+        for (int partIndex = 0; partIndex < parts.size(); partIndex++) {
+            Map<String, Object> part = parts.get(partIndex);
+            String partPath = String.valueOf(partIndex + 1);
+            collectContentAssignments(assignments, part.get("documents"), outlineId, partPath);
+            List<Map<String, Object>> chapters = listOfMaps(part.get("chapters"));
+            for (int chapterIndex = 0; chapterIndex < chapters.size(); chapterIndex++) {
+                collectContentAssignmentsRecursive(assignments, chapters.get(chapterIndex), outlineId, partPath + "." + (chapterIndex + 1));
             }
-            for (Map<String, Object> child : listOfMaps(part.get("children"))) {
-                collectContentAssignmentsRecursive(assignments, child);
+            List<Map<String, Object>> children = listOfMaps(part.get("children"));
+            for (int childIndex = 0; childIndex < children.size(); childIndex++) {
+                collectContentAssignmentsRecursive(assignments, children.get(childIndex), outlineId, partPath + "." + (childIndex + 1));
             }
         }
         return assignments;
     }
 
-    private void collectContentAssignmentsRecursive(List<Map<String, Object>> assignments, Map<String, Object> directory) {
-        collectContentAssignments(assignments, directory.get("documents"));
-        for (Map<String, Object> child : listOfMaps(directory.get("children"))) {
-            collectContentAssignmentsRecursive(assignments, child);
+    private void collectContentAssignmentsRecursive(List<Map<String, Object>> assignments, Map<String, Object> directory, String outlineId, String directoryPath) {
+        collectContentAssignments(assignments, leafDocuments(directory), outlineId, directoryPath);
+        List<Map<String, Object>> children = listOfMaps(directory.get("children"));
+        for (int childIndex = 0; childIndex < children.size(); childIndex++) {
+            collectContentAssignmentsRecursive(assignments, children.get(childIndex), outlineId, directoryPath + "." + (childIndex + 1));
         }
     }
 
-    private void collectContentAssignments(List<Map<String, Object>> assignments, Object value) {
-        for (Map<String, Object> document : listOfMaps(value)) {
-            String nodeId = coalesce(document.get("nodeId"), document.get("outlineNodeId"), document.get("stableId"));
+    private void collectContentAssignments(List<Map<String, Object>> assignments, Object value, String outlineId, String parentPath) {
+        List<Map<String, Object>> documents = listOfMaps(value);
+        for (int documentIndex = 0; documentIndex < documents.size(); documentIndex++) {
+            Map<String, Object> document = documents.get(documentIndex);
             String sourceId = coalesce(document.get("id"), document.get("documentId"), document.get("code"));
+            String path = parentPath + "." + (documentIndex + 1);
+            String nodeId = coalesce(
+                document.get("nodeId"),
+                document.get("outlineNodeId"),
+                document.get("stableId"),
+                stableNodeId(outlineId, "document", path, coalesce(sourceId, String.valueOf(documentIndex + 1)))
+            );
             Object domains = document.get("techDomainIds");
-            if (nodeId == null && sourceId != null) {
-                nodeId = sourceId;
-            }
-            if (nodeId != null && !listValues(domains).isEmpty()) {
+            if (!listValues(domains).isEmpty()) {
                 assignments.add(mapOf("nodeId", nodeId, "techDomainIds", listValues(domains)));
             }
         }
@@ -2099,11 +2110,16 @@ public final class Main {
         return result;
     }
 
-    private Map<String, Object> outlineSummary(String currentOutlineVersionId, Object fallback) {
+    private Map<String, Object> outlineSummary(String currentOutlineVersionId, String currentOutlineState, Object fallback) {
         Map<String, Object> result = asMapOrEmpty(fallback);
         result.put("outlineId", currentOutlineVersionId);
         result.put("outlineVersion", currentOutlineVersionId);
-        result.put("bindingStatus", currentOutlineVersionId == null ? result.getOrDefault("bindingStatus", "not_created") : "published");
+        String normalizedState = currentOutlineState == null ? null : currentOutlineState.trim().toUpperCase();
+        String bindingStatus = currentOutlineVersionId == null
+            ? String.valueOf(result.getOrDefault("bindingStatus", "not_created"))
+            : ("PUBLISHED".equals(normalizedState) ? "published" : "draft");
+        result.put("status", normalizedState == null ? null : normalizedState.toLowerCase());
+        result.put("bindingStatus", bindingStatus);
         return result;
     }
 

@@ -4,6 +4,23 @@ const { createAggregateStore } = require('./aggregate-store');
 const { AGENT_RUNNER_RUNTIME_ROOT } = require('./repo-paths');
 const { createDomainStore } = require('./domain-store');
 
+function list(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function hasLeafDocuments(directory = {}) {
+  if (list(directory.documents).length || list(directory.kps).length || list(directory.knowledgePoints).length) return true;
+  return list(directory.children).some(hasLeafDocuments);
+}
+
+function hasWritableSnapshotContent(outline = {}) {
+  return list(outline.content?.parts).some(part => list(part.documents).length || list(part.chapters).some(hasLeafDocuments) || list(part.children).some(hasLeafDocuments));
+}
+
+function writableSnapshot(metadata = {}) {
+  return { ...metadata, outlines: list(metadata.outlines).filter(hasWritableSnapshotContent) };
+}
+
 /** File-backed repository used by outline routes until the database adapter is ready. */
 class OutlineRepository {
   constructor(rootDir = path.join(AGENT_RUNNER_RUNTIME_ROOT, 'outlines')) {
@@ -31,7 +48,7 @@ class OutlineRepository {
   }
 
   write(metadata) {
-    if (process.env.KNOWLEDGE_STORAGE_MODE === 'database') return this.domainStore.writeOutlinesSnapshot(metadata);
+    if (process.env.KNOWLEDGE_STORAGE_MODE === 'database') return this.domainStore.writeOutlinesSnapshot(writableSnapshot(metadata));
     fs.mkdirSync(this.rootDir, { recursive: true });
     let lockFd;
     try {
@@ -77,4 +94,4 @@ class OutlineRepository {
   }
 }
 
-module.exports = { OutlineRepository };
+module.exports = { OutlineRepository, hasWritableSnapshotContent, writableSnapshot };
