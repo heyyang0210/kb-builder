@@ -21,7 +21,7 @@ from unittest.mock import patch
 
 from app import production_lineage as production_lineage_module
 from app.production_lineage import KeywordRuleRebuild, ProductionLineageError
-from tests.test_keyword_rule_rebuild import _RebuildFixture, _descriptor, _plain
+from test_keyword_rule_rebuild import _RebuildFixture, _descriptor, _plain
 
 
 def _input_digest(dataset_id: str, refs: list[dict]) -> str:

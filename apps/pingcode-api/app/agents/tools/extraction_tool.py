@@ -175,7 +175,15 @@ class ExtractionTool:
                 raise RuntimeError("模型调用未返回结果")
             data = self._normalize_output(response.get("data", {}))
             validate(instance=data, schema=self.output_schema)
-            has_effective_result = any(item.get("knowledgePoints") for item in data.get("results", []))
+            results = data.get("results", [])
+            incompatible_collections = any(
+                item.get("entities") or item.get("relations")
+                for item in results
+                if isinstance(item, dict)
+            )
+            if incompatible_collections:
+                raise TypeError("知识点 Skill 不接受 entities 或 relations 输出")
+            has_effective_result = any(item.get("knowledgePoints") for item in results)
             if not has_effective_result:
                 raise ValueError("模型返回结构有效，但没有知识点候选")
             

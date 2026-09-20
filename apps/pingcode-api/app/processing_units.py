@@ -72,7 +72,7 @@ def _build_units(
     for block in blocks:
         if block["blockType"] == "excluded":
             if current:
-                units.append(_unit(text, current, resource_id, source_path, len(units), 
+                units.append(_unit(text, current, resource_id, source_path, len(units), max_size,
                                    overlap_blocks=overlap_blocks if overlap_blocks else None))
                 # 更新 overlap_blocks 为当前块的末尾部分
                 overlap_blocks, overlap_size = _calculate_overlap(current, overlap_chars)
@@ -83,7 +83,7 @@ def _build_units(
         # 代码块完整性保护：如果当前块是代码块且超过 max_size，尝试保持完整
         if block["blockType"] == "code_block" and len(block["content"]) > max_size:
             if current:
-                units.append(_unit(text, current, resource_id, source_path, len(units),
+                units.append(_unit(text, current, resource_id, source_path, len(units), max_size,
                                    overlap_blocks=overlap_blocks if overlap_blocks else None))
                 overlap_blocks, overlap_size = _calculate_overlap(current, overlap_chars)
                 current = []
@@ -91,7 +91,7 @@ def _build_units(
             # 代码块按行分割，尽量保持完整
             code_chunks = _split_code_block(block, max_size)
             for chunk in code_chunks:
-                units.append(_unit(text, [chunk], resource_id, source_path, len(units),
+                units.append(_unit(text, [chunk], resource_id, source_path, len(units), max_size,
                                    overlap_blocks=overlap_blocks if overlap_blocks else None))
                 overlap_blocks, overlap_size = _calculate_overlap([chunk], overlap_chars)
             continue
@@ -99,7 +99,7 @@ def _build_units(
         # 普通块处理
         if len(block["content"]) > max_size:
             if current:
-                units.append(_unit(text, current, resource_id, source_path, len(units),
+                units.append(_unit(text, current, resource_id, source_path, len(units), max_size,
                                    overlap_blocks=overlap_blocks if overlap_blocks else None))
                 overlap_blocks, overlap_size = _calculate_overlap(current, overlap_chars)
                 current = []
@@ -107,14 +107,14 @@ def _build_units(
             # 大块按段落分割
             large_chunks = _split_large_block(block, max_size)
             for chunk in large_chunks:
-                units.append(_unit(text, [chunk], resource_id, source_path, len(units),
+                units.append(_unit(text, [chunk], resource_id, source_path, len(units), max_size,
                                    overlap_blocks=overlap_blocks if overlap_blocks else None))
                 overlap_blocks, overlap_size = _calculate_overlap([chunk], overlap_chars)
             continue
         
         size = len(block["content"]) + (2 if current else 0)
         if current and current_size + size > max_size:
-            units.append(_unit(text, current, resource_id, source_path, len(units),
+            units.append(_unit(text, current, resource_id, source_path, len(units), max_size,
                                overlap_blocks=overlap_blocks if overlap_blocks else None))
             overlap_blocks, overlap_size = _calculate_overlap(current, overlap_chars)
             current = []
@@ -123,7 +123,7 @@ def _build_units(
         current_size += size
     
     if current:
-        units.append(_unit(text, current, resource_id, source_path, len(units),
+        units.append(_unit(text, current, resource_id, source_path, len(units), max_size,
                            overlap_blocks=overlap_blocks if overlap_blocks else None))
     
     # 更新前后引用
@@ -163,99 +163,41 @@ def _calculate_overlap(blocks: list[dict[str, Any]], overlap_chars: int) -> tupl
 
 def _split_code_block(block: dict[str, Any], max_size: int) -> list[dict[str, Any]]:
     """分割代码块，尽量保持行的完整性"""
-    lines = block["content"].split('\n')
-    chunks = []
-    current_lines = []
-    current_size = 0
-    
-    for line in lines:
-        line_size = len(line) + 1  # +1 for newline
-        if current_size + line_size > max_size and current_lines:
-            chunk_content = '\n'.join(current_lines)
-            chunk = dict(block)
-            chunk["content"] = chunk_content
-            chunks.append(chunk)
-            current_lines = []
-            current_size = 0
-        current_lines.append(line)
-        current_size += line_size
-    
-    if current_lines:
-        chunk_content = '\n'.join(current_lines)
-        chunk = dict(block)
-        chunk["content"] = chunk_content
-        chunks.append(chunk)
-    
-    return chunks
+    return _split_block_content(block, max_size, boundary_pattern=r"\n")
 
 
 def _split_large_block(block: dict[str, Any], max_size: int) -> list[dict[str, Any]]:
     """分割大块，优先在段落边界分割"""
+    return _split_block_content(block, max_size, boundary_pattern=r"\n\n+|[。！？.!?]")
+
+
+def _split_block_content(
+    block: dict[str, Any],
+    max_size: int,
+    *,
+    boundary_pattern: str,
+) -> list[dict[str, Any]]:
+    """按边界切分内容，并为每个子块保留可回查的真实偏移。"""
     content = block["content"]
-    
-    # 尝试在段落边界分割
-    paragraphs = re.split(r'\n\n+', content)
-    chunks = []
-    current_paragraphs = []
-    current_size = 0
-    
-    for para in paragraphs:
-        para_size = len(para) + 2  # +2 for \n\n
-        if current_size + para_size > max_size and current_paragraphs:
-            chunk_content = '\n\n'.join(current_paragraphs)
-            chunk = dict(block)
-            chunk["content"] = chunk_content
-            chunks.append(chunk)
-            current_paragraphs = []
-            current_size = 0
-        
-        # 如果单个段落就超过 max_size，按句子分割
-        if len(para) > max_size:
-            if current_paragraphs:
-                chunk_content = '\n\n'.join(current_paragraphs)
-                chunk = dict(block)
-                chunk["content"] = chunk_content
-                chunks.append(chunk)
-                current_paragraphs = []
-                current_size = 0
-            
-            # 按句子分割
-            sentences = re.split(r'([。！？.!?])', para)
-            current_sentence = []
-            current_sentence_size = 0
-            for i in range(0, len(sentences), 2):
-                sentence = sentences[i]
-                punctuation = sentences[i+1] if i+1 < len(sentences) else ''
-                full_sentence = sentence + punctuation
-                sentence_size = len(full_sentence)
-                
-                if current_sentence_size + sentence_size > max_size and current_sentence:
-                    chunk_content = ''.join(current_sentence)
-                    chunk = dict(block)
-                    chunk["content"] = chunk_content
-                    chunks.append(chunk)
-                    current_sentence = []
-                    current_sentence_size = 0
-                
-                current_sentence.append(full_sentence)
-                current_sentence_size += sentence_size
-            
-            if current_sentence:
-                chunk_content = ''.join(current_sentence)
-                chunk = dict(block)
-                chunk["content"] = chunk_content
-                chunks.append(chunk)
-            continue
-        
-        current_paragraphs.append(para)
-        current_size += para_size
-    
-    if current_paragraphs:
-        chunk_content = '\n\n'.join(current_paragraphs)
+    base_offset = int(block["markdownOffsets"]["start"])
+    chunks: list[dict[str, Any]] = []
+    start = 0
+    while start < len(content):
+        end = min(start + max_size, len(content))
+        if end < len(content):
+            matches = list(re.finditer(boundary_pattern, content[start:end]))
+            if matches:
+                candidate = start + matches[-1].end()
+                if candidate > start:
+                    end = candidate
         chunk = dict(block)
-        chunk["content"] = chunk_content
+        chunk["content"] = content[start:end]
+        chunk["markdownOffsets"] = {
+            "start": base_offset + start,
+            "end": base_offset + end,
+        }
         chunks.append(chunk)
-    
+        start = end
     return chunks
 
 
@@ -265,6 +207,7 @@ def _unit(
     resource_id: str,
     source_path: str,
     index: int,
+    max_size: int,
     overlap_blocks: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     start = blocks[0]["markdownOffsets"]["start"]
@@ -274,10 +217,9 @@ def _unit(
     # 如果有 overlap，在内容前添加 overlap 内容
     overlap_content = ""
     source_chunk_id = None
-    if overlap_blocks:
-        overlap_start = overlap_blocks[0]["markdownOffsets"]["start"]
-        overlap_end = overlap_blocks[-1]["markdownOffsets"]["end"]
-        overlap_content = text[overlap_start:overlap_end]
+    if overlap_blocks and len(content) + 2 < max_size:
+        overlap_content = "\n\n".join(item["content"] for item in overlap_blocks)
+        overlap_content = overlap_content[-(max_size - len(content) - 2):]
         source_chunk_id = f"{resource_id}:{index - 1}" if index > 0 else None
         # 将 overlap 内容添加到当前内容前面
         content = overlap_content + "\n\n" + content
@@ -301,7 +243,7 @@ def _unit(
         "contentHash": _hash_text(content),
         "normalizedOffsets": {"start": start, "end": end},
         "sourceLocations": source_locations,
-        "overlap": {"enabled": overlap_blocks is not None, "sourceChunkId": source_chunk_id},
+        "overlap": {"enabled": bool(overlap_content), "sourceChunkId": source_chunk_id},
     }
 
 

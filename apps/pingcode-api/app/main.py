@@ -1701,7 +1701,7 @@ def apply_keywords_filter(dataset_id: str, request: dict):
 @app.post("/api/config/filter-rules")
 def save_filter_rules(request: dict):
     """新增或更新过滤规则"""
-    rules_path = CONFIG_DIR / "filter-rules.json"
+    rules_path = REPOSITORY_ROOT / "config" / "shared" / "filter-rules.json"
     try:
         existing = {"rules": []}
         if rules_path.exists():
@@ -1728,7 +1728,7 @@ def save_filter_rules(request: dict):
 @app.delete("/api/config/filter-rules/{rule_id}")
 def delete_filter_rule(rule_id: str):
     """删除指定过滤规则"""
-    rules_path = CONFIG_DIR / "filter-rules.json"
+    rules_path = REPOSITORY_ROOT / "config" / "shared" / "filter-rules.json"
     if not rules_path.exists():
         error("FILTER_RULES_NOT_FOUND", "过滤规则配置文件不存在", 404)
     try:

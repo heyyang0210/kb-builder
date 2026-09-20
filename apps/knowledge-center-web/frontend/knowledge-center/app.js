@@ -119,8 +119,19 @@ function render() {
   });
   document.querySelector('.nav-caption.governance').hidden = !canAccessView('platform');
   const outlineView = appState.activeView === 'outlines' ? outlineRouteState() : {};
-  byId('view-root').innerHTML = renderer({ projection: appState.activeView === 'repository' ? appState.gitlabProjection : appState.projection, templateProjection: appState.templateProjection, cleaningProjection: appState.cleaningProjection, cleaningCanWrite: isPlatformAdmin(), reviewProjection: appState.reviewProjection, reviewUi: appState.reviewUi, outlineProjection: appState.outlineProjection, assetCatalog: appState.assetCatalog, principalProjection: appState.principalProjection, principalListState: appState.principalListState, incrementalProjection: appState.incrementalProjection, domainBuildTaskProjection: appState.domainBuildTaskProjection, gitlabProjection: appState.gitlabProjection, permissionProjection: appState.permissionProjection, governanceProjection: appState.platformGovernance, databaseConnectionProjection: appState.databaseConnectionProjection, databaseConnectionDisclosure: appState.databaseConnectionDisclosure, databaseConnectionForm: appState.databaseConnectionForm, databaseConnectionStatus: appState.databaseConnectionStatus, selectedPermissionUserId: appState.selectedPermissionUserId, permissionSaveStatus: appState.permissionSaveStatus, permissionUserSearch: appState.permissionUserSearch, permissionListState: appState.permissionListState, gitlabVerification: appState.gitlabVerification, platformAdmin: isPlatformAdmin(), platformTab: appState.platformTab, gitlabListState: appState.gitlabListState, gitlabAddingConnection: appState.gitlabAddingConnection, gitlabEditingConnection: appState.gitlabEditingConnection, outlinePermissions: { create: canPerform('outline:create'), delete: canPerform('outline:delete') }, outlineView });
+  const databasePasswordDraft = document.querySelector('[data-database-dialog] [data-database-field="password"]')?.value || '';
+  byId('view-root').innerHTML = renderer({ projection: appState.activeView === 'repository' ? appState.gitlabProjection : appState.projection, templateProjection: appState.templateProjection, cleaningProjection: appState.cleaningProjection, cleaningCanWrite: isPlatformAdmin(), reviewProjection: appState.reviewProjection, reviewUi: appState.reviewUi, outlineProjection: appState.outlineProjection, assetCatalog: appState.assetCatalog, principalProjection: appState.principalProjection, principalListState: appState.principalListState, incrementalProjection: appState.incrementalProjection, domainBuildTaskProjection: appState.domainBuildTaskProjection, gitlabProjection: appState.gitlabProjection, permissionProjection: appState.permissionProjection, governanceProjection: appState.platformGovernance, databaseConnectionProjection: appState.databaseConnectionProjection, databaseConnectionDrawerOpen: appState.databaseConnectionDrawerOpen, databaseConnectionAdvancedOpen: appState.databaseConnectionAdvancedOpen, databaseConnectionForm: appState.databaseConnectionForm, databaseConnectionStatus: appState.databaseConnectionStatus, selectedPermissionUserId: appState.selectedPermissionUserId, permissionSaveStatus: appState.permissionSaveStatus, permissionUserSearch: appState.permissionUserSearch, permissionListState: appState.permissionListState, gitlabVerification: appState.gitlabVerification, platformAdmin: isPlatformAdmin(), platformTab: appState.platformTab, gitlabListState: appState.gitlabListState, gitlabAddingConnection: appState.gitlabAddingConnection, gitlabEditingConnection: appState.gitlabEditingConnection, outlinePermissions: { create: canPerform('outline:create'), delete: canPerform('outline:delete') }, outlineView });
   window.lucide?.createIcons();
+  const databaseDialog = document.querySelector('[data-database-dialog]');
+  if (databaseDialog && appState.databaseConnectionDrawerOpen && !databaseDialog.open) {
+    databaseDialog.showModal();
+    const passwordInput = databaseDialog.querySelector('[data-database-field="password"]');
+    if (passwordInput && databasePasswordDraft) passwordInput.value = databasePasswordDraft;
+    if (appState.databaseConnectionDrawerShouldFocus) {
+      appState.databaseConnectionDrawerShouldFocus = false;
+      requestAnimationFrame(() => databaseDialog.querySelector('[data-database-close]')?.focus());
+    }
+  }
   if (appState.activeView === 'dashboard' && openDomainTaskId) {
     const dialog = [...document.querySelectorAll('[data-domain-task-dialog]')].find(item => item.dataset.domainTaskDialog === String(openDomainTaskId));
     if (dialog && !dialog.open) dialog.showModal();
@@ -329,11 +340,61 @@ async function loadDatabaseConnectionAdmin() {
   try {
     const result = await loadDatabaseConnection();
     appState.databaseConnectionProjection = result?.data || result;
-    if (appState.databaseConnectionProjection?.status === 'unconfigured' || appState.databaseConnectionProjection?.status === 'unavailable') appState.databaseConnectionDisclosure = 'auto';
   }
-  catch (error) { appState.databaseConnectionProjection = { status: 'unavailable', error: error.message }; appState.databaseConnectionDisclosure = 'expanded'; }
+  catch (error) { appState.databaseConnectionProjection = { status: 'unavailable', error: error.message }; }
   if (appState.activeView === 'platform') render();
 }
+
+function databaseConnectionPayload(container = document.querySelector('[data-database-dialog]')) {
+  return Object.fromEntries([...(container?.querySelectorAll('[data-database-field]') || [])].map(input => [input.dataset.databaseField, input.value]));
+}
+
+function databaseConnectionDraft(payload) {
+  const { password: _password, ...draft } = payload;
+  return draft;
+}
+
+function closeDatabaseConnectionDrawer({ confirmDirty = true } = {}) {
+  if (confirmDirty && appState.databaseConnectionDirty && !window.confirm('当前修改尚未保存，确定关闭吗？')) return false;
+  appState.databaseConnectionDrawerOpen = false;
+  appState.databaseConnectionDrawerShouldFocus = false;
+  appState.databaseConnectionDirty = false;
+  appState.databaseConnectionAdvancedOpen = false;
+  appState.databaseConnectionForm = null;
+  appState.databaseConnectionStatus = null;
+  render();
+  requestAnimationFrame(() => document.querySelector('[data-database-open]')?.focus());
+  return true;
+}
+
+function syncDatabaseConnectionDraft(container = document.querySelector('[data-database-dialog]')) {
+  appState.databaseConnectionForm = databaseConnectionDraft(databaseConnectionPayload(container));
+  appState.databaseConnectionDirty = true;
+  if (appState.databaseConnectionStatus?.kind === 'success') appState.databaseConnectionStatus = null;
+}
+
+function updateDatabaseConnectionOperationUi(container, status, busy = false) {
+  const feedback = container?.querySelector('.database-connection-feedback');
+  if (feedback) {
+    feedback.textContent = status?.message || '';
+    feedback.classList.toggle('success', status?.kind === 'success');
+    feedback.classList.toggle('error', status?.kind === 'error');
+    feedback.classList.toggle('pending', status?.kind === 'pending');
+  }
+  container?.querySelectorAll('[data-database-close], [data-database-test], [data-database-save]').forEach(button => { button.disabled = busy; });
+  const testButton = container?.querySelector('[data-database-test]');
+  if (testButton) testButton.textContent = busy ? '处理中…' : '仅测试连接';
+}
+
+document.addEventListener('cancel', event => {
+  if (!event.target.matches?.('[data-database-dialog]')) return;
+  event.preventDefault();
+  closeDatabaseConnectionDrawer();
+}, true);
+
+document.addEventListener('toggle', event => {
+  if (event.target.matches?.('[data-database-advanced]')) appState.databaseConnectionAdvancedOpen = event.target.open;
+}, true);
 
 let permissionSearchTimer = null;
 function refreshPermissionResults(searchValue) {
@@ -824,25 +885,53 @@ document.addEventListener('click', async event => {
     }
     return;
   }
-  const databaseToggle = event.target.closest('[data-database-toggle]');
-  if (databaseToggle) { appState.databaseConnectionDisclosure = databaseToggle.getAttribute('aria-expanded') === 'true' ? 'collapsed' : 'expanded'; render(); return; }
+  const databaseOpen = event.target.closest('[data-database-open]');
+  if (databaseOpen) {
+    appState.databaseConnectionDrawerOpen = true;
+    appState.databaseConnectionDrawerShouldFocus = true;
+    appState.databaseConnectionDirty = false;
+    appState.databaseConnectionStatus = null;
+    appState.databaseConnectionForm = { ...(appState.databaseConnectionProjection?.connection || {}), password: '' };
+    render();
+    return;
+  }
+  const databaseClose = event.target.closest('[data-database-close]');
+  if (databaseClose) { closeDatabaseConnectionDrawer(); return; }
+  if (event.target.matches?.('[data-database-dialog]')) { closeDatabaseConnectionDrawer(); return; }
   const databaseTest = event.target.closest('[data-database-test]');
   if (databaseTest) {
-    const panel = databaseTest.closest('.database-connection-panel'); const payload = Object.fromEntries([...panel.querySelectorAll('[data-database-field]')].map(input => [input.dataset.databaseField, input.value]));
-    appState.databaseConnectionForm = payload; appState.databaseConnectionDisclosure = 'expanded';
-    appState.databaseConnectionStatus = { kind: 'pending', message: '正在测试数据库连接…' }; render();
-    try { const result = await testDatabaseConnection(payload); const data = result?.data || result; appState.databaseConnectionStatus = { kind: 'success', message: data.message || '数据库连接可用' }; }
-    catch (error) { appState.databaseConnectionStatus = { kind: 'error', message: error.message || '数据库连接失败' }; appState.databaseConnectionDisclosure = 'expanded'; }
-    render(); return;
+    const dialog = databaseTest.closest('[data-database-dialog]');
+    const payload = databaseConnectionPayload(dialog);
+    appState.databaseConnectionForm = databaseConnectionDraft(payload);
+    appState.databaseConnectionStatus = { kind: 'pending', message: '正在测试页面连接配置…' };
+    updateDatabaseConnectionOperationUi(dialog, appState.databaseConnectionStatus, true);
+    try { const result = await testDatabaseConnection(payload); const data = result?.data || result; appState.databaseConnectionStatus = { kind: 'success', message: data.message || '页面连接配置可用' }; }
+    catch (error) { appState.databaseConnectionStatus = { kind: 'error', message: error.message || '数据库连接失败' }; }
+    updateDatabaseConnectionOperationUi(dialog, appState.databaseConnectionStatus, false);
+    return;
   }
   const databaseSave = event.target.closest('[data-database-save]');
   if (databaseSave) {
-    const panel = databaseSave.closest('.database-connection-panel'); const payload = Object.fromEntries([...panel.querySelectorAll('[data-database-field]')].map(input => [input.dataset.databaseField, input.value]));
-    appState.databaseConnectionForm = payload; appState.databaseConnectionDisclosure = 'expanded';
-    appState.databaseConnectionStatus = { kind: 'pending', message: '正在验证并保存…' }; render();
-    try { const result = await saveDatabaseConnection(payload, appState.databaseConnectionProjection?.rowVersion); appState.databaseConnectionProjection = result?.data || result; appState.databaseConnectionForm = null; appState.databaseConnectionStatus = { kind: 'success', message: '配置已保存，重启服务后生效。' }; appState.databaseConnectionDisclosure = 'expanded'; }
-    catch (error) { appState.databaseConnectionStatus = { kind: 'error', message: error.message || '数据库配置保存失败' }; appState.databaseConnectionDisclosure = 'expanded'; }
-    render(); return;
+    const dialog = databaseSave.closest('[data-database-dialog]');
+    const payload = databaseConnectionPayload(dialog);
+    appState.databaseConnectionForm = databaseConnectionDraft(payload);
+    appState.databaseConnectionStatus = { kind: 'pending', message: '正在验证并保存…' };
+    updateDatabaseConnectionOperationUi(dialog, appState.databaseConnectionStatus, true);
+    try {
+      const result = await saveDatabaseConnection(payload, appState.databaseConnectionProjection?.rowVersion);
+      appState.databaseConnectionProjection = result?.data || result;
+      appState.databaseConnectionForm = { ...(appState.databaseConnectionProjection?.connection || {}), password: '' };
+      appState.databaseConnectionDirty = false;
+      appState.databaseConnectionStatus = { kind: 'success', message: '页面配置已保存。' };
+      const passwordInput = dialog.querySelector('[data-database-field="password"]');
+      if (passwordInput) passwordInput.value = '';
+      render();
+    }
+    catch (error) {
+      appState.databaseConnectionStatus = { kind: 'error', message: error.message || '数据库配置保存失败' };
+      updateDatabaseConnectionOperationUi(dialog, appState.databaseConnectionStatus, false);
+    }
+    return;
   }
   /* ---- GitLab 连接选择 ---- */
   const gitlabConn = event.target.closest("[data-gitlab-connection]");
@@ -1432,6 +1521,8 @@ document.addEventListener('close', event => {
 }, true);
 
 document.addEventListener('change', async event => {
+  const databaseField = event.target.closest('[data-database-field]');
+  if (databaseField) { syncDatabaseConnectionDraft(databaseField.closest('[data-database-dialog]')); return; }
   const principalBindingFilter = event.target.closest('[data-principal-binding-filter]');
   if (principalBindingFilter) { appState.principalListState.bindingStatus = principalBindingFilter.value; render(); return; }
   const principalStateFilter = event.target.closest('[data-principal-state-filter]');
@@ -2285,6 +2376,11 @@ document.addEventListener('keydown', event => {
 });
 
 document.addEventListener('input', event => {
+  const databaseField = event.target.closest('[data-database-field]');
+  if (databaseField) {
+    syncDatabaseConnectionDraft(databaseField.closest('[data-database-dialog]'));
+    return;
+  }
   const principalSearch = event.target.closest('[data-principal-search]');
   if (principalSearch) {
     appState.principalListState.search = principalSearch.value;

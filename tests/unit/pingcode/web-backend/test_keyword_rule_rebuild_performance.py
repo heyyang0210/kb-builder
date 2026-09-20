@@ -14,7 +14,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from app.production_lineage import CommittedRebuildInputRef, KeywordRuleRebuild
-from tests.test_keyword_rule_rebuild import _descriptor
+from test_keyword_rule_rebuild import _descriptor
 
 
 def _sha(path: Path) -> str:

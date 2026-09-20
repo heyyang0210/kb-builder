@@ -18,15 +18,12 @@ import sys
 import json
 from pathlib import Path
 
-# 添加项目根目录到路径（从 tests/ 向上三级到项目根）
-PROJECT_ROOT = Path(__file__).parent.parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
-
-from config import PingCodeConfig
-from client import PingCodeClient
-from crawler import PingCodeCrawler
-from downloader import PingCodeDownloader
-from pipeline import PingCodePipeline
+from bootstrap import ROOT as PROJECT_ROOT
+from pingcode_core.client import PingCodeClient
+from pingcode_core.config import PingCodeConfig
+from pingcode_core.crawler import PingCodeCrawler
+from pingcode_core.downloader import PingCodeDownloader
+from pingcode_core.pipeline import PingCodePipeline
 
 # 测试输出目录
 TEST_OUTPUT = PROJECT_ROOT / 'refs' / 'pingcode' / '_test_output'

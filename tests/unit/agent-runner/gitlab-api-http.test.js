@@ -4,28 +4,25 @@ const os = require('os');
 const path = require('path');
 
 describe('GitLab same-origin HTTP API', () => {
-  let authServer;
   let frontend;
   let gitlabServer;
   let baseUrl;
   let gitlabUrl;
   let tempRoot;
+  let adminCookie;
+  let readerCookie;
 
   beforeAll(async () => {
     tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gitlab-http-'));
     const assets = path.join(tempRoot, 'assets.json');
     fs.writeFileSync(assets, JSON.stringify({ handbooks: [{ handbookId: 'DB-001', name: '数据库手册' }] }));
-    authServer = http.createServer((req, res) => {
-      const cookie = String(req.headers.cookie || '');
-      const admin = cookie.includes('admin');
-      const noRead = cookie.includes('no-read');
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ content: { user: { id: admin ? 'admin' : noRead ? 'no-read' : 'reader' }, roles: admin ? ['PLATFORM_ADMIN'] : ['AUTHOR'], allowedActions: admin ? ['platform:manage', 'knowledge:read'] : noRead ? [] : ['knowledge:read'] } }));
-    });
-    await new Promise(resolve => authServer.listen(0, '127.0.0.1', resolve));
-    process.env.KNOWLEDGE_CENTER_AUTH_HOST = '127.0.0.1';
-    process.env.KNOWLEDGE_CENTER_AUTH_PORT = String(authServer.address().port);
     process.env.KNOWLEDGE_ASSETS_CONFIG = assets;
+    process.env.KNOWLEDGE_CENTER_AUTH_STORE = path.join(tempRoot, 'auth.json');
+    process.env.KNOWLEDGE_CENTER_ADMIN_USERNAME = 'http-admin';
+    process.env.KNOWLEDGE_CENTER_ADMIN_PASSWORD = 'http-admin-password';
+    process.env.KNOWLEDGE_CENTER_KNOWLEDGE_EDITOR_USERNAME = 'http-reader';
+    process.env.KNOWLEDGE_CENTER_KNOWLEDGE_EDITOR_PASSWORD = 'http-reader-password';
+    process.env.KNOWLEDGE_CENTER_COOKIE_SECURE = 'false';
     process.env.KNOWLEDGE_CENTER_GITLAB_CONFIG = path.join(tempRoot, 'gitlab.json');
     process.env.KNOWLEDGE_CENTER_GITLAB_ALLOWED_HOSTS = 'git-tools.yasdb.com,127.0.0.1';
     process.env.KNOWLEDGE_CENTER_GITLAB_OAUTH_CLIENT_ID = 'http-client';
@@ -48,15 +45,20 @@ describe('GitLab same-origin HTTP API', () => {
     frontend = require('../../../apps/knowledge-center-web/frontend-server').server;
     await new Promise(resolve => frontend.listen(0, '127.0.0.1', resolve));
     baseUrl = `http://127.0.0.1:${frontend.address().port}`;
+    adminCookie = await login('http-admin', 'http-admin-password');
+    readerCookie = await login('http-reader', 'http-reader-password');
   });
 
   afterAll(async () => {
     await new Promise(resolve => frontend.close(resolve));
-    await new Promise(resolve => authServer.close(resolve));
     await new Promise(resolve => gitlabServer.close(resolve));
     fs.rmSync(tempRoot, { recursive: true, force: true });
-    delete process.env.KNOWLEDGE_CENTER_AUTH_PORT;
-    delete process.env.KNOWLEDGE_CENTER_AUTH_HOST;
+    delete process.env.KNOWLEDGE_CENTER_AUTH_STORE;
+    delete process.env.KNOWLEDGE_CENTER_ADMIN_USERNAME;
+    delete process.env.KNOWLEDGE_CENTER_ADMIN_PASSWORD;
+    delete process.env.KNOWLEDGE_CENTER_KNOWLEDGE_EDITOR_USERNAME;
+    delete process.env.KNOWLEDGE_CENTER_KNOWLEDGE_EDITOR_PASSWORD;
+    delete process.env.KNOWLEDGE_CENTER_COOKIE_SECURE;
     delete process.env.KNOWLEDGE_ASSETS_CONFIG;
     delete process.env.KNOWLEDGE_CENTER_GITLAB_CONFIG;
     delete process.env.KNOWLEDGE_CENTER_GITLAB_ALLOWED_HOSTS;
@@ -70,59 +72,59 @@ describe('GitLab same-origin HTTP API', () => {
   });
 
   test('ordinary users cannot enumerate or freely browse connections', async () => {
-    const response = await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections`, { headers: { cookie: 'reader=1' } });
+    const response = await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections`, { headers: { cookie: readerCookie } });
     expect(response.status).toBe(403);
-    const direct = await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections/unknown/tree`, { headers: { cookie: 'reader=1' } });
+    const direct = await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections/unknown/tree`, { headers: { cookie: readerCookie } });
     expect(direct.status).toBe(403);
   });
 
   test('ordinary users can list safe personal-account projections and start only configured OAuth connections', async () => {
     const configured = await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections`, {
-      method: 'POST', headers: { cookie: 'admin=1', 'content-type': 'application/json', 'idempotency-key': 'http-personal-account' },
+      method: 'POST', headers: { cookie: adminCookie, 'content-type': 'application/json', 'idempotency-key': 'http-personal-account' },
       body: JSON.stringify({ name: '公司研发 GitLab', host: gitlabUrl, project: 'cod-doc/personal', mode: 'sandbox', authMode: 'user_oauth', purpose: 'read' })
     });
     const connection = (await configured.json()).data;
-    const accounts = await fetch(`${baseUrl}/knowledge-center/api/gitlab/oauth/accounts`, { headers: { cookie: 'reader=1' } });
+    const accounts = await fetch(`${baseUrl}/knowledge-center/api/gitlab/oauth/accounts`, { headers: { cookie: readerCookie } });
     expect(accounts.status).toBe(200);
     await expect(accounts.json()).resolves.toMatchObject({ data: { items: expect.arrayContaining([expect.objectContaining({ connectionId: connection.id, name: '公司研发 GitLab', status: 'disconnected' })]) } });
-    const start = await fetch(`${baseUrl}/knowledge-center/api/gitlab/oauth/start?connectionId=${encodeURIComponent(connection.id)}`, { headers: { cookie: 'reader=1' }, redirect: 'manual' });
+    const start = await fetch(`${baseUrl}/knowledge-center/api/gitlab/oauth/start?connectionId=${encodeURIComponent(connection.id)}`, { headers: { cookie: readerCookie }, redirect: 'manual' });
     expect(start.status).toBe(302);
     expect(new URL(start.headers.get('location')).pathname).toBe('/oauth/authorize');
   });
 
   test('knowledge readers can inspect handbook access status without enumerating connections', async () => {
     const configured = await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections`, {
-      method: 'POST', headers: { cookie: 'admin=1', 'content-type': 'application/json', 'idempotency-key': 'http-access-status' },
+      method: 'POST', headers: { cookie: adminCookie, 'content-type': 'application/json', 'idempotency-key': 'http-access-status' },
       body: JSON.stringify({ name: 'oauth-access', host: gitlabUrl, project: 'cod-doc/access', mode: 'sandbox', authMode: 'user_oauth', purpose: 'read' })
     });
     const connection = (await configured.json()).data;
     const mapped = await fetch(`${baseUrl}/knowledge-center/api/gitlab/mappings/DB-001`, {
-      method: 'PUT', headers: { cookie: 'admin=1', 'content-type': 'application/json', 'idempotency-key': 'http-access-mapping' },
+      method: 'PUT', headers: { cookie: adminCookie, 'content-type': 'application/json', 'idempotency-key': 'http-access-mapping' },
       body: JSON.stringify({ connectionId: connection.id, defaultBranch: 'master', enabledBranches: ['master'], zhPaths: ['doc/产品文档'], enPaths: [] })
     });
     expect(mapped.status).toBe(200);
-    const access = await fetch(`${baseUrl}/knowledge-center/api/gitlab/handbooks/DB-001/access-status`, { headers: { cookie: 'reader=1' } });
+    const access = await fetch(`${baseUrl}/knowledge-center/api/gitlab/handbooks/DB-001/access-status`, { headers: { cookie: readerCookie } });
     expect(access.status).toBe(200);
     await expect(access.json()).resolves.toMatchObject({ data: { authMode: 'user_oauth', connected: false, canRead: false, nextAction: 'connect_gitlab' } });
-    const connections = await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections`, { headers: { cookie: 'reader=1' } });
+    const connections = await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections`, { headers: { cookie: readerCookie } });
     expect(connections.status).toBe(403);
   });
 
-  test('handbook GitLab APIs require knowledge read permission', async () => {
-    const access = await fetch(`${baseUrl}/knowledge-center/api/gitlab/handbooks/DB-001/access-status`, { headers: { cookie: 'no-read=1' } });
-    expect(access.status).toBe(403);
-    await expect(access.json()).resolves.toMatchObject({ error: { code: 'HANDBOOK_READ_FORBIDDEN' } });
+  test('handbook GitLab APIs require an authenticated session', async () => {
+    const access = await fetch(`${baseUrl}/knowledge-center/api/gitlab/handbooks/DB-001/access-status`);
+    expect(access.status).toBe(401);
+    await expect(access.json()).resolves.toMatchObject({ error: { code: 'AUTH_REQUIRED' } });
   });
 
   test('administrator changes handbook status through controlled commands', async () => {
     const changed = await fetch(`${baseUrl}/knowledge-center/api/assets/handbooks/DB-001/status`, {
-      method: 'POST', headers: { cookie: 'admin=1', 'content-type': 'application/json' },
+      method: 'POST', headers: { cookie: adminCookie, 'content-type': 'application/json' },
       body: JSON.stringify({ targetStatus: 'content_building', reason: '进入内容建设', expectedVersion: 1 }),
     });
     expect(changed.status).toBe(200);
     await expect(changed.json()).resolves.toMatchObject({ data: { status: 'content_building', manualStatus: 'content_building', assetVersion: 2 } });
     const published = await fetch(`${baseUrl}/knowledge-center/api/assets/handbooks/DB-001/status`, {
-      method: 'POST', headers: { cookie: 'admin=1', 'content-type': 'application/json' },
+      method: 'POST', headers: { cookie: adminCookie, 'content-type': 'application/json' },
       body: JSON.stringify({ targetStatus: 'handbook_published', reason: '尝试直接发布', expectedVersion: 2 }),
     });
     expect(published.status).toBe(409);
@@ -131,7 +133,7 @@ describe('GitLab same-origin HTTP API', () => {
 
   test('administrator configures a connection and handbook mapping with idempotency', async () => {
     const connectionResponse = await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections`, {
-      method: 'PUT', headers: { cookie: 'admin=1', 'content-type': 'application/json', 'idempotency-key': 'http-connection-1' },
+      method: 'PUT', headers: { cookie: adminCookie, 'content-type': 'application/json', 'idempotency-key': 'http-connection-1' },
       body: JSON.stringify({ name: 'yasdoc', host: 'https://git-tools.yasdb.com', project: 'cod-doc/yasdoc', mode: 'disabled', credentialRef: 'production-read' })
     });
     expect(connectionResponse.status).toBe(200);
@@ -140,58 +142,58 @@ describe('GitLab same-origin HTTP API', () => {
     expect(connection.credentialRef).toBeUndefined();
 
     const mappingResponse = await fetch(`${baseUrl}/knowledge-center/api/gitlab/mappings/DB-001`, {
-      method: 'PUT', headers: { cookie: 'admin=1', 'content-type': 'application/json', 'idempotency-key': 'http-mapping-1' },
+      method: 'PUT', headers: { cookie: adminCookie, 'content-type': 'application/json', 'idempotency-key': 'http-mapping-1' },
       body: JSON.stringify({ connectionId: connection.id, defaultBranch: 'master', enabledBranches: ['master'], zhPaths: ['doc/产品文档'], enPaths: ['doc/Manuals'] })
     });
     expect(mappingResponse.status).toBe(200);
     const body = await mappingResponse.json();
     expect(body.data).toMatchObject({ handbookId: 'DB-001', defaultBranch: 'master' });
 
-    const assetsResponse = await fetch(`${baseUrl}/knowledge-center/api/assets/handbooks`, { headers: { cookie: 'reader=1' } });
+    const assetsResponse = await fetch(`${baseUrl}/knowledge-center/api/assets/handbooks`, { headers: { cookie: readerCookie } });
     expect(assetsResponse.status).toBe(200);
     await expect(assetsResponse.json()).resolves.toMatchObject({ data: { items: [{ handbookId: 'DB-001', repositoryMapped: true, repository: { status: 'confirmed' } }] } });
 
-    const contentResponse = await fetch(`${baseUrl}/knowledge-center/api/gitlab/handbooks/DB-001/branches`, { headers: { cookie: 'reader=1' } });
+    const contentResponse = await fetch(`${baseUrl}/knowledge-center/api/gitlab/handbooks/DB-001/branches`, { headers: { cookie: readerCookie } });
     expect(contentResponse.status).toBe(409);
     await expect(contentResponse.json()).resolves.toMatchObject({ error: { code: 'GITLAB_CONNECTOR_DISABLED' } });
   });
 
   test('mapped reader traverses the real HTTP connector to an authorized GitLab endpoint', async () => {
     const configured = await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections`, {
-      method: 'PUT', headers: { cookie: 'admin=1', 'content-type': 'application/json', 'idempotency-key': 'http-local-connection' },
+      method: 'PUT', headers: { cookie: adminCookie, 'content-type': 'application/json', 'idempotency-key': 'http-local-connection' },
       body: JSON.stringify({ name: 'local-yasdoc', host: gitlabUrl, project: 'cod-doc/yasdoc', mode: 'sandbox', credentialRef: 'local_read' })
     });
     expect(configured.status).toBe(200);
     const connection = (await configured.json()).data;
     const mapped = await fetch(`${baseUrl}/knowledge-center/api/gitlab/mappings/DB-001`, {
-      method: 'PUT', headers: { cookie: 'admin=1', 'content-type': 'application/json', 'idempotency-key': 'http-local-mapping' },
+      method: 'PUT', headers: { cookie: adminCookie, 'content-type': 'application/json', 'idempotency-key': 'http-local-mapping' },
       body: JSON.stringify({ connectionId: connection.id, defaultBranch: 'master', enabledBranches: ['master'], zhPaths: ['doc/产品文档'], enPaths: [] })
     });
     expect(mapped.status).toBe(200);
 
-    const branches = await fetch(`${baseUrl}/knowledge-center/api/gitlab/handbooks/DB-001/branches`, { headers: { cookie: 'reader=1' } });
+    const branches = await fetch(`${baseUrl}/knowledge-center/api/gitlab/handbooks/DB-001/branches`, { headers: { cookie: readerCookie } });
     await expect(branches.json()).resolves.toMatchObject({ data: { handbookName: '数据库手册', items: [{ name: 'master', commitSha: 'abcdef123456' }] } });
-    const tree = await fetch(`${baseUrl}/knowledge-center/api/gitlab/handbooks/DB-001/tree?ref=master&language=zh`, { headers: { cookie: 'reader=1' } });
+    const tree = await fetch(`${baseUrl}/knowledge-center/api/gitlab/handbooks/DB-001/tree?ref=master&language=zh`, { headers: { cookie: readerCookie } });
     expect((await tree.json()).data).toEqual(expect.arrayContaining([expect.objectContaining({ path: 'doc/产品文档/_index.md' })]));
-    const file = await fetch(`${baseUrl}/knowledge-center/api/gitlab/handbooks/DB-001/file?ref=master&language=zh&path=${encodeURIComponent('doc/产品文档/_index.md')}`, { headers: { cookie: 'reader=1' } });
+    const file = await fetch(`${baseUrl}/knowledge-center/api/gitlab/handbooks/DB-001/file?ref=master&language=zh&path=${encodeURIComponent('doc/产品文档/_index.md')}`, { headers: { cookie: readerCookie } });
     await expect(file.json()).resolves.toMatchObject({ data: { content: '# 产品文档', commitId: 'abcdef123456' } });
-    const statistics = await fetch(`${baseUrl}/knowledge-center/api/gitlab/handbooks/DB-001/statistics?ref=master&language=zh`, { headers: { cookie: 'reader=1' } });
+    const statistics = await fetch(`${baseUrl}/knowledge-center/api/gitlab/handbooks/DB-001/statistics?ref=master&language=zh`, { headers: { cookie: readerCookie } });
     await expect(statistics.json()).resolves.toMatchObject({ data: { branch: 'master', chapterCount: 1, documentCount: 2, headSha: 'abcdef123456' } });
   });
 
   test('connection verification persists its latest result in the admin projection', async () => {
     const configured = await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections`, {
-      method: 'POST', headers: { cookie: 'admin=1', 'content-type': 'application/json', 'idempotency-key': 'http-verify-connection' },
+      method: 'POST', headers: { cookie: adminCookie, 'content-type': 'application/json', 'idempotency-key': 'http-verify-connection' },
       body: JSON.stringify({ name: 'verify-yasdoc', baseUrl: gitlabUrl, projectPath: 'cod-doc/yasdoc', mode: 'sandbox', credentialRef: 'local_read', authMode: 'service_account', purpose: 'read' })
     });
     expect(configured.status).toBe(200);
     const connection = (await configured.json()).data;
 
-    const verified = await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections/${encodeURIComponent(connection.id)}/verify`, { method: 'POST', headers: { cookie: 'admin=1' } });
+    const verified = await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections/${encodeURIComponent(connection.id)}/verify`, { method: 'POST', headers: { cookie: adminCookie } });
     expect(verified.status).toBe(200);
     await expect(verified.json()).resolves.toMatchObject({ data: { connectionId: connection.id, status: 'verified', branchCount: 1 } });
 
-    const listed = await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections`, { headers: { cookie: 'admin=1' } });
+    const listed = await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections`, { headers: { cookie: adminCookie } });
     const item = (await listed.json()).data.items.find(candidate => candidate.id === connection.id);
     expect(item).toMatchObject({ authMode: 'service_account', purpose: 'read', status: 'verified', managementStatus: 'active', verificationStatus: 'verified', lastVerification: { status: 'verified', branchCount: 1 } });
     expect(item.lastVerification.verifiedAt).toBeTruthy();
@@ -199,40 +201,52 @@ describe('GitLab same-origin HTTP API', () => {
 
   test('administrator edits, disables and enables an isolated connection', async () => {
     const createdResponse = await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections`, {
-      method: 'POST', headers: { cookie: 'admin=1', 'content-type': 'application/json', 'idempotency-key': 'http-lifecycle-create' },
+      method: 'POST', headers: { cookie: adminCookie, 'content-type': 'application/json', 'idempotency-key': 'http-lifecycle-create' },
       body: JSON.stringify({ name: 'lifecycle-docs', baseUrl: gitlabUrl, projectPath: 'cod-doc/original', mode: 'sandbox', credentialRef: 'local_read', authMode: 'service_account', purpose: 'read' })
     });
     const created = (await createdResponse.json()).data;
 
     const editedResponse = await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections/${encodeURIComponent(created.id)}`, {
-      method: 'PATCH', headers: { cookie: 'admin=1', 'content-type': 'application/json', 'idempotency-key': 'http-lifecycle-edit' },
+      method: 'PATCH', headers: { cookie: adminCookie, 'content-type': 'application/json', 'idempotency-key': 'http-lifecycle-edit' },
       body: JSON.stringify({ projectPath: 'cod-doc/edited', purpose: 'read_write' })
     });
     expect(editedResponse.status).toBe(200);
     await expect(editedResponse.json()).resolves.toMatchObject({ data: { id: created.id, projectPath: 'cod-doc/edited', purpose: 'read_write', authMode: 'service_account' } });
 
-    const disabled = await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections/${encodeURIComponent(created.id)}/disable`, { method: 'POST', headers: { cookie: 'admin=1' } });
+    const disabled = await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections/${encodeURIComponent(created.id)}/disable`, { method: 'POST', headers: { cookie: adminCookie } });
     await expect(disabled.json()).resolves.toMatchObject({ data: { status: 'disabled' } });
-    const rejected = await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections/${encodeURIComponent(created.id)}/verify`, { method: 'POST', headers: { cookie: 'admin=1' } });
+    const rejected = await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections/${encodeURIComponent(created.id)}/verify`, { method: 'POST', headers: { cookie: adminCookie } });
     expect(rejected.status).toBe(409);
     await expect(rejected.json()).resolves.toMatchObject({ error: { code: 'GITLAB_CONNECTION_INACTIVE' } });
 
-    const enabled = await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections/${encodeURIComponent(created.id)}/enable`, { method: 'POST', headers: { cookie: 'admin=1' } });
+    const enabled = await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections/${encodeURIComponent(created.id)}/enable`, { method: 'POST', headers: { cookie: adminCookie } });
     await expect(enabled.json()).resolves.toMatchObject({ data: { id: created.id } });
   });
 
   test('connection verification persists structured upstream failures', async () => {
     const configured = await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections`, {
-      method: 'POST', headers: { cookie: 'admin=1', 'content-type': 'application/json', 'idempotency-key': 'http-failed-connection' },
+      method: 'POST', headers: { cookie: adminCookie, 'content-type': 'application/json', 'idempotency-key': 'http-failed-connection' },
       body: JSON.stringify({ name: 'failed-yasdoc', baseUrl: gitlabUrl, projectPath: 'cod-doc/yasdoc', mode: 'sandbox', authMode: 'user_oauth', purpose: 'read' })
     });
     const connection = (await configured.json()).data;
-    const failed = await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections/${encodeURIComponent(connection.id)}/verify`, { method: 'POST', headers: { cookie: 'admin=1' } });
+    const failed = await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections/${encodeURIComponent(connection.id)}/verify`, { method: 'POST', headers: { cookie: adminCookie } });
     expect(failed.status).toBe(401);
     await expect(failed.json()).resolves.toMatchObject({ error: { code: 'GITLAB_OAUTH_REQUIRED', message: '请先连接 GitLab 账号' } });
 
-    const listed = await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections`, { headers: { cookie: 'admin=1' } });
+    const listed = await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections`, { headers: { cookie: adminCookie } });
     const item = (await listed.json()).data.items.find(candidate => candidate.id === connection.id);
     expect(item).toMatchObject({ status: 'failed', lastVerification: { status: 'failed', error: { code: 'GITLAB_OAUTH_REQUIRED', message: '请先连接 GitLab 账号' } } });
   });
+
+  async function login(username, password) {
+    const response = await fetch(`${baseUrl}/knowledge-center/api/auth/admin/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    expect(response.status).toBe(200);
+    const cookie = response.headers.get('set-cookie')?.split(';', 1)[0];
+    expect(cookie).toMatch(/^kc_session=/);
+    return cookie;
+  }
 });

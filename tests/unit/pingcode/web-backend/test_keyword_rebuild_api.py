@@ -105,7 +105,7 @@ class KeywordRebuildApiAcceptanceTests(unittest.TestCase):
         self.port = sock.getsockname()[1]
         sock.close()
         env = os.environ.copy()
-        backend_root = Path(__file__).resolve().parents[3] / "code" / "pingcode" / "web-backend"
+        backend_root = Path(__file__).resolve().parents[4] / "apps" / "pingcode-api"
         env.update({"PINGCODE_WEB_DATA_ROOT": str(self.root), "PYTHONPATH": str(backend_root)})
         self.process = subprocess.Popen(
             [sys.executable, "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", str(self.port)],

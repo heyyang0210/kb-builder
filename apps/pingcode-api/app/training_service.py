@@ -1156,7 +1156,7 @@ class TrainingService:
         repo_root = Path(__file__).resolve().parents[3]
         return (
             repo_root / "knowledge/skills" / "keyword-filter" / "SKILL.md",
-            repo_root / "config" / "filter-rules.json",
+            repo_root / "config" / "shared" / "filter-rules.json",
         )
 
     @staticmethod
@@ -1858,7 +1858,7 @@ class TrainingService:
     def _keyword_filter_issue_categories() -> dict[str, str]:
         """读取过滤规则中的问题类别字典，避免前后端分别维护文案。"""
         repo_root = Path(__file__).resolve().parents[3]
-        rules_path = repo_root / "config" / "filter-rules.json"
+        rules_path = repo_root / "config" / "shared" / "filter-rules.json"
         try:
             payload = json.loads(rules_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):

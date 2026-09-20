@@ -120,6 +120,31 @@ describe('数据库连接治理', () => {
     } finally { item.cleanup(); }
   });
 
+  test('service.env 中的完整连接优先于无法解密的平台待生效记录', () => {
+    const item = fixture();
+    try {
+      const configRoot = path.join(item.root, 'deployment');
+      fs.mkdirSync(configRoot);
+      fs.writeFileSync(path.join(configRoot, 'service.env'), 'YASDB_JDBC_URL=jdbc:yasdb://deployment.local:1688/yasdb\nYASDB_USERNAME=deployment-user\nYASDB_PASSWORD=deployment-secret\n');
+      fs.writeFileSync(path.join(item.root, 'database.json'), JSON.stringify({
+        version: 1,
+        pending: { version: 1, jdbcUrl: 'jdbc:yasdb://platform.local:2688/platformdb', username: 'platform-user' },
+      }));
+      const repositoryRoot = path.resolve(__dirname, '../../..');
+      const output = execFileSync('bash', ['-c', 'set -euo pipefail; source "$REPO_ROOT/tools/repository/load-yashandb-env.sh"; printf "%s|%s|%s|%s" "$KNOWLEDGE_CENTER_DATABASE_CONFIG_SOURCE" "$YASDB_JDBC_URL" "$YASDB_USERNAME" "$YASDB_PASSWORD"'], {
+        encoding: 'utf8',
+        env: {
+          PATH: process.env.PATH,
+          REPO_ROOT: repositoryRoot,
+          YASDB_CONFIG_DIR: configRoot,
+          KNOWLEDGE_CENTER_DATABASE_CONNECTION_CONFIG: path.join(item.root, 'database.json'),
+          KNOWLEDGE_CENTER_DATABASE_CONFIG_KEY: 'unit-test-key',
+        },
+      });
+      expect(output).toBe('deployment|jdbc:yasdb://deployment.local:1688/yasdb|deployment-user|deployment-secret');
+    } finally { item.cleanup(); }
+  });
+
   test('外部部署配置优先并明确标记平台配置被覆盖', async () => {
     const item = fixture({ env: {
       YASDB_JDBC_URL: 'jdbc:yasdb://deployment.local:1688/yasdb',

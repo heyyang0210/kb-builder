@@ -12,10 +12,34 @@ export YASDB_CONFIG_DIR="$CONFIG_DIR"
 database_environment_preconfigured=0
 if [[ -n "${YASDB_JDBC_URL:-}" || -n "${YASDB_USERNAME:-}" || -n "${YASDB_PASSWORD:-}" ]]; then
   database_environment_preconfigured=1
-  export KNOWLEDGE_CENTER_DATABASE_CONFIG_SOURCE="${KNOWLEDGE_CENTER_DATABASE_CONFIG_SOURCE:-environment}"
 fi
 
-if (( database_environment_preconfigured == 0 )) && [[ -f "$PLATFORM_CONFIG_RESOLVER" ]]; then
+# service.env is the deployment fallback for values not supplied by the caller.
+# Load it before consulting a pending platform record so a broken pending secret
+# cannot prevent a complete deployment configuration from starting the service.
+while IFS= read -r line || [[ -n "$line" ]]; do
+  line="${line#${line%%[![:space:]]*}}"
+  [[ -z "$line" || "$line" == \#* ]] && continue
+  [[ "$line" =~ ^(export[[:space:]]+)?YASDB_[A-Z_]+= ]] || { echo "数据库配置格式错误：$CONFIG_FILE" >&2; return 1 2>/dev/null || exit 1; }
+  key="${line%%=*}"
+  key="${key#export }"
+  value="${line#*=}"
+  value="${value#${value%%[![:space:]]*}}"
+  if [[ "$value" == \"*\" && "$value" == *\" ]] || [[ "$value" == \'*\' && "$value" == *\' ]]; then value="${value:1:${#value}-2}"; fi
+  if [[ -z "${!key+x}" ]]; then export "$key=$value"; fi
+done < "$CONFIG_FILE"
+
+database_connection_complete=0
+if [[ -n "${YASDB_JDBC_URL:-}" && -n "${YASDB_USERNAME:-}" && -n "${YASDB_PASSWORD:-}" ]]; then
+  database_connection_complete=1
+  if (( database_environment_preconfigured == 1 )); then
+    export KNOWLEDGE_CENTER_DATABASE_CONFIG_SOURCE="${KNOWLEDGE_CENTER_DATABASE_CONFIG_SOURCE:-environment}"
+  else
+    export KNOWLEDGE_CENTER_DATABASE_CONFIG_SOURCE="${KNOWLEDGE_CENTER_DATABASE_CONFIG_SOURCE:-deployment}"
+  fi
+fi
+
+if (( database_connection_complete == 0 )) && [[ -f "$PLATFORM_CONFIG_RESOLVER" ]]; then
   platform_config_output="$(node "$PLATFORM_CONFIG_RESOLVER" resolve)" || {
     echo "无法读取已保存的平台数据库配置" >&2
     return 1 2>/dev/null || exit 1
@@ -35,18 +59,6 @@ if (( database_environment_preconfigured == 0 )) && [[ -f "$PLATFORM_CONFIG_RESO
     export KNOWLEDGE_CENTER_DATABASE_CONFIG_SOURCE=platform
   fi
 fi
-
-while IFS= read -r line || [[ -n "$line" ]]; do
-  line="${line#${line%%[![:space:]]*}}"
-  [[ -z "$line" || "$line" == \#* ]] && continue
-  [[ "$line" =~ ^(export[[:space:]]+)?YASDB_[A-Z_]+= ]] || { echo "数据库配置格式错误：$CONFIG_FILE" >&2; return 1 2>/dev/null || exit 1; }
-  key="${line%%=*}"
-  key="${key#export }"
-  value="${line#*=}"
-  value="${value#${value%%[![:space:]]*}}"
-  if [[ "$value" == \"*\" && "$value" == *\" ]] || [[ "$value" == \'*\' && "$value" == *\' ]]; then value="${value:1:${#value}-2}"; fi
-  if [[ -z "${!key+x}" ]]; then export "$key=$value"; fi
-done < "$CONFIG_FILE"
 
 if [[ -z "${KNOWLEDGE_CENTER_DATABASE_CONFIG_SOURCE:-}" ]]; then
   export KNOWLEDGE_CENTER_DATABASE_CONFIG_SOURCE=deployment

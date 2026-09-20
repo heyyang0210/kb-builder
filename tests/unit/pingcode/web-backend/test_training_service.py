@@ -1932,7 +1932,7 @@ class TrainingCancellationTests(unittest.TestCase):
             FakeTasks(terminal_task),
             self.preprocess,
             None,
-            gateway=None,
+            gateway=FakeGateway([]),
         )
         with self.assertRaisesRegex(ModelTestRequiredError, "请先完成模型真实连接测试"):
             service.start(TrainingTaskCreate(batchId="batch-test", mode="formal_knowledge"))

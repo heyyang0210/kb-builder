@@ -20,7 +20,9 @@ const fs = require('fs');
 const path = require('path');
 
 const BACKEND = 'http://localhost:14110';
+const AUTH_BASE_URL = process.env.KNOWLEDGE_CENTER_SYSTEM_AUTH_URL || 'http://127.0.0.1:13510';
 const INTERMEDIATE_DIR = path.join(__dirname, '..', '..', '..', 'runtime', 'agent-runner', 'logs', 'intermediate');
+let authCookie = '';
 
 // ============================================================
 // 工具函数
@@ -34,7 +36,10 @@ function request(method, urlPath, body = null, timeoutMs = 10000) {
       port: url.port,
       path: url.pathname + url.search,
       method,
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(authCookie ? { Cookie: authCookie } : {}),
+      },
       timeout: timeoutMs
     };
     const req = http.request(options, (res) => {
@@ -53,6 +58,21 @@ function request(method, urlPath, body = null, timeoutMs = 10000) {
     if (body) req.write(JSON.stringify(body));
     req.end();
   });
+}
+
+async function loginForSystemTest() {
+  const response = await fetch(`${AUTH_BASE_URL}/knowledge-center/api/auth/admin/login`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      username: process.env.KNOWLEDGE_CENTER_SYSTEM_USERNAME || 'admin',
+      password: process.env.KNOWLEDGE_CENTER_SYSTEM_PASSWORD || 'admin',
+    }),
+  });
+  if (!response.ok) throw new Error(`系统测试登录失败: HTTP ${response.status}`);
+  const cookie = response.headers.get('set-cookie')?.split(';', 1)[0];
+  if (!cookie?.startsWith('kc_session=')) throw new Error('系统测试登录未返回 kc_session');
+  return cookie;
 }
 
 function waitForTaskCompletion(taskId, maxWaitMs = 180000, pollIntervalMs = 5000) {
@@ -308,7 +328,8 @@ describe('L1: query-planner 模块单元测试', () => {
 // ============================================================
 
 describe('L2: 集成测试 - API + MCP 检索', () => {
-  beforeAll(() => {
+  beforeAll(async () => {
+    authCookie = await loginForSystemTest();
     testReport.startTime = new Date().toISOString();
   });
 

@@ -16,7 +16,6 @@ const path = require('path');
 
 const INTEGRATION_TESTS = [
   'tests/unit/agent-runner/api.test.js',
-  'tests/unit/agent-runner/document-api.test.js',
   'tests/unit/agent-runner/system-retrieval-flow.test.js',
   'tests/unit/agent-runner/langgraph-workflow.test.js',
 ];

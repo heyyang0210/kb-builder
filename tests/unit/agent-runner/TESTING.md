@@ -88,7 +88,6 @@
 | 文件 | 测试对象 | 说明 |
 |------|----------|------|
 | `api.test.js` | API 接口 | HTTP 端点验证 |
-| `document-api.test.js` | 文档 API | 文档 CRUD 操作 |
 | `system-retrieval-flow.test.js` | 检索流程 | L1→L2→L3 三层检索 |
 | `langgraph-workflow.test.js` | LangGraph 工作流 | 状态图执行 |
 
@@ -127,60 +126,48 @@
 ### 3.1 总入口脚本
 
 ```bash
-# 运行全部测试（推荐日常使用）
-node tests/run-all-tests.js
+# 快速关键路径
+python3 tests/run_tests.py smoke
 
-# 跳过 E2E 测试（CI 环境常用）
-node tests/run-all-tests.js --skip-e2e
+# 全量测试
+python3 tests/run_tests.py full
 
-# 详细输出
-node tests/run-all-tests.js --verbose
+# 仅展示执行计划
+python3 tests/run_tests.py full --dry-run
 
-# 带覆盖率统计
-node tests/run-all-tests.js --coverage
-
-# 生成测试报告
-node tests/run-all-tests.js --report
+# 生成汇总报告
+python3 tests/run_tests.py full --report runtime/test-reports/full.json
 ```
 
 ### 3.2 按分类运行
 
 ```bash
 # 仅运行单元测试
-node tests/run-all-tests.js unit
+python3 tests/run_tests.py unit
 
 # 仅运行集成测试
-node tests/run-all-tests.js integration
+python3 tests/run_tests.py integration
 
-# 仅运行预处理测试
-node tests/run-all-tests.js preprocessing
+# 仅运行契约、系统和门禁测试
+python3 tests/run_tests.py contract
+python3 tests/run_tests.py system
+python3 tests/run_tests.py gate
 
 # 仅运行 E2E 测试
-node tests/run-all-tests.js e2e
-
-# 仅运行功能测试
-node tests/run-all-tests.js functional
+python3 tests/run_tests.py e2e
 ```
 
-### 3.3 分类专用入口
+### 3.3 分类与维护
 
-```bash
-# 单元测试
-node tests/run-unit-tests.js
+统一入口按文件命名自动发现测试，详细规则见仓库根目录的 `tests/README.md`。旧的 JavaScript 分类脚本仅作为历史实现保留，不再作为对外测试入口。
 
-# 集成测试
-node tests/run-integration-tests.js
-
-# 预处理模块测试
-node tests/run-preprocessing-tests.js
-node tests/run-preprocessing-tests.js --report   # 生成专项报告
-```
+当前 Playwright E2E 只看护知识中心 `13510` 拓扑。旧 Agent Runner 的 `3500/4100` 页面用例、一次性调试脚本和 `13502` 迁移入口已退出全量测试；当前功能必须在知识中心模块测试或当前 E2E 中建立等价回归覆盖。
 
 ### 3.4 Office 保真与视觉接口验证
 
 ```bash
 sudo apt-get install -y libreoffice-core libreoffice-writer libreoffice-impress poppler-utils
-node tests/run-preprocessing-tests.js --verbose
+python3 tests/run_tests.py unit
 
 # 官方 OpenAI 接口
 RUN_VISION_INTEGRATION=1 \
@@ -237,7 +224,6 @@ tests/
 ├── retrieval-query-builder.test.js
 │
 ├── api.test.js                   # API 接口测试
-├── document-api.test.js          # 文档 API 测试
 ├── system-retrieval-flow.test.js # 系统检索流程测试
 ├── langgraph-workflow.test.js    # LangGraph 工作流测试
 │
@@ -316,11 +302,8 @@ tests/
 ### 6.2 查看覆盖率
 
 ```bash
-# 预处理模块覆盖率
-node tests/run-preprocessing-tests.js --coverage
-
 # 全量覆盖率
-npx jest --coverage
+npx jest --config tests/unit/agent-runner/jest.config.js --coverage
 
 # 生成 HTML 报告
 npx jest --coverage --coverageReporters=html
@@ -350,21 +333,18 @@ jobs:
       - name: Install dependencies
         run: cd agent-runner && npm install
       
-      - name: Run unit tests
-        run: cd agent-runner && node tests/run-all-tests.js unit --coverage
-      
-      - name: Run preprocessing tests
-        run: cd agent-runner && node tests/run-all-tests.js preprocessing --coverage
-      
-      - name: Run integration tests
-        run: cd agent-runner && node tests/run-all-tests.js integration
+      - name: Run smoke tests
+        run: python3 tests/run_tests.py smoke
+
+      - name: Validate full test plan
+        run: python3 tests/run_tests.py full --dry-run
 ```
 
 ### 7.2 本地 CI 模拟
 
 ```bash
-# 模拟 CI 环境（跳过 E2E，生成报告）
-node tests/run-all-tests.js --skip-e2e --coverage --report
+# 执行快速 CI 门禁并生成报告
+python3 tests/run_tests.py smoke --report runtime/test-reports/smoke.json
 ```
 
 ---
@@ -375,7 +355,7 @@ node tests/run-all-tests.js --skip-e2e --coverage --report
 
 ```bash
 # 1. 使用详细输出
-node tests/run-all-tests.js --verbose
+python3 tests/run_tests.py full
 
 # 2. 单独运行失败的测试
 npx jest tests/agents.test.js --verbose
@@ -404,30 +384,27 @@ npx playwright install
 npm start
 
 # 3. 运行 E2E 测试
-node tests/run-all-tests.js e2e
+python3 tests/run_tests.py e2e
 ```
 
 ### Q: 如何添加新的测试？
 
-1. 确定测试分类（单元/集成/功能/E2E）
-2. 按命名规范创建文件
-3. 将文件路径添加到对应的入口脚本中
-4. 更新本文档的测试文件清单
+1. 确定测试分类（门禁/单元/契约/集成/系统/E2E）。
+2. 按 `tests/README.md` 的命名规范创建文件，入口会自动发现。
+3. 只有用例需要进入快速关键路径时，才维护 `tests/run_tests.py` 中的 `SMOKE_FILES`。
+4. 运行 `python3 tests/run_tests.py list` 和对应分类验证归类结果。
 
 ---
 
 ## 9. 测试统计
 
-| 分类 | 文件数 | 用例数 | 状态 |
-|------|--------|--------|------|
-| 单元测试 | 9 | ~150 | ✅ |
-| 预处理测试 | 18 | 204 | ✅ |
-| 集成测试 | 4 | ~60 | ✅ |
-| 功能测试 | 5 | ~25 | ✅ |
-| E2E 测试 | 9 | ~50 | ✅ |
-| **合计** | **33** | **~364** | |
+测试文件持续增长，不在文档中维护容易过期的静态数字。使用以下命令查看当前分类统计：
+
+```bash
+python3 tests/run_tests.py list
+```
 
 ---
 
-**文档版本**：v1.0  
-**最后更新**：2026-07-23
+**文档版本**：v1.1
+**最后更新**：2026-09-20

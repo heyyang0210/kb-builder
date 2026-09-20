@@ -2,15 +2,15 @@
 const { defineConfig, devices } = require('@playwright/test');
 
 module.exports = defineConfig({
-  testDir: './tests/e2e',
+  testDir: '../../e2e/agent-runner',
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 1,
   workers: 1,
   reporter: [
-    ['html', { open: 'never', outputFolder: 'tests/e2e/reports' }],
+    ['html', { open: 'never', outputFolder: '../../e2e/agent-runner/reports' }],
     ['list']
-  ],
+  ].filter(project => !process.env.PLAYWRIGHT_PROJECTS || process.env.PLAYWRIGHT_PROJECTS.split(',').includes(project.name)),
   timeout: 30000,
   expect: { timeout: 10000 },
   use: {

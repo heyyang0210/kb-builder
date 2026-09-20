@@ -56,7 +56,6 @@ const TEST_CATEGORIES = {
     description: '测试模块间交互和系统流程',
     files: [
       'tests/unit/agent-runner/api.test.js',
-      'tests/unit/agent-runner/document-api.test.js',
       'tests/unit/agent-runner/system-retrieval-flow.test.js',
       'tests/unit/agent-runner/langgraph-workflow.test.js',
     ]
@@ -356,7 +355,6 @@ function getTestDescription(file) {
     'tests/preprocessing/quality-validator.test.js': '质量验证（清洗/分块/索引检查点）',
     'tests/preprocessing/pipeline-integration.test.js': '预处理流水线端到端集成',
     'tests/api.test.js': 'API 接口测试',
-    'tests/document-api.test.js': '文档 API 测试',
     'tests/system-retrieval-flow.test.js': '系统检索全流程',
     'tests/langgraph-workflow.test.js': 'LangGraph 工作流集成',
     'tests/button-functional-test.js': '前端按钮功能验证',

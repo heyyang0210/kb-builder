@@ -38,10 +38,11 @@ npm run build
 
 ```bash
 npm run check:node
-npm run test:knowledge-center -- --runInBand
+python3 tests/run_tests.py smoke
+python3 tests/run_tests.py full
 ```
 
-测试需要安装 Jest；Python 测试使用含 FastAPI 等项目依赖的解释器，并设置 `PYTHONPATH=apps/pingcode-api:packages/pingcode-core`。浏览器测试与真实外部服务验证的前提见对应测试文件，避免向生产任务写入测试数据。
+统一测试入口及分类命令见 [tests/README.md](tests/README.md)，设计约束见 [仓库统一测试入口设计](docs/统一测试入口设计.md)。入口会自动设置 Python 模块路径；测试仍需安装 Jest、Playwright、FastAPI 等对应项目依赖。浏览器测试与真实外部服务验证的前提见对应测试文件，避免向生产任务写入测试数据。
 
 ## 文档与协作
 

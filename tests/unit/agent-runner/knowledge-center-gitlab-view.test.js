@@ -37,7 +37,7 @@ describe('知识资产 GitLab 阅读前端契约', () => {
     expect(assets).toContain('repositoryMapped');
     expect(assets).toContain("/knowledge-center/review?handbookId=${encodeURIComponent(id)}");
     expect(assets).toContain('<strong>审核与发布</strong>');
-    expect(assets).toContain('阅读文档、查看修改并完成审核');
+    expect(assets).toContain('查看仓库内容、审阅并发布');
     expect(assets).not.toContain('<strong>仓库内容</strong>');
     expect(assets).toContain('配置仓库映射');
     expect(assets).toContain('维护仓库映射');

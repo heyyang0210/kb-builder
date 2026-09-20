@@ -87,8 +87,8 @@ describe('PlannerAgent', () => {
     expect(messages[1].content).toContain('B+树索引');
   });
 
-  test('parseResponse 解析执行计划', () => {
-    const result = agent.parseResponse(mockPlanResponse, { knowledgePoint: { name: 'test' } });
+  test('parseResponse 解析执行计划', async () => {
+    const result = await agent.parseResponse(mockPlanResponse, { knowledgePoint: { name: 'test' } });
     expect(result.knowledge_point).toBeDefined();
     expect(result.document_structure).toBeDefined();
     expect(result.retrieval_plan).toBeDefined();

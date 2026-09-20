@@ -993,7 +993,9 @@ function createKnowledgeCenterHandler(options) {
       const params = new URL(req.url, 'http://localhost').searchParams;
       const handbookId = String(params.get('handbookId') || '');
       if (!handbookId) throw new GitLabConnectorError('HANDBOOK_REQUIRED', '必须指定手册', 400);
-      const assetPromise = requireHandbookReadAsync(session, handbookId);
+      // Resolve access before reading the mapping so a missing handbook cannot
+      // leave a rejected promise unobserved when mapping lookup also fails.
+      const asset = await requireHandbookReadAsync(session, handbookId);
       const { mapping, connection } = findMapping(handbookId, GITLAB_CONFIG_PATH);
       const metadataStartedAt = process.hrtime.bigint();
       const projected = sanitizeConnection(connection);
@@ -1002,10 +1004,7 @@ function createKnowledgeCenterHandler(options) {
       if (!roots.length) throw new GitLabConnectorError('GITLAB_LANGUAGE_NOT_MAPPED', '该语言尚未配置仓库内容路径', 404);
       const metadataMs = Number(process.hrtime.bigint() - metadataStartedAt) / 1e6;
       const branchesStartedAt = process.hrtime.bigint();
-      const [asset, allBranches] = await Promise.all([
-        assetPromise,
-        gitLabRequestForUser(session, connection, options => listBranches(connection, options)),
-      ]);
+      const allBranches = await gitLabRequestForUser(session, connection, options => listBranches(connection, options));
       const branchesMs = Number(process.hrtime.bigint() - branchesStartedAt) / 1e6;
       const branches = allBranches.filter(item => mapping.enabledBranches.includes(item.name));
       const branch = params.get('branch') || mapping.defaultBranch || branches[0]?.name || '';

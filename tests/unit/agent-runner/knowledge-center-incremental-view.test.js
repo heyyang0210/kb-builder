@@ -99,15 +99,13 @@ describe('增量构建前端契约', () => {
     expect(review).toContain('data-review-handbook-select');
     for (const control of ['data-review-directory-toggle', 'data-review-directory-resizer', 'data-review-focus-toggle']) expect(review).toContain(control);
     for (const honestState of ['数据库语法、参数依赖、版本适配、错误码和运维命令专项检查尚未执行', '分析尚未执行', '版本变更记录', '审核历史']) expect(review).toContain(honestState);
-    expect(app()).toContain('appState.gitlabProjection = null');
+    expect(app()).toContain('// 保留已成功加载的 gitlabProjection');
     expect(app()).toContain('contextConflict');
-    expect(app()).toContain("['under_review', 'review_pending', 'approved', 'pending_publish']");
-    expect(app()).toContain('requested ? await loadIncrementalTask(requested)');
+    expect(app()).toContain('selectedId ? await loadIncrementalTask(selectedId) : null');
     expect(app()).toContain("new URLSearchParams({ pageSize: '100' })");
     expect(app()).toContain('knowledge-center-review-directory-collapsed');
     expect(app()).toContain("event.key === 'Escape'");
     expect(read('apps/knowledge-center-web/frontend/knowledge-center/common/state/app-state.js')).toContain('reviewUi:');
-    expect(read('apps/knowledge-center-web/frontend/knowledge-center/styles.css')).toContain('body.review-view main');
   });
 
   test('阅读文档步骤提供在线选区提意见入口并复用审核线程', () => {

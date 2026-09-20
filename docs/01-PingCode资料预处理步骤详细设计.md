@@ -354,6 +354,8 @@ ocr_required / unsupported / quarantined / cancelled
 
 ### 7.3 处理单元记录
 
+处理单元拆分后必须重新计算其在规范文本中的 `normalizedOffsets`；`content` 长度上限包含 overlap 内容，不得因复用原块偏移或追加 overlap 而超过 `maxUnitCharacters`。
+
 ```json
 {
   "chunkId": "resource_xxx:0",

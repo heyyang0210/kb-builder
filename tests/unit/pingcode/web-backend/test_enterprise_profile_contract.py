@@ -7,8 +7,8 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 from jsonschema import Draft202012Validator
 
 
-REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
-CONTRACT_ROOT = REPOSITORY_ROOT / "contracts" / "enterprise-profile" / "v1"
+REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
+CONTRACT_ROOT = REPOSITORY_ROOT / "packages" / "platform-contracts" / "enterprise-profile" / "v1"
 SCHEMA = json.loads((CONTRACT_ROOT / "enterprise-profile.schema.json").read_text(encoding="utf-8"))
 VALIDATOR = Draft202012Validator(SCHEMA)
 SENSITIVE_KEY = re.compile(r"^(password|token|apiKey|cookie|casTicket|secret)$", re.IGNORECASE)

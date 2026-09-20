@@ -14,12 +14,12 @@ from app.production_lineage import (
     KeywordRuleRebuild,
     ProductionLineageError,
 )
-from tests.test_keyword_rebuild_input_snapshot import (
+from test_keyword_rebuild_input_snapshot import (
     DATASET_ID,
     TASK_ID,
     _DatasetFixture,
 )
-from tests.test_keyword_rule_rebuild import _descriptor
+from test_keyword_rule_rebuild import _descriptor
 
 
 class _RuleOnlyExecutor:
