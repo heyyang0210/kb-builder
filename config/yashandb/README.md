@@ -6,6 +6,8 @@
 
 `YASDB_STORAGE_SQL_DIR` 默认不在 `service.env` 中配置，存储服务固定消费 `runtime/build/knowledge-center/current/java/sql/` 的统一构建产物。只有受控发布流程才可显式指定其他 SQL 目录，且该目录必须包含构建生成的 `migration-source.properties`；不得指向 `apps/yashandb-storage/sql/` 源码目录执行迁移。
 
+`YASDB_MIGRATION_CHECKSUM_POLICY` 控制普通服务启动遇到已执行迁移摘要不一致时的行为：开发环境默认 `warn`，记录数据库摘要与当前文件摘要后继续启动；生产或共享环境应显式设为 `strict`。无论该配置为何值，`start.sh migrate` 始终严格拒绝摘要冲突。
+
 配置优先级为：调用方显式参数 > 进程环境变量/密钥系统 > `service.env` > 代码安全默认值。
 
 不同环境直接覆盖变量，例如开发测试数据库：

@@ -25,7 +25,7 @@ export YASDB_STORAGE_PORT='14210'
 ./start.sh
 ```
 
-`./start.sh migrate` 显式执行待应用迁移并退出；`./start.sh` 只校验迁移版本、别名和摘要，存在待执行版本时拒绝启动服务。
+`./start.sh migrate` 显式执行待应用迁移并退出；`./start.sh` 校验迁移版本、别名和摘要，存在待执行版本时拒绝启动服务。普通启动遇到摘要冲突时会同时输出数据库登记值和当前构建文件值；开发环境默认按 `YASDB_MIGRATION_CHECKSUM_POLICY=warn` 告警后继续，生产或共享环境应设为 `strict`。显式 `migrate` 始终严格拒绝摘要冲突，任何模式都不会自动修改迁移记录。
 显式迁移还会校验构建产物中的 `migration-source.properties`：SQL 和版本别名必须来自已提交的 Git revision，否则在连接数据库前拒绝执行。这防止脏工作树中的 SQL 先落库、后续提交又改变文件字节而导致启动摘要冲突。
 迁移文件发现、历史别名兼容、摘要校验和 SQL 执行由 `src/migration/SchemaMigrationManager.java` 集中维护，业务入口只负责编排连接和服务生命周期。
 

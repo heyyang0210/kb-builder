@@ -47,7 +47,7 @@ public final class SchemaMigrationManager {
                 throw new SQLException("首个迁移未创建 KC_SCHEMA_MIGRATION：" + migrations.get(0).getFileName());
             }
             if (migrationTableExists && migrationApplied(connection, version, checksum,
-                aliases.getOrDefault(version, List.of()))) continue;
+                aliases.getOrDefault(version, List.of()), true)) continue;
             try {
                 executeSqlScript(connection, script, file.getFileName().toString());
                 if (!tableExists(connection, "KC_SCHEMA_MIGRATION")) {
@@ -65,16 +65,24 @@ public final class SchemaMigrationManager {
     public void verify(Connection connection) throws SQLException {
         List<Path> migrations = migrationFiles();
         Map<String, List<String>> aliases = migrationAliases(migrations);
+        boolean checksumMismatchFatal = checksumMismatchFatal();
         if (!tableExists(connection, "KC_SCHEMA_MIGRATION")) {
             throw new SQLException("数据库尚未初始化，请先执行 start.sh migrate");
         }
         for (Path file : migrations) {
             String version = versionOf(file);
             String checksum = sha256(readSql(file));
-            if (!migrationApplied(connection, version, checksum, aliases.getOrDefault(version, List.of()))) {
+            if (!migrationApplied(connection, version, checksum, aliases.getOrDefault(version, List.of()), checksumMismatchFatal)) {
                 throw new SQLException("存在待执行的数据库迁移，请先执行 start.sh migrate：" + version);
             }
         }
+    }
+
+    private boolean checksumMismatchFatal() throws SQLException {
+        String policy = System.getenv().getOrDefault("YASDB_MIGRATION_CHECKSUM_POLICY", "warn").trim();
+        if (policy.equalsIgnoreCase("strict")) return true;
+        if (policy.equalsIgnoreCase("warn")) return false;
+        throw new SQLException("YASDB_MIGRATION_CHECKSUM_POLICY 仅支持 warn 或 strict，当前值：" + policy);
     }
 
     private List<Path> migrationFiles() throws SQLException {
@@ -161,7 +169,8 @@ public final class SchemaMigrationManager {
         }
     }
 
-    private boolean migrationApplied(Connection connection, String version, String checksum, List<String> aliases) throws SQLException {
+    private boolean migrationApplied(Connection connection, String version, String checksum, List<String> aliases,
+        boolean checksumMismatchFatal) throws SQLException {
         List<String> candidates = new ArrayList<>();
         candidates.add(version);
         candidates.addAll(aliases);
@@ -171,8 +180,13 @@ public final class SchemaMigrationManager {
                 query.setString(1, candidate);
                 try (ResultSet result = query.executeQuery()) {
                     if (!result.next()) continue;
-                    if (!checksum.equals(result.getString(1).trim())) {
-                        throw new SQLException("数据库迁移摘要不一致：" + candidate);
+                    String recordedChecksum = result.getString(1).trim();
+                    if (!checksum.equals(recordedChecksum)) {
+                        String message = "数据库迁移摘要不一致：" + candidate
+                            + "（数据库=" + recordedChecksum + "，当前文件=" + checksum + "）";
+                        if (checksumMismatchFatal) throw new SQLException(message);
+                        System.err.println("警告：" + message
+                            + "；当前策略为 warn，开发环境继续启动，执行 migrate 时仍会严格拒绝该冲突");
                     }
                     applied = true;
                 }
@@ -236,8 +250,10 @@ public final class SchemaMigrationManager {
             query.setString(1, version);
             try (ResultSet result = query.executeQuery()) {
                 if (result.next()) {
-                    if (!checksum.equals(result.getString(1).trim())) {
-                        throw new SQLException("数据库迁移摘要不一致：" + version);
+                    String recordedChecksum = result.getString(1).trim();
+                    if (!checksum.equals(recordedChecksum)) {
+                        throw new SQLException("数据库迁移摘要不一致：" + version
+                            + "（数据库=" + recordedChecksum + "，当前文件=" + checksum + "）");
                     }
                     return;
                 }

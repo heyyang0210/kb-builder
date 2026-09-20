@@ -96,6 +96,8 @@ OUTLINE_INTERNAL_TOKEN="${KNOWLEDGE_CENTER_OUTLINE_INTERNAL_TOKEN:-}"
 ACTION="${1:-help}"
 NO_BUILD=0
 VERBOSE=0
+FAILURE_COMPONENT=""
+FAILURE_LOG=""
 if [[ -n "${2:-}" ]]; then
   case "$2" in
     --no-build)
@@ -283,6 +285,8 @@ validate_build_artifact() {
 build_platform() {
   echo "构建知识中心统一产物..."
   if ! KNOWLEDGE_CENTER_BUILD_ROOT="$BUILD_ROOT_REL" "$BUILD_SCRIPT" >"$LOG_DIR/knowledge-center-build.log" 2>&1; then
+    FAILURE_COMPONENT="统一构建"
+    FAILURE_LOG="$LOG_DIR/knowledge-center-build.log"
     echo "错误：知识中心构建失败：$LOG_DIR/knowledge-center-build.log" >&2
     tail -n 40 "$LOG_DIR/knowledge-center-build.log" >&2 || true
     return 1
@@ -296,7 +300,9 @@ stop_service() {
   [[ -f "$file" ]] || return 0
   pid="$(tr -d '[:space:]' <"$file" 2>/dev/null || true)"
   if ! service_process_matches "$name" "$pid"; then
-    echo "警告：移除失效 PID 记录，不停止未知进程：$name ${pid:-空}" >&2
+    if process_alive "$pid"; then
+      echo "警告：PID 记录指向非本仓库进程，保留该进程并移除记录：$name $pid" >&2
+    fi
     rm -f "$file"
     return 0
   fi
@@ -382,6 +388,30 @@ start_service() {
   STARTED_SERVICES+=("$name")
 }
 
+print_component_diagnostic() {
+  local name="$1" logfile="$2" mismatch
+  [[ -f "$logfile" ]] || return 0
+  if grep -Fq '数据库迁移摘要不一致' "$logfile"; then
+    mismatch="$(grep -F '数据库迁移摘要不一致' "$logfile" | head -n 1 | sed 's/^[[:space:]]*//')"
+    echo "诊断：$name 数据库迁移完整性校验失败，平台已停止启动且未修改数据库。" >&2
+    echo "详情：$mismatch" >&2
+    echo "处理建议：先核对当前数据库环境与构建版本；不要修改已执行 SQL，也不要直接更新 KC_SCHEMA_MIGRATION。" >&2
+  elif grep -Fq '存在待执行的数据库迁移' "$logfile"; then
+    echo "诊断：$name 检测到待执行迁移。请先审核迁移来源和目标数据库，再显式执行 apps/yashandb-storage/start.sh migrate。" >&2
+  elif grep -Eq 'Connection refused|连接.*失败|认证失败|authentication|password' "$logfile"; then
+    echo "诊断：$name 无法连接依赖服务，请检查 config/yashandb/ 连接配置、网络和凭据。" >&2
+  fi
+}
+
+print_component_warnings() {
+  local name="$1" logfile="$2" warning
+  [[ -f "$logfile" ]] || return 0
+  warning="$(grep -F '警告：数据库迁移摘要不一致' "$logfile" | tail -n 1 || true)"
+  if [[ -n "$warning" ]]; then
+    echo "启动告警：$name：${warning#警告：}" >&2
+  fi
+}
+
 wait_ready() {
   local name="$1" url="$2" deadline pid port owner
   deadline=$((SECONDS + START_TIMEOUT))
@@ -389,19 +419,26 @@ wait_ready() {
   port="$(service_port "$name")"
   while (( SECONDS < deadline )); do
     if ! process_alive "$pid"; then
+      FAILURE_COMPONENT="$name"
+      FAILURE_LOG="$LOG_DIR/$name.log"
       echo "错误：$name 进程已退出：$LOG_DIR/$name.log" >&2
       tail -n 40 "$LOG_DIR/$name.log" >&2 || true
+      print_component_diagnostic "$name" "$LOG_DIR/$name.log"
       return 1
     fi
     owner="$(listener_pid "$port")"
     if service_process_matches "$name" "$pid" && [[ "$owner" == "$pid" ]] && http_ready "$url"; then
+      print_component_warnings "$name" "$LOG_DIR/$name.log"
       echo "$name 已就绪：$url"
       return 0
     fi
     sleep 1
   done
+  FAILURE_COMPONENT="$name"
+  FAILURE_LOG="$LOG_DIR/$name.log"
   echo "错误：$name 在 ${START_TIMEOUT}s 内未就绪：$LOG_DIR/$name.log" >&2
   tail -n 40 "$LOG_DIR/$name.log" >&2 || true
+  print_component_diagnostic "$name" "$LOG_DIR/$name.log"
   return 1
 }
 
@@ -476,6 +513,12 @@ restart_platform() {
 
 print_failure_summary() {
   echo "知识中心操作失败。" >&2
+  if [[ -n "$FAILURE_COMPONENT" ]]; then
+    echo "失败阶段：$FAILURE_COMPONENT" >&2
+  fi
+  if [[ -n "$FAILURE_LOG" ]]; then
+    echo "失败日志：$FAILURE_LOG" >&2
+  fi
   if validate_port_configuration >/dev/null 2>&1 \
     && [[ -n "$INTERNAL_HOST" && -n "$PUBLIC_HOST" && -n "$PINGCODE_HOST" ]]; then
     echo "当前组件状态：" >&2
@@ -488,7 +531,7 @@ print_failure_summary() {
 }
 
 status_platform() {
-  local failed=0 healthy=0 total=4 name pid url port owner state
+  local failed=0 healthy=0 total=4 name pid url port owner state reason
   for name in document pingcode frontend storage; do
     pid="$(cat "$(pid_file "$name")" 2>/dev/null || true)"
     url="$(service_url "$name")"
@@ -496,13 +539,27 @@ status_platform() {
     owner="$(listener_pid "$port")"
     if service_process_matches "$name" "$pid" && [[ "$owner" == "$pid" ]] && http_ready "$url"; then
       state=running
+      reason=healthy
       healthy=$((healthy + 1))
     else
       state=stopped-or-unhealthy
       failed=1
+      if [[ -z "$pid" ]]; then
+        reason=pid-file-missing
+      elif ! process_alive "$pid"; then
+        reason=process-exited
+      elif ! service_process_matches "$name" "$pid"; then
+        reason=process-identity-mismatch
+      elif [[ -z "$owner" ]]; then
+        reason=port-not-listening
+      elif [[ "$owner" != "$pid" ]]; then
+        reason="port-owned-by-$owner"
+      else
+        reason=http-health-check-failed
+      fi
     fi
     if (( VERBOSE == 1 )); then
-      echo "$name: $state pid=${pid:-unknown} url=$url"
+      echo "$name: $state reason=$reason pid=${pid:-unknown} url=$url"
     fi
   done
   if (( failed == 0 )); then

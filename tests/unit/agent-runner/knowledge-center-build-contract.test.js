@@ -66,6 +66,10 @@ describe('knowledge center unified build contract', () => {
     expect(storageScript).toContain('migration_source_actual_sha');
     expect(storageScript).toContain('migration_source_expected_sha');
     expect(yashandbEnvExample).not.toContain('YASDB_STORAGE_SQL_DIR=apps/yashandb-storage/sql');
+    expect(yashandbEnvExample).toContain('YASDB_MIGRATION_CHECKSUM_POLICY=warn');
+    expect(schemaMigrationManager).toContain('getOrDefault("YASDB_MIGRATION_CHECKSUM_POLICY", "warn")');
+    expect(schemaMigrationManager).toContain('aliases.getOrDefault(version, List.of()), true');
+    expect(schemaMigrationManager).toContain('执行 migrate 时仍会严格拒绝该冲突');
   });
 
   test('业务表按四个稳定业务边界共享主键序列', () => {
@@ -130,10 +134,16 @@ describe('knowledge center unified build contract', () => {
     expect(platformScript).toContain('对已确认的本仓库进程执行强制终止');
     expect(platformScript).toContain('已停止 $service，但端口 $port 仍被占用');
     expect(platformScript).toContain('知识中心操作失败。');
+    expect(platformScript).toContain('失败阶段：$FAILURE_COMPONENT');
+    expect(platformScript).toContain('数据库迁移完整性校验失败');
+    expect(platformScript).toContain('启动告警：$name');
+    expect(platformScript).toContain('reason=http-health-check-failed');
+    expect(platformScript).toContain('PID 记录指向非本仓库进程');
     expect(platformScript).toContain('当前配置无法安全计算组件状态');
     expect(platformScript).toContain('validate_environment || return 1');
     expect(platformScript).toContain('build_platform || return 1');
     expect(platformScript).toContain('start_platform || return 1');
+    expect(schemaMigrationManager).toContain('（数据库=" + recordedChecksum + "，当前文件=" + checksum + "）');
   });
 
   test('知识中心管理平台设计只归档到建设平台设计目录', () => {
