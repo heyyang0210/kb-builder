@@ -86,6 +86,28 @@ describe('知识资产工作台前端契约', () => {
     expect(view()).toContain('data-asset-detail-close');
   });
 
+  test('打开和关闭手册操作栏只更新局部选择状态', () => {
+    const app = read('apps/knowledge-center-web/frontend/knowledge-center/app.js');
+    const closeHandler = app.split("const assetDetailBack = event.target.closest('[data-asset-detail-back], [data-asset-detail-close]');")[1].split('const statusResolution')[0];
+    const openHandler = app.split("const assetLink = event.target.closest('[data-asset-id]');")[1].split('const outlineLink')[0];
+    expect(closeHandler).toContain('updateAssetSelection(null)');
+    expect(openHandler).toContain('updateAssetSelection(assetLink.dataset.assetId)');
+    for (const handler of [closeHandler, openHandler]) expect(handler).not.toContain('loadAssetCatalog();');
+    expect(app).toContain("if (view === 'assets' && appState.activeView === 'assets' && appState.assetCatalog");
+    expect(app).toContain('assetCatalogQuery().toString() === assetCatalogRouteKey');
+  });
+
+  test('仓库内容规模使用独立加载状态和单元格更新', () => {
+    const app = read('apps/knowledge-center-web/frontend/knowledge-center/app.js');
+    expect(view()).toContain('data-asset-statistics=');
+    expect(view()).toContain("item.statisticsStatus === 'loading'");
+    expect(view()).toContain('章节 正在统计');
+    expect(app).toContain("item.statisticsStatus = 'loading'");
+    expect(app).toContain('updateAssetStatistics(item)');
+    const loadCatalog = app.split('async function loadAssetCatalog()')[1].split('async function loadGitLabAdmin()')[0];
+    expect(loadCatalog).not.toContain("appState.activeView === 'assets') render();\n}");
+  });
+
   test('新增手册使用聚焦式弹窗并展示对外可见字段', () => {
     expect(view()).toContain('aria-describedby="asset-create-description"');
     expect(view()).toContain('建立基础信息，创建后继续完善大纲。');

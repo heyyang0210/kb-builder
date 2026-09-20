@@ -12,9 +12,15 @@ import { renderReviewPublishing, renderReviewRepositoryRegion } from './modules/
 const renderers = {
   review: renderReviewPublishing,
 };
+let assetSelectionRenderer = null;
+let assetStatisticsRenderer = null;
 const rendererLoaders = {
   dashboard: () => import('./modules/dashboard/view.js').then(module => module.renderDashboard),
-  assets: () => import('./modules/assets/view.js').then(module => module.renderAssets),
+  assets: () => import('./modules/assets/view.js').then(module => {
+    assetSelectionRenderer = module.renderAssetSelection;
+    assetStatisticsRenderer = module.renderAssetStatistics;
+    return module.renderAssets;
+  }),
   cleaning: () => import('./modules/cleaning/view.js').then(module => module.renderCleaning),
   outlines: () => import('./modules/outlines/view.js').then(module => module.renderOutlines),
   templates: () => Promise.all([import('./modules/templates/view.js'), import('./modules/templates/controller.js')]).then(([viewModule, controllerModule]) => {
@@ -153,6 +159,45 @@ function flushDeferredAssetRender() {
   render();
 }
 
+function updateAssetStatistics(item) {
+  if (appState.activeView !== 'assets' || !assetStatisticsRenderer) return;
+  const id = String(item.handbookId || item.id || '');
+  const current = (appState.assetCatalog?.items || []).find(entry => String(entry.handbookId || entry.id || '') === id);
+  if (current !== item) return;
+  const cell = [...document.querySelectorAll('[data-asset-statistics]')].find(node => node.dataset.assetStatistics === id);
+  if (cell) {
+    cell.innerHTML = assetStatisticsRenderer(item);
+    if (item.statisticsStatus === 'loading') cell.setAttribute('aria-busy', 'true');
+    else cell.removeAttribute('aria-busy');
+  }
+}
+
+function updateAssetSelection(selectedId) {
+  if (appState.activeView !== 'assets' || !assetSelectionRenderer) return false;
+  const items = appState.assetCatalog?.items || appState.assetCatalog?.handbooks || [];
+  const selected = selectedId ? items.find(item => String(item.handbookId || item.id) === String(selectedId)) : null;
+  if (selectedId && !selected) return false;
+  const workspace = document.querySelector('.asset-workspace');
+  const root = byId('view-root');
+  if (!workspace || !root) return false;
+  const scrollContainer = byId('main-shell');
+  const scrollTop = scrollContainer?.scrollTop || 0;
+  document.querySelectorAll('[data-asset-id]').forEach(link => link.closest('tr')?.classList.toggle('selected', Boolean(selected) && link.dataset.assetId === String(selectedId)));
+  workspace.querySelector('.asset-workspace-detail')?.remove();
+  root.querySelector('[data-asset-edit-dialog]')?.remove();
+  root.querySelector('[data-repository-mapping-dialog]')?.remove();
+  workspace.classList.toggle('asset-detail-open', Boolean(selected));
+  const selection = assetSelectionRenderer({ selected, principalProjection: appState.principalProjection, gitlabProjection: appState.gitlabProjection, platformAdmin: isPlatformAdmin() });
+  if (selection.actionPanel) workspace.insertAdjacentHTML('beforeend', selection.actionPanel);
+  if (selection.dialogs) root.insertAdjacentHTML('beforeend', selection.dialogs);
+  if (scrollContainer) {
+    scrollContainer.scrollTop = scrollTop;
+    requestAnimationFrame(() => { scrollContainer.scrollTop = scrollTop; });
+  }
+  window.lucide?.createIcons();
+  return true;
+}
+
 async function navigate(view, updateHistory = true) {
   if (!views[view]) return;
   if (appState.activeView === 'templates' && view !== 'templates' && templateController && !templateController.canLeave()) return;
@@ -274,16 +319,26 @@ async function enrichAssetRepositoryStatistics(catalog) {
       if (access?.canRead === false) {
         item.statisticsStatus = 'unavailable';
         item.statisticsError = access.message || '当前 GitLab 账号不可读取该仓库';
+        updateAssetStatistics(item);
         return;
       }
       Object.assign(item, await loadHandbookRepositoryStatistics(item.handbookId, branch, 'zh'), { statisticsStatus: 'ok' });
+      updateAssetStatistics(item);
     }
-    catch (error) { item.statisticsStatus = 'unavailable'; item.statisticsError = error.message; }
+    catch (error) { item.statisticsStatus = 'unavailable'; item.statisticsError = error.message; updateAssetStatistics(item); }
   }));
   return catalog;
 }
 
 let assetLoadSequence = 0;
+let assetCatalogRouteKey = '';
+function assetCatalogQuery(search = window.location.search) {
+  const params = new URLSearchParams(search);
+  const query = new URLSearchParams();
+  for (const key of ['q','owner','status','productId','lifecycle','page','pageSize']) if (params.get(key)) query.set(key, params.get(key));
+  if (params.get('archived') === 'true') query.set('includeArchived', 'true');
+  return query;
+}
 function principalFromSelect(select) {
   if (!select?.value) return null;
   const option = select.selectedOptions?.[0];
@@ -294,18 +349,16 @@ function principalFromSelect(select) {
 
 async function loadAssetCatalog() {
   const sequence = ++assetLoadSequence;
-  const params = new URLSearchParams(window.location.search);
-  const query = new URLSearchParams();
-  for (const key of ['q','owner','status','productId','lifecycle','page','pageSize']) if (params.get(key)) query.set(key, params.get(key));
-  if (params.get('archived') === 'true') query.set('includeArchived', 'true');
+  const query = assetCatalogQuery();
   const [response, connections, principals] = await Promise.all([loadAssets(query), isPlatformAdmin() ? loadGitLabConnections().catch(() => ({ items: [] })) : Promise.resolve({ items: [] }), isPlatformAdmin() ? loadPrincipals({ state: 'ACTIVE' }).catch(() => ({ items: [] })) : Promise.resolve({ items: [] })]);
   if (sequence !== assetLoadSequence) return;
+  assetCatalogRouteKey = query.toString();
   appState.assetCatalog = response?.data || response || null;
   appState.principalProjection = principals?.data || principals || { items: [] };
   appState.gitlabProjection = { ...(appState.gitlabProjection || {}), connections: connections?.items || [] };
+  for (const item of appState.assetCatalog?.items || []) if (item.repositoryMapped && preferredAssetBranch(item)) item.statisticsStatus = 'loading';
   if (appState.activeView === 'assets') render();
   await enrichAssetRepositoryStatistics(appState.assetCatalog);
-  if (sequence === assetLoadSequence && appState.activeView === 'assets') render();
 }
 
 async function loadGitLabAdmin() {
@@ -1253,10 +1306,12 @@ document.addEventListener('click', async event => {
   const assetDetailBack = event.target.closest('[data-asset-detail-back], [data-asset-detail-close]');
   if (assetDetailBack) {
     event.preventDefault();
+    const selectedLink = document.querySelector('.asset-table tr.selected [data-asset-id]');
     const url = new URL(window.location.href);
     url.searchParams.delete('handbookId');
     window.history.pushState({ view: 'assets' }, document.title, url);
-    loadAssetCatalog();
+    if (!updateAssetSelection(null)) render();
+    requestAnimationFrame(() => selectedLink?.focus());
     return;
   }
   const statusResolution = event.target.closest('[data-asset-status-resolve]');
@@ -1289,7 +1344,7 @@ document.addEventListener('click', async event => {
     const url = new URL(window.location.href);
     url.searchParams.set('handbookId', assetLink.dataset.assetId);
     window.history.pushState({ view: 'assets', handbookId: assetLink.dataset.assetId }, document.title, url);
-    loadAssetCatalog();
+    if (!updateAssetSelection(assetLink.dataset.assetId)) render();
     return;
   }
   const outlineLink = event.target.closest('[data-outline-id]');
@@ -1564,7 +1619,8 @@ document.addEventListener('change', async event => {
       const statistics = await loadHandbookRepositoryStatistics(item.handbookId, assetBranch.value, 'zh');
       Object.assign(item, statistics, { selectedBranch: assetBranch.value, statisticsStatus: 'ok' });
       try { window.localStorage.setItem(assetBranchPreferenceKey(item.handbookId), assetBranch.value); } catch (_error) { /* preference is optional */ }
-      render();
+      updateAssetStatistics(item);
+      assetBranch.disabled = false;
     } catch (error) { showAppNotice(error.message || '仓库统计暂不可用'); assetBranch.disabled = false; }
     return;
   }
@@ -2806,6 +2862,10 @@ window.addEventListener('popstate', () => {
   const view = viewFromPath(window.location.pathname) || 'dashboard';
   if (view === "platform") appState.platformTab = platformTabFromSearch(window.location.search);
   if (authState.status === 'authenticated') {
+    if (view === 'assets' && appState.activeView === 'assets' && appState.assetCatalog && assetCatalogQuery().toString() === assetCatalogRouteKey) {
+      updateAssetSelection(new URLSearchParams(window.location.search).get('handbookId'));
+      return;
+    }
     appState.outlineProjection = view === 'outlines' ? null : appState.outlineProjection;
     navigate(view, false);
   }
