@@ -88,6 +88,7 @@ GitLab 阅读路由为 `/knowledge-center/assets/:handbookId/repository`。平�
 平台会话应由后端使用安全 Cookie 管理。前端只在 `sessionStorage` 临时保存已校验的返回路径，不把 ticket、管理员密码或平台会话令牌写入 Web Storage。
 
 大纲管理通过同源受保护接口 `/knowledge-center/api/outline/governance/list` 和 `/knowledge-center/api/outline/governance/:id` 读取真实列表与详情；网关校验会话后代理到文档生成服务，不依赖平台总览投影是否包含大纲分区。
+大纲删除和发布属于业务操作结果，成功时只展示绿色操作通知；只有平台上下文或总览整体不可读时才使用红色“平台数据暂时不可用”面板和“重新检查”动作。
 
 认证实现位于 `packages/agent-runner-core/lib/knowledge-center-auth.js`，由 13510 平台内核直接挂载；`apps/knowledge-center-auth/auth-server.js` 仅保留为独立契约测试和兼容启动入口，不作为隔离平台的必需进程。Storage 的无 HTTP 目标架构和迁移门禁见 [平台内核与模块边界详细设计](../../../../../.codex/知识中心建设平台/03-详细设计/知识中心-平台-详细设计文档.md)。
 

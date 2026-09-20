@@ -201,7 +201,11 @@ function parseCsvOutlineText(raw, fallbackTitle = '上传的大纲') {
 function parseXlsxOutlineFile(filePath, fallbackTitle = path.basename(filePath, path.extname(filePath))) {
   const XLSX = require('xlsx');
   const workbook = XLSX.readFile(filePath, { cellDates: false });
+  const hiddenSheets = new Set((workbook.Workbook?.Sheets || [])
+    .filter(sheet => Number(sheet?.Hidden || 0) > 0)
+    .map(sheet => sheet.name));
   const sheetNames = workbook.SheetNames.filter(name => {
+    if (hiddenSheets.has(name)) return false;
     const sheet = workbook.Sheets[name];
     return sheet && String(sheet['!ref'] || '').trim();
   });

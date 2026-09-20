@@ -2,6 +2,7 @@ const fs = require('fs');
 const http = require('http');
 const os = require('os');
 const path = require('path');
+const AdmZip = require('adm-zip');
 const { createKnowledgeCenterHandler, KnowledgeCenterConfigError } = require('../../../packages/agent-runner-core/routes/knowledge-center');
 const root = path.resolve(__dirname, '../../..');
 const read = relative => fs.readFileSync(path.join(root, relative), 'utf8');
@@ -76,6 +77,16 @@ describe('知识中心大纲管理前端契约', () => {
     expect(api).toContain('无法连接大纲服务');
     expect(app).toContain("title: '删除失败'");
   });
+  test('删除和发布成功不复用平台不可用错误样式', () => {
+    const app = read('apps/knowledge-center-web/frontend/knowledge-center/app.js');
+    expect(app).toContain('function showAppNotice(message, options = {})');
+    expect(app).toContain("panel.className = `notice notice-${tone}`");
+    expect(app).toContain("byId('error-title').textContent = options.title || '操作提示'");
+    expect(app).toContain("byId('retry').hidden = options.retry !== true");
+    expect(app).toContain("showAppNotice('候选大纲已删除', { title: '操作已完成', tone: 'success' })");
+    expect(app).toContain("showAppNotice('大纲已发布，领域建设任务已生成。', { title: '发布完成', tone: 'success' })");
+    expect(app).toContain("showAppNotice('当前无法读取平台数据，请稍后重新检查。', { title: '平台数据暂时不可用', tone: 'danger', retry: true })");
+  });
   test('责任分工和发布缺口展示真实待办状态', () => {
     expect(view()).toContain('待绑定');
     expect(view()).toContain('技术领域分工');
@@ -97,6 +108,9 @@ describe('知识中心大纲管理前端契约', () => {
     const app = read('apps/knowledge-center-web/frontend/knowledge-center/app.js');
     expect(navigation).toContain("startsWith('/knowledge-center/outlines/')");
     expect(api).toContain("status: 'not_found'");
+    expect(api).toContain('handbooksEndpoint}?page=1&pageSize=100`).catch');
+    expect(app).toContain('outlineLoadSequence');
+    expect(app).toContain('sequence !== outlineLoadSequence');
     expect(app).toContain("url.searchParams.set('stage'");
     expect(app).toContain('outlineListState.scrollPosition');
   });
@@ -127,7 +141,7 @@ describe('知识中心大纲管理前端契约', () => {
     expect(source).toContain('已发布大纲只能调整技术领域');
     expect(source).toContain('readonly');
     expect(route).toContain('editVersion: governance.editVersion');
-    expect(route).toContain('nodes: String(process.env.KNOWLEDGE_STORAGE_MODE');
+    expect(route).toContain('nodes: isDatabaseMode()');
   });
 
   test('目录导航支持未分工定位、目录兼页面和单一展开切换', () => {
@@ -153,12 +167,15 @@ describe('知识中心大纲管理前端契约', () => {
     const source = view();
     const assets = read('apps/knowledge-center-web/frontend/knowledge-center/modules/assets/view.js');
     const api = read('apps/knowledge-center-web/frontend/knowledge-center/common/api/platform-api.js');
+    const route = read('packages/agent-runner-core/routes/outline.js');
     expect(assets).toContain('href="/knowledge-center/outlines/${encodeURIComponent(id)}"');
     expect(assets).not.toContain('data-handbook-outline');
     expect(assets).toContain('data-asset-edit-open');
     expect(api).toContain("allItems.filter(item => String(item.handbookId || item.manualId) === String(handbookId))");
     expect(api).toContain("status: 'empty'");
     expect(source).toContain('该手册尚未建立大纲');
+    expect(route).toContain('metadata.outlines.filter(hasPersistedOutlineVersion)');
+    expect(route).toContain("outlineError(res, error, 'OUTLINE_DETAIL_FAILED'");
   });
   test('大纲管理不提供手册管理入口', () => {
     const source = view();
@@ -209,18 +226,32 @@ describe('知识中心大纲管理前端契约', () => {
         OUTLINE_TEMPLATE_PATH: templatePath, OUTLINE_SAMPLE_PATH: samplePath,
         PINGCODE_PREFIX: '/pingcode', PINGCODE_ROOT: fixtureRoot,
       },
-      stores: { knowledgeAssetsStore: { read: () => ({ handbooks: [] }), write() {} }, brandIconStore: {} },
+      stores: {
+        knowledgeAssetsStore: { read: () => ({ handbooks: [] }), write() {} },
+        brandIconStore: {},
+        domainStore: { readTechDomains: () => ({ techDomains: [{ name: '内核' }, { name: 'SQL 引擎' }] }) },
+      },
       moduleRegistry: { get: () => ({ authorize: async () => ({ allowedActions: ['outline:read'], user: { id: 'outline-reader' } }) }) },
       sendFile() {}, proxyAuth() {}, proxyCleaning() {}, proxyOutline() {}, proxyPermission() {}, handleIncrementalBuild() {},
     });
     const server = http.createServer(handler);
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     try {
-      for (const [suffix, expected] of [['template', 'template'], ['sample', 'sample']]) {
-        const response = await fetch(`http://127.0.0.1:${server.address().port}/knowledge-center/api/outline/${suffix}`);
-        expect(response.status).toBe(200);
-        expect(await response.text()).toBe(expected);
-      }
+      const template = await fetch(`http://127.0.0.1:${server.address().port}/knowledge-center/api/outline/template`);
+      expect(template.status).toBe(200);
+      expect(template.headers.get('content-type')).toContain('spreadsheetml.sheet');
+      const zip = new AdmZip(Buffer.from(await template.arrayBuffer()));
+      const workbookXml = zip.getEntry('xl/workbook.xml').getData().toString('utf8');
+      const sheetXml = zip.getEntry('xl/worksheets/sheet1.xml').getData().toString('utf8');
+      const domainSheetXml = zip.getEntry('xl/worksheets/sheet2.xml').getData().toString('utf8');
+      expect(workbookXml).toContain('TECH_DOMAIN_OPTIONS');
+      expect(sheetXml).toContain('dataValidations');
+      expect(sheetXml).toContain('sqref="F2:F1000"');
+      expect(domainSheetXml).toContain('内核');
+      expect(domainSheetXml).toContain('SQL 引擎');
+      const sample = await fetch(`http://127.0.0.1:${server.address().port}/knowledge-center/api/outline/sample`);
+      expect(sample.status).toBe(200);
+      expect(await sample.text()).toBe('sample');
       fs.unlinkSync(templatePath);
       const missingTemplate = await fetch(`http://127.0.0.1:${server.address().port}/knowledge-center/api/outline/template`);
       expect(missingTemplate.status).toBe(404);

@@ -81,12 +81,14 @@ export async function loadOutlineData(handbookId = null) {
     const list = await getJson(`${outlineEndpoint}/list`);
     const allItems = Array.isArray(list?.data) ? list.data : [];
     if (!handbookId) return { status: 'ok', items: allItems, detail: null, selectedId: null, asOf: list?.generatedAt || new Date().toISOString() };
-    const handbooksResponse = await getJson(`${handbooksEndpoint}?page=1&pageSize=100`);
+    let handbookError = null;
+    const handbooksResponse = await getJson(`${handbooksEndpoint}?page=1&pageSize=100`).catch(error => { handbookError = error; return null; });
     const handbooksPayload = handbooksResponse?.data || handbooksResponse || {};
     const handbooks = Array.isArray(handbooksPayload.items) ? handbooksPayload.items : Array.isArray(handbooksPayload.handbooks) ? handbooksPayload.handbooks : [];
     const handbook = handbooks.find(item => String(item.handbookId || item.id) === String(handbookId)) || null;
-    if (!handbook) return { status: 'not_found', items: [], selectedId: handbookId, asOf: list?.generatedAt || new Date().toISOString() };
     const items = allItems.filter(item => String(item.handbookId || item.manualId) === String(handbookId));
+    if (!handbook && !items.length && !handbookError) return { status: 'not_found', items: [], selectedId: handbookId, asOf: list?.generatedAt || new Date().toISOString() };
+    if (!handbook && !items.length && handbookError) return { status: 'empty', items: [], handbook: { handbookId, name: handbookId }, selectedId: null, asOf: list?.generatedAt || new Date().toISOString() };
     if (!items.length) return { status: 'empty', items: [], handbook, selectedId: null, asOf: list?.generatedAt || new Date().toISOString() };
     const selected = [...items].sort((left, right) => {
       const leftPublished = String(left.state || left.status).toLowerCase() === 'published' ? 1 : 0;
@@ -108,7 +110,10 @@ export async function importOutline(formData) {
   if (response.status === 403) throw Object.assign(new Error('没有执行此操作的权限'), { status: 403 });
   const result = await response.json().catch(() => null);
   if (!response.ok) {
-    const message = result?.error?.message || result?.message || `导入失败（HTTP ${response.status}）`;
+    const failedMessages = (result?.data?.items || [])
+      .filter(item => item.status === 'failed' && item.error?.message)
+      .map(item => item.error.message);
+    const message = result?.error?.message || result?.message || failedMessages.join('；') || `导入失败（HTTP ${response.status}）`;
     throw Object.assign(new Error(message), { status: response.status, details: result?.error?.details || [], payload: result });
   }
   return result;

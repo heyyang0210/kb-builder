@@ -10,6 +10,34 @@ const { OutlineRepository } = require('../lib/outline-repository');
 const repository = new OutlineRepository(process.env.OUTLINE_REPOSITORY_DIR ? path.resolve(process.env.OUTLINE_REPOSITORY_DIR) : undefined);
 const handbookDomainStore = createDomainStore();
 
+function isDatabaseMode() {
+  return String(process.env.KNOWLEDGE_STORAGE_MODE || '').toLowerCase() === 'database';
+}
+
+function readActiveTechDomains() {
+  if (!isDatabaseMode()) return readTechDomainConfig();
+  const payload = handbookDomainStore.readTechDomains();
+  return Array.isArray(payload?.techDomains) ? payload.techDomains
+    : Array.isArray(payload?.items) ? payload.items
+    : Array.isArray(payload) ? payload
+    : [];
+}
+
+function hasPersistedOutlineVersion(item = {}) {
+  return Boolean(item.currentOutlineVersionId || item.outlineStructureVersion || item.outlineVersion || item.versionCode);
+}
+
+function outlineError(res, error, fallbackCode, fallbackMessage) {
+  return res.status(error.status || 500).json({
+    success: false,
+    error: {
+      code: error.code || fallbackCode,
+      message: error.message || fallbackMessage,
+      details: error.details
+    }
+  });
+}
+
 // Configure multer for file uploads
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -288,7 +316,7 @@ router.post('/import', upload.fields([{ name: 'file', maxCount: 1 }, { name: 'fi
     for (const input of inputs) {
       const fileName = input.file?.originalname || null;
       try {
-        input.content = normalizeImportedTechDomains(input.content, readTechDomainConfig());
+        input.content = normalizeImportedTechDomains(input.content, readActiveTechDomains());
       } catch (error) {
         removeUploadedFile(input.file);
         results.push({ fileName, status: 'failed', error: { code: error.code || 'INVALID_TECH_DOMAIN_ASSIGNMENT', message: error.message, details: error.details } });
@@ -478,17 +506,18 @@ router.get('/catalog/products', (req, res) => {
 router.get('/governance/list', (req, res) => {
   try {
     const metadata = readMetadata();
-    let items = metadata.outlines.map(normalizeOutline);
+    const outlines = isDatabaseMode() ? metadata.outlines.filter(hasPersistedOutlineVersion) : metadata.outlines;
+    let items = outlines.map(normalizeOutline);
     if (req.query.productId) items = items.filter(item => item.productId === req.query.productId);
     res.json({ success: true, data: items, generatedAt: new Date().toISOString() });
-  } catch (error) { res.status(500).json({ success: false, error: { code: 'OUTLINE_LIST_FAILED', message: error.message } }); }
+  } catch (error) { outlineError(res, error, 'OUTLINE_LIST_FAILED', '大纲列表不可用'); }
 });
 
 router.get('/governance/:id', (req, res) => {
   try {
     const outline = readMetadata().outlines.find(item => item.id === req.params.id);
     if (!outline) return res.status(404).json({ success: false, error: { code: 'OUTLINE_NOT_FOUND', message: '大纲不存在' } });
-    const governance = String(process.env.KNOWLEDGE_STORAGE_MODE || '').toLowerCase() === 'database'
+    const governance = isDatabaseMode()
       ? handbookDomainStore.readOutlineGovernance(req.params.id)
       : buildOutlineGovernance(outline);
     const normalized = normalizeOutline(outline);
@@ -497,7 +526,7 @@ router.get('/governance/:id', (req, res) => {
       handbookId: governance.manualId || normalized.handbookId,
       state: governance.state || normalized.state,
       editVersion: governance.editVersion ?? normalized.editVersion,
-      nodes: String(process.env.KNOWLEDGE_STORAGE_MODE || '').toLowerCase() === 'database'
+      nodes: isDatabaseMode()
         ? (Array.isArray(governance.nodes) ? governance.nodes : outlineNodes(outline))
         : outlineNodes(outline),
       governance,
@@ -505,13 +534,17 @@ router.get('/governance/:id', (req, res) => {
       impact: buildImpactProjection({ ...outline, governance })
     };
     res.json({ success: true, data: detail, generatedAt: new Date().toISOString() });
-  } catch (error) { res.status(500).json({ success: false, error: { code: 'OUTLINE_DETAIL_FAILED', message: error.message } }); }
+  } catch (error) { outlineError(res, error, 'OUTLINE_DETAIL_FAILED', '大纲详情不可用'); }
 });
 
 router.delete('/governance/:id', (req, res) => {
   let stagedFile = null;
   let originalFile = null;
   try {
+    if (isDatabaseMode()) {
+      const data = handbookDomainStore.deleteOutline(req.params.id);
+      return res.json({ success: true, data, message: '候选大纲已删除' });
+    }
     let outline;
     repository.update(metadata => {
       const index = metadata.outlines.findIndex(item => item.id === req.params.id);
@@ -543,11 +576,11 @@ router.get('/governance/:id/responsibility', (req, res) => {
   try {
     const outline = readMetadata().outlines.find(item => item.id === req.params.id);
     if (!outline) return res.status(404).json({ success: false, error: { code: 'OUTLINE_NOT_FOUND', message: '大纲不存在' } });
-    const governance = String(process.env.KNOWLEDGE_STORAGE_MODE || '').toLowerCase() === 'database'
+    const governance = isDatabaseMode()
       ? handbookDomainStore.readOutlineGovernance(req.params.id)
       : buildOutlineGovernance(outline);
     res.json({ success: true, data: governance, generatedAt: new Date().toISOString() });
-  } catch (error) { res.status(500).json({ success: false, error: { code: 'RESPONSIBILITY_FAILED', message: error.message } }); }
+  } catch (error) { outlineError(res, error, 'RESPONSIBILITY_FAILED', '责任分工不可用'); }
 });
 
 router.get('/governance/:id/impact', (req, res) => {

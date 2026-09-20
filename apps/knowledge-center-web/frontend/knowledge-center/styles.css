@@ -257,6 +257,8 @@ body.review-focus-mode #sidebar,body.review-focus-mode #sidebar-restore,body.rev
 .asset-stage-grid span { color: var(--color-brand); font-size: 12px; }
 .asset-detail { justify-content: space-between; }
 .asset-detail > div { display: grid; gap: 5px; }
+.asset-name, .asset-name:visited, .asset-name:hover, .asset-name:focus-visible { color: var(--color-brand); text-decoration: none; }
+.asset-name:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 2px; }
 .asset-name-link { color: var(--color-brand); text-decoration: none; }
 .asset-name-link:hover, .asset-name-link:focus-visible { color: var(--color-brand-hover); text-decoration: underline; }
 .asset-context-label { color: var(--color-text-secondary); }

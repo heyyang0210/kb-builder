@@ -4,7 +4,7 @@
 
 该服务是当前过渡期的 JDBC 运行组件，提供记录读写、乐观并发、Schema 初始化和完整导出。长期目标是将同一数据访问契约作为平台内核 Storage 模块直接调用，业务请求不再经过 HTTP 中转；在 Node/YashanDB 直接适配器和回退验证完成前，14210 仍由运维脚本管理，不得提前删除。
 
-详细设计见 [YashanDB 数据存储与迁移开发设计](../../docs/modules/platform-foundation/development/yashandb-storage-and-migration-design.md)。
+详细设计见 [知识中心-平台-详细设计文档](../../.codex/知识中心建设平台/03-详细设计/知识中心-平台-详细设计文档.md)。
 
 ## 运行要求
 

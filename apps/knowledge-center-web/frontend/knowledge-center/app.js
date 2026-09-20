@@ -87,6 +87,7 @@ function outlineRouteState() {
 
 let assetRenderDeferred = false;
 let openDomainTaskId = null;
+let outlineLoadSequence = 0;
 
 function render() {
   if (appState.activeView === 'assets' && document.querySelector('.asset-dialog[open]')) {
@@ -226,7 +227,11 @@ async function loadRepositoryWorkspace() {
 
 async function loadOutlines() {
   const { handbookId } = outlineRouteState();
-  appState.outlineProjection = await loadOutlineData(handbookId);
+  const sequence = ++outlineLoadSequence;
+  const projection = await loadOutlineData(handbookId);
+  const current = outlineRouteState();
+  if (sequence !== outlineLoadSequence || String(current.handbookId || '') !== String(handbookId || '')) return;
+  appState.outlineProjection = projection;
   if (appState.activeView === 'outlines') render();
 }
 
@@ -446,15 +451,19 @@ async function runIncrementalAction(control, taskId, operation, successMessage) 
   }
 }
 
-function showAppNotice(message) {
+function showAppNotice(message, options = {}) {
   const panel = byId('error-panel');
+  const tone = options.tone || 'warning';
+  panel.className = `notice notice-${tone}`;
   panel.hidden = false;
+  byId('error-title').textContent = options.title || '操作提示';
   byId('error-message').textContent = message;
+  byId('retry').hidden = options.retry !== true;
 }
 
 function showApplicationError(error) {
   showApplication();
-  showAppNotice(`页面加载失败：${error?.message || '请重新加载页面。'}`);
+  showAppNotice(`页面加载失败：${error?.message || '请重新加载页面。'}`, { title: '页面加载失败', tone: 'danger', retry: true });
 }
 
 function authErrorMessage(error) {
@@ -549,8 +558,11 @@ function updatePlatformState(context, overview) {
   // 覆盖审核页面并误报“平台数据暂时不可用”；该页面只由 reviewProjection
   // 的真实状态决定是否展示错误。
   const isReviewView = appState.activeView === 'review';
-  byId('error-panel').hidden = !unavailable || isReviewView;
-  if (unavailable && !isReviewView) byId('error-message').textContent = '当前无法读取平台数据，请稍后重新检查。';
+  if (unavailable && !isReviewView) {
+    showAppNotice('当前无法读取平台数据，请稍后重新检查。', { title: '平台数据暂时不可用', tone: 'danger', retry: true });
+  } else {
+    byId('error-panel').hidden = true;
+  }
 }
 
 function updatePlatformGovernance(context, overview, gitlabProjection = appState.gitlabProjection) {
@@ -1051,7 +1063,7 @@ document.addEventListener('click', async event => {
     outlineDelete.textContent = '删除中…';
     try {
       await deleteOutline(id);
-      showAppNotice('候选大纲已删除');
+      showAppNotice('候选大纲已删除', { title: '操作已完成', tone: 'success' });
       appState.outlineProjection = null;
       if (outlineRouteState().isDetail) window.history.replaceState({ view: 'outlines' }, document.title, '/knowledge-center/outlines');
       await loadOutlines();
@@ -2119,6 +2131,7 @@ document.addEventListener('submit', async event => {
       }
     }
     status.textContent = `导入完成：成功 ${succeeded.length} 个，失败 ${files.length - succeeded.length} 个`;
+    if (!succeeded.length) return;
     appState.outlineProjection = null;
     const latest = succeeded[succeeded.length - 1];
     if (latest?.id || latest?.handbookId) {

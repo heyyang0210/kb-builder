@@ -4,7 +4,7 @@ Vue/Vite 前端应用。本地开发可在本目录执行，正式构建统一�
 
 Vite 配置只装载 `PINGCODE_WEB_` 前缀的构建参数，不得用空前缀读取完整进程环境，避免终端中的本机路径进入前端 chunk。
 
-统一构建在执行 Vite 时固定使用 `NODE_ENV=production`。平台服务自身可以配置为 `development`，但该运行配置不得影响发布构建，否则 Vue 可能把组件绝对文件名保留在业务 chunk 中并触发路径泄漏门禁。
+统一构建在执行 Vite 时固定使用 `NODE_ENV=production`。平台服务自身可以配置为 `development`，但该运行配置不得影响发布构建，否则 Vue 可能把组件绝对文件名保留在业务 chunk 中并触发路径泄漏门禁。统一构建会给 Vite 注入 `NODE_OPTIONS`，默认 `--max-old-space-size=1536`，可通过 `KNOWLEDGE_CENTER_VITE_NODE_OPTIONS` 覆盖；当前压缩构建测试机建议配置约 8GiB 内存。
 
 ```bash
 npm install
