@@ -3,7 +3,7 @@ const path = require('path');
 const crypto = require('crypto');
 
 // Jest 要求 mock factory 中不能引用外部变量，除非以 mock 开头
-const mockTestDir = path.join(__dirname, '..', '..', 'agent-runner', 'tmp', 'test-config-' + Date.now());
+const mockTestDir = path.join(process.env.YASDB_TEST_TMP_DIR || require('os').tmpdir(), 'test-config-' + Date.now());
 
 process.env.AGENT_RUNNER_KEY = 'test-key-for-unit-tests';
 

@@ -25,7 +25,8 @@ python3 tests/run_tests.py all
 ```
 
 每个框架都以详细模式输出具体成功、失败和跳过的用例；入口末尾汇总各任务状态、测试文件数、耗时、失败用例列表和最终退出码。任一任务失败、超时或无法启动时，入口返回非零退出码。
-每次执行都会追加一条 JSONL 日志，记录实际命令、状态、退出码、耗时和失败用例；日志默认位于 `runtime/test-reports/test-run.log`，可用 `--log` 指定路径。该日志不保存环境变量、密码或令牌。
+
+`gate` 和 `full/all` 会自动保存按日期分层的正式报告：`runtime/test-reports/index.md`只展示历史索引，每次运行的 `report.md` 展示核心结论，任务输出和浏览器证据保存在 `details/`。其他分类保存到 `runtime/test-results/`。
 
 首次运行前安装仓库测试依赖：
 
@@ -41,8 +42,9 @@ npx playwright install chromium firefox
 python3 tests/run_tests.py full --dry-run
 python3 tests/run_tests.py full --fail-fast
 python3 tests/run_tests.py full --timeout 3600
-python3 tests/run_tests.py full --report runtime/test-reports/full.json
-python3 tests/run_tests.py full --log runtime/test-reports/full-execution.log
+python3 tests/run_tests.py full --coverage
+python3 tests/run_tests.py full --report runtime/test-results/exports/compat-full.json
+python3 tests/run_tests.py full --log runtime/test-results/exports/compat-full.log
 
 # 定向执行一个或多个 Playwright 浏览器项目
 PLAYWRIGHT_PROJECTS=chromium python3 tests/run_tests.py e2e

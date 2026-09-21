@@ -9,7 +9,7 @@ const { ExcelAdapter } = require('../../../../packages/agent-runner-core/lib/pre
 const { PptxAdapter } = require('../../../../packages/agent-runner-core/lib/preprocessing/cleaners/pptx-adapter');
 const { ArchiveAdapter } = require('../../../../packages/agent-runner-core/lib/preprocessing/cleaners/archive-adapter');
 
-const TEST_DIR = path.join(__dirname, '..', '..', 'tmp', 'test-adapter-chain-' + Date.now());
+const TEST_DIR = path.join(process.env.YASDB_TEST_TMP_DIR || require('os').tmpdir(), 'test-adapter-chain-' + Date.now());
 
 describe('AdapterChain', () => {
   let chain;

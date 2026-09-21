@@ -2,7 +2,7 @@ const fs = require('fs').promises;
 const path = require('path');
 const { ExcelAdapter } = require('../../../../packages/agent-runner-core/lib/preprocessing/cleaners/excel-adapter');
 
-const TEST_DIR = path.join(__dirname, '..', '..', 'tmp', 'test-excel-adapter-' + Date.now());
+const TEST_DIR = path.join(process.env.YASDB_TEST_TMP_DIR || require('os').tmpdir(), 'test-excel-adapter-' + Date.now());
 
 describe('ExcelAdapter', () => {
   let adapter;

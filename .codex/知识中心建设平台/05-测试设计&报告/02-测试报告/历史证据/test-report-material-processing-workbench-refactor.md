@@ -27,8 +27,8 @@
 
 ## 3. 响应式证据
 
-- `reports/workbench-1440x960.png`
-- `reports/workbench-1280x800.png`
+- [`workbench-1440x960.png`](./workbench-1440x960.png)
+- [`workbench-1280x800.png`](./workbench-1280x800.png)
 
 两种尺寸均验证：页面无横向溢出、任务列表可读、主要操作不重叠、详情抽屉可打开和关闭。
 

@@ -2,7 +2,7 @@ const fs = require('fs').promises;
 const path = require('path');
 const { MarkdownAdapter } = require('../../../../packages/agent-runner-core/lib/preprocessing/cleaners/markdown-adapter');
 
-const TEST_DIR = path.join(__dirname, '..', '..', 'tmp', 'test-markdown-adapter-' + Date.now());
+const TEST_DIR = path.join(process.env.YASDB_TEST_TMP_DIR || require('os').tmpdir(), 'test-markdown-adapter-' + Date.now());
 
 describe('MarkdownAdapter', () => {
   let adapter;

@@ -1,6 +1,11 @@
 // @ts-check
 const { defineConfig, devices } = require('@playwright/test');
+const path = require('path');
 const selectedProjects = process.env.PLAYWRIGHT_PROJECTS?.split(',').map(item => item.trim()).filter(Boolean);
+const repositoryRoot = path.resolve(__dirname, '..', '..', '..');
+const artifactRoot = process.env.YASDB_TEST_ARTIFACT_DIR
+  ? path.resolve(process.env.YASDB_TEST_ARTIFACT_DIR)
+  : path.join(repositoryRoot, 'runtime', 'test-results', 'playwright', new Date().toISOString().replace(/[:.]/g, '-'));
 
 module.exports = defineConfig({
   testDir: '../../e2e/agent-runner',
@@ -8,10 +13,8 @@ module.exports = defineConfig({
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 1,
   workers: 1,
-  reporter: [
-    ['html', { open: 'never', outputFolder: '../../e2e/agent-runner/reports' }],
-    ['list']
-  ],
+  reporter: [['list']],
+  outputDir: path.join(artifactRoot, 'playwright'),
   timeout: 30000,
   expect: { timeout: 10000 },
   use: {

@@ -5,7 +5,7 @@ const FileReader = require('../../../packages/agent-runner-core/lib/tools/file-r
 const FileWriter = require('../../../packages/agent-runner-core/lib/tools/file-writer');
 const ToolManager = require('../../../packages/agent-runner-core/lib/tools/tool-manager');
 
-const TEST_DIR = path.join(__dirname, '..', '..', 'agent-runner', 'tmp', 'test-tools-' + Date.now());
+const TEST_DIR = path.join(process.env.YASDB_TEST_TMP_DIR || require('os').tmpdir(), 'test-tools-' + Date.now());
 
 beforeAll(() => {
   fs.mkdirSync(TEST_DIR, { recursive: true });

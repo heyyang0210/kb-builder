@@ -44,7 +44,7 @@ python3 -m unittest discover -s tests -p 'test_*.py' -v
 
 ## 浏览器证据
 
-浏览器测试截图：`tests/reports/batch-source-filters.png`。
+浏览器测试截图：[`batch-source-filters.png`](./batch-source-filters.png)。
 
 截图包含：
 

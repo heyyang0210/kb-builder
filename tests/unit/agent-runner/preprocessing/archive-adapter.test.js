@@ -5,7 +5,7 @@ const { ArchiveAdapter } = require('../../../../packages/agent-runner-core/lib/p
 const { AdapterChain } = require('../../../../packages/agent-runner-core/lib/preprocessing/cleaners/adapter-chain');
 const { MarkdownAdapter } = require('../../../../packages/agent-runner-core/lib/preprocessing/cleaners/markdown-adapter');
 
-const TEST_DIR = path.join(__dirname, '..', '..', 'tmp', 'test-archive-adapter-' + Date.now());
+const TEST_DIR = path.join(process.env.YASDB_TEST_TMP_DIR || require('os').tmpdir(), 'test-archive-adapter-' + Date.now());
 
 describe('ArchiveAdapter', () => {
   let adapter;

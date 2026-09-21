@@ -3,7 +3,7 @@ const path = require('path');
 const { PreprocessingEngine } = require('../../../../packages/agent-runner-core/lib/preprocessing');
 const { DesignDocPipeline } = require('../../../../packages/agent-runner-core/lib/preprocessing/pipelines/design-doc-pipeline');
 
-const TEST_DIR = path.join(__dirname, '..', '..', 'tmp', 'test-pipeline-' + Date.now());
+const TEST_DIR = path.join(process.env.YASDB_TEST_TMP_DIR || require('os').tmpdir(), 'test-pipeline-' + Date.now());
 const SOURCE_DIR = path.join(TEST_DIR, 'source');
 const OUTPUT_DIR = path.join(TEST_DIR, 'output');
 

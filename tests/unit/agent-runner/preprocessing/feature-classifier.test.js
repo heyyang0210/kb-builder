@@ -2,7 +2,7 @@ const fs = require('fs').promises;
 const path = require('path');
 const { FeatureClassifier } = require('../../../../packages/agent-runner-core/lib/preprocessing/classifiers/feature-classifier');
 
-const TEST_DIR = path.join(__dirname, '..', '..', 'tmp', `test-feature-classifier-${Date.now()}`);
+const TEST_DIR = path.join(process.env.YASDB_TEST_TMP_DIR || require('os').tmpdir(), `test-feature-classifier-${Date.now()}`);
 
 describe('FeatureClassifier', () => {
   beforeAll(async () => fs.mkdir(TEST_DIR, { recursive: true }));

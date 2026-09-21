@@ -69,7 +69,13 @@ class WorkbenchBrowserIntegrationTests(unittest.TestCase):
                     rows.first.click()
                     page.get_by_role("dialog", name="资料加工任务详情").wait_for()
                     page.get_by_role("button", name="关闭任务详情").click()
-                report = Path(__file__).parent / "reports" / f"workbench-{width}x{height}.png"
+                artifact_root = Path(
+                    os.getenv(
+                        "YASDB_TEST_ARTIFACT_DIR",
+                        Path(__file__).resolve().parents[4] / "runtime/test-results/pingcode-browser",
+                    )
+                )
+                report = artifact_root / f"workbench-{width}x{height}.png"
                 report.parent.mkdir(parents=True, exist_ok=True)
                 page.screenshot(path=str(report), full_page=True)
                 page.close()

@@ -3,7 +3,7 @@ const path = require('path');
 const { QualityValidator } = require('../../../../packages/agent-runner-core/lib/preprocessing/quality-validator');
 const { PipelineReport } = require('../../../../packages/agent-runner-core/lib/preprocessing/pipeline');
 
-const TEST_DIR = path.join(__dirname, '..', '..', 'tmp', 'test-quality-' + Date.now());
+const TEST_DIR = path.join(process.env.YASDB_TEST_TMP_DIR || require('os').tmpdir(), 'test-quality-' + Date.now());
 
 describe('QualityValidator', () => {
   let validator;

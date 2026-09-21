@@ -59,7 +59,7 @@ npm run build
 - “文档预览 / Markdown 源码”模式可见。
 - 目标页面 6 张图片全部 `complete=true` 且 `naturalWidth > 0`。
 - 浏览器控制台错误数：0。
-- 截图：`reports/batch_157fe779b2ac4fb5-markdown-preview.png`。
+- 截图：[`batch_157fe779b2ac4fb5-markdown-preview.png`](./batch_157fe779b2ac4fb5-markdown-preview.png)。
 
 ## 已知非阻塞项
 

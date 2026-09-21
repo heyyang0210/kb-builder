@@ -51,8 +51,8 @@ npm run build
 - 加工页首次加载请求 `category=text`。
 - 扫描前和扫描后，待转换区域未展开时均未请求 `category=conversion_pending`。
 - 展开待转换区域后才发送 `category=conversion_pending` 请求。
-- 截图：`reports/batch-file-pagination.png`。
-- 截图：`reports/preprocess-pending-collapsed.png`。
+- 截图：[`batch-file-pagination.png`](./batch-file-pagination.png)。
+- 截图：[`preprocess-pending-collapsed.png`](./preprocess-pending-collapsed.png)。
 
 ## 清洗预设结果
 

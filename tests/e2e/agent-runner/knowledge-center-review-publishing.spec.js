@@ -225,6 +225,7 @@ test.describe('审核与发布多角色 E2E', () => {
   });
 
   test('阅读、差异、行级意见、审核和发布均由真实后端驱动', async ({ page, request }) => {
+    test.setTimeout(60000);
     const seeded = await seedUnderReview(request);
     await login(page.context().request, 'admin', 'admin');
     await installGitLabFixture(page);

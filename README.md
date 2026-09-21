@@ -42,7 +42,7 @@ python3 tests/run_tests.py smoke
 python3 tests/run_tests.py full
 ```
 
-统一测试入口及分类命令见 [tests/README.md](tests/README.md)，设计约束见 [仓库统一测试入口设计](docs/统一测试入口设计.md)。入口会自动设置 Python 模块路径；测试仍需安装 Jest、Playwright、FastAPI 等对应项目依赖。浏览器测试与真实外部服务验证的前提见对应测试文件，避免向生产任务写入测试数据。
+统一测试入口及分类命令见 [tests/README.md](tests/README.md)，设计约束与报告契约见 [知识中心平台统一测试入口设计](.codex/知识中心建设平台/05-测试设计&报告/01-测试设计/知识中心-平台-统一测试入口-测试设计文档.md)。入口会自动设置 Python 模块路径；测试仍需安装 Jest、Playwright、FastAPI 等对应项目依赖。浏览器测试与真实外部服务验证的前提见对应测试文件，避免向生产任务写入测试数据。
 
 ## 文档与协作
 

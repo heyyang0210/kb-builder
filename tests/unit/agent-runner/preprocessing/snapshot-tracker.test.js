@@ -2,7 +2,7 @@ const fs = require('fs').promises;
 const path = require('path');
 const { SnapshotTracker } = require('../../../../packages/agent-runner-core/lib/preprocessing/snapshot-tracker');
 
-const TEST_DIR = path.join(__dirname, '..', '..', 'tmp', 'test-snapshot-' + Date.now());
+const TEST_DIR = path.join(process.env.YASDB_TEST_TMP_DIR || require('os').tmpdir(), 'test-snapshot-' + Date.now());
 
 describe('SnapshotTracker', () => {
   let tracker;

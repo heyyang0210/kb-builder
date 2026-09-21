@@ -7,7 +7,7 @@ const { VectorIndexer } = require('../../../../packages/agent-runner-core/lib/pr
 const { KnowledgeGraphIndexer } = require('../../../../packages/agent-runner-core/lib/preprocessing/indexers/knowledge-graph-indexer');
 const { IndexQualityEvaluator } = require('../../../../packages/agent-runner-core/lib/preprocessing/index-quality-evaluator');
 
-const TEST_DIR = path.join(__dirname, '..', '..', 'tmp', `test-indexes-${Date.now()}`);
+const TEST_DIR = path.join(process.env.YASDB_TEST_TMP_DIR || require('os').tmpdir(), `test-indexes-${Date.now()}`);
 
 describe('本地向量和知识图谱索引', () => {
   let vectorStore;

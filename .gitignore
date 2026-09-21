@@ -80,9 +80,7 @@ temp/
 # 测试输出
 _test_output/
 scripts/pingcode/web/backend/tests/reports/
-coverage/
 .coverage
-htmlcov/
 
 # Docker
 .docker/
@@ -93,10 +91,7 @@ htmlcov/
 prompt.md
 prompt-log.md
 
-# Playwright E2E 测试报告（构建产物）
-**/tests/e2e/reports/
-tests/e2e/screenshots/
-test-results/
+# 测试运行产物只能写入 runtime；源码树报告目录不忽略，用来拦截误写
 
 # 知识加工和大纲生成中间产物
 

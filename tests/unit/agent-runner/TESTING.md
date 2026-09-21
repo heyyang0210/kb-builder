@@ -136,7 +136,8 @@ python3 tests/run_tests.py full
 python3 tests/run_tests.py full --dry-run
 
 # 生成汇总报告
-python3 tests/run_tests.py full --report runtime/test-reports/full.json
+python3 tests/run_tests.py full
+python3 tests/run_tests.py full --coverage
 ```
 
 ### 3.2 按分类运行
@@ -290,26 +291,18 @@ tests/
 
 ## 6. 测试覆盖率
 
-### 6.1 当前覆盖率（预处理模块）
+### 6.1 覆盖率口径
 
-| 模块 | 语句覆盖 | 函数覆盖 | 说明 |
-|------|----------|----------|------|
-| `design-doc-cleaner.js` | 100% | 100% | 6 条清洗规则全覆盖 |
-| `markdown-adapter.js` | 94% | 92% | 扫描/解析/元数据 |
-| `semantic-chunker.js` | 92% | 89% | 分块/保护/overlap |
-| `snapshot-tracker.js` | 91% | 100% | 快照管理 |
-| `quality-validator.js` | 77% | 90% | 质量验证 |
-| `layered-indexer.js` | 58% | 50% | 索引构建（待补充） |
+覆盖率必须来自当次真实 `--coverage` 执行，不在设计文档中维护容易过期的静态百分比。首版只采集 Jest 管理的 JavaScript 代码，不得表述为全仓覆盖率。
 
 ### 6.2 查看覆盖率
 
 ```bash
-# 全量覆盖率
-npx jest --config tests/unit/agent-runner/jest.config.js --coverage
+# full/all 默认不采集覆盖率；显式采集 Jest 管理的 JavaScript 代码
+python3 tests/run_tests.py full --coverage
 
-# 生成 HTML 报告
-npx jest --coverage --coverageReporters=html
-# 报告位置：coverage/lcov-report/index.html
+# 报告位置见本次运行的 report.md，完整 HTML 详情在同一目录 details/coverage/lcov-report/
+# Python、独立 Node 脚本和 Playwright 在首版标记为未采集/不适用
 ```
 
 ---
@@ -346,7 +339,7 @@ jobs:
 
 ```bash
 # 执行快速 CI 门禁并生成报告
-python3 tests/run_tests.py smoke --report runtime/test-reports/smoke.json
+python3 tests/run_tests.py smoke --report runtime/test-results/smoke.json
 ```
 
 ---

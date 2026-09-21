@@ -2,7 +2,7 @@ const fs = require('fs').promises;
 const path = require('path');
 const { PptxAdapter } = require('../../../../packages/agent-runner-core/lib/preprocessing/cleaners/pptx-adapter');
 
-const TEST_DIR = path.join(__dirname, '..', '..', 'tmp', 'test-pptx-adapter-' + Date.now());
+const TEST_DIR = path.join(process.env.YASDB_TEST_TMP_DIR || require('os').tmpdir(), 'test-pptx-adapter-' + Date.now());
 
 describe('PptxAdapter', () => {
   let adapter;

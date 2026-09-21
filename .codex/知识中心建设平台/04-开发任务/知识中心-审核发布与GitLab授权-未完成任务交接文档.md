@@ -268,7 +268,7 @@ PATCH /knowledge-center/api/incremental-tasks/{taskId}/reviews/{reviewId}/commen
 6. “外部账号”解除连接后，再次读取需要重新授权。
 7. 日志、地址栏和前端投影中没有 Token、Cookie、授权码或 Client Secret。
 
-验收记录应写入 `05-测试报告/知识中心-平台管理-GitLab仓库全量测试报告.md`，状态必须使用“通过/失败/未执行”，不能把发起接口返回 302 当作 OAuth 闭环通过。
+验收记录应写入 `05-测试设计&报告/02-测试报告/知识中心-平台管理-GitLab仓库全量测试报告.md`，状态必须使用“通过/失败/未执行”，不能把发起接口返回 302 当作 OAuth 闭环通过。
 
 ### HO-P0-05：混合工作区审计和主题化提交
 

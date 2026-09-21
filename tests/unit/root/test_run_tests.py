@@ -4,6 +4,7 @@ import os
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -117,6 +118,11 @@ class RepositoryTestRunnerTests(unittest.TestCase):
         self.assertTrue(all(len(task.files) == 1 for task in script_tasks))
         self.assertTrue(all(RUNNER.task_command(task)[0] in {"node", RUNNER.python_executable()} for task in script_tasks))
 
+    def test_node_test_task_executes_every_discovered_file(self):
+        task = next(task for task in RUNNER.build_tasks("unit") if task.framework == "node-test")
+        command = RUNNER.task_command(task)
+        self.assertEqual([RUNNER.relative(path) for path in task.files], command[2:])
+
     def test_node_script_exit_does_not_stop_following_task(self):
         runtime_root = RUNNER.REPOSITORY_ROOT / "runtime"
         runtime_root.mkdir(exist_ok=True)
@@ -176,6 +182,79 @@ class RepositoryTestRunnerTests(unittest.TestCase):
             [{"task": "unit / Jest", "test": "suite › broken case"}],
             entry["failedTests"],
         )
+
+    def test_coverage_is_only_available_for_full_and_all(self):
+        self.assertTrue(RUNNER.parse_args(["full", "--coverage"]).coverage)
+        self.assertTrue(RUNNER.parse_args(["all", "--coverage"]).coverage)
+        with self.assertRaises(SystemExit):
+            RUNNER.parse_args(["gate", "--coverage"])
+
+    def test_coverage_runs_only_files_classified_for_jest(self):
+        source = RUNNER_PATH.read_text(encoding="utf-8")
+        self.assertIn('"--runTestsByPath"', source)
+
+    def test_dry_run_does_not_fail_when_coverage_is_not_executed(self):
+        coverage = RUNNER.CoverageSummary(
+            "NOT_RUN", "Jest 管理的 JavaScript 代码", {}, diagnostic="dry-run 未执行"
+        )
+        self.assertTrue(RUNNER.coverage_succeeded(coverage, dry_run=True))
+        self.assertFalse(RUNNER.coverage_succeeded(coverage, dry_run=False))
+
+    def test_formal_run_uses_date_partition_and_compact_report_layout(self):
+        with tempfile.TemporaryDirectory() as directory:
+            old_report_root = RUNNER.TEST_REPORT_ROOT
+            old_result_root = RUNNER.TEST_RESULT_ROOT
+            try:
+                RUNNER.TEST_REPORT_ROOT = Path(directory) / "test-reports"
+                RUNNER.TEST_RESULT_ROOT = Path(directory) / "test-results"
+                context = RUNNER.create_run_context(
+                    "all", datetime(2026, 9, 21, 12, 34, 56, 123456, tzinfo=timezone.utc)
+                )
+            finally:
+                RUNNER.TEST_REPORT_ROOT = old_report_root
+                RUNNER.TEST_RESULT_ROOT = old_result_root
+        self.assertTrue(context.formal)
+        self.assertEqual("full", context.command)
+        self.assertEqual("2026-09-21", context.run_dir.parent.name)
+        self.assertEqual("details", context.details_dir.name)
+        self.assertEqual("tasks", context.tasks_dir.name)
+
+    def test_framework_counts_are_extracted_for_report_summary(self):
+        self.assertEqual(
+            (10, 7, 1, 2),
+            RUNNER.extract_test_counts("jest", "Tests: 1 failed, 2 skipped, 7 passed, 10 total\n"),
+        )
+        self.assertEqual(
+            (5, 3, 1, 1),
+            RUNNER.extract_test_counts("pytest", "===== 1 failed, 1 skipped, 3 passed in 0.10s =====\n"),
+        )
+        self.assertEqual(
+            (7, 6, 0, 1),
+            RUNNER.extract_test_counts("node-test", "# tests 7\n# pass 6\n# fail 0\n# skipped 1\n"),
+        )
+        self.assertEqual(
+            (6, 1, 1, 4),
+            RUNNER.extract_test_counts("playwright", "1 failed\n4 did not run\n1 passed\n"),
+        )
+
+    def test_test_environment_targets_the_instance_prepared_by_runner(self):
+        self.assertEqual(RUNNER.KNOWLEDGE_CENTER_BASE_URL, RUNNER.test_environment()["KPG_BASE_URL"])
+
+    def test_test_sources_do_not_write_reports_or_temp_data_into_source_tree(self):
+        forbidden = (
+            'tests/e2e/agent-runner/reports',
+            'Path(__file__).parent / "reports"',
+            "path.join(__dirname, '..', '..', 'tmp'",
+            "path.join(__dirname, '..', '..', 'agent-runner', 'tmp'",
+        )
+        offenders = []
+        for path in (RUNNER.REPOSITORY_ROOT / "tests").rglob("*"):
+            if path == Path(__file__) or path.suffix not in {".py", ".js", ".cjs"} or not path.is_file():
+                continue
+            source = path.read_text(encoding="utf-8", errors="ignore")
+            if any(pattern in source for pattern in forbidden):
+                offenders.append(path.relative_to(RUNNER.REPOSITORY_ROOT).as_posix())
+        self.assertEqual([], offenders)
 
 
 if __name__ == "__main__":

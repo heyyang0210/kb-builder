@@ -122,7 +122,13 @@ class BatchFilterBrowserTests(unittest.TestCase):
             page.wait_for_timeout(500)
             self.assertIn("sourceType=upload", page.url)
             self.assertIn("keyword=", page.url)
-            report_path = Path(__file__).parent / "reports" / "batch-source-filters.png"
+            artifact_root = Path(
+                os.getenv(
+                    "YASDB_TEST_ARTIFACT_DIR",
+                    Path(__file__).resolve().parents[4] / "runtime/test-results/pingcode-browser",
+                )
+            )
+            report_path = artifact_root / "batch-source-filters.png"
             report_path.parent.mkdir(parents=True, exist_ok=True)
             page.screenshot(path=str(report_path), full_page=True)
             browser.close()
