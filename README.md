@@ -21,6 +21,10 @@
 ## 启动与检查
 
 ```bash
+./knowledge-center.sh doctor
+./knowledge-center.sh doctor --commands
+./tools/deployment/install-knowledge-center.sh --check
+# 确认计划后显式执行：./tools/deployment/install-knowledge-center.sh --apply
 npm run build
 ./knowledge-center.sh start
 ./knowledge-center.sh status
@@ -30,9 +34,13 @@ npm run build
 
 唯一构建脚本为 `tools/repository/build-knowledge-center.sh`，`npm run build` 只调用该入口。默认产物位于可重建的 `runtime/build/knowledge-center/current/`，详见[统一可重复构建设计](.codex/知识中心建设平台/03-详细设计/知识中心-平台-详细设计文档.md)。构建指纹只覆盖当前真实存在的源码输入并在扫描前校验；PingCode Vite 构建默认使用 `KNOWLEDGE_CENTER_VITE_NODE_OPTIONS=--max-old-space-size=1536`，压缩构建测试机建议配置约 8GiB 内存。
 
-默认页面：`http://192.168.130.180:13510/knowledge-center/`。根目录 `knowledge-center.sh` 是平台唯一权威运维入口，`start/restart` 默认先执行统一构建；本地配置入口为 `config/knowledge-center/.env`，启动参数、依赖与环境覆盖见[启动设计](.codex/知识中心建设平台/03-详细设计/知识中心-平台-详细设计文档.md)。
+对外访问由 `KNOWLEDGE_CENTER_PUBLIC_BASE_URL` 显式配置，可直接使用 IP，例如 `http://192.0.2.10:13510`；脚本不再内置某台机器的 IP，也不从网卡自动推断。根目录 `knowledge-center.sh` 负责诊断和运行生命周期，`start/restart` 默认先执行统一构建，但不自动安装系统软件。依赖安装必须显式调用 `tools/deployment/install-knowledge-center.sh --apply`。
+
+`doctor` 检查 Java 17+、Node.js 20+、Python 3.10+、Node/Python 模块、Playwright Chromium 制品、配置权限、外部 URL、构建产物、真实 YashanDB 连通性和迁移完整性；`--commands` 只输出可复制的处置命令，`--json` 输出结构化结果。受限网络环境的离线交付约定见 [部署工具说明](tools/deployment/README.md)。
 
 `restart` 会先构建再停止旧服务；构建失败时保留旧服务。脚本会预检端口、超时和产物摘要，只强制回收经过工作目录与命令行确认的本仓库进程。启动失败时会标明失败组件、日志和已识别的迁移/连接故障；`status --verbose` 会区分 PID 缺失、进程退出、端口未监听、端口归属冲突和 HTTP 健康检查失败。
+
+平台启停会写入运行日志目录下的 `lifecycle.log`，组件重新启动前会将上一轮日志归档到 `history/`。自动化测试使用独立端口和状态目录；只有所有权令牌与进程身份均匹配时才允许回收，不得停止共享开发实例。
 
 开发环境中，已执行迁移的摘要与当前构建不一致时默认在启动终端和组件日志输出告警并继续启动；生产或共享环境通过 `YASDB_MIGRATION_CHECKSUM_POLICY=strict` 恢复强制门禁。显式数据库迁移始终保持严格校验。
 

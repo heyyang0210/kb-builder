@@ -1,6 +1,6 @@
 const { test, expect } = require('@playwright/test');
 
-const baseUrl = process.env.KPG_BASE_URL || 'http://127.0.0.1:13510';
+const baseUrl = process.env.KPG_BASE_URL;
 
 test('统一入口可通过真实后端完成资料上传并创建批次', async ({ page }) => {
   await page.goto(`${baseUrl}/knowledge-center/`);

@@ -27,4 +27,16 @@ describe('平台人员管理工作台', () => {
     expect(styles).toContain('.principal-dialog::backdrop');
     expect(styles).toContain('min-height:44px');
   });
+
+  test('未登录人员可更正错误预绑定账号并需要二次确认', () => {
+    expect(view).toContain('data-principal-cas-correction-dialog');
+    expect(view).toContain('确认更正 CAS 登录名');
+    expect(view).toContain('更正后，原 CAS 登录名将无法再匹配此人员');
+    expect(view).toContain('data-principal-login-error');
+    expect(app).toContain('const hasLoggedInWithCas = Boolean(item.firstLoginAt || item.lastLoginAt)');
+    expect(app).toContain('尚未通过 CAS 登录，可更正错误的预绑定账号');
+    expect(app).toContain('该人员已有 CAS 登录记录，不能直接更正');
+    expect(app).toContain("error.code === 'CAS_LOGIN_NAME_CONFLICT'");
+    expect(styles).toContain('.principal-correction-summary');
+  });
 });

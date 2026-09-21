@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 
 // 这是性能门禁，不使用 mock 数据；默认指向当前实际知识中心环境。
-const baseUrl = process.env.KPG_BASE_URL || 'http://192.168.130.180:13510';
+const baseUrl = process.env.KPG_BASE_URL;
 const localEnv = (() => {
   const file = path.resolve(__dirname, '../../../config/knowledge-center/.env');
   if (!fs.existsSync(file)) return {};

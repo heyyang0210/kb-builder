@@ -51,7 +51,10 @@ if [[ "${1:-}" == migrate ]]; then
   migration_source_actual_sha="$({
     find "$YASDB_STORAGE_SQL_DIR" -maxdepth 1 -type f \
       \( -name '[0-9][0-9][0-9]_*.sql' -o -name 'migration-aliases.properties' \) -print0 \
-      | sort -z | xargs -0 sha256sum
+      | sort -z | while IFS= read -r -d '' migration_file; do
+          migration_digest="$(sha256sum "$migration_file" | awk '{print $1}')"
+          printf '%s  apps/yashandb-storage/sql/%s\n' "$migration_digest" "$(basename "$migration_file")"
+        done
   } | sha256sum | awk '{print $1}')"
   [[ "$migration_source_dirty" == false && -n "$migration_source_revision" && "$migration_source_revision" != unknown \
     && -n "$migration_source_expected_sha" && "$migration_source_actual_sha" == "$migration_source_expected_sha" ]] || {
@@ -67,4 +70,5 @@ if [[ "$(uname -s)" == MINGW* || "$(uname -s)" == MSYS* || "$(uname -s)" == CYGW
   classpath_separator=';'
 fi
 
-exec java -cp "${jdbc_jar}${classpath_separator}${classes_dir}" Main "$@"
+java_bin="${KNOWLEDGE_CENTER_JAVA_BIN:-java}"
+exec "$java_bin" -cp "${jdbc_jar}${classpath_separator}${classes_dir}" Main "$@"

@@ -50,6 +50,12 @@ python3 tests/run_tests.py full --log runtime/test-results/exports/compat-full.l
 PLAYWRIGHT_PROJECTS=chromium python3 tests/run_tests.py e2e
 ```
 
+部署契约测试覆盖 `knowledge-center.sh doctor --json`、RPM/DEB 安装命令路由、外部 URL 配置、离线包摘要校验和数据库 `probe/verify` 入口。契约测试会跳过真实数据库探测；真实部署验收必须单独执行 `./knowledge-center.sh doctor`。
+
+Playwright 始终由统一入口启动随机本地端口的隔离测试实例，不复用外部 `KPG_BASE_URL`。该实例复用同一 YashanDB 服务，但强制通过 `YASDB_CONFIG_DIR=runtime/test-config/yashandb` 从其 `service.env` 加载 `test_hy` 独立 Schema 账号；缺少配置或账号不是 `test_hy` 时前置失败，不得回退或额外依赖业务配置。
+
+E2E 启动时还会校验服务端返回的 `environment=test` 和本次 `testRunId`，校验失败则在发送业务写请求前终止。状态与日志位于本次报告 `details/knowledge-center/`。回收必须通过所有权令牌和进程身份校验；校验失败时保留现场，绝不停止共享开发平台。
+
 ## 分类规则
 
 文件名按以下优先级归类：
@@ -67,7 +73,7 @@ Python 用例支持标准的 `test_*.py` 和 `*_test.py` 两种命名形式。�
 
 `smoke` 是按运行时间维护的快速关键路径。`full` 按 `gate → unit → contract → integration → system → e2e` 顺序执行，可能需要浏览器、已启动的服务、环境变量或外部依赖；缺少条件的测试应由测试自身明确显示为跳过或失败，不允许入口将“未发现测试”冒充成功。
 
-Playwright 分类只包含当前知识中心拓扑。入口先检查 `KPG_BASE_URL`（默认 `http://127.0.0.1:13510`）；服务未运行时通过 `knowledge-center.sh` 启动，并且只在本轮确实由入口启动时负责停止。历史 `3500/4100/13502` 页面、一次性调试脚本和已下线兼容入口不属于 `full`。
+Playwright 分类只包含当前知识中心拓扑。所有服务地址由统一入口注入，用例不得以 `13510` 或远程业务地址作为写入回退。历史 `3500/4100/13502` 页面、一次性调试脚本和已下线兼容入口不属于 `full`。
 
 `/api/document/*` 评论契约已迁移到当前 `13510` 知识中心网关，并归入 integration 分类；HTML 原文预览由当前页面与 API/E2E 契约覆盖。
 

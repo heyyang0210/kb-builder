@@ -132,4 +132,20 @@ describe('数据库模式知识资产状态覆盖', () => {
       data: { items: [expect.objectContaining({ handbookId: 'DB-041', status: 'asset_created', manualStatus: null, assetVersion: 15 })] },
     });
   });
+
+  test('存储写入失败返回 503 且前端请求进程继续存活', async () => {
+    const knowledgeAssetsStore = jsonStore({
+      handbooks: [{ handbookId: 'DB-503', name: '不可用存储手册', assetVersion: 1, documentSummary: { runningTasks: 0 } }],
+      audits: [],
+    });
+    knowledgeAssetsStore.write.mockImplementation(() => { throw Object.assign(new Error('数据库暂不可用'), { code: 'DOMAIN_STORE_UNAVAILABLE', status: 503 }); });
+    await startHandler({ knowledgeAssetsStore, manualStatusStore: jsonStore({ version: 1, statuses: {}, audits: [] }) });
+
+    const response = await fetch(`${baseUrl}/knowledge-center/api/assets/handbooks/DB-503/archive`, { method: 'POST' });
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({ success: false, error: { code: 'DOMAIN_STORE_UNAVAILABLE' } });
+
+    const health = await fetch(`${baseUrl}/knowledge-center/api/assets/handbooks?page=1&pageSize=20`);
+    expect(health.status).toBe(200);
+  });
 });

@@ -1,6 +1,6 @@
 const { test, expect } = require('@playwright/test');
 
-const baseUrl = process.env.KPG_BASE_URL || 'http://127.0.0.1:13510';
+const baseUrl = process.env.KPG_BASE_URL;
 
 test.beforeEach(async ({ page }) => {
   await page.goto(`${baseUrl}/knowledge-center/`);
@@ -133,7 +133,45 @@ test('默认列表全宽，点击手册名称后打开并可关闭弹性操作�
   await expect(page.getByLabel('当前手册操作')).toHaveCount(0);
 });
 
-test('管理手册集中展示基本信息、责任人、状态与停用能力', async ({ page }) => {
+test('长列表下方选择手册时保持滚动位置并显示吸顶操作栏', async ({ page }) => {
+  const items = Array.from({ length: 50 }, (_, index) => ({
+    handbookId: `STICKY-${String(index + 1).padStart(2, '0')}`,
+    name: `吸顶测试手册 ${index + 1}`,
+    status: 'asset_created',
+    statusDisplayName: '待创建',
+    ownerA: { principalId: 1, displayName: '测试负责人' },
+    ownerB: null,
+    repositoryMapped: false,
+    chapterCount: index,
+    documentCount: index,
+    assetVersion: 1,
+  }));
+  await page.route('**/knowledge-center/api/assets/handbooks*', async route => {
+    if (route.request().method() !== 'GET') return route.continue();
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: {
+      items, page: 1, pageSize: 50, total: 50, products: [], generatedAt: '2026-09-21T07:00:00.000Z',
+      statistics: { asset_created: 50, outline_editing: 0, outline_published: 0, content_building: 0, handbook_published: 0 },
+    } }) });
+  });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`${baseUrl}/knowledge-center/assets?pageSize=50`);
+  const lastManual = page.getByRole('link', { name: '吸顶测试手册 50' });
+  await lastManual.scrollIntoViewIfNeeded();
+  const mainShell = page.locator('#main-shell');
+  const before = await mainShell.evaluate(element => element.scrollTop);
+  expect(before).toBeGreaterThan(0);
+  await lastManual.click();
+  const actionPanel = page.getByLabel('当前手册操作');
+  await expect(actionPanel).toBeVisible();
+  await expect(actionPanel.getByRole('button', { name: /管理手册/ })).toBeVisible();
+  await expect.poll(() => mainShell.evaluate(element => element.scrollTop)).toBe(before);
+  const box = await actionPanel.boundingBox();
+  expect(box).not.toBeNull();
+  expect(box.y).toBeGreaterThanOrEqual(0);
+  expect(box.y).toBeLessThan(100);
+});
+
+test('管理手册折叠高级操作并通过专用对话框确认停用', async ({ page }) => {
   await page.goto(`${baseUrl}/knowledge-center/assets`);
   await page.locator('[data-asset-id]').first().click();
   await page.getByRole('button', { name: /管理手册/ }).click();
@@ -143,8 +181,52 @@ test('管理手册集中展示基本信息、责任人、状态与停用能力',
   await expect(dialog.getByLabel('B 角')).toBeVisible();
   await expect(dialog.getByLabel('手册状态')).toBeVisible();
   await expect(dialog.getByLabel('变更原因')).toBeVisible();
-  await expect(dialog.getByRole('button', { name: '停用手册' })).toBeVisible();
+  const advanced = dialog.locator('[data-asset-advanced-actions]');
+  await expect(advanced).not.toHaveAttribute('open', '');
+  await expect(dialog.getByRole('button', { name: '停用手册' })).not.toBeVisible();
+  await advanced.locator('summary').click();
+  const archiveButton = dialog.getByRole('button', { name: '停用手册' });
+  await expect(archiveButton).toBeVisible();
+
+  const nameInput = dialog.getByLabel('手册名称');
+  const originalName = await nameInput.inputValue();
+  await nameInput.fill(`${originalName} 临时修改`);
+  await archiveButton.click();
+  await expect(dialog.getByText('请先保存或取消当前修改，再停用手册。')).toBeVisible();
+  await expect(page.getByRole('dialog', { name: /确认停用/ })).toHaveCount(0);
+
+  await nameInput.fill(originalName);
+  await archiveButton.click();
+  const confirmDialog = page.getByRole('dialog', { name: /确认停用/ });
+  await expect(confirmDialog).toBeVisible();
+  await expect(dialog).not.toBeVisible();
+  await expect(confirmDialog.getByText('从在用资产列表和阶段统计中隐藏')).toBeVisible();
+  await expect(confirmDialog.getByText('仓库映射、文档和版本继续保留')).toBeVisible();
+  await expect(confirmDialog.getByText('责任关系和审计记录继续保留')).toBeVisible();
+  await confirmDialog.getByRole('button', { name: '取消' }).click();
+  await expect(dialog).toBeVisible();
+  await expect(archiveButton).toBeFocused();
   await dialog.getByRole('button', { name: '取消' }).click();
+});
+
+test('停用失败时确认对话框保留错误并允许重试', async ({ page }) => {
+  await page.route('**/knowledge-center/api/assets/handbooks/*/archive', route => route.fulfill({
+    status: 503,
+    contentType: 'application/json',
+    body: JSON.stringify({ success: false, error: { code: 'ASSET_ARCHIVE_FAILED', message: '模拟停用失败' } }),
+  }));
+  await page.goto(`${baseUrl}/knowledge-center/assets`);
+  await page.locator('[data-asset-id]').first().click();
+  await page.getByRole('button', { name: /管理手册/ }).click();
+  const dialog = page.getByRole('dialog', { name: '管理手册' });
+  await dialog.locator('[data-asset-advanced-actions] summary').click();
+  await dialog.getByRole('button', { name: '停用手册' }).click();
+  const confirmDialog = page.getByRole('dialog', { name: /确认停用/ });
+  const confirmButton = confirmDialog.getByRole('button', { name: '确认停用' });
+  await confirmButton.click();
+  await expect(confirmDialog).toBeVisible();
+  await expect(confirmDialog.getByText('模拟停用失败')).toBeVisible();
+  await expect(confirmButton).toBeEnabled();
 });
 
 test('手册名称打开操作栏，大纲和手册管理保持独立入口', async ({ page }) => {

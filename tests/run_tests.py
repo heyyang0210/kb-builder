@@ -13,6 +13,7 @@ import json
 import os
 import re
 import shlex
+import socket
 import subprocess
 import sys
 import time
@@ -22,6 +23,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
+from uuid import uuid4
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -32,10 +34,9 @@ JEST_CONFIG = REPOSITORY_ROOT / "tests" / "unit" / "agent-runner" / "jest.config
 PLAYWRIGHT_CONFIG = REPOSITORY_ROOT / "tests" / "unit" / "agent-runner" / "playwright.config.js"
 TEST_REPORT_ROOT = REPOSITORY_ROOT / "runtime" / "test-reports"
 TEST_RESULT_ROOT = REPOSITORY_ROOT / "runtime" / "test-results"
+TEST_DATABASE_CONFIG_DIR = REPOSITORY_ROOT / "runtime" / "test-config" / "yashandb"
 KNOWLEDGE_CENTER_SCRIPT = REPOSITORY_ROOT / "knowledge-center.sh"
-KNOWLEDGE_CENTER_BASE_URL = os.environ.get(
-    "KPG_BASE_URL", "http://127.0.0.1:13510"
-).rstrip("/")
+KNOWLEDGE_CENTER_BASE_URL = "http://127.0.0.1:13510"
 KNOWLEDGE_CENTER_HEALTH_URL = KNOWLEDGE_CENTER_BASE_URL + "/knowledge-center/api/auth/config"
 
 SEMANTIC_SUITES = ("gate", "unit", "contract", "integration", "system", "e2e")
@@ -94,6 +95,16 @@ class CoverageSummary:
     metrics: dict[str, float]
     lowest_files: tuple[tuple[str, float], ...] = ()
     diagnostic: str = ""
+
+
+@dataclass(frozen=True)
+class KnowledgeCenterLease:
+    owner: str
+    base_url: str
+    health_url: str
+    environment: dict[str, str]
+    state_dir: Path
+    process_identities: dict[str, tuple[int, str]]
 
 
 def relative(path: Path) -> str:
@@ -307,7 +318,12 @@ def python_executable() -> str:
     return os.environ.get("TEST_PYTHON", sys.executable)
 
 
-def test_environment(task: TestTask | None = None, run_context: RunContext | None = None) -> dict[str, str]:
+def test_environment(
+    task: TestTask | None = None,
+    run_context: RunContext | None = None,
+    knowledge_center_base_url: str | None = None,
+    knowledge_center_test_run_id: str | None = None,
+) -> dict[str, str]:
     env = os.environ.copy()
     python_paths = [
         str(REPOSITORY_ROOT / "apps" / "pingcode-api"),
@@ -325,7 +341,9 @@ def test_environment(task: TestTask | None = None, run_context: RunContext | Non
         env["NODE_PATH"] = os.pathsep.join(node_paths)
     # 统一入口准备和探活的是同一个知识中心实例。性能门禁不能在未显式配置时
     # 回退到测试文件中的远端地址，否则测到的是网络和另一套环境。
-    env.setdefault("KPG_BASE_URL", KNOWLEDGE_CENTER_BASE_URL)
+    env["KPG_BASE_URL"] = knowledge_center_base_url or env.get("KPG_BASE_URL", KNOWLEDGE_CENTER_BASE_URL)
+    if knowledge_center_test_run_id:
+        env["KNOWLEDGE_CENTER_TEST_RUN_ID"] = knowledge_center_test_run_id
     if run_context:
         env["YASDB_TEST_RUN_DIR"] = str(run_context.run_dir)
         env["YASDB_TEST_ARTIFACT_DIR"] = str(run_context.artifact_dir)
@@ -415,38 +433,142 @@ def wait_for_http(url: str, timeout_seconds: int) -> bool:
     return False
 
 
-def ensure_knowledge_center() -> tuple[bool, bool, str]:
-    """Return ready, started_by_runner, diagnostic."""
-    if http_ready(KNOWLEDGE_CENTER_HEALTH_URL):
-        return True, False, "复用已运行的知识中心服务"
+def reserve_local_ports(count: int) -> tuple[int, ...]:
+    sockets = []
+    try:
+        for _ in range(count):
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.bind(("127.0.0.1", 0))
+            sockets.append(sock)
+        return tuple(sock.getsockname()[1] for sock in sockets)
+    finally:
+        for sock in sockets:
+            sock.close()
+
+
+def process_identity(pid: int) -> str | None:
+    try:
+        fields = (Path("/proc") / str(pid) / "stat").read_text(encoding="utf-8").split()
+    except (OSError, ValueError):
+        return None
+    return fields[21] if len(fields) > 21 else None
+
+
+def read_lease_processes(state_dir: Path) -> dict[str, tuple[int, str]]:
+    identities = {}
+    for service in ("storage", "document", "pingcode", "frontend"):
+        try:
+            pid = int((state_dir / f"{service}.pid").read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            continue
+        identity = process_identity(pid)
+        if identity is not None:
+            identities[service] = (pid, identity)
+    return identities
+
+
+def isolated_knowledge_center_environment(context: RunContext) -> tuple[dict[str, str], str, str]:
+    test_database_config = TEST_DATABASE_CONFIG_DIR / "service.env"
+    if not test_database_config.is_file():
+        raise RuntimeError(
+            f"缺少测试数据库配置：{test_database_config.relative_to(REPOSITORY_ROOT)}"
+        )
+    config_text = test_database_config.read_text(encoding="utf-8")
+    username = re.search(r'^YASDB_USERNAME=["\']?([^"\'\r\n]+)', config_text, re.MULTILINE)
+    if not username or username.group(1).strip().lower() != "test_hy":
+        raise RuntimeError("测试数据库配置必须使用 test_hy 独立 Schema 账号")
+    frontend, document, pingcode, storage = reserve_local_ports(4)
+    service_root = context.details_dir / "knowledge-center"
+    state_dir = service_root / "state"
+    log_dir = service_root / "logs"
+    owner = f"test-run:{context.run_id}:{uuid4().hex}"
+    env = test_environment(run_context=context).copy()
+    # 隔离实例必须只从测试专用配置加载 JDBC 凭据，不得继承当前
+    # Shell 中可能指向业务 Schema 的显式覆盖。
+    for key in ("YASDB_JDBC_URL", "YASDB_USERNAME", "YASDB_PASSWORD"):
+        env.pop(key, None)
+    env.update({
+        "KNOWLEDGE_CENTER_FRONTEND_PORT": str(frontend),
+        "KNOWLEDGE_CENTER_DOCUMENT_API_PORT": str(document),
+        "KNOWLEDGE_CENTER_PINGCODE_API_PORT": str(pingcode),
+        "YASDB_STORAGE_PORT": str(storage),
+        "YASDB_STORAGE_URL": f"http://127.0.0.1:{storage}",
+        "KNOWLEDGE_CENTER_INTERNAL_HOST": "127.0.0.1",
+        "KNOWLEDGE_CENTER_PUBLIC_BASE_URL": f"http://127.0.0.1:{frontend}",
+        "KNOWLEDGE_CENTER_PINGCODE_HOST": "127.0.0.1",
+        "KNOWLEDGE_CENTER_STATE_DIR": str(state_dir),
+        "KNOWLEDGE_CENTER_LOG_DIR": str(log_dir),
+        "KNOWLEDGE_CENTER_RUN_OWNER": owner,
+        "KNOWLEDGE_CENTER_NO_TAKEOVER": "1",
+        "KNOWLEDGE_CENTER_OPERATION_ACTOR": "unified-test-runner",
+        "KNOWLEDGE_CENTER_STOP_REASON": f"test-run-cleanup:{context.run_id}",
+        "KNOWLEDGE_CENTER_ENV": "test",
+        "KNOWLEDGE_CENTER_ENVIRONMENT": "test",
+        "KNOWLEDGE_CENTER_TEST_RUN_ID": context.run_id,
+        "YASDB_CONFIG_DIR": str(TEST_DATABASE_CONFIG_DIR),
+        "KNOWLEDGE_STORAGE_MODE": "database",
+        "KNOWLEDGE_CENTER_AUTH_STORE": str(service_root / "data" / "auth.json"),
+        "INCREMENTAL_BUILD_STATE": str(service_root / "data" / "incremental-build-state.json"),
+    })
+    base_url = f"http://127.0.0.1:{frontend}"
+    return env, base_url, owner
+
+
+def ensure_knowledge_center(context: RunContext) -> tuple[bool, KnowledgeCenterLease | None, str]:
+    """Always start an owned instance backed by the dedicated test schema."""
     if not KNOWLEDGE_CENTER_SCRIPT.is_file():
-        return False, False, f"缺少启动脚本：{KNOWLEDGE_CENTER_SCRIPT}"
+        return False, None, f"缺少启动脚本：{KNOWLEDGE_CENTER_SCRIPT}"
+    try:
+        env, base_url, owner = isolated_knowledge_center_environment(context)
+    except RuntimeError as error:
+        return False, None, str(error)
+    health_url = base_url + "/knowledge-center/api/auth/config"
     last_output = ""
     for arguments in (("start", "--no-build"), ("start",)):
         completed = subprocess.run(
             [str(KNOWLEDGE_CENTER_SCRIPT), *arguments],
             cwd=REPOSITORY_ROOT,
-            env=test_environment(),
+            env=env,
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             check=False,
         )
         last_output = completed.stdout
-        if completed.returncode == 0 and http_ready(KNOWLEDGE_CENTER_HEALTH_URL):
-            return True, "已在运行" not in completed.stdout, "统一入口已准备知识中心测试服务"
-        if "已有知识中心启停操作正在执行" in completed.stdout and wait_for_http(KNOWLEDGE_CENTER_HEALTH_URL, 60):
-            return True, False, "复用并发启动完成的知识中心服务"
-    return False, False, last_output.strip() or "知识中心服务启动失败"
+        if completed.returncode == 0 and http_ready(health_url):
+            state_dir = Path(env["KNOWLEDGE_CENTER_STATE_DIR"])
+            lease = KnowledgeCenterLease(owner, base_url, health_url, env, state_dir, read_lease_processes(state_dir))
+            if len(lease.process_identities) != 4:
+                return False, lease, "独立测试实例缺少完整进程所有权证据"
+            return True, lease, "统一入口已启动 test_hy Schema 隔离的知识中心测试实例"
+    return False, None, last_output.strip() or "知识中心服务启动失败"
 
 
-def stop_owned_knowledge_center() -> None:
-    subprocess.run(
+def stop_owned_knowledge_center(lease: KnowledgeCenterLease) -> bool:
+    try:
+        actual_owner = (lease.state_dir / "run-owner").read_text(encoding="utf-8").strip()
+    except OSError:
+        return False
+    if actual_owner != lease.owner:
+        return False
+    for service, (pid, identity) in lease.process_identities.items():
+        if process_identity(pid) != identity:
+            return False
+        try:
+            recorded_pid = int((lease.state_dir / f"{service}.pid").read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            return False
+        if recorded_pid != pid:
+            return False
+    env = lease.environment.copy()
+    env["KNOWLEDGE_CENTER_EXPECTED_OWNER"] = lease.owner
+    completed = subprocess.run(
         [str(KNOWLEDGE_CENTER_SCRIPT), "stop"],
         cwd=REPOSITORY_ROOT,
-        env=test_environment(),
+        env=env,
         check=False,
     )
+    return completed.returncode == 0
 
 
 def run_task(
@@ -455,6 +577,8 @@ def run_task(
     dry_run: bool,
     timeout: int,
     run_context: RunContext | None = None,
+    knowledge_center_base_url: str | None = None,
+    knowledge_center_test_run_id: str | None = None,
     log_path: Path | None = None,
 ) -> TaskResult:
     command = task_command(task)
@@ -481,7 +605,7 @@ def run_task(
         completed = subprocess.run(
             command,
             cwd=REPOSITORY_ROOT,
-            env=test_environment(task, run_context),
+            env=test_environment(task, run_context, knowledge_center_base_url, knowledge_center_test_run_id),
             timeout=timeout,
             check=False,
             text=True,
@@ -899,10 +1023,10 @@ def main(argv: list[str] | None = None) -> int:
     context = create_run_context(args.command, generated_at, formal_override=False if args.dry_run else None)
     results: list[TaskResult] = []
     coverage = None
-    owns_knowledge_center = False
+    knowledge_center_lease = None
     playwright_ready = args.dry_run or not any(task.framework == "playwright" for task in tasks)
     if not playwright_ready:
-        playwright_ready, owns_knowledge_center, diagnostic = ensure_knowledge_center()
+        playwright_ready, knowledge_center_lease, diagnostic = ensure_knowledge_center(context)
         print(f"Playwright 前置条件：{diagnostic}")
         if not playwright_ready:
             results.append(TaskResult("preflight", "Playwright / 知识中心服务", "preflight", "FAIL", 0.0, 1, 0, (diagnostic,), ""))
@@ -915,6 +1039,8 @@ def main(argv: list[str] | None = None) -> int:
                 dry_run=args.dry_run,
                 timeout=args.timeout,
                 run_context=context,
+                knowledge_center_base_url=(knowledge_center_lease.base_url if knowledge_center_lease else None),
+                knowledge_center_test_run_id=(context.run_id if knowledge_center_lease else None),
                 log_path=context.tasks_dir / f"{task_slug(len(results) + 1, task)}.log",
             )
             results.append(result)
@@ -927,8 +1053,8 @@ def main(argv: list[str] | None = None) -> int:
         elif args.coverage:
             coverage = CoverageSummary("NOT_RUN", "Jest 管理的 JavaScript 代码", {}, diagnostic="dry-run 未执行")
     finally:
-        if owns_knowledge_center:
-            stop_owned_knowledge_center()
+        if knowledge_center_lease and not stop_owned_knowledge_center(knowledge_center_lease):
+            print("警告：测试实例所有权或进程身份已变化，拒绝自动停止，请根据本次报告手工处置。", file=sys.stderr)
     elapsed = time.monotonic() - started
 
     print_summary(results, elapsed)

@@ -14,6 +14,8 @@ const renderers = {
 };
 let assetSelectionRenderer = null;
 let assetStatisticsRenderer = null;
+let assetArchiveManageDialog = null;
+let assetArchiveTrigger = null;
 const rendererLoaders = {
   dashboard: () => import('./modules/dashboard/view.js').then(module => module.renderDashboard),
   assets: () => import('./modules/assets/view.js').then(module => {
@@ -51,6 +53,7 @@ function ensureRouteStyles(view) {
 
 let iconLibraryScheduled = false;
 let pendingPrincipalImportFile = null;
+let pendingPrincipalCorrection = null;
 let principalSearchTimer = null;
 function scheduleIconLibrary() {
   if (iconLibraryScheduled || window.lucide) return;
@@ -185,6 +188,7 @@ function updateAssetSelection(selectedId) {
   document.querySelectorAll('[data-asset-id]').forEach(link => link.closest('tr')?.classList.toggle('selected', Boolean(selected) && link.dataset.assetId === String(selectedId)));
   workspace.querySelector('.asset-workspace-detail')?.remove();
   root.querySelector('[data-asset-edit-dialog]')?.remove();
+  root.querySelector('[data-asset-archive-dialog]')?.remove();
   root.querySelector('[data-repository-mapping-dialog]')?.remove();
   workspace.classList.toggle('asset-detail-open', Boolean(selected));
   const selection = assetSelectionRenderer({ selected, principalProjection: appState.principalProjection, gitlabProjection: appState.gitlabProjection, platformAdmin: isPlatformAdmin() });
@@ -196,6 +200,25 @@ function updateAssetSelection(selectedId) {
   }
   window.lucide?.createIcons();
   return true;
+}
+
+function assetEditSnapshot(form) {
+  return new URLSearchParams(new FormData(form)).toString();
+}
+
+function restoreAssetManageDialog() {
+  const manageDialog = assetArchiveManageDialog;
+  const trigger = assetArchiveTrigger;
+  assetArchiveManageDialog = null;
+  assetArchiveTrigger = null;
+  if (manageDialog?.isConnected && !manageDialog.open) manageDialog.showModal();
+  requestAnimationFrame(() => trigger?.isConnected && trigger.focus());
+}
+
+function cancelAssetArchiveDialog(dialog) {
+  if (dialog?.querySelector('[data-asset-archive-confirm-form]')?.dataset.busy === 'true') return;
+  dialog?.close();
+  restoreAssetManageDialog();
 }
 
 async function navigate(view, updateHistory = true) {
@@ -452,9 +475,23 @@ function updateDatabaseConnectionOperationUi(container, status, busy = false) {
 }
 
 document.addEventListener('cancel', event => {
-  if (!event.target.matches?.('[data-database-dialog]')) return;
-  event.preventDefault();
-  closeDatabaseConnectionDrawer();
+  if (event.target.matches?.('[data-database-dialog]')) {
+    event.preventDefault();
+    closeDatabaseConnectionDrawer();
+    return;
+  }
+  if (event.target.matches?.('[data-asset-archive-dialog]')) {
+    event.preventDefault();
+    cancelAssetArchiveDialog(event.target);
+    return;
+  }
+  if (event.target.matches?.('[data-principal-cas-correction-dialog]')) {
+    event.preventDefault();
+    event.target.close();
+    const input = pendingPrincipalCorrection?.form?.elements.casLoginName;
+    pendingPrincipalCorrection = null;
+    requestAnimationFrame(() => input?.focus());
+  }
 }, true);
 
 document.addEventListener('toggle', event => {
@@ -808,9 +845,13 @@ document.addEventListener('click', async event => {
     if (form) {
       form.elements.principalId.value = '';
       form.elements.rowVersion.value = '';
+      form.dataset.originalCasLoginName = '';
       form.elements.casLoginName.disabled = false;
+      form.elements.casLoginName.required = false;
+      form.elements.casLoginName.removeAttribute('aria-invalid');
       form.querySelector('[data-principal-dialog-title]').textContent = '新增人员';
       form.querySelector('[data-principal-login-help]').textContent = '可留空，首次登录时自动绑定。';
+      form.querySelector('[data-principal-login-error]').textContent = '';
       form.querySelector('button[type="submit"]').textContent = '确认新增';
       form.querySelector('[data-principal-form-status]').textContent = '';
     }
@@ -828,10 +869,17 @@ document.addEventListener('click', async event => {
     form.elements.rowVersion.value = item.rowVersion;
     form.elements.displayName.value = item.displayName || '';
     form.elements.casLoginName.value = item.casLoginName || '';
-    form.elements.casLoginName.disabled = Boolean(item.casLoginName);
+    form.dataset.originalCasLoginName = item.casLoginName || '';
+    const hasLoggedInWithCas = Boolean(item.firstLoginAt || item.lastLoginAt);
+    form.elements.casLoginName.disabled = Boolean(item.casLoginName) && hasLoggedInWithCas;
+    form.elements.casLoginName.required = Boolean(item.casLoginName);
+    form.elements.casLoginName.removeAttribute('aria-invalid');
     form.elements.state.value = item.state || 'ACTIVE';
     form.querySelector('[data-principal-dialog-title]').textContent = '编辑人员';
-    form.querySelector('[data-principal-login-help]').textContent = item.casLoginName ? '已绑定的 CAS 登录名不允许在此换绑。' : '可留空，首次登录时自动绑定。';
+    form.querySelector('[data-principal-login-help]').textContent = item.casLoginName
+      ? (hasLoggedInWithCas ? '该人员已有 CAS 登录记录，不能直接更正，请走身份换绑流程。' : '尚未通过 CAS 登录，可更正错误的预绑定账号；保存前需要再次确认。')
+      : '可留空，首次登录时自动绑定。';
+    form.querySelector('[data-principal-login-error]').textContent = '';
     form.querySelector('button[type="submit"]').textContent = '保存修改';
     form.querySelector('[data-principal-form-status]').textContent = '';
     dialog.showModal();
@@ -878,6 +926,15 @@ document.addEventListener('click', async event => {
     return;
   }
   if (event.target.closest('[data-principal-dialog-close]')) { event.target.closest('dialog')?.close(); return; }
+  const correctionCancel = event.target.closest('[data-principal-correction-cancel]');
+  if (correctionCancel) {
+    const dialog = correctionCancel.closest('[data-principal-cas-correction-dialog]');
+    dialog?.close();
+    const input = pendingPrincipalCorrection?.form?.elements.casLoginName;
+    pendingPrincipalCorrection = null;
+    requestAnimationFrame(() => input?.focus());
+    return;
+  }
   if (event.target.closest('[data-principal-clear-filters]')) {
     appState.principalListState = { search: '', bindingStatus: '', state: '' }; render(); return;
   }
@@ -1269,7 +1326,16 @@ document.addEventListener('click', async event => {
     return;
   }
   if (event.target.closest('[data-asset-create-open]')) { document.querySelector('[data-asset-create-dialog]')?.showModal(); return; }
-  if (event.target.closest('[data-asset-edit-open]')) { document.querySelector('[data-asset-edit-dialog]')?.showModal(); return; }
+  if (event.target.closest('[data-asset-edit-open]')) {
+    const dialog = document.querySelector('[data-asset-edit-dialog]');
+    const form = dialog?.querySelector('[data-asset-edit-form]');
+    if (form) {
+      form.dataset.initialSnapshot = assetEditSnapshot(form);
+      form.querySelector('[data-asset-form-status]').textContent = '';
+    }
+    dialog?.showModal();
+    return;
+  }
   const mappingOpen = event.target.closest('[data-repository-mapping-open]');
   if (mappingOpen) {
     const dialog = document.querySelector('[data-repository-mapping-dialog]');
@@ -1296,6 +1362,30 @@ document.addEventListener('click', async event => {
         if (error.status !== 404) form.querySelector('[data-asset-form-status]').textContent = error.message;
       }
     }
+    return;
+  }
+  const archiveOpen = event.target.closest('[data-asset-archive-open]');
+  if (archiveOpen) {
+    const manageDialog = archiveOpen.closest('[data-asset-edit-dialog]');
+    const form = archiveOpen.closest('[data-asset-edit-form]');
+    const status = form?.querySelector('[data-asset-form-status]');
+    if (form && assetEditSnapshot(form) !== form.dataset.initialSnapshot) {
+      status.textContent = '请先保存或取消当前修改，再停用手册。';
+      status.focus();
+      return;
+    }
+    const archiveDialog = document.querySelector('[data-asset-archive-dialog]');
+    if (!archiveDialog) return;
+    assetArchiveManageDialog = manageDialog;
+    assetArchiveTrigger = archiveOpen;
+    status.textContent = '';
+    manageDialog?.close();
+    archiveDialog.showModal();
+    return;
+  }
+  const archiveCancel = event.target.closest('[data-asset-archive-cancel]');
+  if (archiveCancel) {
+    cancelAssetArchiveDialog(archiveCancel.closest('[data-asset-archive-dialog]'));
     return;
   }
   const dialogClose = event.target.closest('[data-asset-dialog-close]');
@@ -1341,14 +1431,6 @@ document.addEventListener('click', async event => {
       form.closest('dialog')?.close();
       await loadAssetCatalog();
     } catch (error) { form.querySelector('[data-asset-form-status]').textContent = error.message; }
-    return;
-  }
-  const archive = event.target.closest('[data-asset-archive]');
-  if (archive) {
-    const item = appState.assetCatalog?.items?.find(entry => String(entry.handbookId || entry.id) === archive.dataset.assetArchive);
-    const chapters = Number.isInteger(item?.chapterCount) ? `${item.chapterCount} 个章节` : '章节数暂不可用';
-    const documents = Number.isInteger(item?.documentCount) ? `${item.documentCount} 份文档` : '文档数暂不可用';
-    if (window.confirm(`停用后手册将从在用资产列表隐藏，${chapters}、${documents}以及仓库映射、责任和审计记录均会保留。确认停用？`)) archiveAsset(archive.dataset.assetArchive).then(() => { archive.closest('dialog')?.close(); return loadAssetCatalog(); }).catch(error => showAppNotice(error.message));
     return;
   }
   const restore = event.target.closest('[data-asset-restore]');
@@ -1885,23 +1967,77 @@ function removeMappingPath(lang, path) {
   if (idx >= 0) paths.splice(idx, 1);
 }
 
+async function savePrincipalEditor(form, payload, correctionDialog = null) {
+  const status = form.querySelector('[data-principal-form-status]');
+  const fieldError = form.querySelector('[data-principal-login-error]');
+  const input = form.elements.casLoginName;
+  const button = form.querySelector('button[type="submit"]');
+  const correctionButton = correctionDialog?.querySelector('button[type="submit"]');
+  const correctionStatus = correctionDialog?.querySelector('[data-principal-correction-status]');
+  button.disabled = true;
+  if (correctionButton) correctionButton.disabled = true;
+  status.textContent = '';
+  fieldError.textContent = '';
+  input.removeAttribute('aria-invalid');
+  if (correctionStatus) correctionStatus.textContent = '正在更正…';
+  try {
+    if (form.elements.principalId.value) {
+      await updatePrincipal(form.elements.principalId.value, { ...payload, rowVersion: Number(form.elements.rowVersion.value) });
+      correctionDialog?.close();
+      pendingPrincipalCorrection = null;
+      await loadGitLabAdmin();
+      showAppNotice(correctionDialog ? 'CAS 登录名已更正。' : '人员信息已保存。', { title: '保存成功', tone: 'success' });
+    } else {
+      await createPrincipal(payload);
+      await loadGitLabAdmin();
+      showAppNotice('人员已新增。', { title: '保存成功', tone: 'success' });
+    }
+  } catch (error) {
+    if (error.code === 'CAS_LOGIN_NAME_CONFLICT') {
+      correctionDialog?.close();
+      pendingPrincipalCorrection = null;
+      fieldError.textContent = '该 CAS 登录名已绑定其他人员，请核对后重新填写。';
+      input.setAttribute('aria-invalid', 'true');
+      requestAnimationFrame(() => input.focus());
+    } else {
+      const target = correctionStatus || status;
+      target.textContent = error.message || '人员保存失败。';
+    }
+    return false;
+  } finally {
+    button.disabled = false;
+    if (correctionButton) correctionButton.disabled = false;
+  }
+  return true;
+}
+
 document.addEventListener('submit', async event => {
+  const correctionForm = event.target.closest('[data-principal-cas-correction-form]');
+  if (correctionForm) {
+    event.preventDefault();
+    const pending = pendingPrincipalCorrection;
+    if (!pending) { correctionForm.closest('dialog')?.close(); return; }
+    await savePrincipalEditor(pending.form, pending.payload, correctionForm.closest('dialog'));
+    return;
+  }
   const principalEditorForm = event.target.closest('[data-principal-editor-form]');
   if (principalEditorForm) {
     event.preventDefault();
-    const status = principalEditorForm.querySelector('[data-principal-form-status]');
-    const button = principalEditorForm.querySelector('button[type="submit"]'); button.disabled = true;
-    try {
-      const payload = { displayName: principalEditorForm.elements.displayName.value.trim(), casLoginName: principalEditorForm.elements.casLoginName.value.trim() || null, state: principalEditorForm.elements.state.value };
-      if (principalEditorForm.elements.principalId.value) {
-        await updatePrincipal(principalEditorForm.elements.principalId.value, { ...payload, rowVersion: Number(principalEditorForm.elements.rowVersion.value) });
-        status.textContent = '人员信息已保存。';
-      } else {
-        await createPrincipal(payload); status.textContent = '人员已新增。';
-      }
-      await loadGitLabAdmin(); setTimeout(() => principalEditorForm.closest('dialog')?.close(), 500);
-    } catch (error) { status.textContent = error.message || '人员保存失败。'; }
-    finally { button.disabled = false; }
+    const payload = { displayName: principalEditorForm.elements.displayName.value.trim(), casLoginName: principalEditorForm.elements.casLoginName.value.trim() || null, state: principalEditorForm.elements.state.value };
+    const originalLogin = principalEditorForm.dataset.originalCasLoginName || '';
+    if (originalLogin && payload.casLoginName !== originalLogin) {
+      const dialog = document.querySelector('[data-principal-cas-correction-dialog]');
+      if (!dialog) return;
+      pendingPrincipalCorrection = { form: principalEditorForm, payload };
+      dialog.querySelector('[data-principal-correction-name]').textContent = payload.displayName;
+      dialog.querySelector('[data-principal-correction-before]').textContent = originalLogin;
+      dialog.querySelector('[data-principal-correction-after]').textContent = payload.casLoginName || '—';
+      dialog.querySelector('[data-principal-correction-status]').textContent = '';
+      dialog.showModal();
+      dialog.querySelector('button[type="submit"]')?.focus();
+      return;
+    }
+    await savePrincipalEditor(principalEditorForm, payload);
     return;
   }
   const principalImportForm = event.target.closest('[data-principal-import-form]');
@@ -2256,6 +2392,36 @@ document.addEventListener('submit', async event => {
     const button=createForm.querySelector('button[type="submit"]'), status=createForm.querySelector('[data-asset-form-status]'); button.disabled=true;
     try { const saved=await createAsset({name:createForm.elements.name.value.trim(),productId:createForm.elements.productId.value,ownerA:principalFromSelect(createForm.elements.ownerA),ownerB:principalFromSelect(createForm.elements.ownerB),externalVisible:createForm.elements.externalVisible.checked,summary:createForm.elements.summary.value.trim()}); createForm.closest('dialog').close(); const url=new URL(window.location.href); url.searchParams.set('handbookId',saved.handbookId); window.history.pushState({view:'assets'},'',url); await loadAssetCatalog(); }
     catch(error){status.textContent=error.message;} finally{button.disabled=false;} return;
+  }
+  const assetArchiveForm = event.target.closest('[data-asset-archive-confirm-form]');
+  if (assetArchiveForm) {
+    event.preventDefault();
+    const dialog = assetArchiveForm.closest('[data-asset-archive-dialog]');
+    const submit = assetArchiveForm.querySelector('button[type="submit"]');
+    const cancelControls = assetArchiveForm.querySelectorAll('[data-asset-archive-cancel]');
+    const status = assetArchiveForm.querySelector('[data-asset-archive-status]');
+    const originalText = submit.textContent;
+    assetArchiveForm.dataset.busy = 'true';
+    submit.disabled = true;
+    cancelControls.forEach(control => { control.disabled = true; });
+    submit.textContent = '正在停用…';
+    status.textContent = '';
+    try {
+      await archiveAsset(assetArchiveForm.dataset.assetArchive);
+      dialog.close();
+      assetArchiveManageDialog = null;
+      assetArchiveTrigger = null;
+      await loadAssetCatalog();
+      showAppNotice('手册已停用，可在“已停用资产”中重新启用。', { title: '停用完成', tone: 'success' });
+    } catch (error) {
+      status.textContent = error.message || '停用失败，请稍后重试。';
+      delete assetArchiveForm.dataset.busy;
+      submit.disabled = false;
+      cancelControls.forEach(control => { control.disabled = false; });
+      submit.textContent = originalText;
+      submit.focus();
+    }
+    return;
   }
   const mappingForm = event.target.closest('[data-repository-mapping-form]');
   if (mappingForm) {

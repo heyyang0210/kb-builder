@@ -111,12 +111,29 @@ function createKnowledgeCenterHandler(options) {
     }
     const originalUrl = req.url;
     req.url = targetUrl;
-    Promise.resolve(authModule.handler(req, res)).finally(() => { req.url = originalUrl; });
+    Promise.resolve(authModule.handler(req, res))
+      .catch(error => sendRequestError(res, error, 'AUTH_SERVICE_UNAVAILABLE'))
+      .finally(() => { req.url = originalUrl; });
+  }
+
+  function sendRequestError(res, error, fallbackCode = 'KNOWLEDGE_CENTER_REQUEST_FAILED') {
+    if (res.headersSent || res.writableEnded) return;
+    const declaredStatus = Number(error?.status);
+    const status = Number.isInteger(declaredStatus) && declaredStatus >= 400 && declaredStatus <= 599 ? declaredStatus : 503;
+    res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify({ success: false, error: {
+      code: error?.code || fallbackCode,
+      message: error?.message || '知识中心服务暂时不可用，请稍后重试。',
+      retryable: status >= 500,
+    } }));
   }
 
   async function requireSession(req, res, action) {
     const session = await authorizeRequest(req);
-    if (session) { await action(session); return; }
+    if (session) {
+      try { await action(session); } catch (error) { sendRequestError(res, error); }
+      return;
+    }
     const requestId = String(req.headers['x-request-id'] || '');
     const correlationId = String(req.headers['x-correlation-id'] || requestId);
     res.writeHead(401, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
@@ -616,10 +633,25 @@ function createKnowledgeCenterHandler(options) {
       res.end(JSON.stringify({ success: false, error: { code: 'ASSET_HAS_RUNNING_TASKS', message: '手册存在运行中任务，暂不能停用', details: { runningTasks: running } } }));
       return;
     }
+    const previousArchivedAt = item.archivedAt || null;
+    const previousStatus = item.status;
+    // The database projection enforces STATE=ARCHIVED iff ARCHIVED_AT is set.
+    // Keep the file-backed contract (archivedAt controls visibility) while
+    // emitting the corresponding database state for database-backed writes.
     item.archivedAt = archived ? new Date().toISOString() : null;
+    if (databaseMode) item.status = archived ? 'archived' : 'active';
     item.assetVersion = Number(item.assetVersion || 1) + 1;
     auditAsset(payload, archived ? 'ASSET_ARCHIVED' : 'ASSET_RESTORED', handbookId, session);
-    writeKnowledgeAssets(payload);
+    try {
+      writeKnowledgeAssets(payload);
+    } catch (error) {
+      item.archivedAt = previousArchivedAt;
+      item.status = previousStatus;
+      const status = Number(error.status) >= 500 ? 503 : (Number(error.status) || 503);
+      res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+      res.end(JSON.stringify({ success: false, error: { code: error.code || 'ASSET_ARCHIVE_FAILED', message: error.message || '手册生命周期更新失败，请稍后重试。' } }));
+      return;
+    }
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
     res.end(JSON.stringify({ success: true, data: projectAsset(item, true) }));
   }

@@ -3,7 +3,7 @@ const { test, expect } = require('@playwright/test');
 // This suite exercises the real authentication and incremental-build HTTP
 // APIs. GitLab content is intentionally a controlled fixture because the
 // production OAuth connector is not connected in the test environment.
-const baseUrl = process.env.KPG_BASE_URL || 'http://127.0.0.1:13510';
+const baseUrl = process.env.KPG_BASE_URL;
 const repositoryMarkdown = '# 安装手册\n\n<span id="YFS" name="YFS">YFS 参数说明</span>\n\n## 参数说明\n\n1. 准备环境\n   - [x] 检查版本\n   - [ ] 核对端口\n\n> 数据库版本必须与参数依赖一致。\n\n| 参数 | 版本依赖 |\n| :--- | ---: |\n| YAS_PORT | **23.4** |\n\n---\n\n```sql\nSELECT 1;\n```';
 
 async function login(api, username, password) {

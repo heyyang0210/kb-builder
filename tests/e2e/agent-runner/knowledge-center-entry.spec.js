@@ -1,6 +1,6 @@
 const { test, expect } = require('@playwright/test');
 
-const baseUrl = process.env.KPG_BASE_URL || 'http://127.0.0.1:13510';
+const baseUrl = process.env.KPG_BASE_URL;
 const viewports = [
   { name: 'desktop', width: 1440, height: 900 },
   { name: 'small-desktop', width: 1024, height: 768 },

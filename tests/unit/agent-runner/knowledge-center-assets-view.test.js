@@ -134,6 +134,30 @@ describe('知识资产工作台前端契约', () => {
     expect(app).toContain('flushDeferredAssetRender');
   });
 
+  test('停用手册收纳到高级操作并使用专用确认对话框', () => {
+    expect(view()).toContain('<details class="asset-advanced-actions" data-asset-advanced-actions>');
+    expect(view()).toContain('<summary>高级操作</summary>');
+    expect(view()).not.toContain('data-asset-advanced-actions open');
+    expect(view()).toContain('data-asset-archive-open=');
+    expect(view()).toContain('data-asset-archive-dialog');
+    expect(view()).toContain('data-asset-archive-confirm-form');
+    expect(view()).toContain('确认停用“');
+    expect(view()).toContain('可在“已停用资产”中重新启用');
+    const app = read('apps/knowledge-center-web/frontend/knowledge-center/app.js');
+    expect(app).toContain('请先保存或取消当前修改，再停用手册。');
+    expect(app).toContain("event.target.matches?.('[data-asset-archive-dialog]')");
+    expect(app).not.toContain('window.confirm(`停用后手册将从在用资产列表隐藏');
+  });
+
+  test('桌面操作栏吸顶且窄屏恢复普通文档流', () => {
+    const css = read('apps/knowledge-center-web/frontend/knowledge-center/styles.css');
+    expect(css).toContain('@media (min-width: 1101px)');
+    expect(css).toContain('.asset-workspace-detail { position: sticky; top: 14px;');
+    expect(css).toContain('max-height: calc(100dvh - 28px)');
+    expect(css).toContain('.asset-workspace.asset-detail-open .asset-workspace-detail { position: static;');
+    expect(css).toContain('max-height: none; overflow: visible;');
+  });
+
   test('基础字号令牌接近浏览器 110% 观感', () => {
     const tokens = read('apps/knowledge-center-web/frontend/knowledge-center/common/tokens.css');
     const base = read('apps/knowledge-center-web/frontend/knowledge-center/common/base.css');

@@ -406,6 +406,8 @@ function createKnowledgeCenterAuthService(options = {}) {
     adminPassword: String(options.adminPassword || 'admin'),
     knowledgeEditorUsername: String(options.knowledgeEditorUsername || 'test'),
     knowledgeEditorPassword: String(options.knowledgeEditorPassword || 'test'),
+    environment: String(options.environment || 'development'),
+    testRunId: options.testRunId ? String(options.testRunId) : null,
     sessionTtlMs: Number(options.sessionTtlMs || 8 * 60 * 60 * 1000),
     secureCookie: options.secureCookie !== false,
     requestTimeoutMs: Number(options.requestTimeoutMs || 5000),
@@ -469,7 +471,11 @@ function createKnowledgeCenterAuthService(options = {}) {
       if (req.method === 'GET' && pathname === '/auth/config') {
         const login = new URL(`${config.casBaseUrl}/login`);
         login.searchParams.set('service', config.serviceUrl);
-        const content = { enabled: true, casEnabled: true, loginUrl: login.toString(), adminLoginEnabled: true, productName: '知识中心管理' };
+        const content = {
+          enabled: true, casEnabled: true, loginUrl: login.toString(), adminLoginEnabled: true,
+          productName: '知识中心管理', environment: config.environment,
+          ...(config.environment === 'test' && config.testRunId ? { testRunId: config.testRunId } : {}),
+        };
         return json(res, 200, { success: true, content, ...content });
       }
       if (req.method === 'GET' && pathname === '/auth/session') {

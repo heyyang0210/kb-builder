@@ -22,7 +22,20 @@ class CasPrincipalBindingContractTests(unittest.TestCase):
 
     def test_binding_errors_are_exposed_as_conflicts(self):
         source = STORAGE_MAIN.read_text(encoding="utf-8")
-        self.assertIn('code.startsWith("CAS_PRINCIPAL_") ? 409', source)
+        self.assertIn('code.startsWith("CAS_PRINCIPAL_") || code.startsWith("CAS_LOGIN_") ? 409', source)
+
+    def test_only_never_logged_principal_can_correct_prebound_login(self):
+        source = PRINCIPAL_REPOSITORY.read_text(encoding="utf-8")
+        self.assertIn('boolean correctingLogin = currentLogin != null && !currentLogin.equals(login)', source)
+        self.assertIn('existing.get("firstLoginAt") != null || existing.get("lastLoginAt") != null', source)
+        self.assertIn('throw new SQLException("CAS_LOGIN_REBIND_REQUIRES_GOVERNANCE")', source)
+        self.assertIn('findByLogin(connection, login, false)', source)
+        self.assertNotIn('throw new SQLException("CAS_LOGIN_NAME_IMMUTABLE")', source)
+
+    def test_all_cas_login_conflicts_return_http_409(self):
+        source = STORAGE_MAIN.read_text(encoding="utf-8")
+        self.assertIn('code.startsWith("CAS_PRINCIPAL_") || code.startsWith("CAS_LOGIN_") ? 409', source)
+        self.assertIn('case "CAS_LOGIN_REBIND_REQUIRES_GOVERNANCE"', source)
 
 
 if __name__ == "__main__":

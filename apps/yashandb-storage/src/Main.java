@@ -67,8 +67,8 @@ public final class Main {
 
     public static void main(String[] args) throws Exception {
         String command = args.length == 0 ? "serve" : args[0];
-        if (args.length > 1 || !("serve".equals(command) || "migrate".equals(command) || "probe".equals(command))) {
-            throw new IllegalArgumentException("用法：Main [serve|migrate|probe]");
+        if (args.length > 1 || !("serve".equals(command) || "migrate".equals(command) || "probe".equals(command) || "verify".equals(command))) {
+            throw new IllegalArgumentException("用法：Main [serve|migrate|probe|verify]");
         }
         Class.forName(DRIVER);
         Main application = new Main();
@@ -85,6 +85,15 @@ public final class Main {
             try {
                 application.migrate();
                 System.out.println("数据库迁移已完成");
+            } finally {
+                application.connectionPool.closeAll();
+            }
+            return;
+        }
+        if ("verify".equals(command)) {
+            try {
+                application.verifyMigrations();
+                System.out.println("{\"success\":true,\"migrations\":\"verified\"}");
             } finally {
                 application.connectionPool.closeAll();
             }
@@ -536,7 +545,7 @@ public final class Main {
             failure(exchange, 400, "INVALID_JSON", error.getMessage());
         } catch (SQLException error) {
             String code = coalesce(error.getMessage(), "PERSONNEL_OPERATION_FAILED");
-            int status = code.startsWith("CAS_PRINCIPAL_") ? 409
+            int status = code.startsWith("CAS_PRINCIPAL_") || code.startsWith("CAS_LOGIN_") ? 409
                 : code.endsWith("NOT_FOUND") ? 404
                 : code.contains("CONFLICT") || code.endsWith("IMMUTABLE") ? 409
                 : code.endsWith("REQUIRED") || code.endsWith("INVALID") || code.endsWith("EMPTY") || code.endsWith("TOO_LARGE") ? 422 : 503;
@@ -2315,7 +2324,7 @@ public final class Main {
             case "CAS_LOGIN_NAME_CONFLICT", "CAS_LOGIN_BIND_CONFLICT" -> "CAS 登录名已绑定其他人员";
             case "CAS_PRINCIPAL_NOT_FOUND" -> "未找到唯一的待绑定人员，请先在人员管理中核对姓名和状态";
             case "CAS_PRINCIPAL_AMBIGUOUS" -> "存在多个同名待绑定人员，请先在人员管理中完成身份确认";
-            case "CAS_LOGIN_NAME_IMMUTABLE" -> "已绑定的 CAS 登录名不允许换绑";
+            case "CAS_LOGIN_REBIND_REQUIRES_GOVERNANCE" -> "该人员已有 CAS 登录记录，不能直接更正登录名，请走身份换绑流程";
             case "PERSONNEL_STATE_INVALID" -> "人员状态只允许 ACTIVE 或 INACTIVE";
             case "PERSONNEL_BINDING_STATUS_INVALID" -> "CAS 绑定状态只允许 BOUND 或 PENDING";
             case "PERSONNEL_NOT_FOUND" -> "人员不存在";

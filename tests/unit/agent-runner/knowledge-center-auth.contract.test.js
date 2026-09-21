@@ -205,6 +205,8 @@ describe('知识中心认证 HTTP 契约（真实服务 + CAS 协议桩）', () 
       sessionSecret: 'contract-test-secret',
       adminUsername: 'admin',
       adminPassword: 'admin',
+      environment: 'test',
+      testRunId: 'contract-run-1',
       repository: 'memory',
       principalDirectory: {
         upsertCas: async info => {
@@ -233,6 +235,7 @@ describe('知识中心认证 HTTP 契约（真实服务 + CAS 协议桩）', () 
     expect(config.status).toBe(200);
     expect(config.headers['content-type']).toMatch(/application\/json/);
     expect(config.data).toEqual(expect.objectContaining({ enabled: expect.any(Boolean) }));
+    expect(config.data).toEqual(expect.objectContaining({ environment: 'test', testRunId: 'contract-run-1' }));
     const session = await jsonRequest(base, 'GET', AUTH_PATH('session'));
     expect([200, 401]).toContain(session.status);
     expect(session.headers['content-type']).toMatch(/application\/json/);

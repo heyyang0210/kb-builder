@@ -5,6 +5,7 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$SCRIPT_DIR"
 ENV_FILE="${KNOWLEDGE_CENTER_ENV_FILE:-$REPO_ROOT/config/knowledge-center/.env}"
+ACTION="${1:-help}"
 
 load_dotenv() {
   local file="$1" line key value
@@ -38,9 +39,12 @@ load_dotenv() {
 if [[ -f "$ENV_FILE" ]]; then
   load_dotenv "$ENV_FILE"
 fi
+YASDB_CONFIG_DIR="${YASDB_CONFIG_DIR:-$REPO_ROOT/config/yashandb}"
+SERVICE_ENV_FILE="$YASDB_CONFIG_DIR/service.env"
+export YASDB_CONFIG_DIR
 # 数据库存储服务与 Node/Python 入口共享 config/yashandb 的连接参数。
 # 显式注入的环境变量优先，开发环境无需手工导出密码。
-if [[ -f "$REPO_ROOT/tools/repository/load-yashandb-env.sh" ]]; then
+if [[ -f "$SERVICE_ENV_FILE" && -f "$REPO_ROOT/tools/repository/load-yashandb-env.sh" ]]; then
   source "$REPO_ROOT/tools/repository/load-yashandb-env.sh"
 fi
 
@@ -52,6 +56,9 @@ is_placeholder() {
 # must not override operational defaults in the restart script.
 if is_placeholder "${KNOWLEDGE_CENTER_PUBLIC_HOST:-}"; then
   unset KNOWLEDGE_CENTER_PUBLIC_HOST
+fi
+if is_placeholder "${KNOWLEDGE_CENTER_PUBLIC_BASE_URL:-}"; then
+  unset KNOWLEDGE_CENTER_PUBLIC_BASE_URL
 fi
 if is_placeholder "${KNOWLEDGE_CENTER_INTERNAL_HOST:-}"; then
   unset KNOWLEDGE_CENTER_INTERNAL_HOST
@@ -77,29 +84,67 @@ esac
 BUILD_DIR="$REPO_ROOT/$BUILD_ROOT_REL/current"
 LOG_DIR="${KNOWLEDGE_CENTER_LOG_DIR:-$RUNTIME_DIR/logs/knowledge-center-isolated}"
 STATE_DIR="${KNOWLEDGE_CENTER_STATE_DIR:-$RUNTIME_DIR/.runtime/knowledge-center-isolated}"
+RUN_OWNER="${KNOWLEDGE_CENTER_RUN_OWNER:-}"
+EXPECTED_OWNER="${KNOWLEDGE_CENTER_EXPECTED_OWNER:-}"
+NO_TAKEOVER="${KNOWLEDGE_CENTER_NO_TAKEOVER:-0}"
+OPERATION_ACTOR="${KNOWLEDGE_CENTER_OPERATION_ACTOR:-${USER:-unknown}}"
+STOP_REASON="${KNOWLEDGE_CENTER_STOP_REASON:-manual}"
 
 FRONTEND_PORT="${KNOWLEDGE_CENTER_FRONTEND_PORT:-13510}"
 DOCUMENT_API_PORT="${KNOWLEDGE_CENTER_DOCUMENT_API_PORT:-14110}"
 PINGCODE_API_PORT="${KNOWLEDGE_CENTER_PINGCODE_API_PORT:-18010}"
 AUTH_API_PORT="${KNOWLEDGE_CENTER_AUTH_PORT:-14200}"
 INTERNAL_HOST="${KNOWLEDGE_CENTER_INTERNAL_HOST:-127.0.0.1}"
-PUBLIC_HOST="${KNOWLEDGE_CENTER_PUBLIC_HOST:-192.168.130.180}"
 PINGCODE_HOST="${KNOWLEDGE_CENTER_PINGCODE_HOST:-127.0.0.1}"
+KNOWLEDGE_CENTER_ENVIRONMENT="${KNOWLEDGE_CENTER_ENV:-${KNOWLEDGE_CENTER_ENVIRONMENT:-development}}"
+export KNOWLEDGE_CENTER_ENVIRONMENT
+PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-}"
+if [[ -z "$PLAYWRIGHT_BROWSERS_PATH" && -d "$REPO_ROOT/runtime/browsers/playwright" ]]; then
+  PLAYWRIGHT_BROWSERS_PATH="$REPO_ROOT/runtime/browsers/playwright"
+fi
+if [[ -n "$PLAYWRIGHT_BROWSERS_PATH" && "$PLAYWRIGHT_BROWSERS_PATH" != /* ]]; then
+  PLAYWRIGHT_BROWSERS_PATH="$REPO_ROOT/$PLAYWRIGHT_BROWSERS_PATH"
+fi
+[[ -z "$PLAYWRIGHT_BROWSERS_PATH" ]] || export PLAYWRIGHT_BROWSERS_PATH
+PUBLIC_BASE_URL="${KNOWLEDGE_CENTER_PUBLIC_BASE_URL:-}"
+LEGACY_PUBLIC_HOST_USED=0
+if [[ -z "$PUBLIC_BASE_URL" && -n "${KNOWLEDGE_CENTER_PUBLIC_HOST:-}" ]]; then
+  PUBLIC_BASE_URL="http://${KNOWLEDGE_CENTER_PUBLIC_HOST}:$FRONTEND_PORT"
+  LEGACY_PUBLIC_HOST_USED=1
+elif [[ -z "$PUBLIC_BASE_URL" && "$KNOWLEDGE_CENTER_ENVIRONMENT" == development ]]; then
+  PUBLIC_BASE_URL="http://127.0.0.1:$FRONTEND_PORT"
+fi
+PUBLIC_BASE_URL="${PUBLIC_BASE_URL%/}"
+PUBLIC_APP_URL="${PUBLIC_BASE_URL:+$PUBLIC_BASE_URL/knowledge-center/}"
+PUBLIC_SERVICE_URL="$PUBLIC_APP_URL"
+PUBLIC_OAUTH_REDIRECT_URI="${PUBLIC_BASE_URL:+$PUBLIC_BASE_URL/knowledge-center/api/gitlab/oauth/callback}"
+if [[ "$PUBLIC_BASE_URL" == https://* ]]; then
+  COOKIE_SECURE=true
+else
+  COOKIE_SECURE=false
+fi
+if [[ "$KNOWLEDGE_CENTER_ENVIRONMENT" == production || "$KNOWLEDGE_CENTER_ENVIRONMENT" == staging ]]; then
+  MIGRATION_CHECKSUM_POLICY=strict
+else
+  MIGRATION_CHECKSUM_POLICY="${YASDB_MIGRATION_CHECKSUM_POLICY:-warn}"
+fi
 STOP_TIMEOUT="${KNOWLEDGE_CENTER_STOP_TIMEOUT:-10}"
 START_TIMEOUT="${KNOWLEDGE_CENTER_START_TIMEOUT:-45}"
 NODE_BIN="${KNOWLEDGE_CENTER_NODE_BIN:-node}"
 NPM_BIN="${KNOWLEDGE_CENTER_NPM_BIN:-npm}"
 PYTHON_BIN="${KNOWLEDGE_CENTER_PYTHON_BIN:-}"
+JAVA_BIN="${KNOWLEDGE_CENTER_JAVA_BIN:-java}"
 NODE_MODULE_PATH="${KNOWLEDGE_CENTER_NODE_PATH:-$REPO_ROOT/node_modules:$RUNTIME_DIR/node_modules}"
 PYTHON_MODULE_PATH="$PINGCODE_API_DIR:$PINGCODE_CORE_DIR${PYTHONPATH:+:$PYTHONPATH}"
 OUTLINE_INTERNAL_TOKEN="${KNOWLEDGE_CENTER_OUTLINE_INTERNAL_TOKEN:-}"
-ACTION="${1:-help}"
 NO_BUILD=0
 VERBOSE=0
+DOCTOR_FORMAT=human
 FAILURE_COMPONENT=""
 FAILURE_LOG=""
-if [[ -n "${2:-}" ]]; then
-  case "$2" in
+shift $(( $# > 0 ? 1 : 0 ))
+while (( $# > 0 )); do
+  case "$1" in
     --no-build)
       [[ "$ACTION" == start || "$ACTION" == restart ]] || { echo "错误：--no-build 仅适用于 start/restart" >&2; exit 2; }
       NO_BUILD=1
@@ -108,13 +153,23 @@ if [[ -n "${2:-}" ]]; then
       [[ "$ACTION" == status ]] || { echo "错误：--verbose 仅适用于 status" >&2; exit 2; }
       VERBOSE=1
       ;;
-    *) echo "错误：未知参数：$2" >&2; exit 2 ;;
+    --commands)
+      [[ "$ACTION" == doctor ]] || { echo "错误：--commands 仅适用于 doctor" >&2; exit 2; }
+      DOCTOR_FORMAT=commands
+      ;;
+    --json)
+      [[ "$ACTION" == doctor ]] || { echo "错误：--json 仅适用于 doctor" >&2; exit 2; }
+      DOCTOR_FORMAT=json
+      ;;
+    *) echo "错误：未知参数：$1" >&2; exit 2 ;;
   esac
-fi
-[[ -z "${3:-}" ]] || { echo "错误：参数过多" >&2; exit 2; }
+  shift
+done
 
 if [[ -z "$PYTHON_BIN" ]]; then
-  if [[ -x "$PINGCODE_API_DIR/.venv/bin/python" ]] && "$PINGCODE_API_DIR/.venv/bin/python" -c 'import uvicorn' >/dev/null 2>&1; then
+  if [[ -x "$REPO_ROOT/runtime/venvs/knowledge-center/bin/python" ]] && "$REPO_ROOT/runtime/venvs/knowledge-center/bin/python" -c 'import uvicorn' >/dev/null 2>&1; then
+    PYTHON_BIN="$REPO_ROOT/runtime/venvs/knowledge-center/bin/python"
+  elif [[ -x "$PINGCODE_API_DIR/.venv/bin/python" ]] && "$PINGCODE_API_DIR/.venv/bin/python" -c 'import uvicorn' >/dev/null 2>&1; then
     PYTHON_BIN="$PINGCODE_API_DIR/.venv/bin/python"
   else
     PYTHON_BIN="python3"
@@ -122,6 +177,29 @@ if [[ -z "$PYTHON_BIN" ]]; then
 fi
 
 mkdir -p "$LOG_DIR" "$STATE_DIR"
+
+DOCTOR_LIBRARY="$REPO_ROOT/tools/deployment/knowledge-center-doctor.sh"
+[[ -f "$DOCTOR_LIBRARY" ]] || { echo "错误：缺少诊断库：tools/deployment/knowledge-center-doctor.sh" >&2; exit 2; }
+source "$DOCTOR_LIBRARY"
+
+print_legacy_public_host_warning() {
+  (( LEGACY_PUBLIC_HOST_USED == 0 )) || echo "警告：KNOWLEDGE_CENTER_PUBLIC_HOST 已弃用，请改用 KNOWLEDGE_CENTER_PUBLIC_BASE_URL=$PUBLIC_BASE_URL" >&2
+}
+
+lifecycle_event() {
+  local action="$1" service="$2" detail="${3:-}"
+  printf '%s\taction=%s\tservice=%s\tactor=%s\tdetail=%s\n' \
+    "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$action" "$service" "$OPERATION_ACTOR" "$detail" >>"$LOG_DIR/lifecycle.log"
+}
+
+archive_service_log() {
+  local logfile="$1" name timestamp
+  [[ -s "$logfile" ]] || return 0
+  name="$(basename "$logfile")"
+  timestamp="$(date '+%Y%m%d-%H%M%S')"
+  mkdir -p "$LOG_DIR/history"
+  mv "$logfile" "$LOG_DIR/history/${name%.log}-$timestamp.log"
+}
 
 acquire_operation_lock() {
   command -v flock >/dev/null 2>&1 || { echo "错误：缺少命令：flock" >&2; return 1; }
@@ -131,6 +209,20 @@ acquire_operation_lock() {
 
 pid_file() {
   printf '%s/%s.pid' "$STATE_DIR" "$1"
+}
+
+owner_file() {
+  printf '%s/run-owner' "$STATE_DIR"
+}
+
+assert_expected_owner() {
+  local actual
+  [[ -n "$EXPECTED_OWNER" ]] || return 0
+  actual="$(tr -d '\r\n' <"$(owner_file)" 2>/dev/null || true)"
+  [[ -n "$actual" && "$actual" == "$EXPECTED_OWNER" ]] || {
+    echo "错误：运行所有权校验失败，拒绝停止当前知识中心实例" >&2
+    return 1
+  }
 }
 
 service_cwd() {
@@ -248,21 +340,71 @@ validate_port_configuration() {
 }
 
 validate_environment() {
-  local command_name directory
+  local command_name directory version major minor mode
   validate_positive_integer KNOWLEDGE_CENTER_STOP_TIMEOUT "$STOP_TIMEOUT" || return 1
   validate_positive_integer KNOWLEDGE_CENTER_START_TIMEOUT "$START_TIMEOUT" || return 1
   validate_port_configuration || return 1
-  [[ -n "$INTERNAL_HOST" && -n "$PUBLIC_HOST" && -n "$PINGCODE_HOST" ]] || {
+  [[ -n "$INTERNAL_HOST" && -n "$PINGCODE_HOST" ]] || {
     echo "错误：服务监听地址不能为空" >&2
     return 1
   }
-  for command_name in "$NODE_BIN" "$NPM_BIN" "$PYTHON_BIN" curl ss setsid java sha256sum; do
+  [[ -n "$PUBLIC_BASE_URL" && "$PUBLIC_BASE_URL" =~ ^https?://[^/[:space:]]+/?$ ]] || {
+    echo "错误：KNOWLEDGE_CENTER_PUBLIC_BASE_URL 必须是完整 http(s)://host[:port] 原点，IP 或域名均可" >&2
+    return 1
+  }
+  for command_name in "$NODE_BIN" "$NPM_BIN" "$PYTHON_BIN" "$JAVA_BIN" curl ss setsid sha256sum; do
     if [[ "$command_name" == */* ]]; then
       [[ -x "$command_name" ]] || { echo "错误：命令不可执行：$command_name" >&2; return 1; }
     else
       command -v "$command_name" >/dev/null 2>&1 || { echo "错误：缺少命令：$command_name" >&2; return 1; }
     fi
   done
+  version="$("$JAVA_BIN" -version 2>&1 | head -n 1 | sed -E 's/.*version "?([^" ]+).*/\1/')"
+  major="$(doctor_version_major "$version")"
+  [[ "$major" =~ ^[0-9]+$ ]] && (( major >= 17 )) || {
+    echo "错误：Java 必须为 17+，当前为 ${version:-unknown}" >&2
+    echo "查看安装命令：$0 doctor --commands" >&2
+    return 1
+  }
+  version="$("$NODE_BIN" --version 2>/dev/null || true)"
+  major="$(doctor_version_major "$version")"
+  [[ "$major" =~ ^[0-9]+$ ]] && (( major >= 20 )) || {
+    echo "错误：Node.js 必须为 20+，当前为 ${version:-unknown}" >&2
+    echo "查看安装命令：$0 doctor --commands" >&2
+    return 1
+  }
+  version="$("$PYTHON_BIN" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || true)"
+  major="${version%%.*}"
+  minor="${version#*.}"
+  [[ "$major" == 3 && "$minor" =~ ^[0-9]+$ ]] && (( minor >= 10 )) || {
+    echo "错误：Python 必须为 3.10+，当前为 ${version:-unknown}" >&2
+    echo "查看安装命令：$0 doctor --commands" >&2
+    return 1
+  }
+  "$PYTHON_BIN" -c 'from pathlib import Path; import uvicorn, fastapi, pydantic; from playwright.sync_api import sync_playwright; p = sync_playwright().start(); executable = Path(p.chromium.executable_path); p.stop(); raise SystemExit(0 if executable.is_file() else 1)' >/dev/null 2>&1 || {
+    echo "错误：Python 运行依赖或 Playwright Chromium 制品不完整" >&2
+    echo "自动安装：$REPO_ROOT/tools/deployment/install-knowledge-center.sh --apply --component python" >&2
+    return 1
+  }
+  NODE_PATH="$NODE_MODULE_PATH" "$NODE_BIN" -e "require('express'); require('socket.io'); require('xlsx')" >/dev/null 2>&1 || {
+    echo "错误：Node.js 缺少 express/socket.io/xlsx 中的一个或多个模块" >&2
+    echo "自动安装：$REPO_ROOT/tools/deployment/install-knowledge-center.sh --apply --component node" >&2
+    return 1
+  }
+  [[ -f "$SERVICE_ENV_FILE" ]] || {
+    echo "错误：数据库唯一配置不存在：$SERVICE_ENV_FILE" >&2
+    echo "初始化：$REPO_ROOT/tools/deployment/install-knowledge-center.sh --apply --component config" >&2
+    return 1
+  }
+  mode="$(stat -c '%a' "$SERVICE_ENV_FILE" 2>/dev/null || true)"
+  [[ "$mode" == 600 || "$mode" == 400 ]] || { echo "错误：$SERVICE_ENV_FILE 权限必须为 0600 或更严格，当前为 ${mode:-unknown}" >&2; return 1; }
+  if [[ "$KNOWLEDGE_CENTER_ENVIRONMENT" == production || "$KNOWLEDGE_CENTER_ENVIRONMENT" == staging ]]; then
+    [[ -f "$ENV_FILE" ]] || { echo "错误：$KNOWLEDGE_CENTER_ENVIRONMENT 环境必须提供 $ENV_FILE" >&2; return 1; }
+    mode="$(stat -c '%a' "$ENV_FILE" 2>/dev/null || true)"
+    [[ "$mode" == 600 || "$mode" == 400 ]] || { echo "错误：$ENV_FILE 权限必须为 0600 或更严格" >&2; return 1; }
+    [[ -n "${KNOWLEDGE_CENTER_ADMIN_PASSWORD:-}" && "${KNOWLEDGE_CENTER_ADMIN_PASSWORD:-}" != admin ]] || { echo "错误：共享/生产环境禁止使用默认管理员密码" >&2; return 1; }
+    [[ -n "$OUTLINE_INTERNAL_TOKEN" ]] || { echo "错误：共享/生产环境必须配置 KNOWLEDGE_CENTER_OUTLINE_INTERNAL_TOKEN" >&2; return 1; }
+  fi
   for directory in "$DOCUMENT_DIR" "$FRONTEND_DIR" "$PINGCODE_API_DIR" "$PINGCODE_WEB_DIR" "$PINGCODE_CORE_DIR" "$STORAGE_DIR"; do
     [[ -d "$directory" ]] || { echo "错误：目录不存在：$directory" >&2; return 1; }
   done
@@ -324,6 +466,7 @@ stop_service() {
     fi
   fi
   rm -f "$file"
+  lifecycle_event stop "$name" "$STOP_REASON"
   echo "$name 已停止"
 }
 
@@ -340,6 +483,10 @@ assert_port_available() {
   local port="$1" listener service pid
   listener="$(ss -ltnp "sport = :$port" 2>/dev/null || true)"
   if grep -q LISTEN <<<"$listener"; then
+    if [[ "$NO_TAKEOVER" == "1" ]]; then
+      echo "错误：独立实例端口 $port 已被占用，禁止接管或停止现有进程" >&2
+      return 1
+    fi
     pid="$(sed -n 's/.*pid=\([0-9][0-9]*\).*/\1/p' <<<"$listener" | head -n 1)"
     for service in document pingcode auth frontend storage; do
       if [[ -n "$pid" ]] && service_process_matches "$service" "$pid"; then
@@ -377,6 +524,7 @@ start_service() {
   shift 3
   (( $# > 0 )) || { echo "错误：$name 缺少启动命令" >&2; return 1; }
   [[ -d "$cwd" ]] || { echo "错误：$name 工作目录不存在：$cwd" >&2; return 1; }
+  archive_service_log "$logfile"
   (
     # 子服务不得继承平台运维锁，否则主脚本退出后锁仍会被长期持有。
     exec 9>&-
@@ -385,6 +533,7 @@ start_service() {
   ) &
   local pid=$!
   echo "$pid" >"$(pid_file "$name")"
+  lifecycle_event start "$name" "pid=$pid owner=${RUN_OWNER:-shared}"
   STARTED_SERVICES+=("$name")
 }
 
@@ -457,9 +606,11 @@ start_platform() {
   else
     validate_build_artifact || return 1
   fi
-  reconcile_known_services
-  # 14200 是旧认证服务端口。认证模块已并入平台进程，启动时受控清理遗留实例。
-  stop_service auth || return 1
+  if [[ "$NO_TAKEOVER" != "1" ]]; then
+    reconcile_known_services
+    # 14200 是旧认证服务端口。认证模块已并入平台进程，启动时受控清理遗留实例。
+    stop_service auth || return 1
+  fi
   assert_port_available "$FRONTEND_PORT" || return 1
   assert_port_available "$DOCUMENT_API_PORT" || return 1
   assert_port_available "$PINGCODE_API_PORT" || return 1
@@ -472,7 +623,8 @@ start_platform() {
 
   STARTED_SERVICES=()
   start_service storage "$STORAGE_DIR" "$LOG_DIR/storage.log" \
-    env KNOWLEDGE_CENTER_RUNTIME_DIR="$RUNTIME_DIR" KNOWLEDGE_CENTER_BUILD_ROOT="$BUILD_ROOT_REL" \
+    env KNOWLEDGE_CENTER_RUNTIME_DIR="$RUNTIME_DIR" KNOWLEDGE_CENTER_BUILD_ROOT="$BUILD_ROOT_REL" KNOWLEDGE_CENTER_JAVA_BIN="$JAVA_BIN" \
+    YASDB_MIGRATION_CHECKSUM_POLICY="$MIGRATION_CHECKSUM_POLICY" \
     YASDB_STORAGE_CLASSES_DIR="$BUILD_DIR/java/classes" YASDB_JDBC_JAR="$BUILD_DIR/java/lib/yashandb-jdbc.jar" \
     YASDB_STORAGE_SQL_DIR="$BUILD_DIR/java/sql" "$STORAGE_DIR/start.sh" || return 1
   wait_ready storage "$(service_url storage)" || { rollback_started; return 1; }
@@ -491,12 +643,29 @@ start_platform() {
   start_service frontend "$FRONTEND_DIR" "$LOG_DIR/frontend.log" \
     env NODE_PATH="$NODE_MODULE_PATH" PORT="$FRONTEND_PORT" KNOWLEDGE_STORAGE_MODE="${KNOWLEDGE_STORAGE_MODE:-database}" YASDB_PASSWORD="${YASDB_PASSWORD:-}" YASDB_STORAGE_URL="${YASDB_STORAGE_URL:-http://127.0.0.1:14210}" YASDB_STORAGE_HOST="${YASDB_STORAGE_HOST:-127.0.0.1}" YASDB_STORAGE_PORT="${YASDB_STORAGE_PORT:-14210}" YASDB_STORAGE_TIMEOUT_MS="${YASDB_STORAGE_TIMEOUT_MS:-15000}" DOCUMENT_API_HOST="$INTERNAL_HOST" DOCUMENT_API_PORT="$DOCUMENT_API_PORT" \
     PINGCODE_API_HOST="$PINGCODE_HOST" PINGCODE_API_PORT="$PINGCODE_API_PORT" \
-    KNOWLEDGE_CENTER_SERVICE_URL="http://$PUBLIC_HOST:$FRONTEND_PORT/knowledge-center/" KNOWLEDGE_CENTER_COOKIE_SECURE=false \
+    KNOWLEDGE_CENTER_PUBLIC_BASE_URL="$PUBLIC_BASE_URL" KNOWLEDGE_CENTER_SERVICE_URL="$PUBLIC_SERVICE_URL" \
+    KNOWLEDGE_CENTER_ENVIRONMENT="$KNOWLEDGE_CENTER_ENVIRONMENT" KNOWLEDGE_CENTER_TEST_RUN_ID="${KNOWLEDGE_CENTER_TEST_RUN_ID:-}" \
+    KNOWLEDGE_CENTER_GITLAB_OAUTH_REDIRECT_URI="$PUBLIC_OAUTH_REDIRECT_URI" KNOWLEDGE_CENTER_COOKIE_SECURE="$COOKIE_SECURE" \
     KNOWLEDGE_CENTER_FRONTEND_ROOT="$BUILD_DIR/web/platform" PINGCODE_WEB_DIST_DIR="$BUILD_DIR/web/pingcode" \
     KNOWLEDGE_CENTER_OUTLINE_INTERNAL_TOKEN="$token" "$NODE_BIN" frontend-server.js || { rollback_started; return 1; }
   wait_ready frontend "$(service_url frontend)" || { rollback_started; return 1; }
 
-  echo "知识中心管理平台已启动：http://$PUBLIC_HOST:$FRONTEND_PORT/knowledge-center/"
+  if [[ "${KNOWLEDGE_CENTER_VERIFY_PUBLIC_URL:-1}" == 1 ]] && ! http_ready "$PUBLIC_APP_URL"; then
+    FAILURE_COMPONENT="外部访问地址"
+    FAILURE_LOG="$LOG_DIR/frontend.log"
+    echo "错误：内部服务已就绪，但外部地址不可访问：$PUBLIC_APP_URL" >&2
+    echo "处理建议：检查 KNOWLEDGE_CENTER_PUBLIC_BASE_URL、本机路由、防火墙和反向代理。" >&2
+    rollback_started
+    return 1
+  fi
+
+  if [[ -n "$RUN_OWNER" ]]; then
+    printf '%s\n' "$RUN_OWNER" >"$(owner_file)"
+  else
+    rm -f "$(owner_file)"
+  fi
+
+  echo "知识中心管理平台已启动：$PUBLIC_APP_URL"
   echo "状态目录：$STATE_DIR"
   echo "日志目录：$LOG_DIR"
 }
@@ -520,7 +689,7 @@ print_failure_summary() {
     echo "失败日志：$FAILURE_LOG" >&2
   fi
   if validate_port_configuration >/dev/null 2>&1 \
-    && [[ -n "$INTERNAL_HOST" && -n "$PUBLIC_HOST" && -n "$PINGCODE_HOST" ]]; then
+    && [[ -n "$INTERNAL_HOST" && -n "$PUBLIC_BASE_URL" && -n "$PINGCODE_HOST" ]]; then
     echo "当前组件状态：" >&2
     status_platform 1>&2 || true
   else
@@ -528,6 +697,8 @@ print_failure_summary() {
   fi
   echo "日志目录：$LOG_DIR" >&2
   echo "构建日志：$LOG_DIR/knowledge-center-build.log" >&2
+  echo "完整诊断：$0 doctor" >&2
+  echo "依赖安装：$REPO_ROOT/tools/deployment/install-knowledge-center.sh --apply" >&2
 }
 
 status_platform() {
@@ -567,7 +738,7 @@ status_platform() {
   else
     echo "知识中心管理平台：部分组件异常"
   fi
-  echo "访问地址：http://$PUBLIC_HOST:$FRONTEND_PORT/knowledge-center/"
+  echo "访问地址：$PUBLIC_APP_URL"
   echo "内部组件：$healthy/$total 正常（认证作为平台内置模块运行）"
   (( VERBOSE == 1 )) || echo "详细诊断：$0 status --verbose"
   return "$failed"
@@ -579,42 +750,56 @@ platform_healthy() {
 
 case "$ACTION" in
   help|-h|--help)
-    echo "用法：$0 {start|stop|restart|status} [--no-build|--verbose]"
+    echo "用法：$0 {start|stop|restart|status|doctor} [--no-build|--verbose|--commands|--json]"
     echo "  start    启动知识中心平台；已运行的同名服务会先受控接管"
     echo "  stop     停止知识中心平台服务，不操作 YashanDB 数据库实例"
     echo "  restart  停止后重新启动全部平台服务"
     echo "  status   显示统一平台状态，不暴露内部诊断端点"
+    echo "  doctor   只诊断当前环境，不安装或修改系统"
     echo "  --no-build  启动/重启时复用已有统一构建产物"
     echo "  --verbose   status 时显示内部组件、PID 和诊断端点"
+    echo "  --commands  doctor 时只输出可复制的处置命令"
+    echo "  --json      doctor 时输出结构化 JSON"
+    ;;
+  doctor)
+    [[ "$DOCTOR_FORMAT" == json ]] || print_legacy_public_host_warning
+    run_doctor "$DOCTOR_FORMAT"
     ;;
   start)
+    print_legacy_public_host_warning
     acquire_operation_lock
     validate_environment || { print_failure_summary; exit 1; }
-    reconcile_known_services
-    stop_service auth
-    if platform_healthy; then
-      echo "知识中心管理平台已在运行：http://$PUBLIC_HOST:$FRONTEND_PORT/knowledge-center/"
-      exit 0
+    if [[ "$NO_TAKEOVER" != "1" ]]; then
+      reconcile_known_services
+      stop_service auth
+      if platform_healthy; then
+        echo "知识中心管理平台已在运行：$PUBLIC_APP_URL"
+        exit 0
+      fi
+      stop_all || { print_failure_summary; exit 1; }
     fi
-    stop_all || { print_failure_summary; exit 1; }
     start_platform || { print_failure_summary; exit 1; }
     ;;
   restart)
+    print_legacy_public_host_warning
     acquire_operation_lock
     restart_platform || { print_failure_summary; exit 1; }
     ;;
   status)
+    print_legacy_public_host_warning
     status_platform
     ;;
   stop)
     acquire_operation_lock
     validate_positive_integer KNOWLEDGE_CENTER_STOP_TIMEOUT "$STOP_TIMEOUT"
     validate_port_configuration
+    assert_expected_owner
     reconcile_known_services
     stop_all || { print_failure_summary; exit 1; }
+    rm -f "$(owner_file)"
     ;;
   *)
-    echo "用法：$0 {start|stop|restart|status} [--no-build]" >&2
+    echo "用法：$0 {start|stop|restart|status|doctor}" >&2
     exit 2
     ;;
 esac

@@ -14,6 +14,7 @@ module.exports = defineConfig({
   retries: process.env.CI ? 2 : 1,
   workers: 1,
   reporter: [['list']],
+  globalSetup: path.join(__dirname, '..', '..', 'e2e', 'agent-runner', 'test-environment-guard.cjs'),
   outputDir: path.join(artifactRoot, 'playwright'),
   timeout: 30000,
   expect: { timeout: 10000 },

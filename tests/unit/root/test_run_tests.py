@@ -1,6 +1,7 @@
 import importlib.util
 import json
 import os
+import re
 import sys
 import tempfile
 import unittest
@@ -239,6 +240,49 @@ class RepositoryTestRunnerTests(unittest.TestCase):
 
     def test_test_environment_targets_the_instance_prepared_by_runner(self):
         self.assertEqual(RUNNER.KNOWLEDGE_CENTER_BASE_URL, RUNNER.test_environment()["KPG_BASE_URL"])
+        environment = RUNNER.test_environment(
+            knowledge_center_base_url="http://127.0.0.1:45678",
+            knowledge_center_test_run_id="run-1",
+        )
+        self.assertEqual("http://127.0.0.1:45678", environment["KPG_BASE_URL"])
+        self.assertEqual("run-1", environment["KNOWLEDGE_CENTER_TEST_RUN_ID"])
+
+    def test_isolated_environment_uses_ephemeral_ports_and_owner(self):
+        with tempfile.TemporaryDirectory() as directory:
+            old_result_root = RUNNER.TEST_RESULT_ROOT
+            try:
+                RUNNER.TEST_RESULT_ROOT = Path(directory) / "test-results"
+                context = RUNNER.create_run_context("e2e")
+                env, base_url, owner = RUNNER.isolated_knowledge_center_environment(context)
+            finally:
+                RUNNER.TEST_RESULT_ROOT = old_result_root
+        self.assertTrue(base_url.startswith("http://127.0.0.1:"))
+        self.assertTrue(owner.startswith("test-run:"))
+        self.assertEqual("1", env["KNOWLEDGE_CENTER_NO_TAKEOVER"])
+        self.assertEqual("test", env["KNOWLEDGE_CENTER_ENV"])
+        self.assertEqual("test", env["KNOWLEDGE_CENTER_ENVIRONMENT"])
+        self.assertEqual(context.run_id, env["KNOWLEDGE_CENTER_TEST_RUN_ID"])
+        self.assertEqual(str(RUNNER.TEST_DATABASE_CONFIG_DIR), env["YASDB_CONFIG_DIR"])
+        self.assertEqual("database", env["KNOWLEDGE_STORAGE_MODE"])
+        self.assertNotEqual("13510", base_url.rsplit(":", 1)[-1])
+
+    def test_explicit_target_does_not_bypass_isolated_instance(self):
+        old_base_url = os.environ.get("KPG_BASE_URL")
+        os.environ["KPG_BASE_URL"] = "http://127.0.0.1:13510"
+        original_environment = RUNNER.isolated_knowledge_center_environment
+        try:
+            RUNNER.isolated_knowledge_center_environment = lambda context: (_ for _ in ()).throw(RuntimeError("隔离配置校验"))
+            context = RUNNER.create_run_context("e2e")
+            ready, lease, diagnostic = RUNNER.ensure_knowledge_center(context)
+        finally:
+            RUNNER.isolated_knowledge_center_environment = original_environment
+            if old_base_url is None:
+                os.environ.pop("KPG_BASE_URL", None)
+            else:
+                os.environ["KPG_BASE_URL"] = old_base_url
+        self.assertFalse(ready)
+        self.assertIsNone(lease)
+        self.assertIn("隔离配置", diagnostic)
 
     def test_test_sources_do_not_write_reports_or_temp_data_into_source_tree(self):
         forbidden = (
@@ -254,6 +298,17 @@ class RepositoryTestRunnerTests(unittest.TestCase):
             source = path.read_text(encoding="utf-8", errors="ignore")
             if any(pattern in source for pattern in forbidden):
                 offenders.append(path.relative_to(RUNNER.REPOSITORY_ROOT).as_posix())
+        self.assertEqual([], offenders)
+
+    def test_playwright_specs_do_not_fallback_to_shared_knowledge_center(self):
+        offenders = []
+        for path in RUNNER.E2E_TEST_ROOT.glob("*.spec.js"):
+            source = path.read_text(encoding="utf-8", errors="ignore")
+            if re.search(r"KPG_BASE_URL\s*\|\|", source) or re.search(
+                r"https?://(?:10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.)",
+                source,
+            ):
+                offenders.append(path.name)
         self.assertEqual([], offenders)
 
 

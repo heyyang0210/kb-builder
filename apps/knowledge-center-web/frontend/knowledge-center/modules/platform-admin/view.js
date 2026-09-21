@@ -204,9 +204,21 @@ export function renderPrincipalsTab(projection = {}, listState = {}) {
         <header><div><h2 data-principal-dialog-title>新增人员</h2><p>人员可在手册和大纲中被选为责任人。</p></div><button class="icon-button" type="button" data-principal-dialog-close aria-label="关闭">×</button></header>
         <input type="hidden" name="principalId"><input type="hidden" name="rowVersion">
         <label><span>姓名 *</span><input name="displayName" required maxlength="128" autocomplete="off"></label>
-        <label><span>CAS 登录名</span><input name="casLoginName" maxlength="128" autocomplete="off"><small data-principal-login-help>可留空，首次登录时自动绑定。</small></label>
+        <label><span>CAS 登录名</span><input name="casLoginName" maxlength="128" autocomplete="off" aria-describedby="principal-login-help principal-login-error"><small id="principal-login-help" data-principal-login-help>可留空，首次登录时自动绑定。</small><small id="principal-login-error" class="principal-field-error" data-principal-login-error role="alert"></small></label>
         <fieldset><legend>使用状态</legend><label><input type="radio" name="state" value="ACTIVE" checked> 启用</label><label><input type="radio" name="state" value="INACTIVE"> 停用</label></fieldset>
         <footer><span data-principal-form-status role="status"></span><button class="button tertiary" type="button" data-principal-dialog-close>取消</button><button class="button primary" type="submit">确认新增</button></footer>
+      </form>
+    </dialog>
+    <dialog class="principal-dialog principal-cas-correction-dialog" data-principal-cas-correction-dialog aria-labelledby="principal-cas-correction-title">
+      <form data-principal-cas-correction-form>
+        <header><div><h2 id="principal-cas-correction-title">确认更正 CAS 登录名</h2><p>这会改变该人员后续统一认证使用的账号。</p></div><button class="icon-button" type="button" data-principal-correction-cancel aria-label="关闭">×</button></header>
+        <div class="principal-correction-summary">
+          <p><span>人员</span><strong data-principal-correction-name></strong></p>
+          <p><span>原登录名</span><code data-principal-correction-before></code></p>
+          <p><span>新登录名</span><code data-principal-correction-after></code></p>
+        </div>
+        <p class="principal-correction-warning">更正后，原 CAS 登录名将无法再匹配此人员。请确认新账号属于本人。</p>
+        <footer><span data-principal-correction-status role="status"></span><button class="button tertiary" type="button" data-principal-correction-cancel>取消</button><button class="button danger" type="submit">确认更正</button></footer>
       </form>
     </dialog>
     <dialog class="principal-dialog principal-import-dialog" data-principal-import-dialog>

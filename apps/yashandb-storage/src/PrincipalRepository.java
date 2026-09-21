@@ -152,8 +152,12 @@ final class PrincipalRepository {
         long currentVersion = ((Number) existing.get("rowVersion")).longValue();
         if (expectedRowVersion != currentVersion) throw new SQLException("PERSONNEL_VERSION_CONFLICT");
         String currentLogin = optional(String.valueOf(existing.get("casLoginName") == null ? "" : existing.get("casLoginName")));
-        if (currentLogin != null && !currentLogin.equals(login)) throw new SQLException("CAS_LOGIN_NAME_IMMUTABLE");
-        if (currentLogin == null && login != null) {
+        boolean correctingLogin = currentLogin != null && !currentLogin.equals(login);
+        if (correctingLogin && login == null) throw new SQLException("CAS_LOGIN_NAME_REQUIRED");
+        if (correctingLogin && (existing.get("firstLoginAt") != null || existing.get("lastLoginAt") != null)) {
+            throw new SQLException("CAS_LOGIN_REBIND_REQUIRES_GOVERNANCE");
+        }
+        if (login != null && !login.equals(currentLogin)) {
             Map<String, Object> conflict = findByLogin(connection, login, false);
             if (conflict != null && ((Number) conflict.get("principalId")).longValue() != id) throw new SQLException("CAS_LOGIN_NAME_CONFLICT");
         }

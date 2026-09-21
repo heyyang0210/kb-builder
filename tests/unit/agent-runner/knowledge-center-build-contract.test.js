@@ -12,6 +12,8 @@ describe('knowledge center unified build contract', () => {
   const buildScriptPath = 'tools/repository/build-knowledge-center.sh';
   const buildScript = read(buildScriptPath);
   const platformScript = read('knowledge-center.sh');
+  const doctorScript = read('tools/deployment/knowledge-center-doctor.sh');
+  const installScript = read('tools/deployment/install-knowledge-center.sh');
   const storageScript = read('apps/yashandb-storage/start.sh');
   const storageMain = read('apps/yashandb-storage/src/Main.java');
   const schemaMigrationManager = read('apps/yashandb-storage/src/migration/SchemaMigrationManager.java');
@@ -144,6 +146,105 @@ describe('knowledge center unified build contract', () => {
     expect(platformScript).toContain('build_platform || return 1');
     expect(platformScript).toContain('start_platform || return 1');
     expect(schemaMigrationManager).toContain('（数据库=" + recordedChecksum + "，当前文件=" + checksum + "）');
+  });
+
+  test('跨环境部署使用完整外部 URL 并分离诊断与安装', () => {
+    const envExample = read('config/knowledge-center/.env.example');
+    const frontendServer = read('apps/knowledge-center-web/frontend-server.js');
+
+    expect(platformScript).toContain('KNOWLEDGE_CENTER_PUBLIC_BASE_URL');
+    expect(platformScript).not.toMatch(/https?:\/\/(?:10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.)/);
+    expect(platformScript).toContain('PUBLIC_SERVICE_URL="$PUBLIC_APP_URL"');
+    expect(platformScript).toContain('PUBLIC_OAUTH_REDIRECT_URI="${PUBLIC_BASE_URL:+$PUBLIC_BASE_URL/knowledge-center/api/gitlab/oauth/callback}"');
+    expect(platformScript).toContain('run_doctor "$DOCTOR_FORMAT"');
+    expect(platformScript).toContain('install-knowledge-center.sh --apply');
+    expect(platformScript).toContain('KNOWLEDGE_CENTER_VERIFY_PUBLIC_URL');
+    expect(platformScript).toContain('SERVICE_ENV_FILE="$YASDB_CONFIG_DIR/service.env"');
+    expect(platformScript).toContain('KNOWLEDGE_CENTER_ENVIRONMENT="$KNOWLEDGE_CENTER_ENVIRONMENT"');
+    expect(platformScript).toContain('KNOWLEDGE_CENTER_TEST_RUN_ID="${KNOWLEDGE_CENTER_TEST_RUN_ID:-}"');
+    expect(platformScript).toContain('PLAYWRIGHT_BROWSERS_PATH');
+    expect(doctorScript).toContain('doctor_print_json');
+    expect(doctorScript).toContain('"$STORAGE_DIR/start.sh" probe');
+    expect(doctorScript).toContain('"$STORAGE_DIR/start.sh" verify');
+    expect(installScript).toContain('--offline-bundle');
+    expect(installScript).toContain('sha256sum -c manifest.sha256');
+    expect(installScript).toContain('python-wheels');
+    expect(installScript).toContain('playwright-browsers');
+    expect(installScript).toContain('-m playwright install chromium');
+    expect(installScript).toContain('-m playwright install --with-deps chromium');
+    expect(installScript).toContain('rpm:browser)');
+    expect(installScript).toContain('p.chromium.launch(headless=True)');
+    expect(frontendServer).toContain('KNOWLEDGE_CENTER_PUBLIC_BASE_URL');
+    expect(envExample).toContain('KNOWLEDGE_CENTER_PUBLIC_BASE_URL=http://127.0.0.1:13510');
+    expect(envExample).toContain('KNOWLEDGE_CENTER_FRONTEND_PORT=13510');
+    expect(envExample).not.toMatch(/^PORT=/m);
+    expect(envExample).not.toMatch(/^DOCUMENT_API_PORT=/m);
+    expect(envExample).not.toMatch(/^PINGCODE_API_PORT=/m);
+    expect(envExample).not.toMatch(/^PINGCODE_WEB_HOST=/m);
+  });
+
+  test('doctor 输出可解析 JSON 且不泄漏数据库密码', () => {
+    const result = childProcess.spawnSync(path.join(repoRoot, 'knowledge-center.sh'), ['doctor', '--json'], {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        KNOWLEDGE_CENTER_ENV: 'development',
+        KNOWLEDGE_CENTER_PUBLIC_BASE_URL: 'http://127.0.0.1:13510',
+        KNOWLEDGE_CENTER_DOCTOR_SKIP_DATABASE: '1',
+      },
+    });
+    const report = JSON.parse(result.stdout);
+    expect(Array.isArray(report.checks)).toBe(true);
+    expect(report.checks.some(check => check.code === 'public-url' && check.status === 'PASS')).toBe(true);
+    const databasePassword = process.env.YASDB_PASSWORD || '';
+    if (databasePassword) expect(result.stdout).not.toContain(databasePassword);
+  });
+
+  test('doctor 保留显式测试环境标识并遵循自定义数据库配置目录', () => {
+    const temporaryRoot = fs.mkdtempSync(path.join(require('os').tmpdir(), 'kc-doctor-env-contract-'));
+    try {
+      const result = childProcess.spawnSync(path.join(repoRoot, 'knowledge-center.sh'), ['doctor', '--json'], {
+        cwd: repoRoot,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          KNOWLEDGE_CENTER_ENV: '',
+          KNOWLEDGE_CENTER_ENVIRONMENT: 'test',
+          KNOWLEDGE_CENTER_PUBLIC_BASE_URL: 'http://127.0.0.1:13510',
+          KNOWLEDGE_CENTER_DOCTOR_SKIP_DATABASE: '1',
+          YASDB_CONFIG_DIR: temporaryRoot,
+        },
+      });
+      const report = JSON.parse(result.stdout);
+      expect(report.environment).toBe('test');
+      const databaseCheck = report.checks.find(check => check.code === 'database-env');
+      expect(databaseCheck.current).toBe('service.env 不存在');
+      expect(databaseCheck.command).toContain(path.join(temporaryRoot, 'service.env'));
+    } finally {
+      fs.rmSync(temporaryRoot, { recursive: true, force: true });
+    }
+  });
+
+  test('安装器为 RPM 和 DEB 系统生成不同基础包命令', () => {
+    const temporaryRoot = fs.mkdtempSync(path.join(require('os').tmpdir(), 'kc-install-contract-'));
+    try {
+      const kylin = path.join(temporaryRoot, 'kylin-os-release');
+      const debian = path.join(temporaryRoot, 'debian-os-release');
+      fs.writeFileSync(kylin, 'ID=kylin\nID_LIKE=rhel\n');
+      fs.writeFileSync(debian, 'ID=debian\nID_LIKE=debian\n');
+      const run = osRelease => childProcess.execFileSync('bash', [
+        path.join(repoRoot, 'tools/deployment/install-knowledge-center.sh'), '--check', '--component', 'base'
+      ], {
+        cwd: repoRoot,
+        encoding: 'utf8',
+        env: { ...process.env, KNOWLEDGE_CENTER_OS_RELEASE_FILE: osRelease },
+      });
+      expect(run(kylin)).toMatch(/(dnf|yum) install -y/);
+      expect(run(debian)).toContain('apt-get install -y');
+    } finally {
+      fs.rmSync(temporaryRoot, { recursive: true, force: true });
+    }
   });
 
   test('知识中心管理平台设计只归档到建设平台设计目录', () => {

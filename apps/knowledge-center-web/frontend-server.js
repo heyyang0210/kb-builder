@@ -19,6 +19,7 @@ const { PlatformModuleRegistry } = require('../../packages/agent-runner-core/lib
 const PORT = Number(process.env.PORT || 3500);
 const HOST = '0.0.0.0';
 const PUBLIC_HOST = process.env.KNOWLEDGE_CENTER_PUBLIC_HOST || 'localhost';
+const PUBLIC_BASE_URL = String(process.env.KNOWLEDGE_CENTER_PUBLIC_BASE_URL || `http://${PUBLIC_HOST}:${PORT}`).replace(/\/$/, '');
 const ROOT = process.env.KNOWLEDGE_CENTER_FRONTEND_ROOT
   ? path.resolve(process.env.KNOWLEDGE_CENTER_FRONTEND_ROOT)
   : path.join(__dirname, 'frontend');
@@ -106,13 +107,15 @@ const GITLAB_DOCUMENT_TYPES_PATH = process.env.KNOWLEDGE_CENTER_GITLAB_DOCUMENT_
   : CONFIG_PATHS.contentRules;
 const authModule = createKnowledgeCenterAuthService({
   casBaseUrl: process.env.KNOWLEDGE_CENTER_CAS_URL || 'https://cas.yasdb.com/cas',
-  serviceUrl: process.env.KNOWLEDGE_CENTER_SERVICE_URL || `http://${PUBLIC_HOST}:${PORT}/knowledge-center/`,
+  serviceUrl: process.env.KNOWLEDGE_CENTER_SERVICE_URL || `${PUBLIC_BASE_URL}/knowledge-center/`,
   adminUsername: process.env.KNOWLEDGE_CENTER_ADMIN_USERNAME || 'admin',
   adminPassword: process.env.KNOWLEDGE_CENTER_ADMIN_PASSWORD || 'admin',
   knowledgeEditorUsername: process.env.KNOWLEDGE_CENTER_KNOWLEDGE_EDITOR_USERNAME || 'test',
   knowledgeEditorPassword: process.env.KNOWLEDGE_CENTER_KNOWLEDGE_EDITOR_PASSWORD || 'test',
   sessionTtlMs: Number(process.env.KNOWLEDGE_CENTER_SESSION_TTL_MS || 8 * 60 * 60 * 1000),
   secureCookie: process.env.KNOWLEDGE_CENTER_COOKIE_SECURE !== 'false',
+  environment: process.env.KNOWLEDGE_CENTER_ENVIRONMENT || process.env.KNOWLEDGE_CENTER_ENV || 'development',
+  testRunId: process.env.KNOWLEDGE_CENTER_TEST_RUN_ID || null,
   repositoryPath: process.env.KNOWLEDGE_CENTER_AUTH_STORE || path.join(AGENT_RUNNER_RUNTIME_ROOT, 'tmp', 'knowledge-center-auth.json'),
   // Auth state stays on the local repository in the platform process. The
   // database aggregate store currently exposes synchronous curl-backed APIs;
@@ -281,7 +284,19 @@ const server = http.createServer((req, res) => {
 
   // Knowledge center routes (auth, assets, gitlab, outline, incremental, static)
   if (pathname === KNOWLEDGE_CENTER_PREFIX || pathname.startsWith(`${KNOWLEDGE_CENTER_PREFIX}/`)) {
-    handleKnowledgeCenter(req, res);
+    try {
+      Promise.resolve(handleKnowledgeCenter(req, res)).catch(error => {
+        if (res.headersSent || res.writableEnded) return;
+        const status = Number.isInteger(Number(error?.status)) ? Number(error.status) : 503;
+        res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify({ success: false, error: { code: error?.code || 'KNOWLEDGE_CENTER_REQUEST_FAILED', message: error?.message || '知识中心服务暂时不可用，请稍后重试。', retryable: status >= 500 } }));
+      });
+    } catch (error) {
+      if (!res.headersSent && !res.writableEnded) {
+        res.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify({ success: false, error: { code: error?.code || 'KNOWLEDGE_CENTER_REQUEST_FAILED', message: error?.message || '知识中心服务暂时不可用，请稍后重试。', retryable: true } }));
+      }
+    }
     return;
   }
 
@@ -333,8 +348,8 @@ const server = http.createServer((req, res) => {
 if (require.main === module) {
   server.listen(PORT, HOST, () => {
     console.log(`Frontend server listening on http://${HOST}:${PORT}`);
-    console.log(`Open http://${PUBLIC_HOST}:${PORT}/document-generation-workbench.html in your browser`);
-    console.log(`Open http://${PUBLIC_HOST}:${PORT}${PINGCODE_PREFIX}/ in your browser`);
+    console.log(`Open ${PUBLIC_BASE_URL}/document-generation-workbench.html in your browser`);
+    console.log(`Open ${PUBLIC_BASE_URL}${PINGCODE_PREFIX}/ in your browser`);
   });
 }
 
