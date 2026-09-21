@@ -1,12 +1,12 @@
 const assert = require('node:assert/strict');
 
-const BACKEND = process.env.DOCUMENT_BACKEND || 'http://localhost:4100';
+const BACKEND = process.env.KPG_BASE_URL || 'http://127.0.0.1:13510';
 
 async function request(method, pathname, body) {
   const response = await fetch(new URL(pathname, BACKEND), {
     method,
     headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body)
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
   const payload = await response.json();
   return { response, payload };
@@ -28,7 +28,7 @@ async function run() {
   try {
     const created = await request('POST', commentsPath(primaryDoc.id), {
       content: '  API 测试评论  ',
-      quote: '  被引用的原文  '
+      quote: '  被引用的原文  ',
     });
     assert.equal(created.response.status, 201);
     assert.equal(created.payload.success, true);
@@ -43,33 +43,21 @@ async function run() {
     assert.equal(listed.payload.count, listed.payload.data.length);
     assert.ok(listed.payload.data.some(comment => comment.id === createdCommentId));
 
-    const emptyContent = await request('POST', commentsPath(primaryDoc.id), {
-      content: '   ',
-      quote: ''
-    });
+    const emptyContent = await request('POST', commentsPath(primaryDoc.id), { content: '   ', quote: '' });
     assert.equal(emptyContent.response.status, 400);
     assert.equal(emptyContent.payload.success, false);
 
-    const invalidQuote = await request('POST', commentsPath(primaryDoc.id), {
-      content: '正文',
-      quote: { text: '错误类型' }
-    });
+    const invalidQuote = await request('POST', commentsPath(primaryDoc.id), { content: '正文', quote: { text: '错误类型' } });
     assert.equal(invalidQuote.response.status, 400);
 
-    const crossDocumentDelete = await request(
-      'DELETE',
-      `${commentsPath(otherDoc.id)}/${encodeURIComponent(createdCommentId)}`
-    );
+    const crossDocumentDelete = await request('DELETE', `${commentsPath(otherDoc.id)}/${encodeURIComponent(createdCommentId)}`);
     assert.equal(crossDocumentDelete.response.status, 404);
 
     const stillPresent = await request('GET', commentsPath(primaryDoc.id));
     assert.ok(stillPresent.payload.data.some(comment => comment.id === createdCommentId));
 
     const deletedCommentId = createdCommentId;
-    const deleted = await request(
-      'DELETE',
-      `${commentsPath(primaryDoc.id)}/${encodeURIComponent(deletedCommentId)}`
-    );
+    const deleted = await request('DELETE', `${commentsPath(primaryDoc.id)}/${encodeURIComponent(deletedCommentId)}`);
     assert.equal(deleted.response.status, 200);
     assert.equal(deleted.payload.success, true);
     createdCommentId = null;
@@ -77,10 +65,7 @@ async function run() {
     const afterDelete = await request('GET', commentsPath(primaryDoc.id));
     assert.ok(!afterDelete.payload.data.some(comment => comment.id === deletedCommentId));
 
-    const repeatedDelete = await request(
-      'DELETE',
-      `${commentsPath(primaryDoc.id)}/${encodeURIComponent(deletedCommentId)}`
-    );
+    const repeatedDelete = await request('DELETE', `${commentsPath(primaryDoc.id)}/${encodeURIComponent(deletedCommentId)}`);
     assert.equal(repeatedDelete.response.status, 404);
 
     const missingDocument = Buffer.from('output:missing-comment-test.md').toString('base64');
@@ -88,10 +73,7 @@ async function run() {
     assert.equal(missing.response.status, 404);
   } finally {
     if (createdCommentId) {
-      await request(
-        'DELETE',
-        `${commentsPath(primaryDoc.id)}/${encodeURIComponent(createdCommentId)}`
-      );
+      await request('DELETE', `${commentsPath(primaryDoc.id)}/${encodeURIComponent(createdCommentId)}`);
     }
   }
 

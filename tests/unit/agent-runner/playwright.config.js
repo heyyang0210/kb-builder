@@ -1,5 +1,6 @@
 // @ts-check
 const { defineConfig, devices } = require('@playwright/test');
+const selectedProjects = process.env.PLAYWRIGHT_PROJECTS?.split(',').map(item => item.trim()).filter(Boolean);
 
 module.exports = defineConfig({
   testDir: '../../e2e/agent-runner',
@@ -10,7 +11,7 @@ module.exports = defineConfig({
   reporter: [
     ['html', { open: 'never', outputFolder: '../../e2e/agent-runner/reports' }],
     ['list']
-  ].filter(project => !process.env.PLAYWRIGHT_PROJECTS || process.env.PLAYWRIGHT_PROJECTS.split(',').includes(project.name)),
+  ],
   timeout: 30000,
   expect: { timeout: 10000 },
   use: {
@@ -30,6 +31,6 @@ module.exports = defineConfig({
       name: 'firefox',
       use: { ...devices['Desktop Firefox'] },
     },
-  ],
+  ].filter(project => !selectedProjects || selectedProjects.includes(project.name)),
   webServer: undefined,
 });

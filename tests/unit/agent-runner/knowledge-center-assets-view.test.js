@@ -106,6 +106,10 @@ describe('知识资产工作台前端契约', () => {
     expect(app).toContain('updateAssetStatistics(item)');
     const loadCatalog = app.split('async function loadAssetCatalog()')[1].split('async function loadGitLabAdmin()')[0];
     expect(loadCatalog).not.toContain("appState.activeView === 'assets') render();\n}");
+    expect(view()).toContain("item.statisticsStatus === 'forbidden'");
+    expect(view()).toContain("item.statisticsStatus === 'unavailable'");
+    expect(app).toContain('assetStatisticsSequences');
+    expect(app).toContain('expectedVersion: Number(assetForm.dataset.assetVersion)');
   });
 
   test('新增手册使用聚焦式弹窗并展示对外可见字段', () => {

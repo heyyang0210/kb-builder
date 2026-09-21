@@ -5,6 +5,7 @@
  */
 
 const logger = require('../logger');
+const { normalizeQuery } = require('../retrieval-query-builder');
 
 /**
  * 知识点类型 → 检索维度映射
@@ -67,13 +68,13 @@ const QUERY_TEMPLATES = {
 function extractCoreTerm(knowledgePoint) {
   const name = knowledgePoint.name || '';
   
-  let coreTerm = name
+  let coreTerm = normalizeQuery(name
     .replace(/^\d+\.\d+(\.\d+)?\s*/, '')
     .replace(/\s*→\s*/g, ' ')
     .replace(/[`'"]/g, '')
     .replace(/[：:]/g, ' ')
     .replace(/\//g, ' ')
-    .trim();
+    .trim());
   
   return coreTerm;
 }

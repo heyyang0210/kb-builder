@@ -10,10 +10,6 @@ function governanceError(code, message, status = 500) {
   return Object.assign(new Error(message), { code, status });
 }
 
-function emptyState() {
-  return { schemaVersion: 1, version: 0, effectiveVersion: 0, effective: null, pending: null };
-}
-
 function parseJdbcUrl(url) {
   const value = String(url || '').trim();
   if (/[?&](?:password|passwd|pwd)=/i.test(value)) {
@@ -51,29 +47,6 @@ function redact(value) {
     passwordConfigured: Boolean(value.passwordConfigured),
     passwordMasked: value.passwordConfigured ? MASK : '',
   };
-}
-
-function encryptSecret(secret, keySource) {
-  if (!secret) return null;
-  if (!keySource) throw governanceError('DATABASE_SECRET_KEY_REQUIRED', '数据库密码加密密钥未配置，暂不能保存密码', 503);
-  const key = crypto.createHash('sha256').update(String(keySource)).digest();
-  const iv = crypto.randomBytes(12);
-  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
-  const ciphertext = Buffer.concat([cipher.update(String(secret), 'utf8'), cipher.final()]);
-  return { algorithm: 'aes-256-gcm', iv: iv.toString('base64'), tag: cipher.getAuthTag().toString('base64'), ciphertext: ciphertext.toString('base64') };
-}
-
-function decryptSecret(record, keySource) {
-  if (!record?.ciphertext) return '';
-  if (!keySource) throw governanceError('DATABASE_SECRET_KEY_REQUIRED', '数据库密码加密密钥未配置', 503);
-  try {
-    const key = crypto.createHash('sha256').update(String(keySource)).digest();
-    const decipher = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(record.iv, 'base64'));
-    decipher.setAuthTag(Buffer.from(record.tag, 'base64'));
-    return Buffer.concat([decipher.update(Buffer.from(record.ciphertext, 'base64')), decipher.final()]).toString('utf8');
-  } catch (_) {
-    throw governanceError('DATABASE_SECRET_DECRYPT_FAILED', '数据库密码无法解密，请重新输入密码', 503);
-  }
 }
 
 function createJavaProbe(options = {}) {
@@ -116,26 +89,67 @@ function createJavaProbe(options = {}) {
 }
 
 function createDatabaseConnectionGovernance(options = {}) {
-  const filePath = options.filePath || path.join(process.cwd(), 'runtime', 'knowledge-center', 'database-connection-config.json');
+  const filePath = options.filePath || path.join(process.cwd(), 'config', 'yashandb', 'service.env');
   const env = options.env || process.env;
-  const keySource = options.keySource || env.KNOWLEDGE_CENTER_DATABASE_CONFIG_KEY || env.KNOWLEDGE_CENTER_SESSION_SECRET;
   const probe = options.probe || createJavaProbe(options);
   let commitTail = Promise.resolve();
 
-  function read() {
+  function readText() {
     try {
-      return { ...emptyState(), ...JSON.parse(fs.readFileSync(filePath, 'utf8')) };
+      return fs.readFileSync(filePath, 'utf8');
     } catch (error) {
-      if (error.code === 'ENOENT') return emptyState();
+      if (error.code === 'ENOENT') return '';
       throw governanceError('DATABASE_CONFIG_READ_FAILED', '数据库配置无法读取，请检查文件内容和权限', 503);
     }
   }
 
-  function write(data) {
+  function parseEnv(text) {
+    const values = {};
+    for (const rawLine of String(text || '').split(/\r?\n/)) {
+      const line = rawLine.trim();
+      if (!line || line.startsWith('#')) continue;
+      const match = line.match(/^(?:export\s+)?([A-Z_][A-Z0-9_]*)\s*=\s*(.*)$/);
+      if (!match) continue;
+      let value = match[2].trim();
+      if (value.startsWith('"') && value.endsWith('"')) {
+        try {
+          value = JSON.parse(value);
+        } catch (_) {
+          throw governanceError('DATABASE_CONFIG_READ_FAILED', '数据库配置无法读取，请检查文件内容和权限', 503);
+        }
+      } else if (value.startsWith("'") && value.endsWith("'")) {
+        value = value.slice(1, -1);
+      }
+      values[match[1]] = value;
+    }
+    return values;
+  }
+
+  function quoteEnv(value) {
+    return JSON.stringify(String(value));
+  }
+
+  function updateEnv(text, updates) {
+    const lines = String(text || '').split(/\r?\n/);
+    const seen = new Set();
+    const output = lines.map(line => {
+      const match = line.match(/^(\s*(?:export\s+)?)(YASDB_JDBC_URL|YASDB_USERNAME|YASDB_PASSWORD)(\s*=).*/);
+      if (!match) return line;
+      seen.add(match[2]);
+      return `${match[1]}${match[2]}${match[3]}${quoteEnv(updates[match[2]])}`;
+    });
+    for (const key of ['YASDB_JDBC_URL', 'YASDB_USERNAME', 'YASDB_PASSWORD']) {
+      if (!seen.has(key)) output.push(`${key}=${quoteEnv(updates[key])}`);
+    }
+    return `${output.join('\n').replace(/\n+$/, '')}\n`;
+  }
+
+  function write(text) {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     const temporary = `${filePath}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`;
     try {
-      fs.writeFileSync(temporary, `${JSON.stringify(data, null, 2)}\n`, { mode: 0o600 });
+      fs.writeFileSync(temporary, text, { mode: 0o600 });
+      fs.chmodSync(temporary, 0o600);
       fs.renameSync(temporary, filePath);
     } finally {
       if (fs.existsSync(temporary)) fs.unlinkSync(temporary);
@@ -148,140 +162,101 @@ function createDatabaseConnectionGovernance(options = {}) {
     return current;
   }
 
-  function storedPassword(record) {
-    return record?.passwordSecret ? decryptSecret(record.passwordSecret, keySource) : '';
-  }
-
-  function runtimeConnection(data) {
-    const hasRuntimeEnvironment = Boolean(env.YASDB_JDBC_URL || env.YASDB_USERNAME || env.YASDB_PASSWORD);
-    const declaredSource = env.KNOWLEDGE_CENTER_DATABASE_CONFIG_SOURCE;
-    if (hasRuntimeEnvironment) {
-      const fallback = data.effective || {};
-      const normalized = normalizeConnection({
-        ...fallback,
-        jdbcUrl: env.YASDB_JDBC_URL || fallback.jdbcUrl,
-        username: env.YASDB_USERNAME || fallback.username,
-      }, fallback);
-      return {
-        ...normalized,
-        password: env.YASDB_PASSWORD || storedPassword(data.effective),
-        source: declaredSource === 'platform' ? 'platform' : 'environment',
-      };
-    }
-    if (!data.effective?.jdbcUrl) return null;
-    return { ...normalizeConnection(data.effective, data.effective), password: storedPassword(data.effective), source: 'platform' };
-  }
-
-  function candidateRecord(data) {
-    return data.pending?.jdbcUrl ? data.pending : (runtimeConnection(data) || data.effective);
-  }
-
-  function projection() {
-    const data = read();
-    const runtime = runtimeConnection(data);
-    const candidate = candidateRecord(data);
-    const restartRequired = Boolean(data.pending && Number(data.pending.version) > Number(data.effectiveVersion || 0));
-    const passwordConfigured = Boolean(candidate?.passwordSecret || runtime?.password);
-    const connection = candidate ? redact({ ...candidate, passwordConfigured }) : null;
-    const effectiveConnection = runtime ? redact({ ...runtime, passwordConfigured: Boolean(runtime.password) }) : null;
-    const status = restartRequired && runtime?.source === 'environment'
-      ? 'overridden'
-      : restartRequired
-        ? 'pending_restart'
-      : runtime && data.effectiveVerification?.status === 'success'
-        ? 'connected'
-        : candidate ? 'configured' : 'unconfigured';
+  function fileConnection() {
+    const values = parseEnv(readText());
+    if (!values.YASDB_JDBC_URL || !values.YASDB_USERNAME) return null;
     return {
-      status,
-      configured: Boolean(candidate),
-      effectiveSource: runtime?.source || (candidate ? 'platform' : 'unconfigured'),
-      environmentOverride: runtime?.source === 'environment',
-      connection,
-      effectiveConnection,
-      lastVerification: restartRequired ? data.pendingVerification || null : data.effectiveVerification || data.lastVerification || null,
-      restartRequired,
-      rowVersion: Number(data.version || 0),
-      effectiveVersion: Number(data.effectiveVersion || 0),
-      pendingVersion: data.pending?.version || null,
+      ...normalizeConnection({ jdbcUrl: values.YASDB_JDBC_URL, username: values.YASDB_USERNAME }),
+      password: values.YASDB_PASSWORD || '',
     };
   }
 
-  function passwordFor(input, data) {
+  function runtimeConnection() {
+    if (env.YASDB_JDBC_URL && env.YASDB_USERNAME) {
+      return {
+        ...normalizeConnection({ jdbcUrl: env.YASDB_JDBC_URL, username: env.YASDB_USERNAME }),
+        password: env.YASDB_PASSWORD || '',
+        source: 'environment',
+      };
+    }
+    const configured = fileConnection();
+    return configured ? { ...configured, source: 'deployment' } : null;
+  }
+
+  function projection() {
+    const configured = fileConnection();
+    const runtime = runtimeConnection();
+    const restartRequired = Boolean(configured && runtime?.source === 'environment'
+      && (configured.jdbcUrl !== runtime.jdbcUrl || configured.username !== runtime.username || configured.password !== runtime.password));
+    const connection = configured ? redact({ ...configured, passwordConfigured: Boolean(configured.password) }) : null;
+    const effectiveConnection = runtime ? redact({ ...runtime, passwordConfigured: Boolean(runtime.password) }) : null;
+    const status = restartRequired ? 'pending_restart' : configured ? 'configured' : 'unconfigured';
+    const rowVersion = Number.parseInt(crypto.createHash('sha256').update(readText()).digest('hex').slice(0, 12), 16);
+    return {
+      status,
+      configured: Boolean(configured),
+      effectiveSource: runtime?.source || 'unconfigured',
+      environmentOverride: restartRequired,
+      connection,
+      effectiveConnection,
+      lastVerification: null,
+      restartRequired,
+      rowVersion,
+      effectiveVersion: rowVersion,
+      pendingVersion: null,
+    };
+  }
+
+  function passwordFor(input) {
     const supplied = String(input.password || '');
     if (supplied) return supplied;
-    const secret = data.pending?.passwordSecret || data.effective?.passwordSecret;
-    if (secret) return decryptSecret(secret, keySource);
+    const configured = fileConnection();
+    if (configured?.password) return configured.password;
     if (env.YASDB_PASSWORD) return env.YASDB_PASSWORD;
     throw governanceError('DATABASE_PASSWORD_REQUIRED', '新建数据库配置时密码不能为空', 422);
   }
 
   async function test(input = {}) {
-    const data = read();
-    const fallback = candidateRecord(data) || {};
+    const fallback = fileConnection() || {};
     const normalized = normalizeConnection(input, fallback);
-    const password = passwordFor(input, data);
+    const password = passwordFor(input);
     return probe({ ...normalized, password });
   }
 
-  async function save(input = {}, expectedVersion, context = {}) {
-    const beforeProbe = read();
-    const fallback = candidateRecord(beforeProbe) || {};
+  async function save(input = {}, expectedVersion) {
+    const fallback = fileConnection() || {};
     const normalized = normalizeConnection(input, fallback);
-    const retainedSecret = beforeProbe.pending?.passwordSecret || beforeProbe.effective?.passwordSecret;
-    if (!String(input.password || '') && !retainedSecret) {
+    if (!String(input.password || '') && !fallback.password && !env.YASDB_PASSWORD) {
       throw governanceError('DATABASE_PASSWORD_REQUIRED', '新建数据库配置时密码不能为空', 422);
     }
-    const password = String(input.password || '') || decryptSecret(retainedSecret, keySource);
+    const password = String(input.password || '') || fallback.password || env.YASDB_PASSWORD;
     const verification = await probe({ ...normalized, password });
     return withCommitLock(() => {
-      const data = read();
-      if (expectedVersion == null || Number(expectedVersion) !== Number(data.version || 0)) {
+      if (expectedVersion == null || Number(expectedVersion) !== projection().rowVersion) {
         throw governanceError('DATABASE_CONFIG_CONFLICT', '数据库配置已被其他管理员更新，请刷新后重试', 409);
       }
-      const nextVersion = Number(data.version || 0) + 1;
-      const existingSecret = data.pending?.passwordSecret || data.effective?.passwordSecret || null;
-      const passwordSecret = String(input.password || '') ? encryptSecret(password, keySource) : existingSecret;
-      if (!passwordSecret) throw governanceError('DATABASE_PASSWORD_REQUIRED', '新建数据库配置时密码不能为空', 422);
-      const pending = { version: nextVersion, ...normalized, passwordSecret, updatedAt: new Date().toISOString() };
-      const audits = Array.isArray(data.audits) ? data.audits.slice(-99) : [];
-      audits.push({ action: 'DATABASE_CONFIG_SAVED', actorId: String(context.actorId || 'unknown'), version: nextVersion, verifiedAt: verification.verifiedAt, updatedAt: pending.updatedAt });
-      write({ ...data, version: nextVersion, pending, pendingVerification: verification, lastVerification: verification, audits });
-      return projection();
+      write(updateEnv(readText(), {
+        YASDB_JDBC_URL: normalized.jdbcUrl,
+        YASDB_USERNAME: normalized.username,
+        YASDB_PASSWORD: password,
+      }));
+      const saved = projection();
+      return {
+        ...saved,
+        status: saved.restartRequired ? saved.status : 'verified',
+        lastVerification: verification,
+      };
     });
   }
 
   function startupConfig() {
-    const data = read();
-    const record = data.pending?.jdbcUrl ? data.pending : data.effective;
+    const record = fileConnection();
     if (!record?.jdbcUrl) return null;
-    const normalized = normalizeConnection(record, record);
-    const password = storedPassword(record);
-    if (!password) throw governanceError('DATABASE_PASSWORD_REQUIRED', '数据库启动配置缺少密码', 503);
-    return { ...normalized, password, version: Number(record.version || data.effectiveVersion || 0) };
+    if (!record.password) throw governanceError('DATABASE_PASSWORD_REQUIRED', '数据库启动配置缺少密码', 503);
+    return { ...record, version: projection().rowVersion };
   }
 
-  function promoteStartupConfig(input = {}) {
-    const version = Number(input.version);
-    if (!Number.isInteger(version) || version <= 0) return projection();
-    const data = read();
-    const matchingPending = Number(data.pending?.version) === version ? data.pending : null;
-    const normalized = normalizeConnection(input, matchingPending || data.effective || {});
-    const password = String(input.password || '');
-    if (!password) throw governanceError('DATABASE_PASSWORD_REQUIRED', '数据库启动配置缺少密码', 503);
-    const effective = { version, ...normalized, passwordSecret: matchingPending?.passwordSecret || encryptSecret(password, keySource), activatedAt: new Date().toISOString() };
-    const effectiveVerification = { status: 'success', message: '数据库连接已在当前运行实例生效', verifiedAt: new Date().toISOString() };
-    write({
-      ...data,
-      effectiveVersion: version,
-      effective,
-      effectiveVerification,
-      pending: matchingPending ? null : data.pending,
-      pendingVerification: matchingPending ? null : data.pendingVerification,
-    });
-    return projection();
-  }
-
-  return { projection, test, save, startupConfig, promoteStartupConfig };
+  return { projection, test, save, startupConfig };
 }
 
 module.exports = { EXAMPLE_URL, createDatabaseConnectionGovernance, createJavaProbe, normalizeConnection, parseJdbcUrl };

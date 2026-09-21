@@ -35,12 +35,21 @@ const parseServerTiming = header => Object.fromEntries(String(header || '').spli
 test.describe('知识中心刷新性能门禁', () => {
   test.describe.configure({ mode: 'serial', timeout: 30000 });
 
-  test.beforeEach(async ({ context }) => {
+  test.beforeEach(async ({ page }) => {
     expect(username && password, '请通过环境变量或 config/knowledge-center/.env 配置性能门禁管理员账号').toBeTruthy();
-    const response = await context.request.post(`${baseUrl}/knowledge-center/api/auth/admin/login`, {
-      data: { username, password },
-    });
-    expect(response.ok(), `管理员登录失败：HTTP ${response.status()}`).toBeTruthy();
+    // 先建立同源页面，about:blank 无法向真实服务发起跨源登录请求。
+    await page.goto(`${baseUrl}/knowledge-center/`, { waitUntil: 'domcontentloaded' });
+    // 通过浏览器 fetch 登录，确保 Set-Cookie 写入页面 cookie jar。
+    const result = await page.evaluate(async ({ url, login, secret }) => {
+      const response = await fetch(url, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: login, password: secret }),
+      });
+      return { ok: response.ok, status: response.status };
+    }, { url: `${baseUrl}/knowledge-center/api/auth/admin/login`, login: username, secret: password });
+    expect(result.ok, `管理员登录失败：HTTP ${result.status}`).toBeTruthy();
   });
 
   test(`YashanDB 手册投影分段耗时不超过${storageBudgetMs}ms`, async ({ request }, testInfo) => {

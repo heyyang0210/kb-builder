@@ -179,7 +179,7 @@ class M2PublishContractTests(unittest.TestCase):
 @unittest.skipUnless(shutil.which("node"), "Node.js 不可用，无法执行前端 helper 契约")
 class M2FrontendGovernanceHelperTests(unittest.TestCase):
     API_MODULE = (
-        Path(__file__).resolve().parents[3] / "code" / "pingcode" / "web-frontend" / "src" / "api.js"
+        Path(__file__).resolve().parents[4] / "apps" / "pingcode-web" / "src" / "api.js"
     )
 
     def _evaluate(self, expression: str):

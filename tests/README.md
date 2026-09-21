@@ -25,6 +25,7 @@ python3 tests/run_tests.py all
 ```
 
 每个框架都以详细模式输出具体成功、失败和跳过的用例；入口末尾汇总各任务状态、测试文件数、耗时、失败用例列表和最终退出码。任一任务失败、超时或无法启动时，入口返回非零退出码。
+每次执行都会追加一条 JSONL 日志，记录实际命令、状态、退出码、耗时和失败用例；日志默认位于 `runtime/test-reports/test-run.log`，可用 `--log` 指定路径。该日志不保存环境变量、密码或令牌。
 
 首次运行前安装仓库测试依赖：
 
@@ -41,6 +42,10 @@ python3 tests/run_tests.py full --dry-run
 python3 tests/run_tests.py full --fail-fast
 python3 tests/run_tests.py full --timeout 3600
 python3 tests/run_tests.py full --report runtime/test-reports/full.json
+python3 tests/run_tests.py full --log runtime/test-reports/full-execution.log
+
+# 定向执行一个或多个 Playwright 浏览器项目
+PLAYWRIGHT_PROJECTS=chromium python3 tests/run_tests.py e2e
 ```
 
 ## 分类规则
@@ -61,5 +66,14 @@ Python 用例支持标准的 `test_*.py` 和 `*_test.py` 两种命名形式。�
 `smoke` 是按运行时间维护的快速关键路径。`full` 按 `gate → unit → contract → integration → system → e2e` 顺序执行，可能需要浏览器、已启动的服务、环境变量或外部依赖；缺少条件的测试应由测试自身明确显示为跳过或失败，不允许入口将“未发现测试”冒充成功。
 
 Playwright 分类只包含当前知识中心拓扑。入口先检查 `KPG_BASE_URL`（默认 `http://127.0.0.1:13510`）；服务未运行时通过 `knowledge-center.sh` 启动，并且只在本轮确实由入口启动时负责停止。历史 `3500/4100/13502` 页面、一次性调试脚本和已下线兼容入口不属于 `full`。
+
+`/api/document/*` 评论契约已迁移到当前 `13510` 知识中心网关，并归入 integration 分类；HTML 原文预览由当前页面与 API/E2E 契约覆盖。
+
+性能门禁依据专项报告的真实 Chromium 基线运行，因此 `gate` 中的 Playwright 用例只选择 Chromium；Firefox 等浏览器仍由 `e2e` 功能回归覆盖，不套用 Chromium 的 150 ms 性能阈值。
+
+E2E 若临时修改共享账号角色或其他持久状态，必须在 `finally` 中恢复原值；不得依赖用例执行顺序或把变更遗留给后续分类。
+Node 测试中的文件 watcher 必须 `unref` 或显式关闭；会修改共享配置文件的测试必须在结束时恢复原内容。
+
+`system` 中的检索链路会真实调用当前知识中心 Agent API 与 MCP；依赖外部模型的完整文档生成默认跳过，通过 `RUN_KNOWLEDGE_CENTER_LIVE_MODEL_TESTS=1` 显式启用。
 
 `external/` 是独立维护的工程，不在本入口扫描范围内。

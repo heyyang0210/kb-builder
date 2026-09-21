@@ -5,6 +5,11 @@ function unique(items) {
   return Array.from(new Set((items || []).map(item => String(item).trim()).filter(Boolean)));
 }
 
+function normalizeReferencePath(value) {
+  const normalized = String(value || '').replace(/^(?:\.\.\/)+/, '');
+  return /^(?:skills|templates)\//.test(normalized) ? `knowledge/${normalized}` : normalized;
+}
+
 function sanitizeFilenameBase(value) {
   return String(value || 'document')
     .replace(/\.(md|markdown)$/i, '')
@@ -195,7 +200,7 @@ async function extractDirectReferences(prompt, templatePath, knowledgePoint) {
 
   return {
     mcpQueries,
-    referenceFiles: unique(referenceFiles)
+    referenceFiles: unique(referenceFiles.map(normalizeReferencePath))
   };
 }
 

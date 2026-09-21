@@ -36,7 +36,7 @@
     {
       "id": "ai-cognitive",
       "name": "AI 体系认知",
-      "path": "../ai 体系认知",
+      "path": "../../ai 体系认知",
       "writable": false,
       "description": "AI 体系认知知识文档"
     },

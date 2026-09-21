@@ -97,9 +97,10 @@ const handleIncrementalBuild = createIncrementalBuildHandler({ repository: incre
 const GITLAB_CONFIG_PATH = process.env.KNOWLEDGE_CENTER_GITLAB_CONFIG
   ? path.resolve(process.env.KNOWLEDGE_CENTER_GITLAB_CONFIG)
   : CONFIG_PATHS.gitlabConnections;
-const DATABASE_CONNECTION_CONFIG_PATH = process.env.KNOWLEDGE_CENTER_DATABASE_CONNECTION_CONFIG
-  ? path.resolve(process.env.KNOWLEDGE_CENTER_DATABASE_CONNECTION_CONFIG)
-  : path.join(AGENT_RUNNER_RUNTIME_ROOT, 'knowledge-center', 'database-connection-config.json');
+const DATABASE_CONNECTION_CONFIG_PATH = path.join(
+  process.env.YASDB_CONFIG_DIR ? path.resolve(process.env.YASDB_CONFIG_DIR) : path.join(REPOSITORY_ROOT, 'config', 'yashandb'),
+  'service.env',
+);
 const GITLAB_DOCUMENT_TYPES_PATH = process.env.KNOWLEDGE_CENTER_GITLAB_DOCUMENT_TYPES
   ? path.resolve(process.env.KNOWLEDGE_CENTER_GITLAB_DOCUMENT_TYPES)
   : CONFIG_PATHS.contentRules;

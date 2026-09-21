@@ -301,6 +301,7 @@ async function loadDomainBuildTasksWorkspace() {
 }
 
 const assetBranchPreferenceKey = handbookId => `knowledge-center:asset-branch:${handbookId}`;
+const assetStatisticsSequences = new Map();
 function preferredAssetBranch(item) {
   const enabled = item.repository?.enabledBranches || [];
   let saved = null;
@@ -314,18 +315,26 @@ async function enrichAssetRepositoryStatistics(catalog) {
     const branch = preferredAssetBranch(item);
     item.selectedBranch = branch;
     if (!branch) return;
+    const sequence = (assetStatisticsSequences.get(item.handbookId) || 0) + 1;
+    assetStatisticsSequences.set(item.handbookId, sequence);
     try {
       const access = await loadHandbookGitLabAccess(item.handbookId);
       if (access?.canRead === false) {
-        item.statisticsStatus = 'unavailable';
+        item.statisticsStatus = 'forbidden';
         item.statisticsError = access.message || '当前 GitLab 账号不可读取该仓库';
         updateAssetStatistics(item);
         return;
       }
-      Object.assign(item, await loadHandbookRepositoryStatistics(item.handbookId, branch, 'zh'), { statisticsStatus: 'ok' });
+      const statistics = await loadHandbookRepositoryStatistics(item.handbookId, branch, 'zh');
+      if (assetStatisticsSequences.get(item.handbookId) !== sequence || item.selectedBranch !== branch) return;
+      Object.assign(item, statistics, { statisticsStatus: 'ok' });
       updateAssetStatistics(item);
     }
-    catch (error) { item.statisticsStatus = 'unavailable'; item.statisticsError = error.message; updateAssetStatistics(item); }
+    catch (error) {
+      if (assetStatisticsSequences.get(item.handbookId) !== sequence || item.selectedBranch !== branch) return;
+      item.statisticsStatus = 'unavailable';
+      item.statisticsError = error.message; updateAssetStatistics(item);
+    }
   }));
   return catalog;
 }
@@ -350,7 +359,10 @@ function principalFromSelect(select) {
 async function loadAssetCatalog() {
   const sequence = ++assetLoadSequence;
   const query = assetCatalogQuery();
-  const [response, connections, principals] = await Promise.all([loadAssets(query), isPlatformAdmin() ? loadGitLabConnections().catch(() => ({ items: [] })) : Promise.resolve({ items: [] }), isPlatformAdmin() ? loadPrincipals({ state: 'ACTIVE' }).catch(() => ({ items: [] })) : Promise.resolve({ items: [] })]);
+  const requestQuery = new URLSearchParams(query);
+  const requestedHandbookId = new URLSearchParams(window.location.search).get('handbookId');
+  if (requestedHandbookId) requestQuery.set('handbookId', requestedHandbookId);
+  const [response, connections, principals] = await Promise.all([loadAssets(requestQuery), isPlatformAdmin() ? loadGitLabConnections().catch(() => ({ items: [] })) : Promise.resolve({ items: [] }), isPlatformAdmin() ? loadPrincipals({ state: 'ACTIVE' }).catch(() => ({ items: [] })) : Promise.resolve({ items: [] })]);
   if (sequence !== assetLoadSequence) return;
   assetCatalogRouteKey = query.toString();
   appState.assetCatalog = response?.data || response || null;
@@ -1614,14 +1626,27 @@ document.addEventListener('change', async event => {
   if (assetBranch) {
     const item = appState.assetCatalog?.items?.find(entry => String(entry.handbookId) === assetBranch.dataset.assetBranch);
     if (!item) return;
+    const previousBranch = item.selectedBranch || assetBranch.value;
+    const requestedBranch = assetBranch.value;
+    const sequence = (assetStatisticsSequences.get(item.handbookId) || 0) + 1;
+    assetStatisticsSequences.set(item.handbookId, sequence);
     assetBranch.disabled = true;
     try {
-      const statistics = await loadHandbookRepositoryStatistics(item.handbookId, assetBranch.value, 'zh');
-      Object.assign(item, statistics, { selectedBranch: assetBranch.value, statisticsStatus: 'ok' });
-      try { window.localStorage.setItem(assetBranchPreferenceKey(item.handbookId), assetBranch.value); } catch (_error) { /* preference is optional */ }
+      const statistics = await loadHandbookRepositoryStatistics(item.handbookId, requestedBranch, 'zh');
+      if (assetStatisticsSequences.get(item.handbookId) !== sequence) { assetBranch.disabled = false; return; }
+      Object.assign(item, statistics, { selectedBranch: requestedBranch, statisticsStatus: 'ok' });
+      try { window.localStorage.setItem(assetBranchPreferenceKey(item.handbookId), requestedBranch); } catch (_error) { /* preference is optional */ }
       updateAssetStatistics(item);
       assetBranch.disabled = false;
-    } catch (error) { showAppNotice(error.message || '仓库统计暂不可用'); assetBranch.disabled = false; }
+    } catch (error) {
+      if (assetStatisticsSequences.get(item.handbookId) === sequence) {
+        item.selectedBranch = previousBranch;
+        assetBranch.value = previousBranch;
+        item.statisticsStatus = 'unavailable';
+        updateAssetStatistics(item);
+      }
+      showAppNotice(error.message || '仓库统计暂不可用'); assetBranch.disabled = false;
+    }
     return;
   }
   const userDropdown = event.target.closest('[data-permission-user-select]');
@@ -2255,14 +2280,16 @@ document.addEventListener('submit', async event => {
     button.disabled = true;
     try {
       const current = appState.assetCatalog?.items?.find(item => String(item.handbookId) === String(id));
+      const statusChanged = assetForm.elements.status.value !== current?.status;
+      const reason = assetForm.elements.statusReason.value.trim();
+      if (statusChanged && !reason) throw new Error('修改手册状态时必须填写变更原因');
       let saved = await updateAsset(id, {
         name: assetForm.elements.name.value.trim(),
         ownerA: principalFromSelect(assetForm.elements.ownerA),
         ownerB: principalFromSelect(assetForm.elements.ownerB),
+        expectedVersion: Number(assetForm.dataset.assetVersion),
       });
-      if (assetForm.elements.status.value !== current?.status) {
-        const reason = assetForm.elements.statusReason.value.trim();
-        if (!reason) throw new Error('修改手册状态时必须填写变更原因');
+      if (statusChanged) {
         saved = await updateAssetStatus(id, { targetStatus: assetForm.elements.status.value, reason, expectedVersion: saved.assetVersion });
       }
       assetForm.closest('dialog').close(); await loadAssetCatalog();

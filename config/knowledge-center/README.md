@@ -7,6 +7,8 @@
 - `content-rules.json`（内容规则）：资料加工、质量、同义词、特性和 GitLab 文档类型。
 - `branding/default-icon.png`：登录页、favicon 和侧栏共用的默认品牌图标。
 
+`service.json` 中 `documentPaths[].path` 的相对路径统一以仓库根目录解析，不以 `config/knowledge-center/` 或服务进程的启动目录解析。例如仓库位于 `/data/docs/AI高效应用示例/06-YashanDB知识库Skill仓库`时，`../../ai 体系认知` 指向 `/data/docs/ai 体系认知`。配置中保留相对路径，避免将开发机的绝对路径固化到仓库。
+
 底层逻辑是依次回答“产品是什么、服务怎样运行、内容怎样处理”。根目录不得继续增加无法归入这三类的 JSON；持续变化的知识资产、GitLab 连接和模板库位于 `runtime/knowledge-center/`，不随配置发布包覆盖。
 
 `.env.example` 只描述环境注入契约；本地 `.env` 可保存本机凭据但不得提交，生产密钥应由环境变量或密钥系统注入。

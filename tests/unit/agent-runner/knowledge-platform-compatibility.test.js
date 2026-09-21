@@ -88,6 +88,24 @@ describe('知识中心通用化兼容基线', () => {
     expect(config.model.providers.deepseek.models).toEqual(expect.arrayContaining(['deepseek-chat', 'deepseek-reasoner']));
   });
 
+  test('AI 体系认知使用仓库相对路径且解析后目录存在', () => {
+    const config = JSON.parse(read('config/knowledge-center/service.json'));
+    const documentRoot = config.documentPaths.find(item => item.id === 'ai-cognitive');
+    expect(documentRoot).toBeTruthy();
+    expect(path.isAbsolute(documentRoot.path)).toBe(false);
+    expect(documentRoot.path).toBe('../../ai 体系认知');
+    expect(fs.statSync(path.resolve(root, documentRoot.path)).isDirectory()).toBe(true);
+  });
+
+  test('文档管理深链直接进入指定标签，AI 目录默认展示全部 HTML', () => {
+    const page = read('apps/knowledge-center-web/frontend/document-generation-workbench.html');
+    expect(page).toContain("const requestedTab = route.get('tab')");
+    expect(page).toContain('await switchTab(requestedTab)');
+    expect(page).toContain('await viewDocument(requestedDocument, false)');
+    expect(page).toContain("revealHtml: root.root_id === 'ai-cognitive'");
+    expect(page).toContain("htmlCount + ' 个 HTML'");
+  });
+
   test('SSE、下载和预览深链均有版本化契约快照', () => {
     const source = read('apps/pingcode-api/app/main.py');
     expect(streamDownload.sse).toHaveLength(4);

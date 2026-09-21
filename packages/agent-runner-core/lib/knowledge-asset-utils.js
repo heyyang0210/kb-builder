@@ -60,6 +60,7 @@ function queryKnowledgeAssets(payload, searchParams, admin, gitlabConfigPath) {
   const productId = (searchParams.get('productId') || '').trim();
   const lifecycle = (searchParams.get('lifecycle') || '').trim();
   const includeArchived = searchParams.get('includeArchived') === 'true';
+  const handbookId = (searchParams.get('handbookId') || '').trim();
   const page = Math.max(1, Number.parseInt(searchParams.get('page') || '1', 10) || 1);
   const pageSize = Math.min(100, Math.max(1, Number.parseInt(searchParams.get('pageSize') || '20', 10) || 20));
   let mappings = new Map();
@@ -77,7 +78,9 @@ function queryKnowledgeAssets(payload, searchParams, admin, gitlabConfigPath) {
       && (!status || item.status === status)
       && (!productId || String(item.productId) === productId);
   });
-  const start = (page - 1) * pageSize;
+  const targetIndex = handbookId ? filtered.findIndex(item => String(item.handbookId) === handbookId) : -1;
+  const resolvedPage = targetIndex >= 0 ? Math.floor(targetIndex / pageSize) + 1 : page;
+  const start = (resolvedPage - 1) * pageSize;
   const productsById = new Map();
   for (const item of payload.handbooks) {
     const id = item.productId || item.productType;
@@ -86,7 +89,7 @@ function queryKnowledgeAssets(payload, searchParams, admin, gitlabConfigPath) {
     if (!productsById.has(key)) productsById.set(key, { id: key, name: item.productName || item.productType || key });
   }
   const products = [...productsById.values()];
-  return { items: filtered.slice(start, start + pageSize), page, pageSize, total: filtered.length, statistics, products, generatedAt: payload.generatedAt || null };
+  return { items: filtered.slice(start, start + pageSize), page: resolvedPage, pageSize, total: filtered.length, statistics, products, generatedAt: payload.generatedAt || null };
 }
 
 function isPlatformAdmin(session) {

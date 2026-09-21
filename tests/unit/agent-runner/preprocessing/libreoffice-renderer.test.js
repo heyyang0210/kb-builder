@@ -56,7 +56,7 @@ describe('LibreOfficeRenderer real integration', () => {
   const realTest = hasCommand('libreoffice') && hasCommand('pdftoppm') ? test : test.skip;
 
   realTest('真实 PPTX 至少渲染一张 PNG', async () => {
-    const sample = path.resolve(__dirname, '../../../refs/pingcode/_test_output/pipeline/files/存储引擎-Coral.pptx');
+    const sample = path.resolve(__dirname, '../../../../knowledge/refs/pingcode/_test_output/pipeline/files/存储引擎-Coral.pptx');
     const outputDir = await fs.mkdtemp(path.join(os.tmpdir(), 'office-real-test-'));
     try {
       const pages = await new LibreOfficeRenderer().render(sample, outputDir);

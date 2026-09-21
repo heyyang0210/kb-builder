@@ -4,8 +4,8 @@
 
 ## 当前能力
 
-- `database-connection-governance.js`：YashanDB 连接配置的脱敏投影、JDBC 身份验证与固定 SQL 探测、pending/effective 版本切换、原子版本冲突控制、操作审计和敏感字段加密。JDBC 连接串是地址、端口和数据库名的唯一配置来源，解析字段不得反向覆盖连接串。
+- `database-connection-governance.js`：YashanDB 连接配置的脱敏投影、JDBC 身份验证与固定 SQL 探测，以及对 `config/yashandb/service.env` 的原子读写和版本冲突控制。该文件是数据库连接的唯一事实源；密码不再复制到 JSON 或运行时配置文件。
 
 数据库连接配置属于平台管理员维护的共享业务配置；数据库驱动、连接池、Schema 迁移和存储基础设施仍由 `database-config.js`、YashanDB Storage 服务及部署配置负责。平台管理模块不执行 SQL 迁移、不启动或停止数据库实例，也不承担通用数据库客户端职责。
 
-平台配置保存后先进入 `pending`，统一启动脚本只在没有外部 `YASDB_*` 环境变量覆盖时装载它。Storage 通过真实健康检查后，启动脚本才将该版本推进为 `effective`；启动失败时保留旧有效版本和待生效配置。
+页面验证成功后直接原子更新 `service.env`，启动脚本和 Storage 读取同一文件。已经运行的进程仍使用启动时环境变量，保存后必须重启；页面通过运行连接与文件连接的差异展示待重启状态。`configured` 只表示文件配置存在，不代表数据库真实可连；保存请求的真实 JDBC 探测成功时返回 `verified`，运行健康最终以 Storage 服务健康状态为准。

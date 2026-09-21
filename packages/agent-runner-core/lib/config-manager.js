@@ -18,6 +18,7 @@ class ConfigManager {
     this.configDir = path.dirname(CONFIG_PATHS.service);
     this.encryptionKey = this._deriveKey(process.env.AGENT_RUNNER_KEY || 'default-key');
     this.cache = new Map();
+    this.watcher = null;
     this._watchConfigDir();
   }
 
@@ -207,13 +208,14 @@ class ConfigManager {
     if (!fs.existsSync(this.configDir)) return;
 
     try {
-      fs.watch(this.configDir, (eventType, filename) => {
+      this.watcher = fs.watch(this.configDir, (eventType, filename) => {
         if (filename && filename.endsWith('.json')) {
           if (filename === path.basename(CONFIG_PATHS.service)) this.cache.clear();
           else this.cache.delete(filename.replace('.json', ''));
           logger.debug(`Config cache cleared for: ${filename}`);
         }
       });
+      this.watcher.unref?.();
     } catch (err) {
       logger.warn(`Failed to watch config directory: ${err.message}`);
     }

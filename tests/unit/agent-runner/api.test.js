@@ -1,8 +1,22 @@
 const http = require('http');
+const fs = require('fs');
+const path = require('path');
+
+jest.mock('openai', () => class OpenAITestDouble {
+  constructor() {
+    this.chat = {
+      completions: {
+        create: jest.fn().mockRejectedValue(new Error('unit test model unavailable')),
+      },
+    };
+  }
+});
 
 let server;
 let serverProcess;
+let serviceConfigSnapshot;
 const BASE_URL = 'http://localhost:4101';
+const SERVICE_CONFIG_PATH = path.resolve(__dirname, '../../../config/knowledge-center/service.json');
 
 // 使用 supertest 风格但直接用 http
 function request(method, urlPath, body = null) {
@@ -38,6 +52,7 @@ function request(method, urlPath, body = null) {
 
 // 在测试前启动服务
 beforeAll((done) => {
+  serviceConfigSnapshot = fs.readFileSync(SERVICE_CONFIG_PATH);
   process.env.PORT = '4101';
   process.env.NODE_ENV = 'test';
 
@@ -50,10 +65,14 @@ beforeAll((done) => {
 }, 10000);
 
 afterAll((done) => {
-  if (server) {
-    server.close(done);
-  } else {
+  const finish = () => {
+    if (serviceConfigSnapshot) fs.writeFileSync(SERVICE_CONFIG_PATH, serviceConfigSnapshot);
     done();
+  };
+  if (server) {
+    server.close(finish);
+  } else {
+    finish();
   }
 });
 

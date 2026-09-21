@@ -127,7 +127,7 @@ GitLab 投影在前端初始化为 `{ connections: [] }`，渲染入口对 `null
 - 审计人员：只读连接状态和操作记录。
 - 普通用户：不显示平台管理入口；具有 `knowledge:read` 且可见当前手册时，可从具体手册连接或解除自己的 GitLab 账号。
 
-连接状态统一使用“未配置 / 待验证 / 已验证 / 验证失败 / 已停用”；错误同时提供错误码、原因、可恢复动作和服务端时间，不能只用颜色表达。仓库阅读前端按业务错误码区分“需要连接 GitLab 账号”（401）、“无权限访问此仓库内容”（403）、“该手册尚未配置可读内容”（映射类 404）、“找不到请求的仓库内容”（项目/分支/文件类 404）、“当前仓库连接不可读取”（409）和“仓库服务暂时不可用”（网络或 5xx），并给出对应恢复路径，不能将所有错误统称为仓库不可用。
+连接状态统一使用“未配置 / 待验证 / 已验证 / 验证失败 / 已停用”；错误同时提供错误码、原因、可恢复动作和服务端时间，不能只用颜色表达。仓库阅读前端按业务错误码区分“需要连接 GitLab 账号”（401）、“无权限访问此仓库内容”（403）、“手册不存在”（`ASSET_NOT_FOUND`，404）、“该手册尚未配置可读内容”（映射类 404）、“找不到请求的仓库内容”（项目/分支/文件类 404）、“当前仓库连接不可读取”（409）和“仓库服务暂时不可用”（网络或 5xx），并给出对应恢复路径，不能将所有错误统称为仓库不可用。
 
 ## 6. 接口边界
 
@@ -269,8 +269,8 @@ JDBC 连接串是数据库地址、端口和数据库名/服务名的唯一输�
 │ jdbc:yasdb://db.example.internal:1688/yashandb          │
 │ 用户：regress                                             │
 ├───────────────────────────────────────────────────┤
-│ 服务启动时已指定连接。要启用页面配置，请移除  │
-│ 启动时连接并重启服务。                              │
+│ 配置已写入 service.env；当前进程仍使用启动时连接。 │
+│ 重启服务后生效。                                    │
 ├───────────────────────────────────────────────────┤
 │ 页面连接配置                                            │
 │ JDBC 连接串 [jdbc:yasdb://db.example.internal:1688/yashandb] │
@@ -311,7 +311,7 @@ JDBC 连接串是数据库地址、端口和数据库名/服务名的唯一输�
 关键规则：
 
 1. 点击“验证并保存”时必须先验证当前表单；验证失败不得保存。“仅测试连接”只验证，不写入配置。
-2. 保存成功只写入平台配置和加密密码引用，不立即热切换连接池。
+2. 保存成功直接原子更新唯一配置文件 `config/yashandb/service.env`，不创建第二份平台配置，也不立即热切换连接池。
 3. 保存成功后显示“配置已保存，重启服务后生效”，并提供重启说明；页面不直接执行进程重启。
 4. 取消操作恢复最近一次已保存投影，不清除当前运行连接状态。
 5. 页面刷新后，显示“已保存配置”和“当前运行连接”是否一致；不把待重启配置伪装成已生效。
@@ -376,24 +376,23 @@ GET  /knowledge-center/api/platform/database-connection/status
 
 测试失败响应必须包含稳定错误码、中文原因、是否可重试和服务端时间，不返回 JDBC 驱动堆栈或密码。
 
-### 8.7 保存、加密和审计
+### 8.7 保存、安全和并发
 
 - 只有 `PLATFORM_ADMIN` 可以读取配置投影、测试连接和保存配置。
-- 密码由服务端使用部署环境注入的加密密钥加密保存；前端、日志、审计和错误响应均不得出现密码正文。
+- 页面和启动器读写同一份 `config/yashandb/service.env`；不得再创建 JSON 候选配置、密码副本或第二套生效来源。
+- `service.env` 是本地敏感配置，文件权限必须为 `0600`，不得提交版本库；前端、日志和错误响应均不得出现密码正文。
 - `PUT` 使用 `If-Match` 或 `rowVersion` 防止管理员覆盖其他管理员刚保存的配置。
-- 保存操作记录操作者、配置版本、脱敏前后差异、验证结果和是否需要重启，不记录完整 JDBC URL 中的密码部分。
-- 当前运行配置和待生效配置必须有独立版本号：`effectiveVersion`、`pendingVersion`。
-- 环境变量优先级高于页面保存值时，接口返回 `effectiveSource=environment` 和 `restartRequired=false/true` 的明确解释。
-- 统一启动脚本先合并调用方环境与 `config/yashandb/service.env`。只有 JDBC 连接串、用户名或密码仍不完整时，才尝试解密平台 `pending`；无法解密的待生效记录不得阻断完整部署配置启动。Storage 真实健康检查通过后，仅在本次实际采用平台配置时将该版本推进为 `effective`。
+- `rowVersion` 由文件内容指纹生成；保存时先比较版本，再通过同目录临时文件和原子替换写入，保留 `service.env` 中其他 `YASDB_*` 配置和注释。
+- 当前运行连接来自进程启动时的环境，文件连接来自 `service.env`；两者不一致时返回 `restartRequired=true`，不再维护 `effectiveVersion`、`pendingVersion` 或启动后推进记录。
 - 连接测试复用 YashanDB JDBC 运行组件的 `probe` 命令，凭据通过子进程环境传递，不放入命令行；探测必须完成登录并执行 `SELECT 1 FROM DUAL`。
 
 ### 8.8 伪代码
 
 ```text
 loadDatabaseConnection()
-  deployment = merge(environment, serviceEnv)
-  source = isComplete(deployment) ? deployment : decrypt(platformPending)
-  return redact(source), effectiveSource, restartState
+  saved = read(serviceEnv)
+  running = read(processEnvironment)
+  return redact(saved), redact(running), saved != running
 
 testDatabaseConnection(input)
   require PLATFORM_ADMIN
@@ -408,9 +407,8 @@ saveDatabaseConnection(input, rowVersion)
   normalized = validateAndNormalize(input)
   require testDatabaseConnection(normalized).status == success
   assertRowVersion(rowVersion)
-  encryptedPassword = encrypt(input.password) if input.password is not empty
-  persistPendingConfig(normalized, encryptedPassword, nextVersion)
-  appendAudit(actor, diffWithoutSecrets, nextVersion, restartRequired=true)
+  password = input.password or serviceEnv.password
+  atomicUpdate(serviceEnv, normalized, password, mode=0600)
   return redactedProjection(restartRequired=true)
 ```
 
@@ -420,7 +418,7 @@ saveDatabaseConnection(input, rowVersion)
 - 不允许页面触发数据库实例启动、停止或 Schema 迁移。
 - 连接串中的密码参数若存在，前端必须拒绝提交，要求密码单独填写。
 - 连接超时、认证失败、网络不可达、数据库不存在分别映射为不同中文错误提示。
-- 保存后重启失败时，旧的有效配置继续服务；待生效配置保留为待重试状态，不覆盖旧配置。
+- 保存后重启失败时，已运行的旧进程不受影响；运维通过受控备份或版本管理恢复上一份 `service.env` 后再重启。
 - 页面不可用时，运维仍可使用 `YASDB_JDBC_URL`、`YASDB_USERNAME` 和 `YASDB_PASSWORD` 启动服务。
 
 ### 8.10 验收标准

@@ -12,8 +12,9 @@
 7. 索引生成
 """
 
-import sys
 import json
+import os
+import sys
 from pathlib import Path
 from bootstrap import ROOT
 
@@ -144,6 +145,9 @@ def test_index_builder(roots, pages):
 
 
 def main():
+    if os.getenv("RUN_PINGCODE_LIVE_TESTS") != "1":
+        print("SKIP: 需要设置 RUN_PINGCODE_LIVE_TESTS=1 才会访问真实 PingCode/CAS 环境")
+        return
     print("=" * 60)
     print("PingCode 集成测试")
     print("=" * 60)

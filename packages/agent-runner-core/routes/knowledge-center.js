@@ -535,6 +535,9 @@ function createKnowledgeCenterHandler(options) {
       const payload = readKnowledgeAssets();
       const item = payload.handbooks.find(entry => entry.handbookId === handbookId);
       if (!item) { res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify({ success: false, error: { code: 'ASSET_NOT_FOUND', message: '手册不存在' } })); return; }
+      const expectedVersion = Number(changes.expectedVersion);
+      const currentVersion = Number(item.assetVersion || 1);
+      if (!Number.isInteger(expectedVersion) || expectedVersion !== currentVersion) throw Object.assign(new Error('手册信息已变化，请刷新后重试'), { code: 'ASSET_VERSION_CONFLICT', status: 409 });
       const before = { name: item.name, ownerA: item.ownerA, ownerB: item.ownerB };
       if (Object.hasOwn(changes, 'name')) { const name = String(changes.name || '').trim(); if (!name) throw new Error('手册名称不能为空'); item.name = name; }
       if (Object.hasOwn(changes, 'ownerA')) item.ownerA = ownerValue(changes.ownerA, true);
@@ -546,8 +549,8 @@ function createKnowledgeCenterHandler(options) {
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
       res.end(JSON.stringify({ success: true, data: projectAsset(item, true) }));
     } catch (error) {
-      res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify({ success: false, error: { code: 'ASSET_UPDATE_FAILED', message: error.message } }));
+      res.writeHead(error.status || (error.code === 'ASSET_VERSION_CONFLICT' ? 409 : 400), { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ success: false, error: { code: error.code || 'ASSET_UPDATE_FAILED', message: error.message } }));
     }
   }
 
@@ -664,7 +667,10 @@ function createKnowledgeCenterHandler(options) {
   // --- GitLab handler ---
 
   function sendGitLabError(res, error) {
-    const status = error instanceof GitLabConnectorError || error instanceof GitLabOAuthError ? error.status : 500;
+    const declaredStatus = Number(error?.status);
+    const status = error instanceof GitLabConnectorError || error instanceof GitLabOAuthError
+      ? error.status
+      : Number.isInteger(declaredStatus) && declaredStatus >= 400 && declaredStatus <= 599 ? declaredStatus : 500;
     const body = { success: false, error: { code: error.code || 'GITLAB_REQUEST_FAILED', message: error.message || 'GitLab 请求失败', details: error.details || {} } };
     res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
     res.end(JSON.stringify(body));

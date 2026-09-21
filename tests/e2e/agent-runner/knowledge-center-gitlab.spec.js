@@ -120,24 +120,27 @@ test('知识编辑者可查看并解除个人 GitLab 连接', async ({ page }) =
     contentType: 'application/json',
     body: JSON.stringify({ success: true, content: { authenticated: true, user: { displayName: '知识编辑', roles: ['KNOWLEDGE_EDITOR'], visibleModules: ['dashboard', 'assets'], allowedActions: ['knowledge:read'] }, roles: ['KNOWLEDGE_EDITOR'], visibleModules: ['dashboard', 'assets'], allowedActions: ['knowledge:read'] } }),
   }));
-  await page.route('**/knowledge-center/api/gitlab/oauth/status', route => route.fulfill({
+  let connected = true;
+  await page.route('**/knowledge-center/api/gitlab/oauth/accounts', route => route.fulfill({
     status: 200,
     contentType: 'application/json',
-    body: JSON.stringify({ success: true, data: { connected: true, updatedAt: '2026-09-06T08:30:00.000Z' } }),
+    body: JSON.stringify({ success: true, data: { items: [{ connectionId: 'gitlab-test', name: '研发 GitLab', host: 'git.example.test', status: connected ? 'connected' : 'disconnected', lastUsedAt: '2026-09-06T08:30:00.000Z' }] } }),
   }));
   let disconnectRequest;
-  await page.route('**/knowledge-center/api/gitlab/oauth/disconnect', route => {
+  await page.route('**/knowledge-center/api/gitlab/oauth/disconnect**', route => {
     disconnectRequest = route.request();
+    connected = false;
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: { connected: false } }) });
   });
 
   await page.goto(`${baseUrl}/knowledge-center/assets`);
   await page.getByRole('button', { name: '查看个人外部账号' }).click();
-  const dialog = page.getByRole('dialog', { name: '外部账号' });
+  const dialog = page.getByRole('dialog', { name: '个人设置' });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByText('已连接', { exact: true })).toBeVisible();
-  await dialog.getByRole('button', { name: '解除连接' }).click();
+  await dialog.getByRole('button', { name: '解除', exact: true }).click();
   await expect.poll(() => disconnectRequest?.method()).toBe('POST');
+  expect(new URL(disconnectRequest.url()).searchParams.get('connectionId')).toBe('gitlab-test');
   expect(disconnectRequest.headers()['idempotency-key']).toBeTruthy();
   await expect(dialog.getByText('未连接', { exact: true })).toBeVisible();
 });

@@ -5,7 +5,7 @@ const {
   projectAsset,
   queryKnowledgeAssets,
   isPlatformAdmin,
-} = require('../frontend-server');
+} = require('../../../packages/agent-runner-core/lib/knowledge-asset-utils');
 
 const handbook = (overrides = {}) => ({
   handbookId: 'DB-001',
@@ -57,5 +57,12 @@ describe('知识资产 API 投影', () => {
     expect(queryKnowledgeAssets(payload, new URLSearchParams('includeArchived=true&pageSize=100'), true).total).toBe(3);
     expect(queryKnowledgeAssets(payload, new URLSearchParams('lifecycle=inactive&pageSize=100'), true).items.map(item => item.handbookId)).toEqual(['DB-002']);
     expect(queryKnowledgeAssets(payload, new URLSearchParams('lifecycle=active&pageSize=100'), true).total).toBe(2);
+  });
+
+  test('handbookId 深链自动定位目标分页', () => {
+    const payload = { handbooks: Array.from({ length: 25 }, (_, index) => handbook({ handbookId: `DB-${String(index + 1).padStart(3, '0')}` })) };
+    const result = queryKnowledgeAssets(payload, new URLSearchParams('handbookId=DB-021&pageSize=20'), true);
+    expect(result.page).toBe(2);
+    expect(result.items.map(item => item.handbookId)).toContain('DB-021');
   });
 });

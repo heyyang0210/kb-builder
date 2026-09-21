@@ -5,6 +5,11 @@ module.exports = {
     'node_modules',
     '<rootDir>/../../../runtime/agent-runner/node_modules',
   ],
+  // Jest 的绝对 moduleDirectories 会把 htmlparser2 的嵌套 entities 错配到旧顶层版本。
+  moduleNameMapper: {
+    '^entities/decode$': '<rootDir>/../../../runtime/agent-runner/node_modules/htmlparser2/node_modules/entities/dist/commonjs/decode.js',
+    '^entities/escape$': '<rootDir>/../../../runtime/agent-runner/node_modules/htmlparser2/node_modules/entities/dist/commonjs/escape.js',
+  },
   // These suites intentionally use Node's native test runner and its mock API.
   // The unified Python entry invokes them with `node --test`.
   testMatch: [

@@ -442,17 +442,6 @@ wait_ready() {
   return 1
 }
 
-promote_database_startup_config() {
-  [[ "${KNOWLEDGE_CENTER_DATABASE_CONFIG_SOURCE:-}" == platform ]] || return 0
-  [[ -n "${KNOWLEDGE_CENTER_DATABASE_STARTUP_VERSION:-}" ]] || return 0
-  if ! "$NODE_BIN" "$REPO_ROOT/tools/repository/yashandb-platform-config.js" promote; then
-    FAILURE_COMPONENT="storage"
-    FAILURE_LOG="$LOG_DIR/storage.log"
-    echo "错误：数据库服务已就绪，但无法记录平台配置的生效版本" >&2
-    return 1
-  fi
-}
-
 rollback_started() {
   local index
   for ((index=${#STARTED_SERVICES[@]} - 1; index >= 0; index--)); do
@@ -487,7 +476,6 @@ start_platform() {
     YASDB_STORAGE_CLASSES_DIR="$BUILD_DIR/java/classes" YASDB_JDBC_JAR="$BUILD_DIR/java/lib/yashandb-jdbc.jar" \
     YASDB_STORAGE_SQL_DIR="$BUILD_DIR/java/sql" "$STORAGE_DIR/start.sh" || return 1
   wait_ready storage "$(service_url storage)" || { rollback_started; return 1; }
-  promote_database_startup_config || { rollback_started; return 1; }
 
   start_service document "$DOCUMENT_DIR" "$LOG_DIR/document.log" \
     env NODE_PATH="$NODE_MODULE_PATH" PORT="$DOCUMENT_API_PORT" HOST="$INTERNAL_HOST" \

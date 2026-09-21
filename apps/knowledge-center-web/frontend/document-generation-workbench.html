@@ -758,6 +758,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sa
 /* 根节点样式 */
 .doc-tree-root { margin-bottom: 4px; }
 .doc-tree-root > .doc-tree-dir-header { font-weight: 600; font-size: 13px; background: var(--bg); border-bottom: 1px solid var(--border); padding: 8px 10px; }
+.doc-tree-root-count { color: var(--text-secondary); font-size: 10px; font-weight: 400; white-space: nowrap; }
 .doc-tree-root-badge {
   font-size: 10px; padding: 1px 6px; border-radius: 8px; margin-left: auto; font-weight: 400;
 }
@@ -1563,7 +1564,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sa
               allow="clipboard-write"
               hidden></iframe>
             <div class="doc-html-preview-error" id="docHtmlPreviewError" hidden>
-              HTML 文档加载失败，请使用“下载”或“新窗口打开”查看。
+              <div>HTML 文档加载失败，请重试或使用“下载”或“新窗口打开”查看。</div>
+              <button class="btn btn-outline btn-sm" type="button" onclick="retryCurrentHtmlPreview()">重试</button>
             </div>
             <div class="markdown-preview doc-preview-pane" id="docPreviewContent"></div>
             <div class="doc-edit-pane" id="docEditPane" style="display:none">
@@ -7142,6 +7144,11 @@ function getBackendBaseUrl() {
 const BACKEND_URL = getBackendBaseUrl();
 const BACKEND = BACKEND_URL;
 
+function resolveBackendResourceUrl(resourcePath) {
+  const baseUrl = BACKEND_URL || window.location.origin;
+  return new URL(resourcePath, baseUrl).href;
+}
+
 async function checkBackendConnection() {
   const dot = document.getElementById('connectionDot');
   const text = document.getElementById('connectionText');
@@ -8663,12 +8670,13 @@ function switchTab(tabName) {
   restoreTabState(tabName);
   
   // 每次进入文档管理均刷新，避免保存后仍显示旧列表。
-  if (tabName === 'doc-mgmt') {
-    refreshDocumentManagement();
-  }
+  const refreshPromise = tabName === 'doc-mgmt'
+    ? refreshDocumentManagement()
+    : Promise.resolve();
   
   currentTab = tabName;
   console.log(`Switched to tab: ${tabName}`);
+  return refreshPromise;
 }
 
 function saveTabState(tabName) {
@@ -8815,7 +8823,8 @@ let _docManager = {
   originalContent: '',
   comments: [],
   commentsVisible: false,
-  commentsRequestId: 0
+  commentsRequestId: 0,
+  htmlPreviewRequestId: 0
 };
 
 function openDocumentViewer() {
@@ -8939,19 +8948,35 @@ function renderDocTree(nodes, depth) {
   }
 }
 
-function buildTreeHTML(nodes, depth) {
+function treeNodeContainsHtml(node) {
+  if (node.type === 'file') return String(node.ext || '').toLowerCase() === '.html';
+  return (node.children || []).some(treeNodeContainsHtml);
+}
+
+function countTreeFiles(nodes, extension) {
+  let count = 0;
+  for (const node of nodes || []) {
+    if (node.type === 'file' && (!extension || String(node.ext || '').toLowerCase() === extension)) count += 1;
+    if (node.children) count += countTreeFiles(node.children, extension);
+  }
+  return count;
+}
+
+function buildTreeHTML(nodes, depth, options) {
   let html = '';
+  options = options || {};
   for (const node of nodes) {
     if (node.type === 'directory') {
       const dirId = 'tree-dir-' + node.path.replace(/[^a-zA-Z0-9]/g, '_');
+      const revealHtml = options.revealHtml && treeNodeContainsHtml(node);
       html += '<div class="doc-tree-dir">';
       html += '<div class="doc-tree-dir-header" onclick="toggleTreeDir(\'' + dirId + '\', this)">';
-      html += '<span class="tree-arrow">▶</span>';
+      html += '<span class="tree-arrow' + (revealHtml ? ' open' : '') + '">▶</span>';
       html += '<span class="tree-icon">📁</span>';
       html += '<span>' + escapeHtml(node.name) + '</span>';
       html += '</div>';
-      html += '<div class="doc-tree-dir-children" id="' + dirId + '">';
-      html += buildTreeHTML(node.children || [], depth + 1);
+      html += '<div class="doc-tree-dir-children' + (revealHtml ? ' show' : '') + '" id="' + dirId + '">';
+      html += buildTreeHTML(node.children || [], depth + 1, options);
       html += '</div></div>';
     } else {
       const isActive = _docManager.currentDoc && _docManager.currentDoc.id === node.id;
@@ -8976,16 +9001,20 @@ function buildRootTreeHTML(roots, depth) {
     const badgeText = root.writable ? '可写' : '只读';
     const emptyNote = !root.exists ? ' <span style="color:var(--warning);font-size:11px">(路径不存在)</span>' : '';
     const childCount = (root.children || []).length;
+    const fileCount = countTreeFiles(root.children || []);
+    const htmlCount = countTreeFiles(root.children || [], '.html');
+    const countText = root.root_id === 'ai-cognitive' ? fileCount + ' 个文件 · ' + htmlCount + ' 个 HTML' : fileCount + ' 个文件';
     html += '<div class="doc-tree-root doc-tree-dir">';
     html += '<div class="doc-tree-dir-header" onclick="toggleTreeDir(\'' + rootId + '\', this)">';
     html += '<span class="tree-arrow open">▶</span>';
     html += '<span class="tree-icon">📂</span>';
     html += '<span>' + escapeHtml(root.name) + emptyNote + '</span>';
+    html += '<span class="doc-tree-root-count">' + countText + '</span>';
     html += '<span class="doc-tree-root-badge ' + badgeClass + '">' + badgeText + '</span>';
     html += '</div>';
     html += '<div class="doc-tree-dir-children show" id="' + rootId + '">';
     if (root.children && root.children.length > 0) {
-      html += buildTreeHTML(root.children, depth + 1);
+      html += buildTreeHTML(root.children, depth + 1, { revealHtml: root.root_id === 'ai-cognitive' });
     } else if (root.exists) {
       html += '<div class="doc-empty" style="padding:8px 12px;font-size:12px">暂无文档</div>';
     }
@@ -9355,10 +9384,40 @@ function clearHtmlPreview() {
   const frame = document.getElementById('docHtmlPreviewFrame');
   const error = document.getElementById('docHtmlPreviewError');
   if (frame) {
+    frame.onload = null;
+    frame.onerror = null;
     frame.hidden = true;
     frame.src = 'about:blank';
   }
   if (error) error.hidden = true;
+  _docManager.htmlPreviewRequestId += 1;
+}
+
+async function loadHtmlPreview(frame, error, rawUrl) {
+  const requestId = _docManager.htmlPreviewRequestId;
+  const previewUrl = resolveBackendResourceUrl(rawUrl);
+  try {
+    const response = await fetch(previewUrl, { method: 'HEAD', cache: 'no-store' });
+    if (requestId !== _docManager.htmlPreviewRequestId) return;
+    if (!response.ok) throw new Error('HTML 文档资源不可用');
+
+    frame.onload = () => {
+      if (requestId !== _docManager.htmlPreviewRequestId || frame.src !== previewUrl) return;
+      frame.hidden = false;
+      if (error) error.hidden = true;
+    };
+    frame.onerror = () => {
+      if (requestId !== _docManager.htmlPreviewRequestId || frame.src !== previewUrl) return;
+      frame.hidden = true;
+      if (error) error.hidden = false;
+    };
+    frame.src = previewUrl;
+    frame.hidden = false;
+  } catch (_) {
+    if (requestId !== _docManager.htmlPreviewRequestId) return;
+    frame.hidden = true;
+    if (error) error.hidden = false;
+  }
 }
 
 function renderDocContent(documentData, mode) {
@@ -9380,8 +9439,7 @@ function renderDocContent(documentData, mode) {
         if (error) error.hidden = false;
         return;
       }
-      frame.src = new URL(doc.raw_url, BACKEND).href;
-      frame.hidden = false;
+      loadHtmlPreview(frame, error, doc.raw_url);
       return;
     }
     previewEl.style.display = 'block';
@@ -9411,6 +9469,12 @@ function renderDocContent(documentData, mode) {
     const textarea = document.getElementById('docEditTextarea');
     textarea.value = doc.content || '';
     updateLineNumbers();
+  }
+}
+
+function retryCurrentHtmlPreview() {
+  if (_docManager.currentDoc && isHtmlDocument(_docManager.currentDoc.ext)) {
+    renderDocContent(_docManager.currentDoc, 'preview');
   }
 }
 
@@ -9615,7 +9679,7 @@ function openCurrentDocInNewWindow() {
   if (!_docManager.currentDoc) return;
   const doc = _docManager.currentDoc;
   const url = isHtmlDocument(doc.ext) && doc.raw_url
-    ? new URL(doc.raw_url, BACKEND).href
+    ? resolveBackendResourceUrl(doc.raw_url)
     : BACKEND + '/api/document/' + encodeURIComponent(doc.id) + '/download';
   window.open(url, '_blank', 'noopener,noreferrer');
 }
@@ -9838,6 +9902,15 @@ function formatFileSize(bytes) {
   const i = Math.floor(Math.log(bytes) / Math.log(1024));
   return (bytes / Math.pow(1024, i)).toFixed(i > 0 ? 1 : 0) + ' ' + units[i];
 }
+
+document.addEventListener('DOMContentLoaded', async () => {
+  const route = new URLSearchParams(window.location.search);
+  const requestedTab = route.get('tab');
+  if (!['doc-gen', 'doc-mgmt', 'analytics'].includes(requestedTab)) return;
+  await switchTab(requestedTab);
+  const requestedDocument = route.get('doc');
+  if (requestedTab === 'doc-mgmt' && requestedDocument) await viewDocument(requestedDocument, false);
+});
 
 </script>
 

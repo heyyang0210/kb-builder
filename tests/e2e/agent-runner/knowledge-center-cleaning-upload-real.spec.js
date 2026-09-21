@@ -57,21 +57,32 @@ test('已认证但无写权限角色不能创建上传会话', async ({ page }) 
   const users = usersBody.data?.users || usersBody.content?.users || usersBody.users || [];
   const editor = users.find(user => user.loginName === 'test');
   expect(editor?.id).toBeTruthy();
-  const roleResponse = await api.patch(`${baseUrl}/knowledge-center/api/platform/permissions/${encodeURIComponent(editor.id)}/roles`, {
-    data: { roles: ['REVIEWER'] },
-  });
-  expect(roleResponse.ok()).toBeTruthy();
-  await api.post(`${baseUrl}/knowledge-center/api/auth/logout`);
+  const originalRoles = editor.roles || ['KNOWLEDGE_EDITOR'];
+  try {
+    const roleResponse = await api.patch(`${baseUrl}/knowledge-center/api/platform/permissions/${encodeURIComponent(editor.id)}/roles`, {
+      data: { roles: ['REVIEWER'] },
+    });
+    expect(roleResponse.ok()).toBeTruthy();
+    await api.post(`${baseUrl}/knowledge-center/api/auth/logout`);
 
-  const testLogin = await api.post(`${baseUrl}/knowledge-center/api/auth/admin/login`, { data: { username: 'test', password: 'test' } });
-  expect(testLogin.ok()).toBeTruthy();
-  const response = await api.post(`${baseUrl}/knowledge-center/api/cleaning/upload-sessions`, {
-    data: { name: 'reviewer-e2e', operatorLabel: 'test', totalFiles: 1, totalBytes: 1 },
-  });
-  expect(response.status()).toBe(403);
-  const body = await response.json();
-  expect(body.success).toBe(false);
-  expect(body.error.code).toBe('CLEANING_PERMISSION_DENIED');
+    const testLogin = await api.post(`${baseUrl}/knowledge-center/api/auth/admin/login`, { data: { username: 'test', password: 'test' } });
+    expect(testLogin.ok()).toBeTruthy();
+    const response = await api.post(`${baseUrl}/knowledge-center/api/cleaning/upload-sessions`, {
+      data: { name: 'reviewer-e2e', operatorLabel: 'test', totalFiles: 1, totalBytes: 1 },
+    });
+    expect(response.status()).toBe(403);
+    const body = await response.json();
+    expect(body.success).toBe(false);
+    expect(body.error.code).toBe('PLATFORM_ADMIN_REQUIRED');
+  } finally {
+    await api.post(`${baseUrl}/knowledge-center/api/auth/logout`);
+    const restoreLogin = await api.post(`${baseUrl}/knowledge-center/api/auth/admin/login`, { data: { username: 'admin', password: 'admin' } });
+    expect(restoreLogin.ok()).toBeTruthy();
+    const restoreResponse = await api.patch(`${baseUrl}/knowledge-center/api/platform/permissions/${encodeURIComponent(editor.id)}/roles`, {
+      data: { roles: originalRoles },
+    });
+    expect(restoreResponse.ok()).toBeTruthy();
+  }
 });
 
 test('不存在的数据集图谱查询返回明确资源错误而非空假数据', async ({ page }) => {

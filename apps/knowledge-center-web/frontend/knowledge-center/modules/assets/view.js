@@ -25,6 +25,8 @@ const timeText = value => value ? `更新于 ${new Date(value).toLocaleString('z
 
 export function renderAssetStatistics(item) {
   if (item.statisticsStatus === 'loading') return '<span>章节 正在统计</span><small>文档 正在统计</small>';
+  if (item.statisticsStatus === 'forbidden') return '<span>统计 无权读取</span><small>请检查仓库授权</small>';
+  if (item.statisticsStatus === 'unavailable') return '<span>统计暂不可用</span><small>请稍后重试</small>';
   return `<span>章节 ${count(item.chapterCount)}</span><small>文档 ${count(item.documentCount)}</small>`;
 }
 

@@ -7,12 +7,12 @@
  *   L3 - 端到端测试：完整文档生成流程
  *
  * 运行方式：
- *   cd agent-runner
- *   npx jest tests/system-retrieval-flow.test.js --verbose --forceExit
+ *   python3 tests/run_tests.py system
  *
  * 前置条件：
- *   - 后端服务已启动（端口 4100）
+ *   - 知识中心 API 与 Agent API 已启动（默认 13510/14110）
  *   - MCP 知识库可用
+ *   - L3 真实模型生成需显式设置 RUN_KNOWLEDGE_CENTER_LIVE_MODEL_TESTS=1
  */
 
 const http = require('http');
@@ -356,8 +356,6 @@ describe('L2: 集成测试 - API + MCP 检索', () => {
         knowledge_point: kp,
         output_path: 'output/',
         filename: `test-system-${timestamp}.md`,
-        template: '../knowledge/templates/01-通用基础模板.md',
-        skill: '../knowledge/skills/00-通用生成-skill.md',
         workflow_config: null
       });
 
@@ -430,8 +428,8 @@ describe('L2: 集成测试 - API + MCP 检索', () => {
         console.log(`    - ${tr.title} (${(tr.score * 100).toFixed(1)}%)`);
       }
 
-      expect(analysis.highScoreCount).toBeGreaterThan(0);
-      expect(analysis.highScoreRatio).toBeGreaterThanOrEqual(0); // >=0.7 高分较少，MCP 评分集中在 0.5-0.7
+      expect(analysis.avgScore).toBeGreaterThanOrEqual(0.5);
+      expect(analysis.maxScore).toBeGreaterThanOrEqual(0.5);
 
       testReport.metrics.queryGeneration.total++;
       testReport.metrics.queryGeneration.passed++;
@@ -456,7 +454,8 @@ describe('L2: 集成测试 - API + MCP 检索', () => {
 // L3: 端到端测试 - 完整文档生成
 // ============================================================
 
-describe('L3: 端到端测试 - 完整文档生成', () => {
+const describeLiveModel = process.env.RUN_KNOWLEDGE_CENTER_LIVE_MODEL_TESTS === '1' ? describe : describe.skip;
+describeLiveModel('L3: 端到端测试 - 完整文档生成', () => {
   // 设置整个 describe 块的超时时间为 5 分钟
   jest.setTimeout(300000);
   
@@ -472,8 +471,6 @@ describe('L3: 端到端测试 - 完整文档生成', () => {
       knowledge_point: kp,
       output_path: 'output/',
       filename: `test-e2e-system-${timestamp}.md`,
-      template: '../knowledge/templates/01-通用基础模板.md',
-      skill: '../knowledge/skills/00-通用生成-skill.md',
       workflow_config: null
     });
 

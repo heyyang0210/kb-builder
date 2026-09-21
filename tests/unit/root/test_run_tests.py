@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import os
 import sys
 import tempfile
@@ -63,6 +64,19 @@ class RepositoryTestRunnerTests(unittest.TestCase):
         all_tasks = [(task.suite, task.framework, task.files) for task in RUNNER.build_tasks("all")]
         self.assertEqual(full, all_tasks)
 
+    def test_playwright_performance_gate_uses_chromium_baseline(self):
+        task = RUNNER.TestTask(
+            "gate",
+            "playwright",
+            "performance gate",
+            (RUNNER.E2E_TEST_ROOT / "knowledge-center-performance.gate.spec.js",),
+        )
+        command = RUNNER.task_command(task)
+        self.assertEqual(["--project", "chromium"], command[-2:])
+
+        e2e_task = RUNNER.TestTask("e2e", "playwright", "functional e2e", task.files)
+        self.assertNotIn("--project", RUNNER.task_command(e2e_task))
+
     def test_runner_classification_separates_framework_tests_and_scripts(self):
         with tempfile.TemporaryDirectory() as directory:
             node_script = Path(directory) / "standalone.test.js"
@@ -97,7 +111,7 @@ class RepositoryTestRunnerTests(unittest.TestCase):
             self.assertEqual("unittest", RUNNER.classify_python_runner(path))
 
     def test_executable_scripts_are_isolated_into_one_process_per_file(self):
-        tasks = RUNNER.build_tasks("unit")
+        tasks = RUNNER.build_tasks("full")
         script_tasks = [task for task in tasks if task.framework in {"node-script", "python-script"}]
         self.assertTrue(script_tasks)
         self.assertTrue(all(len(task.files) == 1 for task in script_tasks))
@@ -145,6 +159,22 @@ class RepositoryTestRunnerTests(unittest.TestCase):
         self.assertEqual(
             ("suite › case", "tests/example.test.js"),
             RUNNER.extract_failed_tests("jest", output),
+        )
+
+    def test_execution_log_persists_commands_and_failures(self):
+        result = RUNNER.TaskResult(
+            "unit", "unit / Jest", "jest", "FAIL", 1.25, 1, 1,
+            ("suite › broken case",), "node jest --runInBand",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "test-run.log"
+            RUNNER.write_execution_log(path, "unit", [result], 1.25)
+            entry = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual("node jest --runInBand", entry["tasks"][0]["command"])
+        self.assertEqual(["suite › broken case"], entry["tasks"][0]["failedTests"])
+        self.assertEqual(
+            [{"task": "unit / Jest", "test": "suite › broken case"}],
+            entry["failedTests"],
         )
 
 

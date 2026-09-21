@@ -60,7 +60,7 @@ describe('数据库连接右侧抽屉交互', () => {
   });
 
   test('待生效说明只出现一处，保存反馈不重复原因和步骤', () => {
-    expect(view).toContain('要启用页面配置，请移除启动时连接并重启服务。');
+    expect(view).toContain('配置已写入 service.env；当前进程仍使用启动时连接，重启服务后生效。');
     expect(app).toContain("message: '页面配置已保存。'");
     expect(app).not.toContain('页面配置已保存。移除服务启动时指定的数据库连接并重启后生效。');
   });

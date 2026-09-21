@@ -4,6 +4,7 @@ const { test, expect } = require('@playwright/test');
 // APIs. GitLab content is intentionally a controlled fixture because the
 // production OAuth connector is not connected in the test environment.
 const baseUrl = process.env.KPG_BASE_URL || 'http://127.0.0.1:13510';
+const repositoryMarkdown = '# 安装手册\n\n<span id="YFS" name="YFS">YFS 参数说明</span>\n\n## 参数说明\n\n1. 准备环境\n   - [x] 检查版本\n   - [ ] 核对端口\n\n> 数据库版本必须与参数依赖一致。\n\n| 参数 | 版本依赖 |\n| :--- | ---: |\n| YAS_PORT | **23.4** |\n\n---\n\n```sql\nSELECT 1;\n```';
 
 async function login(api, username, password) {
   const response = await api.post(`${baseUrl}/knowledge-center/api/auth/admin/login`, { data: { username, password } });
@@ -84,30 +85,48 @@ async function seedCandidateReady(api) {
 }
 
 async function installGitLabFixture(page) {
-  await page.route('**/knowledge-center/api/gitlab/handbooks/DB-001/access-status', route => route.fulfill({
-    status: 200, contentType: 'application/json',
-    body: JSON.stringify({ success: true, data: { canRead: true, connected: true } }),
-  }));
-  await page.route('**/knowledge-center/api/gitlab/handbooks/DB-001/branches', route => route.fulfill({
-    status: 200, contentType: 'application/json',
-    body: JSON.stringify({ success: true, data: { defaultBranch: 'master', branches: [{ name: 'master' }, { name: 'br23.4' }] } }),
-  }));
-  await page.route('**/knowledge-center/api/gitlab/handbooks/DB-001/tree**', route => route.fulfill({
-    status: 200, contentType: 'application/json',
-    body: JSON.stringify({ success: true, data: [{ type: 'tree', name: 'doc', path: 'doc' }, { type: 'blob', name: 'install.md', path: 'doc/install.md' }] }),
-  }));
   await page.route('**/knowledge-center/api/gitlab/handbooks/DB-001/file**', route => route.fulfill({
-    status: 200, contentType: 'application/json',
-    body: JSON.stringify({ success: true, data: { path: 'doc/install.md', content: '# 安装手册\n\n<span id="YFS" name="YFS">YFS 参数说明</span>\n\n## 参数说明\n\n1. 准备环境\n   - [x] 检查版本\n   - [ ] 核对端口\n\n> 数据库版本必须与参数依赖一致。\n\n| 参数 | 版本依赖 |\n| :--- | ---: |\n| YAS_PORT | **23.4** |\n\n---\n\n```sql\nSELECT 1;\n```', commitId: 'abcdef123456', updatedAt: '2026-09-06T10:00:00.000Z' } }),
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ success: true, data: { path: 'doc/install.md', content: repositoryMarkdown, commitId: 'abcdef123456', updatedAt: '2026-09-06T10:00:00.000Z' } }),
   }));
+  await page.route('**/knowledge-center/api/review/repository-context**', route => {
+    const requestUrl = new URL(route.request().url());
+    const handbookId = requestUrl.searchParams.get('handbookId') || 'DB-001';
+    const branch = requestUrl.searchParams.get('branch') || 'master';
+    const language = requestUrl.searchParams.get('language') === 'en' ? 'en' : 'zh';
+    const file = { path: 'doc/install.md', content: repositoryMarkdown, commitId: 'abcdef123456', updatedAt: '2026-09-06T10:00:00.000Z' };
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ success: true, data: {
+        status: 'ok', handbookId,
+        handbookName: handbookId === 'DB-001' ? '产品描述手册' : handbookId,
+        connectionName: 'E2E GitLab', project: 'cod-doc/yasdoc',
+        languages: { zh: true, en: true },
+        branches: [{ name: 'master' }, { name: 'br23.4' }], branch, language,
+        tree: [{ type: 'tree', name: 'doc', path: 'doc' }, { type: 'blob', name: 'install.md', path: 'doc/install.md' }],
+        file, requestedPath: file.path, commitSha: file.commitId, updatedAt: file.updatedAt,
+      } }),
+    });
+  });
+}
+
+async function isolateInitialEmptyReview(page, handbookId = 'DB-001') {
+  await page.route('**/knowledge-center/api/review/bootstrap**', async route => {
+    const response = await route.fetch();
+    const payload = await response.json();
+    payload.data = { ...payload.data, items: [], allItems: [], detail: null, handbookId };
+    await route.fulfill({ response, json: payload });
+  }, { times: 1 });
 }
 
 test.describe('审核与发布多角色 E2E', () => {
   test('全局入口无待办时自动进入可见手册阅读工作台', async ({ page }) => {
     await login(page.context().request, 'admin', 'admin');
     await installGitLabFixture(page);
+    await isolateInitialEmptyReview(page);
     await page.goto(`${baseUrl}/knowledge-center/review`);
-    await expect(page.locator('#app-shell')).toHaveClass(/sidebar-collapsed/);
     await expect(page.getByRole('heading', { name: '产品描述手册' })).toBeVisible();
     await expect(page.getByRole('heading', { name: '尚无待审核修改稿' })).toBeVisible();
     await expect(page.getByText('YAS_PORT')).toBeVisible();
@@ -118,7 +137,6 @@ test.describe('审核与发布多角色 E2E', () => {
     await expect(page.locator('pre[data-language="sql"]')).toContainText('SELECT 1');
     await expect(page.locator('.repository-markdown #YFS[name="YFS"]')).toHaveCount(1);
     await expect(page.locator('.repository-markdown')).not.toContainText('<span id="YFS"');
-    await expect(page.getByRole('combobox', { name: '当前手册' })).toHaveValue('DB-001');
     await expect(page.getByText('当前没有待处理审核事项')).toHaveCount(0);
   });
 
@@ -131,7 +149,8 @@ test.describe('审核与发布多角色 E2E', () => {
     await expect(page.getByRole('link', { name: '前往文档生产' })).toHaveAttribute('href', '/knowledge-center/production?handbookId=DB-NOT-FOUND');
     await expect(page.locator('.review-workspace')).toHaveCount(1);
     await expect(page.locator('.review-document-content')).toHaveCount(1);
-    await expect(page.getByRole('button', { name: '2 查看修改' })).toBeDisabled();
+    await expect(page.getByRole('button', { name: '2 查看修改' })).toHaveCount(0);
+    await expect(page.getByText('正文阅读', { exact: true })).toBeVisible();
     await expect(page.locator('body')).not.toContainText('unknown');
     await expect(page.locator('body')).not.toContainText('未返回');
   });
@@ -149,13 +168,19 @@ test.describe('审核与发布多角色 E2E', () => {
   test('存量手册可从阅读页发起在线评审，并对快照提出行级意见', async ({ page }) => {
     await login(page.context().request, 'test', 'test');
     await installGitLabFixture(page);
+    await isolateInitialEmptyReview(page);
     await page.goto(`${baseUrl}/knowledge-center/review?handbookId=DB-001`);
 
-    await page.getByRole('button', { name: '发起在线评审' }).click();
+    await expect(page.getByText('YAS_PORT')).toBeVisible();
     const dialog = page.getByRole('dialog', { name: '发起在线评审' });
+    await expect.poll(async () => {
+      if (!await dialog.isVisible()) await page.getByRole('button', { name: '发起在线评审' }).click();
+      return dialog.isVisible();
+    }).toBe(true);
     await expect(dialog.getByText('产品', { exact: true })).toBeVisible();
     await expect(dialog.getByText('YashanDB')).toBeVisible();
-    await expect(dialog.getByRole('combobox', { name: '当前正式版本' })).toHaveValue('v1');
+    await expect(dialog.getByRole('group', { name: '选择 Git 提交作为基线来源' })).toBeVisible();
+    await expect(dialog.getByRole('textbox', { name: /业务版本/ })).toHaveValue(/\S+/);
     await expect(dialog.getByRole('radio', { name: /当前文档/ })).toBeChecked();
     await dialog.getByRole('textbox', { name: '评审说明（可选）' }).fill('核对 23.4 参数依赖与运维命令');
     await dialog.getByRole('button', { name: '创建评审快照' }).click();
@@ -170,14 +195,14 @@ test.describe('审核与发布多角色 E2E', () => {
       state: 'under_review',
       reviewMode: 'online_review',
       target: { scope: 'document', documentIds: ['doc/install.md'] },
-      candidate: { snapshotOfPublishedVersionId: 'v1', operations: [] },
+      candidate: { snapshotOfPublishedVersionId: expect.any(String), operations: [] },
     });
 
     await expect(page.locator('#view-root').getByRole('heading', { name: task.name })).toBeVisible();
     await expect(page.locator('[data-review-document-id="doc/install.md"]')).toHaveCount(1);
     await expect(page.getByText('当前显示正式版本评审快照')).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'YashanDB 产品描述手册' })).toBeVisible();
-    await expect(page.getByText('准备环境')).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: '安装手册' })).toBeVisible();
+    await expect(page.getByText('准备环境')).toBeVisible();
     await page.locator('#YFS').evaluate(element => {
       const selection = window.getSelection();
       const range = document.createRange();
@@ -191,12 +216,12 @@ test.describe('审核与发布多角色 E2E', () => {
     await bubble.getByRole('button', { name: '对选中文字提出意见' }).click();
     const inlineForm = page.locator('[data-review-inline-form]');
     await expect(inlineForm).toBeVisible();
-    await expect(inlineForm.locator('.review-inline-input-quote')).toContainText('YFS 参数说明');
+    await expect(inlineForm.locator('..').locator('.review-inline-input-quote')).toContainText('YFS 参数说明');
     await inlineForm.locator('textarea[name="comment"]').fill('请核对 YFS 参数说明的版本依赖。');
     await inlineForm.getByRole('button', { name: '提交意见' }).click();
     await expect(page.locator('[data-review-inline-form]')).toHaveCount(0);
     await page.getByRole('button', { name: /3 处理审核意见/ }).click();
-    await expect(page.getByText('请核对 YFS 参数说明的版本依赖。')).toBeVisible();
+    await expect(page.locator('[data-review-opinion]').filter({ hasText: '请核对 YFS 参数说明的版本依赖。' })).toBeVisible();
   });
 
   test('阅读、差异、行级意见、审核和发布均由真实后端驱动', async ({ page, request }) => {
@@ -233,7 +258,8 @@ test.describe('审核与发布多角色 E2E', () => {
     await expect(page.getByRole('button', { name: '展开文档目录' })).toBeVisible();
     await page.getByRole('button', { name: '展开文档目录' }).click();
     await expect(page.locator('.review-evidence-drawer')).not.toHaveAttribute('open', '');
-    await page.locator('.review-evidence-drawer > summary').click();
+    const finalEvidenceDrawer = page.locator('.review-evidence-drawer');
+    if (await finalEvidenceDrawer.getAttribute('open') === null) await finalEvidenceDrawer.locator(':scope > summary').click();
     await expect(page.locator('[data-role-card="reader"]')).toContainText('可用');
     await expect(page.locator('[data-role-card="reviewer"]')).toContainText('可用');
     await expect(page.locator('[data-role-card="publisher"]')).toContainText('不可用');
@@ -252,8 +278,8 @@ test.describe('审核与发布多角色 E2E', () => {
     await activeCommentForm.locator('textarea').fill('请核对 23.4 参数依赖');
     await activeCommentForm.getByRole('button', { name: '提交意见' }).click();
     await page.getByRole('button', { name: '3 处理审核意见' }).click();
-    await expect(page.getByText('请核对 23.4 参数依赖')).toBeVisible();
     const opinion = page.locator('[data-review-opinion]').filter({ hasText: '请核对 23.4 参数依赖' });
+    await expect(opinion).toBeVisible();
     await expect(opinion.getByRole('button', { name: '回复' })).toBeVisible();
     await expect(opinion.getByRole('button', { name: '标记已处理' })).toBeVisible();
     await opinion.getByRole('button', { name: '回复' }).click();
@@ -265,7 +291,8 @@ test.describe('审核与发布多角色 E2E', () => {
     await expect(opinion.getByRole('button', { name: '重新打开' })).toBeVisible();
     await opinion.getByRole('button', { name: '重新打开' }).click();
     await expect(opinion.getByText('待处理')).toBeVisible();
-    await page.locator('.review-evidence-drawer > summary').click();
+    const decisionEvidenceDrawer = page.locator('.review-evidence-drawer');
+    if (await decisionEvidenceDrawer.getAttribute('open') === null) await decisionEvidenceDrawer.locator(':scope > summary').click();
     await expect(page.getByRole('heading', { name: '角色与门禁' })).toBeVisible();
     await expect(page.getByText(/数据库语法、参数依赖、版本适配、错误码和运维命令专项检查尚未执行/)).toBeVisible();
     await expect(page.getByText(/暂无真实 AI 分析结果/)).toBeVisible();

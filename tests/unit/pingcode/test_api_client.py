@@ -10,8 +10,9 @@ API 客户端测试用例
 5. 解析文档内容
 """
 
-import sys
 import json
+import os
+import sys
 from pathlib import Path
 from bootstrap import ROOT
 
@@ -136,6 +137,9 @@ def _print_tree(roots, max_depth=3, current_depth=0):
 
 
 def main():
+    if os.getenv("RUN_PINGCODE_LIVE_TESTS") != "1":
+        print("SKIP: 需要设置 RUN_PINGCODE_LIVE_TESTS=1 才会访问真实 PingCode/CAS 环境")
+        return
     print("=" * 60)
     print("API 客户端测试")
     print("=" * 60)

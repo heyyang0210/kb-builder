@@ -910,16 +910,18 @@ class IncrementalBuildService {
       canRevise: owner && hasAction(session, 'knowledge:write') && task.state === 'rejected',
       canRecordEvidence: hasAction(session, 'publish:manage') && task.state === 'published',
     };
-    const projection = structuredClone(task);
+    // 审核列表只需要稳定的选择器/历史字段；不要为每个历史任务复制审核证据，
+    // 否则任务数量增长会直接拖慢审核工作台首屏。
+    const projection = summary
+      ? structuredClone(Object.fromEntries([
+        'id', 'name', 'title', 'handbookId', 'handbookName', 'productName',
+        'businessVersion', 'baselineVersionId', 'baselineVersionLabel',
+        'baselineVersionName', 'state', 'status', 'createdAt', 'updatedAt',
+      ].filter(key => Object.prototype.hasOwnProperty.call(task, key)).map(key => [key, task[key]])))
+      : structuredClone(task);
     projection.capabilities = capabilities;
     projection.candidateSummary = task.candidate ? { id: task.candidate.id, digest: task.candidate.digest, operationCount: task.candidate.operations.length, createdAt: task.candidate.createdAt } : null;
     projection.reviewSummary = { total: task.reviews.length, pending: task.reviews.filter(item => item.status === 'pending').length, approved: task.reviews.filter(item => item.status === 'approved').length, rejected: task.reviews.filter(item => item.status === 'rejected').length };
-    if (summary) {
-      delete projection.sourceSnapshots;
-      delete projection.draft;
-      delete projection.candidate;
-      delete projection.reviews;
-    }
     return projection;
   }
 }

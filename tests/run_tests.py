@@ -65,6 +65,7 @@ class TaskResult:
     return_code: int
     file_count: int
     failed_tests: tuple[str, ...] = ()
+    command: str = ""
 
 
 def relative(path: Path) -> str:
@@ -223,11 +224,14 @@ def task_command(task: TestTask) -> list[str]:
     if task.framework == "python-script":
         return [python_executable(), files[0]]
     if task.framework == "playwright":
-        return [
+        command = [
             *node_tool("playwright"), "test",
             "--config", relative(PLAYWRIGHT_CONFIG),
             "--reporter=list", *files,
         ]
+        if task.suite == "gate":
+            command.extend(("--project", "chromium"))
+        return command
     raise ValueError(f"未知测试框架: {task.framework}")
 
 
@@ -346,15 +350,16 @@ def stop_owned_knowledge_center() -> None:
 
 def run_task(task: TestTask, *, dry_run: bool, timeout: int) -> TaskResult:
     command = task_command(task)
+    command_text = shlex.join(command)
     print(f"\n{'=' * 72}")
     print(f"执行：{task.label}（{len(task.files)} 个测试文件）")
-    print(f"命令：{shlex.join(command)}")
+    print(f"命令：{command_text}")
     print("-" * 72, flush=True)
 
     if dry_run:
         for path in task.files:
             print(f"  - {relative(path)}")
-        return TaskResult(task.suite, task.label, task.framework, "DRY-RUN", 0.0, 0, len(task.files))
+        return TaskResult(task.suite, task.label, task.framework, "DRY-RUN", 0.0, 0, len(task.files), command=command_text)
 
     started = time.monotonic()
     try:
@@ -393,7 +398,7 @@ def run_task(task: TestTask, *, dry_run: bool, timeout: int) -> TaskResult:
         status = "INTERRUPTED"
         failed_tests = (f"任务被中断：{task.label}",)
     duration = time.monotonic() - started
-    return TaskResult(task.suite, task.label, task.framework, status, duration, return_code, len(task.files), failed_tests)
+    return TaskResult(task.suite, task.label, task.framework, status, duration, return_code, len(task.files), failed_tests, command_text)
 
 
 def print_catalog() -> None:
@@ -440,6 +445,39 @@ def write_report(path: Path, command: str, results: list[TaskResult], elapsed: f
     print(f"测试报告：{target}")
 
 
+def write_execution_log(path: Path, command: str, results: list[TaskResult], elapsed: float) -> None:
+    """追加一条 JSONL 执行日志，便于按命令和失败用例回查历史运行。"""
+    target = path if path.is_absolute() else REPOSITORY_ROOT / path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    entry = {
+        "generatedAt": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "command": command,
+        "durationSeconds": round(elapsed, 3),
+        "passed": all(result.status in {"PASS", "DRY-RUN"} for result in results),
+        "tasks": [
+            {
+                "suite": result.suite,
+                "label": result.label,
+                "framework": result.framework,
+                "command": result.command,
+                "status": result.status,
+                "returnCode": result.return_code,
+                "durationSeconds": round(result.duration_seconds, 3),
+                "failedTests": list(result.failed_tests),
+            }
+            for result in results
+        ],
+        "failedTests": [
+            {"task": result.label, "test": failure}
+            for result in results
+            for failure in result.failed_tests
+        ],
+    }
+    with target.open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    print(f"测试日志：{target}")
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="仓库统一测试入口：按分类执行并汇总 Jest、unittest 和 Playwright 结果。"
@@ -453,6 +491,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--fail-fast", action="store_true", help="任一测试任务失败后停止")
     parser.add_argument("--timeout", type=int, default=1800, help="每个测试任务的超时秒数，默认 1800")
     parser.add_argument("--report", type=Path, help="可选 JSON 汇总报告路径，建议写入 runtime/")
+    parser.add_argument(
+        "--log",
+        type=Path,
+        default=Path("runtime/test-reports/test-run.log"),
+        help="执行日志路径（JSONL，默认 runtime/test-reports/test-run.log）",
+    )
     args = parser.parse_args(argv)
     if args.timeout <= 0:
         parser.error("--timeout 必须大于 0")
@@ -482,7 +526,7 @@ def main(argv: list[str] | None = None) -> int:
         playwright_ready, owns_knowledge_center, diagnostic = ensure_knowledge_center()
         print(f"Playwright 前置条件：{diagnostic}")
         if not playwright_ready:
-            results.append(TaskResult("preflight", "Playwright / 知识中心服务", "preflight", "FAIL", 0.0, 1, 0, (diagnostic,)))
+            results.append(TaskResult("preflight", "Playwright / 知识中心服务", "preflight", "FAIL", 0.0, 1, 0, (diagnostic,), ""))
     try:
         for task in tasks:
             if task.framework == "playwright" and not playwright_ready:
@@ -499,6 +543,7 @@ def main(argv: list[str] | None = None) -> int:
     print_summary(results, elapsed)
     if args.report:
         write_report(args.report, args.command, results, elapsed)
+    write_execution_log(args.log, args.command, results, elapsed)
     return 0 if all(result.status in {"PASS", "DRY-RUN"} for result in results) else 1
 
 

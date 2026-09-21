@@ -116,6 +116,12 @@ describe('GitLab same-origin HTTP API', () => {
     await expect(access.json()).resolves.toMatchObject({ error: { code: 'AUTH_REQUIRED' } });
   });
 
+  test('review repository context preserves a missing handbook as HTTP 404', async () => {
+    const response = await fetch(`${baseUrl}/knowledge-center/api/review/repository-context?handbookId=DB-NOT-FOUND`, { headers: { cookie: readerCookie } });
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toMatchObject({ error: { code: 'ASSET_NOT_FOUND' } });
+  });
+
   test('administrator changes handbook status through controlled commands', async () => {
     const changed = await fetch(`${baseUrl}/knowledge-center/api/assets/handbooks/DB-001/status`, {
       method: 'POST', headers: { cookie: adminCookie, 'content-type': 'application/json' },
