@@ -83,23 +83,27 @@ final class PrincipalRepository {
     }
 
     Map<String, Object> syncCasLogin(Connection connection, String loginName, String displayName, String actor) throws SQLException {
+        return syncCasLogin(connection, loginName, displayName, actor, false);
+    }
+
+    private Map<String, Object> syncCasLogin(Connection connection, String loginName, String displayName,
+                                             String actor, boolean allowCreate) throws SQLException {
         String login = required(loginName, "CAS_LOGIN_NAME_REQUIRED");
         String name = required(displayName, "PERSONNEL_NAME_REQUIRED");
-        Map<String, Object> existing = findByLogin(connection, login, true);
-        if (existing != null) {
-            long id = Long.parseLong(String.valueOf(existing.get("principalId")));
+        Long existingId = findIdByLogin(connection, login, true);
+        if (existingId != null) {
             try (PreparedStatement update = connection.prepareStatement(
                 "UPDATE KC_PLATFORM_PRINCIPAL SET LAST_LOGIN_AT=CURRENT_TIMESTAMP, STATE='ACTIVE', ROW_VERSION=ROW_VERSION+1, "
                     + "UPDATED_BY=?, UPDATED_AT=CURRENT_TIMESTAMP WHERE PRINCIPAL_ID=?")) {
-                update.setString(1, actor); update.setLong(2, id); update.executeUpdate();
+                update.setString(1, actor); update.setLong(2, existingId); update.executeUpdate();
             }
-            return findById(connection, id);
+            return findById(connection, existingId);
         }
         List<Long> candidates = pendingCandidates(connection, name);
         if (candidates.size() == 1) {
             long id = candidates.get(0);
             try (PreparedStatement update = connection.prepareStatement(
-                "UPDATE KC_PLATFORM_PRINCIPAL SET CAS_LOGIN_NAME=?, FIRST_LOGIN_AT=COALESCE(FIRST_LOGIN_AT, CURRENT_TIMESTAMP), "
+                "UPDATE KC_PLATFORM_PRINCIPAL SET CAS_LOGIN_NAME=?, FIRST_LOGIN_AT=CURRENT_TIMESTAMP, "
                     + "LAST_LOGIN_AT=CURRENT_TIMESTAMP, STATE='ACTIVE', ROW_VERSION=ROW_VERSION+1, UPDATED_BY=?, UPDATED_AT=CURRENT_TIMESTAMP "
                     + "WHERE PRINCIPAL_ID=? AND CAS_LOGIN_NAME IS NULL")) {
                 update.setString(1, login); update.setString(2, actor); update.setLong(3, id);
@@ -107,7 +111,9 @@ final class PrincipalRepository {
             }
             return findById(connection, id);
         }
-        return create(connection, name, login, "ACTIVE", actor);
+        if (candidates.size() > 1) throw new SQLException("CAS_PRINCIPAL_AMBIGUOUS");
+        if (allowCreate) return create(connection, name, login, "ACTIVE", actor);
+        throw new SQLException("CAS_PRINCIPAL_NOT_FOUND");
     }
 
     Map<String, Object> importPerson(Connection connection, String displayName, String casLoginName, String state, String actor) throws SQLException {
@@ -120,7 +126,7 @@ final class PrincipalRepository {
                 return update(connection, ((Number) existing.get("principalId")).longValue(), name, login,
                     state, ((Number) existing.get("rowVersion")).longValue(), actor);
             }
-            return syncCasLogin(connection, login, name, actor);
+            return syncCasLogin(connection, login, name, actor, true);
         }
         try (PreparedStatement query = connection.prepareStatement(
             "SELECT " + PROJECTION + " FROM KC_PLATFORM_PRINCIPAL P WHERE P.DISPLAY_NAME=? AND P.CAS_LOGIN_NAME IS NULL ORDER BY P.PRINCIPAL_ID")) {
@@ -179,6 +185,14 @@ final class PrincipalRepository {
         try (PreparedStatement query = connection.prepareStatement(sql)) {
             query.setString(1, login);
             try (ResultSet result = query.executeQuery()) { return result.next() ? project(result) : null; }
+        }
+    }
+
+    private Long findIdByLogin(Connection connection, String login, boolean lock) throws SQLException {
+        String sql = "SELECT PRINCIPAL_ID FROM KC_PLATFORM_PRINCIPAL WHERE CAS_LOGIN_NAME=?" + (lock ? " FOR UPDATE" : "");
+        try (PreparedStatement query = connection.prepareStatement(sql)) {
+            query.setString(1, login);
+            try (ResultSet result = query.executeQuery()) { return result.next() ? result.getLong(1) : null; }
         }
     }
 

@@ -608,6 +608,11 @@ function authErrorMessage(error) {
     CAS_TICKET_INVALID: '统一认证信息已失效，请重新登录。',
     CAS_TICKET_EXPIRED: '统一认证信息已过期，请重新登录。',
     CAS_SERVICE_MISMATCH: '登录请求无法验证，请联系平台管理员。',
+    CAS_PRINCIPAL_NOT_FOUND: '未找到唯一的待绑定人员，请联系平台管理员核对姓名和人员状态。',
+    CAS_PRINCIPAL_AMBIGUOUS: '存在多个同名待绑定人员，请联系平台管理员完成身份确认。',
+    CAS_LOGIN_NAME_CONFLICT: '该 CAS 账号已绑定其他人员，请联系平台管理员。',
+    CAS_LOGIN_BIND_CONFLICT: '该 CAS 账号绑定发生冲突，请重新登录；问题持续时请联系平台管理员。',
+    CAS_PRINCIPAL_SYNC_FAILED: '统一认证已通过，但人员信息同步失败，请稍后重试。',
     ADMIN_ACCOUNT_LOCKED: '管理员账号暂时无法登录，请联系平台管理员。',
   };
   return messages[error?.code] || error?.message || '登录未完成，请重试。';

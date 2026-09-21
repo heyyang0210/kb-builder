@@ -481,7 +481,19 @@ function createKnowledgeCenterAuthService(options = {}) {
         const body = await readBody(req);
         if (body.service || body.serviceUrl) throw new AuthError('CAS_SERVICE_MISMATCH', 'CAS service 由服务端固定配置', 400);
         const info = await validateTicket(body.ticket);
-        const principal = principalDirectory?.upsertCas ? await principalDirectory.upsertCas(info) : null;
+        let principal = null;
+        try {
+          principal = principalDirectory?.upsertCas ? await principalDirectory.upsertCas(info) : null;
+        } catch (error) {
+          const bindingCodes = new Set([
+            'CAS_LOGIN_NAME_CONFLICT', 'CAS_LOGIN_BIND_CONFLICT',
+            'CAS_PRINCIPAL_NOT_FOUND', 'CAS_PRINCIPAL_AMBIGUOUS',
+          ]);
+          if (bindingCodes.has(error?.code)) {
+            throw new AuthError(error.code, error.message || 'CAS 账号无法唯一绑定现有人员，请联系平台管理员', 409);
+          }
+          throw new AuthError('CAS_PRINCIPAL_SYNC_FAILED', '统一认证成功，但人员信息同步失败，请稍后重试', 503, true);
+        }
         const user = repository.upsertCas(info, principal?.principalId || principal?.id || null);
         if (!user.enabled) throw new AuthError('USER_DISABLED', '当前账号无法访问平台', 403);
         const token = repository.createSession(user, config.sessionTtlMs);

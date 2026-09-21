@@ -91,7 +91,9 @@ class DomainStore {
   statusForCode(code) {
     if (code === 'OUTLINE_NOT_FOUND' || code === 'ASSET_NOT_FOUND') return 404;
     if (code === 'BUILD_TASK_NOT_FOUND' || code === 'BUILD_TASK_ITEM_NOT_FOUND') return 404;
-    if (code === 'REVISION_CONFLICT' || code === 'OUTLINE_VERSION_CONFLICT' || code === 'OUTLINE_EDIT_CONFLICT' || code === 'OUTLINE_GOVERNANCE_CONFLICT' || code === 'OUTLINE_IMMUTABLE' || code === 'PUBLISHED_CONTENT_LOCKED') return 409;
+    if (code === 'REVISION_CONFLICT' || code === 'OUTLINE_VERSION_CONFLICT' || code === 'OUTLINE_EDIT_CONFLICT' || code === 'OUTLINE_GOVERNANCE_CONFLICT' || code === 'OUTLINE_IMMUTABLE' || code === 'PUBLISHED_CONTENT_LOCKED'
+      || code === 'CAS_LOGIN_NAME_CONFLICT' || code === 'CAS_LOGIN_BIND_CONFLICT'
+      || code === 'CAS_PRINCIPAL_NOT_FOUND' || code === 'CAS_PRINCIPAL_AMBIGUOUS') return 409;
     if (code === 'OUTLINE_DOCUMENT_REQUIRED' || code === 'INVALID_DOMAIN_PAYLOAD' || code === 'OUTLINE_RESPONSIBILITY_REQUIRED' || code === 'PUBLISHED_ASSIGNMENT_REQUIRED' || code === 'BUILD_TASK_ASSIGNEE_INVALID') return 422;
     return 503;
   }

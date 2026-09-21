@@ -536,7 +536,10 @@ public final class Main {
             failure(exchange, 400, "INVALID_JSON", error.getMessage());
         } catch (SQLException error) {
             String code = coalesce(error.getMessage(), "PERSONNEL_OPERATION_FAILED");
-            int status = code.endsWith("NOT_FOUND") ? 404 : code.contains("CONFLICT") || code.endsWith("IMMUTABLE") ? 409 : code.endsWith("REQUIRED") || code.endsWith("INVALID") || code.endsWith("EMPTY") || code.endsWith("TOO_LARGE") ? 422 : 503;
+            int status = code.startsWith("CAS_PRINCIPAL_") ? 409
+                : code.endsWith("NOT_FOUND") ? 404
+                : code.contains("CONFLICT") || code.endsWith("IMMUTABLE") ? 409
+                : code.endsWith("REQUIRED") || code.endsWith("INVALID") || code.endsWith("EMPTY") || code.endsWith("TOO_LARGE") ? 422 : 503;
             failure(exchange, status, code, personnelErrorMessage(code));
         }
     }
@@ -2310,6 +2313,8 @@ public final class Main {
             case "PERSONNEL_NAME_REQUIRED" -> "姓名为必填项";
             case "CAS_LOGIN_NAME_REQUIRED" -> "CAS 登录名为必填项";
             case "CAS_LOGIN_NAME_CONFLICT", "CAS_LOGIN_BIND_CONFLICT" -> "CAS 登录名已绑定其他人员";
+            case "CAS_PRINCIPAL_NOT_FOUND" -> "未找到唯一的待绑定人员，请先在人员管理中核对姓名和状态";
+            case "CAS_PRINCIPAL_AMBIGUOUS" -> "存在多个同名待绑定人员，请先在人员管理中完成身份确认";
             case "CAS_LOGIN_NAME_IMMUTABLE" -> "已绑定的 CAS 登录名不允许换绑";
             case "PERSONNEL_STATE_INVALID" -> "人员状态只允许 ACTIVE 或 INACTIVE";
             case "PERSONNEL_BINDING_STATUS_INVALID" -> "CAS 绑定状态只允许 BOUND 或 PENDING";

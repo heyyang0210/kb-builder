@@ -55,6 +55,8 @@ function startCasStub() {
     ['ST-business-1', { username: 'alice', uid: 'uid-alice', cn: 'Alice', mail: 'alice@example.test', employeeNumber: 'E001' }],
     ['ST-business-2', { username: 'alice', uid: 'uid-alice', cn: 'Alice Updated', mail: 'alice2@example.test', employeeNumber: 'E001' }],
     ['ST-admin', { username: 'root-cas', uid: 'uid-root', cn: 'Root' }],
+    ['ST-principal-missing', { username: 'missing', uid: 'uid-missing', cn: '未建档用户' }],
+    ['ST-principal-unavailable', { username: 'unavailable', uid: 'uid-unavailable', cn: '存储异常用户' }],
   ]);
   const server = http.createServer((req, res) => {
     const requestUrl = new URL(req.url, 'http://cas.test');
@@ -206,6 +208,8 @@ describe('知识中心认证 HTTP 契约（真实服务 + CAS 协议桩）', () 
       repository: 'memory',
       principalDirectory: {
         upsertCas: async info => {
+          if (info.user === 'missing') throw Object.assign(new Error('未找到唯一的待绑定人员'), { code: 'CAS_PRINCIPAL_NOT_FOUND', status: 409 });
+          if (info.user === 'unavailable') throw Object.assign(new Error('storage unavailable'), { code: 'DOMAIN_UNAVAILABLE', status: 503 });
           principalSyncs.push({ casLoginName: info.user, displayName: info.cn?.[0] || info.user });
           return { principalId: 101 };
         },
@@ -252,6 +256,17 @@ describe('知识中心认证 HTTP 契约（真实服务 + CAS 协议桩）', () 
     expect(session.data.content.allowedActions).not.toEqual(expect.arrayContaining(['outline:create', 'outline:delete']));
     const adminProbe = await jsonRequest(base, 'GET', ADMIN_PROBE, null, { cookie: businessCookie });
     expect(adminProbe.status).toBe(403);
+  });
+
+  test('CAS 首次登录无法绑定人员时返回明确冲突，存储异常返回可重试错误', async () => {
+    const missing = await jsonRequest(base, 'POST', AUTH_PATH('cas/callback'), { ticket: 'ST-principal-missing' });
+    expect(missing.status).toBe(409);
+    expect(missing.data.error).toMatchObject({ code: 'CAS_PRINCIPAL_NOT_FOUND', retryable: false });
+
+    const unavailable = await jsonRequest(base, 'POST', AUTH_PATH('cas/callback'), { ticket: 'ST-principal-unavailable' });
+    expect(unavailable.status).toBe(503);
+    expect(unavailable.data.error).toMatchObject({ code: 'CAS_PRINCIPAL_SYNC_FAILED', retryable: true });
+    expect(unavailable.data.error.message).not.toContain('storage unavailable');
   });
 
   test('ticket 一次性消费、service 不匹配和越界深链均被拒绝', async () => {
