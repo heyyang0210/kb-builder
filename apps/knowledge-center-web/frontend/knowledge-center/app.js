@@ -1,4 +1,4 @@
-import { archiveAsset, createAsset, createPrincipal, deleteOutline, importOutline, importPrincipals, loadAssets, loadOutlineData, loadPlatformData, loadPrincipals, publishOutlineGovernance, resolveAssetStatus, restoreAsset, saveOutlineGovernance, updateAsset, updateAssetStatus, updateDomainBuildTaskItem, loadDomainBuildTasks as fetchDomainBuildTasks, loadPlatformPermissions, updatePlatformUserPermissions, updatePrincipal, loadDatabaseConnection, testDatabaseConnection, saveDatabaseConnection } from './common/api/platform-api.js';
+import { archiveAsset, createAsset, createPrincipal, deleteOutline, importOutline, importPrincipals, loadAssets, loadOutlineData, loadPlatformData, loadPrincipals, publishOutlineGovernance, resolveAssetStatus, restoreAsset, saveOutlineGovernance, updateAsset, updateAssetStatus, updateDomainBuildTaskItem, loadDomainBuildTasks as fetchDomainBuildTasks, loadPlatformPermissions, updatePlatformUserPermissions, updatePrincipal, loadDatabaseConnectionStatus, testDatabaseConnection, saveDatabaseConnection } from './common/api/platform-api.js';
 import { disconnectGitLabOAuth, gitLabOAuthHref, loadGitLabBranches, loadGitLabConnections, loadGitLabOAuthAccounts, loadGitLabOAuthStatus, loadGitLabOAuthConfig, loadGitLabTree, loadHandbookGitLabAccess, loadHandbookRepository, loadHandbookRepositoryCommits, loadHandbookRepositoryFile, loadHandbookRepositoryMapping, loadHandbookRepositoryStatistics, loadHandbookRepositoryTree, loadReviewRepositoryContext, saveGitLabConnection, saveHandbookRepositoryMapping, createGitLabConnection, updateGitLabConnection, verifyGitLabConnection, disableGitLabConnection, enableGitLabConnection, searchGitLabConnections } from './common/api/gitlab-api.js';
 import { addIncrementalSource, bootstrapBaseline, commentIncrementalReview, createIncrementalReview, createIncrementalRevision, createIncrementalTask, createOnlineReview, decideIncrementalReview, loadCandidateDiff, loadHandbookReviewSummary, loadIncrementalBaselines, loadIncrementalTask, loadIncrementalTasks, loadReviewBootstrap, publishIncrementalTask, recordIncrementalEvidence, reopenIncrementalReviewComment, replyIncrementalReviewComment, resolveIncrementalReviewComment, runIncrementalChecks, saveIncrementalDraft, submitIncrementalCandidate, updateIncrementalTarget } from './common/api/incremental-api.js';
 import { bootstrapAuth, consumeRememberedTarget, performLogout, rememberCurrentTarget, startCasLogin, submitAdminLogin } from './common/auth/auth-controller.js';
@@ -425,11 +425,13 @@ async function loadGitLabAdmin() {
 }
 
 async function loadDatabaseConnectionAdmin() {
+  appState.databaseConnectionProjection = { ...(appState.databaseConnectionProjection || {}), status: 'loading', healthStatus: 'loading' };
+  if (appState.activeView === 'platform') render();
   try {
-    const result = await loadDatabaseConnection();
+    const result = await loadDatabaseConnectionStatus();
     appState.databaseConnectionProjection = result?.data || result;
   }
-  catch (error) { appState.databaseConnectionProjection = { status: 'unavailable', error: error.message }; }
+  catch (error) { appState.databaseConnectionProjection = { status: 'unavailable', healthStatus: 'unavailable', error: error.message, healthError: { message: error.message } }; }
   if (appState.activeView === 'platform') render();
 }
 

@@ -93,6 +93,11 @@ function createDatabaseConnectionGovernance(options = {}) {
   const env = options.env || process.env;
   const probe = options.probe || createJavaProbe(options);
   let commitTail = Promise.resolve();
+  let healthCache = null;
+  const healthCacheTtlMs = Number(options.healthCacheTtlMs) > 0 ? Number(options.healthCacheTtlMs) : 30000;
+  const healthCheckIntervalMs = Number(options.healthCheckIntervalMs ?? env.DATABASE_HEALTH_CHECK_INTERVAL_MS ?? 30000);
+  let healthCheckTimer = null;
+  let healthCheckInFlight = null;
 
   function readText() {
     try {
@@ -183,6 +188,11 @@ function createDatabaseConnectionGovernance(options = {}) {
     return configured ? { ...configured, source: 'deployment' } : null;
   }
 
+  function runtimeConnectionKey(connection) {
+    if (!connection) return null;
+    return crypto.createHash('sha256').update(JSON.stringify([connection.jdbcUrl, connection.username, connection.password || ''])).digest('hex');
+  }
+
   function projection() {
     const configured = fileConnection();
     const runtime = runtimeConnection();
@@ -223,6 +233,63 @@ function createDatabaseConnectionGovernance(options = {}) {
     return probe({ ...normalized, password });
   }
 
+  function currentHealth() {
+    const projected = projection();
+    const runtime = runtimeConnection();
+    if (!runtime) return { ...projected, healthStatus: 'unconfigured', healthCheckedAt: null, healthError: null };
+    if (healthCache && healthCache.runtimeKey === runtimeConnectionKey(runtime)) {
+      return { ...projected, ...healthCache.result };
+    }
+    return { ...projected, healthStatus: null, healthCheckedAt: null, healthLatencyMs: null, healthError: null };
+  }
+
+  async function refreshHealth(options = {}) {
+    if (healthCheckInFlight) return healthCheckInFlight;
+    const runtime = runtimeConnection();
+    if (!runtime) {
+      healthCache = null;
+      return currentHealth();
+    }
+    const runtimeKey = runtimeConnectionKey(runtime);
+    if (!options.force && healthCache && healthCache.runtimeKey === runtimeKey && Date.now() - healthCache.checkedAt < healthCacheTtlMs) return currentHealth();
+    healthCheckInFlight = (async () => {
+      let result;
+      try {
+        const verification = await probe(runtime);
+        result = {
+          healthStatus: 'healthy',
+          healthCheckedAt: verification.verifiedAt || new Date().toISOString(),
+          healthLatencyMs: verification.latencyMs ?? null,
+          healthError: null,
+        };
+      } catch (error) {
+        result = {
+          healthStatus: 'unavailable',
+          healthCheckedAt: new Date().toISOString(),
+          healthLatencyMs: null,
+          healthError: { code: error.code || 'DATABASE_CONNECTION_UNAVAILABLE', message: error.message || '数据库连接不可用' },
+        };
+      }
+      const latestRuntime = runtimeConnection();
+      if (runtimeConnectionKey(latestRuntime) !== runtimeKey) return currentHealth();
+      healthCache = { runtimeKey, checkedAt: Date.now(), result };
+      return { ...projection(), ...result };
+    })();
+    try { return await healthCheckInFlight; } finally { healthCheckInFlight = null; }
+  }
+
+  function startHealthMonitor() {
+    if (healthCheckTimer || !Number.isFinite(healthCheckIntervalMs) || healthCheckIntervalMs <= 0) return;
+    void refreshHealth({ force: true });
+    healthCheckTimer = setInterval(() => { void refreshHealth({ force: true }); }, healthCheckIntervalMs);
+    healthCheckTimer.unref?.();
+  }
+
+  function stopHealthMonitor() {
+    if (healthCheckTimer) clearInterval(healthCheckTimer);
+    healthCheckTimer = null;
+  }
+
   async function save(input = {}, expectedVersion) {
     const fallback = fileConnection() || {};
     const normalized = normalizeConnection(input, fallback);
@@ -231,7 +298,7 @@ function createDatabaseConnectionGovernance(options = {}) {
     }
     const password = String(input.password || '') || fallback.password || env.YASDB_PASSWORD;
     const verification = await probe({ ...normalized, password });
-    return withCommitLock(() => {
+    const saved = await withCommitLock(() => {
       if (expectedVersion == null || Number(expectedVersion) !== projection().rowVersion) {
         throw governanceError('DATABASE_CONFIG_CONFLICT', '数据库配置已被其他管理员更新，请刷新后重试', 409);
       }
@@ -240,13 +307,27 @@ function createDatabaseConnectionGovernance(options = {}) {
         YASDB_USERNAME: normalized.username,
         YASDB_PASSWORD: password,
       }));
-      const saved = projection();
+      const committed = projection();
       return {
-        ...saved,
-        status: saved.restartRequired ? saved.status : 'verified',
+        ...committed,
+        status: committed.restartRequired ? committed.status : 'verified',
         lastVerification: verification,
       };
     });
+    if (!saved.restartRequired) {
+      const runtime = runtimeConnection();
+      healthCache = {
+        runtimeKey: runtimeConnectionKey(runtime),
+        checkedAt: Date.now(),
+        result: {
+          healthStatus: 'healthy',
+          healthCheckedAt: verification.verifiedAt || new Date().toISOString(),
+          healthLatencyMs: verification.latencyMs ?? null,
+          healthError: null,
+        },
+      };
+    }
+    return saved;
   }
 
   function startupConfig() {
@@ -256,7 +337,9 @@ function createDatabaseConnectionGovernance(options = {}) {
     return { ...record, version: projection().rowVersion };
   }
 
-  return { projection, test, save, startupConfig };
+  if (options.autoStartHealthMonitor !== false) startHealthMonitor();
+
+  return { projection, currentHealth, refreshHealth, startHealthMonitor, stopHealthMonitor, health: refreshHealth, test, save, startupConfig };
 }
 
 module.exports = { EXAMPLE_URL, createDatabaseConnectionGovernance, createJavaProbe, normalizeConnection, parseJdbcUrl };

@@ -12,6 +12,7 @@ export const loadTemplates = (params = {}) => {
   return getJson(query ? `${templatesEndpoint}?${query}` : templatesEndpoint);
 };
 export const loadDatabaseConnection = () => getJson(databaseConnectionEndpoint);
+export const loadDatabaseConnectionStatus = () => getJson(`${databaseConnectionEndpoint}/status`);
 export const testDatabaseConnection = payload => getJson(`${databaseConnectionEndpoint}/test`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
 export const saveDatabaseConnection = (payload, rowVersion) => getJson(databaseConnectionEndpoint, { method: 'PUT', headers: { 'Content-Type': 'application/json', ...(rowVersion != null ? { 'If-Match': String(rowVersion) } : {}) }, body: JSON.stringify(payload) });
 export const loadTemplate = id => getJson(`${templatesEndpoint}/${encodeURIComponent(id)}`);

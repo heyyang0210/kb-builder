@@ -8,6 +8,7 @@ const { createAggregateStore, DatabaseIncrementalStore } = require('../../packag
 const crypto = require('crypto');
 const { createIncrementalBuildHandler } = require('../../packages/agent-runner-core/lib/incremental-build-service');
 const { createKnowledgeCenterHandler } = require('../../packages/agent-runner-core/routes/knowledge-center');
+const { createDatabaseConnectionGovernance } = require('../../packages/agent-runner-core/lib/platform-management/database-connection-governance');
 const { REPOSITORY_ROOT, AGENT_RUNNER_RUNTIME_ROOT } = require('../../packages/agent-runner-core/lib/repo-paths');
 const { CONFIG_PATHS } = require('../../packages/agent-runner-core/lib/config-registry');
 const { createBrandIconStore } = require('../../packages/agent-runner-core/lib/brand-icon-store');
@@ -138,6 +139,10 @@ if (usingDefaultAdmin || usingDefaultEditor) {
 }
 const platformModules = new PlatformModuleRegistry();
 platformModules.register({ id: 'auth', version: '1.0.0', ...authModule });
+const databaseConnectionGovernance = createDatabaseConnectionGovernance({
+  filePath: DATABASE_CONNECTION_CONFIG_PATH,
+  autoStartHealthMonitor: false,
+});
 
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -275,6 +280,7 @@ const handleKnowledgeCenter = createKnowledgeCenterHandler({
   },
   stores: { knowledgeAssetsStore, manualStatusStore, templateStore, brandIconStore, domainStore },
   moduleRegistry: platformModules,
+  databaseConnectionGovernance,
 });
 
 // --- Main server ---
@@ -346,12 +352,15 @@ const server = http.createServer((req, res) => {
 });
 
 if (require.main === module) {
+  databaseConnectionGovernance.startHealthMonitor();
   server.listen(PORT, HOST, () => {
     console.log(`Frontend server listening on http://${HOST}:${PORT}`);
     console.log(`Open ${PUBLIC_BASE_URL}/document-generation-workbench.html in your browser`);
     console.log(`Open ${PUBLIC_BASE_URL}${PINGCODE_PREFIX}/ in your browser`);
   });
 }
+
+server.on('close', () => databaseConnectionGovernance.stopHealthMonitor());
 
 module.exports = {
   server,

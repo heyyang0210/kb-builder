@@ -75,7 +75,10 @@ function createKnowledgeCenterHandler(options) {
   validateOutlineWorkbookPath('OUTLINE_TEMPLATE_PATH', OUTLINE_TEMPLATE_PATH);
   validateOutlineWorkbookPath('OUTLINE_SAMPLE_PATH', OUTLINE_SAMPLE_PATH);
   const templateStore = stores.templateStore || createTemplateStore();
-  const databaseConnection = options.databaseConnectionGovernance || createDatabaseConnectionGovernance({ filePath: DATABASE_CONNECTION_CONFIG_PATH });
+  const databaseConnection = options.databaseConnectionGovernance || createDatabaseConnectionGovernance({
+    filePath: DATABASE_CONNECTION_CONFIG_PATH,
+    autoStartHealthMonitor: false,
+  });
   const authModule = moduleRegistry?.get?.('auth') || modules.auth;
   const databaseMode = String(process.env.KNOWLEDGE_STORAGE_MODE || 'file').toLowerCase() === 'database';
 
@@ -1092,12 +1095,34 @@ function createKnowledgeCenterHandler(options) {
       requireSession(req, res, async session => {
         if (forbidUnlessPlatformAdmin(res, session)) return;
         try {
+          if (pathname.endsWith('/status')) {
+            if (req.method === 'POST') {
+              const data = await databaseConnection.refreshHealth({ force: true });
+              res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+              res.end(JSON.stringify({ success: true, data }));
+              return;
+            }
+            if (req.method === 'GET') {
+              const data = databaseConnection.currentHealth();
+              res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+              res.end(JSON.stringify({ success: true, data }));
+              return;
+            }
+            res.writeHead(405, { Allow: 'GET, POST' });
+            res.end();
+            return;
+          }
           if (pathname.endsWith('/test')) {
             if (req.method !== 'POST') { res.writeHead(405, { Allow: 'POST' }); res.end(); return; }
             const result = await databaseConnection.test(await readJsonBody(req));
             res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify({ success: true, data: result })); return;
           }
-          if (req.method === 'GET') { res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify({ success: true, data: databaseConnection.projection() })); return; }
+          if (req.method === 'GET') {
+            const data = databaseConnection.projection();
+            res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+            res.end(JSON.stringify({ success: true, data }));
+            return;
+          }
           if (req.method === 'PUT') { const body = await readJsonBody(req); const result = await databaseConnection.save(body, req.headers['if-match'] || body.rowVersion, { actorId: session?.user?.id }); res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify({ success: true, data: result })); return; }
           res.writeHead(405, { Allow: 'GET, PUT' }); res.end();
         } catch (error) { res.writeHead(error.status || 503, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify({ success: false, error: { code: error.code || 'DATABASE_CONNECTION_ERROR', message: error.message || '数据库连接操作失败', retryable: error.status === 503, serverTime: new Date().toISOString() } })); }

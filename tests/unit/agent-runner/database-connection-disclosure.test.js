@@ -4,6 +4,7 @@ const path = require('path');
 const view = fs.readFileSync(path.resolve(__dirname, '../../../apps/knowledge-center-web/frontend/knowledge-center/modules/platform-admin/view.js'), 'utf8');
 const app = fs.readFileSync(path.resolve(__dirname, '../../../apps/knowledge-center-web/frontend/knowledge-center/app.js'), 'utf8');
 const state = fs.readFileSync(path.resolve(__dirname, '../../../apps/knowledge-center-web/frontend/knowledge-center/common/state/app-state.js'), 'utf8');
+const route = fs.readFileSync(path.resolve(__dirname, '../../../packages/agent-runner-core/routes/knowledge-center.js'), 'utf8');
 
 describe('数据库连接右侧抽屉交互', () => {
   test('治理页保留紧凑状态卡，配置在模态抽屉中完成', () => {
@@ -34,6 +35,30 @@ describe('数据库连接右侧抽屉交互', () => {
     expect(view).not.toContain('data-database-field="port"');
     expect(view).not.toContain('data-database-field="database"');
     expect(app).not.toContain('syncDatabaseConnectionFields');
+  });
+
+  test('首屏加载不伪造数据库终态，返回后只展示真实健康结果', () => {
+    expect(view).toContain("healthStatus === 'healthy'");
+    expect(view).toContain('已配置，尚未验证');
+    expect(view).toContain('database-summary-skeleton');
+    expect(view).toContain('database-summary-skeleton-card');
+    expect(view).toContain('database-status-skeleton');
+    expect(view).not.toContain("loading ? '正在检查'");
+    expect(view).not.toContain("loading\n    ? '正在读取数据库运行状态…'");
+    expect(app).toContain('loadDatabaseConnectionStatus');
+    expect(app).toContain("healthStatus: 'loading'");
+    expect(app).not.toContain('const projectionResult = await loadDatabaseConnection()');
+    expect(route).toContain('const data = databaseConnection.currentHealth()');
+    expect(route).toContain('await databaseConnection.refreshHealth({ force: true })');
+    expect(route).toContain('autoStartHealthMonitor: false');
+    expect(route).toContain("res.writeHead(405, { Allow: 'GET, POST' })");
+  });
+
+  test('抽屉内 JDBC 字段保留等宽字体，摘要卡使用页面统一字体', () => {
+    expect(view).toContain('连接串使用等宽字体，便于核对地址、端口和连接参数');
+    const styles = fs.readFileSync(path.resolve(__dirname, '../../../apps/knowledge-center-web/frontend/knowledge-center/styles.css'), 'utf8');
+    expect(styles).toContain('.database-jdbc-input { font-family: ui-monospace');
+    expect(styles).toContain('.database-connection-summary code { overflow: hidden; color: var(--color-text); font: inherit;');
   });
 
   test('运行状态与页面配置分层，不向用户暴露内部来源术语', () => {
