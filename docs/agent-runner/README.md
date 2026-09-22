@@ -30,6 +30,7 @@ docs/agent-runner/
 | [Role Contract v1 与角色治理设计](./39-Role-Contract-v1与角色治理设计.md) | 九个角色的公共契约、状态所有权、权限、证据、失败升级和演进边界 |
 | [Task Routing Contract v1 与最小执行路径](./40-Task-Routing-Contract-v1与最小角色路径设计.md) | 直接处理、标准开发、治理任务和按需上下文装载 |
 | [Approval Boundary v1 人工审批边界](./41-Approval-Boundary-v1人工审批边界.md) | 默认授权、必须审批、不确定项判断和最小审批记录的单一事实源 |
+| [Code Review 与提交验证流程](./42-Code-Review与提交验证流程.md) | Codex Review 模式与确定性验证的分工、按变更风险选择检查、隔离真实 API 和提交边界 |
 
 知识中心管理平台的服务基础设施设计已归档到 [知识中心建设平台](../../.codex/知识中心建设平台/03-详细设计/知识中心-平台-详细设计文档.md)；本目录只保留 Agent Runner 自身设计。
 
