@@ -29,7 +29,8 @@ test('管理员看到必要字段、单一更新时间和真实服务端分页',
   await expect(root.getByRole('button', { name: '新增手册' })).toBeVisible();
   await expect(root.locator('.asset-page-intro .asset-context-label')).toHaveCount(0);
   await expect(root.getByRole('button', { name: '新增手册' })).toHaveCSS('color', 'rgb(3, 105, 161)');
-  await expect(root.getByRole('link', { name: '已停用资产' })).toBeVisible();
+  await expect(root.locator('[data-asset-more-menu] summary')).toBeVisible();
+  await expect(root.getByRole('link', { name: /查看已停用资产/ })).not.toBeVisible();
   await expect(root.getByRole('columnheader', { name: '操作' })).toHaveCount(0);
   await expect(root.locator('tbody .asset-name').first()).toBeVisible();
   await expect(root.getByRole('button', { name: '查看', exact: true })).toHaveCount(0);
@@ -293,7 +294,15 @@ test('仓库映射以多层目录树展示且文件不可选', async ({ page }) 
 
 test('管理员通过二级入口查看已停用资产', async ({ page }) => {
   await page.goto(`${baseUrl}/knowledge-center/assets`);
-  await page.getByRole('link', { name: '已停用资产' }).click();
+  const moreTrigger = page.locator('[data-asset-more-menu] summary');
+  await moreTrigger.click();
+  const inactiveLink = page.getByRole('link', { name: /查看已停用资产/ });
+  await expect(inactiveLink).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(inactiveLink).not.toBeVisible();
+  await expect(moreTrigger).toBeFocused();
+  await moreTrigger.click();
+  await inactiveLink.click();
   await expect(page).toHaveURL(/lifecycle=inactive/);
   await expect(page.getByRole('heading', { name: '已停用资产' })).toBeVisible();
   await expect(page.getByRole('navigation', { name: '手册阶段筛选' })).toHaveCount(0);
@@ -307,7 +316,8 @@ test('普通角色不显示资产生命周期管理入口', async ({ page }) => 
     body: JSON.stringify({ success: true, content: { authenticated: true, user: { displayName: '普通用户', roles: ['KNOWLEDGE_EDITOR'], visibleModules: ['dashboard', 'assets'], allowedActions: ['knowledge:read'] }, roles: ['KNOWLEDGE_EDITOR'], visibleModules: ['dashboard', 'assets'], allowedActions: ['knowledge:read'] } }),
   }));
   await page.goto(`${baseUrl}/knowledge-center/assets`);
-  await expect(page.getByRole('link', { name: '已停用资产' })).toHaveCount(0);
+  await expect(page.locator('[data-asset-more-menu]')).toHaveCount(0);
+  await expect(page.getByRole('link', { name: /查看已停用资产/ })).toHaveCount(0);
   await expect(page.getByRole('button', { name: '停用手册' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: '重新启用' })).toHaveCount(0);
   await expect(page.getByRole('columnheader', { name: '管理' })).toHaveCount(0);

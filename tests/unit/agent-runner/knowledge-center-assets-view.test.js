@@ -13,7 +13,8 @@ describe('知识资产工作台前端契约', () => {
   });
 
   test('页面顶部不重复展示模块眉标题和说明', () => {
-    expect(view()).toContain('class="sr-only">手册资产</h2>');
+    expect(view()).toContain('class="asset-list-heading"><h2 class="sr-only">');
+    expect(view()).toContain("inactive?'历史手册列表':'手册资产列表'");
     expect(view()).not.toContain('查找手册，确认责任与阶段，再进入专业模块处理。');
     expect(view()).not.toContain('renderAssetsLegacy');
   });
@@ -80,7 +81,7 @@ describe('知识资产工作台前端契约', () => {
     expect(app).toContain("if (view === 'assets') loadAssetCatalog()");
     expect(view()).toContain('asset-detail-open');
     expect(view()).toContain('返回手册列表');
-    expect(view()).toContain('已停用资产');
+    expect(view()).toContain('查看已停用资产');
     expect(view()).not.toContain('包含已归档');
     expect(view()).not.toContain('手册发布');
     expect(view()).toContain('data-asset-detail-close');
@@ -147,6 +148,24 @@ describe('知识资产工作台前端契约', () => {
     expect(app).toContain('请先保存或取消当前修改，再停用手册。');
     expect(app).toContain("event.target.matches?.('[data-asset-archive-dialog]')");
     expect(app).not.toContain('window.confirm(`停用后手册将从在用资产列表隐藏');
+  });
+
+  test('已停用资产入口收纳到更多菜单并在停用成功后提供直接入口', () => {
+    expect(view()).toContain('<details class="asset-more-menu" data-asset-more-menu>');
+    expect(view()).toContain('class="button tertiary asset-more-trigger">更多');
+    expect(view()).toContain('查看已停用资产');
+    expect(view()).toContain('查询历史资产并重新启用');
+    expect(view()).toContain('class="asset-page-title"');
+    expect(view()).toContain('返回在用资产');
+    const app = read('apps/knowledge-center-web/frontend/knowledge-center/app.js');
+    const html = read('apps/knowledge-center-web/frontend/knowledge-center/knowledge-center-management.html');
+    const css = read('apps/knowledge-center-web/frontend/knowledge-center/styles.css');
+    expect(html).toContain('id="notice-action"');
+    expect(app).toContain("actionLabel: '查看已停用资产'");
+    expect(app).toContain("actionHref: '/knowledge-center/assets?lifecycle=inactive'");
+    expect(app).toContain("document.querySelector('[data-asset-more-menu][open]')");
+    expect(css).toContain('.asset-more-menu-panel { position: absolute;');
+    expect(css).toContain('.asset-more-trigger { min-height: 44px;');
   });
 
   test('桌面操作栏吸顶且窄屏恢复普通文档流', () => {

@@ -629,11 +629,20 @@ async function runIncrementalAction(control, taskId, operation, successMessage) 
 function showAppNotice(message, options = {}) {
   const panel = byId('error-panel');
   const tone = options.tone || 'warning';
+  const action = byId('notice-action');
   panel.className = `notice notice-${tone}`;
   panel.hidden = false;
   byId('error-title').textContent = options.title || '操作提示';
   byId('error-message').textContent = message;
   byId('retry').hidden = options.retry !== true;
+  action.hidden = !options.actionHref;
+  if (options.actionHref) {
+    action.href = options.actionHref;
+    action.textContent = options.actionLabel || '查看详情';
+  } else {
+    action.removeAttribute('href');
+    action.textContent = '';
+  }
 }
 
 function showApplicationError(error) {
@@ -839,6 +848,9 @@ function applyBrandIcon(icon = {}) {
 }
 
 document.addEventListener('click', async event => {
+  document.querySelectorAll('[data-asset-more-menu][open]').forEach(menu => {
+    if (!menu.contains(event.target)) menu.removeAttribute('open');
+  });
   const principalOpenCreate = event.target.closest('[data-principal-open-create]');
   if (principalOpenCreate) {
     const dialog = document.querySelector('[data-principal-editor-dialog]');
@@ -2414,7 +2426,12 @@ document.addEventListener('submit', async event => {
       assetArchiveManageDialog = null;
       assetArchiveTrigger = null;
       await loadAssetCatalog();
-      showAppNotice('手册已停用，可在“已停用资产”中重新启用。', { title: '停用完成', tone: 'success' });
+      showAppNotice('手册已从在用资产和阶段统计中隐藏，历史关系继续保留。', {
+        title: '停用完成',
+        tone: 'success',
+        actionLabel: '查看已停用资产',
+        actionHref: '/knowledge-center/assets?lifecycle=inactive',
+      });
     } catch (error) {
       status.textContent = error.message || '停用失败，请稍后重试。';
       delete assetArchiveForm.dataset.busy;
@@ -3022,6 +3039,12 @@ byId('mobile-menu').addEventListener('click', () => {
 byId('mobile-close').addEventListener('click', () => closeMobileNavigation());
 byId('mobile-overlay').addEventListener('click', () => closeMobileNavigation());
 document.addEventListener('keydown', event => {
+  const assetMoreMenu = document.querySelector('[data-asset-more-menu][open]');
+  if (event.key === 'Escape' && assetMoreMenu) {
+    assetMoreMenu.removeAttribute('open');
+    assetMoreMenu.querySelector('summary')?.focus();
+    return;
+  }
   const infoDrawer = byId('outline-handbook-info');
   if (event.key === 'Escape' && infoDrawer && !infoDrawer.hidden) {
     document.querySelector('[data-outline-info-close]')?.click();
