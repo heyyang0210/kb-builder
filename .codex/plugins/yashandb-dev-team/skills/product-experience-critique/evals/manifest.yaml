@@ -1,4 +1,4 @@
-version: "0.4.0"
+version: "0.5.0"
 skill: product-experience-critique
 purpose: 防止规则触发、证据纪律、设计路由、重点收敛、界面整改和不实施边界退化
 hard_gates:
@@ -9,6 +9,9 @@ hard_gates:
   - evidence_limits_are_explicit
   - current_facts_override_memory
   - design_targets_are_not_runtime_facts
+  - historical_scores_separate_method_and_runtime_evidence
+  - no_numeric_post_evolution_runtime_score_without_new_run
+  - reported_score_totals_match_dimension_sum
 quality_checks:
   - output_has_observations_inferences_recommendations
   - output_has_prioritized_remediation
@@ -20,3 +23,4 @@ quality_checks:
   - proposed_interface_benefits_map_to_observed_problems
   - terminology_uses_business_language
   - jobs_lens_drives_delete_simplify_strengthen_tradeoffs
+  - evolution_uses_repeated_evidence_and_preserves_score_denominator

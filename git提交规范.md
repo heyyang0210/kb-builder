@@ -1,6 +1,7 @@
 # Git 提交规范
 
 本规范适用于仓库内所有代码、文档、配置、脚本、Skill、提示词和设计产物。提交信息采用 [Conventional Commits](https://www.conventionalcommits.org/)，当前以人工检查为准；仓库尚未启用 commitlint 或 Git hooks 自动门禁。
+不要提交prompt.md。
 
 ## 1. 格式
 

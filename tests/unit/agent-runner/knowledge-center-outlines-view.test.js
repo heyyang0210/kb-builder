@@ -13,11 +13,21 @@ describe('知识中心大纲管理前端契约', () => {
     expect(fs.existsSync(path.join(root, '.codex/知识中心建设平台/03-详细设计/知识中心-大纲管理-详细设计文档.md'))).toBe(true);
     expect(fs.existsSync(path.join(root, 'docs/agent-runner/modules/outline-management/development/44-知识中心大纲统一解析展示与管理员增删权限设计.md'))).toBe(false);
   });
-  test('分别展示产品、业务版本标签和大纲版本', () => {
-    expect(view()).toContain('productId');
-    expect(view()).toContain('businessVersionTags');
+  test('列表产品与知识资产一致且只保留四个必要字段', () => {
+    const source = view();
+    const api = read('apps/knowledge-center-web/frontend/knowledge-center/common/api/platform-api.js');
+    expect(api).toContain('productsByHandbook');
+    expect(api).toContain('item.productName || item.product?.name || item.productType ||');
+    expect(api).toContain('未指定产品');
+    expect(source).toContain('data-table-view-id="outline-catalog"');
+    for (const label of ['手册', '产品', '状态', '更新时间']) expect(source).toContain(`data-table-column-label="${label}"`);
+    expect(source).not.toContain('<th>产品 / 业务版本</th>');
+    expect(source).not.toContain('<th>待处理</th>');
+    expect(source).not.toContain('<th>下一步</th>');
+    expect(source).not.toContain('<span>待处理问题</span>');
+    expect(source).not.toContain('outline-issue-summary');
+    expect(source).toContain('outline-list-link asset-name');
     expect(view()).toContain('outlineStructureVersion');
-    expect(view()).toContain('业务版本');
     expect(view()).toContain('大纲版本');
   });
   test('未接入、真实空数据与已有数据采用不同分支', () => {
@@ -32,10 +42,13 @@ describe('知识中心大纲管理前端契约', () => {
     expect(api).toContain('loadOutlineData');
     expect(api).toContain('encodeURIComponent(selectedId)');
   });
-  test('治理子视图和逆向提取边界明确', () => {
-    for (const label of ['目录与分工', '预览与发布', '责任分工']) expect(view()).toContain(label);
-    expect(view()).not.toContain("key: 'responsibility'");
-    expect(view()).not.toContain('outline-responsibility-table');
+  test('两个职责型工作区和管理边界明确', () => {
+    for (const label of ['文档总览', '分工管理', '主责技术领域', '协作技术领域']) expect(view()).toContain(label);
+    expect(view()).toContain('data-outline-tab');
+    expect(view()).toContain('outline-responsibility-table');
+    expect(view()).toContain('data-domain-task-assignee');
+    expect(view()).not.toContain('目录与分工');
+    expect(view()).not.toContain('预览与发布');
     expect(view()).not.toContain("{ key: 'templates'");
     expect(view()).not.toContain("{ key: 'changes'");
     expect(view()).not.toContain('Codex/Claude Code');
@@ -58,13 +71,13 @@ describe('知识中心大纲管理前端契约', () => {
     expect(uploader).not.toContain('_parseMarkdown');
   });
 
-  test('普通用户只读，管理员删除候选且目录显示编号和内容说明', () => {
+  test('普通用户只读，管理员删除候选且右侧不重复目录事实', () => {
     const source = view();
     const api = read('apps/knowledge-center-web/frontend/knowledge-center/common/api/platform-api.js');
     expect(source).toContain('只有具备大纲管理权限的账号可新增或删除大纲');
     expect(source).toContain('permissions.delete && canDelete(item)');
     expect(source).toContain('item.sourceId');
-    expect(source).toContain('outline-document-meta');
+    expect(source).not.toContain('outline-document-meta');
     expect(source).toContain('data-outline-description');
     expect(api).toContain("method: 'DELETE'");
   });
@@ -91,8 +104,8 @@ describe('知识中心大纲管理前端契约', () => {
     expect(view()).toContain('待绑定');
     expect(view()).toContain('技术领域分工');
     expect(view()).toContain('当前有效分工');
-    expect(view()).toContain('发布门禁可通过');
-    expect(view()).toContain('发布并生成建设任务');
+    expect(view()).toContain('发布大纲');
+    expect(view()).toContain('发布后才能进行人员分工');
   });
   test('列表和详情分离，详情使用按需打开的手册信息', () => {
     const source = view();
@@ -102,7 +115,7 @@ describe('知识中心大纲管理前端契约', () => {
     expect(source).toContain('data-outline-info-toggle');
     expect(source).toContain('outline-stage-canvas');
   });
-  test('详情深链、无效手册与阶段参数有明确契约', () => {
+  test('详情深链、无效手册与工作区参数有明确契约', () => {
     const navigation = read('apps/knowledge-center-web/frontend/knowledge-center/common/state/navigation.js');
     const api = read('apps/knowledge-center-web/frontend/knowledge-center/common/api/platform-api.js');
     const app = read('apps/knowledge-center-web/frontend/knowledge-center/app.js');
@@ -111,56 +124,127 @@ describe('知识中心大纲管理前端契约', () => {
     expect(api).toContain('handbooksEndpoint}?page=1&pageSize=100`).catch');
     expect(app).toContain('outlineLoadSequence');
     expect(app).toContain('sequence !== outlineLoadSequence');
-    expect(app).toContain("url.searchParams.set('stage'");
+    expect(app).toContain("url.searchParams.set('tab'");
     expect(app).toContain('outlineListState.scrollPosition');
+    expect(app).toContain("if (view === 'outlines' && outlineRouteState().isDetail) appState.outlineProjection = null");
   });
-  test('目录阶段使用文档导航并恢复当前 document', () => {
+  test('文档总览使用三栏节点治理并恢复当前 node', () => {
     const source = view();
     const styles = read('apps/knowledge-center-web/frontend/knowledge-center/modules/outlines/outlines.css');
     const app = read('apps/knowledge-center-web/frontend/knowledge-center/app.js');
-    expect(source).toContain('outline-directory-workspace');
+    expect(source).toContain('outline-governance-workbench');
     expect(source).toContain('aria-label="手册目录导航"');
     expect(source).toContain('data-outline-document');
-    expect(source).toContain('outline-document-content');
-    expect(source).toContain('正文内容尚未接入');
-    expect(source).toContain('保存目录与分工');
-    expect(source).toContain('data-outline-domain-node');
-    expect(source).toContain('outline-publish-domain-preview');
-    expect(styles).toContain('.outline-directory-workspace');
+    expect(source).toContain('outline-node-list');
+    expect(source).toContain('outline-node-inspector');
+    expect(source).toContain('data-outline-directory');
+    expect(source).toContain('data-outline-node-search');
+    expect(source).toContain('data-outline-node-domain-filter');
+    expect(source).toContain('data-outline-node-owner-filter');
+    expect(source).toContain('data-table-view-id="outline-structure"');
+    expect(source).not.toContain('data-outline-column-toggle');
+    expect(source).toContain('章节名称');
+    expect(source).toContain('技术领域');
+    expect(source).toContain('主责负责人');
+    expect(source).toContain("assignment?.techDomainIds?.[0]");
+    expect(source).toContain('按主责负责人筛选');
+    expect(source).toContain('操作');
+    expect(source).toContain('data-outline-description-edit');
+    expect(source).toContain('data-outline-description-dialog');
+    expect(source).toContain('data-outline-description-readonly');
+    expect(source).not.toContain('data-outline-description="');
+    expect(source).toContain('主责技术领域');
+    expect(source).toContain('协作技术领域');
+    expect(source).toContain('data-outline-primary-domain');
+    expect(source).toContain('data-outline-collaborator-domain');
+    expect(styles).toContain('.outline-governance-workbench');
     expect(styles).toContain('@media (max-width: 700px)');
     expect(app).toContain("documentId: parameters.get('document')");
+    expect(app).toContain("nodeId: parameters.get('node') || parameters.get('document')");
+    expect(app).toContain("url.searchParams.set('node', selectedId)");
     expect(app).toContain("url.searchParams.set('document', selectedId)");
     expect(app).toContain("setAttribute('aria-current', 'page')");
+    expect(source).not.toContain('data-outline-related-document');
+    expect(source).not.toContain('data-outline-node-template');
+    expect(source).toContain("published || missingDomains ? ' disabled' : ''");
   });
 
-  test('发布后页面概览显示当前领域和实际责任人', () => {
+  test('发布后分工管理显示领域成员和实际责任人', () => {
     const source = view();
     const route = read('packages/agent-runner-core/routes/outline.js');
-    expect(source).toContain('页面归属');
-    expect(source).toContain('effective?.ownerships');
-    expect(source).toContain('已发布大纲只能调整技术领域');
+    expect(source).toContain('data-outline-assignment-stats-dialog');
+    expect(source).toContain('成员负载');
+    expect(source).not.toContain('人员分派进度');
+    expect(source).toContain('data-domain-task-assignee');
+    expect(source).toContain('已发布大纲的内容说明不可修改');
     expect(source).toContain('readonly');
     expect(route).toContain('editVersion: governance.editVersion');
     expect(route).toContain('nodes: isDatabaseMode()');
   });
 
-  test('目录导航支持未分工定位、目录兼页面和单一展开切换', () => {
+  test('目录导航只负责定位，支持搜索、目录兼页面和单一展开切换', () => {
     const source = view();
     const app = read('apps/knowledge-center-web/frontend/knowledge-center/app.js');
     const styles = read('apps/knowledge-center-web/frontend/knowledge-center/modules/outlines/outlines.css');
-    expect(source).toContain('data-outline-unassigned-filter');
-    expect(source).toContain('data-outline-document-unassigned');
+    expect(source).not.toContain('data-outline-unassigned-filter');
+    expect(source).not.toContain('data-outline-document-unassigned');
     expect(source).toContain('data-outline-tree-toggle');
-    expect(source).toContain('所有页面均已完成分工');
-    expect(source).toContain('documents[0]?.id || null');
+    expect(source).toContain('data-outline-directory-search');
+    expect(source).toContain('allDocuments[0]?.id || allNodes[0]?.id || null');
     expect(source).not.toContain('data-outline-tree-expand="');
     expect(source).not.toContain("emptyFiltered ? ' disabled' : ''");
     expect(source).not.toContain('全部展开</button>');
     expect(source).not.toContain('全部收起</button>');
     expect(app).toContain("filterUnassigned: parameters.get('unassigned') === 'true'");
-    expect(app).toContain('data-outline-unassigned-filter');
+    expect(app).not.toContain('data-outline-unassigned-filter');
     expect(app).not.toContain('data-outline-tree-expand');
     expect(styles).toContain('.outline-navigation-document-button.is-unassigned');
+  });
+
+  test('目录移动使用右键菜单和服务端完整顺序', () => {
+    const source = view();
+    expect(source).toContain('data-outline-context-menu');
+    expect(source).toContain('data-outline-move-dialog');
+    expect(source).toContain('directoryChoiceTree');
+    expect(source).not.toContain('draggable="true"');
+    expect(source).not.toContain('outline-v1</');
+  });
+
+  test('分工管理展示领域任务与成员分派', () => {
+    const source = view();
+    const app = read('apps/knowledge-center-web/frontend/knowledge-center/app.js');
+    const combobox = read('apps/knowledge-center-web/frontend/knowledge-center/common/searchable-combobox.js');
+    expect(source).toContain('data-domain-task-assignee');
+    expect(source).toContain('data-outline-assignment-domain-filter');
+    expect(source).toContain('查看分工统计');
+    expect(source).toContain('主责文档');
+    expect(source).toContain('协作文档');
+    expect(source).toContain('data-table-column-label="责任人"');
+    expect(source).not.toContain('<th>人员分派</th>');
+    expect(source).not.toContain('页面责任人');
+    expect(source).toContain('历史责任人 ${escapeHtml(item.assigneeName || assigneeId)}（不在当前团队）');
+    expect(source).toContain('data-outline-assignment-directory');
+    expect(source).toContain('placeholder="搜索目录或文档"');
+    expect(source).toContain('data-navigation-default="280"');
+    expect(source).toContain('data-navigation-max="380"');
+    expect(source).toContain('class="outline-assignment-batch" hidden');
+    expect(source).not.toContain('<span>团队成员</span><strong>${people.length} 人</strong>');
+    expect(source).not.toContain('管理团队');
+    expect(app).toContain("batchBar.hidden = !selected.length");
+    for (const selector of ['[data-domain-task-assignee]', '[data-outline-assignment-domain-filter]', '[data-outline-assignment-member-filter]', '[data-outline-batch-assignee]']) {
+      expect(combobox).toContain(selector);
+    }
+  });
+
+  test('团队未配置时阻断人员分派并提供恢复入口', () => {
+    const source = view();
+    const app = read('apps/knowledge-center-web/frontend/knowledge-center/app.js');
+    expect(source).toContain('if (!activeTask.domainLeaderId)');
+    expect(source).toContain('团队尚未配置');
+    expect(source).toContain('现有 ${items.length} 篇文档及历史责任记录不会被修改');
+    expect(source).toContain('data-outline-team-config-link');
+    expect(source).toContain('permissions.platformAdmin');
+    expect(app).toContain('platformAdmin: isPlatformAdmin()');
   });
 
   test('大纲管理从手册操作栏进入，手册名称不承担跳转', () => {

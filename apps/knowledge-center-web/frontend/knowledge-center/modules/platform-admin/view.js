@@ -25,15 +25,26 @@ const TAB_LABELS = {
 };
 
 /* ---- 标签页导航 ---- */
-function renderTabs(activeTab) {
-  const tabs = ['governance', 'principals', 'permissions', 'gitlab'];
-  return `<nav class="platform-tabs" role="tablist" aria-label="平台管理分区">
-    ${tabs.map(tab => `<button class="platform-tab" role="tab" type="button"
+function renderTabs(activeTab, teamGroupView = 'people') {
+  const tabButton = tab => `<button class="platform-tab" type="button"
       data-platform-tab="${tab}"
-      aria-selected="${tab === activeTab}"
+      aria-current="${tab === activeTab ? 'page' : 'false'}"
       aria-controls="platform-panel-${tab}"
       id="platform-tab-${tab}"
-    >${TAB_LABELS[tab]}</button>`).join('')}
+    >${TAB_LABELS[tab]}</button>`;
+  return `<nav class="platform-tabs" aria-label="平台管理分区">
+    ${tabButton('governance')}
+    <div class="platform-tab-menu" ${activeTab === 'principals' ? 'data-active' : ''}>
+      <details>
+        <summary class="platform-tab platform-tab-summary" id="platform-tab-principals" aria-haspopup="menu" aria-current="${activeTab === 'principals' ? 'page' : 'false'}">人员管理</summary>
+        <div class="platform-submenu" role="menu" aria-label="人员管理子页面">
+          <button type="button" role="menuitem" data-team-group-view="people" aria-current="${teamGroupView === 'people' ? 'page' : 'false'}">人员管理</button>
+          <button type="button" role="menuitem" data-team-group-view="groups" aria-current="${teamGroupView === 'groups' ? 'page' : 'false'}">团队小组</button>
+        </div>
+      </details>
+    </div>
+    ${tabButton('permissions')}
+    ${tabButton('gitlab')}
   </nav>`;
 }
 
@@ -138,15 +149,15 @@ function renderGovernanceTab(governanceProjection = {}, projection = {}, databas
 
   const recentOpsHtml = recentOps.length ? `<div class="governance-recent-ops">
     <h3 style="margin:0 0 var(--space-3);font-size:15px;font-weight:700">最近治理操作</h3>
-    <table class="governance-ops-table">
-      <thead><tr><th>时间</th><th>操作者</th><th>操作</th><th>目标</th><th>结果</th></tr></thead>
+    <table class="governance-ops-table" data-table-view-id="platform-recent-operations" data-table-view-schema="1" data-table-view-label="最近治理操作">
+      <thead><tr><th data-table-column="time" data-table-column-required="true" data-table-column-label="时间">时间</th><th data-table-column="operator" data-table-column-label="操作者">操作者</th><th data-table-column="action" data-table-column-label="操作">操作</th><th data-table-column="target" data-table-column-label="目标">目标</th><th data-table-column="result" data-table-column-label="结果">结果</th></tr></thead>
       <tbody>
         ${recentOps.map(op => `<tr>
-          <td>${escapeHtml(op.time || op.updatedAt || '-')}</td>
-          <td>${escapeHtml(op.operator || op.createdBy || '-')}</td>
-          <td>${escapeHtml(op.action || op.operation || '-')}</td>
-          <td>${escapeHtml(op.target || '-')}</td>
-          <td><span class="status-badge ${op.result === 'success' ? 'ok' : op.result === 'failure' ? 'error' : 'warning'}">${escapeHtml(op.result === 'success' ? '成功' : op.result === 'failure' ? '失败' : op.result || '-')}</span></td>
+          <td data-table-column="time">${escapeHtml(op.time || op.updatedAt || '-')}</td>
+          <td data-table-column="operator">${escapeHtml(op.operator || op.createdBy || '-')}</td>
+          <td data-table-column="action">${escapeHtml(op.action || op.operation || '-')}</td>
+          <td data-table-column="target">${escapeHtml(op.target || '-')}</td>
+          <td data-table-column="result"><span class="status-badge ${op.result === 'success' ? 'ok' : op.result === 'failure' ? 'error' : 'warning'}">${escapeHtml(op.result === 'success' ? '成功' : op.result === 'failure' ? '失败' : op.result || '-')}</span></td>
         </tr>`).join('')}
       </tbody>
     </table>
@@ -165,7 +176,34 @@ function renderGovernanceTab(governanceProjection = {}, projection = {}, databas
 }
 
 /* ---- 用户权限标签页 ---- */
-export function renderPrincipalsTab(projection = {}, listState = {}) {
+function renderPersonPicker({ id, name, label, people, selectedId = '', excluded = new Set(), searchRole, hint = '' }) {
+  const available = people.filter(person => !excluded.has(String(person.principalId)));
+  const selected = available.find(person => String(person.principalId) === String(selectedId));
+  const options = available.map(person => `<button type="button" role="option" class="team-combobox-option" aria-selected="${String(person.principalId) === String(selectedId)}" data-team-combobox-option="${escapeHtml(person.principalId)}" data-display-name="${escapeHtml(person.displayName)}">${escapeHtml(person.displayName)}</button>`).join('');
+  return `<div class="team-person-picker team-combobox" data-team-combobox="${searchRole}"><label for="${id}-search">${label}</label><div class="team-combobox-control"><i data-lucide="search" aria-hidden="true"></i><input id="${id}-search" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="${id}-options" autocomplete="off" placeholder="输入姓名快速筛选" aria-label="${label}快速筛选" data-team-combobox-input value="${escapeHtml(selected?.displayName || '')}"><button type="button" class="team-combobox-clear" data-team-combobox-clear aria-label="清除${label}" ${selected ? '' : 'hidden'}>×</button></div><div id="${id}-options" class="team-combobox-options" role="listbox" hidden>${options || '<div class="team-combobox-empty" role="status">暂无匹配人员</div>'}</div><input type="hidden" name="${name}" data-team-combobox-value value="${escapeHtml(selectedId)}">${hint ? `<small>${hint}</small>` : ''}</div>`;
+}
+
+function renderTeamGroupsTab(projection = {}, principals = [], selectedGroupId = '', ui = {}) {
+  if (!projection || projection.status === 'loading') return `<div role="tabpanel" id="platform-panel-principals" aria-labelledby="platform-tab-principals" class="team-group-page"><header class="principal-page-header"><div><h2>团队小组</h2></div></header><div class="team-group-loading" aria-busy="true"><span></span><span></span><span></span></div></div>`;
+  if (projection.status === 'unavailable') {
+    const uninitialized = projection.statusCode === 404 || projection.errorCode === 'TEAM_GROUP_SERVICE_UNAVAILABLE' || /不存在|初始化|迁移|404|No context/i.test(projection.error || '');
+    return `<div role="tabpanel" id="platform-panel-principals" aria-labelledby="platform-tab-principals" class="team-group-page"><header class="principal-page-header"><div><h2>团队小组</h2></div></header><section class="team-group-unavailable" role="alert"><i data-lucide="triangle-alert" aria-hidden="true"></i><div><h3>${uninitialized ? '团队小组尚未初始化' : '团队小组暂不可用'}</h3><p>${uninitialized ? '当前无法读取团队小组数据，请完成初始化后重新加载。' : escapeHtml(projection.error || '权威数据暂时不能读取，请稍后重试。')}</p><div><button class="button primary" type="button" data-team-group-retry>重新加载</button><button class="button tertiary" type="button" data-platform-tab="governance">前往系统治理</button></div></div></section></div>`;
+  }
+  const groups = Array.isArray(projection.items) ? projection.items : [];
+  const selected = groups.find(item => String(item.teamGroupId) === String(selectedGroupId)) || groups[0];
+  const people = Array.isArray(principals) ? principals.filter(item => item.state === 'ACTIVE') : [];
+  const memberIds = new Set((selected?.members || []).map(item => String(item.principalId)));
+  const leaderId = selected?.leader?.principalId ? String(selected.leader.principalId) : '';
+  const savedStatus = ui.saveStatus?.groupId === String(selected?.teamGroupId) ? ui.saveStatus : null;
+  const impact = ui.impact?.groupId === String(selected?.teamGroupId) ? ui.impact : null;
+  const memberChips = (selected?.members || []).map(member => `<span class="team-member-chip" data-team-member-chip="${escapeHtml(member.principalId)}">${escapeHtml(member.displayName)}<button type="button" data-team-member-remove="${escapeHtml(member.principalId)}" aria-label="移除成员 ${escapeHtml(member.displayName)}"><i data-lucide="x" aria-hidden="true"></i></button><input type="hidden" name="memberPrincipalIds" value="${escapeHtml(member.principalId)}"></span>`).join('');
+  const leaderPicker = renderPersonPicker({ id: 'team-group-leader', name: 'leaderPrincipalId', label: '负责人', people, selectedId: leaderId, searchRole: 'leader', hint: '支持输入姓名关键字，使用 ↑/↓ 选择，回车确认。' });
+  const memberPicker = renderPersonPicker({ id: 'team-group-member-candidate', name: 'memberCandidate', label: '添加成员', people, excluded: new Set([leaderId, ...memberIds]), searchRole: 'member' });
+  return `<div role="tabpanel" id="platform-panel-principals" aria-labelledby="platform-tab-principals" class="team-group-page"><header class="principal-page-header"><div><h2>团队小组</h2></div><button class="button primary" type="button" data-team-group-create>新建团队小组</button></header><div class="team-group-workspace"><aside class="team-group-list"><div class="team-group-list-heading"><strong>团队小组</strong><span>${groups.length} 个</span></div><div class="team-group-list-scroll">${groups.map(group => `<button type="button" class="team-group-list-item ${String(group.teamGroupId) === String(selected?.teamGroupId) ? 'is-selected' : ''}" data-team-group-view="groups" data-team-group-id="${escapeHtml(group.teamGroupId)}"><span><strong>${escapeHtml(group.groupName || '-')}</strong></span><small>${group.leader ? `${escapeHtml(group.leader.displayName)} · ${Number(group.members?.length || 0)} 名成员` : '未设置负责人'}</small></button>`).join('') || '<div class="team-group-list-empty">暂无团队小组</div>'}</div></aside><section class="team-group-detail">${selected ? `<form data-team-group-form data-team-group-id="${escapeHtml(selected.teamGroupId)}" data-team-group-version="${Number(selected.rowVersion || 1)}" data-current-leader-id="${escapeHtml(leaderId)}"><header class="team-group-detail-header"><h3>${escapeHtml(selected.groupName)}</h3>${selected.techDomainName ? `<p>关联领域：${escapeHtml(selected.techDomainName)}</p>` : ''}</header><div class="team-group-field"><label for="team-group-leader">负责人</label><select id="team-group-leader" name="leaderPrincipalId" required><option value="">请选择人员</option>${people.map(person => `<option value="${escapeHtml(person.principalId)}" ${String(person.principalId) === leaderId ? 'selected' : ''}>${escapeHtml(person.displayName)}</option>`).join('')}</select></div><fieldset class="team-group-member-field"><legend>团队成员</legend><div class="team-member-add"><select data-team-member-candidate aria-label="选择要添加的团队成员"><option value="">请选择人员</option>${people.filter(person => String(person.principalId) !== leaderId && !memberIds.has(String(person.principalId))).map(person => `<option value="${escapeHtml(person.principalId)}" data-display-name="${escapeHtml(person.displayName)}">${escapeHtml(person.displayName)}</option>`).join('')}</select><button class="button secondary" type="button" data-team-member-add>添加成员</button></div><div class="team-member-chips" data-team-member-chips>${memberChips || '<span class="team-member-empty" data-team-member-empty>暂无其他团队成员</span>'}</div></fieldset><p class="team-group-status ${savedStatus?.kind || ''}" data-team-group-status role="status" aria-live="polite">${escapeHtml(savedStatus?.message || '')}</p><footer class="team-group-actions"><button class="button primary" type="button" data-team-group-save>保存</button><button class="button tertiary" type="button" data-team-group-cancel>取消</button></footer></form>` : '<div class="empty-state"><strong>暂无团队小组</strong></div>'}</section></div><dialog class="principal-dialog" data-team-group-create-dialog aria-labelledby="team-group-create-title"><form data-team-group-create-form><header><h2 id="team-group-create-title">新建团队小组</h2><button class="icon-button" type="button" data-team-group-create-close aria-label="关闭"><i data-lucide="x" aria-hidden="true"></i></button></header><label><span>小组名称 *</span><input name="groupName" required maxlength="255" autocomplete="off"></label><p class="team-group-status" data-team-group-create-status role="status" aria-live="polite"></p><footer><button class="button primary" type="submit">新建</button><button class="button tertiary" type="button" data-team-group-create-close>取消</button></footer></form></dialog></div>`;
+}
+
+export function renderPrincipalsTab(projection = {}, listState = {}, teamGroupProjection = {}, teamGroupView = 'people', teamGroupUi = {}) {
+  if (teamGroupView === 'groups') return renderTeamGroupsTab(teamGroupProjection, projection.items || [], new URLSearchParams(window.location.search).get('groupId') || '', teamGroupUi);
   if (projection.status === 'unavailable') return `<div role="tabpanel" id="platform-panel-principals" aria-labelledby="platform-tab-principals">${pendingState('人员服务暂不可用', projection.error || '请稍后重试。')}</div>`;
   const items = Array.isArray(projection.items) ? projection.items : [];
   const search = String(listState.search || '').trim().toLowerCase();
@@ -216,7 +254,7 @@ export function renderPrincipalsTab(projection = {}, listState = {}) {
         <select data-principal-state-filter aria-label="按使用状态筛选"><option value="">全部使用状态</option><option value="ACTIVE" ${state === 'ACTIVE' ? 'selected' : ''}>启用</option><option value="INACTIVE" ${state === 'INACTIVE' ? 'selected' : ''}>已停用</option></select>
         <span class="principal-result-count" aria-live="polite">共 ${filtered.length} 人</span>
       </div>
-      <div class="principal-table-wrap"><table class="governance-ops-table principal-table"><thead><tr><th>姓名</th><th>CAS 登录名</th><th>CAS 绑定状态</th><th>使用状态</th><th>手册责任</th><th>最近登录</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <div class="principal-table-wrap"><table class="governance-ops-table principal-table" data-table-view-id="platform-principals" data-table-view-schema="1" data-table-view-label="人员管理"><thead><tr><th data-table-column="name" data-table-column-required="true" data-table-column-label="姓名">姓名</th><th data-table-column="login" data-table-column-label="CAS 登录名">CAS 登录名</th><th data-table-column="binding" data-table-column-label="CAS 绑定状态">CAS 绑定状态</th><th data-table-column="state" data-table-column-label="使用状态">使用状态</th><th data-table-column="manuals" data-table-column-label="手册责任">手册责任</th><th data-table-column="lastLogin" data-table-column-label="最近登录">最近登录</th><th data-table-column="actions" data-table-column-required="true" data-table-column-label="操作">操作</th></tr></thead><tbody>${rows}</tbody></table></div>
     </div>
     <dialog class="principal-dialog" data-principal-editor-dialog>
       <form method="dialog" data-principal-editor-form>
@@ -621,6 +659,9 @@ export function renderPlatformAdmin({
   permissionProjection,
   principalProjection,
   principalListState,
+  teamGroupProjection,
+  teamGroupView,
+  teamGroupUi,
   governanceProjection,
   databaseConnectionProjection,
   databaseConnectionDrawerOpen,
@@ -643,7 +684,7 @@ export function renderPlatformAdmin({
   let tabContent;
   switch (activeTab) {
     case 'principals':
-      tabContent = renderPrincipalsTab(principalProjection || {}, principalListState || {});
+      tabContent = renderPrincipalsTab(principalProjection || {}, principalListState || {}, teamGroupProjection, teamGroupView || 'people', teamGroupUi || {});
       break;
     case 'permissions':
       tabContent = renderPermissionsTab(permissionProjection, selectedPermissionUserId, permissionSaveStatus, permissionUserSearch || '', permissionListState || {});
@@ -672,6 +713,6 @@ export function renderPlatformAdmin({
     <h2>平台管理</h2>
     <span class="platform-header-meta">${projection?.asOf ? `更新于 ${new Date(projection.asOf).toLocaleString('zh-CN', { hour12: false })}` : ''}</span>
   </div>
-  ${renderTabs(activeTab)}
+  ${renderTabs(activeTab, teamGroupView || 'people')}
   ${tabContent}`;
 }

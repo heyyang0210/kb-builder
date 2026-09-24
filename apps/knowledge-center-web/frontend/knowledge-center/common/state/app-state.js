@@ -16,8 +16,9 @@ export const appState = {
   activeView: 'dashboard', contextProjection: null, projection: null, cleaningProjection: null, outlineProjection: null, assetCatalog: null, incrementalProjection: null, domainBuildTaskProjection: null, reviewProjection: null, gitlabProjection: { connections: [] }, gitlabAccountProjection: null,
   outlineListState: { search: '', statusFilter: '', scrollPosition: 0 },
   selectedPermissionUserId: null,
-  principalProjection: null,
+  principalProjection: null, teamGroupProjection: null,
   principalListState: { search: '', bindingStatus: '', state: '' },
+  teamGroupUi: { statusFilter: null, saveStatus: null, impact: null },
   permissionSaveStatus: null,
   permissionUserSearch: '',
   permissionListState: { page: 1, pageSize: 50, status: '', role: '' },
@@ -35,5 +36,7 @@ export const appState = {
   gitlabListState: { search: '', page: 1, pageSize: 20, selectedConnectionId: null },
   gitlabVerification: null,
   reviewUi: { directoryCollapsed: false, directoryWidth: 260, focusMode: false, readingDensity: 'comfortable' },
+  handbookProductionUi: { drafts: {}, draftHtml: {}, draftBranchByDocument: {}, references: {}, dirtyDocuments: [], savedDocuments: [], selectedForReview: [], modeByDocument: {}, directoryOpen: {}, directoryWidth: 260, directoryCollapsed: false, templateByDocument: {}, templateDetails: {}, templateStatus: '', focusMode: false, assistantOpen: false, assistantTab: 'ai', assistantStatus: '' },
   mappingState: { connectionId: null, treeItems: [], expandedPaths: new Set(), branches: [], enabledBranches: [], zhPaths: [], enPaths: [], activeLang: 'zh' },
+  productionUi: { handbookColumns: ['handbook', 'product', 'owner', 'progress', 'published'] },
 };

@@ -102,6 +102,48 @@ function handlerFromModule(mod, options) {
 }
 
 describe('知识中心认证 HTTP 契约（真实服务 + CAS 协议桩）', () => {
+  test('混合仓储仅在本地保存会话，并异步回读数据库 CAS 用户', async () => {
+    const { HybridAuthRepository, MemoryAuthRepository } = require(AUTH_MODULE);
+    const local = new MemoryAuthRepository();
+    local.ensureAdmin('admin', 'admin');
+    local.state.users.push({
+      id: 'legacy-cas-user', identitySource: 'cas', loginName: 'legacy', displayName: 'Legacy',
+      enabled: true, roles: ['KNOWLEDGE_EDITOR'],
+    });
+    const databaseUser = {
+      id: 'usr_database', userKey: 'usr_database', identitySource: 'cas', loginName: 'alice',
+      displayName: 'Alice', enabled: true, roles: ['KNOWLEDGE_EDITOR'], principalId: 101, rowVersion: 3,
+    };
+    const domainStore = {
+      readPlatformAuthUser: jest.fn(() => { throw new Error('不应调用同步读取'); }),
+      readPlatformAuthUsers: jest.fn(() => { throw new Error('不应调用同步列表'); }),
+      readPlatformAuthUserAsync: jest.fn(async key => key === databaseUser.id ? { ...databaseUser } : null),
+      readPlatformAuthUsersAsync: jest.fn(async () => ({ items: [{ ...databaseUser }] })),
+      replacePlatformUserRolesAsync: jest.fn(async (id, roles) => ({ ...databaseUser, id, roles })),
+    };
+    const repository = new HybridAuthRepository(local, domainStore);
+    const token = repository.createSession(databaseUser, 60_000);
+
+    await expect(repository.session(token)).resolves.toMatchObject({
+      record: { userId: 'usr_database', authMethod: 'cas' },
+      user: { id: 'usr_database', loginName: 'alice', roles: ['KNOWLEDGE_EDITOR'] },
+    });
+    expect(domainStore.readPlatformAuthUserAsync).toHaveBeenCalledWith('usr_database');
+    expect(domainStore.readPlatformAuthUser).not.toHaveBeenCalled();
+
+    const users = await repository.listUsers();
+    expect(users.map(user => user.id)).toEqual(expect.arrayContaining(['usr_database']));
+    expect(users.map(user => user.id)).not.toContain('legacy-cas-user');
+    expect(users.filter(user => user.identitySource === 'local')).toHaveLength(1);
+
+    await expect(repository.updateUserRoles('usr_database', ['REVIEWER'], 'admin', 3, 'idem-1'))
+      .resolves.toMatchObject({ roles: ['REVIEWER'] });
+    expect(domainStore.replacePlatformUserRolesAsync).toHaveBeenCalledWith('usr_database', ['REVIEWER'], 3, 'idem-1', 'admin');
+
+    databaseUser.enabled = false;
+    await expect(repository.session(token)).resolves.toBeNull();
+  });
+
   test('五类业务角色按最小职责投影模块和动作', () => {
     const { userProjection } = require(AUTH_MODULE);
     const project = role => userProjection({ id: role, loginName: role, displayName: role, identitySource: 'test', roles: [role] });

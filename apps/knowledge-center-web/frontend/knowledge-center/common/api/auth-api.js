@@ -34,7 +34,7 @@ async function requestJson(path, options = {}) {
     throw new AuthApiError(error.message || payload?.message || '认证请求未完成', {
       status: response.status,
       code: error.code || payload?.code || `AUTH_HTTP_${response.status}`,
-      details: error.details,
+      details: { ...(error.details || {}), requestId: error.requestId || response.headers.get('x-request-id') || '' },
     });
   }
   return payload?.data ?? payload?.content ?? payload ?? {};

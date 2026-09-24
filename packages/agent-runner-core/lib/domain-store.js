@@ -159,6 +159,29 @@ class DomainStore {
     return result.data || result;
   }
 
+  readTeamGroups(query = {}) {
+    const queryString = new URLSearchParams(Object.entries(query).filter(([, value]) => value !== undefined && value !== null && value !== '')).toString();
+    const result = this.request('GET', `/v1/platform/team-groups${queryString ? `?${queryString}` : ''}`);
+    return result.data || result;
+  }
+
+  readTeamGroup(groupId) {
+    const result = this.request('GET', `/v1/platform/team-groups/${encodeURIComponent(groupId)}`);
+    return result.data || result;
+  }
+
+  createTeamGroup(payload, idempotencyKey) {
+    const result = this.request('POST', '/v1/platform/team-groups', payload, { 'Idempotency-Key': idempotencyKey });
+    return result.data || result;
+  }
+
+  replaceTeamRoster(groupId, payload, rowVersion, idempotencyKey) {
+    const result = this.request('PUT', `/v1/platform/team-groups/${encodeURIComponent(groupId)}/roster`, payload, {
+      'If-Match': String(rowVersion), 'Idempotency-Key': idempotencyKey,
+    });
+    return result.data || result;
+  }
+
   readOutlineGovernance(outlineId) {
     const result = this.request('GET', `/v1/domain/outlines/${encodeURIComponent(outlineId)}/governance`);
     return result.data || result;
@@ -187,6 +210,85 @@ class DomainStore {
 
   updateBuildTaskItem(taskId, itemId, payload) {
     const result = this.request('PATCH', `/v1/domain/build-tasks/${encodeURIComponent(taskId)}/items/${encodeURIComponent(itemId)}`, payload);
+    return result.data || result;
+  }
+
+  readPlatformAuthUsers() {
+    const result = this.request('GET', '/v1/platform/auth/users');
+    return result.data || result;
+  }
+
+  async readPlatformAuthUsersAsync() {
+    const result = await this.requestAsync('GET', '/v1/platform/auth/users');
+    return result.data || result;
+  }
+
+  readPlatformAuthUser(userKey) {
+    const result = this.request('GET', `/v1/platform/auth/users/${encodeURIComponent(userKey)}`);
+    return result.data || result;
+  }
+
+  async readPlatformAuthUserAsync(userKey) {
+    const result = await this.requestAsync('GET', `/v1/platform/auth/users/${encodeURIComponent(userKey)}`);
+    return result.data || result;
+  }
+
+  upsertPlatformCasUser(payload) {
+    const result = this.request('POST', '/v1/platform/auth/users/cas', payload);
+    return result.data || result;
+  }
+
+  async upsertPlatformCasUserAsync(payload) {
+    const result = await this.requestAsync('POST', '/v1/platform/auth/users/cas', payload);
+    return result.data || result;
+  }
+
+  replacePlatformUserRoles(userKey, roles, rowVersion, idempotencyKey, actor) {
+    const result = this.request('PATCH', `/v1/platform/auth/users/${encodeURIComponent(userKey)}/roles`, { roles, actor }, {
+      'If-Match': String(rowVersion), 'Idempotency-Key': idempotencyKey,
+    });
+    return result.data || result;
+  }
+
+  async replacePlatformUserRolesAsync(userKey, roles, rowVersion, idempotencyKey, actor) {
+    const result = await this.requestAsync('PATCH', `/v1/platform/auth/users/${encodeURIComponent(userKey)}/roles`, { roles, actor }, {
+      'If-Match': String(rowVersion), 'Idempotency-Key': idempotencyKey,
+    });
+    return result.data || result;
+  }
+
+  readPlatformGitLabConnections() {
+    const result = this.request('GET', '/v1/platform/gitlab/connections');
+    return result.data || result;
+  }
+
+  readPlatformGitLabConnection(key) {
+    const result = this.request('GET', `/v1/platform/gitlab/connections/${encodeURIComponent(key)}`);
+    return result.data || result;
+  }
+
+  upsertPlatformGitLabConnection(payload, rowVersion, idempotencyKey, actor) {
+    const headers = { 'Idempotency-Key': idempotencyKey, ...(rowVersion != null ? { 'If-Match': String(rowVersion) } : {}) };
+    const result = this.request('PUT', '/v1/platform/gitlab/connections', { ...payload, actor }, headers);
+    return result.data || result;
+  }
+
+  setPlatformGitLabConnectionState(key, status, rowVersion, idempotencyKey, actor) {
+    const result = this.request('PATCH', `/v1/platform/gitlab/connections/${encodeURIComponent(key)}/state`, { status, actor }, {
+      'If-Match': String(rowVersion), 'Idempotency-Key': idempotencyKey,
+    });
+    return result.data || result;
+  }
+
+  readPlatformGitLabMapping(manualCode) {
+    const result = this.request('GET', `/v1/platform/gitlab/mappings/${encodeURIComponent(manualCode)}`);
+    return result.data || result;
+  }
+
+  replacePlatformGitLabMapping(manualCode, payload, rowVersion, idempotencyKey, actor) {
+    const result = this.request('PUT', `/v1/platform/gitlab/mappings/${encodeURIComponent(manualCode)}`, { ...payload, actor }, {
+      'Idempotency-Key': idempotencyKey, ...(rowVersion != null ? { 'If-Match': String(rowVersion) } : {}),
+    });
     return result.data || result;
   }
 }

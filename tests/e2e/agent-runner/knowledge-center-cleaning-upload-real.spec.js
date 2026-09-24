@@ -47,26 +47,13 @@ test('匿名用户不能读取或写入资料清洗', async ({ page }) => {
   expect(body.error.code).toBe('AUTH_REQUIRED');
 });
 
-test('已认证但无写权限角色不能创建上传会话', async ({ page }) => {
+test('已认证但无平台管理权限角色不能创建上传会话', async ({ page }) => {
   const api = page.context().request;
-  const adminLogin = await api.post(`${baseUrl}/knowledge-center/api/auth/admin/login`, { data: { username: 'admin', password: 'admin' } });
-  expect(adminLogin.ok()).toBeTruthy();
-  const usersResponse = await api.get(`${baseUrl}/knowledge-center/api/platform/permissions`);
-  expect(usersResponse.ok()).toBeTruthy();
-  const usersBody = await usersResponse.json();
-  const users = usersBody.data?.users || usersBody.content?.users || usersBody.users || [];
-  const editor = users.find(user => user.loginName === 'test');
-  expect(editor?.id).toBeTruthy();
-  const originalRoles = editor.roles || ['KNOWLEDGE_EDITOR'];
   try {
-    const roleResponse = await api.patch(`${baseUrl}/knowledge-center/api/platform/permissions/${encodeURIComponent(editor.id)}/roles`, {
-      data: { roles: ['REVIEWER'] },
-    });
-    expect(roleResponse.ok()).toBeTruthy();
-    await api.post(`${baseUrl}/knowledge-center/api/auth/logout`);
-
     const testLogin = await api.post(`${baseUrl}/knowledge-center/api/auth/admin/login`, { data: { username: 'test', password: 'test' } });
     expect(testLogin.ok()).toBeTruthy();
+    const loginBody = await testLogin.json();
+    expect(loginBody.content?.user?.roles).not.toContain('PLATFORM_ADMIN');
     const response = await api.post(`${baseUrl}/knowledge-center/api/cleaning/upload-sessions`, {
       data: { name: 'reviewer-e2e', operatorLabel: 'test', totalFiles: 1, totalBytes: 1 },
     });
@@ -76,12 +63,6 @@ test('已认证但无写权限角色不能创建上传会话', async ({ page }) 
     expect(body.error.code).toBe('PLATFORM_ADMIN_REQUIRED');
   } finally {
     await api.post(`${baseUrl}/knowledge-center/api/auth/logout`);
-    const restoreLogin = await api.post(`${baseUrl}/knowledge-center/api/auth/admin/login`, { data: { username: 'admin', password: 'admin' } });
-    expect(restoreLogin.ok()).toBeTruthy();
-    const restoreResponse = await api.patch(`${baseUrl}/knowledge-center/api/platform/permissions/${encodeURIComponent(editor.id)}/roles`, {
-      data: { roles: originalRoles },
-    });
-    expect(restoreResponse.ok()).toBeTruthy();
   }
 });
 

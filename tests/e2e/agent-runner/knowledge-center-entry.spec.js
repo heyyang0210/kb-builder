@@ -39,7 +39,10 @@ test('资料清洗和文档生产使用独立页面语义', async ({ page }) => 
   await expect(page.locator('#view-root')).toContainText(/知识库版本|资料加工服务暂时不可用/);
   await page.getByRole('button', { name: '文档生产', exact: true }).click();
   await expect(page.locator('#view-root').getByRole('heading', { name: '文档生产' })).toBeVisible();
+  await expect(page.getByRole('tab', { name: '手册视图' })).toHaveAttribute('aria-selected', 'true');
+  await page.getByRole('tab', { name: '任务视图' }).click();
   await expect(page.locator('#view-root').getByRole('heading', { name: '增量任务' })).toBeVisible();
+  await expect(page.getByRole('tab', { name: '任务视图' })).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('#view-root').getByRole('button', { name: '创建增量任务' })).toBeVisible();
 });
 

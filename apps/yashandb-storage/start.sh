@@ -56,8 +56,9 @@ if [[ "${1:-}" == migrate ]]; then
           printf '%s  apps/yashandb-storage/sql/%s\n' "$migration_digest" "$(basename "$migration_file")"
         done
   } | sha256sum | awk '{print $1}')"
-  [[ "$migration_source_dirty" == false && -n "$migration_source_revision" && "$migration_source_revision" != unknown \
-    && -n "$migration_source_expected_sha" && "$migration_source_actual_sha" == "$migration_source_expected_sha" ]] || {
+  [[ -n "$migration_source_revision" && "$migration_source_revision" != unknown \
+    && -n "$migration_source_expected_sha" && "$migration_source_actual_sha" == "$migration_source_expected_sha" \
+    && "$migration_source_dirty" == false ]] || {
     echo "拒绝执行迁移：SQL 必须来自已提交的 Git 版本，当前构建包含未提交迁移变更" >&2
     exit 1
   }

@@ -19,6 +19,9 @@
 | `007_create_platform_principal.sql` | 创建知识中心本地人员主数据，并为手册责任人增加姓名快照 |
 | `008_split_business_id_sequences.sql` | 将 13 张业务表从公共序列切换为每表独立 ID 序列；公共序列暂仅作回退兼容 |
 | `009_consolidate_business_sequences.sql` | 按手册、大纲、责任治理和人员四个业务边界收敛序列，并删除公共及每表历史序列 |
+| `010_platform_centralization.sql` | 平台认证权限和 GitLab 共享配置关系表 |
+| `011_team_groups.sql` | 创建团队小组和成员表，从现有领域产生初始小组并一次性迁移旧成员 |
+| `012_decouple_team_groups.sql` | 保留 011 历史摘要，将领域到团队的唯一关系迁移到 `KC_TECH_DOMAIN.TEAM_GROUP_ID`，再删除团队表中的 `TECH_DOMAIN_ID`；分工投影不按名称推断团队 |
 
 手册与大纲采用稳定主体和版本分离模型：一本手册恰好对应一个 `KC_MANUAL_OUTLINE` 主体，大纲主体可以拥有多个 `KC_MANUAL_OUTLINE_VERSION`。大纲主体不重复保存手册的产品和名称，展示时通过 `MANUAL_ID` 获取。所有内部主键、模块内关联键以及权威目录 ID 均使用 `BIGINT`；主键生成器按手册、大纲、责任治理和人员四个稳定业务边界管理，不按每张物理表扩张序列数量。
 

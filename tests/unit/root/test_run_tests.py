@@ -284,6 +284,41 @@ class RepositoryTestRunnerTests(unittest.TestCase):
         self.assertIsNone(lease)
         self.assertIn("隔离配置", diagnostic)
 
+    def test_e2e_database_sync_is_mandatory_before_service_start(self):
+        source = RUNNER_PATH.read_text(encoding="utf-8")
+        sync_script = RUNNER.E2E_DATABASE_SYNC_SCRIPT.read_text(encoding="utf-8")
+        sync_call = source.index("synchronize_e2e_database(context, database_lock)")
+        migration_call = source.index("migrate_e2e_database(context, env)")
+        service_start = source.index('[str(KNOWLEDGE_CENTER_SCRIPT), *arguments]')
+        self.assertLess(sync_call, migration_call)
+        self.assertLess(migration_call, service_start)
+        self.assertIn("sync-e2e-yashandb-schema.sh", source)
+        self.assertIn("expected_source=\"${YASDB_E2E_SOURCE_SCHEMA:-pf_knowledge}\"", sync_script)
+        self.assertIn("expected_target=\"${YASDB_E2E_TARGET_SCHEMA:-test_hy}\"", sync_script)
+        self.assertIn("SyncYashanDbSchemaData", sync_script)
+        self.assertNotIn("FROMUSER=", sync_script)
+        self.assertNotIn("TOUSER=", sync_script)
+
+    def test_dirty_migrations_are_rejected_for_every_schema(self):
+        storage_script = RUNNER.YASHANDB_STORAGE_SCRIPT.read_text(encoding="utf-8")
+        runner_source = RUNNER_PATH.read_text(encoding="utf-8")
+        self.assertIn('"$migration_source_dirty" == false', storage_script)
+        self.assertNotIn("KNOWLEDGE_CENTER_ALLOW_DIRTY_TEST_MIGRATIONS", storage_script)
+        self.assertNotIn("KNOWLEDGE_CENTER_ALLOW_DIRTY_TEST_MIGRATIONS", runner_source)
+        self.assertIn('[str(YASHANDB_STORAGE_SCRIPT), "migrate"]', runner_source)
+
+    def test_e2e_database_lock_can_be_acquired_and_released(self):
+        with tempfile.TemporaryDirectory() as directory:
+            old_lock_file = RUNNER.E2E_DATABASE_LOCK_FILE
+            try:
+                RUNNER.E2E_DATABASE_LOCK_FILE = Path(directory) / "test-hy.lock"
+                lock = RUNNER.acquire_e2e_database_lock(timeout_seconds=1)
+                self.assertFalse(lock.closed)
+                RUNNER.release_e2e_database_lock(lock)
+                self.assertTrue(lock.closed)
+            finally:
+                RUNNER.E2E_DATABASE_LOCK_FILE = old_lock_file
+
     def test_test_sources_do_not_write_reports_or_temp_data_into_source_tree(self):
         forbidden = (
             'tests/e2e/agent-runner/reports',

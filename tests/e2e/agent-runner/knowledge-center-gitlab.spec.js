@@ -17,7 +17,7 @@ test('已认证用户刷新 GitLab 标签页保持登录且没有页面异常', 
   const pageErrors = [];
   page.on('pageerror', error => pageErrors.push(error.message));
   await page.goto(`${baseUrl}/knowledge-center/platform?tab=gitlab`);
-  await expect(page.getByRole('tab', { name: 'GitLab 仓库' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('button', { name: 'GitLab 仓库' })).toHaveAttribute('aria-current', 'page');
   await page.reload();
   await expect(page.locator('#app-shell')).toBeVisible();
   await expect(page.locator('#auth-shell')).toBeHidden();

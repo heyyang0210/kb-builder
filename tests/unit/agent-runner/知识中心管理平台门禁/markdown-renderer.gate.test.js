@@ -6,6 +6,7 @@ function loadRenderer() {
   const file = path.join(__dirname, '..', '..', '..', '..', 'apps/knowledge-center-web/frontend/knowledge-center/modules/repository/view.js');
   const source = fs.readFileSync(file, 'utf8')
     .replace("import { escapeHtml } from '../../common/utils/dom.js';", "const escapeHtml = value => String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\\\"/g, '&quot;');")
+    .replace("import { renderDirectoryTree } from '../../common/directory-tree.js';", "const renderDirectoryTree = () => '';")
     .replace('export function renderRepository', 'function renderRepository')
     .replace('export { safeMarkdown, treeHierarchy };', 'globalThis.safeMarkdown = safeMarkdown;');
   const context = { globalThis: {}, window: {}, encodeURIComponent };

@@ -28,7 +28,7 @@ export YASDB_STORAGE_PORT='14210'
 `./start.sh migrate` 显式执行待应用迁移并退出；`./start.sh` 校验迁移版本、别名和摘要，存在待执行版本时拒绝启动服务。普通启动遇到摘要冲突时会同时输出数据库登记值和当前构建文件值；开发环境默认按 `YASDB_MIGRATION_CHECKSUM_POLICY=warn` 告警后继续，生产或共享环境应设为 `strict`。显式 `migrate` 始终严格拒绝摘要冲突，任何模式都不会自动修改迁移记录。
 
 `Main probe` 是平台数据库连接治理的内部验证命令：它使用候选 JDBC 地址和凭据建立真实会话，执行固定的 `SELECT 1 FROM DUAL` 后立即退出。`Main verify` 在不启动 HTTP 服务的情况下校验已执行迁移的版本、别名和摘要。两者都不修改数据库，密码只通过子进程环境传递，不放入命令行、日志或响应。启动脚本支持通过 `KNOWLEDGE_CENTER_JAVA_BIN` 使用项目隔离的 Java 17 运行时。
-显式迁移还会校验构建产物中的 `migration-source.properties`：SQL 和版本别名必须来自已提交的 Git revision，否则在连接数据库前拒绝执行。这防止脏工作树中的 SQL 先落库、后续提交又改变文件字节而导致启动摘要冲突。运行产物重算聚合摘要时使用统一源路径 `apps/yashandb-storage/sql/<file>`，不让构建目录的路径差异影响摘要。
+显式迁移还会校验构建产物中的 `migration-source.properties`：SQL 和版本别名必须来自已提交的 Git revision，否则在连接数据库前拒绝执行。该门禁同样适用于 E2E 专用 `test_hy`：统一入口可以先同步基线并构建当前代码，但只执行已提交的迁移字节，不对脏 SQL 设置测试例外。运行产物重算聚合摘要时使用统一源路径 `apps/yashandb-storage/sql/<file>`，不让构建目录的路径差异影响摘要。
 迁移文件发现、历史别名兼容、摘要校验和 SQL 执行由 `src/migration/SchemaMigrationManager.java` 集中维护，业务入口只负责编排连接和服务生命周期。
 
 业务服务切换到数据库模式前，需先启动本服务并确认健康检查成功：
@@ -68,6 +68,9 @@ SQL 迁移目录：
 | `sql/007_create_platform_principal.sql` | 本地人员主数据和手册责任人姓名快照 |
 | `sql/008_split_business_id_sequences.sql` | 为各业务表分配独立数字主键序列，切断对公共序列的新增依赖 |
 | `sql/009_consolidate_business_sequences.sql` | 将主键生成器收敛为 4 个业务边界序列，并清理旧序列 |
+| `sql/010_platform_centralization.sql` | 当前认证权限与 GitLab 配置 8 张关系表及 `KC_PLATFORM_SEQ`；不导入数据、不删除旧序列 |
+| `sql/011_team_groups.sql` | 技术领域团队与成员两表；为现有有效技术领域创建真实团队，并一次性迁移旧成员关系 |
+| `sql/012_decouple_team_groups.sql` | 保留 011 历史摘要不变，把既有领域—团队关系迁移到 `KC_TECH_DOMAIN.TEAM_GROUP_ID`，再删除团队表旧领域列并重建查询索引 |
 
 默认 SQL 目录是统一构建产物 `runtime/build/knowledge-center/current/java/sql/`。可通过 `YASDB_STORAGE_SQL_DIR` 指定其他经发布审核的 SQL 目录，但显式迁移要求该目录同时携带 `migration-source.properties`；禁止将该变量指向 `apps/yashandb-storage/sql/` 工作树源码目录。服务不会执行目录之外的 SQL。
 
@@ -88,6 +91,16 @@ node ../../tools/knowledge-processing/migrate-manuals-to-target-yashandb.js --ap
 ```
 
 脚本默认 dry-run，以 `runtime/knowledge-center/knowledge-assets.json` 为源；`--apply` 通过真实手册 API 写入，并回读手册和大纲数量。迁移报告位于 `runtime/yashandb-migration/`。
+
+认证权限与 GitLab 当前配置的一次性迁移使用：
+
+```bash
+node ../../tools/knowledge-processing/migrate-platform-config-to-yashandb.js plan
+MIGRATION_APPROVAL_REF=审批单号 MIGRATION_MAINTENANCE_WINDOW=true \
+  node ../../tools/knowledge-processing/migrate-platform-config-to-yashandb.js import --apply
+```
+
+该工具默认只读计划；`import` 仅在显式批准引用和维护窗口标记同时存在时调用 Storage 内部迁移接口。它只迁移 CAS 用户、角色关系、GitLab 连接和当前映射；本地账号、会话、Ticket、审计、幂等记录和 GitLab Token 均被排除并输出原因。当前工作区未执行 `import`，也未执行真实数据库写入。
 
 ## exp/imp 数据库迁移脚本
 

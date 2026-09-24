@@ -54,7 +54,7 @@ describe('knowledge center unified build contract', () => {
     expect(crypto.createHash('sha256').update(migration).digest('hex'))
       .toBe('1a65c173e2f18a5a487d21105333496c7e193a99b754cc030ed07a06d23e21aa');
     expect(crypto.createHash('sha256').update(principalMigration).digest('hex'))
-      .toBe('423ef742fe0e7727a374b2b39ff944cd823519a71dd7afc8076991fba751de9f');
+      .toBe('336a3600e291119e378c531fe6ce34a362a5a040c34ee980d88f67fe798a008e');
     expect(storageRules.trimEnd().split('\n')).toHaveLength(15);
     expect(storageRules).toContain('NNN_<action>_<object>.sql');
     expect(schemaMigrationManager).toContain('aliases.getOrDefault(version, List.of())');
@@ -72,6 +72,16 @@ describe('knowledge center unified build contract', () => {
     expect(schemaMigrationManager).toContain('getOrDefault("YASDB_MIGRATION_CHECKSUM_POLICY", "warn")');
     expect(schemaMigrationManager).toContain('aliases.getOrDefault(version, List.of()), true');
     expect(schemaMigrationManager).toContain('执行 migrate 时仍会严格拒绝该冲突');
+    const teamGroupMigration = read('apps/yashandb-storage/sql/012_decouple_team_groups.sql');
+    expect(migrationNames).toContain('012_decouple_team_groups.sql');
+    expect(read('apps/yashandb-storage/sql/011_team_groups.sql')).toContain('TECH_DOMAIN_ID BIGINT NOT NULL');
+    expect(teamGroupMigration).toContain('ALTER TABLE KC_TECH_DOMAIN ADD TEAM_GROUP_ID BIGINT');
+    expect(teamGroupMigration).toContain('UK_KC_TDOMAIN_GROUP UNIQUE (TEAM_GROUP_ID)');
+    expect(teamGroupMigration).toContain('ALTER TABLE KC_TEAM_GROUP DROP COLUMN TECH_DOMAIN_ID');
+    expect(storageMain).toContain('D.TEAM_GROUP_ID=G.TEAM_GROUP_ID');
+    expect(storageMain).toContain('BUILD_TASK_ASSIGNEE_INVALID');
+    expect(storageMain).toContain("M.MEMBER_ROLE='LEADER'");
+    expect(storageMain).toContain('TEAM_GROUP_LEADER_DUPLICATED');
   });
 
   test('业务表按四个稳定业务边界共享主键序列', () => {

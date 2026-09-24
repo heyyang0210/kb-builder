@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import fcntl
 import json
 import os
 import re
@@ -36,6 +37,10 @@ TEST_REPORT_ROOT = REPOSITORY_ROOT / "runtime" / "test-reports"
 TEST_RESULT_ROOT = REPOSITORY_ROOT / "runtime" / "test-results"
 TEST_DATABASE_CONFIG_DIR = REPOSITORY_ROOT / "runtime" / "test-config" / "yashandb"
 KNOWLEDGE_CENTER_SCRIPT = REPOSITORY_ROOT / "knowledge-center.sh"
+KNOWLEDGE_CENTER_BUILD_SCRIPT = REPOSITORY_ROOT / "tools" / "repository" / "build-knowledge-center.sh"
+YASHANDB_STORAGE_SCRIPT = REPOSITORY_ROOT / "apps" / "yashandb-storage" / "start.sh"
+E2E_DATABASE_SYNC_SCRIPT = REPOSITORY_ROOT / "tools" / "repository" / "sync-e2e-yashandb-schema.sh"
+E2E_DATABASE_LOCK_FILE = REPOSITORY_ROOT / "runtime" / "test-results" / "database-sync" / "test-hy.lock"
 KNOWLEDGE_CENTER_BASE_URL = "http://127.0.0.1:13510"
 KNOWLEDGE_CENTER_HEALTH_URL = KNOWLEDGE_CENTER_BASE_URL + "/knowledge-center/api/auth/config"
 
@@ -105,6 +110,7 @@ class KnowledgeCenterLease:
     environment: dict[str, str]
     state_dir: Path
     process_identities: dict[str, tuple[int, str]]
+    database_lock: Any
 
 
 def relative(path: Path) -> str:
@@ -341,7 +347,9 @@ def test_environment(
         env["NODE_PATH"] = os.pathsep.join(node_paths)
     # 统一入口准备和探活的是同一个知识中心实例。性能门禁不能在未显式配置时
     # 回退到测试文件中的远端地址，否则测到的是网络和另一套环境。
-    env["KPG_BASE_URL"] = knowledge_center_base_url or env.get("KPG_BASE_URL", KNOWLEDGE_CENTER_BASE_URL)
+    # 每个任务都必须指向 runner 明确准备的实例；调用方未传入隔离地址时，
+    # 固定使用默认本地入口，避免继承 shell 或历史服务残留的 KPG_BASE_URL。
+    env["KPG_BASE_URL"] = knowledge_center_base_url or KNOWLEDGE_CENTER_BASE_URL
     if knowledge_center_test_run_id:
         env["KNOWLEDGE_CENTER_TEST_RUN_ID"] = knowledge_center_test_run_id
     if run_context:
@@ -514,6 +522,106 @@ def isolated_knowledge_center_environment(context: RunContext) -> tuple[dict[str
     return env, base_url, owner
 
 
+def acquire_e2e_database_lock(timeout_seconds: int = 600):
+    E2E_DATABASE_LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+    lock = E2E_DATABASE_LOCK_FILE.open("a+", encoding="utf-8")
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        try:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            lock.seek(0)
+            lock.truncate()
+            lock.write(f"pid={os.getpid()} acquiredAt={datetime.now().astimezone().isoformat()}\n")
+            lock.flush()
+            return lock
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                lock.close()
+                raise RuntimeError("等待 test_hy E2E 独占锁超时")
+            time.sleep(1)
+
+
+def synchronize_e2e_database(context: RunContext, lock) -> str:
+    if not E2E_DATABASE_SYNC_SCRIPT.is_file():
+        raise RuntimeError(f"缺少 E2E 数据库同步脚本：{relative(E2E_DATABASE_SYNC_SCRIPT)}")
+    output_dir = context.details_dir / "database-sync"
+    env = os.environ.copy()
+    env.update({
+        "KNOWLEDGE_CENTER_E2E_DB_LOCK_HELD": "1",
+        "YASDB_E2E_SYNC_OUTPUT_DIR": str(output_dir),
+        "YASDB_E2E_SYNC_LOCK_FILE": str(E2E_DATABASE_LOCK_FILE),
+    })
+    completed = subprocess.run(
+        [str(E2E_DATABASE_SYNC_SCRIPT)],
+        cwd=REPOSITORY_ROOT,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+    (output_dir / "execution.log").write_text(completed.stdout, encoding="utf-8")
+    if completed.returncode != 0:
+        raise RuntimeError(completed.stdout.strip() or "pf_knowledge 到 test_hy 同步失败")
+    report = output_dir / "report.json"
+    if not report.is_file() or not json.loads(report.read_text(encoding="utf-8")).get("passed"):
+        raise RuntimeError("test_hy 同步缺少通过的对账报告")
+    return completed.stdout.strip()
+
+
+def migrate_e2e_database(context: RunContext, environment: dict[str, str]) -> str:
+    """Build the worktree and apply only committed migrations to locked test_hy."""
+    for required in (KNOWLEDGE_CENTER_BUILD_SCRIPT, YASHANDB_STORAGE_SCRIPT):
+        if not required.is_file():
+            raise RuntimeError(f"缺少 E2E 数据库迁移入口：{relative(required)}")
+    output_dir = context.details_dir / "database-migration"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    build = subprocess.run(
+        [str(KNOWLEDGE_CENTER_BUILD_SCRIPT)],
+        cwd=REPOSITORY_ROOT,
+        env=environment,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+    (output_dir / "build.log").write_text(build.stdout, encoding="utf-8")
+    if build.returncode != 0:
+        raise RuntimeError(build.stdout.strip() or "E2E 当前工作树构建失败")
+
+    migration = subprocess.run(
+        [str(YASHANDB_STORAGE_SCRIPT), "migrate"],
+        cwd=REPOSITORY_ROOT,
+        env=environment,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+    (output_dir / "execution.log").write_text(migration.stdout, encoding="utf-8")
+    report = {
+        "generatedAt": datetime.now().astimezone().isoformat(),
+        "targetSchema": "test_hy",
+        "buildPassed": build.returncode == 0,
+        "migrationPassed": migration.returncode == 0,
+        "passed": build.returncode == 0 and migration.returncode == 0,
+    }
+    (output_dir / "report.json").write_text(
+        json.dumps(report, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    if migration.returncode != 0:
+        raise RuntimeError(migration.stdout.strip() or "test_hy 当前工作树迁移失败")
+    return migration.stdout.strip()
+
+
+def release_e2e_database_lock(lock) -> None:
+    if lock is None or lock.closed:
+        return
+    fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+    lock.close()
+
+
 def ensure_knowledge_center(context: RunContext) -> tuple[bool, KnowledgeCenterLease | None, str]:
     """Always start an owned instance backed by the dedicated test schema."""
     if not KNOWLEDGE_CENTER_SCRIPT.is_file():
@@ -521,6 +629,14 @@ def ensure_knowledge_center(context: RunContext) -> tuple[bool, KnowledgeCenterL
     try:
         env, base_url, owner = isolated_knowledge_center_environment(context)
     except RuntimeError as error:
+        return False, None, str(error)
+    database_lock = None
+    try:
+        database_lock = acquire_e2e_database_lock()
+        synchronize_e2e_database(context, database_lock)
+        migrate_e2e_database(context, env)
+    except RuntimeError as error:
+        release_e2e_database_lock(database_lock)
         return False, None, str(error)
     health_url = base_url + "/knowledge-center/api/auth/config"
     last_output = ""
@@ -537,10 +653,11 @@ def ensure_knowledge_center(context: RunContext) -> tuple[bool, KnowledgeCenterL
         last_output = completed.stdout
         if completed.returncode == 0 and http_ready(health_url):
             state_dir = Path(env["KNOWLEDGE_CENTER_STATE_DIR"])
-            lease = KnowledgeCenterLease(owner, base_url, health_url, env, state_dir, read_lease_processes(state_dir))
+            lease = KnowledgeCenterLease(owner, base_url, health_url, env, state_dir, read_lease_processes(state_dir), database_lock)
             if len(lease.process_identities) != 4:
                 return False, lease, "独立测试实例缺少完整进程所有权证据"
             return True, lease, "统一入口已启动 test_hy Schema 隔离的知识中心测试实例"
+    release_e2e_database_lock(database_lock)
     return False, None, last_output.strip() or "知识中心服务启动失败"
 
 
@@ -1053,8 +1170,10 @@ def main(argv: list[str] | None = None) -> int:
         elif args.coverage:
             coverage = CoverageSummary("NOT_RUN", "Jest 管理的 JavaScript 代码", {}, diagnostic="dry-run 未执行")
     finally:
-        if knowledge_center_lease and not stop_owned_knowledge_center(knowledge_center_lease):
-            print("警告：测试实例所有权或进程身份已变化，拒绝自动停止，请根据本次报告手工处置。", file=sys.stderr)
+        if knowledge_center_lease:
+            if not stop_owned_knowledge_center(knowledge_center_lease):
+                print("警告：测试实例所有权或进程身份已变化，拒绝自动停止，请根据本次报告手工处置。", file=sys.stderr)
+            release_e2e_database_lock(knowledge_center_lease.database_lock)
     elapsed = time.monotonic() - started
 
     print_summary(results, elapsed)

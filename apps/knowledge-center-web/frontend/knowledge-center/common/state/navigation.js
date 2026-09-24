@@ -29,6 +29,7 @@ export function viewFromPath(pathname) {
   const normalized = pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname;
   if (normalized.startsWith('/knowledge-center/assets/') && normalized.endsWith('/repository')) return 'repository';
   if (normalized.startsWith('/knowledge-center/outlines/')) return 'outlines';
+  if (normalized.startsWith('/knowledge-center/production/handbook/')) return 'production';
   return viewByRoute[normalized] || null;
 }
 

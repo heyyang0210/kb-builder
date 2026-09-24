@@ -130,6 +130,49 @@
 }
 .notice p { margin: 3px 0 0; }
 .notice-actions { display: flex; align-items: center; gap: var(--space-2); flex: 0 0 auto; }
+.searchable-combobox { position: relative; display: inline-flex; width: min(100%, 240px); min-width: 0; max-width: 100%; align-items: stretch; }
+.searchable-combobox .searchable-combobox-input { box-sizing: border-box; width: 100%; min-width: 0; min-height: 40px; padding: 8px 38px 8px 10px; border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); font: inherit; }
+.searchable-combobox-input:focus { outline: 2px solid var(--color-brand); outline-offset: 1px; }
+.searchable-combobox-input:disabled { cursor: not-allowed; opacity: .6; }
+.searchable-combobox-toggle { position: absolute; top: 1px; right: 1px; bottom: 1px; width: 36px; border: 0; border-left: 1px solid var(--color-border); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; background: transparent; color: var(--color-text-secondary); cursor: pointer; }
+.searchable-combobox-toggle:hover, .searchable-combobox-toggle:focus-visible { background: var(--color-brand-subtle); color: var(--color-brand); }
+.searchable-combobox-native { position: absolute !important; width: 1px !important; height: 1px !important; overflow: hidden !important; clip: rect(0 0 0 0) !important; clip-path: inset(50%) !important; white-space: nowrap !important; }
+.searchable-combobox-listbox { position: fixed; z-index: 1000; display: grid; gap: 2px; overflow-y: auto; padding: 5px; border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm); background: var(--color-surface); box-shadow: var(--shadow-overlay); }
+.searchable-combobox-option { min-height: 40px; padding: 8px 10px; border: 0; border-radius: 4px; background: transparent; color: var(--color-text); text-align: left; font: inherit; cursor: pointer; }
+.searchable-combobox-option:hover, .searchable-combobox-option.is-active { background: var(--color-brand-subtle); color: var(--color-brand); }
+.searchable-combobox-option[aria-selected="true"] { font-weight: 650; }
+.searchable-combobox-empty { padding: 12px 10px; color: var(--color-text-secondary); font-size: 13px; }
+
+/* Context widths preserve the information density of the original controls. */
+.asset-table .searchable-combobox,
+.outline-responsibility-table .searchable-combobox { width: min(100%, 190px); }
+.asset-filters .searchable-combobox,
+.outline-node-list-tools .searchable-combobox,
+.outline-assignment-filters .searchable-combobox,
+.outline-assignment-batch .searchable-combobox,
+.permissions-filters .searchable-combobox,
+.repository-toolbar .searchable-combobox,
+.review-reader-controls .searchable-combobox { width: min(100%, 220px); }
+.asset-dialog .searchable-combobox,
+.mapping-inline-grid .searchable-combobox,
+.domain-task-assignee .searchable-combobox,
+.outline-primary-domain .searchable-combobox,
+.outline-assignment-heading .searchable-combobox,
+.team-group-field .searchable-combobox,
+.team-member-add .searchable-combobox,
+.handbook-generation-setup .searchable-combobox,
+.incremental-create-dialog .searchable-combobox,
+.incremental-baseline-picker .searchable-combobox,
+.incremental-operation-fields .searchable-combobox,
+.review-online-dialog .searchable-combobox { width: 100%; }
+.review-task-switcher .searchable-combobox { width: clamp(260px, 40vw, 480px); }
+
+/* Reserved explicit size contract for callers that need a stable override. */
+.searchable-combobox[data-combobox-size="compact"] { width: min(100%, 190px); }
+.searchable-combobox[data-combobox-size="standard"] { width: min(100%, 240px); }
+.searchable-combobox[data-combobox-size="full"] { width: 100%; }
+
+@media (max-width: 700px) { .searchable-combobox { width: 100%; } .searchable-combobox .searchable-combobox-input, .searchable-combobox .searchable-combobox-toggle { min-height: 44px; } .searchable-combobox-listbox { max-width: calc(100vw - 16px); } }
 @media (max-width: 900px) {
   .button { min-height: 44px; }
   .panel { padding: var(--space-4); }
@@ -137,4 +180,19 @@
   .capability-state .button { grid-column: 1 / -1; width: 100%; }
   .notice { align-items: flex-start; flex-direction: column; }
   .notice-actions { flex-wrap: wrap; }
+}
+/* 常驻目录面板：业务页面通过 data-navigation-layout 定义自己的列宽和折叠布局。 */
+[data-navigation-layout] { min-width: 0; }
+[data-navigation-pane-resizer] { position: absolute; z-index: 4; top: 0; right: -5px; width: 10px; height: 100%; cursor: col-resize; touch-action: none; }
+[data-navigation-pane-resizer]::before { content: ''; position: absolute; top: 0; bottom: 0; left: 4px; width: 1px; background: transparent; }
+[data-navigation-pane-resizer]:hover::before,
+[data-navigation-pane-resizer]:focus-visible::before,
+.navigation-pane-resizing [data-navigation-pane-resizer]::before { background: var(--color-brand); }
+[data-navigation-pane-resizer]:focus-visible { outline: 0; }
+[data-navigation-pane-resizer]:focus-visible::after { content: ''; position: absolute; inset: 0; border-radius: 4px; background: var(--color-brand-subtle); opacity: .7; }
+[data-navigation-layout] [data-navigation-pane-toggle] { position: relative; z-index: 5; }
+.navigation-pane-resizing, .navigation-pane-resizing * { user-select: none; cursor: col-resize !important; }
+[data-navigation-pane-toggle] { min-width: 40px; min-height: 40px; }
+@media (max-width: 767px) {
+  [data-navigation-pane-resizer] { display: none; }
 }

@@ -440,6 +440,16 @@ describe('大纲治理投影', () => {
     expect(candidate.governance.assignments).toEqual([{ nodeId: document.id, techDomainIds: [] }]);
   });
 
+  test('候选大纲保存目录顺序并阻断循环层级', () => {
+    const nodes = nodesFromContent(outline.content, outline.id);
+    const document = nodes.find(node => node.kind === 'document');
+    const chapter = nodes.find(node => node.kind === 'directory' && node.title === '1.1 安装');
+    const candidate = { ...outline, state: 'draft', nodes, governance: { assignments: [] } };
+    saveFileGovernance(candidate, { editVersion: 1, governanceVersion: 1, directoryOrder: nodes.map((node, index) => ({ nodeId: node.id, parentNodeId: node.id === document.id ? chapter.id : node.parentId || null, order: nodes.length - index })) }, []);
+    expect(candidate.nodes.find(node => node.id === document.id).parentId).toBe(chapter.id);
+    expect(() => saveFileGovernance(candidate, { editVersion: 1, governanceVersion: 2, directoryOrder: nodes.map(node => ({ nodeId: node.id, parentNodeId: node.id === chapter.id ? document.id : node.parentId || null, order: 1 })) }, [])).toThrow('目录层级不能形成循环');
+  });
+
   test('已发布大纲可以换领域并把新页面任务默认归属领域负责人', () => {
     const document = nodesFromContent(outline.content, outline.id).find(node => node.kind === 'document');
     const domains = [

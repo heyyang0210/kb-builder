@@ -11,6 +11,91 @@ async function loginAsAdmin(page) {
   await expect(page).toHaveURL(`${baseUrl}/knowledge-center/platform`);
 }
 
+test('点击人员管理展开子菜单并进入团队小组', async ({ page }) => {
+  await loginAsAdmin(page);
+  await page.goto(`${baseUrl}/knowledge-center/platform?tab=governance`);
+  const personnel = page.locator('.platform-tab-summary');
+  await expect(personnel).toBeVisible();
+  await personnel.click();
+  await expect(page.getByRole('menuitem', { name: '人员管理' })).toBeVisible();
+  const teamItem = page.getByRole('menuitem', { name: '团队小组' });
+  await expect(teamItem).toBeVisible();
+  const tabsBox = await page.locator('.platform-tabs').boundingBox();
+  const teamItemBox = await teamItem.boundingBox();
+  expect(tabsBox).not.toBeNull();
+  expect(teamItemBox).not.toBeNull();
+  expect(teamItemBox.y + teamItemBox.height).toBeGreaterThan(tabsBox.y + tabsBox.height);
+  await page.getByRole('menuitem', { name: '人员管理' }).click();
+  await expect(page).toHaveURL(/tab=principals&view=people/);
+  await expect(page.getByRole('heading', { name: '人员管理', exact: true })).toBeVisible();
+  await page.locator('.platform-tab-summary').click();
+  await expect(page.getByRole('menuitem', { name: '团队小组' })).toBeVisible();
+  await page.getByRole('menuitem', { name: '团队小组' }).click();
+  await expect(page).toHaveURL(/tab=principals&view=groups/);
+  await expect(page.getByRole('heading', { name: '团队小组', exact: true })).toBeVisible();
+});
+
+test('团队小组工作区只保留名册编辑和新建入口', async ({ page }) => {
+  await loginAsAdmin(page);
+  await page.goto(`${baseUrl}/knowledge-center/platform?tab=principals&view=groups`);
+  await expect(page.getByRole('button', { name: '新建团队小组' })).toBeVisible();
+  const form = page.locator('[data-team-group-form]');
+  await expect(form).toBeVisible();
+  await expect(form.getByRole('combobox', { name: '负责人，可输入筛选' })).toBeVisible();
+  await expect(form.getByText('团队成员', { exact: true })).toBeVisible();
+  await expect(form.getByText('影响预览')).toHaveCount(0);
+  await expect(form.getByText('变更原因')).toHaveCount(0);
+  const save = form.getByRole('button', { name: '保存', exact: true });
+  const cancel = form.getByRole('button', { name: '取消', exact: true });
+  await expect(save).toBeVisible();
+  await expect(cancel).toBeVisible();
+  expect(await form.locator('.team-group-actions button').allTextContents()).toEqual(['保存', '取消']);
+});
+
+test('修改团队成员时会话失效进入统一重新登录页', async ({ page }) => {
+  await loginAsAdmin(page);
+  await page.goto(`${baseUrl}/knowledge-center/platform?tab=principals&view=groups`);
+  const form = page.locator('[data-team-group-form]');
+  await expect(form).toBeVisible();
+  await page.route('**/knowledge-center/api/platform/team-groups/*/roster', route => route.fulfill({
+    status: 401,
+    contentType: 'application/json',
+    body: JSON.stringify({ success: false, error: { code: 'AUTH_REQUIRED', message: '请登录后继续' } }),
+  }));
+  await form.getByRole('button', { name: '保存', exact: true }).click();
+  await expect(page.getByText('登录状态已过期，请重新登录。')).toBeVisible();
+  await expect(page.getByText('请登录后继续')).toHaveCount(0);
+  await expect(page.getByText('平台管理登录')).toBeVisible();
+});
+
+test('登录后可通过真实 API 保存当前团队名册', async ({ page }) => {
+  await loginAsAdmin(page);
+  await page.goto(`${baseUrl}/knowledge-center/platform?tab=principals&view=groups`);
+  const form = page.locator('[data-team-group-form]');
+  await expect(form).toBeVisible();
+  await form.getByRole('button', { name: '保存', exact: true }).click();
+  await expect(form.locator('[data-team-group-status]')).toContainText('团队名册已保存');
+});
+
+test('旧页面的名册预览请求不再返回 405', async ({ page }) => {
+  await loginAsAdmin(page);
+  await page.goto(`${baseUrl}/knowledge-center/platform?tab=principals&view=groups`);
+  const form = page.locator('[data-team-group-form]');
+  await expect(form).toBeVisible();
+  const groupId = await form.getAttribute('data-team-group-id');
+  const response = await page.evaluate(async id => {
+    const result = await fetch(`/knowledge-center/api/platform/team-groups/${encodeURIComponent(id)}/roster/preview`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    return { status: result.status, body: await result.json() };
+  }, groupId);
+  expect(response.status).toBe(200);
+  expect(response.body?.data?.deprecated).toBe(true);
+});
+
 function directory(items) {
   return { success: true, data: { generatedAt: '2026-09-21T09:00:00.000Z', total: items.length, items, summary: {
     total: items.length,
@@ -39,6 +124,15 @@ test('未登录人员可更正错误 CAS 预绑定并需要二次确认', async 
   await expect(loginInput).toBeEnabled();
   await expect(editor.getByText('尚未通过 CAS 登录，可更正错误的预绑定账号')).toBeVisible();
   await loginInput.fill('shixin');
+  const contextRefresh = page.waitForRequest(request => request.method() === 'GET' && request.url().includes('/knowledge-center/api/platform/context'));
+  await page.evaluate(async () => {
+    const { notifyKnowledgeDataChanged } = await import('/knowledge-center/common/state/data-change.js');
+    notifyKnowledgeDataChanged(['context'], 'e2e-platform-editor-rerender');
+  });
+  const refreshedContextRequest = await contextRefresh;
+  expect((await refreshedContextRequest.response())?.ok()).toBeTruthy();
+  await expect(editor).toBeVisible();
+  await expect(loginInput).toHaveValue('shixin');
   await editor.getByRole('button', { name: '保存修改' }).click();
   const confirmation = page.getByRole('dialog', { name: '确认更正 CAS 登录名' });
   await expect(confirmation).toContainText('wrong-shixin');

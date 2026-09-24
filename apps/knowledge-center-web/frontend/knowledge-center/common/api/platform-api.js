@@ -5,6 +5,7 @@ const handbooksEndpoint = '/knowledge-center/api/assets/handbooks';
 // 用户角色由认证服务统一维护；平台管理仅提供同源代理入口。
 const permissionsEndpoint = '/knowledge-center/api/auth/users';
 const principalsEndpoint = '/knowledge-center/api/platform/principals';
+const teamGroupsEndpoint = '/knowledge-center/api/platform/team-groups';
 const databaseConnectionEndpoint = '/knowledge-center/api/platform/database-connection';
 const templatesEndpoint = '/knowledge-center/api/templates';
 export const loadTemplates = (params = {}) => {
@@ -15,6 +16,25 @@ export const loadDatabaseConnection = () => getJson(databaseConnectionEndpoint);
 export const loadDatabaseConnectionStatus = () => getJson(`${databaseConnectionEndpoint}/status`);
 export const testDatabaseConnection = payload => getJson(`${databaseConnectionEndpoint}/test`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
 export const saveDatabaseConnection = (payload, rowVersion) => getJson(databaseConnectionEndpoint, { method: 'PUT', headers: { 'Content-Type': 'application/json', ...(rowVersion != null ? { 'If-Match': String(rowVersion) } : {}) }, body: JSON.stringify(payload) });
+async function teamGroupRequest(url, options = {}) {
+  const response = await fetch(url, { cache: 'no-store', credentials: 'same-origin', ...options });
+  const result = await response.json().catch(() => null);
+  if (response.status === 401) {
+    window.dispatchEvent(new CustomEvent('knowledge-center:session-expired'));
+    throw Object.assign(new Error('登录状态已过期'), { status: 401, code: result?.error?.code || 'AUTH_REQUIRED', payload: result });
+  }
+  if (response.status === 403) {
+    window.dispatchEvent(new CustomEvent('knowledge-center:permission-denied'));
+    throw Object.assign(new Error('没有执行此操作的权限'), { status: 403, code: result?.error?.code || 'TEAM_GROUP_MANAGE_FORBIDDEN', payload: result });
+  }
+  if (!response.ok || result?.success === false || !result) throw Object.assign(new Error(result?.error?.message || `团队小组服务响应异常（HTTP ${response.status}）`), { status: response.status, code: result?.error?.code, payload: result });
+  return result;
+}
+export const loadTeamGroups = () => teamGroupRequest(`${teamGroupsEndpoint}?groupType=TECH_DOMAIN`);
+export const createTeamGroup = payload => teamGroupRequest(teamGroupsEndpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': `team-group-${Date.now()}` }, body: JSON.stringify(payload) });
+export const loadTeamGroup = id => teamGroupRequest(`${teamGroupsEndpoint}/${encodeURIComponent(id)}`);
+export const previewTeamRoster = (id, payload) => teamGroupRequest(`${teamGroupsEndpoint}/${encodeURIComponent(id)}/roster/preview`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+export const saveTeamRoster = (id, payload, rowVersion) => teamGroupRequest(`${teamGroupsEndpoint}/${encodeURIComponent(id)}/roster`, { method: 'PUT', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': `team-roster-${id}-${Date.now()}`, ...(rowVersion != null ? { 'If-Match': String(rowVersion) } : {}) }, body: JSON.stringify(payload) });
 export const loadTemplate = id => getJson(`${templatesEndpoint}/${encodeURIComponent(id)}`);
 export const createTemplate = payload => templateRequest('', templateJson('POST', payload));
 export const saveTemplate = (id, payload) => templateRequest(`/${encodeURIComponent(id)}/save`, templateJson('POST', payload));
@@ -85,7 +105,20 @@ export async function loadOutlineData(handbookId = null) {
   try {
     const list = await getJson(`${outlineEndpoint}/list`);
     const allItems = Array.isArray(list?.data) ? list.data : [];
-    if (!handbookId) return { status: 'ok', items: allItems, detail: null, selectedId: null, asOf: list?.generatedAt || new Date().toISOString() };
+    if (!handbookId) {
+      const handbooksResponse = await getJson(`${handbooksEndpoint}?page=1&pageSize=100`).catch(() => null);
+      const handbooksPayload = handbooksResponse?.data || handbooksResponse || {};
+      const handbooks = Array.isArray(handbooksPayload.items) ? handbooksPayload.items : Array.isArray(handbooksPayload.handbooks) ? handbooksPayload.handbooks : [];
+      const productsByHandbook = new Map(handbooks.map(item => [
+        String(item.handbookId || item.id),
+        String(item.productName || item.product?.name || item.productType || '').trim() || '未指定产品',
+      ]));
+      const items = allItems.map(item => ({
+        ...item,
+        productDisplayName: productsByHandbook.get(String(item.handbookId || item.manualId)) || '未指定产品',
+      }));
+      return { status: 'ok', items, detail: null, selectedId: null, asOf: list?.generatedAt || new Date().toISOString() };
+    }
     let handbookError = null;
     const handbooksResponse = await getJson(`${handbooksEndpoint}?page=1&pageSize=100`).catch(error => { handbookError = error; return null; });
     const handbooksPayload = handbooksResponse?.data || handbooksResponse || {};

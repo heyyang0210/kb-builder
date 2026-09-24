@@ -1,9 +1,16 @@
 const { test, expect } = require('@playwright/test');
+const fs = require('fs');
+const path = require('path');
 
 // This suite exercises the real authentication and incremental-build HTTP
 // APIs. GitLab content is intentionally a controlled fixture because the
 // production OAuth connector is not connected in the test environment.
 const baseUrl = process.env.KPG_BASE_URL;
+const evidenceDir = path.resolve(__dirname, '../../../runtime/test-results/navigation-pane-p0');
+function evidencePath(name, browserName) {
+  fs.mkdirSync(evidenceDir, { recursive: true });
+  return path.join(evidenceDir, `${name}-${browserName}.png`);
+}
 const repositoryMarkdown = '# 安装手册\n\n<span id="YFS" name="YFS">YFS 参数说明</span>\n\n## 参数说明\n\n1. 准备环境\n   - [x] 检查版本\n   - [ ] 核对端口\n\n> 数据库版本必须与参数依赖一致。\n\n| 参数 | 版本依赖 |\n| :--- | ---: |\n| YAS_PORT | **23.4** |\n\n---\n\n```sql\nSELECT 1;\n```';
 
 async function login(api, username, password) {
@@ -122,6 +129,70 @@ async function isolateInitialEmptyReview(page, handbookId = 'DB-001') {
 }
 
 test.describe('审核与发布多角色 E2E', () => {
+  test('P0：审核阅读目录支持调宽、取消回退、刷新后重新增强和移动端单列', async ({ page, browserName }, testInfo) => {
+    await login(page.context().request, 'admin', 'admin');
+    await installGitLabFixture(page);
+    await isolateInitialEmptyReview(page);
+    await page.goto(`${baseUrl}/knowledge-center/review`);
+    let layout = page.locator('[data-navigation-layout-id="review"]');
+    let handle = layout.locator('[data-navigation-pane-resizer]');
+    await expect(handle).toBeVisible();
+    const initial = Number(await handle.getAttribute('aria-valuenow'));
+    const layoutBox = await layout.boundingBox();
+    const handleBox = await handle.boundingBox();
+    expect(layoutBox).toBeTruthy();
+    expect(handleBox).toBeTruthy();
+    await handle.evaluate((element, coordinates) => {
+      element.setPointerCapture = () => {};
+      element.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 80, button: 0, clientX: coordinates.startX, clientY: coordinates.y }));
+      element.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, pointerId: 80, button: 0, clientX: coordinates.endX, clientY: coordinates.y }));
+      element.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 80, button: 0, clientX: coordinates.endX, clientY: coordinates.y }));
+    }, { startX: layoutBox.x + initial, endX: layoutBox.x + initial + 32, y: handleBox.y + handleBox.height / 2 });
+    const committed = Number(await handle.getAttribute('aria-valuenow'));
+    expect(committed).toBeGreaterThan(initial);
+
+    await handle.evaluate((element, coordinates) => {
+      element.setPointerCapture = () => {};
+      element.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 81, button: 0, clientX: coordinates.startX, clientY: coordinates.y }));
+      element.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, pointerId: 81, button: 0, clientX: coordinates.endX, clientY: coordinates.y }));
+    }, { startX: layoutBox.x + committed, endX: layoutBox.x + committed + 40, y: handleBox.y + handleBox.height / 2 });
+    await handle.focus();
+    await page.keyboard.press('Escape');
+    await expect(handle).toHaveAttribute('aria-valuenow', String(committed));
+
+    await page.getByRole('button', { name: '刷新阅读' }).click();
+    layout = page.locator('[data-navigation-layout-id="review"]');
+    handle = layout.locator('[data-navigation-pane-resizer]');
+    await expect(handle).toBeVisible();
+    await handle.focus();
+    await page.keyboard.press('ArrowLeft');
+    await expect(handle).toHaveAttribute('aria-valuenow', String(Math.max(220, committed - 16)));
+
+    await page.setViewportSize({ width: 375, height: 812 });
+    await expect(layout.locator('[data-navigation-pane-resizer]')).toBeHidden();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+    const directoryBox = await layout.locator('[data-navigation-pane]').boundingBox();
+    const contentBox = await layout.locator('.review-document-content').boundingBox();
+    const responsiveMetrics = await page.evaluate(() => {
+      const selectors = ['.review-main-grid', '.review-main-grid > div:first-child', '.review-reading-layout', '.review-document-tree', '.review-document-content', '.review-evidence-column'];
+      return Object.fromEntries(selectors.map(selector => {
+        const element = document.querySelector(selector);
+        if (!element) return [selector, null];
+        const box = element.getBoundingClientRect();
+        const style = getComputedStyle(element);
+        return [selector, { width: box.width, display: style.display, gridTemplateColumns: style.gridTemplateColumns, minWidth: style.minWidth }];
+      }));
+    });
+    expect(directoryBox?.width || 0).toBeGreaterThan(220);
+    expect(contentBox?.width || 0, JSON.stringify(responsiveMetrics)).toBeGreaterThan(220);
+    expect(await layout.locator('.review-document-content').evaluate(element => getComputedStyle(element).writingMode)).toBe('horizontal-tb');
+    const mobileScreenshot = await page.screenshot({ fullPage: true, path: evidencePath('review-mobile', browserName) });
+    await testInfo.attach('审核阅读目录移动端', {
+      body: mobileScreenshot,
+      contentType: 'image/png',
+    });
+  });
+
   test('全局入口无待办时自动进入可见手册阅读工作台', async ({ page }) => {
     await login(page.context().request, 'admin', 'admin');
     await installGitLabFixture(page);

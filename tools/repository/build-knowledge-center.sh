@@ -164,6 +164,8 @@ java_compile_args=(
   apps/yashandb-storage/src/Main.java
   apps/yashandb-storage/src/HandbookProjectionRepository.java
   apps/yashandb-storage/src/PrincipalRepository.java
+  apps/yashandb-storage/src/PlatformAuthRepository.java
+  apps/yashandb-storage/src/PlatformGitLabRepository.java
   apps/yashandb-storage/src/StorageSchemaDao.java
   apps/yashandb-storage/src/migration/SchemaMigrationManager.java
 )

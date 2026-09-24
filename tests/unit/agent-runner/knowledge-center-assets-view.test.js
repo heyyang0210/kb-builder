@@ -135,6 +135,12 @@ describe('知识资产工作台前端契约', () => {
     expect(app).toContain('flushDeferredAssetRender');
   });
 
+  test('手册责任人候选只展示中文姓名，CAS 账号仅用于筛选', () => {
+    expect(view()).toContain('data-search="${escapeHtml(search)}"');
+    expect(view()).toContain('>${escapeHtml(name)}</option>');
+    expect(view()).not.toContain('${escapeHtml(name)} · ${escapeHtml(identity)}');
+  });
+
   test('停用手册收纳到高级操作并使用专用确认对话框', () => {
     expect(view()).toContain('<details class="asset-advanced-actions" data-asset-advanced-actions>');
     expect(view()).toContain('<summary>高级操作</summary>');

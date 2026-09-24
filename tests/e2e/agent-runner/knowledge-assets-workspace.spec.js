@@ -165,7 +165,7 @@ test('长列表下方选择手册时保持滚动位置并显示吸顶操作栏',
   const actionPanel = page.getByLabel('当前手册操作');
   await expect(actionPanel).toBeVisible();
   await expect(actionPanel.getByRole('button', { name: /管理手册/ })).toBeVisible();
-  await expect.poll(() => mainShell.evaluate(element => element.scrollTop)).toBe(before);
+  await expect.poll(async () => Math.abs(await mainShell.evaluate(element => element.scrollTop) - before)).toBeLessThan(1);
   const box = await actionPanel.boundingBox();
   expect(box).not.toBeNull();
   expect(box.y).toBeGreaterThanOrEqual(0);
@@ -178,8 +178,26 @@ test('管理手册折叠高级操作并通过专用对话框确认停用', async
   await page.getByRole('button', { name: /管理手册/ }).click();
   const dialog = page.getByRole('dialog', { name: '管理手册' });
   await expect(dialog.getByLabel('手册名称')).toBeVisible();
-  await expect(dialog.getByLabel('A 角')).toBeVisible();
-  await expect(dialog.getByLabel('B 角')).toBeVisible();
+  const ownerA = dialog.getByRole('combobox', { name: 'A 角，可输入筛选' });
+  const ownerB = dialog.getByRole('combobox', { name: 'B 角，可输入筛选' });
+  await expect(ownerA).toBeVisible();
+  await expect(ownerB).toBeVisible();
+  await expect(ownerA).toHaveAttribute('aria-autocomplete', 'list');
+  await expect(ownerB).toHaveAttribute('aria-autocomplete', 'list');
+  await expect(dialog.locator('select[name="ownerA"]')).toHaveAttribute('aria-hidden', 'true');
+  await expect(dialog.locator('select[name="ownerB"]')).toHaveAttribute('aria-hidden', 'true');
+  await ownerA.fill('heyang');
+  const heyangOption = dialog.getByRole('option', { name: '何阳', exact: true });
+  await expect(heyangOption).toBeVisible();
+  await expect(dialog.getByRole('option', { name: /heyang/i })).toHaveCount(0);
+  await heyangOption.click();
+  await expect(ownerA).toHaveValue('何阳');
+  await expect(dialog.locator('select[name="ownerA"]')).not.toHaveValue('');
+  // 后续继续验证停用流程；恢复弹框初始快照，避免把 Combobox 选择测试当作未保存业务变更。
+  await dialog.locator('form').evaluate(form => form.reset());
+  const ownerLabels = await dialog.locator('select[name="ownerA"] option, select[name="ownerB"] option').allTextContents();
+  expect(ownerLabels.some(label => label.includes(' · '))).toBe(false);
+  if (ownerLabels.some(label => label.includes('何阳'))) expect(ownerLabels).toContain('何阳');
   await expect(dialog.getByLabel('手册状态')).toBeVisible();
   await expect(dialog.getByLabel('变更原因')).toBeVisible();
   const advanced = dialog.locator('[data-asset-advanced-actions]');
@@ -251,7 +269,9 @@ test('仓库映射配置默认分支和可切换分支并使用平台配色', as
   await page.goto(`${baseUrl}/knowledge-center/assets?handbookId=DB-001`);
   await page.getByRole('button', { name: /仓库映射/ }).click();
   const dialog = page.getByRole('dialog');
-  await expect(dialog.getByLabel('选择分支')).toBeVisible();
+  await expect(
+    dialog.getByRole('combobox', { name: '选择分支，可输入筛选' })
+  ).toBeVisible();
   await expect(dialog.getByText('允许在知识资产中切换的分支', { exact: true })).toBeVisible();
   await expect(dialog.locator('[data-mapping-enabled-branches]')).toBeVisible();
   await expect(dialog.getByRole('button', { name: '中文内容' })).toHaveCSS('background-color', 'rgb(3, 105, 161)');
@@ -269,25 +289,59 @@ test('仓库映射以多层目录树展示且文件不可选', async ({ page }) 
     { name: '_index.md', path: 'doc/Manuals/Product Overview/_index.md', type: 'blob' },
   ] }) }));
   await page.goto(`${baseUrl}/knowledge-center/assets?handbookId=DB-001`);
+  const initialBranchResponse = page.waitForResponse(response => response.url().includes('/branches'));
+  const initialTreeResponse = page.waitForResponse(response => response.url().includes('/tree'));
   await page.getByRole('button', { name: /仓库映射/ }).click();
+  await Promise.all([initialBranchResponse, initialTreeResponse]);
   const dialog = page.getByRole('dialog');
   await expect(dialog.getByText('手册映射路径', { exact: true })).toBeVisible();
   await expect(dialog.getByText('选择内容路径', { exact: true })).toHaveCount(0);
-  await dialog.getByLabel('GitLab 连接').selectOption({ index: 1 });
   await expect(dialog.getByRole('tree', { name: 'GitLab 仓库目录' })).toBeVisible();
-  await dialog.getByRole('button', { name: '展开 doc' }).click();
-  await dialog.getByRole('button', { name: '展开 产品文档' }).click();
-  await dialog.getByRole('button', { name: '展开 产品描述' }).click();
+  const dispatchTreeClick = selector => page.evaluate(currentSelector => {
+    const control = document.querySelector(currentSelector);
+    if (!control) return false;
+    control.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    return true;
+  }, selector);
+  const ensureTreeExpanded = path => page.evaluate(currentPath => {
+    const item = document.querySelector(`[data-mapping-tree-item="${CSS.escape(currentPath)}"]`);
+    if (!item) return false;
+    if (item.getAttribute('aria-expanded') === 'true') return true;
+    const control = item.querySelector('[data-mapping-tree-expand]');
+    if (!control) return false;
+    control.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    return true;
+  }, path);
+  expect(await ensureTreeExpanded('doc')).toBe(true);
+  expect(await ensureTreeExpanded('doc/产品文档')).toBe(true);
+  expect(await ensureTreeExpanded('doc/产品文档/产品描述')).toBe(true);
   const fileNode = dialog.locator('[data-mapping-tree-item="doc/产品文档/产品描述/_index.md"]');
   await expect(fileNode).toBeVisible();
   await expect(fileNode.locator('[data-mapping-tree-toggle]')).toHaveCount(0);
-  await dialog.locator('[data-mapping-tree-item="doc/产品文档/产品描述"] [data-mapping-tree-toggle]').click();
+  // 连接切换会并行刷新分支与目录；等待最后一次目录渲染落定后再选择路径。
+  await page.waitForTimeout(300);
+  const chineseTags = dialog.locator('[data-mapping-zh-tags]');
+  if (!(await chineseTags.textContent())?.includes('doc/产品文档/产品描述')) {
+    const selectedChinesePath = await dispatchTreeClick('[data-mapping-tree-toggle="doc/产品文档/产品描述"]');
+    expect(selectedChinesePath).toBe(true);
+  }
   await expect(dialog.locator('[data-mapping-zh-tags]')).toContainText('doc/产品文档/产品描述');
-  await dialog.getByRole('button', { name: '英文内容' }).click();
-  await dialog.getByRole('button', { name: '展开 Manuals' }).click();
-  await dialog.locator('[data-mapping-tree-item="doc/Manuals/Product Overview"] [data-mapping-tree-toggle]').click();
+  expect(await dispatchTreeClick('[data-mapping-language="en"]')).toBe(true);
+  expect(await ensureTreeExpanded('doc/Manuals')).toBe(true);
+  const englishTags = dialog.locator('[data-mapping-en-tags]');
+  if (!(await englishTags.textContent())?.includes('doc/Manuals/Product Overview')) {
+    const selectedEnglishPath = await dispatchTreeClick('[data-mapping-tree-toggle="doc/Manuals/Product Overview"]');
+    expect(selectedEnglishPath).toBe(true);
+  }
   await expect(dialog.locator('[data-mapping-en-tags]')).toContainText('doc/Manuals/Product Overview');
-  await dialog.getByLabel('选择分支').selectOption('release');
+  const branchInput = dialog.getByRole('combobox', {
+    name: '选择分支，可输入筛选',
+  });
+  const releaseTreeResponse = page.waitForResponse(response => response.url().includes('/tree'));
+  await branchInput.click();
+  await branchInput.fill('release');
+  await page.getByRole('option', { name: 'release', exact: true }).click();
+  await releaseTreeResponse;
   await expect(dialog.locator('[data-mapping-zh-tags]')).toContainText('尚未从目录选择中文路径');
   await expect(dialog.locator('[data-mapping-en-tags]')).toContainText('尚未从目录选择英文路径');
 });

@@ -1,25 +1,22 @@
 import { dataNote, pendingState } from '../../common/components/ui.js';
 import { escapeHtml } from '../../common/utils/dom.js';
+import { renderDirectoryTree } from '../../common/directory-tree.js';
 
 const firstDefined = (...values) => values.find(value => value !== undefined && value !== null);
 const businessStatusLabels = { incomplete: '待完善', review: '待评审', published: '已发布' };
-const stages = [
-  { key: 'directory', label: '目录与分工' }, { key: 'publish', label: '预览与发布' },
-];
 
 function identity(item = {}) {
-  const state = firstDefined(item.status, item.state);
+  const state = String(firstDefined(item.status, item.state, '')).toLowerCase();
   const statusKey = ['published', 'superseded', 'archived'].includes(state)
     ? 'published'
     : ['pending_confirmation', 'confirmed'].includes(state) ? 'review' : 'incomplete';
   return {
     name: firstDefined(item.name, item.title, item.manualName, '未命名大纲'),
-    product: firstDefined(item.productDisplayName, item.productName, item.product?.displayName, item.productId),
+    product: firstDefined(item.productDisplayName, item.productName, item.product?.name, item.product?.displayName, item.productId, '未指定产品'),
     versions: firstDefined(item.businessVersionTags, item.applicableVersionTags, item.businessVersions, []),
     outlineVersion: firstDefined(item.outlineVersion, item.outlineStructureVersion, item.structureVersion, item.version),
     state, statusKey, status: businessStatusLabels[statusKey],
     updated: firstDefined(item.updatedAt, item.modifiedAt, item.updated_at),
-    issues: Number(firstDefined(item.pendingIssueCount, item.issueCount, item.impact?.issues?.length, item.preflight?.blockingCount, 0)),
   };
 }
 
@@ -28,16 +25,10 @@ function owner(item, role) {
 }
 
 function labels(values) {
-  const items = Array.isArray(values) ? values : values ? [values] : [];
+  const items = (Array.isArray(values) ? values : values ? [values] : []).filter(value => value !== null && value !== undefined && value !== '');
   if (!items.length) return '<span class="muted">未设置</span>';
-  return `<span class="outline-tags">${items.map(value => `<span class="status">${escapeHtml(typeof value === 'object' ? firstDefined(value.displayName, value.name, value.id) : value)}</span>`).join('')}</span>`;
+  return `<span class="outline-tags">${items.map(value => `<span class="status">${escapeHtml(value && typeof value === 'object' ? firstDefined(value.displayName, value.name, value.id) : value)}</span>`).join('')}</span>`;
 }
-
-function nextAction(state) {
-  return ({ parsing: '查看解析进度', preflight_failed: '修复问题', pending_confirmation: '查看目录差异', confirmed: '查看发布准备', published: '查看已发布目录', draft: '继续完善' }[state] || '查看目录');
-}
-
-const actionStage = state => ({ preflight_failed: 'directory', confirmed: 'publish' }[state] || 'directory');
 
 function canDelete(item) {
   return !item.readOnly && !['published', 'superseded'].includes(item.state || item.status);
@@ -45,10 +36,10 @@ function canDelete(item) {
 
 function list(items, filters = {}, permissions = {}) {
   const stats = items.reduce((summary, item) => {
-    const value = identity(item); summary.pending += value.issues;
+    const value = identity(item);
     summary[value.statusKey] += 1;
     return summary;
-  }, { pending: 0, incomplete: 0, review: 0, published: 0 });
+  }, { incomplete: 0, review: 0, published: 0 });
   const query = String(filters.search || '');
   const status = String(filters.status || '');
   let visibleRows = 0;
@@ -59,15 +50,14 @@ function list(items, filters = {}, permissions = {}) {
     const hidden = Boolean((query && !searchText.includes(query.toLowerCase())) || (status && value.statusKey !== status));
     if (!hidden) visibleRows += 1;
     return `<tr data-outline-row data-outline-state="${escapeHtml(value.statusKey)}" data-outline-search-text="${escapeHtml(searchText)}"${hidden ? ' hidden' : ''}>
-      <td><a class="outline-list-link" href="/knowledge-center/outlines/${encodeURIComponent(id || '')}" data-outline-id="${escapeHtml(id || '')}"><strong title="${escapeHtml(value.name)}">${escapeHtml(value.name)}</strong><small>${escapeHtml(id || '未编号')}</small></a></td>
-      <td>${escapeHtml(value.product || '未设置')}<small>${labels(value.versions)}</small></td><td><span class="status">${escapeHtml(value.status || '未提供')}</span></td>
-      <td>${value.issues ? `<strong>${value.issues} 项</strong>` : '<span class="muted">待检查</span>'}</td><td>${escapeHtml(value.updated ? new Date(value.updated).toLocaleDateString('zh-CN') : '未提供')}</td>
-      <td><div class="outline-row-actions"><a class="button compact" href="/knowledge-center/outlines/${encodeURIComponent(id || '')}" data-outline-id="${escapeHtml(id || '')}">${nextAction(value.state)}</a>${permissions.delete && canDelete(item) ? `<button class="button compact danger" type="button" data-outline-delete="${escapeHtml(item.id || '')}" data-outline-delete-name="${escapeHtml(value.name)}"><i data-lucide="trash-2" aria-hidden="true"></i>删除</button>` : ''}</div></td></tr>`;
+      <td data-table-column="name"><a class="outline-list-link asset-name" href="/knowledge-center/outlines/${encodeURIComponent(id || '')}" data-outline-id="${escapeHtml(id || '')}"><strong title="${escapeHtml(value.name)}">${escapeHtml(value.name)}</strong></a></td>
+      <td data-table-column="product">${escapeHtml(value.product)}</td><td data-table-column="status"><span class="status">${escapeHtml(value.status || '未提供')}</span></td>
+      <td data-table-column="updated">${escapeHtml(value.updated ? new Date(value.updated).toLocaleDateString('zh-CN') : '未提供')}</td></tr>`;
   }).join('');
   return `<section class="outline-list" aria-labelledby="outline-list-title"><h2 id="outline-list-title" class="sr-only">手册大纲列表</h2>
-    <div class="outline-list-summary" aria-label="大纲概况"><div><strong>${items.length}</strong><span>份大纲</span></div><div><strong>${stats.pending || '暂无'}</strong><span>待处理问题</span></div><div><strong>${stats.incomplete || '暂无'}</strong><span>待完善</span></div><div><strong>${stats.review || '暂无'}</strong><span>待评审</span></div><div><strong>${stats.published || '暂无'}</strong><span>已发布</span></div></div>
+    <div class="outline-list-summary" aria-label="大纲概况"><div><strong>${items.length}</strong><span>份大纲</span></div><div><strong>${stats.incomplete || '暂无'}</strong><span>待完善</span></div><div><strong>${stats.review || '暂无'}</strong><span>待评审</span></div><div><strong>${stats.published || '暂无'}</strong><span>已发布</span></div></div>
     <div class="outline-list-toolbar"><label for="outline-search">搜索手册</label><input id="outline-search" type="search" value="${escapeHtml(query)}" placeholder="手册名称或编号" data-outline-search><label for="outline-status-filter">状态</label><select id="outline-status-filter" data-outline-status-filter><option value="">全部</option>${Object.entries(businessStatusLabels).map(([key, label]) => `<option value="${key}"${status === key ? ' selected' : ''}>${label}</option>`).join('')}</select></div>
-    <div class="outline-table-wrap"><table class="outline-table"><caption class="sr-only">手册大纲及状态</caption><thead><tr><th>手册</th><th>产品 / 业务版本</th><th>状态</th><th>待处理</th><th>更新时间</th><th>下一步</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <div class="outline-table-wrap"><table class="outline-table" data-table-view-id="outline-catalog" data-table-view-schema="1" data-table-view-label="手册大纲"><caption class="sr-only">手册大纲及状态</caption><thead><tr><th data-table-column="name" data-table-column-required="true" data-table-column-label="手册">手册</th><th data-table-column="product" data-table-column-label="产品">产品</th><th data-table-column="status" data-table-column-label="状态">状态</th><th data-table-column="updated" data-table-column-label="更新时间">更新时间</th></tr></thead><tbody>${rows}</tbody></table></div>
     <div class="outline-filter-empty" data-outline-filter-empty${visibleRows ? ' hidden' : ''}>没有符合当前条件的大纲。</div></section>`;
 }
 
@@ -117,82 +107,143 @@ function collectDocuments(items, parentPath = [], documents = []) {
   return documents;
 }
 
+function collectOutlineNodes(items, parentId = null, path = [], nodes = []) {
+  (Array.isArray(items) ? items : []).forEach((item, index) => {
+    const id = String(firstDefined(item.id, item.documentId, item.sourceId, `outline-node-${nodes.length + 1}`));
+    const title = String(nodeTitle(item));
+    const document = isDocumentNode(item);
+    const entry = { id, item, parentId: parentId ? String(parentId) : null, path, index, document };
+    nodes.push(entry);
+    if (!document) collectOutlineNodes(nodeChildren(item), id, [...path, title], nodes);
+  });
+  return nodes;
+}
+
+function directChildren(items, selectedId) {
+  const nodes = collectOutlineNodes(items);
+  const selected = nodes.find(node => node.id === String(selectedId));
+  const parentId = selected && !selected.document ? selected.id : (selected?.parentId || null);
+  return nodes.filter(node => String(node.parentId || '') === String(parentId || ''));
+}
+
+function nodeCompleteness(node, governance) {
+  if (node.document) {
+    const description = firstDefined(node.item.description, node.item.desc, node.item.body, '');
+    const assignment = (governance.effectiveDocumentAssignments || []).find(item => String(item.nodeId || item.documentId) === node.id);
+    if (!(assignment?.techDomainIds || []).length) return { label: '待分领域', tone: 'warning' };
+    if (!String(description).trim()) return { label: '待完善', tone: 'warning' };
+    return { label: '已完善', tone: 'success' };
+  }
+  const descendants = collectOutlineNodes(nodeChildren(node.item)).filter(item => item.document);
+  const incomplete = descendants.filter(item => nodeCompleteness(item, governance).tone !== 'success').length;
+  return incomplete ? { label: `待完善 ${incomplete}`, tone: 'warning' } : { label: '已完善', tone: 'success' };
+}
+
+function nodeGovernanceFacts(node, governance) {
+  const nodes = node.document ? [node] : collectOutlineNodes(nodeChildren(node.item)).filter(child => child.document);
+  const domains = Array.isArray(governance.techDomains) ? governance.techDomains : [];
+  const assignments = Array.isArray(governance.effectiveDocumentAssignments) ? governance.effectiveDocumentAssignments : [];
+  const domainNames = new Set();
+  const ownerNames = new Set();
+  nodes.forEach(entry => {
+    const assignment = assignments.find(item => String(item.nodeId || item.documentId) === String(entry.id) || String(item.documentId) === String(entry.item.sourceId || ''));
+    (assignment?.techDomainIds || []).forEach(id => domainNames.add(domains.find(domain => String(domain.id) === String(id))?.name || id));
+    const primaryDomainId = String(assignment?.techDomainIds?.[0] || '');
+    const primaryOwner = (assignment?.ownerships || []).find(owner => String(owner.techDomainId) === primaryDomainId);
+    if (primaryOwner?.assigneeName) ownerNames.add(primaryOwner.assigneeName);
+  });
+  const status = nodeCompleteness(node, governance);
+  return { domains: [...domainNames], owners: [...ownerNames], status, count: nodes.length };
+}
+
+function readonlyDocumentPanel(document, governance = {}) {
+  const item = document.item;
+  const title = nodeTitle(item);
+  const description = firstDefined(item.description, item.desc, item.body, '');
+  const effective = (governance.effectiveDocumentAssignments || []).find(assignment => String(assignment.nodeId || assignment.documentId) === String(document.id));
+  const domains = Array.isArray(governance.techDomains) ? governance.techDomains : [];
+  const effectiveText = (effective?.techDomainIds || []).map(id => domains.find(domain => String(domain.id) === String(id))?.name || id).join('、') || '尚未设置';
+  const assignments = Array.isArray(governance.assignments) ? governance.assignments : [];
+  const explicit = assignments.find(assignment => String(assignment.nodeId) === String(document.id));
+  const explicitDomainIds = (explicit?.techDomainIds || []).map(String);
+  const primaryDomainId = explicitDomainIds[0] || '';
+  const collaboratorIds = new Set(explicitDomainIds.slice(1));
+  const primaryOptions = domains.map(domain => `<option value="${escapeHtml(domain.id)}"${String(domain.id) === primaryDomainId ? ' selected' : ''}>${escapeHtml(domain.name || domain.code || domain.id)}</option>`).join('');
+  const collaboratorOptions = domains.map(domain => { const id = String(domain.id); return `<label class="outline-domain-option"${id === primaryDomainId ? ' hidden' : ''}><input type="checkbox" data-outline-collaborator-domain value="${escapeHtml(id)}"${collaboratorIds.has(id) ? ' checked' : ''}><span>${escapeHtml(domain.name || domain.code || domain.id)}</span></label>`; }).join('');
+  return `<article class="outline-document-panel outline-document-readonly" data-outline-document-panel="${escapeHtml(document.id)}" aria-label="${escapeHtml(title)}"><dl class="outline-document-facts"><div><dt>内容说明</dt><dd><p class="outline-description-readonly" data-outline-description-readonly>${escapeHtml(description || '暂无内容说明')}</p><small>内容说明只读查看；需要修改时使用中栏操作列的铅笔图标。</small></dd></div><div><dt>技术领域分工</dt><dd><fieldset class="outline-domain-fieldset" data-outline-domain-group="${escapeHtml(document.id)}"><legend class="sr-only">为 ${escapeHtml(title)} 设置技术领域</legend><label class="outline-primary-domain"><span>主责技术领域</span><select data-outline-primary-domain><option value="">请选择主责技术领域</option>${primaryOptions}</select></label><div class="outline-collaborator-domains"><span>协作技术领域</span><div class="outline-domain-options">${collaboratorOptions || '<span class="muted">暂无技术领域配置</span>'}</div></div><small>当前有效分工：${escapeHtml(effectiveText)}。</small></fieldset></dd></div></dl></article>`;
+}
+
+function descriptionEditDialog(governance) {
+  const published = String(governance.state || '').toLowerCase() === 'published';
+  return `<dialog class="outline-description-dialog" data-outline-description-dialog data-outline-published="${published}" aria-labelledby="outline-description-dialog-title"><form><header><div><span class="eyebrow">更新内容说明</span><h3 id="outline-description-dialog-title" data-outline-description-title>内容说明</h3></div><button class="icon-button" type="button" data-outline-description-close aria-label="关闭内容说明编辑" title="关闭"><i data-lucide="x" aria-hidden="true"></i></button></header><label for="outline-description-dialog-input">内容说明<textarea id="outline-description-dialog-input" rows="10" data-outline-description-draft${published ? ' readonly' : ''}></textarea></label><p class="muted">${published ? '已发布大纲的内容说明不可修改，请创建新的候选版本。' : '保存后只更新大纲页面说明，不修改正文。'}</p><footer><span class="outline-dialog-status" data-outline-description-status role="status"></span><button class="button secondary" type="button" data-outline-description-close>取消</button><button class="button" type="button" data-outline-description-save${published ? ' disabled' : ''}>保存说明</button></footer></form></dialog>`;
+}
+
+function nodeInspector(node, governance) {
+  if (!node) return '<aside class="outline-node-inspector" data-outline-node-inspector><div class="outline-inspector-empty"><i data-lucide="mouse-pointer-2" aria-hidden="true"></i><h3>选择一个节点</h3><p>从左侧目录或中间清单选择节点，查看治理属性。</p></div></aside>';
+  const item = node.item;
+  const title = nodeTitle(item);
+  const status = nodeCompleteness(node, governance);
+  if (!node.document) {
+    const children = nodeChildren(item);
+    const documents = collectOutlineNodes(children).filter(child => child.document).length;
+    return `<aside class="outline-node-inspector" data-outline-node-inspector><header><span class="eyebrow">目录节点</span><h3>${escapeHtml(title)}</h3><span class="outline-node-status ${status.tone}">${escapeHtml(status.label)}</span></header><dl class="outline-inspector-facts"><div><dt>所属路径</dt><dd>${escapeHtml(node.path.join(' / ') || '手册根目录')}</dd></div><div><dt>直接子节点</dt><dd>${children.length} 个</dd></div><div><dt>文档页面</dt><dd>${documents} 篇</dd></div><div><dt>说明</dt><dd>${escapeHtml(firstDefined(item.description, item.desc, '暂无目录说明'))}</dd></div></dl><p class="muted">目录只负责组织层级；内容生产配置由下游文档生产流程管理。</p></aside>`;
+  }
+  const document = { id: node.id, item };
+  return `<aside class="outline-node-inspector" data-outline-node-inspector>${readonlyDocumentPanel(document, governance)}</aside>`;
+}
+
+function nodeList(items, selectedId, governance, filterUnassigned) {
+  const children = directChildren(items, selectedId).filter(node => !filterUnassigned || (node.document && nodeCompleteness(node, governance).label === '待分领域'));
+  const columns = ['chapter', 'kind', 'status', 'domain', 'owner', 'actions'];
+  const columnLabels = { chapter: '章节名称', kind: '类型', status: '状态', domain: '技术领域', owner: '主责负责人', actions: '操作' };
+  return `<section class="outline-node-list" aria-label="大纲结构"><header><div><span class="eyebrow">当前目录</span><h3>大纲结构</h3><p class="muted">按章节名称、领域和主责负责人定位内容。</p></div><div class="outline-node-list-tools"><label class="outline-filter-field"><span class="sr-only">查询章节名称</span><input type="search" placeholder="查询章节名称" aria-label="查询章节名称" data-outline-node-search></label><label class="outline-filter-field"><span class="sr-only">按技术领域筛选</span><select aria-label="按技术领域筛选" data-outline-node-domain-filter><option value="">全部领域</option>${[...new Set(children.flatMap(node => nodeGovernanceFacts(node, governance).domains))].map(value => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`).join('')}</select></label><label class="outline-filter-field"><span class="sr-only">按主责负责人筛选</span><select aria-label="按主责负责人筛选" data-outline-node-owner-filter><option value="">全部主责负责人</option>${[...new Set(children.flatMap(node => nodeGovernanceFacts(node, governance).owners))].map(value => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`).join('')}</select></label></div></header><div class="outline-node-table-wrap"><table class="outline-node-table" data-table-view-id="outline-structure" data-table-view-schema="2" data-table-view-label="大纲结构"><thead><tr>${columns.map(key => `<th data-outline-column="${key}" data-table-column="${key}" data-table-column-required="${key === 'chapter' || key === 'actions'}" data-table-column-label="${columnLabels[key]}">${columnLabels[key]}</th>`).join('')}</tr></thead><tbody>${children.map(node => { const facts = nodeGovernanceFacts(node, governance); const domainText = facts.domains.length ? facts.domains.join('、') : '未分配'; const ownerText = facts.owners.length ? facts.owners.join('、') : '待分派'; return `<tr data-outline-node-row data-outline-node-id="${escapeHtml(node.id)}" data-outline-node-kind="${node.document ? 'document' : 'directory'}" data-outline-node-search="${escapeHtml(nodeTitle(node.item).toLowerCase())}" data-outline-node-domain="${escapeHtml(domainText)}" data-outline-node-owner="${escapeHtml(ownerText)}"><td data-outline-column="chapter" data-table-column="chapter"><button type="button" class="outline-node-row-button${node.id === String(selectedId) ? ' is-selected' : ''}" data-outline-node="${escapeHtml(node.id)}" data-outline-node-kind="${node.document ? 'document' : 'directory'}"><i data-lucide="${node.document ? 'file-text' : 'folder'}" aria-hidden="true"></i><span>${escapeHtml(nodeTitle(node.item))}</span></button></td><td data-outline-column="kind" data-table-column="kind">${node.document ? '文档' : '目录'}</td><td data-outline-column="status" data-table-column="status"><span class="outline-node-status ${facts.status.tone}">${escapeHtml(facts.status.label)}</span></td><td data-outline-column="domain" data-table-column="domain">${escapeHtml(domainText)}</td><td data-outline-column="owner" data-table-column="owner">${escapeHtml(ownerText)}</td><td data-outline-column="actions" data-table-column="actions">${node.document ? `<button class="icon-button outline-description-edit" type="button" data-outline-description-edit="${escapeHtml(node.id)}" aria-label="编辑 ${escapeHtml(nodeTitle(node.item))} 的内容说明" title="编辑内容说明"><i data-lucide="pencil" aria-hidden="true"></i></button>` : '<span class="muted">—</span>'}</td></tr>`; }).join('')}</tbody></table><div class="outline-node-filter-empty" data-outline-node-filter-empty hidden>没有符合筛选条件的章节。</div></div></section>`;
+}
+
 function containsDocument(items, selectedId) {
   return collectDocuments(items).some(item => item.id === selectedId);
 }
 
-function navigationNode(item, selectedId, depth = 0, index = 0, missingIds = new Set(), filterUnassigned = false) {
-  const children = nodeChildren(item);
-  const title = String(nodeTitle(item));
-  if (isDocumentNode(item)) {
-    const id = documentId(item, index);
-    if (filterUnassigned && !missingIds.has(id)) return '';
-    const selected = id === selectedId;
-    const sourceId = firstDefined(item.sourceId, item.documentId);
-    const status = missingIds.has(id) ? '<small class="outline-navigation-document-status">待分工</small>' : '';
-    return `<li class="outline-navigation-document${missingIds.has(id) ? ' is-unassigned' : ''}"><button class="outline-navigation-document-button${selected ? ' is-selected' : ''}${missingIds.has(id) ? ' is-unassigned' : ''}" type="button" data-outline-document="${escapeHtml(id)}" data-outline-document-unassigned="${missingIds.has(id)}"${selected ? ' aria-current="page"' : ''} title="${escapeHtml(title)}"><i data-lucide="file-text" aria-hidden="true"></i><span class="outline-navigation-document-copy"><strong>${escapeHtml(title)}</strong>${sourceId ? `<small>${escapeHtml(sourceId)}</small>` : ''}</span>${status}</button></li>`;
-  }
-  const visibleChildren = [...children]
-    .sort((left, right) => Number(left.order || 0) - Number(right.order || 0))
-    .map((child, childIndex) => navigationNode(child, selectedId, depth + 1, childIndex, missingIds, filterUnassigned))
-    .filter(Boolean);
-  const hasSelected = containsDocument(children, selectedId);
-  const content = `<i data-lucide="folder" aria-hidden="true"></i><span>${escapeHtml(title)}</span>`;
-  if (!visibleChildren.length) return filterUnassigned ? '' : `<li class="outline-navigation-group outline-navigation-empty"><div class="outline-navigation-group-label">${content}</div></li>`;
-  return `<li class="outline-navigation-group"><details${depth === 0 || hasSelected ? ' open' : ''}><summary>${content}</summary><ul>${visibleChildren.join('')}</ul></details></li>`;
+function filteredOutlineTree(items, missingIds, filterUnassigned) {
+  return (Array.isArray(items) ? items : []).map(item => {
+    if (isDocumentNode(item)) return !filterUnassigned || missingIds.has(documentId(item)) ? item : null;
+    const children = filteredOutlineTree(nodeChildren(item), missingIds, filterUnassigned);
+    return children.length ? { ...item, children } : null;
+  }).filter(Boolean);
 }
 
-function documentPanel(document, selected, governance = {}) {
-  const item = document.item;
-  const title = nodeTitle(item);
-  const description = firstDefined(item.description, item.desc, item.body, '');
-  const sourceId = firstDefined(item.sourceId, item.documentId);
-  const path = document.path.length ? document.path.join(' / ') : '未设置层级路径';
-  const panelId = `outline-document-panel-${document.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
-  const published = governance.state === 'published';
-  const assignments = Array.isArray(governance.assignments) ? governance.assignments : [];
-  const explicit = assignments.find(assignment => String(assignment.nodeId) === String(document.id));
-  const effective = (governance.effectiveDocumentAssignments || []).find(assignment => String(assignment.nodeId) === String(document.id));
-  const explicitDomainIds = explicit?.techDomainIds || [];
-  const selectedDomains = new Set((Array.isArray(explicitDomainIds) ? explicitDomainIds : [explicitDomainIds]).map(String));
-  const domains = Array.isArray(governance.techDomains) ? governance.techDomains : [];
-  const domainOptions = domains.map(domain => `<label class="outline-domain-option"><input type="checkbox" data-outline-domain-node="${escapeHtml(document.id)}" value="${escapeHtml(domain.id)}"${selectedDomains.has(String(domain.id)) ? ' checked' : ''}><span>${escapeHtml(domain.name || domain.code || domain.id)}</span></label>`).join('');
-  const effectiveIds = Array.isArray(effective?.techDomainIds) ? effective.techDomainIds.map(String) : [];
-  const effectiveNames = effectiveIds.map(id => domains.find(domain => String(domain.id) === id)?.name || id);
-  const effectiveText = effectiveNames.length ? effectiveNames.join('、') : '尚未设置';
-  const ownerships = Array.isArray(effective?.ownerships) ? effective.ownerships : [];
-  const ownershipText = ownerships.length
-    ? ownerships.map(ownership => `${ownership.techDomainName || ownership.techDomainId}：${ownership.assigneeName || (ownership.status === 'not_published' ? '发布后由领域负责人负责' : '待分派')}`).join('；')
-    : '未形成发布后的页面归属';
-  const descriptionHint = published
-    ? '已发布大纲的内容说明不可修改；如需修改，请创建新的候选版本。'
-    : '内容说明用于指导后续页面建设，可在发布前修改。';
-  const assignmentHint = published
-    ? '已发布大纲只能调整技术领域，不能取消该页面的全部分工。调整后会同步当前领域建设任务。'
-    : '这里维护页面级分工；可选择多个领域，清空后表示取消该页面的显式分工。';
-  return `<article class="outline-document-panel" data-outline-document-panel="${escapeHtml(document.id)}"${selected ? '' : ' hidden'} aria-labelledby="${escapeHtml(panelId)}-title"><header><p class="eyebrow">当前文档</p><h3 id="${escapeHtml(panelId)}-title">${escapeHtml(title)}</h3><p class="outline-document-meta">${sourceId ? `文档编号：${escapeHtml(sourceId)}` : '文档编号：未提供'}</p></header><dl class="outline-document-facts"><div><dt>层级路径</dt><dd>${escapeHtml(path)}</dd></div><div><dt>内容说明</dt><dd><textarea class="outline-description-editor" data-outline-description="${escapeHtml(document.id)}" rows="8"${published ? ' readonly' : ''}>${escapeHtml(description)}</textarea><small>${descriptionHint}</small></dd></div><div><dt>技术领域分工</dt><dd><fieldset class="outline-domain-fieldset" data-outline-domain-group="${escapeHtml(document.id)}"><legend class="sr-only">为 ${escapeHtml(title)} 选择技术领域</legend><div class="outline-domain-options">${domainOptions || '<span class="muted">暂无技术领域配置</span>'}</div><small>当前有效分工：${escapeHtml(effectiveText)}。${assignmentHint}</small></fieldset></dd></div><div><dt>页面归属</dt><dd class="outline-document-ownership">${escapeHtml(ownershipText)}<small>${published ? '归属来自当前领域建设任务，领域负责人改派后刷新本页即可更新。' : '发布后默认归属对应技术领域负责人。'}</small></dd></div></dl><p class="outline-document-body-pending" role="status"><i data-lucide="file-text" aria-hidden="true"></i><span>正文内容尚未接入，本阶段维护的是大纲中的内容说明。</span></p></article>`;
+function directoryChoiceTree(items) {
+  const buildDirectories = values => (Array.isArray(values) ? values : [])
+    .filter(item => !isDocumentNode(item))
+    .map(item => ({ ...item, children: buildDirectories(nodeChildren(item)) }));
+  const directories = buildDirectories(items);
+  return renderDirectoryTree(directories, {
+    listClass: 'outline-move-directory-list', directoryClass: 'outline-move-directory',
+    childrenOf: node => node.children || [], isLeaf: () => false,
+    nodeKey: node => String(node.id || nodeTitle(node)),
+    renderDirectoryLabel: node => `<label><input type="radio" name="outline-target-directory" value="${escapeHtml(String(node.id || ''))}"><span>${escapeHtml(nodeTitle(node))}</span></label>`,
+  });
 }
 
-function outlineNavigation(items, selectedId, governance, filterUnassigned = false) {
+function outlineNavigation(items, selectedId, governance) {
   const allDocuments = collectDocuments(items);
-  const missingIds = new Set((governance.effectiveDocumentAssignments || [])
-    .filter(item => !(item.techDomainIds || []).length)
-    .map(item => String(item.nodeId)));
-  const documents = filterUnassigned
-    ? allDocuments.filter(document => missingIds.has(document.id))
-    : allDocuments;
+  const documents = allDocuments;
   if (!allDocuments.length) return pendingState('目录暂不可用', '当前大纲未返回 document 叶子节点。');
-  const selected = documents.some(item => item.id === selectedId) ? selectedId : (documents[0]?.id || null);
-  const navigation = `<ul class="outline-navigation-root">${items.map((item, index) => navigationNode(item, selected, 0, index, missingIds, filterUnassigned)).filter(Boolean).join('')}</ul>`;
-  const missingCount = allDocuments.filter(item => missingIds.has(item.id)).length;
-  const filterLabel = filterUnassigned ? '显示全部页面' : `只看未分工 (${missingCount})`;
-  const filterIcon = filterUnassigned ? 'list' : 'filter';
-  const emptyFiltered = filterUnassigned && !documents.length;
-  const navigationBody = emptyFiltered
-    ? '<div class="outline-navigation-empty-state"><i data-lucide="check-circle-2" aria-hidden="true"></i><span>所有页面均已完成分工</span></div>'
-    : navigation;
-  const saveLabel = governance.state === 'published' ? '保存责任分工调整' : '保存目录与分工';
-  return `<div class="outline-directory-workspace"><nav class="outline-navigation" aria-label="手册目录导航"><header class="outline-navigation-header"><div><h3>手册目录</h3><span>${filterUnassigned ? `${documents.length} 个待分工页面` : `${documents.length} 篇文档`}</span></div><div class="outline-navigation-toolbar" aria-label="目录视图控制"><button class="button tertiary compact" type="button" data-outline-unassigned-filter="${filterUnassigned ? 'true' : 'false'}" aria-pressed="${filterUnassigned}"><i data-lucide="${filterIcon}" aria-hidden="true"></i>${filterLabel}</button><button class="icon-button outline-tree-toggle" type="button" data-outline-tree-toggle aria-label="展开全部目录" title="展开全部目录" data-outline-tree-expanded="false"><i data-lucide="chevrons-down" aria-hidden="true"></i></button></div></header><div class="outline-navigation-scroll">${navigationBody}</div></nav><section class="outline-document-content" aria-live="polite">${documents.map(item => documentPanel(item, item.id === selected, governance)).join('')}<div class="outline-stage-actions"><button class="button secondary" type="button" data-outline-governance-save>${saveLabel}</button><span class="outline-governance-status" role="status"></span></div></section></div>`;
+  const allNodes = collectOutlineNodes(items);
+  const selected = allNodes.some(item => item.id === String(selectedId)) ? String(selectedId) : (allDocuments[0]?.id || allNodes[0]?.id || null);
+  const selectedNode = allNodes.find(item => item.id === selected);
+  const tree = filteredOutlineTree(items, new Set(), false);
+  const navigation = renderDirectoryTree(tree, {
+    listClass: 'review-document-tree-list outline-navigation-root', directoryClass: 'outline-navigation-group',
+    childrenOf: node => nodeChildren(node), isLeaf: node => isDocumentNode(node),
+    nodeKey: node => String(node.id || nodeTitle(node)),
+    openDirectory: node => containsDocument(nodeChildren(node), selected),
+    renderDirectoryLabel: node => `<button type="button" class="outline-navigation-group-button${String(node.id) === selected ? ' is-selected' : ''}" data-outline-directory="${escapeHtml(String(node.id || nodeTitle(node)))}" data-outline-node="${escapeHtml(String(node.id || nodeTitle(node)))}"><i data-lucide="folder" aria-hidden="true"></i><span>${escapeHtml(nodeTitle(node))}</span></button>`,
+    renderLeaf: node => {
+      const id = documentId(node); const isSelected = id === selected;
+      return `<li class="${isSelected ? 'selected' : ''}" data-outline-tree-item data-outline-node-id="${escapeHtml(id)}"><button class="outline-navigation-document-button" type="button" data-outline-document="${escapeHtml(id)}" data-outline-node="${escapeHtml(id)}" data-outline-node-kind="document" aria-current="${isSelected ? 'page' : 'false'}" aria-haspopup="menu"><span>${escapeHtml(nodeTitle(node))}</span></button></li>`;
+    }
+  });
+  return `<div class="outline-governance-workbench" data-navigation-layout data-navigation-layout-id="outline-overview" data-navigation-pane-label="手册目录" data-navigation-min="240" data-navigation-max="380" data-navigation-default="280" data-navigation-width-variable="--outline-directory-width" style="--outline-directory-width:280px"><nav class="outline-navigation review-document-tree" data-navigation-pane data-directory-tree aria-label="手册目录导航"><header class="outline-navigation-header"><div><h3>手册目录</h3><span>${documents.length} 篇文档</span></div><div class="outline-navigation-toolbar" aria-label="目录视图控制"><label class="outline-navigation-search"><span class="sr-only">搜索目录</span><input type="search" placeholder="搜索目录或文档" data-directory-search data-outline-directory-search></label><button class="icon-button outline-tree-toggle" type="button" data-outline-tree-toggle aria-label="展开全部目录" title="展开全部目录" data-outline-tree-expanded="false"><i data-lucide="chevrons-down" aria-hidden="true"></i></button><button class="icon-button outline-directory-collapse" type="button" data-navigation-pane-toggle aria-label="收起手册目录" title="收起手册目录"><i data-lucide="panel-left-close" aria-hidden="true"></i></button></div></header><div class="outline-navigation-scroll">${navigation}</div><div class="outline-navigation-resizer" data-navigation-pane-resizer role="separator" aria-orientation="vertical" aria-label="调整手册目录宽度" aria-valuemin="240" aria-valuemax="380" aria-valuenow="280" tabindex="0"></div></nav>${nodeList(items, selected, governance, false)}${nodeInspector(selectedNode, governance)}<div class="outline-stage-actions"><button type="button" hidden data-outline-governance-save>保存</button><span class="outline-governance-status" role="status">已保存</span></div><div class="outline-document-context-menu" data-outline-context-menu role="menu" hidden><button type="button" role="menuitem" data-outline-context-edit>编辑内容说明</button><button type="button" role="menuitem" data-outline-move-open>移动到目录</button><button type="button" role="menuitem" data-outline-context-assignment>查看分工</button></div>${descriptionEditDialog(governance)}<dialog class="outline-move-dialog" data-outline-move-dialog aria-labelledby="outline-move-title"><form method="dialog" data-directory-tree><header><h3 id="outline-move-title">移动到目录</h3><button class="icon-button" type="button" data-outline-move-close aria-label="关闭"><i data-lucide="x" aria-hidden="true"></i></button></header><label class="outline-move-search">搜索目标目录<input type="search" data-directory-search data-outline-move-search placeholder="按目录名称搜索"></label><p>请选择目标目录：</p>${directoryChoiceTree(items)}<p class="outline-move-status" data-outline-move-status role="alert"></p><footer><button class="button secondary" type="button" data-outline-move-close>取消</button><button class="button" type="button" data-outline-move-confirm disabled>确认移动</button></footer></form></dialog></div>`;
 }
 
 function hierarchy(items) {
@@ -202,32 +253,143 @@ function hierarchy(items) {
   return roots;
 }
 
-function publish(value) {
-  const summary = value?.summary || {};
-  const missing = Array.isArray(value?.effectiveDocumentAssignments) ? value.effectiveDocumentAssignments.filter(item => !(item.techDomainIds || []).length) : [];
-  const tasks = Array.isArray(value?.tasks) ? value.tasks : [];
-  const domains = Array.isArray(value?.techDomains) ? value.techDomains : [];
-  const domainNames = new Map(domains.map(domain => [String(domain.id), domain.name || domain.code || domain.id]));
-  const preview = new Map();
-  for (const item of Array.isArray(value?.effectiveDocumentAssignments) ? value.effectiveDocumentAssignments : []) {
-    for (const domainId of item.techDomainIds || []) preview.set(String(domainId), (preview.get(String(domainId)) || 0) + 1);
-  }
-  const previewRows = [...preview.entries()].map(([domainId, count]) => `<li><span>${escapeHtml(domainNames.get(domainId) || domainId)}</span><strong>${count} 个页面</strong></li>`).join('');
-  return `<section class="outline-publish-panel"><header><div><h3>预览与发布</h3><p>确认目录说明和技术领域分工后发布。发布后将按领域生成建设任务，领域负责人可继续把页面分派给组员。</p></div><span class="status">${missing.length ? '待完成责任分工' : '发布门禁可通过'}</span></header><dl class="outline-context"><div><dt>页面分工</dt><dd>${escapeHtml(`${summary.assignedDocuments || 0} / ${summary.totalDocuments || 0}`)}</dd></div><div><dt>未分工页面</dt><dd>${missing.length ? missing.map(item => escapeHtml(item.title)).join('、') : '无'}</dd></div><div><dt>领域任务预览</dt><dd>${previewRows ? `<ul class="outline-publish-domain-preview">${previewRows}</ul>` : '保存分工后生成预览'}</dd></div><div><dt>已生成领域任务</dt><dd>${escapeHtml(tasks.length)} 个</dd></div></dl><button class="button" type="button" data-outline-publish ${missing.length ? 'disabled' : ''}>发布并生成建设任务</button><span class="outline-governance-status" role="status"></span></section>`;
+function taskPeople(task = {}) {
+  const people = [
+    { id: task.domainLeaderId, name: task.domainLeaderName, role: '领域负责人' },
+    ...(Array.isArray(task.domainMembers) ? task.domainMembers.map(person => ({ ...person, role: person.role || '领域成员' })) : []),
+  ].filter(person => person?.id);
+  return [...new Map(people.map(person => [String(person.id), { ...person, id: String(person.id) }])).values()];
 }
 
-function detail(item, projection, activeStage, permissions = {}, selectedDocumentId = null, filterUnassigned = false) {
+function taskAssigneeOptions(task, item = {}) {
+  const people = taskPeople(task);
+  const assigneeId = String(item.assigneeId || '');
+  const known = people.some(person => person.id === assigneeId);
+  const historical = assigneeId && !known
+    ? `<option value="${escapeHtml(assigneeId)}" data-assignee-name="${escapeHtml(item.assigneeName || assigneeId)}" selected>历史责任人 ${escapeHtml(item.assigneeName || assigneeId)}（不在当前团队）</option>`
+    : '';
+  return ['<option value="">未指定责任人</option>', historical, ...people.map(person => `<option value="${escapeHtml(person.id)}" data-assignee-name="${escapeHtml(person.name || person.id)}"${assigneeId === person.id ? ' selected' : ''}>${escapeHtml(person.name || person.id)}</option>`)].join('');
+}
+
+function assignmentDirectoryData(nodes, items) {
+  const flat = collectOutlineNodes(nodes);
+  const byId = new Map(flat.map(node => [node.id, node]));
+  const itemNodeId = item => String(item.outlineNodeId || item.documentId || '');
+  const directoryIds = item => {
+    const ids = [];
+    let current = byId.get(itemNodeId(item));
+    while (current?.parentId) {
+      ids.push(String(current.parentId));
+      current = byId.get(String(current.parentId));
+    }
+    return ids;
+  };
+  const directories = flat.filter(node => !node.document).map(node => ({
+    ...node,
+    children: [],
+    count: items.filter(item => directoryIds(item).includes(node.id)).length,
+  }));
+  const directoryById = new Map(directories.map(node => [node.id, node]));
+  const roots = [];
+  directories.forEach(node => {
+    const parent = directoryById.get(String(node.parentId || ''));
+    if (parent) parent.children.push(node);
+    else roots.push(node);
+  });
+  const tree = renderDirectoryTree(roots, {
+    listClass: 'outline-navigation-root outline-assignment-tree', directoryClass: 'outline-navigation-group outline-assignment-tree-node',
+    childrenOf: node => node.children || [], isLeaf: () => false, hideEmptyDirectories: false,
+    nodeKey: node => node.id,
+    renderDirectoryLabel: node => `<button type="button" class="outline-navigation-group-button" data-outline-assignment-directory="${escapeHtml(node.id)}"><i data-lucide="folder" aria-hidden="true"></i><span>${escapeHtml(nodeTitle(node.item))}</span><small>${node.count}</small></button>`,
+  });
+  return {
+    idsFor: item => directoryIds(item).join(' '),
+    html: `<nav class="outline-navigation review-document-tree outline-assignment-directory" data-navigation-pane data-directory-tree aria-label="手册目录过滤"><header class="outline-navigation-header"><div><h3>手册目录</h3><span>${items.length} 篇文档</span></div><div class="outline-navigation-toolbar" aria-label="目录视图控制"><label class="outline-navigation-search"><span class="sr-only">搜索目录或文档</span><input type="search" data-directory-search placeholder="搜索目录或文档"></label><button class="icon-button outline-tree-toggle" type="button" data-outline-tree-toggle aria-label="展开全部目录" title="展开全部目录" data-outline-tree-expanded="false"><i data-lucide="chevrons-down" aria-hidden="true"></i></button><button class="icon-button outline-directory-collapse" type="button" data-navigation-pane-toggle aria-label="收起手册目录" title="收起手册目录"><i data-lucide="panel-left-close" aria-hidden="true"></i></button></div></header><div class="outline-navigation-scroll"><button class="outline-assignment-all outline-navigation-group-label is-active" type="button" data-outline-assignment-directory=""><i data-lucide="files" aria-hidden="true"></i><span>全部文档</span><small>${items.length}</small></button>${tree}</div><div class="outline-navigation-resizer outline-assignment-resizer" data-navigation-pane-resizer role="separator" aria-orientation="vertical" aria-label="调整分工目录宽度" aria-valuemin="240" aria-valuemax="380" aria-valuenow="280" tabindex="0"></div></nav>`,
+  };
+}
+
+function assignmentStatsDialog(activeTask, items, people, domainRole) {
+  const primary = items.filter(item => domainRole(item) === '主责').length;
+  const collaborator = Math.max(items.length - primary, 0);
+  const assigned = items.filter(item => item.assigneeId).length;
+  const pending = Math.max(items.length - assigned, 0);
+  const workload = new Map(people.map(person => [person.id, 0]));
+  items.forEach(item => {
+    if (item.assigneeId) workload.set(String(item.assigneeId), (workload.get(String(item.assigneeId)) || 0) + 1);
+  });
+  const members = people.length
+    ? people.map(person => `<li${String(person.id) === String(activeTask.domainLeaderId || '') ? ' class="is-leader"' : ''}><span>${escapeHtml(person.name || person.id)}${String(person.id) === String(activeTask.domainLeaderId || '') ? '<small>领域负责人</small>' : ''}</span><strong>${workload.get(person.id) || 0}</strong></li>`).join('')
+    : '<li class="is-empty">当前领域尚未配置团队成员</li>';
+  return `<dialog class="outline-assignment-stats-dialog" data-outline-assignment-stats-dialog aria-labelledby="outline-assignment-stats-title"><div class="outline-assignment-stats-card"><header><div><span class="eyebrow">当前领域</span><h3 id="outline-assignment-stats-title">分工统计</h3></div><button class="icon-button" type="button" data-outline-assignment-stats-close aria-label="关闭分工统计"><i data-lucide="x" aria-hidden="true"></i></button></header><dl class="outline-assignment-stats-context"><div><dt>技术领域</dt><dd>${escapeHtml(activeTask.techDomainName || activeTask.domainName || activeTask.techDomainId || '未命名领域')}</dd></div><div><dt>领域负责人</dt><dd>${escapeHtml(activeTask.domainLeaderName || '未配置')}</dd></div></dl><dl class="outline-assignment-stats-summary"><div><dt>主责文档</dt><dd>${primary}</dd></div><div><dt>协作文档</dt><dd>${collaborator}</dd></div><div><dt>已分派</dt><dd>${assigned}</dd></div><div><dt>待分派</dt><dd>${pending}</dd></div></dl><section><h4>成员负载</h4><ul>${members}</ul></section><footer><button class="button secondary" type="button" data-outline-assignment-stats-close>关闭</button></footer></div></dialog>`;
+}
+
+function assignmentManagement(governance, taskProjection, handbookId, outlineId, selectedDomainId = '', selectedDocumentId = '', permissions = {}, nodes = []) {
+  if (String(governance.state || '').toLowerCase() !== 'published') {
+    return `<section class="outline-assignment-empty"><i data-lucide="users" aria-hidden="true"></i><h3>发布后才能进行人员分工</h3><p>手册管理员需要先在“文档总览”完成技术领域分工并发布大纲，系统随后按技术领域生成正式建设任务。</p><button class="button secondary" type="button" data-outline-tab="overview">前往文档总览</button></section>`;
+  }
+  if (taskProjection?.status === 'unavailable') return pendingState('分工任务暂不可用', taskProjection.error?.message || '请稍后重新读取领域建设任务。');
+  const projected = Array.isArray(taskProjection?.tasks) ? taskProjection.tasks : [];
+  const embedded = Array.isArray(governance.tasks) ? governance.tasks : [];
+  const source = projected.length ? projected : embedded;
+  const tasks = source.filter(task => {
+    const sameHandbook = !handbookId || !task.manualId || String(task.manualId) === String(handbookId);
+    const sameOutline = !outlineId || !task.outlineVersionId || String(task.outlineVersionId) === String(outlineId);
+    return sameHandbook && sameOutline;
+  });
+  if (!tasks.length) return pendingState('尚未生成领域建设任务', '当前发布版本没有可分派的领域任务，请重新检查发布结果。');
+  const activeTask = tasks.find(task => String(task.techDomainId) === String(selectedDomainId)) || tasks[0];
+  const activeDomainId = String(activeTask.techDomainId || '');
+  const people = taskPeople(activeTask);
+  const items = Array.isArray(activeTask.items) ? activeTask.items : [];
+  const domainOptions = tasks.map(task => `<option value="${escapeHtml(task.techDomainId)}"${String(task.techDomainId) === activeDomainId ? ' selected' : ''}>${escapeHtml(task.techDomainName || task.domainName || task.techDomainId)}</option>`).join('');
+  const assignments = Array.isArray(governance.effectiveDocumentAssignments) ? governance.effectiveDocumentAssignments : [];
+  const domainRole = item => {
+    const assignment = assignments.find(entry => String(entry.documentId || entry.nodeId) === String(item.documentId || item.outlineNodeId));
+    const domains = Array.isArray(assignment?.techDomainIds) ? assignment.techDomainIds.map(String) : [];
+    return domains[0] === activeDomainId ? '主责' : '协作';
+  };
+  const statsDialog = assignmentStatsDialog(activeTask, items, people, domainRole);
+  const leaderSummary = selectedDomainId && activeTask.domainLeaderName ? `<div class="outline-assignment-leader"><span>领域负责人</span><strong>${escapeHtml(activeTask.domainLeaderName)}</strong></div>` : '';
+  const assignmentHeader = `<header class="outline-assignment-heading"><label><span>当前领域</span><select data-outline-assignment-domain-filter>${domainOptions}</select></label>${leaderSummary}<button class="button secondary compact" type="button" data-outline-assignment-stats-open><i data-lucide="chart-no-axes-column" aria-hidden="true"></i>查看分工统计</button></header>`;
+  if (!activeTask.domainLeaderId) {
+    const returnTo = `/knowledge-center/outlines/${encodeURIComponent(handbookId || '')}?tab=assignments&domain=${encodeURIComponent(activeDomainId)}`;
+    const configHref = `/knowledge-center/platform?tab=principals&view=groups&returnTo=${encodeURIComponent(returnTo)}&domain=${encodeURIComponent(activeDomainId)}`;
+    const recovery = permissions.platformAdmin
+      ? `<a class="button" href="${escapeHtml(configHref)}" data-outline-team-config-link>前往团队小组配置</a>`
+      : '<p class="muted">请联系平台管理员配置负责人和成员。</p>';
+    return `<section class="outline-assignment-workspace" data-domain-task>${assignmentHeader}<div class="outline-assignment-blocked"><i data-lucide="users" aria-hidden="true"></i><h3>${escapeHtml(activeTask.techDomainName || activeTask.domainName || activeDomainId)}团队尚未配置</h3><p>分工管理需要先设置领域负责人和团队成员。</p><p>现有 ${items.length} 篇文档及历史责任记录不会被修改。</p>${recovery}</div>${statsDialog}</section>`;
+  }
+  const assigned = items.filter(item => item.assigneeId).length;
+  const pending = Math.max(items.length - assigned, 0);
+  const defaultStatus = pending > 0 ? 'pending' : 'assigned';
+  const directory = assignmentDirectoryData(nodes, items);
+  const rows = items.map(item => {
+    const focused = selectedDocumentId && [item.documentId, item.outlineNodeId].map(String).includes(String(selectedDocumentId));
+    const assigneeId = String(item.assigneeId || '');
+    const knownAssignee = !assigneeId || people.some(person => person.id === assigneeId);
+    const assignmentLabel = !assigneeId ? '待分派' : knownAssignee ? '已分派' : '历史责任人待确认';
+    const initiallyHidden = defaultStatus === 'pending' ? Boolean(assigneeId) : !assigneeId;
+    const title = item.documentTitle || item.title || item.documentId || '未命名文档';
+    const role = domainRole(item);
+    return `<tr data-outline-assignment-row data-assigned="${assigneeId ? 'true' : 'false'}" data-assignee-id="${escapeHtml(assigneeId)}" data-directory-ids="${escapeHtml(directory.idsFor(item))}" data-search-text="${escapeHtml(String(title).toLowerCase())}"${focused ? ' class="is-focused"' : ''}${initiallyHidden ? ' hidden' : ''}><td data-label="选择"><input type="checkbox" data-outline-task-select aria-label="选择 ${escapeHtml(title)}"></td><td data-label="文档"><strong>${escapeHtml(title)}</strong></td><td data-label="本领域职责"><span class="outline-domain-role ${role === '主责' ? 'primary' : ''}">本领域${role}</span></td><td data-label="责任人"><div class="outline-assignee-control"><label class="sr-only" for="outline-assignee-${escapeHtml(item.id)}">为《${escapeHtml(title)}》选择责任人</label><select id="outline-assignee-${escapeHtml(item.id)}" data-domain-task-assignee data-task-id="${escapeHtml(activeTask.id)}" data-item-id="${escapeHtml(item.id)}">${taskAssigneeOptions(activeTask, item)}</select><small class="outline-assignee-state${knownAssignee ? '' : ' needs-review'}">${assignmentLabel}</small></div></td></tr>`;
+  }).join('');
+  const teamNote = people.length === 1 ? '<p class="outline-team-note">暂无其他团队成员，当前可分派给领域负责人。</p>' : '';
+  return `<section class="outline-assignment-workspace" data-domain-task data-assignment-status="${defaultStatus}" data-assignment-directory="">${assignmentHeader}${teamNote}<div class="outline-assignment-layout" data-navigation-layout data-navigation-layout-id="outline-assignment" data-navigation-pane-label="手册目录" data-navigation-min="240" data-navigation-max="380" data-navigation-default="280" data-navigation-width-variable="--outline-assignment-directory-width" style="--outline-assignment-directory-width:280px">${directory.html}<div class="outline-assignment-content"><div class="outline-assignment-content-heading"><div><span class="eyebrow">当前领域</span><h3>分工任务</h3></div><div class="outline-assignment-summary"><button type="button"${defaultStatus === 'pending' ? ' class="active"' : ''} data-outline-assignment-status="pending">待分派 ${pending}</button><button type="button"${defaultStatus === 'assigned' ? ' class="active"' : ''} data-outline-assignment-status="assigned">已分派 ${assigned}</button><button type="button" data-outline-assignment-status="all">全部 ${items.length}</button></div></div><div class="outline-assignment-filters"><label><span class="sr-only">搜索文档</span><input type="search" placeholder="搜索文档" data-outline-assignment-search></label><label><span class="sr-only">按责任人筛选</span><select data-outline-assignment-member-filter aria-label="按责任人筛选"><option value="">全部责任人</option><option value="unassigned">待分派</option>${people.map(person => `<option value="${escapeHtml(person.id)}">${escapeHtml(person.name || person.id)}</option>`).join('')}</select></label></div><div class="outline-responsibility-table-wrap"><table class="outline-responsibility-table" data-table-view-id="outline-assignment" data-table-view-schema="2" data-table-view-label="分工任务"><thead><tr><th data-table-column="selection" data-table-column-required="true" data-table-column-label="选择"><span class="sr-only">选择</span></th><th data-table-column="document" data-table-column-required="true" data-table-column-label="文档">文档</th><th data-table-column="role" data-table-column-label="本领域职责">本领域职责</th><th data-table-column="assignee" data-table-column-required="true" data-table-column-label="责任人">责任人</th></tr></thead><tbody>${rows}</tbody></table></div><div class="outline-assignment-batch" hidden><span data-outline-selected-count>已选择 0 篇</span><select data-outline-batch-assignee aria-label="批量选择责任人"><option value="">选择责任人</option>${people.map(person => `<option value="${escapeHtml(person.id)}" data-assignee-name="${escapeHtml(person.name || person.id)}">${escapeHtml(person.name || person.id)}</option>`).join('')}</select><button class="button" type="button" data-outline-batch-assign disabled>确认分派</button></div><span class="domain-task-status" role="status"></span></div></div>${statsDialog}</section>`;
+}
+
+function detail(item, projection, permissions = {}, selectedDocumentId = null, filterUnassigned = false, activeTab = 'overview', taskProjection = null, selectedDomainId = '') {
   const value = identity(item);
   const handbookName = firstDefined(projection?.handbook?.name, projection?.handbook?.title, item.handbookName, item.manualName, value.name, '未命名手册');
   const nodes = hierarchy(firstDefined(item.nodes, item.tree, item.chapters, item.content?.parts, []));
   const governance = item.governance || item.responsibility || {};
-  const directory = outlineNavigation(nodes, selectedDocumentId, governance, filterUnassigned);
-  const bodies = { directory, publish: publish(governance) };
+  const directory = outlineNavigation(nodes, selectedDocumentId, governance);
+  const published = value.state === 'published';
+  const missingDomains = (governance.effectiveDocumentAssignments || []).filter(entry => !(entry.techDomainIds || []).length).length;
+  const assignments = assignmentManagement(governance, taskProjection, item.handbookId || projection?.handbook?.id, item.id, selectedDomainId, selectedDocumentId, permissions, nodes);
   return `<div class="outline-detail-shell"><a class="outline-back" href="/knowledge-center/outlines" data-outline-back><i data-lucide="arrow-left" aria-hidden="true"></i>返回大纲列表</a>
-    <header class="outline-detail-header"><div class="outline-detail-title"><p class="eyebrow">当前手册</p><h2>${escapeHtml(handbookName)}</h2><p>大纲版本：${escapeHtml(value.outlineVersion || value.name || '尚未建立')}</p></div><div class="outline-detail-actions"><span class="status">${escapeHtml(value.status || '状态未提供')}</span>${templateDownloadLink()}<button class="button secondary" type="button" data-outline-info-toggle aria-controls="outline-handbook-info" aria-expanded="false"><i data-lucide="info" aria-hidden="true"></i>手册信息</button>${permissions.delete && canDelete(item) ? `<button class="button danger" type="button" data-outline-delete="${escapeHtml(item.id || '')}" data-outline-delete-name="${escapeHtml(value.name)}"><i data-lucide="trash-2" aria-hidden="true"></i>删除候选</button>` : ''}<button class="button" type="button" data-outline-stage-target="${actionStage(value.state)}">${nextAction(value.state)}</button></div></header>
-    ${value.issues ? `<p class="outline-issue-summary" role="status">还有 <strong>${value.issues}</strong> 项待处理问题</p>` : ''}
-    <div class="outline-stagebar" role="tablist" aria-label="大纲处理阶段">${stages.map((stage, index) => { const active = stage.key === activeStage; return `<button id="outline-tab-${stage.key}" class="tab${active ? ' active' : ''}" type="button" role="tab" aria-selected="${active}" aria-controls="outline-panel-${stage.key}" tabindex="${active ? 0 : -1}" data-outline-tab="${stage.key}"><span>${index + 1}</span>${stage.label}</button>`; }).join('')}</div>
-    <section class="outline-stage-canvas">${stages.map(stage => `<div id="outline-panel-${stage.key}" role="tabpanel" aria-labelledby="outline-tab-${stage.key}" data-outline-panel="${stage.key}"${stage.key === activeStage ? '' : ' hidden'}>${bodies[stage.key]}</div>`).join('')}</section>${dataNote(projection)}${templateHelpPanel()}
+    <header class="outline-detail-header"><div class="outline-detail-title"><h2>${escapeHtml(handbookName)}</h2><p>大纲版本：${escapeHtml(value.outlineVersion || value.name || '尚未建立')}</p></div><div class="outline-detail-actions"><span class="status">${escapeHtml(value.status || '状态未提供')}</span><details class="outline-more-actions"><summary class="button secondary">更多操作</summary><div class="outline-more-menu">${templateDownloadLink()}<button class="button secondary" type="button" data-outline-info-toggle aria-controls="outline-handbook-info" aria-expanded="false"><i data-lucide="info" aria-hidden="true"></i>手册信息</button>${permissions.delete && canDelete(item) ? `<button class="button danger" type="button" data-outline-delete="${escapeHtml(item.id || '')}" data-outline-delete-name="${escapeHtml(value.name)}"><i data-lucide="trash-2" aria-hidden="true"></i>删除候选</button>` : ''}</div></details><button class="button" type="button" data-outline-publish data-outline-overview-action${activeTab === 'overview' ? '' : ' hidden'}${published || missingDomains ? ' disabled' : ''}>${published ? '已发布' : '发布大纲'}</button></div></header>
+    <div class="outline-work-tabs" role="tablist" aria-label="大纲管理工作区"><button id="outline-tab-overview" class="tab${activeTab === 'overview' ? ' active' : ''}" type="button" role="tab" aria-selected="${activeTab === 'overview'}" aria-controls="outline-panel-overview" tabindex="${activeTab === 'overview' ? 0 : -1}" data-outline-tab="overview">文档总览</button><button id="outline-tab-assignments" class="tab${activeTab === 'assignments' ? ' active' : ''}" type="button" role="tab" aria-selected="${activeTab === 'assignments'}" aria-controls="outline-panel-assignments" tabindex="${activeTab === 'assignments' ? 0 : -1}" data-outline-tab="assignments">分工管理</button></div>
+    <section class="outline-stage-canvas"><div id="outline-panel-overview" role="tabpanel" aria-labelledby="outline-tab-overview" data-outline-panel="overview"${activeTab === 'overview' ? '' : ' hidden'}>${directory}</div><div id="outline-panel-assignments" role="tabpanel" aria-labelledby="outline-tab-assignments" data-outline-panel="assignments"${activeTab === 'assignments' ? '' : ' hidden'}>${assignments}</div></section>${dataNote(projection)}${templateHelpPanel()}
     <div class="outline-info-overlay" data-outline-info-close hidden></div><aside id="outline-handbook-info" class="outline-info-drawer" aria-labelledby="outline-info-title" hidden><div class="outline-info-heading"><h3 id="outline-info-title">手册信息</h3><button class="icon-button" type="button" data-outline-info-close aria-label="关闭手册信息" title="关闭手册信息"><i data-lucide="x" aria-hidden="true"></i></button></div><dl class="outline-context"><div><dt>适用产品</dt><dd>${escapeHtml(value.product || '未设置')}</dd></div><div><dt>业务版本</dt><dd>${labels(value.versions)}</dd></div><div><dt>A 角</dt><dd>${escapeHtml(owner(item, 'primary'))}</dd></div><div><dt>B 角</dt><dd>${escapeHtml(owner(item, 'assistant'))}</dd></div></dl></aside></div>`;
 }
 
@@ -236,7 +398,7 @@ function importArea(handbookId) {
   return `<details class="outline-import"><summary class="button secondary"><i data-lucide="upload" aria-hidden="true"></i>导入大纲</summary><form class="outline-actions" data-outline-import data-handbook-id="${escapeHtml(handbookId)}"><label for="outline-import-file"><strong>选择 XLSX 大纲模板</strong><input id="outline-import-file" name="file" type="file" accept=".xlsx" required></label><button class="button secondary" type="submit">导入候选</button><span class="muted" data-outline-import-status aria-live="polite"></span><ol class="outline-import-results" data-outline-import-results aria-live="polite"></ol></form></details>`;
 }
 
-function renderOutlinesLegacy({ outlineProjection: source, outlineView = {}, outlinePermissions = {} }) {
+function renderOutlinesLegacy({ outlineProjection: source, outlineView = {}, outlinePermissions = {}, domainBuildTaskProjection = null }) {
   const items = Array.isArray(source?.items) ? source.items : [];
   if (outlineView.isDetail) {
     const back = '<a class="outline-back" href="/knowledge-center/outlines" data-outline-back><i data-lucide="arrow-left" aria-hidden="true"></i>返回大纲列表</a>';
@@ -244,7 +406,7 @@ function renderOutlinesLegacy({ outlineProjection: source, outlineView = {}, out
     if (source.status === 'not_found') return `${back}${pendingState('手册不存在', '该手册可能已删除，或链接已失效。')}`;
     if (source.status === 'empty') return `${back}<header class="outline-empty-header"><p class="eyebrow">当前手册</p><h2>${escapeHtml(source.handbook?.name || source.handbook?.title || outlineView.handbookId)}</h2><p class="muted">该手册尚未建立大纲。</p><div class="outline-empty-actions">${templateDownloadLink()}${outlinePermissions.create ? importArea(outlineView.handbookId) : ''}</div></header>${pendingState('尚未建立大纲', outlinePermissions.create ? '请在当前手册上下文导入 XLSX 模板，创建第一个候选版本。' : '当前账号只能查看大纲，无法创建候选版本。')}`;
     if (source.status !== 'ok') return `${back}${pendingState(source.status === 'forbidden' ? '无权查看大纲' : '大纲服务不可用', source.error?.message || '请稍后重试。')}`;
-    return detail(source.detail, { asOf: source.asOf, handbook: source.handbook }, outlineView.activeStage, outlinePermissions, outlineView.documentId, outlineView.filterUnassigned);
+    return detail(source.detail, { asOf: source.asOf, handbook: source.handbook }, outlinePermissions, outlineView.nodeId || outlineView.documentId, outlineView.filterUnassigned, outlineView.activeTab, domainBuildTaskProjection, outlineView.domainId);
   }
   let body;
   if (!source) body = pendingState('正在读取大纲', '正在请求大纲治理服务。');

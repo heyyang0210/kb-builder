@@ -23,6 +23,7 @@ description: 评审当前 YashanDB 知识中心项目的前端页面，结合项
 4. 根据证据类型读取 [references/evidence-levels.md](references/evidence-levels.md)。
 5. 查询 [memory/index.md](memory/index.md)，只读取与当前页面类型和现象相关的 Memory，不一次加载所有案例。
 6. 当前页面、当前代码和有效设计始终优先于历史 Memory；冲突时标记待确认，不得猜测。
+7. 用户要求“根据历史运行记录评分”“评估 Skill 是否需要演进”或“演进后复评”时，读取 [references/evolution-scoring.md](references/evolution-scoring.md)，盘点 `prompt.md`、`runtime/skill-evolution/product-experience-critique/`、测试结果和 Eval 证据；不得只按 Skill 文本自评。
 
 ## 评审流程
 
@@ -36,6 +37,7 @@ description: 评审当前 YashanDB 知识中心项目的前端页面，结合项
 8. 对每个重要建议说明修改对象、用户收益、实施代价、风险和验收方式。
 9. 当整改涉及信息架构、模块关系、核心流程或关键状态变化时，读取 [references/interface-remediation.md](references/interface-remediation.md)，对照输出当前界面简图、建议界面简图及优化收益。
 10. 使用 [references/output-contract.md](references/output-contract.md) 生成中文结果。默认不输出虚假精确的综合分数。
+11. 评分模式下必须同时输出：历史样本范围、评分维度与权重、演进前方法分、由历史证据支持的演进决策、演进后方法分及尚未验证的部分。没有新的独立真实评审和复测时，演进后真实运行分必须记为“待验证”，不得填入数字，也不得把“新增规则”当作“真实运行改善”。
 
 ## 证据纪律
 
@@ -51,6 +53,7 @@ description: 评审当前 YashanDB 知识中心项目的前端页面，结合项
 - 原始观察、候选经验和 Eval 运行结果写入 `runtime/skill-evolution/product-experience-critique/`，不直接写入正式 Memory。
 - 正式 Memory 晋升需要通过 `evals/` 回归，生成变更提案，并由人类确认。不允许单个案例无门禁改写核心方法。
 - 详细晋升规则见 [references/memory-governance.md](references/memory-governance.md)。
+- 历史运行评分和 Skill 演进只能先写入 `runtime/skill-evolution/product-experience-critique/`；没有新的真实运行证据时，不晋升正式 Memory。
 
 ## 结果约束
 

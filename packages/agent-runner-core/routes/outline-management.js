@@ -670,29 +670,48 @@ function readTechDomainConfig() {
 }
 
 function normalizeAssignments(value) {
-  return (Array.isArray(value) ? value : []).map(item => ({
-    nodeId: String(item?.nodeId || item?.outlineNodeId || ''),
-    techDomainIds: [...new Set((Array.isArray(item?.techDomainIds) ? item.techDomainIds : item?.techDomainId ? [item.techDomainId] : []).map(String).filter(Boolean))]
-  })).filter(item => item.nodeId);
+  return (Array.isArray(value) ? value : []).map(item => {
+    const ownerships = (Array.isArray(item?.ownerships) ? item.ownerships : []).map(ownership => ({
+      techDomainId: String(ownership?.techDomainId || ''),
+      assigneeId: ownership?.assigneeId ? String(ownership.assigneeId) : null,
+      assigneeName: ownership?.assigneeName ? String(ownership.assigneeName) : null
+    })).filter(ownership => ownership.techDomainId);
+    const result = {
+      nodeId: String(item?.nodeId || item?.outlineNodeId || ''),
+      techDomainIds: [...new Set((Array.isArray(item?.techDomainIds) ? item.techDomainIds : item?.techDomainId ? [item.techDomainId] : []).map(String).filter(Boolean))]
+    };
+    if (ownerships.length) result.ownerships = ownerships;
+    return result;
+  }).filter(item => item.nodeId);
 }
 
 function effectiveAssignmentsForNodes(nodes, assignments) {
-  const explicit = new Map(assignments.map(item => [item.nodeId, item.techDomainIds]));
+  const explicit = new Map(assignments.map(item => [item.nodeId, item]));
   const byId = new Map(nodes.map(node => [String(node.id), node]));
   return nodes.filter(isDocumentNode).map(node => {
     const domainIds = [];
     let current = String(node.id);
     while (current) {
-      for (const domainId of explicit.get(current) || []) {
+      for (const domainId of explicit.get(current)?.techDomainIds || []) {
         if (!domainIds.includes(domainId)) domainIds.push(domainId);
       }
       current = byId.get(current)?.parentId ? String(byId.get(current).parentId) : '';
     }
+    const ownerships = domainIds.map(domainId => {
+      let owner = null;
+      let cursor = String(node.id);
+      while (cursor && !owner) {
+        owner = (explicit.get(cursor)?.ownerships || []).find(item => String(item.techDomainId) === String(domainId)) || null;
+        cursor = byId.get(cursor)?.parentId ? String(byId.get(cursor).parentId) : '';
+      }
+      return owner ? { ...owner, techDomainId: String(domainId) } : { techDomainId: String(domainId) };
+    });
     return {
       nodeId: node.id,
       documentId: node.sourceId || node.id,
       title: node.title,
-      techDomainIds: domainIds
+      techDomainIds: domainIds,
+      ownerships
     };
   });
 }
@@ -710,13 +729,14 @@ function documentOwnership(effectiveDocumentAssignments, tasks, techDomains) {
     ownerships: document.techDomainIds.map(domainId => {
       const domain = domains.get(String(domainId)) || {};
       const item = taskItems.get(`${document.documentId}|${domainId}`);
+      const declared = (document.ownerships || []).find(ownership => String(ownership.techDomainId) === String(domainId));
       return {
         taskId: item?.taskId || null,
         techDomainId: String(domainId),
         techDomainName: domain.name || domain.code || domainId,
-        assigneeId: item?.assigneeId || null,
-        assigneeName: item?.assigneeName || null,
-        status: item?.status || 'not_published'
+        assigneeId: item?.assigneeId || declared?.assigneeId || null,
+        assigneeName: item?.assigneeName || declared?.assigneeName || null,
+        status: item?.status || (declared?.assigneeId ? 'assigned' : 'not_published')
       };
     })
   }));
@@ -883,8 +903,9 @@ function buildFileTasks(outline, techDomains, publishedAt, existingTasks = []) {
       if (!existing) {
         const previous = existingItems.get(`${item.documentId}|${domainId}`);
         const domain = domains.get(domainId) || {};
-        const assigneeId = previous?.assigneeId || domain.leader?.id || null;
-        const assigneeName = previous?.assigneeName || domain.leader?.name || null;
+        const declared = (item.ownerships || []).find(ownership => String(ownership.techDomainId) === String(domainId));
+        const assigneeId = previous?.assigneeId || declared?.assigneeId || domain.leader?.id || null;
+        const assigneeName = previous?.assigneeName || declared?.assigneeName || domain.leader?.name || null;
         const status = previous?.status && previous?.assigneeId
           ? previous.status
           : (assigneeId ? 'assigned' : (previous?.status || 'unassigned'));
@@ -918,6 +939,33 @@ function saveFileGovernance(outline, payload, techDomains = readTechDomainConfig
   }
   const nodes = outlineNodes(outline, outline.id);
   const nodeIds = new Set(nodes.map(node => String(node.id)));
+  if (Array.isArray(payload.directoryOrder)) {
+    const requested = payload.directoryOrder.filter(item => item && item.nodeId).map(item => ({
+      nodeId: String(item.nodeId),
+      parentNodeId: item.parentNodeId ? String(item.parentNodeId) : null,
+      order: Number(item.order)
+    }));
+    const requestedIds = new Set(requested.map(item => item.nodeId));
+    if (requested.some(item => !nodeIds.has(item.nodeId) || (item.parentNodeId && !nodeIds.has(item.parentNodeId)) || !Number.isInteger(item.order) || item.order < 1)) {
+      throw Object.assign(new Error('目录变更包含无效节点或顺序'), { status: 422, code: 'INVALID_DIRECTORY_PAYLOAD' });
+    }
+    if (requested.some(item => item.parentNodeId === item.nodeId)) {
+      throw Object.assign(new Error('目录不能成为自身的父级'), { status: 422, code: 'INVALID_DIRECTORY_HIERARCHY' });
+    }
+    for (const item of requested) {
+      let parent = item.parentNodeId;
+      const seen = new Set([item.nodeId]);
+      while (parent) {
+        if (seen.has(parent)) throw Object.assign(new Error('目录层级不能形成循环'), { status: 422, code: 'INVALID_DIRECTORY_HIERARCHY' });
+        seen.add(parent);
+        parent = requested.find(candidate => candidate.nodeId === parent)?.parentNodeId || null;
+      }
+    }
+    if (requestedIds.size !== nodeIds.size) throw Object.assign(new Error('目录变更必须包含完整目录结构'), { status: 422, code: 'INVALID_DIRECTORY_PAYLOAD' });
+    const updates = new Map(requested.map(item => [item.nodeId, item]));
+    nodes.forEach(node => { const update = updates.get(String(node.id)); if (update) { node.parentId = update.parentNodeId; node.order = update.order; } });
+    outline.nodes = nodes;
+  }
   const assignments = normalizeAssignments(payload.assignments);
   for (const assignment of assignments) {
     if (!nodeIds.has(assignment.nodeId)) {

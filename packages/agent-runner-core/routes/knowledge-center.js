@@ -2,7 +2,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { loadPlatformContext, loadPlatformProjection } = require('../lib/platform-context-gateway');
-const { GitLabConnectorError, readConfig: readGitLabConfig, upsertConnection, recordVerification, setConnectionStatus, upsertMapping, findMapping, findConnection, listBranches, listTree, readFile: readGitLabFile, listCommits, sanitizeConnection, authorizeMappedRequest } = require('../lib/gitlab-connector');
+const { GitLabConnectorError, readConfig: readFileGitLabConfig, upsertConnection: upsertFileConnection, recordVerification: recordFileVerification, setConnectionStatus: setFileConnectionStatus, upsertMapping: upsertFileMapping, findMapping: findFileMapping, findConnection: findFileConnection, listBranches, listTree, readFile: readGitLabFile, listCommits, sanitizeConnection, authorizeMappedRequest } = require('../lib/gitlab-connector');
 const { GitLabOAuthError, config: gitLabOAuthConfig, start: startGitLabOAuth, callback: completeGitLabOAuth, tokenForUser, status: gitLabOAuthStatus, disconnect: disconnectGitLabOAuth } = require('../lib/gitlab-oauth');
 const { ASSET_STATUS_LABELS, systemAssetStatus, assetStatus, projectAsset, queryKnowledgeAssets: queryKnowledgeAssetsBase, isPlatformAdmin } = require('../lib/knowledge-asset-utils');
 const { matchCleaningEndpoint } = require('../lib/knowledge-center-cleaning-contract');
@@ -72,6 +72,43 @@ function createKnowledgeCenterHandler(options) {
   } = config;
 
   const { knowledgeAssetsStore, manualStatusStore, brandIconStore, domainStore } = stores;
+  const databasePlatformMode = String(process.env.KNOWLEDGE_PLATFORM_CONFIG_MODE || process.env.KNOWLEDGE_STORAGE_MODE || '').toLowerCase() === 'database';
+  const readGitLabConfig = filePath => {
+    if (!databasePlatformMode) return readFileGitLabConfig(filePath);
+    const result = domainStore.readPlatformGitLabConnections();
+    return { connections: result.items || [], mappings: [], idempotency: [], audit: [] };
+  };
+  const findConnection = (id, filePath) => {
+    if (!databasePlatformMode) return findFileConnection(id, filePath);
+    const item = domainStore.readPlatformGitLabConnection(id);
+    if (!item) throw new GitLabConnectorError('GITLAB_CONNECTION_NOT_FOUND', 'GitLab 仓库连接不存在', 404);
+    return item;
+  };
+  const findMapping = handbookId => {
+    if (!databasePlatformMode) return findFileMapping(handbookId, GITLAB_CONFIG_PATH);
+    const mapping = domainStore.readPlatformGitLabMapping(handbookId);
+    if (!mapping) throw new GitLabConnectorError('GITLAB_MAPPING_NOT_FOUND', '该手册尚未配置 GitLab 内容映射', 404);
+    const connection = findConnection(mapping.connectionId);
+    return { mapping, connection };
+  };
+  const upsertConnection = (input, filePath, audit = {}) => {
+    if (!databasePlatformMode) return upsertFileConnection(input, filePath, audit);
+    return domainStore.upsertPlatformGitLabConnection(input, input.rowVersion ?? null, audit.idempotencyKey, audit.operatorId);
+  };
+  const setConnectionStatus = (id, status, filePath, audit = {}) => {
+    if (!databasePlatformMode) return setFileConnectionStatus(id, status, filePath, audit);
+    const current = findConnection(id); const rowVersion = audit.rowVersion == null ? current.rowVersion : Number(String(audit.rowVersion).replace(/\"/g, ''));
+    return domainStore.setPlatformGitLabConnectionState(id, status, rowVersion, audit.idempotencyKey, audit.operatorId);
+  };
+  const upsertMapping = (handbookId, input, filePath, audit = {}) => {
+    if (!databasePlatformMode) return upsertFileMapping(handbookId, input, filePath, audit);
+    return domainStore.replacePlatformGitLabMapping(handbookId, input, input.rowVersion ?? null, audit.idempotencyKey, audit.operatorId);
+  };
+  const recordVerification = (id, verification, filePath, audit = {}) => {
+    if (!databasePlatformMode) return recordFileVerification(id, verification, filePath, audit);
+    // 验证结果只进入本地运行时日志，业务配置不被改写。
+    return sanitizeConnection(findConnection(id));
+  };
   validateOutlineWorkbookPath('OUTLINE_TEMPLATE_PATH', OUTLINE_TEMPLATE_PATH);
   validateOutlineWorkbookPath('OUTLINE_SAMPLE_PATH', OUTLINE_SAMPLE_PATH);
   const templateStore = stores.templateStore || createTemplateStore();
@@ -878,7 +915,8 @@ function createKnowledgeCenterHandler(options) {
         const idempotencyKey = String(req.headers['idempotency-key'] || '').trim();
         if (!idempotencyKey) throw new GitLabConnectorError('IDEMPOTENCY_KEY_REQUIRED', '配置更新必须携带 Idempotency-Key', 400);
         const body = await readJsonBody(req);
-        const connection = upsertConnection(body, GITLAB_CONFIG_PATH, { idempotencyKey, operatorId: session?.user?.id });
+        const rowVersion = req.headers['if-match'] == null ? null : Number(String(req.headers['if-match']).replace(/\"/g, ''));
+        const connection = upsertConnection({ ...body, ...(rowVersion != null ? { rowVersion } : {}) }, GITLAB_CONFIG_PATH, { idempotencyKey, operatorId: session?.user?.id });
         res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
         res.end(JSON.stringify({ success: true, data: connection })); return;
       }
@@ -889,7 +927,8 @@ function createKnowledgeCenterHandler(options) {
         if (!idempotencyKey) throw new GitLabConnectorError('IDEMPOTENCY_KEY_REQUIRED', '配置更新必须携带 Idempotency-Key', 400);
         const id = decodeURIComponent(connectionUpdate[1]);
         const existing = findConnection(id, GITLAB_CONFIG_PATH);
-        const connection = upsertConnection({ ...existing, ...await readJsonBody(req), id }, GITLAB_CONFIG_PATH, { idempotencyKey, operatorId: session?.user?.id });
+        const rowVersion = req.headers['if-match'] == null ? null : Number(String(req.headers['if-match']).replace(/\"/g, ''));
+        const connection = upsertConnection({ ...existing, ...await readJsonBody(req), id, ...(rowVersion != null ? { rowVersion } : {}) }, GITLAB_CONFIG_PATH, { idempotencyKey, operatorId: session?.user?.id });
         res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
         res.end(JSON.stringify({ success: true, data: connection })); return;
       }
@@ -900,7 +939,8 @@ function createKnowledgeCenterHandler(options) {
         const connectionId = decodeURIComponent(connectionCommand[1]);
         const action = connectionCommand[2];
         if (action === 'disable' || action === 'enable') {
-          const connection = setConnectionStatus(connectionId, action === 'enable' ? 'active' : 'inactive', GITLAB_CONFIG_PATH, { operatorId: session?.user?.id });
+          const idempotencyKey = String(req.headers['idempotency-key'] || '').trim() || null;
+          const connection = setConnectionStatus(connectionId, action === 'enable' ? 'active' : 'inactive', GITLAB_CONFIG_PATH, { idempotencyKey, operatorId: session?.user?.id, rowVersion: req.headers['if-match'] });
           res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
           res.end(JSON.stringify({ success: true, data: connection })); return;
         }
@@ -932,7 +972,8 @@ function createKnowledgeCenterHandler(options) {
         if (!idempotencyKey) throw new GitLabConnectorError('IDEMPOTENCY_KEY_REQUIRED', '配置更新必须携带 Idempotency-Key', 400);
         const handbookId = decodeURIComponent(mappingUpdate[1]);
         if (!readKnowledgeAssets().handbooks.some(item => item.handbookId === handbookId)) throw new GitLabConnectorError('ASSET_NOT_FOUND', '手册资产不存在', 404);
-        const mapping = upsertMapping(handbookId, await readJsonBody(req), GITLAB_CONFIG_PATH, { idempotencyKey, operatorId: session?.user?.id });
+        const rowVersion = req.headers['if-match'] == null ? null : Number(String(req.headers['if-match']).replace(/\"/g, ''));
+        const mapping = upsertMapping(handbookId, { ...await readJsonBody(req), ...(rowVersion != null ? { rowVersion } : {}) }, GITLAB_CONFIG_PATH, { idempotencyKey, operatorId: session?.user?.id });
         res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
         res.end(JSON.stringify({ success: true, data: mapping })); return;
       }
@@ -1134,6 +1175,64 @@ function createKnowledgeCenterHandler(options) {
     }
     if (pathname === '/knowledge-center/api/platform/permissions' || pathname.startsWith('/knowledge-center/api/platform/permissions/')) {
       dispatchAuth(req, res, `/knowledge-center/api/auth/users${req.url.slice('/knowledge-center/api/platform/permissions'.length)}`); return;
+    }
+    if (pathname === '/knowledge-center/api/platform/team-groups' || pathname.startsWith('/knowledge-center/api/platform/team-groups/')) {
+      requireSession(req, res, async session => {
+        if (forbidUnlessPlatformAdmin(res, session)) return;
+        try {
+          if (req.method === 'GET' && pathname === '/knowledge-center/api/platform/team-groups') {
+            const params = new URL(req.url, 'http://localhost').searchParams;
+            const data = await domainStore.readTeamGroups({ groupType: params.get('groupType') || 'TECH_DOMAIN' });
+            res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+            res.end(JSON.stringify({ success: true, data })); return;
+          }
+          if (req.method === 'POST' && pathname === '/knowledge-center/api/platform/team-groups') {
+            const key = req.headers['idempotency-key'];
+            if (!key) throw Object.assign(new Error('新建团队小组必须携带 Idempotency-Key'), { code: 'IDEMPOTENCY_KEY_REQUIRED', status: 400 });
+            const data = await domainStore.createTeamGroup({ ...(await readJsonBody(req)), actor: session.user?.id || 'platform:admin' }, key);
+            res.writeHead(201, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+            res.end(JSON.stringify({ success: true, data })); return;
+          }
+          const rosterPreview = pathname.match(/^\/knowledge-center\/api\/platform\/team-groups\/([^/]+)\/roster\/preview$/);
+          const roster = pathname.match(/^\/knowledge-center\/api\/platform\/team-groups\/([^/]+)\/roster$/);
+          const detail = pathname.match(/^\/knowledge-center\/api\/platform\/team-groups\/([^/]+)$/);
+          if (rosterPreview && req.method === 'POST') {
+            await readJsonBody(req);
+            res.writeHead(200, {
+              'Content-Type': 'application/json; charset=utf-8',
+              'Cache-Control': 'no-store',
+              Deprecation: 'true',
+            });
+            res.end(JSON.stringify({
+              success: true,
+              data: {
+                previewToken: 'roster-preview-compatibility',
+                previewedImpactDigest: 'roster-preview-compatibility',
+                unfinishedTaskCount: 0,
+                removedMemberTaskCount: 0,
+                deprecated: true,
+              },
+            }));
+            return;
+          }
+          if (detail && req.method === 'GET') {
+            const data = await domainStore.readTeamGroup(decodeURIComponent(detail[1]));
+            res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify({ success: true, data })); return;
+          }
+          if (roster && req.method === 'PUT') {
+            const body = await readJsonBody(req);
+            const key = req.headers['idempotency-key'];
+            if (!key) throw Object.assign(new Error('团队名册保存必须携带 Idempotency-Key'), { code: 'IDEMPOTENCY_KEY_REQUIRED', status: 400 });
+            const rowVersion = req.headers['if-match'] || body.rowVersion;
+            const data = await domainStore.replaceTeamRoster(decodeURIComponent(roster[1]), { ...body, actor: session.user?.id || 'platform:admin' }, rowVersion, key);
+            res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify({ success: true, data })); return;
+          }
+          res.writeHead(405, { Allow: 'GET, POST, PUT' }); res.end();
+        } catch (error) {
+          res.writeHead(error.status || 503, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+          res.end(JSON.stringify({ success: false, error: { code: error.code || 'TEAM_GROUP_SERVICE_UNAVAILABLE', message: error.message || '团队名册服务暂不可用' } }));
+        }
+      }); return;
     }
     if (pathname === '/knowledge-center/api/platform/principals/template') {
       requireSession(req, res, session => {

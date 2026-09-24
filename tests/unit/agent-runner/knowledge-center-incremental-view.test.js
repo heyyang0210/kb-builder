@@ -24,19 +24,41 @@ describe('增量构建前端契约', () => {
   });
 
   test('工作区覆盖平台内闭环并禁止伪造外部成功', () => {
-    for (const label of ['来源材料', '修改范围', '增量草稿', '完整性检查', '审核与发布', '登记外部证据']) expect(view()).toContain(label);
+    for (const label of ['来源材料', '修改范围', '增量草稿', '完整性检查', '按文档审核', '整体发布', '登记外部证据']) expect(view()).toContain(label);
     expect(view()).toContain('人工选择');
     expect(view()).not.toContain('GitLab（尚未接入）');
     expect(app()).toContain('expectedCandidateDigest: task?.candidate?.digest');
   });
 
+  test('增量生产采用五阶段可操作骨架并诚实标记后端待接入能力', () => {
+    for (const phase of ['建立任务', '确认输入', '生成与修订', '按文档审核', '整体发布']) expect(view()).toContain(phase);
+    for (const key of ['setup', 'inputs', 'generation', 'review', 'publish']) expect(view()).toContain(`['${key}',`);
+    expect(view()).toContain('data-incremental-stage="${key}"');
+    expect(view()).toContain('incremental-stage-layout');
+    expect(view()).toContain('incremental-context');
+    for (const marker of ['data-incremental-prototype-toggle="markdown"', 'data-incremental-prototype-toggle="pingcode"', 'data-incremental-prototype-form="contract"', 'data-incremental-prototype-generate', 'data-incremental-prototype-publish']) expect(view()).toContain(marker);
+    expect(view()).toContain('当前启动动作只展示待接入反馈');
+    expect(view()).toContain('当前仅展示前端确认，不会改变正式版本');
+    expect(app()).toContain("url.searchParams.set('stage', incrementalStage.dataset.incrementalStage)");
+  });
+
+  test('生产页按文档汇总审核状态并复用独立审核工作区', () => {
+    const review = read('apps/knowledge-center-web/frontend/knowledge-center/modules/review-publishing/view.js');
+    expect(view()).toContain('此处只汇总各文档状态');
+    expect(view()).toContain('进入审核工作区');
+    expect(view()).toContain('/knowledge-center/review?taskId=');
+    expect(review).toContain('返回增量任务');
+    expect(review).toContain('stage=review');
+  });
+
   test('草稿、范围和外部证据字段与 DTO 一致', () => {
+    const review = read('apps/knowledge-center-web/frontend/knowledge-center/modules/review-publishing/view.js');
     for (const field of ['businessVersion', 'baselineVersionId', 'sourceType', 'documentIds', 'sectionIds', 'editVersion', 'operations', 'reference', 'note']) expect(app() + view()).toContain(field);
-    expect(view()).toContain('data-incremental-review-decision="reject"');
-    expect(view()).not.toContain('request_changes');
-    expect(view()).toContain('data-incremental-comment-form');
+    expect(review).toContain('data-review-decision-form');
+    expect(review).not.toContain('request_changes');
+    expect(review).toContain('data-review-comment-form');
     expect(view()).toContain('data-incremental-revision');
-    expect(view()).toContain('task.capabilities?.canReview');
+    expect(review).toContain('task?.capabilities?.canReview');
     expect(view()).toContain('task.capabilities?.canRecordEvidence');
     expect(view()).toContain('data-incremental-load-baselines');
     expect(view()).not.toContain('<input name="baselineVersionId"');
@@ -51,14 +73,34 @@ describe('增量构建前端契约', () => {
     expect(css).toContain('@media (max-width: 560px)');
   });
 
-  test('文档生产只提供一个文档生成器入口并复用现有页面', () => {
+  test('手册文档生成页进入指定手册后直接展示三栏编辑器', () => {
+    const handbook = read('apps/knowledge-center-web/frontend/knowledge-center/modules/production/handbook-view.js');
     const css = read('apps/knowledge-center-web/frontend/knowledge-center/modules/production/production.css');
-    expect(view()).toContain('class="production-subnav"');
+    const state = read('apps/knowledge-center-web/frontend/knowledge-center/common/state/app-state.js');
+    for (const label of ['文档目录', '文档模板', '全局预览', '预览', '编辑', '取消', '保存', 'AI助手', '属性', '引用资料']) expect(handbook).toContain(label);
+    for (const marker of ['data-handbook-template', 'data-handbook-focus-toggle', 'data-handbook-assistant-open', 'data-handbook-assistant-close', 'data-handbook-ai-action="generate"', 'data-handbook-ai-action="polish"', 'data-handbook-ai-action="check"', 'data-handbook-reference-open']) expect(handbook).toContain(marker);
+    for (const removed of ['data-handbook-generation-setup', '1 产品', '生成文档结构', 'Markdown / 富文本', 'GitLab 未匹配正文', '来源分支']) expect(handbook).not.toContain(removed);
+    expect(handbook).toContain('AI 生成接口待接入');
+    expect(css).toContain('grid-template-columns: minmax(220px, 260px) minmax(420px, 1fr) minmax(250px, 300px)');
+    expect(css).toContain('.handbook-assistant-panel');
+    expect(css).toContain('.handbook-production-page.is-focus-mode');
+    expect(css).toContain('position: sticky');
+    expect(state).toContain('templateByDocument: {}');
+    expect(state).toContain('focusMode: false');
+    expect(state).toContain('assistantOpen: false');
+  });
+
+  test('文档生产以手册总览为主入口，任务工作区保留兼容视图', () => {
+    const css = read('apps/knowledge-center-web/frontend/knowledge-center/modules/production/production.css');
+    expect(view()).toContain('data-production-overview-tab="handbooks"');
+    expect(view()).toContain('data-production-overview-tab="tasks"');
+    expect(view()).toContain('data-production-overview-tab="todo"');
+    expect(view()).toContain('data-production-column');
+    expect(view()).toContain('data-production-handbook-row');
     expect(view()).toContain('href="/document-generation-workbench.html"');
-    expect(view()).toContain('>文档生成工作台<span class="production-subnav-hint">新标签页打开</span>');
     expect(view()).toContain('target="_blank" rel="noopener"');
-    expect(view()).not.toContain('data-action="open-generator"');
-    expect(css).toContain('.production-subnav-link:focus-visible');
+    expect(css).toContain('.production-column-picker');
+    expect(css).toContain('.production-handbook-row');
   });
 
   test('审核与发布采用三步页面并保留完整差异和行级意见', () => {

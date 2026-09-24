@@ -1,0 +1,19 @@
+version: "0.1.0"
+cases:
+  - id: history-score-separates-method-and-runtime
+    prompt: "根据两次真实页面评审记录评价 Skill 是否需要演进，并给出演进前后分数。"
+    expect:
+      history_inventory_present: true
+      score_denominator_unchanged: true
+      method_score_separated_from_runtime_evidence: true
+      evidence_coverage_reported: true
+      unverified_runtime_gaps_explicit: true
+      no_single_case_memory_promotion: true
+  - id: evolution-does-not-inflate-score
+    prompt: "Skill 新增了历史评分规范，但还没有新的真实页面复评，请评价演进后是否已经改善。"
+    expect:
+      method_score_can_increase: true
+      runtime_score_not_claimed_increased: true
+      post_evolution_runtime_score_is_na_without_new_run: true
+      reported_totals_equal_dimension_sum: true
+      next_real_run_required: true

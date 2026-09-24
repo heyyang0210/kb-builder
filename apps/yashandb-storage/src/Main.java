@@ -56,6 +56,8 @@ public final class Main {
     private final JdbcConnectionPool connectionPool;
     private final HandbookProjectionRepository handbookProjectionRepository = new HandbookProjectionRepository();
     private final PrincipalRepository principalRepository = new PrincipalRepository();
+    private final PlatformAuthRepository platformAuthRepository = new PlatformAuthRepository();
+    private final PlatformGitLabRepository platformGitLabRepository = new PlatformGitLabRepository();
     private static boolean perfEnabled() { return "1".equals(System.getenv("PERF_TRACE")); }
     private static void perf(String event, long started, long sqlStarted, long lockStarted) {
         if (!perfEnabled()) return;
@@ -116,6 +118,9 @@ public final class Main {
         server.createContext("/v1/domain/outlines", this::domainOutlines);
         server.createContext("/v1/domain/tech-domains", this::techDomains);
         server.createContext("/v1/domain/build-tasks", this::buildTasks);
+        server.createContext("/v1/platform/team-groups", this::teamGroups);
+        server.createContext("/v1/platform/auth", this::platformAuth);
+        server.createContext("/v1/platform/gitlab", this::platformGitLab);
         server.createContext("/v1/export", this::exportAll);
         server.setExecutor(Executors.newFixedThreadPool(integer("YASDB_STORAGE_THREADS", 8)));
         server.start();
@@ -178,9 +183,18 @@ public final class Main {
                     query.setString(1, code);
                     try (ResultSet result = query.executeQuery()) {
                         if (!result.next()) {
-                            try (PreparedStatement insert = connection.prepareStatement("INSERT INTO KC_TECH_DOMAIN(DOMAIN_CODE, DOMAIN_NAME, STATE, CREATED_BY, UPDATED_BY) VALUES (?, ?, 'ACTIVE', 'system:seed', 'system:seed')")) {
+                            long teamGroupId = nextTableId(connection, "KC_RESPONSIBILITY_SEQ");
+                            try (PreparedStatement insertGroup = connection.prepareStatement(
+                                "INSERT INTO KC_TEAM_GROUP(TEAM_GROUP_ID,GROUP_CODE,GROUP_NAME,GROUP_TYPE,STATE,CREATED_BY,UPDATED_BY) VALUES (?, ?, ?, 'TECH_DOMAIN', 'ACTIVE', 'system:seed', 'system:seed')")) {
+                                insertGroup.setLong(1, teamGroupId);
+                                insertGroup.setString(2, "TECH_DOMAIN:" + code);
+                                insertGroup.setString(3, name);
+                                insertGroup.executeUpdate();
+                            }
+                            try (PreparedStatement insert = connection.prepareStatement("INSERT INTO KC_TECH_DOMAIN(DOMAIN_CODE, DOMAIN_NAME, TEAM_GROUP_ID, STATE, CREATED_BY, UPDATED_BY) VALUES (?, ?, ?, 'ACTIVE', 'system:seed', 'system:seed')")) {
                                 insert.setString(1, code);
                                 insert.setString(2, name);
+                                insert.setLong(3, teamGroupId);
                                 insert.executeUpdate();
                             }
                         }
@@ -647,6 +661,115 @@ public final class Main {
         }
     }
 
+    private void platformAuth(HttpExchange exchange) throws IOException {
+        String path = exchange.getRequestURI().getRawPath();
+        try (Connection connection = connection()) {
+            if ("GET".equals(exchange.getRequestMethod()) && "/v1/platform/auth/users".equals(path)) {
+                sendJson(exchange, 200, mapOf("success", true, "data", platformAuthRepository.listUsers(connection)));
+                connection.commit(); return;
+            }
+            if ("GET".equals(exchange.getRequestMethod()) && path.startsWith("/v1/platform/auth/users/")) {
+                String key = decode(path.substring("/v1/platform/auth/users/".length()));
+                Map<String, Object> user = platformAuthRepository.findUser(connection, key);
+                if (user == null) failure(exchange, 404, "AUTH_USER_NOT_FOUND", "用户不存在");
+                else sendJson(exchange, 200, mapOf("success", true, "data", user));
+                connection.commit(); return;
+            }
+            if ("POST".equals(exchange.getRequestMethod()) && "/v1/platform/auth/users/cas".equals(path)) {
+                Map<String, Object> payload = readJsonObject(exchange);
+                long principalId = Long.parseLong(coalesce(payload.get("principalId")));
+                Map<String, Object> user = platformAuthRepository.upsertCasUser(connection, principalId,
+                    coalesce(payload.get("loginName"), payload.get("casLoginName")),
+                    coalesce(payload.get("actor"), "system:cas"));
+                connection.commit(); sendJson(exchange, 200, mapOf("success", true, "data", user)); return;
+            }
+            if ("PATCH".equals(exchange.getRequestMethod()) && path.startsWith("/v1/platform/auth/users/") && path.endsWith("/roles")) {
+                String key = decode(path.substring("/v1/platform/auth/users/".length(), path.length() - "/roles".length()));
+                long expected = requiredRowVersion(exchange);
+                if (expected == Long.MIN_VALUE) return;
+                if (!requireIdempotencyKey(exchange)) return;
+                Map<String, Object> payload = readJsonObject(exchange);
+                List<String> roles = listValues(payload.get("roles")).stream().map(String::valueOf).toList();
+                Map<String, Object> user = platformAuthRepository.replaceRoles(connection, key, roles, expected,
+                    coalesce(payload.get("actor"), "system:api"));
+                connection.commit(); sendJson(exchange, 200, mapOf("success", true, "data", user)); return;
+            }
+            methodNotAllowed(exchange);
+        } catch (JsonParseException | NumberFormatException error) {
+            failure(exchange, 400, "INVALID_JSON", "请求参数格式错误");
+        } catch (SQLException error) {
+            platformFailure(exchange, error);
+        }
+    }
+
+    private void platformGitLab(HttpExchange exchange) throws IOException {
+        String path = exchange.getRequestURI().getRawPath();
+        try (Connection connection = connection()) {
+            if ("GET".equals(exchange.getRequestMethod()) && "/v1/platform/gitlab/connections".equals(path)) {
+                sendJson(exchange, 200, mapOf("success", true, "data", platformGitLabRepository.listConnections(connection)));
+                connection.commit(); return;
+            }
+            if (("PUT".equals(exchange.getRequestMethod()) || "POST".equals(exchange.getRequestMethod()))
+                && "/v1/platform/gitlab/connections".equals(path)) {
+                if (!requireIdempotencyKey(exchange)) return;
+                Map<String, Object> payload = readJsonObject(exchange);
+                Long expected = optionalRowVersion(exchange); if (expected != null && expected == Long.MIN_VALUE) return;
+                Map<String, Object> item = platformGitLabRepository.upsertConnection(connection, payload, expected,
+                    coalesce(payload.get("actor"), "system:api"));
+                connection.commit(); sendJson(exchange, 200, mapOf("success", true, "data", item)); return;
+            }
+            if (path.startsWith("/v1/platform/gitlab/connections/") && path.length() > "/v1/platform/gitlab/connections/".length()) {
+                String suffix = path.substring("/v1/platform/gitlab/connections/".length());
+                boolean stateCommand = suffix.endsWith("/state");
+                String key = decode(stateCommand ? suffix.substring(0, suffix.length() - "/state".length()) : suffix);
+                if ("GET".equals(exchange.getRequestMethod()) && !stateCommand) {
+                    Map<String, Object> item = platformGitLabRepository.findConnection(connection, key);
+                    if (item == null) failure(exchange, 404, "GITLAB_CONNECTION_NOT_FOUND", "GitLab 仓库连接不存在");
+                    else sendJson(exchange, 200, mapOf("success", true, "data", item));
+                    connection.commit(); return;
+                }
+                if ("PATCH".equals(exchange.getRequestMethod()) && !stateCommand) {
+                    long expected = requiredRowVersion(exchange); if (expected == Long.MIN_VALUE) return;
+                    if (!requireIdempotencyKey(exchange)) return;
+                    Map<String, Object> payload = readJsonObject(exchange); payload.put("id", key);
+                    Map<String, Object> item = platformGitLabRepository.upsertConnection(connection, payload, expected,
+                        coalesce(payload.get("actor"), "system:api"));
+                    connection.commit(); sendJson(exchange, 200, mapOf("success", true, "data", item)); return;
+                }
+                if ("PATCH".equals(exchange.getRequestMethod()) && stateCommand) {
+                    long expected = requiredRowVersion(exchange); if (expected == Long.MIN_VALUE) return;
+                    if (!requireIdempotencyKey(exchange)) return;
+                    Map<String, Object> payload = readJsonObject(exchange);
+                    Map<String, Object> item = platformGitLabRepository.setConnectionState(connection, key,
+                        coalesce(payload.get("status")), expected, coalesce(payload.get("actor"), "system:api"));
+                    connection.commit(); sendJson(exchange, 200, mapOf("success", true, "data", item)); return;
+                }
+            }
+            if (path.startsWith("/v1/platform/gitlab/mappings/") && path.length() > "/v1/platform/gitlab/mappings/".length()) {
+                String manualCode = decode(path.substring("/v1/platform/gitlab/mappings/".length()));
+                if ("GET".equals(exchange.getRequestMethod())) {
+                    Map<String, Object> mapping = platformGitLabRepository.findMapping(connection, manualCode);
+                    if (mapping == null) failure(exchange, 404, "GITLAB_MAPPING_NOT_FOUND", "该手册尚未配置 GitLab 内容映射");
+                    else sendJson(exchange, 200, mapOf("success", true, "data", mapping));
+                    connection.commit(); return;
+                }
+                if ("PUT".equals(exchange.getRequestMethod())) {
+                    if (!requireIdempotencyKey(exchange)) return;
+                    Long expected = optionalRowVersion(exchange); if (expected != null && expected == Long.MIN_VALUE) return;
+                    Map<String, Object> payload = readJsonObject(exchange);
+                    Map<String, Object> mapping = platformGitLabRepository.replaceMapping(connection, manualCode, payload, expected,
+                        coalesce(payload.get("actor"), "system:api"));
+                    connection.commit(); sendJson(exchange, 200, mapOf("success", true, "data", mapping)); return;
+                }
+            }
+            methodNotAllowed(exchange);
+        } catch (JsonParseException error) {
+            failure(exchange, 400, "INVALID_JSON", error.getMessage());
+        } catch (SQLException error) {
+            platformFailure(exchange, error);
+        }
+    }
+
     private void techDomains(HttpExchange exchange) throws IOException {
         if (!"GET".equals(exchange.getRequestMethod())) {
             methodNotAllowed(exchange);
@@ -658,6 +781,188 @@ public final class Main {
         } catch (SQLException error) {
             failure(exchange, 503, "DATABASE_UNAVAILABLE", "技术领域信息读取失败");
         }
+    }
+
+    private void teamGroups(HttpExchange exchange) throws IOException {
+        String path = exchange.getRequestURI().getRawPath();
+        try {
+            if ("GET".equals(exchange.getRequestMethod()) && "/v1/platform/team-groups".equals(path)) {
+                try (Connection connection = connection()) {
+                    sendJson(exchange, 200, mapOf("success", true, "data", projectTeamGroups(connection)));
+                    connection.commit();
+                }
+                return;
+            }
+            if ("POST".equals(exchange.getRequestMethod()) && "/v1/platform/team-groups".equals(path)) {
+                if (!requireIdempotencyKey(exchange)) return;
+                Map<String, Object> payload = readJsonObject(exchange);
+                try (Connection connection = connection()) {
+                    Map<String, Object> created = createTeamGroup(connection, payload);
+                    connection.commit();
+                    sendJson(exchange, 201, mapOf("success", true, "data", created));
+                }
+                return;
+            }
+            if (path.startsWith("/v1/platform/team-groups/") && path.endsWith("/roster")) {
+                if (!"PUT".equals(exchange.getRequestMethod())) { methodNotAllowed(exchange); return; }
+                if (!requireIdempotencyKey(exchange)) return;
+                Long expected = optionalRowVersion(exchange); if (expected != null && expected == Long.MIN_VALUE) return;
+                long groupId = parseTeamGroupId(path.substring("/v1/platform/team-groups/".length(), path.length() - "/roster".length()));
+                Map<String, Object> payload = readJsonObject(exchange);
+                try (Connection connection = connection()) {
+                    Map<String, Object> saved = replaceTeamRoster(connection, groupId, payload, expected);
+                    connection.commit();
+                    sendJson(exchange, 200, mapOf("success", true, "data", saved));
+                }
+                return;
+            }
+            if (path.startsWith("/v1/platform/team-groups/") && path.length() > "/v1/platform/team-groups/".length()) {
+                if (!"GET".equals(exchange.getRequestMethod())) { methodNotAllowed(exchange); return; }
+                long groupId = parseTeamGroupId(path.substring("/v1/platform/team-groups/".length()));
+                try (Connection connection = connection()) {
+                    Map<String, Object> group = teamGroup(connection, groupId, false);
+                    if (group == null) failure(exchange, 404, "TEAM_GROUP_NOT_FOUND", "团队不存在");
+                    else sendJson(exchange, 200, mapOf("success", true, "data", group));
+                    connection.commit();
+                }
+                return;
+            }
+            methodNotAllowed(exchange);
+        } catch (JsonParseException error) {
+            failure(exchange, 400, "INVALID_JSON", error.getMessage());
+        } catch (IllegalArgumentException error) {
+            failure(exchange, 400, "TEAM_GROUP_ID_INVALID", "团队编号不合法");
+        } catch (SQLException error) {
+            String code = error.getMessage();
+            if ("TEAM_GROUP_NOT_FOUND".equals(code)) failure(exchange, 404, code, "团队不存在");
+            else if ("TEAM_GROUP_VERSION_CONFLICT".equals(code)) failure(exchange, 409, code, "团队名册已被修改，请刷新后重试");
+            else if ("TEAM_GROUP_NAME_REQUIRED".equals(code)) failure(exchange, 422, code, "请填写团队小组名称");
+            else if ("TEAM_GROUP_NAME_DUPLICATED".equals(code)) failure(exchange, 409, code, "团队小组名称已存在");
+            else if ("TEAM_GROUP_LEADER_REQUIRED".equals(code)) failure(exchange, 422, code, "必须选择一名有效负责人");
+            else if ("TEAM_GROUP_MEMBER_INVALID".equals(code)) failure(exchange, 422, code, "团队成员必须是启用的平台人员");
+            else failure(exchange, 503, "TEAM_GROUP_STORE_UNAVAILABLE", "团队名册读写失败");
+        }
+    }
+
+    private long parseTeamGroupId(String value) {
+        String normalized = decode(value);
+        if (normalized == null || normalized.isBlank()) throw new IllegalArgumentException("empty");
+        return Long.parseLong(normalized);
+    }
+
+    private Map<String, Object> projectTeamGroups(Connection connection) throws SQLException {
+        List<Map<String, Object>> groups = new ArrayList<>();
+        try (PreparedStatement query = connection.prepareStatement(
+            "SELECT G.TEAM_GROUP_ID,G.GROUP_CODE,G.GROUP_NAME,G.GROUP_TYPE,G.STATE,G.ROW_VERSION,D.TECH_DOMAIN_ID,D.DOMAIN_NAME "
+                + "FROM KC_TEAM_GROUP G LEFT JOIN KC_TECH_DOMAIN D ON D.TEAM_GROUP_ID=G.TEAM_GROUP_ID AND D.STATE='ACTIVE' "
+                + "WHERE G.GROUP_TYPE='TECH_DOMAIN' ORDER BY G.GROUP_NAME,G.TEAM_GROUP_ID"); ResultSet result = query.executeQuery()) {
+            while (result.next()) groups.add(projectTeamGroupRow(connection, result));
+        }
+        return mapOf("items", groups, "total", groups.size(), "generatedAt", Instant.now().toString());
+    }
+
+    private Map<String, Object> teamGroup(Connection connection, long groupId, boolean lock) throws SQLException {
+        if (lock) {
+            try (PreparedStatement query = connection.prepareStatement("SELECT TEAM_GROUP_ID FROM KC_TEAM_GROUP WHERE TEAM_GROUP_ID=? FOR UPDATE")) {
+                query.setLong(1, groupId);
+                try (ResultSet result = query.executeQuery()) {
+                    if (!result.next()) return null;
+                }
+            }
+        }
+        String sql = "SELECT G.TEAM_GROUP_ID,G.GROUP_CODE,G.GROUP_NAME,G.GROUP_TYPE,G.STATE,G.ROW_VERSION,D.TECH_DOMAIN_ID,D.DOMAIN_NAME "
+            + "FROM KC_TEAM_GROUP G LEFT JOIN KC_TECH_DOMAIN D ON D.TEAM_GROUP_ID=G.TEAM_GROUP_ID AND D.STATE='ACTIVE' WHERE G.TEAM_GROUP_ID=?";
+        try (PreparedStatement query = connection.prepareStatement(sql)) {
+            query.setLong(1, groupId);
+            try (ResultSet result = query.executeQuery()) { return result.next() ? projectTeamGroupRow(connection, result) : null; }
+        }
+    }
+
+    private Map<String, Object> projectTeamGroupRow(Connection connection, ResultSet result) throws SQLException {
+        long groupId = result.getLong(1);
+        List<Map<String, Object>> members = new ArrayList<>();
+        Map<String, Object> leader = null;
+        try (PreparedStatement query = connection.prepareStatement(
+            "SELECT M.PRINCIPAL_ID,M.MEMBER_ROLE,P.DISPLAY_NAME FROM KC_TEAM_GROUP_MEMBER M JOIN KC_PLATFORM_PRINCIPAL P ON P.PRINCIPAL_ID=M.PRINCIPAL_ID WHERE M.TEAM_GROUP_ID=? AND M.STATE='ACTIVE' ORDER BY M.MEMBER_ROLE,M.PRINCIPAL_ID")) {
+            query.setLong(1, groupId);
+            try (ResultSet rows = query.executeQuery()) {
+                while (rows.next()) {
+                    Map<String, Object> person = mapOf("principalId", rows.getString(1), "displayName", rows.getString(3), "role", rows.getString(2));
+                    if ("LEADER".equals(rows.getString(2))) leader = person; else members.add(person);
+                }
+            }
+        }
+        return mapOf("teamGroupId", String.valueOf(groupId), "groupCode", result.getString(2), "groupName", result.getString(3),
+            "groupType", result.getString(4), "state", result.getString(5), "rowVersion", result.getLong(6), "leader", leader, "members", members,
+            "configured", leader != null, "techDomainId", result.getString(7), "techDomainName", result.getString(8));
+    }
+
+    private Map<String, Object> createTeamGroup(Connection connection, Map<String, Object> payload) throws SQLException {
+        String name = coalesce(payload.get("groupName"));
+        if (name == null) throw new SQLException("TEAM_GROUP_NAME_REQUIRED");
+        String code = coalesce(payload.get("groupCode"));
+        if (code == null) code = "TECH:" + sha256(name).substring(0, 16).toUpperCase();
+        try (PreparedStatement duplicate = connection.prepareStatement("SELECT COUNT(*) FROM KC_TEAM_GROUP WHERE GROUP_TYPE='TECH_DOMAIN' AND GROUP_NAME=?")) {
+            duplicate.setString(1, name);
+            try (ResultSet result = duplicate.executeQuery()) {
+                result.next();
+                if (result.getLong(1) > 0) throw new SQLException("TEAM_GROUP_NAME_DUPLICATED");
+            }
+        }
+        String actor = coalesce(payload.get("actor"), "platform:admin");
+        try (PreparedStatement insert = connection.prepareStatement(
+            "INSERT INTO KC_TEAM_GROUP(GROUP_CODE,GROUP_NAME,GROUP_TYPE,STATE,CREATED_BY,UPDATED_BY) VALUES (?,?,'TECH_DOMAIN','ACTIVE',?,?)")) {
+            insert.setString(1, code); insert.setString(2, name); insert.setString(3, actor); insert.setString(4, actor); insert.executeUpdate();
+        }
+        try (PreparedStatement query = connection.prepareStatement("SELECT TEAM_GROUP_ID FROM KC_TEAM_GROUP WHERE GROUP_TYPE='TECH_DOMAIN' AND GROUP_CODE=?")) {
+            query.setString(1, code);
+            try (ResultSet result = query.executeQuery()) { if (result.next()) return teamGroup(connection, result.getLong(1), false); }
+        }
+        throw new SQLException("TEAM_GROUP_NOT_FOUND");
+    }
+
+    private Map<String, Object> replaceTeamRoster(Connection connection, long groupId, Map<String, Object> payload, Long expected) throws SQLException {
+        Map<String, Object> group = teamGroup(connection, groupId, true);
+        if (group == null) throw new SQLException("TEAM_GROUP_NOT_FOUND");
+        long currentVersion = ((Number) group.get("rowVersion")).longValue();
+        if (expected != null && expected != currentVersion) throw new SQLException("TEAM_GROUP_VERSION_CONFLICT");
+        Long leaderId = numberValue(payload.get("leaderPrincipalId"));
+        List<Long> memberIds = principalIds(payload.get("memberPrincipalIds"));
+        if (leaderId == null || leaderId <= 0) throw new SQLException("TEAM_GROUP_LEADER_REQUIRED");
+        validateTeamPrincipals(connection, leaderId, memberIds);
+        try (PreparedStatement delete = connection.prepareStatement("DELETE FROM KC_TEAM_GROUP_MEMBER WHERE TEAM_GROUP_ID=?")) {
+            delete.setLong(1, groupId); delete.executeUpdate();
+        }
+        try (PreparedStatement insert = connection.prepareStatement("INSERT INTO KC_TEAM_GROUP_MEMBER(TEAM_GROUP_ID,PRINCIPAL_ID,MEMBER_ROLE,STATE,CREATED_BY,UPDATED_BY) VALUES (?,?,?,'ACTIVE',?,?)")) {
+            String actor = coalesce(payload.get("actor"), "platform:admin");
+            insert.setLong(1, groupId); insert.setLong(2, leaderId); insert.setString(3, "LEADER"); insert.setString(4, actor); insert.setString(5, actor); insert.addBatch();
+            for (Long id : memberIds) { if (id == leaderId) continue; insert.setLong(1, groupId); insert.setLong(2, id); insert.setString(3, "MEMBER"); insert.setString(4, actor); insert.setString(5, actor); insert.addBatch(); }
+            insert.executeBatch();
+        }
+        try (PreparedStatement update = connection.prepareStatement("UPDATE KC_TEAM_GROUP SET ROW_VERSION=ROW_VERSION+1,UPDATED_BY=?,UPDATED_AT=CURRENT_TIMESTAMP WHERE TEAM_GROUP_ID=?")) {
+            update.setString(1, coalesce(payload.get("actor"), "platform:admin")); update.setLong(2, groupId); update.executeUpdate();
+        }
+        return teamGroup(connection, groupId, false);
+    }
+
+    private void validateTeamPrincipals(Connection connection, long leaderId, List<Long> memberIds) throws SQLException {
+        List<Long> all = new ArrayList<>(memberIds); if (!all.contains(leaderId)) all.add(leaderId);
+        for (Long id : all) {
+            try (PreparedStatement query = connection.prepareStatement("SELECT PRINCIPAL_ID FROM KC_PLATFORM_PRINCIPAL WHERE PRINCIPAL_ID=? AND STATE='ACTIVE'")) {
+                query.setLong(1, id); try (ResultSet result = query.executeQuery()) { if (!result.next()) throw new SQLException("TEAM_GROUP_MEMBER_INVALID"); }
+            }
+        }
+    }
+
+    private static Long numberValue(Object value) {
+        if (value == null || String.valueOf(value).isBlank()) return null;
+        try { return Long.valueOf(String.valueOf(value)); } catch (NumberFormatException error) { return null; }
+    }
+
+    private static List<Long> principalIds(Object value) throws SQLException {
+        List<Long> ids = new ArrayList<>();
+        for (Object item : listValues(value)) { Long id = numberValue(item); if (id == null || id <= 0 || ids.contains(id)) throw new SQLException("TEAM_GROUP_MEMBER_INVALID"); ids.add(id); }
+        return ids;
     }
 
     private void buildTasks(HttpExchange exchange) throws IOException {
@@ -720,6 +1025,8 @@ public final class Main {
                 failure(exchange, 404, "BUILD_TASK_NOT_FOUND", "领域建设任务不存在");
             } else if ("BUILD_TASK_ITEM_NOT_FOUND".equals(code)) {
                 failure(exchange, 404, "BUILD_TASK_ITEM_NOT_FOUND", "任务页面不存在");
+            } else if ("BUILD_TASK_TEAM_BINDING_REQUIRED".equals(code)) {
+                failure(exchange, 422, code, "当前技术领域尚未建立显式团队绑定，不能自动推断责任人");
             } else {
                 failure(exchange, 503, "DATABASE_UNAVAILABLE", "领域建设任务读写失败");
             }
@@ -757,38 +1064,19 @@ public final class Main {
     private Map<String, Object> projectTechDomains(Connection connection) throws SQLException {
         List<Map<String, Object>> domains = new ArrayList<>();
         Map<String, Map<String, Object>> byId = new LinkedHashMap<>();
-        String domainSql = "SELECT TECH_DOMAIN_ID, DOMAIN_CODE, DOMAIN_NAME FROM KC_TECH_DOMAIN WHERE STATE='ACTIVE' ORDER BY DOMAIN_NAME, TECH_DOMAIN_ID";
+        String domainSql = "SELECT TECH_DOMAIN_ID, DOMAIN_CODE, DOMAIN_NAME, TEAM_GROUP_ID FROM KC_TECH_DOMAIN WHERE STATE='ACTIVE' ORDER BY DOMAIN_NAME, TECH_DOMAIN_ID";
         try (PreparedStatement statement = connection.prepareStatement(domainSql); ResultSet result = statement.executeQuery()) {
             while (result.next()) {
                 Map<String, Object> domain = new LinkedHashMap<>();
                 domain.put("id", result.getString(1));
                 domain.put("code", result.getString(2));
                 domain.put("name", result.getString(3));
-                domain.put("leader", null);
-                domain.put("members", new ArrayList<>());
+                Map<String, Object> personnel = domainPersonnel(connection, result.getString(1));
+                domain.put("teamGroupId", result.getString(4));
+                domain.put("leader", personnel.get("leader"));
+                domain.put("members", personnel.get("members"));
                 domains.add(domain);
                 byId.put(result.getString(1), domain);
-            }
-        }
-        String personnelSql = "SELECT TECH_DOMAIN_ID, PRINCIPAL_ID, MEMBER_ROLE FROM KC_TECH_DOMAIN_MEMBER WHERE STATE = 'ACTIVE' ORDER BY PRINCIPAL_ID";
-        try (PreparedStatement statement = connection.prepareStatement(personnelSql); ResultSet result = statement.executeQuery()) {
-            while (result.next()) {
-                Map<String, Object> domain = byId.get(result.getString(1));
-                if (domain == null) {
-                    continue;
-                }
-                Map<String, Object> person = mapOf(
-                    "id", result.getString(2),
-                    "name", result.getString(2),
-                    "role", result.getString(3).toLowerCase()
-                );
-                if ("LEADER".equals(result.getString(3))) {
-                    domain.put("leader", person);
-                } else {
-                    @SuppressWarnings("unchecked")
-                    List<Object> members = (List<Object>) domain.get("members");
-                    members.add(person);
-                }
             }
         }
         return mapOf("techDomains", domains, "generatedAt", Instant.now().toString());
@@ -1171,10 +1459,17 @@ public final class Main {
 
     private Long techDomainLeaderId(Connection connection, long domainId) throws SQLException {
         try (PreparedStatement query = connection.prepareStatement(
-            "SELECT PRINCIPAL_ID FROM KC_TECH_DOMAIN_MEMBER WHERE TECH_DOMAIN_ID=? AND MEMBER_ROLE='LEADER' AND STATE='ACTIVE' ORDER BY PRINCIPAL_ID")) {
+            "SELECT M.PRINCIPAL_ID FROM KC_TECH_DOMAIN D "
+                + "JOIN KC_TEAM_GROUP G ON G.TEAM_GROUP_ID=D.TEAM_GROUP_ID AND G.STATE='ACTIVE' "
+                + "JOIN KC_TEAM_GROUP_MEMBER M ON M.TEAM_GROUP_ID=G.TEAM_GROUP_ID AND M.STATE='ACTIVE' AND M.MEMBER_ROLE='LEADER' "
+                + "JOIN KC_PLATFORM_PRINCIPAL P ON P.PRINCIPAL_ID=M.PRINCIPAL_ID AND P.STATE='ACTIVE' "
+                + "WHERE D.TECH_DOMAIN_ID=? AND D.STATE='ACTIVE'")) {
             query.setLong(1, domainId);
             try (ResultSet result = query.executeQuery()) {
-                return result.next() ? result.getLong(1) : null;
+                if (!result.next()) return null;
+                long leaderId = result.getLong(1);
+                if (result.next()) throw new SQLException("TEAM_GROUP_LEADER_DUPLICATED");
+                return leaderId;
             }
         }
     }
@@ -1243,8 +1538,9 @@ public final class Main {
         task.put("createdAt", timestampToString(result.getTimestamp(7)));
         task.put("updatedAt", timestampToString(result.getTimestamp(8)));
         List<Map<String, Object>> items = new ArrayList<>();
-        String itemSql = "SELECT I.RESP_ITEM_ID, N.NODE_KEY, N.NODE_TITLE, I.OWNER_PRINCIPAL_ID, I.BINDING_STATUS, I.UPDATED_BY, I.UPDATED_AT "
+        String itemSql = "SELECT I.RESP_ITEM_ID, N.NODE_KEY, N.NODE_TITLE, I.OWNER_PRINCIPAL_ID, P.DISPLAY_NAME, I.BINDING_STATUS, I.UPDATED_BY, I.UPDATED_AT "
             + "FROM KC_MANUAL_OUTLINE_RESP_ITEM I JOIN KC_MANUAL_OUTLINE_NODE N ON N.OUTLINE_NODE_ID=I.OUTLINE_NODE_ID "
+            + "LEFT JOIN KC_PLATFORM_PRINCIPAL P ON P.PRINCIPAL_ID=I.OWNER_PRINCIPAL_ID "
             + "JOIN KC_MANUAL_OUTLINE_VERSION V ON V.CURRENT_RESP_VERSION_ID=I.RESP_VERSION_ID "
             + "WHERE V.OUTLINE_VERSION_ID=? AND I.TECH_DOMAIN_ID=? ORDER BY N.SORT_NO, I.RESP_ITEM_ID";
         try (PreparedStatement statement = connection.prepareStatement(itemSql)) {
@@ -1257,9 +1553,9 @@ public final class Main {
                     items.add(mapOf(
                         "id", buildTaskItemId(taskId, nodeKey, domainId), "taskId", taskId,
                         "documentId", nodeKey, "documentTitle", rows.getString(3), "outlineNodeId", nodeKey,
-                        "techDomainId", domainId, "assigneeId", assigneeId, "assigneeName", assigneeId,
-                        "status", "BOUND".equals(rows.getString(5)) ? "assigned" : "unassigned",
-                        "assignedBy", rows.getString(6), "assignedAt", timestampToString(rows.getTimestamp(7))
+                        "techDomainId", domainId, "assigneeId", assigneeId, "assigneeName", rows.getString(5),
+                        "status", "BOUND".equals(rows.getString(6)) ? "assigned" : "unassigned",
+                        "assignedBy", rows.getString(7), "assignedAt", timestampToString(rows.getTimestamp(8))
                     ));
                 }
             }
@@ -1269,23 +1565,29 @@ public final class Main {
     }
 
     private Map<String, Object> domainPersonnel(Connection connection, String domainId) throws SQLException {
-        Map<String, Object> value = mapOf("leader", null, "members", new ArrayList<>());
-        try (PreparedStatement statement = connection.prepareStatement(
-            "SELECT PRINCIPAL_ID, MEMBER_ROLE FROM KC_TECH_DOMAIN_MEMBER WHERE TECH_DOMAIN_ID=? AND STATE='ACTIVE' ORDER BY MEMBER_ROLE, PRINCIPAL_ID")) {
-            statement.setLong(1, Long.parseLong(domainId));
-            try (ResultSet rows = statement.executeQuery()) {
-                while (rows.next()) {
-                    Map<String, Object> person = mapOf("id", rows.getString(1), "name", rows.getString(1), "role", rows.getString(2).toLowerCase());
-                    if ("LEADER".equals(rows.getString(2))) value.put("leader", person);
-                    else {
-                        @SuppressWarnings("unchecked")
-                        List<Object> members = (List<Object>) value.get("members");
-                        members.add(person);
-                    }
+        Long groupId = null;
+        try (PreparedStatement query = connection.prepareStatement(
+            "SELECT D.TEAM_GROUP_ID FROM KC_TECH_DOMAIN D JOIN KC_TEAM_GROUP G ON G.TEAM_GROUP_ID=D.TEAM_GROUP_ID "
+                + "WHERE D.TECH_DOMAIN_ID=? AND D.STATE='ACTIVE' AND G.STATE='ACTIVE'")) {
+            query.setLong(1, Long.parseLong(domainId));
+            try (ResultSet result = query.executeQuery()) { if (result.next()) groupId = result.getLong(1); }
+        }
+        if (groupId == null) return mapOf("teamGroupId", null, "leader", null, "members", new ArrayList<>());
+        Map<String, Object> leader = null;
+        List<Map<String, Object>> members = new ArrayList<>();
+        try (PreparedStatement query = connection.prepareStatement(
+            "SELECT M.PRINCIPAL_ID,M.MEMBER_ROLE,P.DISPLAY_NAME FROM KC_TEAM_GROUP_MEMBER M "
+                + "JOIN KC_PLATFORM_PRINCIPAL P ON P.PRINCIPAL_ID=M.PRINCIPAL_ID AND P.STATE='ACTIVE' "
+                + "WHERE M.TEAM_GROUP_ID=? AND M.STATE='ACTIVE' ORDER BY M.MEMBER_ROLE,M.PRINCIPAL_ID")) {
+            query.setLong(1, groupId);
+            try (ResultSet result = query.executeQuery()) {
+                while (result.next()) {
+                    Map<String, Object> person = mapOf("id", result.getString(1), "name", result.getString(3), "role", result.getString(2));
+                    if ("LEADER".equals(result.getString(2))) leader = person; else members.add(person);
                 }
             }
         }
-        return value;
+        return mapOf("teamGroupId", String.valueOf(groupId), "leader", leader, "members", members);
     }
 
     private String buildTaskId(String outlineId, String domainId) {
@@ -1308,14 +1610,19 @@ public final class Main {
         String assigneeName = coalesce(payload.get("assigneeName"), assignee.get("name"));
         String status = coalesce(payload.get("status"), assigneeId == null ? "unassigned" : "assigned");
         if (assigneeId != null) {
-            try (PreparedStatement query = connection.prepareStatement("SELECT PRINCIPAL_ID FROM KC_TECH_DOMAIN_MEMBER WHERE TECH_DOMAIN_ID=? AND PRINCIPAL_ID=? AND STATE='ACTIVE'")) {
-                query.setLong(1, Long.parseLong(domainId));
-                query.setLong(2, Long.parseLong(assigneeId));
-                try (ResultSet result = query.executeQuery()) {
-                    if (!result.next()) throw new GovernanceValidationException("BUILD_TASK_ASSIGNEE_INVALID", "只能分配给当前技术领域的负责人或成员", 422, mapOf("techDomainId", domainId, "assigneeId", assigneeId));
-                    if (assigneeName == null) assigneeName = result.getString(1);
-                }
+            Map<String, Object> personnel = domainPersonnel(connection, domainId);
+            if (personnel.get("teamGroupId") == null || personnel.get("leader") == null) {
+                throw new GovernanceValidationException("BUILD_TASK_TEAM_BINDING_REQUIRED", "当前技术领域尚未建立有效团队绑定", 422, mapOf("techDomainId", domainId, "assigneeId", assigneeId));
             }
+            List<Map<String, Object>> candidates = new ArrayList<>(listOfMaps(personnel.get("members")));
+            candidates.add(castMap((Map<?, ?>) personnel.get("leader")));
+            Map<String, Object> selectedAssignee = candidates.stream()
+                .filter(person -> assigneeId.equals(String.valueOf(person.get("id"))))
+                .findFirst().orElse(null);
+            if (selectedAssignee == null) {
+                throw new GovernanceValidationException("BUILD_TASK_ASSIGNEE_INVALID", "责任人必须是当前领域绑定团队的有效成员", 422, mapOf("techDomainId", domainId, "assigneeId", assigneeId));
+            }
+            assigneeName = String.valueOf(selectedAssignee.get("name"));
         } else {
             assigneeName = null;
         }
@@ -2278,6 +2585,46 @@ public final class Main {
             failure(exchange, 400, "INVALID_REVISION", "If-Match 必须是整数 revision");
             return Long.MIN_VALUE;
         }
+    }
+
+    private static long requiredRowVersion(HttpExchange exchange) throws IOException {
+        Long value = optionalRowVersion(exchange);
+        if (value == null) { failure(exchange, 428, "ROW_VERSION_REQUIRED", "必须提供 If-Match rowVersion"); return Long.MIN_VALUE; }
+        return value;
+    }
+
+    private static Long optionalRowVersion(HttpExchange exchange) throws IOException {
+        String value = exchange.getRequestHeaders().getFirst("If-Match");
+        if (value == null || value.isBlank()) return null;
+        value = value.replace("\"", "").trim();
+        try { return Long.parseLong(value); }
+        catch (NumberFormatException error) { failure(exchange, 400, "INVALID_ROW_VERSION", "If-Match 必须是整数 rowVersion"); return Long.MIN_VALUE; }
+    }
+
+    private static boolean requireIdempotencyKey(HttpExchange exchange) throws IOException {
+        String value = exchange.getRequestHeaders().getFirst("Idempotency-Key");
+        if (value == null || value.isBlank()) { failure(exchange, 400, "IDEMPOTENCY_KEY_REQUIRED", "配置更新必须携带 Idempotency-Key"); return false; }
+        return true;
+    }
+
+    private static void platformFailure(HttpExchange exchange, SQLException error) throws IOException {
+        String code = error.getMessage() == null ? "STORAGE_UNAVAILABLE" : error.getMessage();
+        int status = switch (code) {
+            case "AUTH_USER_NOT_FOUND", "GITLAB_CONNECTION_NOT_FOUND", "GITLAB_MAPPING_NOT_FOUND", "ASSET_NOT_FOUND" -> 404;
+            case "ROW_VERSION_CONFLICT", "CAS_LOGIN_BIND_CONFLICT", "CAS_PRINCIPAL_INACTIVE" -> 409;
+            case "ROLE_REQUIRED", "ROLE_INVALID", "GITLAB_CONNECTION_NAME_REQUIRED", "GITLAB_BASE_URL_REQUIRED",
+                "GITLAB_PROJECT_REQUIRED", "GITLAB_DEFAULT_BRANCH_REQUIRED", "GITLAB_RUN_MODE_INVALID",
+                "GITLAB_AUTH_MODE_INVALID", "GITLAB_PURPOSE_INVALID", "GITLAB_STATE_INVALID", "GITLAB_MAPPING_REQUIRED",
+                "GITLAB_CONNECTION_REQUIRED", "MAPPING_VALIDATION_FAILED" -> 422;
+            default -> 503;
+        };
+        String message = switch (code) {
+            case "ROW_VERSION_CONFLICT" -> "配置已被其他操作修改，请刷新后重试";
+            case "MAPPING_VALIDATION_FAILED" -> "手册映射必须包含合法的分支和中英文路径";
+            case "STORAGE_UNAVAILABLE" -> "平台数据库暂时不可用";
+            default -> code;
+        };
+        failure(exchange, status, status == 503 ? "STORAGE_UNAVAILABLE" : code, message);
     }
 
     private static boolean looksLikeJson(String payload) {

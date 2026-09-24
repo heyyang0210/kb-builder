@@ -118,12 +118,10 @@ const authModule = createKnowledgeCenterAuthService({
   environment: process.env.KNOWLEDGE_CENTER_ENVIRONMENT || process.env.KNOWLEDGE_CENTER_ENV || 'development',
   testRunId: process.env.KNOWLEDGE_CENTER_TEST_RUN_ID || null,
   repositoryPath: process.env.KNOWLEDGE_CENTER_AUTH_STORE || path.join(AGENT_RUNNER_RUNTIME_ROOT, 'tmp', 'knowledge-center-auth.json'),
-  // Auth state stays on the local repository in the platform process. The
-  // database aggregate store currently exposes synchronous curl-backed APIs;
-  // using it here would block the shared 13510 event loop on every login or
-  // permission request. Enable database-backed auth only after an async
-  // adapter is available for this process.
+  // 会话、Ticket 和认证日志保留在本地运行时；CAS 用户和角色通过
+  // DomainStore 的原生异步 HTTP 路径读写，不得在 13510 事件循环中启动同步 curl。
   repository: undefined,
+  domainStore,
   principalDirectory: {
     upsertCas: info => domainStore.syncCasPrincipal({
       casLoginName: String(info.user || info.uid || '').trim(),
