@@ -139,6 +139,15 @@ describe('knowledge center unified build contract', () => {
     }
   });
 
+  test('reuses only a matching and checksum-valid unified build', () => {
+    expect(buildScript).toContain('cache_manifest_matches');
+    expect(buildScript).toContain('cache_artifacts_are_valid');
+    expect(buildScript).toContain('manifest.sourceFingerprint === sourceFingerprint');
+    expect(buildScript).toContain('manifest.migrationSourceSha256 === migrationSha');
+    expect(buildScript).toContain('sha256sum -c manifest.sha256');
+    expect(buildScript).toContain('构建缓存命中');
+  });
+
   test('validates restart inputs and only force-stops owned repository processes', () => {
     expect(() => childProcess.execFileSync('bash', ['-n', path.join(repoRoot, 'knowledge-center.sh')], { stdio: 'pipe' })).not.toThrow();
     expect(platformScript).toContain('validate_port_configuration');

@@ -79,6 +79,38 @@ class RepositoryTestRunnerTests(unittest.TestCase):
         e2e_task = RUNNER.TestTask("e2e", "playwright", "functional e2e", task.files)
         self.assertNotIn("--project", RUNNER.task_command(e2e_task))
 
+    def test_e2e_specs_use_explicit_read_and_write_resource_lanes(self):
+        tasks = [task for task in RUNNER.build_tasks("e2e") if task.framework == "playwright"]
+        self.assertGreater(len(tasks), 1)
+        self.assertEqual(
+            {"service-read", "database-write"},
+            {RUNNER.task_resource(task) for task in tasks},
+        )
+        read_task = next(task for task in tasks if RUNNER.task_resource(task) == "service-read")
+        write_task = next(task for task in tasks if RUNNER.task_resource(task) == "database-write")
+        self.assertGreater(len(read_task.files), len(write_task.files))
+        self.assertIn("--workers 2", " ".join(RUNNER.task_command(read_task, jobs=4)))
+        self.assertIn("--workers 1", " ".join(RUNNER.task_command(write_task, jobs=4)))
+
+    def test_task_resource_classification_is_conservative(self):
+        self.assertEqual("isolated-cpu", RUNNER.task_resource(
+            RUNNER.TestTask("unit", "jest", "unit", (Path("ordinary.test.js"),))))
+        self.assertEqual("database-write", RUNNER.task_resource(
+            RUNNER.TestTask("e2e", "playwright", "e2e", (Path("flow.spec.js"),))))
+        self.assertEqual("performance", RUNNER.task_resource(
+            RUNNER.TestTask("gate", "playwright", "gate", (Path("perf.spec.js"),))))
+        self.assertEqual("shared-state", RUNNER.task_resource(
+            RUNNER.TestTask("integration", "node-script", "script", (Path("run.test.js"),))))
+
+    def test_jobs_option_and_resource_aware_jest_command(self):
+        self.assertEqual(3, RUNNER.parse_args(["unit", "--jobs", "3"]).jobs)
+        with self.assertRaises(SystemExit):
+            RUNNER.parse_args(["unit", "--jobs", "0"])
+        task = RUNNER.TestTask("unit", "jest", "unit", (RUNNER.REPOSITORY_ROOT / "ordinary.test.js",))
+        self.assertIn("--maxWorkers=3", RUNNER.task_command(task, jobs=3))
+        integration = RUNNER.TestTask("integration", "jest", "integration", (RUNNER.REPOSITORY_ROOT / "integration.test.js",))
+        self.assertIn("--runInBand", RUNNER.task_command(integration, jobs=3))
+
     def test_runner_classification_separates_framework_tests_and_scripts(self):
         with tempfile.TemporaryDirectory() as directory:
             node_script = Path(directory) / "standalone.test.js"

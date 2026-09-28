@@ -42,6 +42,7 @@ npx playwright install chromium firefox
 python3 tests/run_tests.py full --dry-run
 python3 tests/run_tests.py full --fail-fast
 python3 tests/run_tests.py full --timeout 3600
+python3 tests/run_tests.py full --jobs 4
 python3 tests/run_tests.py full --coverage
 python3 tests/run_tests.py full --report runtime/test-results/exports/compat-full.json
 python3 tests/run_tests.py full --log runtime/test-results/exports/compat-full.log
@@ -49,6 +50,12 @@ python3 tests/run_tests.py full --log runtime/test-results/exports/compat-full.l
 # 定向执行一个或多个 Playwright 浏览器项目
 PLAYWRIGHT_PROJECTS=chromium python3 tests/run_tests.py e2e
 ```
+
+默认调度采用资源感知的分层并发（`--jobs`，默认 `min(4, CPU 数)`）：纯 Jest、隔离的 Python 用例使用 `isolated-cpu` 通道并行；文件转换等 I/O 用例和只读服务用例分别限制为最多 2 个并发。集成测试、独立脚本以及未知资源类型保守归入 `shared-state` 并串行执行。Playwright 按文件级显式清单拆为 `service-read` 与 `database-write`：只读/Mock 用例最多 2 路并发，真实数据库写入和性能门禁保持单路；未登记的新 E2E 默认进入写通道。`--fail-fast` 会强制所有任务串行，以保证首个失败后立即停止。
+
+E2E 资源清单维护在 `tests/run_tests.py` 的 `E2E_RESOURCE_BY_FILE`。只读通道当前覆盖认证、入口导航、资产工作台、GitLab Mock、手册生产、增量页面 Mock、大纲布局、可搜索组合框和审核阅读回归；写通道覆盖真实资料上传、增量全流程、人员治理和审核发布。单文件内部及同一浏览器项目保持顺序执行，避免测试步骤自身的状态依赖被打乱。
+
+包含 Playwright 的非 `--fail-fast` 运行会在后台准备 `test_hy` 和隔离服务，同时先执行不依赖浏览器的本地分类；进入 Playwright 前必须等待准备成功。统一构建会校验来源指纹、迁移摘要、Node/npm/Python/Java 工具链和 `manifest.sha256`，全部匹配时复用 `runtime/build/knowledge-center/current`；任一项不匹配或产物缺失均完整重建。
 
 部署契约测试覆盖 `knowledge-center.sh doctor --json`、RPM/DEB 安装命令路由、外部 URL 配置、离线包摘要校验和数据库 `probe/verify` 入口。契约测试会跳过真实数据库探测；真实部署验收必须单独执行 `./knowledge-center.sh doctor`。
 

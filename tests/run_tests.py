@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+from concurrent.futures import ThreadPoolExecutor
 import fcntl
 import json
 import os
@@ -62,6 +63,34 @@ class TestTask:
     framework: str
     label: str
     files: tuple[Path, ...]
+    resource: str = ""
+
+
+def task_resource(task: TestTask) -> str:
+    """Return the resource channel used to schedule a task.
+
+    The default is deliberately conservative: unknown tests must not run
+    concurrently with tests that may mutate shared state.
+    """
+    if task.resource:
+        return task.resource
+    if task.framework == "playwright":
+        return "performance" if task.suite == "gate" else "database-write"
+    if task.suite == "system":
+        return "service-read"
+    if task.suite == "integration":
+        return "shared-state"
+    if task.framework in {"node-script", "python-script"}:
+        return "shared-state"
+    if task.framework in {"unittest", "pytest"} and any(
+        token in path.name.lower()
+        for path in task.files
+        for token in ("libreoffice", "vision", "upload", "integration", "concurrency")
+    ):
+        return "isolated-io"
+    if task.framework in {"jest", "node-test", "unittest", "pytest"}:
+        return "isolated-cpu"
+    return "shared-state"
 
 
 @dataclass(frozen=True)
@@ -220,7 +249,25 @@ def discover_test_files() -> dict[str, dict[str, list[Path]]]:
     return discovered
 
 
-def make_task(suite: str, framework: str, files: Iterable[Path]) -> TestTask | None:
+E2E_RESOURCE_BY_FILE = {
+    "knowledge-center-cleaning-upload-real.spec.js": "database-write",
+    "knowledge-center-incremental-flow.spec.js": "database-write",
+    "knowledge-center-personnel.spec.js": "database-write",
+    "knowledge-center-review-publishing.spec.js": "database-write",
+    "knowledge-assets-workspace.spec.js": "service-read",
+    "knowledge-center-gitlab.spec.js": "service-read",
+    "knowledge-center-authentication.spec.js": "service-read",
+    "knowledge-center-entry.spec.js": "service-read",
+    "knowledge-center-handbook-production-p0p1.spec.js": "service-read",
+    "knowledge-center-incremental.spec.js": "service-read",
+    "knowledge-center-outlines-layout.spec.js": "service-read",
+    "knowledge-center-searchable-combobox.spec.js": "service-read",
+    "review-reader-regression.spec.js": "service-read",
+    "knowledge-center-performance.gate.spec.js": "performance",
+}
+
+
+def make_task(suite: str, framework: str, files: Iterable[Path], resource: str = "") -> TestTask | None:
     selected = tuple(sorted(files))
     if not selected:
         return None
@@ -238,6 +285,7 @@ def make_task(suite: str, framework: str, files: Iterable[Path]) -> TestTask | N
         framework=framework,
         label=f"{suite} / {framework_names[framework]}",
         files=selected,
+        resource=resource,
     )
 
 
@@ -264,6 +312,23 @@ def build_tasks(command: str) -> list[TestTask]:
     for suite in suites:
         for framework in FRAMEWORKS:
             files = discovered[suite][framework]
+            if framework == "playwright" and suite == "e2e":
+                # Group specs by an explicit resource contract. Playwright can
+                # schedule read-only files across workers, while the write lane
+                # remains a single worker. Unknown files default to write.
+                for resource in ("service-read", "database-write"):
+                    task = make_task(
+                        suite,
+                        framework,
+                        (
+                            path for path in files
+                            if E2E_RESOURCE_BY_FILE.get(path.name, "database-write") == resource
+                        ),
+                        resource,
+                    )
+                    if task:
+                        tasks.append(task)
+                continue
             if framework in {"node-script", "python-script", "unittest", "pytest"}:
                 tasks.extend(make_task(suite, framework, (path,)) for path in files)
             else:
@@ -273,13 +338,13 @@ def build_tasks(command: str) -> list[TestTask]:
     return tasks
 
 
-def task_command(task: TestTask) -> list[str]:
+def task_command(task: TestTask, jobs: int = 1) -> list[str]:
     files = [relative(path) for path in task.files]
     if task.framework == "jest":
+        worker_flag = f"--maxWorkers={jobs}" if task_resource(task) == "isolated-cpu" and jobs > 1 else "--runInBand"
         return [
             *node_tool("jest"),
-            "--config", relative(JEST_CONFIG),
-            "--runInBand", "--verbose", *files,
+            "--config", relative(JEST_CONFIG), worker_flag, "--verbose", *files,
         ]
     if task.framework == "node-test":
         return ["node", "--test", *files]
@@ -297,6 +362,10 @@ def task_command(task: TestTask) -> list[str]:
             "--config", relative(PLAYWRIGHT_CONFIG),
             "--reporter=list", *files,
         ]
+        workers = 1
+        if task_resource(task) == "service-read":
+            workers = max(1, min(jobs, 2))
+        command.extend(("--workers", str(workers)))
         if task.suite == "gate":
             command.extend(("--project", "chromium"))
         return command
@@ -697,20 +766,24 @@ def run_task(
     knowledge_center_base_url: str | None = None,
     knowledge_center_test_run_id: str | None = None,
     log_path: Path | None = None,
+    jobs: int = 1,
+    emit_output: bool = True,
 ) -> TaskResult:
-    command = task_command(task)
+    command = task_command(task, jobs)
     command_text = shlex.join(command)
-    print(f"\n{'=' * 72}")
-    print(f"执行：{task.label}（{len(task.files)} 个测试文件）")
-    print(f"命令：{command_text}")
-    print("-" * 72, flush=True)
+    if emit_output:
+        print(f"\n{'=' * 72}")
+        print(f"执行：{task.label}（{len(task.files)} 个测试文件）")
+        print(f"命令：{command_text}")
+        print("-" * 72, flush=True)
 
     if dry_run:
         output = "\n".join([f"命令：{command_text}", *(f"文件：{relative(path)}" for path in task.files)]) + "\n"
         if log_path:
             log_path.write_text(output, encoding="utf-8")
-        for path in task.files:
-            print(f"  - {relative(path)}")
+        if emit_output:
+            for path in task.files:
+                print(f"  - {relative(path)}")
         return TaskResult(
             task.suite, task.label, task.framework, "DRY-RUN", 0.0, 0, len(task.files),
             command=command_text,
@@ -729,7 +802,8 @@ def run_task(
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
         )
-        print(completed.stdout, end="" if completed.stdout.endswith("\n") else "\n")
+        if emit_output and completed.stdout:
+            print(completed.stdout, end="" if completed.stdout.endswith("\n") else "\n")
         if log_path:
             log_path.write_text(
                 f"命令：{command_text}\n\n{completed.stdout}",
@@ -737,7 +811,8 @@ def run_task(
             )
         return_code = completed.returncode
         if return_code == 0 and framework_reported_zero_tests(task.framework, completed.stdout):
-            print("底层框架未收集到任何用例，按失败处理。", file=sys.stderr)
+            if emit_output:
+                print("底层框架未收集到任何用例，按失败处理。", file=sys.stderr)
             return_code = 5
         status = "PASS" if return_code == 0 else "FAIL"
         failed_tests = extract_failed_tests(task.framework, completed.stdout)
@@ -745,7 +820,8 @@ def run_task(
             failed_tests = ("未收集到测试用例",)
         test_total, test_passed, test_failed, test_skipped = extract_test_counts(task.framework, completed.stdout)
     except FileNotFoundError as error:
-        print(f"无法启动测试命令：{error}", file=sys.stderr)
+        if emit_output:
+            print(f"无法启动测试命令：{error}", file=sys.stderr)
         return_code = 127
         status = "FAIL"
         failed_tests = (str(error),)
@@ -753,7 +829,8 @@ def run_task(
         if log_path:
             log_path.write_text(f"命令：{command_text}\n\n{error}\n", encoding="utf-8")
     except subprocess.TimeoutExpired:
-        print(f"测试执行超过 {timeout} 秒，已终止。", file=sys.stderr)
+        if emit_output:
+            print(f"测试执行超过 {timeout} 秒，已终止。", file=sys.stderr)
         return_code = 124
         status = "TIMEOUT"
         failed_tests = (f"任务超时：{task.label}",)
@@ -761,7 +838,8 @@ def run_task(
         if log_path:
             log_path.write_text(f"命令：{command_text}\n\n任务超过 {timeout} 秒。\n", encoding="utf-8")
     except KeyboardInterrupt:
-        print("测试执行被用户中断。", file=sys.stderr)
+        if emit_output:
+            print("测试执行被用户中断。", file=sys.stderr)
         return_code = 130
         status = "INTERRUPTED"
         failed_tests = (f"任务被中断：{task.label}",)
@@ -1102,6 +1180,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--dry-run", action="store_true", help="只展示将执行的命令和文件")
     parser.add_argument("--fail-fast", action="store_true", help="任一测试任务失败后停止")
+    parser.add_argument(
+        "--jobs", type=int,
+        default=min(4, os.cpu_count() or 1),
+        help="资源安全任务的最大并发数，默认 min(4, CPU 数)",
+    )
     parser.add_argument("--timeout", type=int, default=1800, help="每个测试任务的超时秒数，默认 1800")
     parser.add_argument("--coverage", action="store_true", help="仅 full/all 启用 Jest JavaScript 覆盖率采集")
     parser.add_argument("--report", type=Path, help="兼容导出 JSON 汇总报告路径；正式报告仍写入 runtime/")
@@ -1109,6 +1192,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     args = parser.parse_args(argv)
     if args.timeout <= 0:
         parser.error("--timeout 必须大于 0")
+    if args.jobs <= 0:
+        parser.error("--jobs 必须大于 0")
     if args.coverage and args.command not in {"full", "all"}:
         parser.error("--coverage 仅支持 full/all")
     for option_name in ("report", "log"):
@@ -1141,28 +1226,119 @@ def main(argv: list[str] | None = None) -> int:
     results: list[TaskResult] = []
     coverage = None
     knowledge_center_lease = None
-    playwright_ready = args.dry_run or not any(task.framework == "playwright" for task in tasks)
-    if not playwright_ready:
+    preflight_executor = None
+    preflight_future = None
+    has_playwright = any(task.framework == "playwright" for task in tasks)
+    playwright_ready = args.dry_run or not has_playwright
+    if has_playwright and not args.dry_run and not args.fail_fast:
+        preflight_executor = ThreadPoolExecutor(max_workers=1)
+        preflight_future = preflight_executor.submit(ensure_knowledge_center, context)
+        print("Playwright 前置条件：已后台准备，先执行不依赖浏览器服务的测试。")
+    elif not playwright_ready:
         playwright_ready, knowledge_center_lease, diagnostic = ensure_knowledge_center(context)
         print(f"Playwright 前置条件：{diagnostic}")
         if not playwright_ready:
             results.append(TaskResult("preflight", "Playwright / 知识中心服务", "preflight", "FAIL", 0.0, 1, 0, (diagnostic,), ""))
     try:
-        for task in tasks:
-            if task.framework == "playwright" and not playwright_ready:
-                continue
-            result = run_task(
-                task,
-                dry_run=args.dry_run,
-                timeout=args.timeout,
-                run_context=context,
-                knowledge_center_base_url=(knowledge_center_lease.base_url if knowledge_center_lease else None),
-                knowledge_center_test_run_id=(context.run_id if knowledge_center_lease else None),
-                log_path=context.tasks_dir / f"{task_slug(len(results) + 1, task)}.log",
-            )
-            results.append(result)
-            if args.fail_fast and result.status not in {"PASS", "DRY-RUN"}:
-                break
+        runnable = [
+            (index, task)
+            for index, task in enumerate(tasks, 1)
+            if not (task.framework == "playwright" and not playwright_ready and preflight_future is None)
+        ]
+        task_results: dict[int, TaskResult] = {}
+
+        def run_one(index: int, task: TestTask, *, emit_output: bool = True) -> TaskResult:
+            log_path = context.tasks_dir / f"{task_slug(index, task)}.log"
+            try:
+                return run_task(
+                    task,
+                    dry_run=args.dry_run,
+                    timeout=args.timeout,
+                    run_context=context,
+                    knowledge_center_base_url=(knowledge_center_lease.base_url if knowledge_center_lease else None),
+                    knowledge_center_test_run_id=(context.run_id if knowledge_center_lease else None),
+                    log_path=log_path,
+                    jobs=args.jobs,
+                    emit_output=emit_output,
+                )
+            except Exception as error:
+                command_text = shlex.join(task_command(task, args.jobs))
+                diagnostic = f"统一测试调度异常：{error}"
+                try:
+                    log_path.write_text(f"命令：{command_text}\n\n{diagnostic}\n", encoding="utf-8")
+                except OSError:
+                    pass
+                return TaskResult(
+                    task.suite, task.label, task.framework, "FAIL", 0.0, 1,
+                    len(task.files), (diagnostic,), command_text,
+                    log_file=log_path.relative_to(context.run_dir).as_posix(),
+                )
+
+        def show_parallel_results(batch: list[tuple[int, TestTask]], batch_results: list[TaskResult]) -> None:
+            for (index, task), result in zip(batch, batch_results):
+                print(f"\n{'=' * 72}")
+                print(f"完成：{task.label} [{result.status}]，耗时 {result.duration_seconds:.2f}s")
+                log_path = context.run_dir / result.log_file if result.log_file else None
+                if log_path and log_path.is_file():
+                    print(log_path.read_text(encoding="utf-8"), end="")
+
+        def run_serial(sequence: list[tuple[int, TestTask]]) -> None:
+            for index, task in sequence:
+                result = run_one(index, task)
+                task_results[index] = result
+                if result.status not in {"PASS", "DRY-RUN"} and args.fail_fast:
+                    break
+
+        def schedule(sequence: list[tuple[int, TestTask]]) -> None:
+            # Keep semantic suites ordered. Within a suite, only explicitly
+            # isolated channels are parallel; all shared/database state stays
+            # serialized and therefore retains the existing safety boundary.
+            for suite in dict.fromkeys(task.suite for _, task in sequence):
+                suite_tasks = [(index, task) for index, task in sequence if task.suite == suite]
+                for resource, limit in (
+                    ("isolated-cpu", args.jobs),
+                    ("isolated-io", min(2, args.jobs)),
+                    ("service-read", min(2, args.jobs)),
+                ):
+                    batch = [(index, task) for index, task in suite_tasks if task_resource(task) == resource]
+                    if not batch:
+                        continue
+                    # A Jest task may itself use --maxWorkers. Run it separately
+                    # so its worker pool cannot oversubscribe the outer process cap.
+                    if resource == "isolated-cpu":
+                        jest_batch = [(index, task) for index, task in batch if task.framework == "jest"]
+                        other_batch = [(index, task) for index, task in batch if task.framework != "jest"]
+                        for item in jest_batch:
+                            result = run_one(*item, emit_output=False)
+                            task_results[item[0]] = result
+                            show_parallel_results([item], [result])
+                        batch = other_batch
+                    if batch:
+                        with ThreadPoolExecutor(max_workers=min(limit, len(batch))) as executor:
+                            batch_results = list(executor.map(lambda item: run_one(*item, emit_output=False), batch))
+                        task_results.update({index: result for (index, _), result in zip(batch, batch_results)})
+                        show_parallel_results(batch, batch_results)
+                run_serial([
+                    item for item in suite_tasks
+                    if task_resource(item[1]) in {"shared-state", "database-write", "performance"}
+                ])
+
+        if args.fail_fast or args.dry_run:
+            run_serial(runnable)
+        elif preflight_future:
+            schedule([(index, task) for index, task in runnable if task.framework != "playwright"])
+            playwright_ready, knowledge_center_lease, diagnostic = preflight_future.result()
+            print(f"Playwright 前置条件：{diagnostic}")
+            if playwright_ready:
+                schedule([(index, task) for index, task in runnable if task.framework == "playwright"])
+            else:
+                results.append(TaskResult(
+                    "preflight", "Playwright / 知识中心服务", "preflight", "FAIL",
+                    0.0, 1, 0, (diagnostic,), "",
+                ))
+        else:
+            schedule(runnable)
+        results.extend(task_results[index] for index in sorted(task_results))
         if args.coverage and not args.dry_run:
             coverage = run_jest_coverage(tasks, context, args.timeout)
             if coverage.status != "PASS":
@@ -1170,6 +1346,8 @@ def main(argv: list[str] | None = None) -> int:
         elif args.coverage:
             coverage = CoverageSummary("NOT_RUN", "Jest 管理的 JavaScript 代码", {}, diagnostic="dry-run 未执行")
     finally:
+        if preflight_executor:
+            preflight_executor.shutdown(wait=True)
         if knowledge_center_lease:
             if not stop_owned_knowledge_center(knowledge_center_lease):
                 print("警告：测试实例所有权或进程身份已变化，拒绝自动停止，请根据本次报告手工处置。", file=sys.stderr)

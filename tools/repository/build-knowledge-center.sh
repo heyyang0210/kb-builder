@@ -98,6 +98,43 @@ stage_rel="${build_root_rel}/.staging-${source_fingerprint:0:12}-$$"
 current_rel="${build_root_rel}/current"
 previous_rel="${build_root_rel}/.previous-$$"
 
+cache_manifest_matches() {
+  [[ -f "$current_rel/manifest.json" && -f "$current_rel/manifest.sha256" ]] || return 1
+  node - "$current_rel/manifest.json" \
+    "$source_fingerprint" "$migration_source_sha256" \
+    "$node_version" "$npm_version" "$python_version" "$java_compiler_version" <<'NODE'
+const fs = require('fs');
+const [manifestPath, sourceFingerprint, migrationSha, nodeVersion, npmVersion, pythonVersion, javaVersion] = process.argv.slice(2);
+try {
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  const matches = manifest.schemaVersion === 1
+    && manifest.sourceFingerprint === sourceFingerprint
+    && manifest.migrationSourceSha256 === migrationSha
+    && manifest.toolchain?.node === nodeVersion
+    && manifest.toolchain?.npm === npmVersion
+    && manifest.toolchain?.python === pythonVersion
+    && manifest.toolchain?.javaCompiler === javaVersion;
+  process.exit(matches ? 0 : 1);
+} catch (_) {
+  process.exit(1);
+}
+NODE
+}
+
+cache_artifacts_are_valid() {
+  [[ -d "$current_rel/web/platform" \
+    && -d "$current_rel/web/pingcode" \
+    && -d "$current_rel/java/classes" \
+    && -f "$current_rel/java/lib/yashandb-jdbc.jar" \
+    && -f "$current_rel/java/sql/migration-source.properties" ]] || return 1
+  (cd "$current_rel" && sha256sum -c manifest.sha256 >/dev/null 2>&1)
+}
+
+if cache_manifest_matches && cache_artifacts_are_valid; then
+  echo "构建缓存命中：$current_rel（sourceFingerprint=$source_fingerprint）"
+  exit 0
+fi
+
 remove_managed_path() {
   local target="$1"
   [[ "$target" == "${build_root_rel}/"* ]] || fail "拒绝清理非构建目录：$target"

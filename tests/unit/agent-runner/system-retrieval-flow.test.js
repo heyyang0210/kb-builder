@@ -333,11 +333,6 @@ describe('L2: 集成测试 - API + MCP 检索', () => {
     testReport.startTime = new Date().toISOString();
   });
 
-  // 每个测试之间间隔 3 秒，避免后端并发压力导致中间文件写入延迟
-  afterEach(async () => {
-    await new Promise(r => setTimeout(r, 3000));
-  });
-
   test('后端服务健康检查', async () => {
     const res = await request('GET', '/api/health');
     expect(res.status).toBe(200);
@@ -366,8 +361,8 @@ describe('L2: 集成测试 - API + MCP 检索', () => {
 
       // 等待检索阶段完成（最多 50 秒）
       let keywordData = null;
-      for (let i = 0; i < 25; i++) {
-        await new Promise(r => setTimeout(r, 2000));
+      for (let i = 0; i < 40; i++) {
+        await new Promise(r => setTimeout(r, Math.min(1000, 200 + i * 100)));
         const files = findIntermediateFiles(taskId);
         if (files.keywordExtraction) {
           keywordData = files.keywordExtraction;
@@ -387,8 +382,8 @@ describe('L2: 集成测试 - API + MCP 检索', () => {
 
       // 等待 MCP 查询结果（增加等待时间）
       let mcpData = null;
-      for (let i = 0; i < 30; i++) {
-        await new Promise(r => setTimeout(r, 3000));
+      for (let i = 0; i < 60; i++) {
+        await new Promise(r => setTimeout(r, Math.min(1000, 200 + i * 100)));
         const files = findIntermediateFiles(taskId);
         if (files.mcpQueryResults && files.mcpQueryResults.length > 0) {
           mcpData = files;
