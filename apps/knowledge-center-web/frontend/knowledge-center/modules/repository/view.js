@@ -145,8 +145,8 @@ function tree(items, selected, prefix = '') {
     isLeaf: node => node.type !== 'tree',
     nodeKey: node => node.path,
     openDirectory: node => String(selected || '').startsWith(`${node.path}/`),
-    renderDirectoryLabel: node => escapeHtml(node.name),
-    renderLeaf: node => `<li class="${node.path === selected ? 'selected' : ''}" data-repository-tree-item><button type="button" data-repository-file="${escapeHtml(node.path)}" aria-current="${node.path === selected ? 'page' : 'false'}">${escapeHtml(node.name)}</button></li>`,
+    renderDirectoryLabel: node => `<span>${escapeHtml(node.name)}</span>`,
+    renderLeaf: node => `<li class="${node.path === selected ? 'selected' : ''}" data-repository-tree-item><button type="button" role="treeitem" data-repository-file="${escapeHtml(node.path)}" aria-current="${node.path === selected ? 'page' : 'false'}" tabindex="-1">${escapeHtml(node.name)}</button></li>`,
   });
 }
 

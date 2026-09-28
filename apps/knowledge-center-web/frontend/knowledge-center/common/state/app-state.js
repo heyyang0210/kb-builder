@@ -36,7 +36,6 @@ export const appState = {
   gitlabListState: { search: '', page: 1, pageSize: 20, selectedConnectionId: null },
   gitlabVerification: null,
   reviewUi: { directoryCollapsed: false, directoryWidth: 260, focusMode: false, readingDensity: 'comfortable' },
-  handbookProductionUi: { drafts: {}, draftHtml: {}, draftBranchByDocument: {}, references: {}, dirtyDocuments: [], savedDocuments: [], selectedForReview: [], modeByDocument: {}, directoryOpen: {}, directoryWidth: 260, directoryCollapsed: false, templateByDocument: {}, templateDetails: {}, templateStatus: '', focusMode: false, assistantOpen: false, assistantTab: 'ai', assistantStatus: '' },
+  handbookProductionUi: { drafts: {}, draftHtml: {}, draftBranchByDocument: {}, serverDrafts: {}, draftLoadState: {}, draftSaveState: {}, attachments: {}, references: {}, dirtyDocuments: [], savedDocuments: [], selectedForReview: [], modeByDocument: {}, directoryOpen: {}, directoryWidth: 260, directoryCollapsed: false, templateByDocument: {}, templateDetails: {}, templateStatus: '', focusMode: false, assistantOpen: false, assistantTab: 'ai', assistantStatus: '', reviewers: [], reviewState: null, history: null, conflict: null },
   mappingState: { connectionId: null, treeItems: [], expandedPaths: new Set(), branches: [], enabledBranches: [], zhPaths: [], enPaths: [], activeLang: 'zh' },
-  productionUi: { handbookColumns: ['handbook', 'product', 'owner', 'progress', 'published'] },
 };

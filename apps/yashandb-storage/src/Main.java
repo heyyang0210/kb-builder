@@ -1166,19 +1166,38 @@ public final class Main {
                 "techDomainIds", domainIds
             ));
         }
+        // 责任分工的技术领域归属和页面责任人来自两条不同的关系：
+        // KC_MANUAL_OUTLINE_RESP_ITEM 保存领域归属，领域建设任务项保存具体负责人。
+        // 以前这里只投影了前者，并把负责人固定为 null，导致生产页的“只看我负责”
+        // 永远无法命中真实分工。先读取同一大纲的任务投影，再按页面和技术领域合并。
+        List<Map<String, Object>> outlineTasks = projectBuildTasksForOutline(connection, outlineId);
+        Map<String, Map<String, Object>> taskItemsByDocumentDomain = new LinkedHashMap<>();
+        for (Map<String, Object> task : outlineTasks) {
+            for (Map<String, Object> taskItem : listOfMaps(task.get("items"))) {
+                String documentId = coalesce(taskItem.get("documentId"), taskItem.get("outlineNodeId"));
+                String domainId = coalesce(taskItem.get("techDomainId"), task.get("techDomainId"));
+                if (documentId != null && domainId != null) {
+                    taskItemsByDocumentDomain.put(documentId + "|" + domainId, taskItem);
+                }
+            }
+        }
         List<Map<String, Object>> ownedEffective = new ArrayList<>();
         for (Map<String, Object> item : effective) {
             Map<String, Object> owned = new LinkedHashMap<>(item);
             List<Map<String, Object>> ownerships = new ArrayList<>();
             for (Object domainValue : listValues(item.get("techDomainIds"))) {
                 String domainId = String.valueOf(domainValue);
+                String documentId = String.valueOf(item.get("documentId"));
+                Map<String, Object> taskItem = taskItemsByDocumentDomain.get(documentId + "|" + domainId);
                 Map<String, Object> ownership = new LinkedHashMap<>();
                 ownership.put("techDomainId", domainId);
                 ownership.put("techDomainName", techDomainName(connection, domainId));
-                ownership.put("taskId", null);
-                ownership.put("assigneeId", null);
-                ownership.put("assigneeName", null);
-                ownership.put("status", "pending_binding");
+                ownership.put("taskId", taskItem == null ? null : taskItem.get("taskId"));
+                ownership.put("assigneeId", taskItem == null ? null : taskItem.get("assigneeId"));
+                ownership.put("assigneeName", taskItem == null ? null : taskItem.get("assigneeName"));
+                ownership.put("status", taskItem == null
+                    ? "pending_binding"
+                    : coalesce(taskItem.get("status"), "unassigned"));
                 ownerships.add(ownership);
             }
             owned.put("ownerships", ownerships);
@@ -1194,7 +1213,7 @@ public final class Main {
         body.put("assignments", assignments);
         body.put("effectiveDocumentAssignments", ownedEffective);
         body.put("techDomains", projectTechDomains(connection).get("techDomains"));
-        body.put("tasks", projectBuildTasksForOutline(connection, outlineId));
+        body.put("tasks", outlineTasks);
         body.put("summary", mapOf(
             "totalDocuments", documents,
             "assignedDocuments", assignedDocuments,

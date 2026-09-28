@@ -88,18 +88,30 @@ describe('增量构建前端契约', () => {
     expect(state).toContain('templateByDocument: {}');
     expect(state).toContain('focusMode: false');
     expect(state).toContain('assistantOpen: false');
+    const digest = read('apps/knowledge-center-web/frontend/knowledge-center/common/utils/sha256.js');
+    expect(app()).toContain("import { sha256Text } from './common/utils/sha256.js'");
+    expect(app()).not.toContain("crypto.subtle.digest('SHA-256'");
+    expect(digest).toContain('if (subtle?.digest)');
+    expect(digest).toContain('return fallbackSha256(bytes)');
   });
 
   test('文档生产以手册总览为主入口，任务工作区保留兼容视图', () => {
     const css = read('apps/knowledge-center-web/frontend/knowledge-center/modules/production/production.css');
     expect(view()).toContain('data-production-overview-tab="handbooks"');
     expect(view()).toContain('data-production-overview-tab="tasks"');
-    expect(view()).toContain('data-production-overview-tab="todo"');
-    expect(view()).toContain('data-production-column');
+    expect(view()).toContain('data-production-overview-tab="generations"');
+    expect(view()).toContain('我的生成');
+    expect(view()).not.toContain('data-production-overview-tab="todo"');
+    expect(view()).not.toContain('我的待办');
+    expect(api()).toContain("/knowledge-center/api/production/generations?scope=mine");
+    expect(app()).toContain("params.get('view') === 'todo'");
+    expect(app()).toContain("canonicalUrl.searchParams.set('view', 'generations')");
+    expect(view()).toContain('data-table-view-id="production-handbooks"');
+    expect(view()).toContain('data-table-column="${key}"');
     expect(view()).toContain('data-production-handbook-row');
     expect(view()).toContain('href="/document-generation-workbench.html"');
     expect(view()).toContain('target="_blank" rel="noopener"');
-    expect(css).toContain('.production-column-picker');
+    expect(css).not.toContain('.production-column-picker');
     expect(css).toContain('.production-handbook-row');
   });
 

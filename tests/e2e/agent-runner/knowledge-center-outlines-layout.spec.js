@@ -18,6 +18,48 @@ test.beforeEach(async ({ page }) => {
   expect(response.ok()).toBe(true);
 });
 
+test('刷新首帧恢复收缩导航且隐藏导航恢复入口不覆盖页面标题', async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem('knowledge-center-sidebar-collapsed', 'true');
+    localStorage.setItem('knowledge-center-sidebar-hidden', 'false');
+    window.__sidebarFirstVisible = null;
+    window.addEventListener('DOMContentLoaded', () => {
+      const shell = document.querySelector('#app-shell');
+      if (!shell) return;
+      const capture = () => {
+        if (shell.hidden || window.__sidebarFirstVisible) return;
+        const sidebar = document.querySelector('#sidebar');
+        window.__sidebarFirstVisible = {
+          collapsed: shell.classList.contains('sidebar-collapsed'),
+          width: sidebar.getBoundingClientRect().width,
+          transitionDuration: getComputedStyle(sidebar).transitionDuration,
+        };
+      };
+      new MutationObserver(capture).observe(shell, { attributes: true, attributeFilter: ['hidden'] });
+      capture();
+    }, { once: true });
+  });
+
+  await page.goto(`${baseUrl}/knowledge-center/outlines`);
+  await expect(page.locator('#app-shell')).toHaveClass(/sidebar-collapsed/);
+  const firstVisible = await page.evaluate(() => window.__sidebarFirstVisible);
+  expect(firstVisible).toEqual({ collapsed: true, width: 64, transitionDuration: '0s' });
+
+  await page.getByRole('button', { name: '展开导航' }).click();
+  await page.getByRole('button', { name: '完全隐藏导航' }).click();
+  const restore = page.getByRole('button', { name: '展开导航' });
+  const heading = page.getByRole('heading', { name: '大纲管理', level: 2 });
+  await expect(restore).toBeVisible();
+  await expect(restore.locator('span')).toHaveCSS('position', 'absolute');
+  const [restoreBox, headingBox] = await Promise.all([restore.boundingBox(), heading.boundingBox()]);
+  expect(restoreBox && headingBox).toBeTruthy();
+  const overlaps = !(restoreBox.x + restoreBox.width <= headingBox.x
+    || headingBox.x + headingBox.width <= restoreBox.x
+    || restoreBox.y + restoreBox.height <= headingBox.y
+    || headingBox.y + headingBox.height <= restoreBox.y);
+  expect(overlaps).toBe(false);
+});
+
 test('大纲版本标签中的空值不会导致详情视图渲染中断', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', error => pageErrors.push(error.message));
@@ -188,6 +230,30 @@ test('P0：文档总览目录可搜索、可调宽和可折叠，目录不提供
   await expect(layout).not.toHaveClass(/navigation-pane-collapsed/);
 });
 
+test('P1：目录树支持键盘移动、展开收起和当前项滚动定位', async ({ page }) => {
+  await page.goto(`${baseUrl}/knowledge-center/outlines/DB-017`);
+  const tree = page.locator('[data-navigation-layout-id="outline-overview"] [role="tree"]').first();
+  await expect(tree).toBeVisible();
+  const items = tree.locator('[role="treeitem"]');
+  await expect(items).not.toHaveCount(0);
+  const first = items.first();
+  await first.focus();
+  await expect(first).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await expect(tree.locator('[role="treeitem"]:focus')).toHaveCount(1);
+  await page.keyboard.press('End');
+  await expect(tree.locator('[role="treeitem"]:focus')).toHaveCount(1);
+  await page.keyboard.press('Home');
+  await expect(tree.locator('[role="treeitem"]:focus')).toHaveCount(1);
+  const expandable = tree.locator('[role="treeitem"][aria-expanded="true"], [role="treeitem"][aria-expanded="false"]').first();
+  if (await expandable.count()) {
+    await expandable.focus();
+    const before = await expandable.getAttribute('aria-expanded');
+    await page.keyboard.press(before === 'true' ? 'ArrowLeft' : 'ArrowRight');
+    await expect(expandable).toHaveAttribute('aria-expanded', before === 'true' ? 'false' : 'true');
+  }
+});
+
 test('P0：目录鼠标拖动可提交，Escape 和 pointercancel 可回退，动态重绘后仍可操作', async ({ page, browserName }, testInfo) => {
   await page.goto(`${baseUrl}/knowledge-center/outlines/DB-017`);
   let layout = page.locator('[data-navigation-layout-id="outline-overview"]');
@@ -307,22 +373,20 @@ test('大纲结构复用公共字段配置抽屉并保持个人视图', async ({
   await expect(page.getByRole('heading', { name: '配置显示字段' })).toBeVisible();
   const ownerToggle = page.locator('[data-table-drawer-visible="owner"]');
   await ownerToggle.uncheck();
-  await page.locator('[data-table-drawer-width="status"]').selectOption('120px');
-  await page.locator('[data-table-drawer-pin="chapter"]').selectOption('left');
-  await page.getByRole('button', { name: '应用', exact: true }).click();
   await expect(page.locator('th[data-outline-column="owner"]')).toBeHidden();
-  await expect(page.locator('th[data-outline-column="chapter"]')).toHaveAttribute('data-table-column-pinned', 'left');
-  expect(await page.locator('th[data-outline-column="status"]').evaluate(element => ({
-    width: element.style.width,
-    minWidth: element.style.minWidth,
-    maxWidth: element.style.maxWidth,
-  }))).toEqual({ width: '120px', minWidth: '120px', maxWidth: '120px' });
+  await expect(page.locator('[data-table-drawer-visible="owner"]')).toBeFocused();
+  await expect(page.getByRole('heading', { name: '配置显示字段' })).toBeVisible();
+  await page.locator('[data-table-view-column="status"][data-table-view-move="up"]').click();
+  await expect(page.locator('.outline-node-table thead th').nth(1)).toContainText('状态');
+  await expect(page.locator('[data-table-view-column="status"][data-table-view-move="up"]')).toBeFocused();
   await page.reload();
   await expect(page.locator('th[data-outline-column="owner"]')).toBeHidden();
+  await expect(page.locator('.outline-node-table thead th').nth(1)).toContainText('状态');
   await page.getByRole('button', { name: '配置大纲结构' }).click();
   await page.getByRole('button', { name: '恢复默认' }).click();
-  await page.getByRole('button', { name: '应用', exact: true }).click();
   await expect(page.locator('th[data-outline-column="owner"]')).toBeVisible();
+  await expect(page.locator('.outline-node-table thead th').nth(1)).toContainText('类型');
+  await page.getByRole('button', { name: '关闭字段配置' }).click();
   const firstRow = page.locator('[data-outline-node-row]').first();
   const chapterName = await firstRow.locator('[data-outline-node]').textContent();
   await page.getByLabel('查询章节名称').fill(chapterName.trim());

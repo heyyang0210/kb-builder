@@ -2,16 +2,16 @@
 .table-view-trigger { margin: 0 0 8px auto; display: flex; align-items: center; gap: 6px; }
 .table-view-trigger svg { width: 16px; height: 16px; }
 .table-view-backdrop { position: fixed; inset: 0; z-index: 70; background: rgb(15 23 42 / 22%); }
-.table-view-drawer { position: fixed; z-index: 71; inset: 0 0 0 auto; width: min(420px, 100vw); display: grid; grid-template-rows: auto minmax(0, 1fr) auto; background: var(--color-surface, #fff); box-shadow: -12px 0 32px rgb(15 23 42 / 16%); }
+.table-view-drawer { position: fixed; z-index: 71; inset: 0 0 0 auto; width: min(420px, 100vw); display: grid; grid-template-rows: auto minmax(0, 1fr); background: var(--color-surface, #fff); box-shadow: -12px 0 32px rgb(15 23 42 / 16%); }
 .table-view-drawer[hidden], .table-view-backdrop[hidden] { display: none; }
-.table-view-drawer > header, .table-view-drawer > footer { padding: 18px 20px; border-bottom: 1px solid var(--color-border); }
+.table-view-drawer > header { padding: 18px 20px; border-bottom: 1px solid var(--color-border); }
 .table-view-drawer > header { display: flex; justify-content: space-between; gap: 12px; }
 .table-view-drawer > header h2 { margin: 2px 0 4px; font-size: 18px; }
 .table-view-drawer > header p { margin: 0; color: var(--color-text-secondary); font-size: 12px; }
 .table-view-drawer-body { min-height: 0; overflow: auto; padding: 16px 20px; }
 .table-view-drawer-actions { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; color: var(--color-text-secondary); font-size: 12px; }
 .table-view-drawer ol { display: grid; gap: 6px; padding: 0; margin: 0; list-style: none; }
-.table-view-drawer li { display: grid; grid-template-columns: 44px minmax(110px, 1fr) 92px 108px; align-items: center; min-height: 52px; border: 1px solid var(--color-border); background: var(--color-surface-subtle); }
+.table-view-drawer li { display: grid; grid-template-columns: 44px minmax(110px, 1fr); align-items: center; min-height: 52px; padding: 0 8px 0 0; border: 1px solid var(--color-border); background: var(--color-surface-subtle); }
 .table-view-drawer li label { min-height: 44px; display: flex; align-items: center; gap: 9px; cursor: pointer; }
 .table-view-drawer li label span { min-width: 0; overflow-wrap: anywhere; }
 .table-view-drawer li label small { margin-left: auto; color: var(--color-text-tertiary); font-size: 11px; }
@@ -19,11 +19,5 @@
 .table-view-order button { width: 44px; height: 22px; display: grid; place-items: center; border: 0; background: transparent; color: var(--color-text-tertiary); cursor: pointer; }
 .table-view-order button:disabled { opacity: .3; cursor: default; }
 .table-view-order svg { width: 14px; height: 14px; }
-.table-view-drawer li > select { min-width: 0; height: 36px; margin-right: 6px; padding: 4px 6px; border: 1px solid var(--color-border-strong); background: var(--color-surface); color: inherit; }
-.table-view-drawer footer { display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid var(--color-border); border-bottom: 0; }
 .table-view-hint { margin: 14px 0 0; color: var(--color-text-tertiary); font-size: 12px; }
-[data-table-column-pinned="left"], [data-table-column-pinned="right"] { position: sticky; z-index: 2; background: var(--color-surface, #fff); }
-[data-table-column-pinned="left"] { box-shadow: 3px 0 0 var(--color-border); }
-[data-table-column-pinned="right"] { box-shadow: -3px 0 0 var(--color-border); }
-thead [data-table-column-pinned] { z-index: 3; background: var(--color-surface-subtle); }
-@media (max-width: 640px) { .table-view-drawer { width: 100vw; } .table-view-drawer > header, .table-view-drawer > footer { padding: 16px; } .table-view-drawer-body { padding: 12px 16px; } .table-view-drawer li { grid-template-columns: 44px minmax(120px, 1fr); padding: 6px; } .table-view-drawer li > select { grid-column: 2; width: 100%; margin: 2px 0; min-height: 44px; } }
+@media (max-width: 640px) { .table-view-drawer { width: 100vw; } .table-view-drawer > header { padding: 16px; } .table-view-drawer-body { padding: 12px 16px; } .table-view-drawer li { grid-template-columns: 44px minmax(120px, 1fr); padding: 6px; } }

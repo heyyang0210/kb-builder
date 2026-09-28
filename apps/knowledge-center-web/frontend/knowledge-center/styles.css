@@ -13,6 +13,7 @@
   color: var(--color-navigation-text);
   transition: width var(--motion-standard), flex-basis var(--motion-standard);
 }
+.sidebar-state-restoring .sidebar { transition: none; }
 .brand { min-height: 72px; display: flex; align-items: center; gap: var(--space-3); padding: 14px 12px; border-bottom: 1px solid var(--color-navigation-border); }
 .brand-mark { width: 36px; height: 36px; flex: none; display: grid; place-items: center; border-radius: var(--radius-sm); background: var(--color-brand-subtle); color: var(--color-brand); font-weight: 800; }
 .brand-mark img { width: 100%; height: 100%; object-fit: contain; border-radius: inherit; }
@@ -27,9 +28,9 @@
 .nav-caption.governance { margin-top: var(--space-4); }
 .nav-item { width: 100%; min-height: 52px; display: flex; align-items: center; gap: 11px; margin: 2px 0; padding: 7px 10px; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--color-navigation-text); text-align: left; cursor: pointer; transition: background var(--motion-fast), border-color var(--motion-fast), color var(--motion-fast); }
 .nav-item:hover { background: var(--color-navigation-hover); }
-.nav-item.active { border-color: #7dd3fc; background: var(--color-navigation-active); color: #075985; box-shadow: inset 3px 0 var(--color-brand); }
+.nav-item.active { border-color: transparent; background: var(--color-navigation-active); color: var(--color-icon-action-hover); box-shadow: inset 3px 0 var(--color-brand); }
 .nav-icon { width: 20px; height: 20px; flex: none; color: var(--color-navigation-muted); stroke-width: 1.8; }
-.nav-item.active .nav-icon { color: var(--color-brand); }
+.nav-item.active .nav-icon { color: var(--color-icon-action-hover); }
 .nav-copy { min-width: 0; }
 .nav-copy b, .nav-copy small { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .nav-copy b { font-size: 14px; }
@@ -37,7 +38,7 @@
 .sidebar-footer { margin-top: auto; display: flex; align-items: center; gap: var(--space-2); padding: 14px 12px; border-top: 1px solid var(--color-navigation-border); color: var(--color-navigation-muted); font-size: 12px; }
 .sidebar-status { min-width: 0; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sidebar-user { display:inline-flex; align-items:center; gap:6px; min-width:0; max-width:128px; padding:6px; border:0; border-radius:var(--radius-sm); background:transparent; color:var(--color-navigation-text); cursor:pointer; font:inherit; }
-.sidebar-user:hover,.sidebar-user:focus-visible { background:var(--color-navigation-hover); color:var(--color-brand); }
+.sidebar-user:hover,.sidebar-user:focus-visible { background:var(--color-navigation-hover); color:var(--color-icon-action-hover); }
 .sidebar-user svg { width:16px; height:16px; flex:none; }
 .sidebar-user span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .status-dot { width: 8px; height: 8px; flex: none; border-radius: 50%; background: #e0aa47; }
@@ -55,7 +56,8 @@
 .sidebar-collapsed .sidebar-resizer { display: none; }
 .sidebar-hidden .sidebar { display: none; }
 .sidebar-restore, .mobile-menu { display: none; position: fixed; z-index: 12; left: 12px; top: 12px; min-height: 40px; align-items: center; gap: var(--space-2); padding: 0 12px; border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); font-weight: 650; cursor: pointer; box-shadow: 0 2px 8px rgb(18 20 22 / 8%); }
-.sidebar-hidden .sidebar-restore { display: inline-flex; }
+.sidebar-restore span { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+.sidebar-hidden .sidebar-restore { display: inline-flex; position: static; flex: 0 0 40px; width: 40px; min-width: 40px; justify-content: center; align-self: flex-start; margin: 12px 0 0 8px; padding: 0; }
 .mobile-overlay { position: fixed; z-index: 8; inset: 0; background: rgb(12 14 16 / 46%); }
 .main-shell { min-width: 0; flex: 1; min-height: 0; overflow-y: auto; container-type: inline-size; }
 @media (min-width: 901px) {

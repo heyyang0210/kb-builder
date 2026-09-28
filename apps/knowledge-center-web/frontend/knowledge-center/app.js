@@ -1,6 +1,8 @@
 import { archiveAsset, createAsset, createPrincipal, createTeamGroup, deleteOutline, importOutline, importPrincipals, loadAssets, loadOutlineData, loadPlatformData, loadPrincipals, loadTeamGroups, loadTeamGroup, saveTeamRoster, publishOutlineGovernance, resolveAssetStatus, restoreAsset, saveOutlineGovernance, updateAsset, updateAssetStatus, updateDomainBuildTaskItem, loadDomainBuildTasks as fetchDomainBuildTasks, loadPlatformPermissions, updatePlatformUserPermissions, updatePrincipal, loadDatabaseConnectionStatus, testDatabaseConnection, saveDatabaseConnection, loadTemplates, loadTemplate } from './common/api/platform-api.js';
 import { disconnectGitLabOAuth, gitLabOAuthHref, loadGitLabBranches, loadGitLabConnections, loadGitLabOAuthAccounts, loadGitLabOAuthStatus, loadGitLabOAuthConfig, loadGitLabTree, loadHandbookGitLabAccess, loadHandbookRepository, loadHandbookRepositoryCommits, loadHandbookRepositoryFile, loadHandbookRepositoryMapping, loadHandbookRepositoryStatistics, loadHandbookRepositoryTree, loadReviewRepositoryContext, saveGitLabConnection, saveHandbookRepositoryMapping, createGitLabConnection, updateGitLabConnection, verifyGitLabConnection, disableGitLabConnection, enableGitLabConnection, searchGitLabConnections } from './common/api/gitlab-api.js';
-import { addIncrementalSource, bootstrapBaseline, commentIncrementalReview, createIncrementalReview, createIncrementalRevision, createIncrementalTask, createOnlineReview, decideIncrementalReview, loadCandidateDiff, loadHandbookReviewSummary, loadIncrementalBaselines, loadIncrementalTask, loadIncrementalTasks, loadReviewBootstrap, publishIncrementalTask, recordIncrementalEvidence, reopenIncrementalReviewComment, replyIncrementalReviewComment, resolveIncrementalReviewComment, runIncrementalChecks, saveIncrementalDraft, submitIncrementalCandidate, updateIncrementalTarget } from './common/api/incremental-api.js';
+import { addIncrementalSource, bootstrapBaseline, commentIncrementalReview, createIncrementalReview, createIncrementalRevision, createIncrementalTask, createOnlineReview, decideIncrementalReview, loadCandidateDiff, loadHandbookReviewSummary, loadIncrementalBaselines, loadIncrementalTask, loadIncrementalTasks, loadMyGenerations, loadReviewBootstrap, publishIncrementalTask, recordIncrementalEvidence, reopenIncrementalReviewComment, replyIncrementalReviewComment, resolveIncrementalReviewComment, runIncrementalChecks, saveIncrementalDraft, submitIncrementalCandidate, updateIncrementalTarget } from './common/api/incremental-api.js';
+import { createHandbookReviewBatch, loadHandbookDraft, loadHandbookDraftRevisions, loadHandbookReviewers, restoreHandbookDraftRevision, saveHandbookDraft, uploadHandbookDraftAttachment } from './common/api/handbook-production-api.js';
+import { sha256Text } from './common/utils/sha256.js';
 import { bootstrapAuth, consumeRememberedTarget, performLogout, rememberCurrentTarget, startCasLogin, submitAdminLogin } from './common/auth/auth-controller.js';
 import { appState, views } from './common/state/app-state.js';
 import { authState, canAccessView, canPerform, clearSession, displayName, firstAccessibleView, isPlatformAdmin } from './common/state/auth-state.js';
@@ -39,11 +41,6 @@ const rendererLoaders = {
   repository: () => import('./modules/repository/view.js').then(module => module.renderRepository),
 };
 const rendererPromises = new Map();
-
-try {
-  const savedColumns = JSON.parse(window.localStorage.getItem('kc-production-handbook-columns') || 'null');
-  if (Array.isArray(savedColumns) && savedColumns.includes('handbook')) appState.productionUi.handbookColumns = savedColumns;
-} catch (_) { /* 使用默认列表字段 */ }
 
 async function ensureRenderer(view) {
   if (renderers[view] || !rendererLoaders[view]) return;
@@ -228,12 +225,16 @@ let outlineLoadSequence = 0;
   document.querySelector('.nav-caption.governance').hidden = !canAccessView('platform');
   const outlineView = appState.activeView === 'outlines' ? outlineRouteState() : {};
   const databasePasswordDraft = document.querySelector('[data-database-dialog] [data-database-field="password"]')?.value || '';
-      byId('view-root').innerHTML = renderer({ projection: appState.activeView === 'repository' ? appState.gitlabProjection : appState.projection, templateProjection: appState.templateProjection, cleaningProjection: appState.cleaningProjection, cleaningCanWrite: isPlatformAdmin(), reviewProjection: appState.reviewProjection, reviewUi: appState.reviewUi, outlineProjection: appState.outlineProjection, assetCatalog: appState.assetCatalog, principalProjection: appState.principalProjection, principalListState: appState.principalListState, teamGroupProjection: appState.teamGroupProjection, teamGroupView: new URLSearchParams(window.location.search).get('view') || 'people', teamGroupUi: appState.teamGroupUi, incrementalProjection: appState.incrementalProjection, productionUi: appState.productionUi, handbookProductionUi: appState.handbookProductionUi, currentUser: { ...(authState.session?.user || {}), displayName: displayName() }, domainBuildTaskProjection: appState.domainBuildTaskProjection, gitlabProjection: appState.gitlabProjection, permissionProjection: appState.permissionProjection, governanceProjection: appState.platformGovernance, databaseConnectionProjection: appState.databaseConnectionProjection, databaseConnectionDrawerOpen: appState.databaseConnectionDrawerOpen, databaseConnectionAdvancedOpen: appState.databaseConnectionAdvancedOpen, databaseConnectionForm: appState.databaseConnectionForm, databaseConnectionStatus: appState.databaseConnectionStatus, selectedPermissionUserId: appState.selectedPermissionUserId, permissionSaveStatus: appState.permissionSaveStatus, permissionUserSearch: appState.permissionUserSearch, permissionListState: appState.permissionListState, gitlabVerification: appState.gitlabVerification, platformAdmin: isPlatformAdmin(), platformTab: appState.platformTab, gitlabListState: appState.gitlabListState, gitlabAddingConnection: appState.gitlabAddingConnection, gitlabEditingConnection: appState.gitlabEditingConnection, outlinePermissions: { create: canPerform('outline:create'), delete: canPerform('outline:delete'), platformAdmin: isPlatformAdmin() }, outlineView });
+      byId('view-root').innerHTML = renderer({ projection: appState.activeView === 'repository' ? appState.gitlabProjection : appState.projection, templateProjection: appState.templateProjection, cleaningProjection: appState.cleaningProjection, cleaningCanWrite: isPlatformAdmin(), reviewProjection: appState.reviewProjection, reviewUi: appState.reviewUi, outlineProjection: appState.outlineProjection, assetCatalog: appState.assetCatalog, principalProjection: appState.principalProjection, principalListState: appState.principalListState, teamGroupProjection: appState.teamGroupProjection, teamGroupView: new URLSearchParams(window.location.search).get('view') || 'people', teamGroupUi: appState.teamGroupUi, incrementalProjection: appState.incrementalProjection, handbookProductionUi: appState.handbookProductionUi, currentUser: { ...(authState.session?.user || {}), displayName: displayName() }, domainBuildTaskProjection: appState.domainBuildTaskProjection, gitlabProjection: appState.gitlabProjection, permissionProjection: appState.permissionProjection, governanceProjection: appState.platformGovernance, databaseConnectionProjection: appState.databaseConnectionProjection, databaseConnectionDrawerOpen: appState.databaseConnectionDrawerOpen, databaseConnectionAdvancedOpen: appState.databaseConnectionAdvancedOpen, databaseConnectionForm: appState.databaseConnectionForm, databaseConnectionStatus: appState.databaseConnectionStatus, selectedPermissionUserId: appState.selectedPermissionUserId, permissionSaveStatus: appState.permissionSaveStatus, permissionUserSearch: appState.permissionUserSearch, permissionListState: appState.permissionListState, gitlabVerification: appState.gitlabVerification, platformAdmin: isPlatformAdmin(), platformTab: appState.platformTab, gitlabListState: appState.gitlabListState, gitlabAddingConnection: appState.gitlabAddingConnection, gitlabEditingConnection: appState.gitlabEditingConnection, outlinePermissions: { create: canPerform('outline:create'), delete: canPerform('outline:delete'), platformAdmin: isPlatformAdmin() }, outlineView });
       cleanupSearchableSelects();
       markDynamicSelects(document);
-      enhanceTableViews(byId('view-root'), String(authState.session?.user?.principalId || authState.session?.user?.userId || authState.session?.user?.username || 'local'));
+      enhanceTableViews(byId('view-root'), {
+        preferenceScope: String(authState.session?.user?.principalId || authState.session?.user?.userId || authState.session?.user?.username || 'local'),
+        onChange: render,
+      });
       enhanceResizableNavigation(byId('view-root'));
       enhanceDirectoryTrees(byId('view-root'));
+      if (appState.activeView === 'production') requestAnimationFrame(mountHandbookVditor);
       const teamImpact = appState.teamGroupUi?.impact;
       if (teamImpact?.groupId) {
         const form = document.querySelector(`[data-team-group-form][data-team-group-id="${CSS.escape(String(teamImpact.groupId))}"]`);
@@ -423,7 +424,17 @@ async function loadRepositoryWorkspace() {
     const tree = Array.isArray(treeResult) ? treeResult : (treeResult.items || treeResult.tree || []);
     const firstFile = state.path || tree.find(item => item.type !== 'tree' && /\.md$/i.test(item.path || item.name))?.path || '';
     const file = firstFile ? await loadHandbookRepositoryFile(state.handbookId, branch, state.language, firstFile) : null;
-    appState.gitlabProjection = { status: 'ok', handbookId: state.handbookId, handbookName: metadata.handbookName, connectionName: metadata.connectionName, project: metadata.project, languages: metadata.languages, branches, branch, language: state.language, tree, file, commitSha: file?.commitId || metadata.commitSha };
+    const resolvedPath = file?.path || firstFile;
+    const canonicalUrl = new URL(window.location.href);
+    canonicalUrl.searchParams.set('branch', branch);
+    canonicalUrl.searchParams.set('lang', state.language);
+    if (resolvedPath) canonicalUrl.searchParams.set('path', resolvedPath);
+    else canonicalUrl.searchParams.delete('path');
+    const canonicalLocation = `${canonicalUrl.pathname}${canonicalUrl.search}${canonicalUrl.hash}`;
+    if (canonicalLocation !== `${window.location.pathname}${window.location.search}${window.location.hash}`) {
+      window.history.replaceState({ ...window.history.state, view: 'repository', branch, language: state.language, path: resolvedPath }, '', canonicalLocation);
+    }
+    appState.gitlabProjection = { status: 'ok', handbookId: state.handbookId, handbookName: metadata.handbookName, connectionName: metadata.connectionName, project: metadata.project, languages: metadata.languages, branches, branch, language: state.language, path: resolvedPath, tree, file, commitSha: file?.commitId || metadata.commitSha };
   } catch (error) {
     appState.gitlabProjection = { status: repositoryStatusFor(error), handbookId: state.handbookId, branch: state.branch, language: state.language, path: state.path, error: { code: error.code, message: error.message, httpStatus: error.status } };
   }
@@ -676,20 +687,29 @@ async function loadIncrementalWorkspace(preferredTaskId = null) {
   const taskId = preferredTaskId || params.get('taskId');
   const productionState = productionRouteState();
   const requestedHandbookId = productionState.handbookId;
+  if (!requestedHandbookId && params.get('view') === 'todo') {
+    const canonicalUrl = new URL(window.location.href);
+    canonicalUrl.searchParams.set('view', 'generations');
+    window.history.replaceState({ ...window.history.state, view: 'production', productionView: 'generations' }, document.title, `${canonicalUrl.pathname}${canonicalUrl.search}`);
+  }
   appState.incrementalProjection = { ...(appState.incrementalProjection || {}), status: 'loading', requestedHandbookId };
   render();
   try {
-    const [tasks, assets, handbookOutline, templates] = await Promise.all([
+    const [tasks, assets, handbookOutline, templates, generations] = await Promise.all([
       loadIncrementalTasks(requestedHandbookId ? { handbookId: requestedHandbookId } : {})
         .catch(error => requestedHandbookId ? [] : Promise.reject(error)),
       loadAssets(new URLSearchParams({ pageSize: '100' })).catch(() => null),
       requestedHandbookId ? loadOutlineData(requestedHandbookId) : Promise.resolve(null),
       requestedHandbookId ? loadTemplates({ summary: '1' }).catch(() => ({ data: [] })) : Promise.resolve({ data: [] }),
+      requestedHandbookId ? Promise.resolve(null) : loadMyGenerations()
+        .then(data => ({ status: 'ready', items: data?.items || [], generatedAt: data?.generatedAt || null }))
+        .catch(error => ({ status: error.status === 403 ? 'forbidden' : 'unavailable', items: [], error: { code: error.code, message: error.message } })),
     ]);
     const items = Array.isArray(tasks) ? tasks : (tasks?.items || []);
     const selectedId = taskId || null;
     const detail = selectedId ? await loadIncrementalTask(selectedId) : null;
     let repository = { mapped: false, status: 'not-mapped', filesByDocument: {}, contentByDocument: {} };
+    let handbookDocuments = [];
     if (requestedHandbookId && handbookOutline?.status === 'ok') {
       try {
         const detail = handbookOutline.detail || {};
@@ -699,13 +719,22 @@ async function loadIncrementalWorkspace(preferredTaskId = null) {
           const isDoc = item.kind === 'document' || item.legacyKind === 'knowledge_point' || item.type === 'document' || item.documentId;
           return isDoc ? [item] : flatten(children);
         });
-        const documents = flatten(nodes).map((item, index) => ({ id: String(item.id || item.documentId || item.sourceId || `document-${index + 1}`), sourceId: String(item.sourceId || item.documentId || ''), title: String(item.title || item.name || item.displayName || item.part || '未命名目录条目'), item }));
-        repository = await loadHandbookProductionRepository(requestedHandbookId, documents, productionState.branch, productionState.documentId);
+        handbookDocuments = flatten(nodes).map((item, index) => ({ id: String(item.id || item.documentId || item.sourceId || `document-${index + 1}`), sourceId: String(item.sourceId || item.documentId || ''), title: String(item.title || item.name || item.displayName || item.part || '未命名目录条目'), item }));
+        repository = await loadHandbookProductionRepository(requestedHandbookId, handbookDocuments, productionState.branch, productionState.documentId || handbookDocuments[0]?.id);
       } catch (error) {
         repository = { mapped: error.code !== 'GITLAB_MAPPING_NOT_FOUND' && error.code !== 'GITLAB_LANGUAGE_NOT_MAPPED', status: repositoryStatusFor(error), handbookId: requestedHandbookId, branch: productionState.branch, error: { code: error.code, message: error.message }, filesByDocument: {}, contentByDocument: {} };
       }
     }
     appState.handbookProductionUi.repository = repository;
+    // Draft identity includes the published outline version. Project it before
+    // the first draft request so read and save resolve the same context key.
+    appState.incrementalProjection = {
+      ...(appState.incrementalProjection || {}),
+      requestedHandbookId,
+      handbookOutline,
+    };
+    const selectedHandbookDocumentId = productionState.documentId || handbookDocuments[0]?.id || '';
+    if (selectedHandbookDocumentId) await loadSharedHandbookDraft(selectedHandbookDocumentId);
     if (requestedHandbookId) {
       const templateItems = templates?.data || templates?.items || [];
       appState.templateProjection = { items: templateItems };
@@ -717,7 +746,7 @@ async function loadIncrementalWorkspace(preferredTaskId = null) {
     }
     appState.incrementalProjection = {
       status: 'ok', items, detail,
-      handbooks: assets?.items || assets?.data?.items || [], requestedHandbookId, handbookOutline,
+      handbooks: assets?.items || assets?.data?.items || [], requestedHandbookId, handbookOutline, generations,
     };
   } catch (error) {
     appState.incrementalProjection = { status: 'unavailable', items: [], detail: null, requestedHandbookId, handbookOutline: null, error: { message: error.message } };
@@ -727,6 +756,239 @@ async function loadIncrementalWorkspace(preferredTaskId = null) {
 
 function handbookUi() {
   return appState.handbookProductionUi;
+}
+
+let handbookVditor = null;
+let handbookVditorDocumentId = '';
+let vditorAssetsPromise = null;
+
+function handbookDraftContext(documentId = document.querySelector('[data-handbook-current-document]')?.dataset.handbookCurrentDocument || '') {
+  const route = productionRouteState();
+  const outline = appState.incrementalProjection?.handbookOutline?.detail || {};
+  return {
+    handbookId: route.handbookId,
+    documentId,
+    outlineVersionId: String(outline.publishedVersion?.id || outline.publishedVersionId || outline.versionId || outline.outlineVersionId || outline.id || outline.outlineId || 'published'),
+    branch: String(handbookUi().repository?.branch || route.branch || 'unmapped'),
+  };
+}
+
+function currentHandbookMarkdown(documentId) {
+  if (handbookUi().drafts?.[documentId] !== undefined) return String(handbookUi().drafts[documentId]);
+  const revision = handbookUi().serverDrafts?.[documentId]?.draft?.revision;
+  if (revision) return String(revision.markdown || '');
+  const repository = handbookUi().repository || {};
+  const mapped = repository.filesByDocument?.[documentId];
+  if (mapped?.matched) return String(repository.contentByDocument?.[documentId] || '');
+  const templateId = handbookUi().templateByDocument?.[documentId]
+    || appState.templateProjection?.items?.find(item => item.status === 'active')?.id
+    || appState.templateProjection?.items?.[0]?.id;
+  const template = handbookUi().templateDetails?.[templateId];
+  return String(template?.current?.content || template?.content || '');
+}
+
+function loadVditorAssets() {
+  if (window.Vditor) return Promise.resolve(window.Vditor);
+  if (vditorAssetsPromise) return vditorAssetsPromise;
+  vditorAssetsPromise = new Promise((resolve, reject) => {
+    const stylesheet = document.createElement('link');
+    stylesheet.rel = 'stylesheet';
+    stylesheet.href = './common/vendor/vditor/dist/index.css';
+    stylesheet.dataset.vditorAsset = 'style';
+    document.head.append(stylesheet);
+    const script = document.createElement('script');
+    script.src = './common/vendor/vditor/dist/index.min.js';
+    script.dataset.vditorAsset = 'script';
+    script.onload = () => resolve(window.Vditor);
+    script.onerror = () => reject(new Error('编辑器资源加载失败'));
+    document.head.append(script);
+  });
+  return vditorAssetsPromise;
+}
+
+async function mountHandbookVditor() {
+  const target = document.querySelector('[data-handbook-vditor]');
+  if (!target) {
+    if (handbookVditor) handbookVditor.destroy();
+    handbookVditor = null; handbookVditorDocumentId = '';
+    return;
+  }
+  const documentId = target.dataset.documentId;
+  if (handbookVditor && handbookVditorDocumentId === documentId && target.querySelector('.vditor')) return;
+  if (handbookVditor) handbookVditor.destroy();
+  try {
+    const Vditor = await loadVditorAssets();
+    if (!target.isConnected) return;
+    handbookVditorDocumentId = documentId;
+    handbookVditor = new Vditor(target, {
+      cdn: `${window.location.origin}/knowledge-center/common/vendor/vditor`,
+      mode: 'wysiwyg', lang: 'zh_CN', value: currentHandbookMarkdown(documentId),
+      minHeight: 480, cache: { enable: false }, counter: { enable: true },
+      toolbar: ['headings', 'bold', 'italic', '|', 'list', 'ordered-list', 'table', 'code', 'link', 'upload', '|', 'undo', 'redo'],
+      upload: {
+        accept: '.png,.jpg,.jpeg,.webp,.gif,.md,.markdown,.pdf,.docx,.xlsx',
+        handler: files => uploadFilesIntoHandbookDraft(documentId, [...files]),
+      },
+      input: markdown => {
+        handbookUi().draftBranchByDocument[documentId] = handbookDraftContext(documentId).branch;
+        handbookUi().drafts[documentId] = markdown;
+        handbookUi().draftHtml[documentId] = handbookVditor?.getHTML?.() || '';
+        updateHandbookUiList('dirtyDocuments', documentId, true);
+        updateHandbookUiList('selectedForReview', documentId, false);
+        updateHandbookDraftControls(documentId);
+      },
+    });
+  } catch (error) {
+    target.innerHTML = `<div class="handbook-production-content-empty" role="alert"><strong>编辑器加载失败</strong><span>${escapeHtml(error.message)}</span></div>`;
+  }
+}
+
+function updateHandbookDraftControls(documentId) {
+  const workspace = document.querySelector(`[data-handbook-current-document="${CSS.escape(documentId)}"]`);
+  workspace?.querySelector('[data-handbook-save-status]')?.replaceChildren('有未保存修改');
+  const save = workspace?.querySelector('[data-handbook-draft-save]');
+  if (save) save.disabled = handbookUi().draftLoadState?.[documentId] !== 'ready';
+  const discard = workspace?.querySelector('[data-handbook-discard]'); if (discard) discard.disabled = false;
+}
+
+async function loadSharedHandbookDraft(documentId) {
+  if (!documentId) return;
+  handbookUi().draftLoadState[documentId] = 'loading';
+  try {
+    const result = await loadHandbookDraft(handbookDraftContext(documentId));
+    handbookUi().serverDrafts[documentId] = result;
+    handbookUi().draftLoadState[documentId] = 'ready';
+    if (handbookUi().draftSaveState?.[documentId]?.status === 'loadFailed') delete handbookUi().draftSaveState[documentId];
+    if (result.exists) {
+      handbookUi().drafts[documentId] = result.draft.revision.markdown;
+      handbookUi().draftHtml[documentId] = result.draft.revision.htmlSnapshot;
+      handbookUi().draftBranchByDocument[documentId] = result.draft.branch;
+      updateHandbookUiList('savedDocuments', documentId, true);
+    } else {
+      delete handbookUi().drafts[documentId]; delete handbookUi().draftHtml[documentId];
+      updateHandbookUiList('savedDocuments', documentId, false);
+    }
+  } catch (error) {
+    handbookUi().draftLoadState[documentId] = error.status === 403 ? 'forbidden' : 'failed';
+    if (handbookUi().draftSaveState?.[documentId]?.status === 'loadFailed') delete handbookUi().draftSaveState[documentId];
+  }
+}
+
+async function uploadFilesIntoHandbookDraft(documentId, files) {
+  const progress = document.querySelector('[data-handbook-attachment-progress]');
+  for (const file of files) {
+    try {
+      if (progress) progress.textContent = `正在上传 ${file.name} · 0%`;
+      const attachment = await uploadHandbookDraftAttachment(handbookDraftContext(documentId), file, percent => {
+        if (progress) progress.textContent = `正在上传 ${file.name} · ${percent}%`;
+      });
+      handbookUi().attachments[documentId] = [...(handbookUi().attachments[documentId] || []), attachment];
+      const label = attachment.kind === 'image'
+        ? `![${file.name}](${attachment.stableReference})`
+        : `[${file.name}](${attachment.stableReference})`;
+      handbookVditor?.insertMD?.(label);
+      if (progress) progress.textContent = `${file.name} 已上传，保存草稿后完成绑定。`;
+    } catch (error) {
+      if (progress) progress.textContent = `${file.name} 上传失败：${error.message}`;
+    }
+  }
+  return null;
+}
+
+async function saveCurrentHandbookDraft(documentId) {
+  if (handbookUi().draftLoadState?.[documentId] !== 'ready') {
+    showAppNotice('共享草稿服务暂不可用，当前编辑内容仍保留在页面中，请稍后重试。', { title: '暂时无法保存' });
+    return;
+  }
+  const markdown = handbookVditorDocumentId === documentId && handbookVditor ? handbookVditor.getValue() : currentHandbookMarkdown(documentId);
+  const htmlSnapshot = handbookVditorDocumentId === documentId && handbookVditor ? handbookVditor.getHTML() : handbookUi().draftHtml?.[documentId] || '';
+  const current = handbookUi().serverDrafts?.[documentId];
+  handbookUi().draftSaveState[documentId] = { status: 'saving' };
+  const status = document.querySelector('[data-handbook-save-status]'); if (status) status.textContent = '保存中';
+  const save = document.querySelector(`[data-handbook-draft-save="${CSS.escape(documentId)}"]`); if (save) save.disabled = true;
+  try {
+    const repositoryBaseline = handbookUi().repository?.contentByDocument?.[documentId] || '';
+    const result = await saveHandbookDraft(handbookDraftContext(documentId), {
+      baselineDigest: await sha256Text(repositoryBaseline),
+      editVersion: current?.draft?.editVersion || 0,
+      markdown,
+      htmlSnapshot,
+      templateVersionId: handbookUi().templateByDocument?.[documentId] || null,
+      attachmentIds: (handbookUi().attachments?.[documentId] || []).map(item => item.attachmentId),
+    });
+    handbookUi().serverDrafts[documentId] = result;
+    handbookUi().drafts[documentId] = result.draft.revision.markdown;
+    handbookUi().draftHtml[documentId] = result.draft.revision.htmlSnapshot;
+    handbookUi().draftBranchByDocument[documentId] = result.draft.branch;
+    handbookUi().draftSaveState[documentId] = { status: 'saved' };
+    updateHandbookUiList('dirtyDocuments', documentId, false);
+    updateHandbookUiList('savedDocuments', documentId, true);
+    render();
+    showAppNotice(`共享草稿 v${result.draft.editVersion} 已保存。`, { title: '保存成功' });
+  } catch (error) {
+    if (error.code === 'DRAFT_VERSION_CONFLICT') {
+      handbookUi().draftSaveState[documentId] = { status: 'conflict', message: error.message };
+      handbookUi().conflict = { documentId, localMarkdown: markdown, localHtml: htmlSnapshot, serverDraft: error.details?.serverDraft };
+      render();
+      requestAnimationFrame(() => document.querySelector('[data-handbook-conflict-dialog]')?.showModal());
+      return;
+    }
+    handbookUi().draftSaveState[documentId] = { status: 'failed', message: error.message };
+    if (status) { status.textContent = `保存失败：${error.message}`; status.setAttribute('role', 'alert'); }
+    if (save) save.disabled = false;
+  }
+}
+
+function discardLocalHandbookChanges(documentId) {
+  const server = handbookUi().serverDrafts?.[documentId];
+  if (server?.exists) {
+    handbookUi().drafts[documentId] = server.draft.revision.markdown;
+    handbookUi().draftHtml[documentId] = server.draft.revision.htmlSnapshot;
+    handbookUi().draftBranchByDocument[documentId] = server.draft.branch;
+  } else {
+    delete handbookUi().drafts[documentId]; delete handbookUi().draftHtml[documentId]; delete handbookUi().draftBranchByDocument[documentId];
+  }
+  delete handbookUi().draftSaveState[documentId];
+  updateHandbookUiList('dirtyDocuments', documentId, false);
+  updateHandbookUiList('selectedForReview', documentId, false);
+  render();
+}
+
+async function openHandbookHistory(documentId) {
+  handbookUi().history = { documentId, loading: true, items: [] };
+  render();
+  const dialog = document.querySelector('[data-handbook-history-dialog]'); dialog?.showModal();
+  try {
+    const result = await loadHandbookDraftRevisions(handbookDraftContext(documentId));
+    handbookUi().history = { documentId, loading: false, items: result.items || [] };
+    render();
+    document.querySelector('[data-handbook-history-dialog]')?.showModal();
+  } catch (error) {
+    handbookUi().history = { documentId, loading: false, items: [], error: error.message };
+    render(); document.querySelector('[data-handbook-history-dialog]')?.showModal();
+  }
+}
+
+async function openHandbookReviewDialog() {
+  const dialog = document.querySelector('[data-handbook-review-dialog]');
+  dialog?.showModal();
+  const status = dialog?.querySelector('[data-handbook-review-dialog-status]');
+  if (status) status.textContent = '正在读取可用审核人…';
+  try {
+    const result = await loadHandbookReviewers(productionRouteState().handbookId);
+    handbookUi().reviewers = result.items || [];
+    const select = dialog.querySelector('[data-handbook-reviewer]');
+    const reviewerOptions = handbookUi().reviewers.map(item => `<option value="${escapeHtml(item.id)}" ${item.disabled ? 'disabled' : ''}>${escapeHtml(item.displayName)}${item.disabled ? '（当前提交者）' : ''}</option>`).join('');
+    select.innerHTML = '<option value="">请选择非提交者审核人</option>' + reviewerOptions;
+    const overrides = dialog.querySelector('[data-handbook-review-overrides]');
+    overrides.innerHTML = '<strong>逐篇覆盖（可选）</strong>' + (handbookUi().selectedForReview || []).map(documentId => {
+      const title = document.querySelector(`[data-handbook-review-document][value="${CSS.escape(documentId)}"]`)?.closest('label')?.querySelector('strong')?.textContent || documentId;
+      return `<label><span>${escapeHtml(title)}</span><select data-handbook-review-override="${escapeHtml(documentId)}"><option value="">使用默认审核人</option>${reviewerOptions}</select></label>`;
+    }).join('');
+    if (status) status.textContent = '';
+  } catch (error) {
+    if (status) status.textContent = `审核人读取失败：${error.message}`;
+  }
 }
 
 function updateHandbookUiList(key, documentId, included) {
@@ -968,9 +1230,14 @@ function showAuth(error = null, status = '') {
 }
 
 function showApplication() {
+  const appShell = byId('app-shell');
+  if (appShell.dataset.sidebarReady !== 'true') {
+    applySidebar({ restoring: true });
+    appShell.dataset.sidebarReady = 'true';
+  }
   byId('auth-loading').hidden = true;
   byId('auth-shell').hidden = true;
-  byId('app-shell').hidden = false;
+  appShell.hidden = false;
   byId('skip-to-main').hidden = false;
   byId('sidebar-user').textContent = displayName();
 }
@@ -3425,25 +3692,7 @@ document.addEventListener('click', event => {
 
   const saveButton = event.target.closest('[data-handbook-draft-save]');
   if (saveButton) {
-    const documentId = saveButton.dataset.handbookDraftSave;
-    updateHandbookUiList('dirtyDocuments', documentId, false);
-    updateHandbookUiList('savedDocuments', documentId, true);
-    render();
-    showAppNotice('已在当前页面保存，正式草稿保存接口待接入。', { title: '保存完成' });
-    return;
-  }
-
-  const restoreButton = event.target.closest('[data-handbook-restore]');
-  if (restoreButton) {
-    const documentId = restoreButton.dataset.handbookRestore;
-    if (!window.confirm('恢复后将丢弃当前页面草稿，原文不会被修改。确认继续？')) return;
-    delete handbookUi().drafts[documentId];
-    delete handbookUi().draftHtml[documentId];
-    delete handbookUi().draftBranchByDocument[documentId];
-    updateHandbookUiList('dirtyDocuments', documentId, false);
-    updateHandbookUiList('savedDocuments', documentId, false);
-    updateHandbookUiList('selectedForReview', documentId, false);
-    render();
+    saveCurrentHandbookDraft(saveButton.dataset.handbookDraftSave);
     return;
   }
 
@@ -3451,14 +3700,42 @@ document.addEventListener('click', event => {
   if (discardButton) {
     const documentId = discardButton.dataset.handbookDiscard;
     if (!window.confirm('确认取消当前页面中的修改？')) return;
-    delete handbookUi().drafts[documentId];
-    delete handbookUi().draftHtml[documentId];
-    delete handbookUi().draftBranchByDocument[documentId];
-    updateHandbookUiList('dirtyDocuments', documentId, false);
-    updateHandbookUiList('savedDocuments', documentId, false);
-    updateHandbookUiList('selectedForReview', documentId, false);
-    render();
+    discardLocalHandbookChanges(documentId);
     return;
+  }
+
+  const historyButton = event.target.closest('[data-handbook-history]');
+  if (historyButton) { openHandbookHistory(historyButton.dataset.handbookHistory); return; }
+  if (event.target.closest('[data-handbook-history-close]')) { event.target.closest('dialog')?.close(); return; }
+  const historyRestore = event.target.closest('[data-handbook-history-restore]');
+  if (historyRestore) {
+    const documentId = handbookUi().history?.documentId;
+    const current = handbookUi().serverDrafts?.[documentId];
+    restoreHandbookDraftRevision(handbookDraftContext(documentId), { revisionId: historyRestore.dataset.handbookHistoryRestore, editVersion: current?.draft?.editVersion || 0 })
+      .then(result => {
+        handbookUi().serverDrafts[documentId] = result;
+        handbookUi().drafts[documentId] = result.draft.revision.markdown;
+        handbookUi().draftHtml[documentId] = result.draft.revision.htmlSnapshot;
+        handbookUi().history = null; render(); showAppNotice(`已创建草稿 v${result.draft.editVersion}。`, { title: '历史版本已恢复' });
+      }).catch(error => showAppNotice(error.message, { title: '恢复失败' }));
+    return;
+  }
+  if (event.target.closest('[data-handbook-conflict-close]')) { event.target.closest('dialog')?.close(); return; }
+  if (event.target.closest('[data-handbook-conflict-copy]')) {
+    navigator.clipboard?.writeText(handbookUi().conflict?.localMarkdown || '');
+    showAppNotice('本地 Markdown 已复制。', { title: '复制成功' }); return;
+  }
+  if (event.target.closest('[data-handbook-conflict-reload]')) {
+    const conflict = handbookUi().conflict; const documentId = conflict?.documentId;
+    if (conflict?.serverDraft) handbookUi().serverDrafts[documentId] = { exists: true, draft: conflict.serverDraft, capabilities: handbookUi().serverDrafts?.[documentId]?.capabilities || {} };
+    handbookUi().conflict = null; discardLocalHandbookChanges(documentId); return;
+  }
+  if (event.target.closest('[data-handbook-conflict-merge]')) {
+    const conflict = handbookUi().conflict; const documentId = conflict?.documentId;
+    if (conflict?.serverDraft) handbookUi().serverDrafts[documentId] = { exists: true, draft: conflict.serverDraft, capabilities: handbookUi().serverDrafts?.[documentId]?.capabilities || {} };
+    handbookUi().drafts[documentId] = conflict?.localMarkdown || '';
+    handbookUi().draftHtml[documentId] = conflict?.localHtml || '';
+    handbookUi().conflict = null; handbookUi().modeByDocument[documentId] = 'edit'; updateHandbookUiList('dirtyDocuments', documentId, true); render(); return;
   }
 
   const referenceOpen = event.target.closest('[data-handbook-reference-open]');
@@ -3504,7 +3781,7 @@ document.addEventListener('click', event => {
     const dialog = document.querySelector('[data-handbook-review-dialog]');
     const count = dialog?.querySelector('[data-handbook-review-count]');
     if (count) count.textContent = `已选择 ${selectedCount} 篇文档`;
-    dialog?.showModal();
+    openHandbookReviewDialog();
     return;
   }
 
@@ -3515,34 +3792,16 @@ document.addEventListener('click', event => {
     return;
   }
 
-  if (event.target.closest('[data-handbook-review-enter]')) {
-    const { handbookId } = productionRouteState();
-    window.location.assign(`/knowledge-center/review?handbookId=${encodeURIComponent(handbookId)}&source=handbook-production`);
-  }
-});
-
-document.addEventListener('input', event => {
-  const editor = event.target.closest('[data-handbook-document-content]');
-  if (!editor) return;
-  const documentId = editor.dataset.documentId;
-  handbookUi().draftBranchByDocument[documentId] = appState.handbookProductionUi.repository?.branch || productionRouteState().branch || '';
-  handbookUi().draftHtml[documentId] = editor.innerHTML;
-  handbookUi().drafts[documentId] = editor.innerText;
-  updateHandbookUiList('dirtyDocuments', documentId, true);
-  updateHandbookUiList('savedDocuments', documentId, false);
-  updateHandbookUiList('selectedForReview', documentId, false);
-  const workspace = editor.closest('[data-handbook-current-document]');
-  const state = workspace?.querySelector('.handbook-production-document-state');
-  const status = workspace?.querySelector('[data-handbook-save-status]');
-  const save = workspace?.querySelector('[data-handbook-draft-save]');
-  const discard = workspace?.querySelector('[data-handbook-discard]');
-  if (state) { state.textContent = '未保存'; state.classList.add('dirty'); }
-  if (status) status.textContent = '有未保存修改。';
-  if (save) save.disabled = false;
-  if (discard) discard.disabled = false;
 });
 
 document.addEventListener('change', async event => {
+  const attachmentInput = event.target.closest('[data-handbook-attachment]');
+  if (attachmentInput) {
+    const documentId = document.querySelector('[data-handbook-current-document]')?.dataset.handbookCurrentDocument || '';
+    await uploadFilesIntoHandbookDraft(documentId, [...(attachmentInput.files || [])]);
+    attachmentInput.value = '';
+    return;
+  }
   const templateSelect = event.target.closest('[data-handbook-template]');
   if (templateSelect) {
     const documentId = templateSelect.dataset.documentId;
@@ -3632,6 +3891,36 @@ document.addEventListener('change', async event => {
 });
 
 document.addEventListener('submit', async event => {
+  const reviewForm = event.target.closest('[data-handbook-review-form]');
+  if (reviewForm) {
+    event.preventDefault();
+    if (!reviewForm.reportValidity()) return;
+    const handbookId = productionRouteState().handbookId;
+    const reviewerId = reviewForm.elements.reviewerId.value;
+    const selected = [...(handbookUi().selectedForReview || [])];
+    const status = reviewForm.querySelector('[data-handbook-review-dialog-status]');
+    const submit = reviewForm.querySelector('[type="submit"]');
+    submit.disabled = true; status.textContent = '正在创建评审批次…';
+    try {
+      const documents = selected.map(documentId => {
+        const context = handbookDraftContext(documentId);
+        const draft = handbookUi().serverDrafts?.[documentId]?.draft;
+        const override = reviewForm.querySelector(`[data-handbook-review-override="${CSS.escape(documentId)}"]`)?.value;
+        return { documentId, outlineVersionId: context.outlineVersionId, branch: context.branch, draftRevisionId: draft?.currentRevisionId, reviewerIds: [override || reviewerId] };
+      });
+      const result = await createHandbookReviewBatch(handbookId, { documents, defaultReviewerIds: [reviewerId], note: reviewForm.elements.note.value.trim() });
+      handbookUi().selectedForReview = [];
+      handbookUi().reviewState = { status: 'submitted', batchId: result.batchId, message: `评审批次 ${result.batchId} 已创建` };
+      await Promise.all(selected.map(loadSharedHandbookDraft));
+      reviewForm.closest('dialog')?.close();
+      render();
+      showAppNotice('评审版本已冻结，下一工作草稿已创建。', { title: '提交成功' });
+    } catch (error) {
+      status.textContent = `提交失败：${error.message}`;
+      submit.disabled = false;
+    }
+    return;
+  }
   const form = event.target.closest('[data-handbook-reference-form]');
   if (!form) return;
   event.preventDefault();
@@ -3674,6 +3963,12 @@ function restoreReviewUi() {
 }
 
 document.addEventListener('keydown', event => {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's' && appState.activeView === 'production' && handbookVditor) {
+    event.preventDefault();
+    const documentId = handbookVditorDocumentId;
+    if (documentId && handbookUi().dirtyDocuments?.includes(documentId)) saveCurrentHandbookDraft(documentId);
+    return;
+  }
   if (event.key === 'Escape' && appState.activeView === 'production' && handbookUi().focusMode && !document.querySelector('dialog[open]')) {
     handbookUi().focusMode = false;
     render();
@@ -3853,17 +4148,6 @@ document.addEventListener('scroll', () => {
 }, true);
 
 document.addEventListener('change', event => {
-  const productionColumn = event.target.closest('[data-production-column]');
-  if (productionColumn) {
-    const key = productionColumn.dataset.productionColumn;
-    const current = new Set(appState.productionUi.handbookColumns || ['handbook', 'product', 'owner', 'progress', 'published']);
-    if (productionColumn.checked) current.add(key); else current.delete(key);
-    current.add('handbook');
-    appState.productionUi.handbookColumns = ['handbook', 'product', 'owner', 'progress', 'published'].filter(item => current.has(item));
-    try { window.localStorage.setItem('kc-production-handbook-columns', JSON.stringify(appState.productionUi.handbookColumns)); } catch (_) { /* storage unavailable */ }
-    render();
-    return;
-  }
   const opinionFilter = event.target.closest('[data-review-opinion-filter]');
   if (opinionFilter) {
     document.querySelectorAll('[data-review-opinion]').forEach(opinion => {
@@ -4221,7 +4505,21 @@ let sidebarWidth = Number(localStorage.getItem('knowledge-center-sidebar-width')
 let sidebarHidden = localStorage.getItem('knowledge-center-sidebar-hidden') === 'true';
 let sidebarCollapsed = localStorage.getItem('knowledge-center-sidebar-collapsed') === 'true';
 
-function applySidebar() {
+function syncSidebarToggleIcon(collapsed) {
+  const toggle = byId('sidebar-collapse');
+  const current = toggle?.querySelector?.('[data-lucide]');
+  if (!current) return;
+  const iconName = collapsed ? 'panel-left-open' : 'panel-left-close';
+  if (current.getAttribute('data-lucide') === iconName) return;
+  const replacement = document.createElement('i');
+  replacement.setAttribute('data-lucide', iconName);
+  replacement.setAttribute('aria-hidden', 'true');
+  current.replaceWith(replacement);
+  window.lucide?.createIcons?.({ nodes: [replacement] });
+}
+
+function applySidebar({ restoring = false } = {}) {
+  if (restoring) shell.classList.add('sidebar-state-restoring');
   shell.classList.toggle('sidebar-collapsed', sidebarCollapsed);
   shell.classList.toggle('sidebar-hidden', sidebarHidden);
   sidebar.style.setProperty('--sidebar-width', `${sidebarCollapsed ? 64 : sidebarWidth}px`);
@@ -4231,6 +4529,8 @@ function applySidebar() {
   const collapseLabel = sidebarCollapsed ? '展开导航' : '收缩导航';
   collapse.setAttribute('aria-label', collapseLabel);
   collapse.setAttribute('title', collapseLabel);
+  syncSidebarToggleIcon(sidebarCollapsed);
+  if (restoring) requestAnimationFrame(() => requestAnimationFrame(() => shell.classList.remove('sidebar-state-restoring')));
 }
 
 function saveSidebar() {

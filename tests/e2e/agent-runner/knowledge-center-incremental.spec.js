@@ -61,6 +61,50 @@ test('文档生产默认展示手册视图，任务视图继续提供增量工�
   await expect(page.locator('.incremental-sidebar')).toContainText('增量任务');
 });
 
+test('文档生产复用公共字段抽屉并迁移旧偏好', async ({ page }) => {
+  await page.route('**/knowledge-center/api/assets/handbooks?*', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ success: true, data: { items: [{ handbookId: 'field-config-e2e', name: '字段配置回归手册', productName: 'YashanDB', ownerAName: '张三' }] } }),
+  }));
+  await page.evaluate(() => localStorage.setItem('kc-production-handbook-columns', JSON.stringify(['handbook', 'owner', 'progress', 'published'])));
+  await page.goto(`${baseUrl}/knowledge-center/production`);
+
+  await expect(page.locator('[data-table-view-id="production-handbooks"]')).toBeVisible();
+  await expect(page.locator('[data-production-column-cell="product"]').first()).toBeHidden();
+  await expect(page.getByRole('button', { name: '配置手册生产列表显示字段' })).toContainText('4/5');
+  expect(await page.evaluate(() => localStorage.getItem('kc-production-handbook-columns'))).toBeNull();
+  expect(await page.evaluate(() => Object.keys(localStorage).some(key => key.includes(':production-handbooks:1')))).toBe(true);
+
+  await page.getByRole('button', { name: '配置手册生产列表显示字段' }).click();
+  await page.locator('[data-table-drawer-visible="product"]').check();
+  await expect(page.locator('[data-production-column-cell="product"]').first()).toBeVisible();
+  await expect(page.locator('[data-table-drawer-visible="product"]')).toBeFocused();
+  await expect(page.getByRole('heading', { name: '配置显示字段' })).toBeVisible();
+  await page.reload();
+  await expect(page.locator('[data-production-column-cell="product"]').first()).toBeVisible();
+});
+
+test('我的生成只展示服务端个人运行投影，旧待办链接自动迁移', async ({ page }) => {
+  await page.route('**/knowledge-center/api/production/generations?scope=mine', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ success: true, data: { scope: 'mine', items: [{
+      generationId: 'gen-mine-1', taskId: 'inc-mine-1', taskName: '生成安装说明', handbookId: 'DB-017', handbookName: 'mysql模式参考手册',
+      status: 'running', statusDisplayName: '生成中', association: 'participant', progress: 45, progressMessage: '正在校验生成内容', updatedAt: '2026-09-28T08:00:00.000Z',
+      nextAction: { label: '查看生成进度', href: '/knowledge-center/production?view=tasks&taskId=inc-mine-1&stage=generation' },
+    }] } }),
+  }));
+  await page.goto(`${baseUrl}/knowledge-center/production?view=todo`);
+  await expect(page).toHaveURL(/view=generations/);
+  await expect(page.getByRole('tab', { name: '我的生成' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByText('生成安装说明')).toBeVisible();
+  await expect(page.getByText('我参与的运行')).toBeVisible();
+  await expect(page.getByText('正在校验生成内容')).toBeVisible();
+  await expect(page.locator('.production-generations')).not.toContainText('审核待办');
+  await expect(page.locator('.production-generations')).not.toContainText('发布待办');
+});
+
 test('手册与任务视图往返时可恢复，空负责人数据不会中断渲染', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', error => pageErrors.push(error.message));

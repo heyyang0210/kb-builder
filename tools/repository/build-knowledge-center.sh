@@ -44,6 +44,11 @@ fi
 
 jdbc_source_rel="apps/yashandb-storage/lib/yashandb-jdbc.jar"
 [[ -f "$jdbc_source_rel" ]] || fail "缺少 YashanDB JDBC 驱动：$jdbc_source_rel"
+vditor_dist_rel="node_modules/vditor/dist"
+vditor_license_rel="node_modules/vditor/LICENSE"
+[[ -f "$vditor_dist_rel/index.min.js" && -f "$vditor_dist_rel/index.css" ]] \
+  || fail "缺少 Vditor 静态资源，请先运行 npm install"
+[[ -f "$vditor_license_rel" ]] || fail "缺少 Vditor LICENSE"
 
 source_revision="$(git rev-parse HEAD 2>/dev/null || printf 'unknown')"
 source_dirty=false
@@ -185,6 +190,10 @@ tar -cf - \
 
 echo "[4/6] 准备知识中心静态前端"
 tar -cf - -C apps/knowledge-center-web/frontend . | tar -xf - -C "$stage_rel/web/platform"
+vditor_target="$stage_rel/web/platform/knowledge-center/common/vendor/vditor"
+mkdir -p "$vditor_target"
+cp -R "$vditor_dist_rel" "$vditor_target/dist"
+cp "$vditor_license_rel" "$vditor_target/LICENSE"
 
 echo "[5/6] 编译 YashanDB Storage"
 cp "$jdbc_source_rel" "$stage_rel/java/lib/yashandb-jdbc.jar"

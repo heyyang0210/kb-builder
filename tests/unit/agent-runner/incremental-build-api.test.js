@@ -100,6 +100,36 @@ describe('P0 平台内增量构建 API', () => {
     expect(missing).toMatchObject({ status: 422, body: { error: { code: 'BASELINE_NOT_FOUND' } } });
   });
 
+  test('我的生成只投影当前用户发起或实际参与的持久化运行', () => {
+    api.repository.transaction(state => {
+      state.tasks.push(
+        {
+          id: 'task-own', name: '我发起的生成', handbookId: 'DB-001', state: 'editing', createdBy: editor.user,
+          generationRun: { id: 'gen-own', status: 'running', initiatedBy: editor.user, participants: [], progress: 40, updatedAt: '2026-09-28T08:00:00.000Z' },
+          reviews: [], updatedAt: '2026-09-28T08:00:00.000Z',
+        },
+        {
+          id: 'task-participated', name: '我参与的生成', handbookId: 'DB-001', state: 'under_review', createdBy: otherEditor.user,
+          generationRuns: [{ runId: 'gen-participated', status: 'completed', initiatedBy: otherEditor.user, participants: [editor.user], resultSummary: { text: '已形成草稿', privatePrompt: '不得返回' }, updatedAt: '2026-09-28T09:00:00.000Z' }],
+          reviews: [], updatedAt: '2026-09-28T09:00:00.000Z',
+        },
+        {
+          id: 'task-visible-only', name: '只是可读', handbookId: 'DB-001', state: 'under_review', createdBy: otherEditor.user,
+          generationRun: { id: 'gen-visible-only', status: 'completed', initiatedBy: otherEditor.user, participants: [] },
+          reviews: [], updatedAt: '2026-09-28T10:00:00.000Z',
+        },
+        { id: 'task-without-run', name: '没有运行事实', handbookId: 'DB-001', state: 'draft', createdBy: editor.user, reviews: [] },
+      );
+    });
+    const result = new IncrementalBuildService(api.repository).listMyGenerations(editor, { scope: 'mine' });
+    expect(result.items.map(item => item.generationId)).toEqual(['gen-participated', 'gen-own']);
+    expect(result.items[0]).toMatchObject({ association: 'participant', resultSummary: '已形成草稿', nextAction: { type: 'open_generation' } });
+    expect(result.items[0]).not.toHaveProperty('privatePrompt');
+    expect(result.items.find(item => item.generationId === 'gen-visible-only')).toBeUndefined();
+    expect(() => new IncrementalBuildService(api.repository).listMyGenerations(editor, { scope: 'mine', userId: 'editor-2' }))
+      .toThrow(expect.objectContaining({ code: 'GENERATION_USER_FILTER_FORBIDDEN', status: 422 }));
+  });
+
   test('知识编辑者可对非自有待审核任务提意见，但不能读取或修改任务', async () => {
     const created = await request(api.baseUrl, 'POST', '/knowledge-center/api/incremental-tasks', { name: '归属验证', handbookId: 'DB-001', businessVersion: '23.4', baselineVersionId: 'v1' }, 'owner-create');
     const id = created.body.data.id;

@@ -40,6 +40,19 @@ function dispatchChange(root, state, committed = false) {
   }));
 }
 
+function syncToggleIcon(toggle, collapsed) {
+  const current = toggle?.querySelector?.('[data-lucide]');
+  if (!current) return;
+  const iconName = collapsed ? 'panel-left-open' : 'panel-left-close';
+  if (current.getAttribute('data-lucide') === iconName) return;
+
+  const replacement = document.createElement('i');
+  replacement.setAttribute('data-lucide', iconName);
+  replacement.setAttribute('aria-hidden', 'true');
+  current.replaceWith(replacement);
+  window.lucide?.createIcons?.({ nodes: [replacement] });
+}
+
 function apply(root, state, { persist = false, dispatch = true } = {}) {
   const limits = config(root);
   state.width = clamp(state.width || limits.defaultWidth, limits.min, limits.max);
@@ -52,6 +65,7 @@ function apply(root, state, { persist = false, dispatch = true } = {}) {
     toggle.setAttribute('aria-expanded', String(!state.collapsed));
     toggle.setAttribute('aria-label', `${state.collapsed ? '展开' : '收起'}${root.dataset.navigationPaneLabel || '目录'}`);
     toggle.title = toggle.getAttribute('aria-label');
+    syncToggleIcon(toggle, state.collapsed);
   }
   const handle = root.querySelector('[data-navigation-pane-resizer]');
   if (handle) {

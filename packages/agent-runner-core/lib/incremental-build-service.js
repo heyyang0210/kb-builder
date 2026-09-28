@@ -31,6 +31,26 @@ function actor(session) {
   return { id: user.id || user.loginName || 'unknown', displayName: user.displayName || user.loginName || '未知用户' };
 }
 
+function principalId(value) {
+  if (value === undefined || value === null) return '';
+  if (typeof value === 'string' || typeof value === 'number') return String(value);
+  return String(value.id || value.userId || value.principalId || value.loginName || '');
+}
+
+function publicPrincipal(value) {
+  const id = principalId(value);
+  if (!id) return null;
+  if (typeof value !== 'object' || value === null) return { id };
+  return { id, ...(value.displayName || value.name ? { displayName: value.displayName || value.name } : {}) };
+}
+
+function publicReference(value) {
+  if (!value) return null;
+  if (typeof value === 'string' || typeof value === 'number') return { id: String(value) };
+  const id = value.id || value.draftId || value.versionId || value.ref;
+  return id ? { id: String(id), ...(value.editVersion !== undefined ? { editVersion: value.editVersion } : {}) } : null;
+}
+
 function actions(session) {
   return new Set(session?.allowedActions || session?.user?.allowedActions || []);
 }
@@ -356,6 +376,66 @@ class IncrementalBuildService {
     if (query.handbookId) tasks = tasks.filter(item => item.handbookId === query.handbookId);
     if (query.state) tasks = tasks.filter(item => item.state === query.state);
     return tasks.map(task => this.project(task, session, true));
+  }
+
+  listMyGenerations(session, query = {}) {
+    requireAction(session, 'knowledge:read');
+    if (query.scope && query.scope !== 'mine') {
+      throw new IncrementalBuildError('GENERATION_SCOPE_INVALID', '生成记录仅支持查询当前用户', 422, { field: 'scope' });
+    }
+    if (query.userId !== undefined) {
+      throw new IncrementalBuildError('GENERATION_USER_FILTER_FORBIDDEN', '不允许指定其他用户查询生成记录', 422, { field: 'userId' });
+    }
+    const currentUserId = actor(session).id;
+    const items = this.repository.read().tasks
+      .filter(task => this.canRead(session, task))
+      .flatMap(task => {
+        const runs = Array.isArray(task.generationRuns)
+          ? task.generationRuns
+          : (task.generationRun ? [task.generationRun] : []);
+        return runs.flatMap((run, index) => {
+          const initiatedBy = run.initiatedBy || run.createdBy || run.startedBy || null;
+          const participants = Array.isArray(run.participants) ? run.participants : [];
+          const explicitInitiatorId = principalId(initiatedBy);
+          const participantIds = new Set(participants.map(principalId).filter(Boolean));
+          const fallbackCreatorId = !explicitInitiatorId ? principalId(task.createdBy) : '';
+          const association = explicitInitiatorId === currentUserId
+            ? 'initiator'
+            : participantIds.has(currentUserId)
+              ? 'participant'
+              : fallbackCreatorId === currentUserId
+                ? 'task_creator_fallback'
+                : '';
+          if (!association) return [];
+          const generationId = String(run.generationId || run.runId || run.id || '');
+          if (!generationId) return [];
+          const status = String(run.status || 'unknown');
+          const href = `/knowledge-center/production?view=tasks&taskId=${encodeURIComponent(task.id)}&stage=generation`;
+          return [{
+            generationId,
+            taskId: task.id,
+            taskName: task.name || task.title || '未命名任务',
+            handbookId: task.handbookId,
+            handbookName: task.handbookName || task.handbookId,
+            status,
+            statusDisplayName: run.statusDisplayName || ({ queued: '等待生成', running: '生成中', completed: '已完成', failed: '生成失败', cancelled: '已取消' }[status] || '状态待确认'),
+            initiatedBy: publicPrincipal(initiatedBy || task.createdBy),
+            participants: participants.map(publicPrincipal).filter(Boolean),
+            association,
+            progress: Number.isFinite(Number(run.progress)) ? Number(run.progress) : null,
+            progressMessage: run.progressMessage || null,
+            draftRef: publicReference(run.draftRef) || (task.draft ? { editVersion: task.draft.editVersion || null } : null),
+            resultSummary: typeof run.resultSummary === 'string' ? run.resultSummary : (run.resultSummary?.text || null),
+            failureReason: typeof run.failureReason === 'string' ? run.failureReason : (typeof run.error === 'string' ? run.error : run.error?.message || null),
+            nextAction: { type: 'open_generation', label: status === 'failed' ? '查看失败原因' : status === 'completed' ? '查看生成结果' : '查看生成进度', href },
+            createdAt: run.createdAt || run.startedAt || task.createdAt,
+            updatedAt: run.updatedAt || run.completedAt || run.startedAt || task.updatedAt,
+            sequence: index + 1,
+          }];
+        });
+      })
+      .sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
+    return { scope: 'mine', items, generatedAt: now() };
   }
 
   reviewBootstrap(session, query = {}) {

@@ -35,14 +35,27 @@ function activePhase(task) {
 
 function phaseIndex(key) { return Math.max(0, phases.findIndex(([phase]) => phase === key)); }
 
-function taskList(projection, todo = false) {
+function taskList(projection) {
   const allItems = array(projection?.items || projection?.tasks);
-  const items = todo ? allItems.filter(task => !['published', 'completed'].includes(task.state || task.status)) : allItems;
+  const items = allItems;
   const selectedId = idOf(selectedTask(projection));
   if (projection?.status === 'loading') return '<div class="incremental-list-state" role="status">正在读取增量任务…</div>';
   if (projection?.status === 'unavailable') return `<div class="incremental-list-state error"><strong>任务暂时无法读取</strong><span>${escapeHtml(projection?.error?.message || '请稍后重试')}</span><button class="button secondary compact" type="button" data-incremental-reload>重新读取</button></div>`;
-  if (!items.length) return emptyState(todo ? '暂无待处理事项' : '暂无增量任务', todo ? '当前没有需要继续处理的生产任务。' : '选择有已发布基线的手册创建第一个任务。');
+  if (!items.length) return emptyState('暂无增量任务', '选择有已发布基线的手册创建第一个任务。');
   return `<div class="incremental-task-list">${items.map(task => { const id = idOf(task); return `<button class="incremental-task-item${id === selectedId ? ' selected' : ''}" type="button" data-incremental-task="${escapeHtml(id)}" aria-pressed="${id === selectedId}"><strong>${escapeHtml(task.name || task.title || '未命名任务')}</strong><span>${escapeHtml(taskStatus(task))}</span><small>${escapeHtml(task.handbookName || task.handbookId || '')}${task.updatedAt ? ` · ${fmtTime(task.updatedAt)}` : ''}</small></button>`; }).join('')}</div>`;
+}
+
+function generationStatusClass(status) {
+  return ['failed', 'cancelled'].includes(status) ? 'is-error' : status === 'completed' ? 'is-success' : 'is-active';
+}
+
+function myGenerations(projection = {}) {
+  if (projection.status === 'loading') return '<section class="production-generations-state" role="status">正在读取我的生成…</section>';
+  if (projection.status === 'forbidden') return `<section class="production-generations-state error" role="alert"><strong>无权查看生成记录</strong><span>${escapeHtml(projection.error?.message || '请联系管理员检查知识读取权限。')}</span></section>`;
+  if (projection.status === 'unavailable') return `<section class="production-generations-state error" role="alert"><strong>我的生成暂时无法读取</strong><span>${escapeHtml(projection.error?.message || '请稍后重试。')}</span><button class="button secondary compact" type="button" data-incremental-reload>重新读取</button></section>`;
+  const items = array(projection.items);
+  if (!items.length) return `<section class="production-overview-empty">${emptyState('暂无生成记录', '你还没有发起或实际参与过 Agent 生成运行。审核、发布等事项请前往平台工作台的“待我处理”。')}</section>`;
+  return `<section class="production-generations" aria-label="我的生成记录"><header><div><h2>我的生成</h2><p>只展示你发起或实际参与的 Agent 生成运行。</p></div><span>${items.length} 条</span></header><div class="production-generation-list">${items.map(item => `<article class="production-generation-item"><div class="production-generation-main"><div><strong>${escapeHtml(item.taskName || '未命名生成')}</strong><span>${escapeHtml(item.handbookName || item.handbookId || '手册待确认')}</span></div><em class="${generationStatusClass(item.status)}">${escapeHtml(item.statusDisplayName || '状态待确认')}</em></div><dl><div><dt>运行编号</dt><dd>${escapeHtml(item.generationId)}</dd></div><div><dt>最近更新</dt><dd>${fmtTime(item.updatedAt)}</dd></div>${item.progress !== null && item.progress !== undefined ? `<div><dt>进度</dt><dd>${escapeHtml(String(item.progress))}%</dd></div>` : ''}</dl>${item.progressMessage ? `<p>${escapeHtml(item.progressMessage)}</p>` : ''}${item.failureReason ? `<p class="production-generation-error">${escapeHtml(typeof item.failureReason === 'string' ? item.failureReason : item.failureReason.message || '生成失败')}</p>` : ''}<footer><span>${item.association === 'participant' ? '我参与的运行' : '我发起的运行'}</span><a class="button secondary compact" href="${escapeHtml(item.nextAction?.href || `/knowledge-center/production?view=tasks&taskId=${encodeURIComponent(item.taskId)}&stage=generation`)}">${escapeHtml(item.nextAction?.label || '查看生成')}</a></footer></article>`).join('')}</div></section>`;
 }
 
 function progress(task, active) {
@@ -161,19 +174,6 @@ function createDialog(projection) {
   return `<dialog class="asset-dialog incremental-create-dialog" data-incremental-create-dialog><form data-incremental-create-form><header class="asset-dialog-heading"><div><span class="eyebrow asset-context-label">增量构建</span><h2>创建增量任务</h2><p>任务将锁定选定的已发布基线。</p></div><button class="icon-button asset-dialog-close" type="button" data-incremental-dialog-close aria-label="关闭"><i data-lucide="x" aria-hidden="true"></i></button></header><label>手册<select name="handbookId" required ${handbooks.length ? '' : 'disabled'}><option value="">${handbooks.length ? '请选择' : '暂无可用手册'}</option>${handbooks.map(item => { const id = String(item.handbookId || item.id); return `<option value="${escapeHtml(id)}" ${id === requestedHandbookId ? 'selected' : ''}>${escapeHtml(item.name || item.handbookName)}</option>`; }).join('')}</select></label><label>任务名称<input name="name" required maxlength="120" placeholder="例如：更新安装前检查说明"></label><label>业务版本<input name="businessVersion" required placeholder="例如：23.4.5.100"></label><div class="incremental-baseline-picker"><label>已发布基线<select name="baselineVersionId" required disabled><option value="">请先读取基线</option></select></label><button class="button secondary" type="button" data-incremental-load-baselines ${handbooks.length ? '' : 'disabled'}>读取基线</button></div><p class="incremental-baseline-status" role="status">仅能选择服务端返回的当前已发布基线。</p><footer><span role="status" class="incremental-form-status"></span><button class="button secondary" type="button" data-incremental-dialog-close>取消</button><button class="button" type="submit" disabled>创建任务</button></footer></form></dialog>`;
 }
 
-const handbookColumnOptions = [
-  ['handbook', '手册'],
-  ['product', '所属产品'],
-  ['owner', '负责人'],
-  ['progress', '当前进展'],
-  ['published', '最近发布'],
-];
-
-function handbookColumnState(ui = {}) {
-  const selected = Array.isArray(ui.handbookColumns) ? ui.handbookColumns : handbookColumnOptions.map(([key]) => key);
-  return new Set(handbookColumnOptions.map(([key]) => key).filter(key => selected.includes(key)));
-}
-
 function handbookValue(item, keys = []) {
   for (const key of keys) {
     const value = item?.[key];
@@ -232,35 +232,33 @@ function handbookRows(projection, assetCatalog) {
   }).filter(item => item.id);
 }
 
-function handbookColumnPicker(columns) {
-  return `<details class="production-column-picker"><summary class="button tertiary compact">显示字段</summary><div class="production-column-picker-panel"><strong>选择列表字段</strong>${handbookColumnOptions.map(([key, label]) => `<label><input type="checkbox" data-production-column="${key}" ${columns.has(key) ? 'checked' : ''} ${key === 'handbook' ? 'disabled' : ''}><span>${label}</span></label>`).join('')}<small>手册名称始终显示，用于进入工作台。</small></div></details>`;
-}
-
-function handbookOverview(projection, assetCatalog, productionUi = {}) {
-  const columns = handbookColumnState(productionUi);
+function handbookOverview(projection, assetCatalog) {
   const rows = handbookRows(projection, assetCatalog);
   if (!rows.length) return `<section class="production-overview-empty">${emptyState('暂无可展示的手册', '手册建立后会在这里显示生产进展。')}</section>`;
-  const column = (key, label, className = '') => columns.has(key) ? `<th class="${className}" data-production-column-head="${key}">${label}</th>` : '';
-  const cell = (key, content, className = '') => columns.has(key) ? `<td class="${className}" data-production-column-cell="${key}">${content}</td>` : '';
-  return `<section class="production-overview" aria-label="手册生产列表"><div class="production-overview-toolbar"><p>点击手册行进入工作台；列表字段可按当前工作习惯调整。</p>${handbookColumnPicker(columns)}</div><div class="production-handbook-table-wrap"><table class="production-handbook-table"><caption class="sr-only">手册生产进展</caption><thead><tr>${column('handbook', '手册', 'is-required')}${column('product', '所属产品')}${column('owner', '负责人')}${column('progress', '当前进展')}${column('published', '最近发布')}</tr></thead><tbody>${rows.map(item => `<tr class="production-handbook-row" tabindex="0" role="link" data-production-handbook-row data-handbook-href="/knowledge-center/production/handbook/${encodeURIComponent(item.id)}"><td class="is-required" data-production-column-cell="handbook"><strong>${escapeHtml(item.name)}</strong></td>${cell('product', escapeHtml(item.product))}${cell('owner', escapeHtml(item.owner))}${cell('progress', `<strong>${escapeHtml(item.progress)}</strong><small>${escapeHtml(item.progressDetail)}</small>`)}${cell('published', `<strong>${escapeHtml(item.published)}</strong><small>${escapeHtml(item.publishedAt ? fmtTime(item.publishedAt) : '发布时间暂不可用')}</small>`)}</tr>`).join('')}</tbody></table></div></section>`;
+  const column = (key, label, required = false) => `<th data-table-column="${key}" data-table-column-label="${label}" data-table-column-required="${required}" data-production-column-head="${key}" class="${required ? 'is-required' : ''}">${label}</th>`;
+  const cell = (key, content, className = '') => `<td class="${className}" data-table-column="${key}" data-production-column-cell="${key}">${content}</td>`;
+  return `<section class="production-overview" aria-label="手册生产列表"><div class="production-overview-toolbar"><p>点击手册行查看生产详情；列表字段可按当前工作习惯调整。</p></div><div class="production-handbook-table-wrap" data-table-view-host><table class="production-handbook-table" data-table-view-id="production-handbooks" data-table-view-schema="1" data-table-view-label="手册生产列表" data-table-view-legacy-key="kc-production-handbook-columns"><caption class="sr-only">手册生产进展</caption><thead><tr>${column('handbook', '手册', true)}${column('product', '所属产品')}${column('owner', '负责人')}${column('progress', '当前进展')}${column('published', '最近发布')}</tr></thead><tbody>${rows.map(item => `<tr class="production-handbook-row" tabindex="0" role="link" data-production-handbook-row data-handbook-href="/knowledge-center/production/handbook/${encodeURIComponent(item.id)}">${cell('handbook', `<strong>${escapeHtml(item.name)}</strong>`, 'is-required')}${cell('product', escapeHtml(item.product))}${cell('owner', escapeHtml(item.owner))}${cell('progress', `<strong>${escapeHtml(item.progress)}</strong><small>${escapeHtml(item.progressDetail)}</small>`)}${cell('published', `<strong>${escapeHtml(item.published)}</strong><small>${escapeHtml(item.publishedAt ? fmtTime(item.publishedAt) : '发布时间暂不可用')}</small>`)}</tr>`).join('')}</tbody></table></div></section>`;
 }
 
 function productionTabs(active) {
-  return `<nav class="production-overview-tabs" role="tablist" aria-label="文档生产视图"><button type="button" role="tab" data-production-overview-tab="handbooks" aria-selected="${active === 'handbooks'}">手册视图</button><button type="button" role="tab" data-production-overview-tab="tasks" aria-selected="${active === 'tasks'}">任务视图</button><button type="button" role="tab" data-production-overview-tab="todo" aria-selected="${active === 'todo'}">我的待办</button></nav>`;
+  return `<nav class="production-overview-tabs" role="tablist" aria-label="文档生产视图"><button type="button" role="tab" data-production-overview-tab="handbooks" aria-selected="${active === 'handbooks'}">手册视图</button><button type="button" role="tab" data-production-overview-tab="tasks" aria-selected="${active === 'tasks'}">任务视图</button><button type="button" role="tab" data-production-overview-tab="generations" aria-selected="${active === 'generations'}">我的生成</button></nav>`;
 }
 
-export function renderProduction({ incrementalProjection, assetCatalog, productionUi = {}, platformAdmin, currentUser, handbookProductionUi, templateProjection }) {
+export function renderProduction({ incrementalProjection, assetCatalog, platformAdmin, currentUser, handbookProductionUi, templateProjection }) {
   const projection = incrementalProjection || { status: 'loading' };
   if (projection.requestedHandbookId) return renderHandbookProduction({ projection, currentUser, ui: handbookProductionUi, templateProjection });
   const task = selectedTask(projection);
   const params = new URLSearchParams(window.location.search);
   const requestedView = params.get('view');
-  const active = params.get('taskId') ? 'tasks' : (['handbooks', 'tasks', 'todo'].includes(requestedView) ? requestedView : 'handbooks');
+  const normalizedView = requestedView === 'todo' ? 'generations' : requestedView;
+  const active = params.get('taskId') ? 'tasks' : (['handbooks', 'tasks', 'generations'].includes(normalizedView) ? normalizedView : 'handbooks');
   const taskItems = array(projection.items || projection.tasks);
-  const visibleTaskItems = active === 'todo' ? taskItems.filter(item => !['published', 'completed'].includes(item.state || item.status)) : taskItems;
-  const taskProjection = active === 'todo' ? { ...projection, items: visibleTaskItems, tasks: visibleTaskItems } : projection;
   const unavailable = projection.status === 'unavailable' ? `<section class="incremental-list-state error" role="alert"><strong>增量服务暂时不可用</strong><span>${escapeHtml(projection.error?.message || '请稍后重试')}</span><button class="button secondary compact" type="button" data-incremental-reload>重新读取</button></section>` : '';
-  const body = unavailable || (active === 'handbooks' ? handbookOverview(projection, assetCatalog, productionUi) : `<div class="incremental-workspace"><aside class="incremental-sidebar" aria-label="${active === 'todo' ? '我的待办' : '增量任务'}"><header><h2>${active === 'todo' ? '我的待办' : '增量任务'}</h2><span>${visibleTaskItems.length} 项</span></header>${taskList(taskProjection, active === 'todo')}</aside><div class="incremental-main">${taskDetail(task, platformAdmin)}</div></div>`);
+  const body = unavailable || (active === 'handbooks'
+    ? handbookOverview(projection, assetCatalog)
+    : active === 'generations'
+      ? myGenerations(projection.generations || { status: 'loading', items: [] })
+      : `<div class="incremental-workspace"><aside class="incremental-sidebar" aria-label="增量任务"><header><h2>增量任务</h2><span>${taskItems.length} 项</span></header>${taskList(projection)}</aside><div class="incremental-main">${taskDetail(task, platformAdmin)}</div></div>`);
   return `<div class="page-intro production-heading"><div><h2>文档生产</h2><p>统一查看手册进展，进入具体工作台继续编辑、审核和发布。</p></div><div class="production-heading-actions"><a class="button secondary" href="/document-generation-workbench.html" target="_blank" rel="noopener">文档生成工作台</a><button class="button" type="button" data-incremental-create-open>创建增量任务</button></div></div>${productionTabs(active)}${body}${createDialog(projection)}`;
 }
 

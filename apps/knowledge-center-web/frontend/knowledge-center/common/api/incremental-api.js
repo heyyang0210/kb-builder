@@ -45,6 +45,10 @@ export function loadIncrementalTasks(params = new URLSearchParams()) {
   return request(`${endpoint}${query ? `?${query}` : ''}`);
 }
 
+export function loadMyGenerations() {
+  return request('/knowledge-center/api/production/generations?scope=mine');
+}
+
 export function loadIncrementalBaselines(handbookId, businessVersion = '') {
   const query = new URLSearchParams({ handbookId });
   if (businessVersion) query.set('businessVersion', businessVersion);

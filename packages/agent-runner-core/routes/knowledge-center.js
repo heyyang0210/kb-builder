@@ -12,6 +12,7 @@ const { previewPersonnelImport, readPersonnelUpload, templateWorkbook } = requir
 const { REPOSITORY_ROOT } = require('../lib/repo-paths');
 const { readTechDomainConfig } = require('./outline-management');
 const { createDatabaseConnectionGovernance } = require('../lib/platform-management/database-connection-governance');
+const { createHandbookProductionService } = require('../lib/handbook-production-service');
 let logger;
 try { logger = require('../lib/logger'); } catch (_) { logger = { info() {} }; }
 
@@ -118,6 +119,7 @@ function createKnowledgeCenterHandler(options) {
   });
   const authModule = moduleRegistry?.get?.('auth') || modules.auth;
   const databaseMode = String(process.env.KNOWLEDGE_STORAGE_MODE || 'file').toLowerCase() === 'database';
+  const handbookProductionService = options.handbookProductionService || createHandbookProductionService();
 
   // --- Auth helpers ---
 
@@ -165,6 +167,7 @@ function createKnowledgeCenterHandler(options) {
       code: error?.code || fallbackCode,
       message: error?.message || '知识中心服务暂时不可用，请稍后重试。',
       retryable: status >= 500,
+      ...(error?.details === undefined ? {} : { details: error.details }),
     } }));
   }
 
@@ -516,6 +519,133 @@ function createKnowledgeCenterHandler(options) {
       req.on('end', () => { try { resolve(JSON.parse(raw || '{}')); } catch (_error) { reject(new Error('请求内容不是有效 JSON')); } });
       req.on('error', reject);
     });
+  }
+
+  function readBinaryBody(req, limit = 50 * 1024 * 1024) {
+    return new Promise((resolve, reject) => {
+      const chunks = [];
+      let size = 0;
+      let settled = false;
+      req.on('data', chunk => {
+        if (settled) return;
+        size += chunk.length;
+        if (size > limit) {
+          settled = true;
+          reject(Object.assign(new Error('附件大小超过允许范围'), { code: 'ATTACHMENT_TOO_LARGE', status: 413 }));
+          req.resume();
+          return;
+        }
+        chunks.push(chunk);
+      });
+      req.on('end', () => { if (!settled) resolve(Buffer.concat(chunks)); });
+      req.on('error', error => { if (!settled) reject(error); });
+    });
+  }
+
+  function productionContext(handbookId, documentId, source) {
+    const value = key => typeof source?.get === 'function' ? source.get(key) : source?.[key];
+    return {
+      handbookId,
+      documentId,
+      outlineVersionId: value('outlineVersionId'),
+      branch: value('branch'),
+    };
+  }
+
+  function sendProductionData(res, data, status = 200) {
+    res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
+    res.end(JSON.stringify({ success: true, data }));
+  }
+
+  async function eligibleReviewers(handbookId, session) {
+    const users = await Promise.resolve(authModule?.repository?.listUsers?.() || []);
+    return users.filter(user => {
+      const roles = new Set(user.roles || []);
+      return roles.has('REVIEWER') || roles.has('PLATFORM_ADMIN');
+    }).map(user => ({
+      id: String(user.principalId || user.id || user.userId),
+      displayName: String(user.displayName || user.name || user.loginName || '未命名审核人'),
+      roles: user.roles || [],
+      handbookId,
+      disabled: String(user.principalId || user.id || user.userId) === String(session?.user?.principalId || session?.user?.id),
+      disabledReason: String(user.principalId || user.id || user.userId) === String(session?.user?.principalId || session?.user?.id) ? '提交者不能成为唯一审核人' : null,
+    }));
+  }
+
+  async function handleHandbookProduction(req, res, session, pathname) {
+    const storedAttachmentMatch = pathname.match(/^\/knowledge-center\/api\/production\/attachments\/([^/]+)$/);
+    const documentMatch = pathname.match(/^\/knowledge-center\/api\/production\/handbooks\/([^/]+)\/documents\/([^/]+)\/draft(?:\/(revisions|restore))?$/);
+    const attachmentMatch = pathname.match(/^\/knowledge-center\/api\/production\/handbooks\/([^/]+)\/documents\/([^/]+)\/draft-attachments$/);
+    const reviewersMatch = pathname.match(/^\/knowledge-center\/api\/production\/handbooks\/([^/]+)\/reviewers$/);
+    const reviewBatchMatch = pathname.match(/^\/knowledge-center\/api\/production\/handbooks\/([^/]+)\/review-batches$/);
+    if (!documentMatch && !attachmentMatch && !reviewersMatch && !reviewBatchMatch && !storedAttachmentMatch) return false;
+
+    if (storedAttachmentMatch && req.method === 'GET') {
+      const result = handbookProductionService.readAttachment(decodeURIComponent(storedAttachmentMatch[1]), session);
+      res.writeHead(200, {
+        'Content-Type': result.metadata.mimeType,
+        'Content-Length': result.buffer.length,
+        'Content-Disposition': `${result.metadata.kind === 'image' ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(result.metadata.fileName)}`,
+        'Cache-Control': 'private, max-age=300',
+        'X-Content-Type-Options': 'nosniff',
+      });
+      res.end(result.buffer);
+      return true;
+    }
+
+    if (reviewersMatch && req.method === 'GET') {
+      sendProductionData(res, { items: await eligibleReviewers(decodeURIComponent(reviewersMatch[1]), session), capabilities: handbookProductionService.capabilities(session) });
+      return true;
+    }
+    if (reviewBatchMatch && req.method === 'POST') {
+      const handbookId = decodeURIComponent(reviewBatchMatch[1]);
+      const body = await readJsonBody(req);
+      const reviewers = await eligibleReviewers(handbookId, session);
+      sendProductionData(res, handbookProductionService.createReviewBatch({ ...body, handbookId }, session, req.headers['idempotency-key'], reviewers), 201);
+      return true;
+    }
+    if (attachmentMatch && req.method === 'POST') {
+      const params = new URL(req.url, 'http://localhost').searchParams;
+      const handbookId = decodeURIComponent(attachmentMatch[1]);
+      const documentId = decodeURIComponent(attachmentMatch[2]);
+      const rawName = String(req.headers['x-file-name'] || '');
+      let fileName;
+      try { fileName = decodeURIComponent(rawName); } catch (_error) { fileName = rawName; }
+      const buffer = await readBinaryBody(req);
+      sendProductionData(res, handbookProductionService.stageAttachment({
+        ...productionContext(handbookId, documentId, params),
+        fileName,
+        mimeType: req.headers['content-type'],
+      }, buffer, session), 201);
+      return true;
+    }
+    if (documentMatch) {
+      const handbookId = decodeURIComponent(documentMatch[1]);
+      const documentId = decodeURIComponent(documentMatch[2]);
+      const suffix = documentMatch[3] || '';
+      if (req.method === 'GET' && !suffix) {
+        const params = new URL(req.url, 'http://localhost').searchParams;
+        sendProductionData(res, handbookProductionService.getDraft(productionContext(handbookId, documentId, params), session));
+        return true;
+      }
+      if (req.method === 'PUT' && !suffix) {
+        const body = await readJsonBody(req);
+        sendProductionData(res, handbookProductionService.saveDraft({ ...body, handbookId, documentId }, session, req.headers['idempotency-key']));
+        return true;
+      }
+      if (req.method === 'GET' && suffix === 'revisions') {
+        const params = new URL(req.url, 'http://localhost').searchParams;
+        sendProductionData(res, handbookProductionService.listRevisions(productionContext(handbookId, documentId, params), session));
+        return true;
+      }
+      if (req.method === 'POST' && suffix === 'restore') {
+        const body = await readJsonBody(req);
+        sendProductionData(res, handbookProductionService.restoreRevision({ ...body, handbookId, documentId }, session, req.headers['idempotency-key']));
+        return true;
+      }
+    }
+    res.writeHead(405, { Allow: 'GET, PUT, POST' }); res.end();
+    return true;
   }
 
   function ownerValue(value, required = false) {
@@ -1069,6 +1199,20 @@ function createKnowledgeCenterHandler(options) {
     }
   }
 
+  function serveMyGenerations(req, res, session) {
+    try {
+      const service = handleIncrementalBuild?.service;
+      if (!service) throw Object.assign(new Error('生成记录服务暂不可用'), { code: 'GENERATION_SERVICE_UNAVAILABLE', status: 503 });
+      const params = Object.fromEntries(new URL(req.url, 'http://localhost').searchParams);
+      const data = service.listMyGenerations(session, params);
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+      res.end(JSON.stringify({ success: true, data }));
+    } catch (error) {
+      res.writeHead(Number(error.status || 500), { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+      res.end(JSON.stringify({ success: false, error: { code: error.code || 'GENERATION_QUERY_FAILED', message: error.message || '生成记录读取失败' } }));
+    }
+  }
+
   async function serveReviewRepositoryContext(req, res, session) {
     const startedAt = process.hrtime.bigint();
     try {
@@ -1415,6 +1559,12 @@ function createKnowledgeCenterHandler(options) {
     }
     if (req.method === 'DELETE' && /^\/knowledge-center\/api\/outline\/governance\/[^/]+$/.test(pathname)) {
       requireSession(req, res, session => { if (!forbidUnlessOutlineAction(res, session, 'outline:delete')) proxyOutline(req, res); }); return;
+    }
+    if (req.method === 'GET' && pathname === '/knowledge-center/api/production/generations') {
+      requireSession(req, res, session => serveMyGenerations(req, res, session)); return;
+    }
+    if (pathname.startsWith('/knowledge-center/api/production/handbooks/') || pathname.startsWith('/knowledge-center/api/production/attachments/')) {
+      requireSession(req, res, session => handleHandbookProduction(req, res, session, pathname)); return;
     }
     if (pathname === '/knowledge-center/api/incremental-tasks' || pathname.startsWith('/knowledge-center/api/incremental-tasks/')) {
       requireSession(req, res, session => handleIncrementalBuild(req, res, session)); return;

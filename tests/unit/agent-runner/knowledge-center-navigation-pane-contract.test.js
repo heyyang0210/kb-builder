@@ -13,6 +13,7 @@ describe('知识中心导航面板 P0 契约', () => {
   const repository = read('apps/knowledge-center-web/frontend/knowledge-center/modules/repository/view.js');
   const tree = read('apps/knowledge-center-web/frontend/knowledge-center/common/directory-tree.js');
   const styles = read('apps/knowledge-center-web/frontend/knowledge-center/styles.css');
+  const storage = read('apps/yashandb-storage/src/Main.java');
 
   test('公共控制器覆盖鼠标、键盘、折叠、默认恢复和本地偏好', () => {
     expect(controller).toContain('pointerdown');
@@ -22,6 +23,23 @@ describe('知识中心导航面板 P0 契约', () => {
     expect(controller).toContain('dblclick');
     expect(controller).toContain('localStorage');
     expect(controller).toContain('knowledge-center:navigation-pane-change');
+    expect(controller).toContain("collapsed ? 'panel-left-open' : 'panel-left-close'");
+    expect(controller).toContain('syncToggleIcon');
+  });
+
+  test('全局主导航的图标与折叠状态同步', () => {
+    expect(app).toContain('function syncSidebarToggleIcon');
+    expect(app).toContain("collapsed ? 'panel-left-open' : 'panel-left-close'");
+    expect(app).toContain('syncSidebarToggleIcon(sidebarCollapsed)');
+  });
+
+  test('刷新首帧先恢复导航状态且完全隐藏入口不覆盖正文', () => {
+    expect(app).toContain('applySidebar({ restoring: true })');
+    expect(app).toContain("appShell.dataset.sidebarReady = 'true'");
+    expect(app).toContain("shell.classList.add('sidebar-state-restoring')");
+    expect(styles).toContain('.sidebar-state-restoring .sidebar { transition: none; }');
+    expect(styles).toContain('.sidebar-hidden .sidebar-restore { display: inline-flex; position: static;');
+    expect(styles).toContain('.sidebar-restore span { position: absolute; width: 1px; height: 1px;');
   });
 
   test('P0 页面声明不同的目录尺寸，不用一个全局宽度覆盖', () => {
@@ -58,6 +76,27 @@ describe('知识中心导航面板 P0 契约', () => {
     expect(outline).toContain('data-navigation-layout-id="outline-overview"');
     expect(outline).toContain('class="outline-navigation review-document-tree outline-assignment-directory"');
     expect(controller).toContain("root.dataset.navigationLayoutId === 'outline-assignment'");
+  });
+
+  test('手册生产“只看我负责”使用数据库真实分工投影，而不是空责任人占位', () => {
+    expect(storage).toContain('taskItemsByDocumentDomain');
+    expect(storage).toContain('taskItem.get("assigneeId")');
+    expect(storage).toContain('taskItem.get("assigneeName")');
+    expect(storage).toContain('body.put("tasks", outlineTasks)');
+    expect(production).toContain('effectiveDocumentAssignments');
+    expect(production).toContain('ownedByCurrentUser(outline, document.id, currentUser)');
+    expect(production).toContain('[currentUser.id, currentUser.userId, currentUser.principalId]');
+    expect(production).toContain('ids.has(owner.id)');
+  });
+
+  test('P1：目录树提供完整键盘 TreeView 语义和当前项定位', () => {
+    expect(tree).toContain('role="tree"');
+    expect(tree).toContain('role="treeitem"');
+    for (const key of ['ArrowDown', 'ArrowUp', 'ArrowRight', 'ArrowLeft', 'Home', 'End', "case 'Enter'", "case ' '"]) expect(tree).toContain(key);
+    expect(tree).toContain('aria-level');
+    expect(tree).toContain('aria-expanded');
+    expect(tree).toContain('scrollIntoView');
+    expect(tree).toContain('item.click()');
   });
 
   test('弹框目标树保留业务语义并提供搜索入口', () => {

@@ -50,7 +50,15 @@ select:focus-visible,
   width: 18px;
   height: 18px;
   flex: none;
+  color: var(--icon-color, var(--color-icon-default));
   stroke-width: 1.8;
+}
+.button .icon,
+.status .icon,
+.summary-icon .icon,
+.risk-summary-icon .icon,
+.icon-wrap .icon {
+  color: currentColor;
 }
 @media (max-width: 900px) {
   body { font-size: 16px; }

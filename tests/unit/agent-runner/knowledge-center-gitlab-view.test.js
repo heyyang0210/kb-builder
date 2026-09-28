@@ -28,6 +28,14 @@ describe('知识资产 GitLab 阅读前端契约', () => {
     expect(view()).toContain('repository-footer');
     expect(view()).not.toContain('class="repository-review"');
   });
+  test('仓库成功读取后保留真实分支、语言和正文路径恢复所需契约', () => {
+    const app = read('apps/knowledge-center-web/frontend/knowledge-center/app.js');
+    expect(app).toContain('canonicalUrl.searchParams.set(\'branch\', branch)');
+    expect(app).toContain('canonicalUrl.searchParams.set(\'lang\', state.language)');
+    expect(app).toContain('canonicalUrl.searchParams.set(\'path\', resolvedPath)');
+    expect(app).toContain('window.history.replaceState');
+    expect(app).toContain('path: resolvedPath');
+  });
   test('Markdown 先转义再以允许元素渲染', () => {
     expect(view()).toContain('escapeHtml(');
     expect(view()).not.toContain('innerHTML');
