@@ -5,6 +5,7 @@
 - `product.json`（产品配置）：产品身份、模块、工作台、能力清单和资源引用。
 - `service.json`（服务配置）：服务、路径、日志、安全、模型、MCP 和 Agent 预设。默认模型为 `gpt-5.5`，并支持 DeepSeek。
 - `content-rules.json`（内容规则）：资料加工、质量、同义词、特性和 GitLab 文档类型。
+  其中 `gitlabVerificationErrors` 按稳定错误码维护 GitLab 验证失败的中文修复建议。数据库模式验证结果保存在 `runtime/knowledge-center/gitlab-verifications.json`；隔离运行可用 `KNOWLEDGE_CENTER_GITLAB_VERIFICATION_STORE` 指定独立运行时文件。
 - `branding/default-icon.png`：登录页、favicon 和侧栏共用的默认品牌图标。
 
 `service.json` 中 `documentPaths[].path` 的相对路径统一以仓库根目录解析，不以 `config/knowledge-center/` 或服务进程的启动目录解析。例如仓库位于 `/data/docs/AI高效应用示例/06-YashanDB知识库Skill仓库`时，`../../ai 体系认知` 指向 `/data/docs/ai 体系认知`。配置中保留相对路径，避免将开发机的绝对路径固化到仓库。

@@ -75,7 +75,22 @@ function sanitizeConnection(connection) {
   };
 }
 
+function normalizeGitLabAddress(input) {
+  const project = String(input.projectPath || input.project || '').trim().replace(/^\/+|\/+$/g, '');
+  const address = String(input.baseUrl || input.host || '').trim().replace(/\/+$/, '');
+  if (!address || !project) throw new GitLabConnectorError('GITLAB_CONFIG_INVALID', 'GitLab 地址和项目路径不能为空');
+  let parsed;
+  try { parsed = new URL(address); } catch (_error) { throw new GitLabConnectorError('GITLAB_CONFIG_INVALID', 'GitLab 地址格式不正确'); }
+  if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash ||
+      (parsed.pathname !== '/' && parsed.pathname.replace(/\/+$/, '') !== `/${project}`)) {
+    throw new GitLabConnectorError('GITLAB_CONFIG_INVALID', 'GitLab 地址请填写站点地址，或与项目路径完全一致的项目 URL');
+  }
+  return { ...input, baseUrl: parsed.origin, host: parsed.origin, projectPath: project, project };
+}
+
 function upsertConnection(input, filePath = DEFAULT_CONFIG_PATH, audit = {}) {
+  const explicitProductionInput = Boolean(input.baseUrl || input.projectPath);
+  input = normalizeGitLabAddress(input);
   const name = String(input.name || input.id || 'default').trim();
   const host = String(input.baseUrl || input.host || '').trim().replace(/\/$/, '');
   const project = String(input.projectPath || input.project || '').trim();
@@ -88,7 +103,7 @@ function upsertConnection(input, filePath = DEFAULT_CONFIG_PATH, audit = {}) {
   if (!allowedHosts.has(parsed.hostname)) throw new GitLabConnectorError('GITLAB_HOST_NOT_ALLOWED', 'GitLab 地址不在平台允许列表中', 403);
   const mode = ['disabled', 'sandbox', 'production'].includes(input.mode)
     ? input.mode
-    : (input.baseUrl || input.projectPath ? 'production' : 'disabled');
+    : (explicitProductionInput ? 'production' : 'disabled');
   if (mode === 'production' && parsed.protocol !== 'https:') throw new GitLabConnectorError('GITLAB_HTTPS_REQUIRED', '生产读取模式必须使用 HTTPS', 400);
   const productionProjects = new Set(String(process.env.KNOWLEDGE_CENTER_GITLAB_PRODUCTION_PROJECTS || 'git-tools.yasdb.com/cod-doc/yasdoc').split(',').map(value => value.trim()).filter(Boolean));
   if (mode === 'sandbox' && productionProjects.has(`${parsed.hostname}/${project}`)) throw new GitLabConnectorError('GITLAB_SANDBOX_PROJECT_REQUIRED', '隔离验证模式不允许连接正式手册仓库', 409);
@@ -224,7 +239,7 @@ async function request(connection, apiPath, options = {}) {
   const text = await response.text();
   let body; try { body = JSON.parse(text); } catch (_error) { body = null; }
   if (!response.ok) {
-    const code = response.status === 401 ? 'GITLAB_UNAUTHORIZED' : response.status === 403 ? 'GITLAB_FORBIDDEN' : 'GITLAB_REQUEST_FAILED';
+    const code = response.status === 401 ? 'GITLAB_UNAUTHORIZED' : response.status === 403 ? 'GITLAB_FORBIDDEN' : response.status === 404 ? 'GITLAB_NOT_FOUND' : 'GITLAB_REQUEST_FAILED';
     throw new GitLabConnectorError(code, body?.message || `GitLab 请求失败（${response.status}）`, response.status, { upstreamStatus: response.status });
   }
   return body;
@@ -303,4 +318,4 @@ function authorizeMappedRequest(mapping, ref, language, requestedPath = '') {
   return clean;
 }
 
-module.exports = { GitLabConnectorError, readConfig, writeConfig, sanitizeConnection, upsertConnection, recordVerification, setConnectionStatus, upsertMapping, findMapping, findConnection, listBranches, listTree, readFile, listCommits, authorizeMappedRequest, request };
+module.exports = { GitLabConnectorError, readConfig, writeConfig, sanitizeConnection, normalizeGitLabAddress, upsertConnection, recordVerification, setConnectionStatus, upsertMapping, findMapping, findConnection, listBranches, listTree, readFile, listCommits, authorizeMappedRequest, request };

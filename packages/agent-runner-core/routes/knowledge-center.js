@@ -2,7 +2,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { loadPlatformContext, loadPlatformProjection } = require('../lib/platform-context-gateway');
-const { GitLabConnectorError, readConfig: readFileGitLabConfig, upsertConnection: upsertFileConnection, recordVerification: recordFileVerification, setConnectionStatus: setFileConnectionStatus, upsertMapping: upsertFileMapping, findMapping: findFileMapping, findConnection: findFileConnection, listBranches, listTree, readFile: readGitLabFile, listCommits, sanitizeConnection, authorizeMappedRequest } = require('../lib/gitlab-connector');
+const { GitLabConnectorError, readConfig: readFileGitLabConfig, upsertConnection: upsertFileConnection, normalizeGitLabAddress, recordVerification: recordFileVerification, setConnectionStatus: setFileConnectionStatus, upsertMapping: upsertFileMapping, findMapping: findFileMapping, findConnection: findFileConnection, listBranches, listTree, readFile: readGitLabFile, listCommits, sanitizeConnection, authorizeMappedRequest } = require('../lib/gitlab-connector');
 const { GitLabOAuthError, config: gitLabOAuthConfig, start: startGitLabOAuth, callback: completeGitLabOAuth, tokenForUser, status: gitLabOAuthStatus, disconnect: disconnectGitLabOAuth } = require('../lib/gitlab-oauth');
 const { ASSET_STATUS_LABELS, systemAssetStatus, assetStatus, projectAsset, queryKnowledgeAssets: queryKnowledgeAssetsBase, isPlatformAdmin } = require('../lib/knowledge-asset-utils');
 const { matchCleaningEndpoint } = require('../lib/knowledge-center-cleaning-contract');
@@ -10,6 +10,8 @@ const { createTemplateStore } = require('../lib/template-store');
 const { readTemplateUpload } = require('../lib/template-import');
 const { previewPersonnelImport, readPersonnelUpload, templateWorkbook } = require('../lib/personnel-import');
 const { REPOSITORY_ROOT } = require('../lib/repo-paths');
+const { createGitLabVerificationStore } = require('../lib/gitlab-verification-store');
+const verificationRepairs = require('../../../config/knowledge-center/content-rules.json').gitlabVerificationErrors;
 const { readTechDomainConfig } = require('./outline-management');
 const { createDatabaseConnectionGovernance } = require('../lib/platform-management/database-connection-governance');
 const { createHandbookProductionService } = require('../lib/handbook-production-service');
@@ -74,10 +76,11 @@ function createKnowledgeCenterHandler(options) {
 
   const { knowledgeAssetsStore, manualStatusStore, brandIconStore, domainStore } = stores;
   const databasePlatformMode = String(process.env.KNOWLEDGE_PLATFORM_CONFIG_MODE || process.env.KNOWLEDGE_STORAGE_MODE || '').toLowerCase() === 'database';
+  const verificationStore = createGitLabVerificationStore();
   const readGitLabConfig = filePath => {
     if (!databasePlatformMode) return readFileGitLabConfig(filePath);
     const result = domainStore.readPlatformGitLabConnections();
-    return { connections: result.items || [], mappings: [], idempotency: [], audit: [] };
+    return { connections: (result.items || []).map(item => verificationStore.project(item)), mappings: [], idempotency: [], audit: [] };
   };
   const findConnection = (id, filePath) => {
     if (!databasePlatformMode) return findFileConnection(id, filePath);
@@ -94,7 +97,9 @@ function createKnowledgeCenterHandler(options) {
   };
   const upsertConnection = (input, filePath, audit = {}) => {
     if (!databasePlatformMode) return upsertFileConnection(input, filePath, audit);
-    return domainStore.upsertPlatformGitLabConnection(input, input.rowVersion ?? null, audit.idempotencyKey, audit.operatorId);
+    const normalized = normalizeGitLabAddress(input);
+    if (!String(normalized.defaultBranch || '').trim()) throw new GitLabConnectorError('GITLAB_DEFAULT_BRANCH_REQUIRED', '请填写仓库实际使用的默认分支');
+    return domainStore.upsertPlatformGitLabConnection({ mode: 'production', status: 'active', ...normalized }, normalized.rowVersion ?? null, audit.idempotencyKey, audit.operatorId);
   };
   const setConnectionStatus = (id, status, filePath, audit = {}) => {
     if (!databasePlatformMode) return setFileConnectionStatus(id, status, filePath, audit);
@@ -105,10 +110,14 @@ function createKnowledgeCenterHandler(options) {
     if (!databasePlatformMode) return upsertFileMapping(handbookId, input, filePath, audit);
     return domainStore.replacePlatformGitLabMapping(handbookId, input, input.rowVersion ?? null, audit.idempotencyKey, audit.operatorId);
   };
-  const recordVerification = (id, verification, filePath, audit = {}) => {
+  const recordVerification = (id, verification, filePath, audit = {}, snapshot) => {
     if (!databasePlatformMode) return recordFileVerification(id, verification, filePath, audit);
-    // 验证结果只进入本地运行时日志，业务配置不被改写。
-    return sanitizeConnection(findConnection(id));
+    try {
+      verificationStore.record(snapshot || findConnection(id), verification);
+    } catch (error) {
+      error.details = { ...error.details, recovery: verificationRepairs[error.code] || verificationRepairs.default };
+      throw error;
+    }
   };
   validateOutlineWorkbookPath('OUTLINE_TEMPLATE_PATH', OUTLINE_TEMPLATE_PATH);
   validateOutlineWorkbookPath('OUTLINE_SAMPLE_PATH', OUTLINE_SAMPLE_PATH);
@@ -947,7 +956,25 @@ function createKnowledgeCenterHandler(options) {
       if (req.method === 'GET' && pathname === '/knowledge-center/api/gitlab/oauth/callback') {
         const params = new URL(req.url, 'http://localhost').searchParams;
         const result = await completeGitLabOAuth({ userId: session?.user?.id, code: params.get('code'), state: params.get('state') });
-        res.writeHead(302, { Location: result.returnTo || '/knowledge-center/platform', 'Cache-Control': 'no-store' }); res.end(); return;
+        const connection = findConnection(result.connectionId, GITLAB_CONFIG_PATH);
+        let returnTo = result.returnTo || '/knowledge-center/platform?tab=gitlab';
+        try {
+          const branches = await gitLabRequestForUser(session, connection, options => listBranches(connection, options));
+          recordVerification(connection.id, { connectionId: connection.id, status: 'verified', branchCount: branches.length, verifiedAt: new Date().toISOString() }, GITLAB_CONFIG_PATH, { operatorId: session?.user?.id }, connection);
+          const target = new URL(returnTo, 'http://knowledge-center.local');
+          target.searchParams.set('gitlabConnection', connection.id);
+          target.searchParams.set('gitlabConnectionStatus', 'verified');
+          returnTo = `${target.pathname}${target.search}${target.hash}`;
+        } catch (error) {
+          const recovery = verificationRepairs[error.code] || verificationRepairs.default;
+          const failed = { connectionId: connection.id, status: 'failed', verifiedAt: new Date().toISOString(), error: { code: error.code || 'GITLAB_VERIFY_FAILED', message: error.message, recovery } };
+          recordVerification(connection.id, failed, GITLAB_CONFIG_PATH, { operatorId: session?.user?.id }, connection);
+          const target = new URL(returnTo, 'http://knowledge-center.local');
+          target.searchParams.set('gitlabConnection', connection.id);
+          target.searchParams.set('gitlabConnectionStatus', 'failed');
+          returnTo = `${target.pathname}${target.search}${target.hash}`;
+        }
+        res.writeHead(302, { Location: returnTo, 'Cache-Control': 'no-store' }); res.end(); return;
       }
       if (req.method === 'GET' && pathname === '/knowledge-center/api/gitlab/oauth/status') {
         const params = new URL(req.url, 'http://localhost').searchParams;
@@ -1075,17 +1102,24 @@ function createKnowledgeCenterHandler(options) {
           res.end(JSON.stringify({ success: true, data: connection })); return;
         }
         const connection = findConnection(connectionId, GITLAB_CONFIG_PATH);
-        if ((connection.status || 'active') === 'inactive') throw new GitLabConnectorError('GITLAB_CONNECTION_INACTIVE', '已停用连接不能验证，请先重新启用', 409);
         let data;
         try {
+          if ((connection.status || 'active') === 'inactive') throw new GitLabConnectorError('GITLAB_CONNECTION_INACTIVE', '已停用连接不能验证，请先重新启用', 409);
           const branches = await gitLabRequestForUser(session, connection, options => listBranches(connection, options));
           data = { connectionId: connection.id, status: 'verified', branchCount: branches.length, verifiedAt: new Date().toISOString() };
         } catch (error) {
-          const failed = { connectionId: connection.id, status: 'failed', verifiedAt: new Date().toISOString(), error: { code: error.code || 'GITLAB_VERIFY_FAILED', message: error.message } };
-          recordVerification(connection.id, failed, GITLAB_CONFIG_PATH, { operatorId: session?.user?.id });
+          const recovery = verificationRepairs[error.code] || verificationRepairs.default;
+          error.details = { ...error.details, recovery };
+          const failed = { connectionId: connection.id, status: 'failed', verifiedAt: new Date().toISOString(), error: { code: error.code || 'GITLAB_VERIFY_FAILED', message: error.message, recovery } };
+          recordVerification(connection.id, failed, GITLAB_CONFIG_PATH, { operatorId: session?.user?.id }, connection);
           throw error;
         }
-        recordVerification(connection.id, data, GITLAB_CONFIG_PATH, { operatorId: session?.user?.id });
+        try {
+          recordVerification(connection.id, data, GITLAB_CONFIG_PATH, { operatorId: session?.user?.id }, connection);
+        } catch (error) {
+          error.details = { ...error.details, recovery: verificationRepairs[error.code] || verificationRepairs.default };
+          throw error;
+        }
         res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
         res.end(JSON.stringify({ success: true, data })); return;
       }

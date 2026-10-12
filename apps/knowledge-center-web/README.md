@@ -1,5 +1,11 @@
 # 知识中心 Web 网关
 
+GitLab 仓库验证：数据库配置模式下，最近成功/失败探测结果写入 `runtime/knowledge-center/gitlab-verifications.json`，列表合并与当前连接配置指纹匹配的结果。运行时文件可用 `KNOWLEDGE_CENTER_GITLAB_VERIFICATION_STORE` 覆盖，不改写数据库业务配置；失败建议由 `content-rules.json#/gitlabVerificationErrors` 提供。更新后需重启网关加载后端逻辑。
+
+GitLab 仓库访问能力只提供 `read`（只读）和 `read_write`（读写）。管理页的“验证连接”当前仅验证读取，不证明读写配置具有写入权限；写回需以已审核的增量候选为来源，并等待明确的仓库文件映射规则。
+
+新增 GitLab 连接需填写仓库实际默认分支。地址可填写 GitLab 站点 URL，或与项目路径完全匹配的完整项目 URL（保存时自动拆分）。认证方式分别是个人 GitLab 授权和平台预置服务凭证；数据库模式新增使用内部运行模式与启用状态默认值，编辑携带版本号以避免覆盖并发更改。
+
 `frontend-server.js` 是知识中心平台内核入口，提供静态资源、Auth 模块、统一 API 路由和 Worker 代理。前端资源位于本目录的 `frontend/`，共享后端能力与模块注册表位于 `packages/agent-runner-core/`。浏览器只访问该平台入口；内部 Worker 和过渡期 Storage 端点不属于产品入口。
 
 平台发布时先在仓库根目录执行 `npm run build`。统一构建脚本将知识中心静态资源和 PingCode Vite 产物写入 `runtime/build/knowledge-center/current/web/`，并由根目录 `knowledge-center.sh` 通过 `KNOWLEDGE_CENTER_FRONTEND_ROOT` 和 `PINGCODE_WEB_DIST_DIR` 注入。源码目录回退仅用于单模块开发调试。

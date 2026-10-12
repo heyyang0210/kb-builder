@@ -1776,10 +1776,9 @@ document.addEventListener('click', async event => {
     try {
       appState.gitlabVerification = await verifyGitLabConnection(connId);
       await loadGitLabAdmin();
-      appState.gitlabVerification = null;
       render();
     } catch (error) {
-      appState.gitlabVerification = { connectionId: connId, status: 'failed', verifiedAt: new Date().toISOString(), error: { code: error.code, message: error.message } };
+      appState.gitlabVerification = { connectionId: connId, status: 'failed', verifiedAt: new Date().toISOString(), error: { code: error.code, message: error.message, recovery: error.recovery } };
       await loadGitLabAdmin();
     }
     return;
@@ -3131,17 +3130,26 @@ document.addEventListener('submit', async event => {
     event.preventDefault();
     const userId = appState.selectedPermissionUserId;
     if (!userId) return;
-    const statusEl = permissionForm.querySelector('.permission-save-status');
-    const button = permissionForm.querySelector('button[type="submit"]');
+    const selectedUser = (appState.permissionProjection?.users || []).find(user => user.id === userId);
+    if (!selectedUser || selectedUser.rolesEditable === false || selectedUser.identitySource !== 'cas') return;
     const roles = [...permissionForm.querySelectorAll('input[name="roles"]:checked')].map(input => input.value);
+    if (selectedUser.rowVersion == null || !Number.isInteger(Number(selectedUser.rowVersion))) {
+      appState.permissionSaveStatus = { error: '用户权限数据已过期，请刷新后重试' };
+      render();
+      return;
+    }
     appState.permissionSaveStatus = 'saving';
     render();
     try {
-      await updatePlatformUserPermissions(userId, { roles });
+      await updatePlatformUserPermissions(userId, {
+        roles,
+        rowVersion: Number(selectedUser.rowVersion),
+        idempotencyKey: `permission-${userId}-${Date.now()}`,
+      });
       appState.permissionSaveStatus = 'saved';
       await loadGitLabAdmin();
       setTimeout(() => { appState.permissionSaveStatus = null; render(); }, 2000);
-    } catch (error) { appState.permissionSaveStatus = 'error'; render(); }
+    } catch (error) { appState.permissionSaveStatus = { error: error.message || '保存失败，请重试' }; render(); }
     return;
   }
   /* ---- GitLab 添加连接表单提交 ---- */
@@ -3157,20 +3165,34 @@ document.addEventListener('submit', async event => {
         name: gitlabAddForm.elements.name.value.trim(),
         baseUrl: gitlabAddForm.elements.baseUrl.value.trim(),
         projectPath: gitlabAddForm.elements.projectPath.value.trim(),
+        defaultBranch: gitlabAddForm.elements.defaultBranch.value.trim(),
         purpose: gitlabAddForm.elements.purpose.value,
         authMode: gitlabAddForm.elements.authMode.value,
         ...(gitlabAddForm.elements.credentialRef.value.trim() ? { credentialRef: gitlabAddForm.elements.credentialRef.value.trim() } : {}),
       });
       appState.gitlabListState.selectedConnectionId = saved.id;
       appState.gitlabAddingConnection = false;
-      if (saved.authMode !== 'user_oauth' || appState.gitlabProjection?.oauthStatus?.connected) {
+      if (saved.authMode === 'user_oauth' && !appState.gitlabProjection?.oauthStatus?.connected) {
+        if (appState.gitlabProjection?.oauthConfig?.configured) {
+          statusEl.textContent = '连接已保存，正在打开 GitLab 授权…';
+          const returnTo = '/knowledge-center/platform?tab=gitlab';
+          window.location.assign(`/knowledge-center/api/gitlab/oauth/start?connectionId=${encodeURIComponent(saved.id)}&returnTo=${encodeURIComponent(returnTo)}`);
+          return;
+        }
+        appState.gitlabVerification = { connectionId: saved.id, status: 'pending_auth', message: '连接已保存，但平台尚未配置 GitLab OAuth。' };
+      } else {
         appState.gitlabVerification = { connectionId: saved.id, status: 'verifying' };
-        await verifyGitLabConnection(saved.id);
+        render();
+        try {
+          appState.gitlabVerification = await verifyGitLabConnection(saved.id);
+        } catch (error) {
+          appState.gitlabVerification = { connectionId: saved.id, status: 'failed', verifiedAt: new Date().toISOString(), error: { code: error.code, message: error.message, recovery: error.recovery } };
+        }
       }
       await loadGitLabAdmin();
-      appState.gitlabVerification = null;
     } catch (error) {
       statusEl.textContent = error.message || "保存失败，请重试";
+      statusEl.setAttribute('role', 'alert');
       button.disabled = false;
     }
     return;
@@ -3189,6 +3211,8 @@ document.addEventListener('submit', async event => {
         name: gitlabEditForm.elements.name.value.trim(),
         baseUrl: gitlabEditForm.elements.baseUrl.value.trim(),
         projectPath: gitlabEditForm.elements.projectPath.value.trim(),
+        defaultBranch: gitlabEditForm.elements.defaultBranch.value.trim(),
+        rowVersion: appState.gitlabEditingConnection?.rowVersion,
         purpose: gitlabEditForm.elements.purpose.value,
         authMode: gitlabEditForm.elements.authMode.value,
         ...(gitlabEditForm.elements.credentialRef.value.trim() ? { credentialRef: gitlabEditForm.elements.credentialRef.value.trim() } : {}),
@@ -3198,6 +3222,7 @@ document.addEventListener('submit', async event => {
       await loadGitLabAdmin();
     } catch (error) {
       statusEl.textContent = error.message || "保存失败，请重试";
+      statusEl.setAttribute('role', 'alert');
       button.disabled = false;
     }
     return;

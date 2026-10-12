@@ -62,6 +62,25 @@ describe('知识资产 GitLab 阅读前端契约', () => {
     expect(admin).toContain('停用');
     expect(admin).not.toContain('accessToken');
   });
+  test('连接表单要求实际默认分支并解释认证身份，编辑提交携带版本', () => {
+    const admin = read('apps/knowledge-center-web/frontend/knowledge-center/modules/platform-admin/view.js');
+    const app = read('apps/knowledge-center-web/frontend/knowledge-center/app.js');
+    const api = read('apps/knowledge-center-web/frontend/knowledge-center/common/api/gitlab-api.js');
+    expect(admin.match(/name="defaultBranch" required/g)).toHaveLength(2);
+    expect(admin).toContain('使用者本人授权 GitLab 账号');
+    expect(admin).toContain('使用平台预置服务凭证');
+    expect(admin).toContain('写入权限不在此步验证');
+    expect(app).toContain('rowVersion: appState.gitlabEditingConnection?.rowVersion');
+    expect(api).toContain("'If-Match': String(changes.rowVersion)");
+  });
+  test('新增用户 OAuth 连接会自动发起授权，回调后由服务端完成读取验证', () => {
+    const app = read('apps/knowledge-center-web/frontend/knowledge-center/app.js');
+    const route = read('packages/agent-runner-core/routes/knowledge-center.js');
+    expect(app).toContain('正在打开 GitLab 授权');
+    expect(app).toContain('/knowledge-center/api/gitlab/oauth/start?connectionId=');
+    expect(route).toContain('gitlabConnectionStatus');
+    expect(route).toContain('recordVerification(connection.id');
+  });
   test('系统治理使用真实平台投影和 GitLab 验证状态，不回退到静态健康值', () => {
     const app = read('apps/knowledge-center-web/frontend/knowledge-center/app.js');
     expect(app).toContain('function updatePlatformGovernance(');
@@ -118,6 +137,11 @@ describe('知识资产 GitLab 阅读前端契约', () => {
     expect(admin).toContain('正在验证连接');
     expect(admin).toContain('验证失败');
     expect(admin).toContain('个分支');
+    expect(admin).toContain('读取验证成功');
+    expect(admin).toContain('<option value="read">只读</option>');
+    expect(admin).toContain('<option value="read_write">读写</option>');
+    expect(admin).toContain("connection.purpose === 'read_write' ? '未验证' : '未配置'");
+    expect(admin).not.toContain('读取并支持后续协作');
     expect(connector).toContain('lastVerification');
     expect(connector).toContain('authMode');
   });

@@ -13,6 +13,7 @@ async function request(url, options = {}) {
     const error = new Error(body?.error?.message || `GitLab 请求失败（HTTP ${response.status}）`);
     error.code = body?.error?.code;
     error.status = response.status;
+    error.recovery = body?.error?.details?.recovery;
     throw error;
   }
   return body.data;
@@ -30,7 +31,13 @@ export const disconnectGitLabOAuth = connectionId => request(`/knowledge-center/
 export const loadHandbookGitLabAccess = handbookId => request(`${handbookEndpoint}/${encodeURIComponent(handbookId)}/access-status`);
 export const handbookGitLabOAuthHref = (handbookId, returnTo) => `${handbookEndpoint}/${encodeURIComponent(handbookId)}/oauth/start?returnTo=${encodeURIComponent(returnTo)}`;
 export const saveGitLabConnection = value => request(endpoint, { method: 'PUT', headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'Idempotency-Key': idempotencyKey('gitlab-connection') }, body: JSON.stringify(value) });
-export const verifyGitLabConnection = id => request(`${endpoint}/${encodeURIComponent(id)}/verify`, { method: 'POST', headers: { Accept: 'application/json', 'Idempotency-Key': idempotencyKey(`gitlab-verify-${id}`) } });
+export async function verifyGitLabConnection(id) {
+  const result = await request(`${endpoint}/${encodeURIComponent(id)}/verify`, { method: 'POST', headers: { Accept: 'application/json', 'Idempotency-Key': idempotencyKey(`gitlab-verify-${id}`) } });
+  if (result?.connectionId !== id || result?.status !== 'verified') {
+    throw new Error('验证接口未返回有效结果，请检查平台服务版本后重新验证。');
+  }
+  return result;
+}
 export const disableGitLabConnection = id => request(`${endpoint}/${encodeURIComponent(id)}/disable`, { method: 'POST', headers: { Accept: 'application/json', 'Idempotency-Key': idempotencyKey(`gitlab-disable-${id}`) } });
 export const enableGitLabConnection = id => request(`${endpoint}/${encodeURIComponent(id)}/enable`, { method: 'POST', headers: { Accept: 'application/json', 'Idempotency-Key': idempotencyKey(`gitlab-enable-${id}`) } });
 export const loadGitLabBranches = id => request(`${endpoint}/${encodeURIComponent(id)}/branches`);
@@ -72,6 +79,7 @@ export function updateGitLabConnection(id, changes) {
       'Content-Type': 'application/json',
       Accept: 'application/json',
       'Idempotency-Key': idempotencyKey(`gitlab-update-${id}`),
+      ...(changes.rowVersion != null ? { 'If-Match': String(changes.rowVersion) } : {}),
     },
     body: JSON.stringify(changes),
   });

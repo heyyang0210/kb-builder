@@ -1,4 +1,19 @@
 {
+  "gitlabVerificationErrors": {
+    "default": "检查 GitLab 地址、项目路径、认证配置和服务日志，修复后点击“重新验证”。",
+    "GITLAB_OAUTH_REQUIRED": "点击“用我的 GitLab 验证连接”完成当前管理员账号授权，然后重新验证。",
+    "GITLAB_OAUTH_NOT_CONFIGURED": "请管理员配置 GitLab OAuth 客户端与回调地址，完成账号授权后重新验证。",
+    "GITLAB_OAUTH_UNAVAILABLE": "检查 GitLab 授权服务的网络与代理配置，恢复后重新授权并验证。",
+    "GITLAB_OAUTH_TOKEN_INVALID": "当前授权已失效，请重新连接当前管理员的 GitLab 账号，再验证连接。",
+    "GITLAB_UNAUTHORIZED": "重新授权当前 GitLab 账号；服务账号请检查凭证是否过期及令牌读取权限。",
+    "GITLAB_FORBIDDEN": "请 GitLab 项目管理员为当前账号授予仓库读取权限，并检查令牌的 read_api 或 read_repository 权限。",
+    "GITLAB_NOT_FOUND": "检查 GitLab 地址和项目路径（含命名空间）是否正确，并确认当前账号可访问该项目。",
+    "GITLAB_CREDENTIAL_UNAVAILABLE": "请管理员配置凭证引用对应的安全环境变量，确认令牌有效后重新验证。",
+    "GITLAB_UNAVAILABLE": "检查平台服务器到 GitLab 的网络、DNS、HTTPS 证书与代理配置，恢复连通后重新验证。",
+    "GITLAB_CONNECTION_INACTIVE": "先重新启用此仓库连接，再点击验证。",
+    "GITLAB_CONNECTOR_DISABLED": "编辑仓库连接并启用生产读取或隔离验证模式，再重新验证。",
+    "GITLAB_VERIFICATION_STORE_UNAVAILABLE": "请管理员检查 runtime 目录的写入权限和磁盘空间，恢复后重新验证。"
+  },
   "preprocessing": {
     "engine": { "logDir": "logs/preprocessing", "snapshotDir": "preprocessing-output/_snapshots", "reportDir": "preprocessing-output/_reports", "snapshots": { "maxRetained": 10 } },
     "pipelines": {

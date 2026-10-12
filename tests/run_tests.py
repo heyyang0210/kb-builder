@@ -259,6 +259,7 @@ E2E_RESOURCE_BY_FILE = {
     "knowledge-assets-workspace.spec.js": "service-read",
     "knowledge-center-gitlab.spec.js": "service-read",
     "knowledge-center-authentication.spec.js": "service-read",
+    "knowledge-center-permissions.spec.js": "service-read",
     "knowledge-center-entry.spec.js": "service-read",
     "knowledge-center-incremental.spec.js": "service-read",
     "knowledge-center-outlines-layout.spec.js": "service-read",

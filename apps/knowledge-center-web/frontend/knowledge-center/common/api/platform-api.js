@@ -229,10 +229,19 @@ export async function loadPlatformPermissions(params = {}) {
 }
 
 export async function updatePlatformUserPermissions(userId, changes) {
+  const rowVersion = Number(changes?.rowVersion);
+  const idempotencyKey = String(changes?.idempotencyKey || '').trim();
+  if (changes?.rowVersion == null || !Number.isInteger(rowVersion)) throw new Error('用户权限数据已过期，请刷新后重试');
+  if (!idempotencyKey) throw new Error('权限保存请求缺少幂等标识，请重试');
   const response = await fetch(`${permissionsEndpoint}/${encodeURIComponent(userId)}/roles`, {
     method: 'PATCH', credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify(changes),
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      'If-Match': String(rowVersion),
+      'Idempotency-Key': idempotencyKey,
+    },
+    body: JSON.stringify({ roles: changes.roles }),
   });
   const result = await response.json().catch(() => null);
   if (!response.ok) throw Object.assign(new Error(result?.error?.message || `权限保存失败（HTTP ${response.status}）`), { status: response.status });

@@ -58,6 +58,21 @@ test('验证失败显示原因并允许重新验证', async ({ page }) => {
   await expect(page.getByRole('button', { name: '重新验证' })).toBeEnabled();
 });
 
+for (const failed of [false, true]) {
+  test(`列表未保存结果时点击验证仍展示${failed ? '失败原因和修复建议' : '成功'}`, async ({ page }) => {
+    await page.route('**/knowledge-center/api/gitlab/connections', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: { items: [{ id: 'test-repo', name: '测试仓库', authMode: 'service_account', status: 'pending', lastVerification: null }] } }) }));
+    await page.route('**/knowledge-center/api/gitlab/connections/test-repo/verify', route => route.fulfill({ status: failed ? 403 : 200, contentType: 'application/json', body: JSON.stringify(failed ? { success: false, error: { code: 'GITLAB_FORBIDDEN', message: '没有仓库读取权限', details: { recovery: '请项目管理员授予仓库读取权限，然后重新验证。' } } } : { success: true, data: { connectionId: 'test-repo', status: 'verified', branchCount: 2, verifiedAt: '2026-10-12T04:00:00Z' } }) }));
+    await page.goto(`${baseUrl}/knowledge-center/platform?tab=gitlab`);
+    await page.getByRole('button', { name: '验证连接', exact: true }).click();
+    if (failed) {
+      await expect(page.locator('.gitlab-verification.failure')).toContainText('没有仓库读取权限');
+      await expect(page.locator('.gitlab-verification.failure')).toContainText('修复建议：请项目管理员授予仓库读取权限');
+    } else await expect(page.locator('.gitlab-verification.success')).toContainText('2 个分支');
+    await expect(page.getByText('尚未验证', { exact: true })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '重新验证' })).toBeEnabled();
+  });
+}
+
 test('新增连接使用当前多仓库表单和幂等请求', async ({ page }) => {
   let savedRequest;
   await page.route('**/knowledge-center/api/gitlab/connections', async route => {
@@ -74,9 +89,33 @@ test('新增连接使用当前多仓库表单和幂等请求', async ({ page }) 
   await form.getByLabel('连接名称').fill('docs');
   await form.getByLabel('GitLab 地址').fill('https://git-tools.yasdb.com');
   await form.getByLabel('项目路径').fill('cod-doc/docs');
+  await form.getByLabel('默认分支').fill('main');
   await form.getByRole('button', { name: '保存并验证' }).click();
   await expect.poll(() => savedRequest?.headers()['idempotency-key']).toBeTruthy();
-  expect(savedRequest.postDataJSON()).toMatchObject({ baseUrl: 'https://git-tools.yasdb.com', projectPath: 'cod-doc/docs', authMode: 'user_oauth', purpose: 'read' });
+  expect(savedRequest.postDataJSON()).toMatchObject({ baseUrl: 'https://git-tools.yasdb.com', projectPath: 'cod-doc/docs', defaultBranch: 'main', authMode: 'user_oauth', purpose: 'read' });
+});
+
+test('新增用户 OAuth 连接自动进入授权，不要求再打开个人管理', async ({ page }) => {
+  let authorizationStarted = false;
+  await page.route('**/knowledge-center/api/gitlab/oauth/status', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: { connected: false } }) }));
+  await page.route('**/knowledge-center/api/gitlab/oauth/config', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: { configured: true } }) }));
+  await page.route('**/knowledge-center/api/gitlab/connections', async route => {
+    if (route.request().method() === 'POST') {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: { id: 'gitlab-auto', name: 'docs', authMode: 'user_oauth', purpose: 'read' } }) });
+      return;
+    }
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: { items: [] } }) });
+  });
+  await page.route('**/knowledge-center/api/gitlab/oauth/start?**', route => { authorizationStarted = true; route.abort(); });
+  await page.goto(`${baseUrl}/knowledge-center/platform?tab=gitlab`);
+  await page.getByRole('button', { name: '添加仓库连接' }).click();
+  const form = page.locator('[data-gitlab-add-form]');
+  await form.getByLabel('连接名称').fill('docs');
+  await form.getByLabel('GitLab 地址').fill('https://git-tools.yasdb.com');
+  await form.getByLabel('项目路径').fill('cod-doc/docs');
+  await form.getByLabel('默认分支').fill('main');
+  await form.getByRole('button', { name: '保存并验证' }).click();
+  await expect.poll(() => authorizationStarted).toBe(true);
 });
 
 test('GitLab 管理页在常用宽度下无横向溢出', async ({ page }) => {

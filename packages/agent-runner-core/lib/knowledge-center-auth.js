@@ -395,7 +395,7 @@ class HybridAuthRepository {
     return [...(databaseUsers.items || []), ...localUsers];
   }
   async updateUserRoles(id, roles, operatorId, rowVersion, idempotencyKey) {
-    if (this.local.findUserById(id)) throw new AuthError('LOCAL_ACCOUNT_NOT_DATABASE_MANAGED', '本地账号角色不可通过数据库角色接口修改', 409);
+    if (this.local.findUserById(id)?.identitySource === 'local') throw new AuthError('LOCAL_ACCOUNT_NOT_DATABASE_MANAGED', '本地账号角色不可通过数据库角色接口修改', 409);
     if (rowVersion == null || !Number.isInteger(rowVersion)) throw new AuthError('ROW_VERSION_REQUIRED', '角色修改必须携带 If-Match rowVersion', 428);
     if (!idempotencyKey) throw new AuthError('IDEMPOTENCY_KEY_REQUIRED', '角色修改必须携带 Idempotency-Key', 400);
     return this.domainStore.replacePlatformUserRolesAsync(id, roles, rowVersion, idempotencyKey, operatorId);

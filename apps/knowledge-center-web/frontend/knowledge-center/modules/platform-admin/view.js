@@ -12,7 +12,7 @@ const ROLE_DISPLAY_NAMES = {
 const CONNECTION_STATUS_LABELS = {
   unconfigured: '未配置',
   pending: '待验证',
-  verified: '已验证',
+  verified: '读取已验证',
   failed: '验证失败',
   disabled: '已停用',
 };
@@ -323,8 +323,10 @@ export function renderPermissionResults(permissionProjection = {}, selectedUserI
   const pageUsers = serverPagination ? filteredUsers : filteredUsers.slice((currentPage - 1) * pageSize, currentPage * pageSize);
   const selectedUser = users.find(u => u.id === selectedUserId) || pageUsers[0];
   const currentRoles = selectedUser ? new Set([...(selectedUser.roles || [])].map(String)) : new Set();
-  const statusText = saveStatus === 'saving' ? '正在保存…' : saveStatus === 'saved' ? '权限已保存' : saveStatus === 'error' ? '保存失败，请重试' : '';
-  const statusClass = saveStatus === 'saved' ? 'permission-status-saved' : saveStatus === 'error' ? 'permission-status-error' : '';
+  const saveError = saveStatus?.error || (saveStatus === 'error' ? '保存失败，请重试' : '');
+  const editable = selectedUser && selectedUser.rolesEditable !== false && selectedUser.identitySource === 'cas';
+  const statusText = saveStatus === 'saving' ? '正在保存…' : saveStatus === 'saved' ? '权限已保存' : saveError;
+  const statusClass = saveStatus === 'saved' ? 'permission-status-saved' : saveError ? 'permission-status-error' : '';
 
   const listHtml = `<ul class="permissions-user-list" role="listbox" aria-label="用户列表">
             ${pageUsers.length ? pageUsers.map(u => {
@@ -346,16 +348,16 @@ export function renderPermissionResults(permissionProjection = {}, selectedUserI
               </div>
             </div>
             <form class="permission-role-form" data-permission-role-form>
-              <p class="muted" style="margin:0 0 var(--space-4);font-size:13px">为该用户分配角色，保存后立即生效。</p>
+              <p class="muted" style="margin:0 0 var(--space-4);font-size:13px">${editable ? '为该用户分配角色，保存后立即生效。' : '本地账号角色不在此页面维护。'}</p>
               <div class="permission-role-grid">
                 ${roles.map(role => `<label class="permission-role-label">
-                  <input type="checkbox" name="roles" value="${escapeHtml(role.id)}" ${currentRoles.has(String(role.id)) ? 'checked' : ''}>
+                  <input type="checkbox" name="roles" value="${escapeHtml(role.id)}" ${currentRoles.has(String(role.id)) ? 'checked' : ''} ${!editable || saveStatus === 'saving' ? 'disabled' : ''}>
                   ${escapeHtml(role.name || role.id)}
                 </label>`).join('')}
               </div>
               <div class="permission-role-footer">
-                <span class="permission-save-status ${statusClass}" role="status">${statusText}</span>
-                <button class="button secondary" type="submit" ${saveStatus === 'saving' ? 'disabled' : ''}>保存权限</button>
+                <span class="permission-save-status ${statusClass}" role="${saveError ? 'alert' : 'status'}" aria-live="polite">${escapeHtml(statusText)}</span>
+                <button class="button secondary" type="submit" ${!editable || saveStatus === 'saving' ? 'disabled' : ''}>保存权限</button>
               </div>
             </form>
           </div>` : '<div class="empty-state"><span>请调整搜索条件</span></div>';
@@ -477,13 +479,14 @@ function verificationFor(connection, transientVerification) {
 
 function renderVerificationStatus(connection, transientVerification) {
   const verification = verificationFor(connection, transientVerification);
-  if (!verification) return '<div class="gitlab-verification pending" role="status"><strong>尚未验证</strong><span>验证后将显示读取权限、分支数量和验证时间。</span></div>';
+  if (!verification) return '<div class="gitlab-verification pending" role="status"><strong>尚未验证</strong><span>验证后将显示连接的读取结果、分支数量和验证时间。</span></div>';
   if (verification.status === 'verifying') return '<div class="gitlab-verification verifying" role="status" aria-live="polite" aria-busy="true"><strong>正在验证连接…</strong><span>正在检查项目访问和读取权限。</span></div>';
+  if (verification.status === 'pending_auth') return `<div class="gitlab-verification pending" role="status"><strong>连接已保存，待完成 GitLab 授权</strong><span>${escapeHtml(verification.message || '请先完成平台 OAuth 配置。')}</span></div>`;
   const verifiedAt = verification.verifiedAt ? new Date(verification.verifiedAt).toLocaleString('zh-CN', { hour12: false }) : '-';
   if (verification.status === 'verified') {
-    return `<div class="gitlab-verification success" role="status" aria-live="polite"><strong>已验证</strong><span>${escapeHtml(String(verification.branchCount ?? 0))} 个分支 · ${escapeHtml(verifiedAt)}</span></div>`;
+    return `<div class="gitlab-verification success" role="status" aria-live="polite"><strong>读取验证成功</strong><span>${escapeHtml(String(verification.branchCount ?? 0))} 个分支 · ${escapeHtml(verifiedAt)}</span></div>`;
   }
-  return `<div class="gitlab-verification failure" role="alert"><strong>验证失败</strong><span>${escapeHtml(verification.error?.message || '连接暂时不可用，请重试。')} · ${escapeHtml(verifiedAt)}</span></div>`;
+  return `<div class="gitlab-verification failure" role="alert"><strong>验证失败</strong><span>${escapeHtml(verification.error?.message || '连接暂时不可用，请重试。')} · ${escapeHtml(verifiedAt)}</span><span>修复建议：${escapeHtml(verification.error?.recovery || '检查连接配置和平台服务日志，修复后重新验证。')}</span></div>`;
 }
 
 function renderGitLabDetail(connection, platformAdmin, transientVerification, oauthStatus = {}, oauthConfig = {}) {
@@ -493,16 +496,16 @@ function renderGitLabDetail(connection, platformAdmin, transientVerification, oa
   const fields = [
     { label: '连接地址', value: connection.baseUrl || connection.host || '-' },
     { label: '项目路径', value: connection.projectPath || connection.project || '-' },
-    { label: '认证方式', value: connection.authMode === 'user_oauth' ? '用户 OAuth' : connection.authMode === 'service_account' ? '服务账号' : connection.authMode || '-' },
+    { label: 'GitLab 身份', value: connection.authMode === 'user_oauth' ? '使用者本人授权' : connection.authMode === 'service_account' ? '平台预置服务凭证' : connection.authMode || '-' },
     { label: connection.authMode === 'user_oauth' ? '当前管理员授权' : '认证状态', value: connection.authMode === 'user_oauth' ? (oauthStatus?.connected ? '已连接，可验证平台配置' : '尚未连接') : (connection.credentialConfigured ? '服务凭证已配置' : '服务凭证未配置') },
-    { label: '运行模式', value: connection.mode === 'production' ? '生产读取' : connection.mode === 'sandbox' ? '隔离验证' : '已禁用' },
+    { label: '运行模式', value: connection.mode === 'production' ? '生产连接' : connection.mode === 'sandbox' ? '隔离验证' : '已禁用' },
   ];
   if (connection.linkedHandbookCount != null) {
     fields.push({ label: '关联手册', value: `${connection.linkedHandbookCount}（只读）` });
   }
-  const purposeLabel = connection.purpose === 'read_write' ? '读取并支持协作' : '读取生产仓库';
+  const purposeLabel = connection.purpose === 'read_write' ? '读写' : '只读';
   const readLabel = verification?.status === 'verified' ? '已验证' : verification?.status === 'failed' ? '验证失败' : '待验证';
-  const writeLabel = connection.purpose === 'read_write' ? (connection.capabilities?.write ? '已启用' : '未验证') : '未配置';
+  const writeLabel = connection.purpose === 'read_write' ? '未验证' : '未配置';
   const needsOAuth = connection.authMode === 'user_oauth' && !oauthStatus?.connected;
   const oauthHref = `/knowledge-center/api/gitlab/oauth/start?connectionId=${encodeURIComponent(connection.id)}&returnTo=${encodeURIComponent('/knowledge-center/platform?tab=gitlab')}`;
 
@@ -521,9 +524,9 @@ function renderGitLabDetail(connection, platformAdmin, transientVerification, oa
       </div>
       <section class="gitlab-access" aria-labelledby="gitlab-access-title">
         <h4 id="gitlab-access-title">访问能力</h4>
-        <div><span>用途</span><strong>${escapeHtml(purposeLabel)}</strong></div>
-        <div><span>读取权限</span><strong>${escapeHtml(readLabel)}</strong></div>
-        <div><span>写入权限</span><strong>${escapeHtml(writeLabel)}</strong></div>
+        <div><span>配置模式</span><strong>${escapeHtml(purposeLabel)}</strong></div>
+        <div><span>读取验证</span><strong>${escapeHtml(readLabel)}</strong></div>
+        <div><span>写入验证</span><strong>${escapeHtml(writeLabel)}</strong></div>
       </section>
       ${needsOAuth ? `<div class="gitlab-oauth-prompt" role="status"><strong>需要使用管理员账号验证平台连接</strong><span>这里只验证平台配置和项目可读性，不会代替业务用户授权。</span>${oauthConfig?.configured ? `<a class="button secondary" href="${escapeHtml(oauthHref)}">用我的 GitLab 验证连接</a>` : '<span>GitLab OAuth 尚未配置，请先完成平台配置。</span>'}</div>` : ''}
       ${renderVerificationStatus(connection, transientVerification)}
@@ -562,22 +565,27 @@ function renderGitLabEditForm(connection) {
           </label>
           <label>GitLab 地址
             <input name="baseUrl" type="url" required value="${escapeHtml(connection.baseUrl || connection.host || '')}">
+            <small>填写 GitLab 站点地址；也可粘贴与项目路径一致的项目 URL</small>
           </label>
           <label>项目路径
             <input name="projectPath" required value="${escapeHtml(connection.projectPath || connection.project || '')}">
             <small>GitLab 项目的完整路径</small>
           </label>
-          <label>用途
+          <label>默认分支
+            <input name="defaultBranch" required value="${escapeHtml(connection.defaultBranch || '')}" placeholder="按仓库实际分支填写">
+          </label>
+          <label>访问能力
             <select name="purpose">
-              <option value="read" ${connection.purpose !== 'read_write' ? 'selected' : ''}>读取</option>
-              <option value="read_write" ${connection.purpose === 'read_write' ? 'selected' : ''}>读取并支持后续协作</option>
+              <option value="read" ${connection.purpose !== 'read_write' ? 'selected' : ''}>只读</option>
+              <option value="read_write" ${connection.purpose === 'read_write' ? 'selected' : ''}>读写</option>
             </select>
           </label>
-          <label>认证模式
+          <label>使用哪种 GitLab 身份
             <select name="authMode" data-gitlab-auth-mode>
-              <option value="user_oauth" ${connection.authMode !== 'service_account' ? 'selected' : ''}>用户 OAuth（推荐）</option>
-              <option value="service_account" ${connection.authMode === 'service_account' ? 'selected' : ''}>平台只读服务账号</option>
+              <option value="user_oauth" ${connection.authMode !== 'service_account' ? 'selected' : ''}>使用者本人授权 GitLab 账号</option>
+              <option value="service_account" ${connection.authMode === 'service_account' ? 'selected' : ''}>使用平台预置服务凭证</option>
             </select>
+            <small>本人授权：每位使用者连接自己的账号；平台凭证：统一使用管理员预置的服务账号。验证连接仅检查读取权限。</small>
           </label>
           <label data-gitlab-credential-field ${connection.authMode === 'service_account' ? '' : 'hidden'}>凭证引用名
             <input name="credentialRef" value="" placeholder="例如：production_read">
@@ -607,26 +615,31 @@ function renderGitLabAddForm() {
           </label>
           <label>GitLab 地址
             <input name="baseUrl" type="url" required placeholder="https://gitlab.example.com">
+            <small>填写 GitLab 站点地址；也可粘贴与项目路径一致的项目 URL</small>
           </label>
           <label>项目路径
             <input name="projectPath" required placeholder="group/project">
             <small>GitLab 项目的完整路径，例如 cod-doc/yasdoc</small>
           </label>
-          <label>用途
+          <label>默认分支
+            <input name="defaultBranch" required placeholder="按仓库实际分支填写，例如 main">
+            <small>请以仓库实际默认分支为准，平台不会猜测分支名</small>
+          </label>
+          <label>访问能力
             <select name="purpose">
-              <option value="read">读取</option>
-              <option value="read_write">读取并支持后续协作</option>
+              <option value="read">只读</option>
+              <option value="read_write">读写</option>
             </select>
           </label>
         </div>
         <div class="gitlab-form-step">
           <h4><span class="step-number">2</span> 认证方式</h4>
-          <label>认证模式
+          <label>使用哪种 GitLab 身份
             <select name="authMode" data-gitlab-auth-mode>
-              <option value="user_oauth">用户 OAuth（推荐）</option>
-              <option value="service_account">平台只读服务账号</option>
+              <option value="user_oauth">使用者本人授权 GitLab 账号</option>
+              <option value="service_account">使用平台预置服务凭证</option>
             </select>
-            <small>CAS 只认证知识中心用户，不等同于 GitLab API 授权</small>
+            <small>本人授权：每位使用者连接自己的 GitLab 账号；平台凭证：统一使用管理员预置的服务账号。选择读写不代表已取得写入权限。</small>
           </label>
           <label data-gitlab-credential-field hidden>凭证引用名
             <input name="credentialRef" placeholder="例如：production_read">
@@ -635,7 +648,7 @@ function renderGitLabAddForm() {
         </div>
         <div class="gitlab-form-step">
           <h4><span class="step-number">3</span> 连接验证</h4>
-          <p style="font-size:13px;color:var(--color-text-secondary);margin:0">保存后将自动验证地址可访问性、项目权限和读取权限。</p>
+          <p style="font-size:13px;color:var(--color-text-secondary);margin:0">保存后验证读取权限；本人授权模式需要先连接 GitLab 账号。写入权限不在此步验证。</p>
           <div id="gitlab-verify-result-container"></div>
         </div>
         <div class="gitlab-form-step">
