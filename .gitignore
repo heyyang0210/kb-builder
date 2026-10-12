@@ -112,3 +112,6 @@ AI工程师进阶之路.md
 # 数据库本地配置（凭证通过环境变量或密钥系统注入）
 config/database/*.local.*
 config/database/*.secret.*
+
+# 测试结果运行产物
+test-results/
