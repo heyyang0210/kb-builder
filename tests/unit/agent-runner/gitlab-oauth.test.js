@@ -40,6 +40,34 @@ describe('GitLab OAuth flow', () => {
     await expect(oauth.tokenForUser('u1', { id: 'c1', host: 'https://git-tools.yasdb.com' })).resolves.toBeNull();
   });
 
+  test('HTTP opt-in accepts private networks but preserves protocol and public-host restrictions', () => {
+    const start = () => oauth.start({ userId: 'u1', connectionId: 'c1', host: 'https://git-tools.yasdb.com' });
+    try {
+      delete process.env.KNOWLEDGE_CENTER_GITLAB_OAUTH_DEV_HTTP;
+      process.env.KNOWLEDGE_CENTER_GITLAB_OAUTH_ALLOW_HTTP = 'true';
+      for (const host of ['172.16.0.1', '172.31.255.254', '10.1.2.3', '192.168.0.1', '127.0.0.1', 'localhost']) {
+        process.env.KNOWLEDGE_CENTER_GITLAB_OAUTH_REDIRECT_URI = `http://${host}/knowledge-center/api/gitlab/oauth/callback`;
+        expect(start()).toContain('/oauth/authorize');
+      }
+      for (const uri of ['http://172.15.1.1/callback', 'http://172.32.1.1/callback', 'http://example.com/callback', 'ftp://172.16.91.10/callback']) {
+        process.env.KNOWLEDGE_CENTER_GITLAB_OAUTH_REDIRECT_URI = uri;
+        expect(start).toThrow('正式回调必须使用 HTTPS');
+      }
+      process.env.KNOWLEDGE_CENTER_GITLAB_OAUTH_REDIRECT_URI = 'http://172.16.91.10/callback';
+      process.env.KNOWLEDGE_CENTER_GITLAB_OAUTH_ALLOW_HTTP = 'false';
+      process.env.KNOWLEDGE_CENTER_GITLAB_OAUTH_DEV_HTTP = 'true';
+      expect(start).toThrow('正式回调必须使用 HTTPS');
+      delete process.env.KNOWLEDGE_CENTER_GITLAB_OAUTH_ALLOW_HTTP;
+      expect(start()).toContain('/oauth/authorize');
+      delete process.env.KNOWLEDGE_CENTER_GITLAB_OAUTH_DEV_HTTP;
+      expect(start).toThrow('正式回调必须使用 HTTPS');
+      process.env.KNOWLEDGE_CENTER_GITLAB_OAUTH_REDIRECT_URI = 'https://example.com/callback';
+      expect(start()).toContain('/oauth/authorize');
+    } finally {
+      delete process.env.KNOWLEDGE_CENTER_GITLAB_OAUTH_ALLOW_HTTP;
+    }
+  });
+
   test('persists encrypted credentials across store instances and isolates connections', async () => {
     const aggregate = memoryAggregate();
     oauth.setCredentialStore(new GitLabOAuthCredentialStore({ aggregate, env: process.env }));

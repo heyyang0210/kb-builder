@@ -29,16 +29,25 @@ function config() {
     clientSecret: String(process.env.KNOWLEDGE_CENTER_GITLAB_OAUTH_CLIENT_SECRET || '').trim(),
     redirectUri: String(process.env.KNOWLEDGE_CENTER_GITLAB_OAUTH_REDIRECT_URI || '').trim(),
     scopes: String(process.env.KNOWLEDGE_CENTER_GITLAB_OAUTH_SCOPES || 'read_api read_repository').trim(),
-    devHttp: process.env.KNOWLEDGE_CENTER_GITLAB_OAUTH_DEV_HTTP === 'true',
+    devHttp: (process.env.KNOWLEDGE_CENTER_GITLAB_OAUTH_ALLOW_HTTP ?? process.env.KNOWLEDGE_CENTER_GITLAB_OAUTH_DEV_HTTP) === 'true',
     refreshWindowMs: Math.max(30_000, Number(process.env.KNOWLEDGE_CENTER_GITLAB_OAUTH_REFRESH_WINDOW_MS || 300_000)),
   };
+}
+
+function isDevelopmentCallbackHost(hostname) {
+  if (hostname === 'localhost') return true;
+  const parts = hostname.split('.').map(Number);
+  if (parts.length !== 4 || parts.some(part => !Number.isInteger(part) || part < 0 || part > 255)) return false;
+  return parts[0] === 127 || parts[0] === 10
+    || (parts[0] === 192 && parts[1] === 168)
+    || (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31);
 }
 
 function ensureConfigured() {
   const value = config();
   if (!value.clientId || !value.clientSecret || !value.redirectUri) throw new GitLabOAuthError('GITLAB_OAUTH_NOT_CONFIGURED', 'GitLab 账号连接尚未配置，请联系平台管理员', 503);
   let parsed; try { parsed = new URL(value.redirectUri); } catch (_error) { throw new GitLabOAuthError('GITLAB_OAUTH_CONFIG_INVALID', 'GitLab 账号连接回调地址格式不正确', 500); }
-  if (parsed.protocol !== 'https:' && !(value.devHttp && (parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost' || /^192\.168\./.test(parsed.hostname)))) throw new GitLabOAuthError('GITLAB_OAUTH_HTTPS_REQUIRED', 'GitLab 账号连接正式回调必须使用 HTTPS', 500);
+  if (parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && value.devHttp && isDevelopmentCallbackHost(parsed.hostname))) throw new GitLabOAuthError('GITLAB_OAUTH_HTTPS_REQUIRED', 'GitLab 账号连接正式回调必须使用 HTTPS', 500);
   return value;
 }
 
