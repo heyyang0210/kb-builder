@@ -1,5 +1,31 @@
 # 知识中心部署工具
 
+HTTP 私网开发环境连接 GitLab 时，已有配置可使用 `KNOWLEDGE_CENTER_GITLAB_OAUTH_ALLOW_HTTP=true`（兼容旧 `KNOWLEDGE_CENTER_GITLAB_OAUTH_DEV_HTTP=true`）。支持 10/8、172.16/12、192.168/16 和本机地址；默认、公网 HTTP 及非 HTTP/HTTPS 协议仍被拒绝。新变量优先，配置后执行原始 restart。GitLab 应用回调地址须匹配进程实际使用的公开地址，详见[OAuth 回调设计](../../docs/operations/production-deployment.md)。
+
+统一构建由 `knowledge-center.sh` 传递其已验证的 Python 入口，避免生产 PATH 中的旧系统 Python 被误用于语法检查；直接调用构建脚本时可通过 `KNOWLEDGE_CENTER_PYTHON_BIN=/path/to/python` 指定同一入口。
+
+## 离线环境局部重启
+
+生产已安装 JDK 时可直接编译。PingCode Web 使用独立 lockfile；离线环境需准备 npm 缓存，不能复用仓库根目录或另一架构的 node_modules。构建脚本发现 `runtime/deployment/npm-cache` 后自动使用 `npm ci --offline --include=dev`，安装失败立即停止，不覆盖已有产物或停止服务。自定义缓存可设置 `KNOWLEDGE_CENTER_NPM_CACHE`。
+
+在联网机器核对 Web lockfile 与生产一致后，下载锁定包（包含 ARM64 可选依赖）：
+
+```bash
+sha256sum apps/pingcode-web/package-lock.json
+mkdir -p runtime/deployment/npm-cache
+node -e 'const p=require("./apps/pingcode-web/package-lock.json").packages; console.log([...new Set(Object.values(p).map(x=>x.resolved).filter(Boolean))].join("\n"))' \
+  | while IFS= read -r url; do
+      npm cache add "$url" --cache "$PWD/runtime/deployment/npm-cache" --ignore-scripts || exit 1
+    done
+npm cache verify --cache "$PWD/runtime/deployment/npm-cache"
+tar -czf runtime/deployment/npm-cache.tar.gz -C runtime/deployment/npm-cache _cacache
+sha256sum runtime/deployment/npm-cache.tar.gz
+```
+
+上传至生产暂存目录，核对 SHA-256 后解压至生产 `runtime/deployment/npm-cache`。不要同步 `config/`。随后在生产执行 `./knowledge-center.sh restart`，查看 `runtime/agent-runner/logs/knowledge-center-isolated/knowledge-center-build.log` 与 `./knowledge-center.sh status --verbose`。以后依赖清单未变更可重复使用缓存；清单变更后需先补充缺失包，不能绕过校验。
+
+现有生产目录可原地执行 `./knowledge-center.sh restart`。仅 JRE 的生产机需要从可信构建机接收与生产源码及构建入口完全匹配、摘要有效的统一产物，同时具备 `apps/yashandb-storage/lib/yashandb-jdbc.jar`。构建入口缓存命中后无需 Java 编译器；源码或摘要不匹配时仍要求 JDK，不会静默跳过构建验证。局部修复应先备份、暂存上传、验证后替换，不发布工作区其他业务改动。详见[离线重启设计](../../docs/operations/production-deployment.md)。
+
 ## 生产同步与一键升级
 
 生产环境默认为 `hey@172.16.91.10:22`，部署根目录为 `/data/code/kb-builder`。本地测试知识中心为 `192.168.130.180`（前端 `13510`、文档 API `14110`、PingCode API `18010`）；测试数据库为 `192.168.23.136:1688/yasdb`，用户 `pf_knowledge`。密码、Token 和 OAuth Secret 不得写入本文档或发布脚本。
@@ -36,3 +62,7 @@ ssh -o BatchMode=yes -o IdentitiesOnly=yes -i ~/.ssh/id_ed25519 -p 22 hey@172.16
 在线 Python 安装会将 Chromium 下载到 `runtime/browsers/playwright/`：DEB 系使用 Playwright `--with-deps`，RPM 系由安装器显式安装 Chromium 运行库。完成后真实启动无头浏览器验证可用性。`doctor` 也会单独报告 Python 包与 Chromium 制品的状态，避免“可导入但不能启动”的假通过。
 
 安装器只在配置不存在时从模板初始化 `config/knowledge-center/.env` 和 `config/yashandb/service.env`，文件权限设为 `0600`，不覆盖现有配置。数据库连接仍只以 `config/yashandb/service.env` 为持久事实源。
+
+### 错误定位补充（2026-10-13）
+
+发布日志使用 DEPLOYMENT_FAILED 记录失败阶段和日志路径；恢复失败另报 DEPLOYMENT_RECOVERY_FAILED，原 runtime 缺失另报 DEPLOYMENT_RECOVERY_RUNTIME_MISSING。

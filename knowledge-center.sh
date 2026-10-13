@@ -426,7 +426,9 @@ validate_build_artifact() {
 
 build_platform() {
   echo "构建知识中心统一产物..."
-  if ! KNOWLEDGE_CENTER_BUILD_ROOT="$BUILD_ROOT_REL" "$BUILD_SCRIPT" >"$LOG_DIR/knowledge-center-build.log" 2>&1; then
+  if ! KNOWLEDGE_CENTER_BUILD_ROOT="$BUILD_ROOT_REL" \
+    KNOWLEDGE_CENTER_PYTHON_BIN="$PYTHON_BIN" \
+    "$BUILD_SCRIPT" >"$LOG_DIR/knowledge-center-build.log" 2>&1; then
     FAILURE_COMPONENT="统一构建"
     FAILURE_LOG="$LOG_DIR/knowledge-center-build.log"
     echo "错误：知识中心构建失败：$LOG_DIR/knowledge-center-build.log" >&2

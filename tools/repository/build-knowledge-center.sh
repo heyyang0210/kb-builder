@@ -7,6 +7,7 @@ repo_root="$(cd "${script_dir}/../.." && pwd)"
 cd "$repo_root"
 
 build_root_rel="${KNOWLEDGE_CENTER_BUILD_ROOT:-runtime/build/knowledge-center}"
+python_bin="${KNOWLEDGE_CENTER_PYTHON_BIN:-python3}"
 
 fail() {
   echo "构建失败：$*" >&2
@@ -17,7 +18,7 @@ validate_relative_build_root() {
   local value="$1" segment
   [[ -n "$value" ]] || fail "构建目录不能为空"
   case "$value" in
-    /*|[A-Za-z]:*|\\*|//* ) fail "构建目录必须是仓库内相对路径：$value" ;;
+    /*|[A-Za-z]:*|\\* ) fail "构建目录必须是仓库内相对路径：$value" ;;
   esac
   [[ "$value" == runtime/build/* ]] || fail "构建目录必须位于 runtime/build/：$value"
   IFS='/' read -r -a segments <<<"$value"
@@ -28,19 +29,11 @@ validate_relative_build_root() {
 
 validate_relative_build_root "$build_root_rel"
 
-for command_name in git node npm python3 java sha256sum tar; do
+for command_name in git node npm java sha256sum tar; do
   command -v "$command_name" >/dev/null 2>&1 || fail "缺少构建命令：$command_name"
 done
-
-java_compiler=javac
-if command -v javac >/dev/null 2>&1; then
-  java_compiler_version="$(javac -version 2>&1 | awk '{print $2}')"
-elif java --list-modules 2>/dev/null | grep -q '^jdk.compiler@'; then
-  java_compiler=module
-  java_compiler_version="$(java --list-modules 2>/dev/null | awk -F@ '/^jdk\.compiler@/ {print $2; exit}')"
-else
-  fail "缺少 Java 编译器，请安装 JDK 17+"
-fi
+command -v "$python_bin" >/dev/null 2>&1 || [[ -x "$python_bin" ]] \
+  || fail "缺少 Python 构建命令：$python_bin"
 
 jdbc_source_rel="apps/yashandb-storage/lib/yashandb-jdbc.jar"
 [[ -f "$jdbc_source_rel" ]] || fail "缺少 YashanDB JDBC 驱动：$jdbc_source_rel"
@@ -67,7 +60,7 @@ migration_source_sha256="$({
 } | sha256sum | awk '{print $1}')"
 node_version="$(node --version)"
 npm_version="$(npm --version)"
-python_version="$(python3 --version 2>&1 | awk '{print $2}')"
+python_version="$("$python_bin" --version 2>&1 | awk '{print $2}')"
 pingcode_vite_node_options="${KNOWLEDGE_CENTER_VITE_NODE_OPTIONS:---max-old-space-size=1536}"
 fingerprint_inputs=(
   package.json
@@ -92,6 +85,7 @@ source_fingerprint="$({
   find "${fingerprint_inputs[@]}" \
     -type f \
     ! -path '*/node_modules/*' \
+    ! -path '*/.venv/*' \
     ! -path '*/dist/*' \
     ! -path '*/__pycache__/*' \
     ! -name '*.pyc' \
@@ -107,9 +101,9 @@ cache_manifest_matches() {
   [[ -f "$current_rel/manifest.json" && -f "$current_rel/manifest.sha256" ]] || return 1
   node - "$current_rel/manifest.json" \
     "$source_fingerprint" "$migration_source_sha256" \
-    "$node_version" "$npm_version" "$python_version" "$java_compiler_version" <<'NODE'
+    "$node_version" "$npm_version" "$python_version" <<'NODE'
 const fs = require('fs');
-const [manifestPath, sourceFingerprint, migrationSha, nodeVersion, npmVersion, pythonVersion, javaVersion] = process.argv.slice(2);
+const [manifestPath, sourceFingerprint, migrationSha, nodeVersion, npmVersion, pythonVersion] = process.argv.slice(2);
 try {
   const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
   const matches = manifest.schemaVersion === 1
@@ -117,8 +111,7 @@ try {
     && manifest.migrationSourceSha256 === migrationSha
     && manifest.toolchain?.node === nodeVersion
     && manifest.toolchain?.npm === npmVersion
-    && manifest.toolchain?.python === pythonVersion
-    && manifest.toolchain?.javaCompiler === javaVersion;
+    && manifest.toolchain?.python === pythonVersion;
   process.exit(matches ? 0 : 1);
 } catch (_) {
   process.exit(1);
@@ -138,6 +131,18 @@ cache_artifacts_are_valid() {
 if cache_manifest_matches && cache_artifacts_are_valid; then
   echo "构建缓存命中：$current_rel（sourceFingerprint=$source_fingerprint）"
   exit 0
+fi
+
+# Java 编译器只在缓存未命中、确实需要重新编译 Storage 时必需。
+# 已校验的同源构建产物可在仅安装 JRE 17 的离线生产机上安全复用。
+java_compiler=javac
+if command -v javac >/dev/null 2>&1; then
+  java_compiler_version="$(javac -version 2>&1 | awk '{print $2}')"
+elif java --list-modules 2>/dev/null | grep -q '^jdk.compiler@'; then
+  java_compiler=module
+  java_compiler_version="$(java --list-modules 2>/dev/null | awk -F@ '/^jdk\.compiler@/ {print $2; exit}')"
+else
+  fail "当前源码与构建缓存不一致，重新构建需要 JDK 17+；仅有 JRE 时请从可信构建机同步同源且摘要有效的统一构建产物"
 fi
 
 remove_managed_path() {
@@ -165,7 +170,7 @@ echo "[1/6] 检查 Node.js 语法"
 node tools/repository/check-node-syntax.js
 
 echo "[2/6] 检查 Python 语法"
-python3 - <<'PY'
+"$python_bin" - <<'PY'
 from pathlib import Path
 
 for root in (Path("apps/pingcode-api"), Path("packages/pingcode-core")):
@@ -176,17 +181,27 @@ for root in (Path("apps/pingcode-api"), Path("packages/pingcode-core")):
 PY
 
 echo "[3/6] 构建 PingCode Web"
+npm_cache="${KNOWLEDGE_CENTER_NPM_CACHE:-$repo_root/runtime/deployment/npm-cache}"
+npm_install_args=(ci --include=dev --ignore-scripts --no-audit --no-fund)
+if [[ -n "${KNOWLEDGE_CENTER_NPM_CACHE:-}" || -d "$npm_cache" ]]; then
+  [[ -d "$npm_cache" ]] || fail "指定的 npm 离线缓存不存在：$npm_cache"
+  [[ "$npm_cache" == /* ]] || npm_cache="$repo_root/$npm_cache"
+  npm_install_args+=(--offline --cache "$npm_cache")
+  echo "使用 npm 离线缓存：$npm_cache（按 Web lockfile 校验并安装本机架构依赖）"
+fi
 tar -cf - \
   --exclude='./node_modules' \
   --exclude='./dist' \
   -C apps/pingcode-web . | tar -xf - -C "$stage_rel/.work/pingcode-web"
 (
   cd "$stage_rel/.work/pingcode-web"
-  npm ci --ignore-scripts --no-audit --no-fund
+  npm "${npm_install_args[@]}" || fail "PingCode Web 依赖安装失败；离线环境请按 apps/pingcode-web/package-lock.json 补齐 npm 缓存，详情见 npm 日志。现有产物未替换"
+  [[ -x node_modules/.bin/vite ]] || fail "PingCode Web 依赖不完整：缺少 Vite 入口，拒绝继续构建"
   # 运行配置可以使用 NODE_ENV=development，但发布构建必须固定为 production。
   # 否则 Vue 会把组件绝对文件名写入 chunk，破坏可重复构建并泄漏开发机路径。
-  NODE_ENV=production NODE_OPTIONS="$pingcode_vite_node_options" npm run build -- --outDir ../../web/pingcode --emptyOutDir
-)
+  NODE_ENV=production NODE_OPTIONS="$pingcode_vite_node_options" npm run build -- --outDir ../../web/pingcode --emptyOutDir \
+    || fail "PingCode Web 构建失败，现有产物未替换"
+) || fail "PingCode Web 构建阶段失败，现有产物未替换"
 
 echo "[4/6] 准备知识中心静态前端"
 tar -cf - -C apps/knowledge-center-web/frontend . | tar -xf - -C "$stage_rel/web/platform"
