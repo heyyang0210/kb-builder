@@ -20,6 +20,8 @@ function markText(text, line) {
 
 function enhanceRenderedHtml(html) {
   const hits = [];
+  const codeBlockCount = (String(html).match(/<pre class="repository-code"(?=[\s>])/gi) || []).length;
+  let enhancedCodeBlockCount = 0;
   let line = 1;
   const rendered = String(html).replace(/<(p|td|th|li)([^>]*)>([\s\S]*?)<\/\1>/gi, (whole, tag, attrs, body) => {
     if (body.includes('<mark ') || body.includes('<code')) { line += body.split('\n').length - 1; return whole; }
@@ -29,10 +31,16 @@ function enhanceRenderedHtml(html) {
     const result = markText(body, line);
     hits.push(...result.hits); line += body.split('\n').length - 1;
     return `<${tag}${attrs}>${result.value}</${tag}>`;
-  }).replace(/<pre class="repository-code"([^>]*)><code class="language-([^\"]*)">([\s\S]*?)<\/code><\/pre>/gi, (whole, attrs, language, body) => {
+  }).replace(/<pre class="repository-code"([^ data-scroll-region="panel">]*)><code class="language-([^\"]*)">([\s\S]*?)<\/code><\/pre>/gi, (whole, attrs, language, body) => {
+    enhancedCodeBlockCount += 1;
     const rows = body.split('\n').length;
     return `<div class="db-code-block" data-db-code-language="${esc(language)}" data-db-code-lines="${rows}"><div class="db-code-toolbar"><span>${esc(language || 'text')}</span><button type="button" data-db-copy-code>复制</button></div>${whole}</div>`;
   });
+  if (enhancedCodeBlockCount < codeBlockCount) {
+    console.warn('[MARKDOWN_CODE_ENHANCEMENT_FAILED] 代码块增强未匹配，复制工具栏未生成；请检查 database-enhancer 的 pre 属性匹配规则', {
+      unenhancedCodeBlockCount: codeBlockCount - enhancedCodeBlockCount,
+    });
+  }
   return { html: rendered, hits };
 }
 

@@ -581,6 +581,15 @@ function createKnowledgeCenterHandler(options) {
     }));
   }
 
+  async function assertActiveProductionOutline(context) {
+    if (!databaseMode) return;
+    const ids = new Set([context?.outlineVersionId, ...(context?.documents || []).map(item => item.outlineVersionId)].filter(Boolean));
+    for (const id of ids) {
+      const outline = await domainStore.readOutlineGovernanceAsync(id);
+      if (outline.deletedAt) throw Object.assign(new Error('大纲已移入回收站，请恢复后再进行文档生产'), { status: 409, code: 'OUTLINE_DELETED' });
+    }
+  }
+
   async function handleHandbookProduction(req, res, session, pathname) {
     const storedAttachmentMatch = pathname.match(/^\/knowledge-center\/api\/production\/attachments\/([^/]+)$/);
     const documentMatch = pathname.match(/^\/knowledge-center\/api\/production\/handbooks\/([^/]+)\/documents\/([^/]+)\/draft(?:\/(revisions|restore))?$/);
@@ -609,6 +618,7 @@ function createKnowledgeCenterHandler(options) {
     if (reviewBatchMatch && req.method === 'POST') {
       const handbookId = decodeURIComponent(reviewBatchMatch[1]);
       const body = await readJsonBody(req);
+      await assertActiveProductionOutline(body);
       const reviewers = await eligibleReviewers(handbookId, session);
       sendProductionData(res, handbookProductionService.createReviewBatch({ ...body, handbookId }, session, req.headers['idempotency-key'], reviewers), 201);
       return true;
@@ -617,6 +627,7 @@ function createKnowledgeCenterHandler(options) {
       const params = new URL(req.url, 'http://localhost').searchParams;
       const handbookId = decodeURIComponent(attachmentMatch[1]);
       const documentId = decodeURIComponent(attachmentMatch[2]);
+      await assertActiveProductionOutline(productionContext(handbookId, documentId, params));
       const rawName = String(req.headers['x-file-name'] || '');
       let fileName;
       try { fileName = decodeURIComponent(rawName); } catch (_error) { fileName = rawName; }
@@ -639,6 +650,7 @@ function createKnowledgeCenterHandler(options) {
       }
       if (req.method === 'PUT' && !suffix) {
         const body = await readJsonBody(req);
+        await assertActiveProductionOutline(body);
         sendProductionData(res, handbookProductionService.saveDraft({ ...body, handbookId, documentId }, session, req.headers['idempotency-key']));
         return true;
       }
@@ -649,6 +661,7 @@ function createKnowledgeCenterHandler(options) {
       }
       if (req.method === 'POST' && suffix === 'restore') {
         const body = await readJsonBody(req);
+        await assertActiveProductionOutline(body);
         sendProductionData(res, handbookProductionService.restoreRevision({ ...body, handbookId, documentId }, session, req.headers['idempotency-key']));
         return true;
       }
@@ -1577,22 +1590,28 @@ function createKnowledgeCenterHandler(options) {
     if (req.method === 'GET' && pathname === '/knowledge-center/api/outline/sample') {
       requireSession(req, res, session => { if (!forbidUnlessOutlineAction(res, session, 'outline:read')) serveOutlineWorkbook(res, OUTLINE_SAMPLE_PATH, '基本数据库管理手册大纲示例.xlsx', 'OUTLINE_SAMPLE_UNAVAILABLE'); }); return;
     }
-    if (req.method === 'GET' && (pathname === '/knowledge-center/api/outline/governance' || pathname.startsWith('/knowledge-center/api/outline/governance/') || pathname === '/knowledge-center/api/outline/tech-domains' || pathname === '/knowledge-center/api/outline/build-tasks' || pathname.startsWith('/knowledge-center/api/outline/build-tasks/'))) {
-      requireSession(req, res, session => { if (!forbidUnlessOutlineAction(res, session, 'outline:read')) proxyOutline(req, res); }); return;
+    if ((req.method === 'POST' && /^\/knowledge-center\/api\/outline\/governance\/[^/]+\/purge$/.test(pathname)) || (req.method === 'GET' && pathname.endsWith('/purge-preflight') && pathname.startsWith('/knowledge-center/api/outline/governance/'))) {
+      requireSession(req, res, session => { if (!forbidUnlessOutlineAction(res, session, 'outline:purge')) proxyOutline(req, res, session); }); return;
+    }
+    if (req.method === 'POST' && /^\/knowledge-center\/api\/outline\/governance\/[^/]+\/restore$/.test(pathname)) {
+      requireSession(req, res, session => { if (!forbidUnlessOutlineAction(res, session, 'outline:delete')) proxyOutline(req, res, session); }); return;
+    }
+    if (req.method === 'GET' && (pathname === '/knowledge-center/api/outline/catalog' || pathname === '/knowledge-center/api/outline/governance' || pathname.startsWith('/knowledge-center/api/outline/governance/') || pathname === '/knowledge-center/api/outline/tech-domains' || pathname === '/knowledge-center/api/outline/build-tasks' || pathname.startsWith('/knowledge-center/api/outline/build-tasks/'))) {
+      requireSession(req, res, session => { if (!forbidUnlessOutlineAction(res, session, 'outline:read')) proxyOutline(req, res, session); }); return;
     }
     if ((req.method === 'PUT' && /^\/knowledge-center\/api\/outline\/governance\/[^/]+\/governance$/.test(pathname)) ||
         (req.method === 'POST' && /^\/knowledge-center\/api\/outline\/governance\/[^/]+\/publish$/.test(pathname)) ||
         (req.method === 'PATCH' && /^\/knowledge-center\/api\/outline\/build-tasks\/[^/]+\/items\/[^/]+$/.test(pathname))) {
-      requireSession(req, res, session => { if (!forbidUnlessOutlineAction(res, session, 'outline:create')) proxyOutline(req, res); }); return;
+      requireSession(req, res, session => { if (!forbidUnlessOutlineAction(res, session, 'outline:create')) proxyOutline(req, res, session); }); return;
     }
     if (pathname === '/knowledge-center/api/templates' || pathname.startsWith('/knowledge-center/api/templates/')) {
       requireSession(req, res, session => handleTemplates(req, res, session)); return;
     }
     if (req.method === 'POST' && (pathname === '/knowledge-center/api/outline/import' || pathname === '/knowledge-center/api/outline/handbooks')) {
-      requireSession(req, res, session => { if (!forbidUnlessOutlineAction(res, session, 'outline:create')) proxyOutline(req, res); }); return;
+      requireSession(req, res, session => { if (!forbidUnlessOutlineAction(res, session, 'outline:create')) proxyOutline(req, res, session); }); return;
     }
     if (req.method === 'DELETE' && /^\/knowledge-center\/api\/outline\/governance\/[^/]+$/.test(pathname)) {
-      requireSession(req, res, session => { if (!forbidUnlessOutlineAction(res, session, 'outline:delete')) proxyOutline(req, res); }); return;
+      requireSession(req, res, session => { if (!forbidUnlessOutlineAction(res, session, 'outline:delete')) proxyOutline(req, res, session); }); return;
     }
     if (req.method === 'GET' && pathname === '/knowledge-center/api/production/generations') {
       requireSession(req, res, session => serveMyGenerations(req, res, session)); return;

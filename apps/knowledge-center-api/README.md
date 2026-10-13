@@ -2,6 +2,8 @@
 
 基于 Workflow Agent 的自动化文档生成系统，通过多步骤协作（Planner → Retriever → Generator → Validator）生成高质量的 YashanDB 知识库文档。
 
+大纲生命周期通过知识中心 BFF 的 `/knowledge-center/api/outline/governance/{id}` 调用：DELETE 移入回收站，POST `restore` 恢复，GET `purge-preflight` 检查引用，POST `purge` 彻底删除。已发布版本支持逻辑删除；彻底删除仅允许超级管理员，需 `{confirmId, reason}` 且无下游引用。现有 admin 补齐 SUPER_ADMIN，不创建额外账号。生命周期写请求和清理预检要求 `KNOWLEDGE_CENTER_OUTLINE_INTERNAL_TOKEN`，身份与动作由受信网关传播。数据库部署需先显式应用 Storage 迁移 013；文件模式不开放彻底删除。契约与操作步骤见 [大纲详细设计](../../.codex/知识中心建设平台/03-详细设计/知识中心-大纲管理-详细设计文档.md)。
+
 ## 目录
 
 - [快速开始](#快速开始)

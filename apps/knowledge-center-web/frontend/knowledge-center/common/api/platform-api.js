@@ -74,7 +74,7 @@ function normalizeOutlineError(error = {}) {
   if (code === 'OUTLINE_GATEWAY_REQUIRED' || code === 'OUTLINE_AUTH_NOT_CONFIGURED') return '大纲权限网关配置异常，请重启知识中心服务后重试。';
   if (code === 'PUBLISHED_CONTENT_LOCKED') return '已发布大纲只能调整技术领域，不能修改内容说明。';
   if (code === 'PUBLISHED_ASSIGNMENT_REQUIRED') return '已发布大纲不能取消页面的全部技术领域分工。';
-  if (code === 'OUTLINE_IMMUTABLE') return '当前大纲版本不可修改或删除，请刷新后重试。';
+  if (code === 'OUTLINE_IMMUTABLE') return '当前大纲版本已发布或已被替代，不能修改结构；如需调整，请导入新的候选版本。';
   if (code === 'OUTLINE_VERSION_CONFLICT' || code === 'OUTLINE_EDIT_CONFLICT' || code === 'OUTLINE_GOVERNANCE_CONFLICT') return '大纲数据已被更新，请刷新页面后重试。';
   if (code === 'INVALID_DOMAIN_PAYLOAD') return '技术领域分工数据不合法，请刷新后重试。';
   if (code === 'OUTLINE_SERVICE_UNAVAILABLE' || code === 'DOCUMENT_API_UNAVAILABLE' || status === 502 || status === 503) return '大纲服务暂时不可用，请确认文档服务已启动后重试。';
@@ -103,22 +103,13 @@ export async function loadPlatformData(scopes = ['context', 'overview']) {
 
 export async function loadOutlineData(handbookId = null) {
   try {
+    if (!handbookId) {
+      const response = await getJson('/knowledge-center/api/outline/catalog');
+      const catalog = response?.data || response || {};
+      return { status: 'ok', items: Array.isArray(catalog.items) ? catalog.items : [], total: Number(catalog.total || 0), snapshotVersion: catalog.snapshotVersion || null, detail: null, selectedId: null, asOf: catalog.generatedAt || new Date().toISOString() };
+    }
     const list = await getJson(`${outlineEndpoint}/list`);
     const allItems = Array.isArray(list?.data) ? list.data : [];
-    if (!handbookId) {
-      const handbooksResponse = await getJson(`${handbooksEndpoint}?page=1&pageSize=100`).catch(() => null);
-      const handbooksPayload = handbooksResponse?.data || handbooksResponse || {};
-      const handbooks = Array.isArray(handbooksPayload.items) ? handbooksPayload.items : Array.isArray(handbooksPayload.handbooks) ? handbooksPayload.handbooks : [];
-      const productsByHandbook = new Map(handbooks.map(item => [
-        String(item.handbookId || item.id),
-        String(item.productName || item.product?.name || item.productType || '').trim() || '未指定产品',
-      ]));
-      const items = allItems.map(item => ({
-        ...item,
-        productDisplayName: productsByHandbook.get(String(item.handbookId || item.manualId)) || '未指定产品',
-      }));
-      return { status: 'ok', items, detail: null, selectedId: null, asOf: list?.generatedAt || new Date().toISOString() };
-    }
     let handbookError = null;
     const handbooksResponse = await getJson(`${handbooksEndpoint}?page=1&pageSize=100`).catch(error => { handbookError = error; return null; });
     const handbooksPayload = handbooksResponse?.data || handbooksResponse || {};
@@ -168,9 +159,26 @@ export async function deleteOutline(outlineId) {
   const result = await response.json().catch(() => null);
   if (!response.ok) {
     const error = { message: result?.error?.message || result?.message, code: result?.error?.code, status: response.status, payload: result };
-    throw Object.assign(new Error(normalizeOutlineError(error)), error);
+    const message = normalizeOutlineError(error);
+    throw Object.assign(new Error(message), { ...error, message });
   }
   return result;
+}
+
+export async function loadOutlineRecycle() {
+  const response = await fetch(`${outlineEndpoint}/recycle`, { credentials: 'same-origin', headers: { Accept: 'application/json' } });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error?.message || '回收站读取失败');
+  return result.data || [];
+}
+
+export async function outlineLifecycle(outlineId, action, payload = {}) {
+  const url = `${outlineEndpoint}/${encodeURIComponent(outlineId)}/${action}`;
+  if (action !== 'purge-preflight') return outlineMutation(url, 'POST', payload);
+  const response = await fetch(url, { credentials: 'same-origin', headers: { Accept: 'application/json' } });
+  const result = await response.json();
+  if (!response.ok) throw Object.assign(new Error(result.error?.message || '删除检查失败'), { code: result.error?.code });
+  return result.data;
 }
 
 async function outlineMutation(url, method, payload) {
@@ -183,7 +191,8 @@ async function outlineMutation(url, method, payload) {
   const result = await response.json().catch(() => null);
   if (!response.ok) {
     const error = { message: result?.error?.message || result?.message, code: result?.error?.code, status: response.status, payload: result };
-    throw Object.assign(new Error(normalizeOutlineError(error)), error);
+    const message = normalizeOutlineError(error);
+    throw Object.assign(new Error(message), { ...error, message });
   }
   return result?.data || result;
 }

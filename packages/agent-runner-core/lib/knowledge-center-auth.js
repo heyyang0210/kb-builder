@@ -17,13 +17,14 @@ const CLEANING_MODULES = ['cleaning'];
 const TEMPLATE_MODULES = ['templates'];
 const BUSINESS_ACTIONS = ['knowledge:read', 'knowledge:write', 'outline:read'];
 const ADMIN_ACTIONS = [...BUSINESS_ACTIONS, 'outline:create', 'outline:delete', 'review:manage', 'publish:manage', 'platform:manage', 'template:read', 'template:edit', 'template:manage'];
-const ASSIGNABLE_ROLES = ['KNOWLEDGE_EDITOR', 'OUTLINE_MANAGER', 'REVIEWER', 'TEMPLATE_EDITOR', 'PLATFORM_ADMIN'];
+const ASSIGNABLE_ROLES = ['KNOWLEDGE_EDITOR', 'OUTLINE_MANAGER', 'REVIEWER', 'TEMPLATE_EDITOR', 'PLATFORM_ADMIN', 'SUPER_ADMIN'];
 const ROLE_DEFINITIONS = {
   KNOWLEDGE_EDITOR: { actions: ['knowledge:read', 'knowledge:write', 'outline:read'], modules: [...BUSINESS_MODULES, 'review'] },
   OUTLINE_MANAGER: { actions: ['knowledge:read', 'outline:read', 'outline:create', 'outline:delete'], modules: ['dashboard', 'assets', 'outlines'] },
   REVIEWER: { actions: ['knowledge:read', 'review:manage'], modules: ['dashboard', 'assets', 'outlines', 'review'] },
   TEMPLATE_EDITOR: { actions: ['knowledge:read', 'outline:read', 'template:read', 'template:edit', 'template:manage'], modules: ['dashboard', 'outlines', ...TEMPLATE_MODULES] },
   PLATFORM_ADMIN: { actions: ADMIN_ACTIONS, modules: [...BUSINESS_MODULES, ...CLEANING_MODULES, ...TEMPLATE_MODULES, 'review', 'platform'] },
+  SUPER_ADMIN: { actions: [...ADMIN_ACTIONS, 'outline:purge', 'platform:super-admin'], modules: [...BUSINESS_MODULES, ...CLEANING_MODULES, ...TEMPLATE_MODULES, 'review', 'platform'] },
 };
 
 class AuthError extends Error {
@@ -168,12 +169,17 @@ class FileAuthRepository {
         displayName: '平台管理员',
         passwordHash: passwordHash(password),
         enabled: true,
-        roles: ['PLATFORM_ADMIN'],
+        roles: ['PLATFORM_ADMIN', 'SUPER_ADMIN'],
         createdAt: now,
         updatedAt: now,
       };
       this.state.users.push(user);
       this.audit('ADMIN_INITIALIZED', user.id, 'success');
+      this.save();
+    } else if (!user.roles.includes('SUPER_ADMIN')) {
+      user.roles = [...new Set([...user.roles, 'SUPER_ADMIN'])];
+      user.updatedAt = new Date().toISOString();
+      this.audit('SUPER_ADMIN_INITIALIZED', user.id, 'success');
       this.save();
     }
     return user;
@@ -618,13 +624,13 @@ function createKnowledgeCenterAuthService(options = {}) {
       }
       if (req.method === 'GET' && pathname === '/auth/health') {
         const session = await current(req);
-        if (!session || !session.user.roles.includes('PLATFORM_ADMIN')) throw new AuthError('PERMISSION_DENIED', '无权查看认证服务状态', 403);
+        if (!session || !session.user.roles.some(role => ['PLATFORM_ADMIN', 'SUPER_ADMIN'].includes(role))) throw new AuthError('PERMISSION_DENIED', '无权查看认证服务状态', 403);
         return ok(res, { status: 'ok', casConfigured: true, repository: effectiveRepository.constructor.name });
       }
       if (req.method === 'GET' && pathname === '/auth/users') {
         const session = await current(req);
         if (!session) throw new AuthError('AUTH_REQUIRED', '请登录后继续', 401);
-        if (!session.user.roles.includes('PLATFORM_ADMIN')) throw new AuthError('PERMISSION_DENIED', '无平台管理权限', 403);
+        if (!session.user.roles.some(role => ['PLATFORM_ADMIN', 'SUPER_ADMIN'].includes(role))) throw new AuthError('PERMISSION_DENIED', '无平台管理权限', 403);
         const query = String(url.searchParams.get('q') || '').trim().toLowerCase();
         const status = String(url.searchParams.get('status') || '');
         const role = String(url.searchParams.get('role') || '');
@@ -648,18 +654,22 @@ function createKnowledgeCenterAuthService(options = {}) {
           roles: Array.isArray(user.roles) ? user.roles : [],
           rowVersion: user.rowVersion || null,
           managementSource: user.managementSource || (user.identitySource === 'cas' ? 'database' : 'local'),
-          rolesEditable: user.rolesEditable !== false && user.identitySource === 'cas',
+          rolesEditable: user.rolesEditable !== false && user.identitySource === 'cas' && (!user.roles?.includes('SUPER_ADMIN') || session.user.roles.includes('SUPER_ADMIN')),
           updatedAt: user.updatedAt,
           principalId: user.principalId || null,
         }));
-        return ok(res, { users, assignableRoles: ASSIGNABLE_ROLES, ...(paged ? { pagination: { page, pageSize, total: allUsers.length, totalPages } } : {}) });
+        return ok(res, { users, assignableRoles: ASSIGNABLE_ROLES.filter(role => role !== 'SUPER_ADMIN' || session.user.roles.includes('SUPER_ADMIN')), ...(paged ? { pagination: { page, pageSize, total: allUsers.length, totalPages } } : {}) });
       }
       const roleMatch = pathname.match(/^\/auth\/users\/([^/]+)\/roles$/);
       if (req.method === 'PATCH' && roleMatch) {
         const session = await current(req);
         if (!session) throw new AuthError('AUTH_REQUIRED', '请登录后继续', 401);
-        if (!session.user.roles.includes('PLATFORM_ADMIN')) throw new AuthError('PERMISSION_DENIED', '无平台管理权限', 403);
+        if (!session.user.roles.some(role => ['PLATFORM_ADMIN', 'SUPER_ADMIN'].includes(role))) throw new AuthError('PERMISSION_DENIED', '无平台管理权限', 403);
         const body = await readBody(req);
+        const target = (await effectiveRepository.listUsers()).find(user => user.id === decodeURIComponent(roleMatch[1]));
+        if (!session.user.roles.includes('SUPER_ADMIN') && (body.roles?.includes('SUPER_ADMIN') || target?.roles?.includes('SUPER_ADMIN'))) {
+          throw new AuthError('SUPER_ADMIN_REQUIRED', '只有超级管理员可以授予、撤销或修改超级管理员角色', 403);
+        }
         const user = await effectiveRepository.updateUserRoles(decodeURIComponent(roleMatch[1]), body.roles, session.user.id,
           req.headers['if-match'] == null ? null : Number(String(req.headers['if-match']).replace(/\"/g, '')),
           String(req.headers['idempotency-key'] || '').trim());
@@ -673,7 +683,7 @@ function createKnowledgeCenterAuthService(options = {}) {
       if (req.method === 'GET' && ['/api/admin/probe', '/admin/probe', '/knowledge-center/api/admin/probe'].includes(pathname)) {
         const session = await current(req);
         if (!session) throw new AuthError('AUTH_REQUIRED', '请登录后继续', 401);
-        if (!session.user.roles.includes('PLATFORM_ADMIN')) throw new AuthError('PERMISSION_DENIED', '无平台管理权限', 403);
+        if (!session.user.roles.some(role => ['PLATFORM_ADMIN', 'SUPER_ADMIN'].includes(role))) throw new AuthError('PERMISSION_DENIED', '无平台管理权限', 403);
         return ok(res, { allowed: true, principal: userProjection(session.user) });
       }
       throw new AuthError('NOT_FOUND', '认证接口不存在', 404);

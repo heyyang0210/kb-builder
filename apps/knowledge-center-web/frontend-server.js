@@ -240,10 +240,16 @@ const proxyKnowledgeCenterCleaning = createProxy({
   errorPayload: (_error, requestId, correlationId) => ({ success: false, error: { code: 'MATERIAL_PROCESSING_UNAVAILABLE', message: '资料加工服务暂时不可用', retryable: true, requestId, correlationId } }),
 });
 
-function proxyKnowledgeCenterOutline(req, res) {
+function proxyKnowledgeCenterOutline(req, res, session) {
   const suffix = req.url.slice('/knowledge-center/api/outline'.length);
   const targetPath = `/api/outline${suffix}`;
   const headers = { ...req.headers, host: `${DOCUMENT_API_HOST}:${DOCUMENT_API_PORT}` };
+  delete headers['x-actor-id'];
+  delete headers['x-outline-actions'];
+  if (session?.user) {
+    headers['x-actor-id'] = session.user.id;
+    headers['x-outline-actions'] = (session.user.allowedActions || []).join(',');
+  }
   if (OUTLINE_INTERNAL_TOKEN) headers['x-knowledge-center-internal-token'] = OUTLINE_INTERNAL_TOKEN;
   const proxyRequest = http.request({ hostname: DOCUMENT_API_HOST, port: DOCUMENT_API_PORT, path: targetPath, method: req.method, headers }, proxyResponse => {
     res.writeHead(proxyResponse.statusCode || 502, proxyResponse.headers);

@@ -11,7 +11,7 @@ import stat
 import time
 import tempfile
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Callable, Mapping, Sequence
@@ -418,7 +418,7 @@ class CommittedRebuildRecordStream:
     batch_id: str
     normalized_paths: Mapping[str, Path]
     processing_path: Path
-    documents: Mapping[str, Mapping[str, Any]] = MappingProxyType({})
+    documents: Mapping[str, Mapping[str, Any]] = field(default_factory=lambda: MappingProxyType({}))
 
     def iter_batches(self, batch_size: int) -> Any:
         if type(batch_size) is not int or batch_size <= 0:

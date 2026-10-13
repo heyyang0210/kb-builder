@@ -82,7 +82,7 @@
           <i data-lucide="x" aria-hidden="true"></i>
         </button>
       </div>
-      <nav class="nav-wrap" aria-label="功能导航">
+      <nav class="nav-wrap" aria-label="功能导航" data-scroll-region="panel">
         <p class="nav-caption">工作区</p>
         <button class="nav-item active" data-view="dashboard" aria-label="工作台" title="工作台"><i class="nav-icon" data-lucide="layout-dashboard" aria-hidden="true"></i><span class="nav-copy"><b>工作台</b><small>任务、资产与风险</small></span></button>
         <button class="nav-item" data-view="assets" aria-label="知识资产" title="知识资产"><i class="nav-icon" data-lucide="library" aria-hidden="true"></i><span class="nav-copy"><b>知识资产</b><small>手册、文档与版本</small></span></button>
@@ -106,7 +106,7 @@
     <button id="sidebar-restore" class="sidebar-restore" type="button" aria-label="展开导航" title="展开导航"><i data-lucide="panel-left-open" aria-hidden="true"></i><span>展开导航</span></button>
     <button id="mobile-menu" class="mobile-menu" type="button" aria-label="打开导航" aria-controls="sidebar" aria-expanded="false"><i data-lucide="menu" aria-hidden="true"></i><span>菜单</span></button>
     <div class="mobile-overlay" id="mobile-overlay" hidden></div>
-    <div class="main-shell" id="main-shell">
+    <div class="main-shell" id="main-shell" data-scroll-owner="main">
       <h1 id="page-title" class="sr-only">工作台</h1>
       <main id="main" tabindex="-1">
         <section id="error-panel" class="notice notice-danger" hidden>
@@ -120,7 +120,7 @@
       </main>
     </div>
   </div>
-  <dialog class="external-account-dialog" id="external-account-dialog" aria-labelledby="external-account-title">
+  <dialog class="external-account-dialog" id="external-account-dialog" aria-labelledby="external-account-title" data-scroll-region="dialog">
     <div class="external-account-head">
       <div><h2 id="external-account-title">个人设置</h2><p>外部账号</p></div>
       <button class="icon-button" id="external-account-close" type="button" aria-label="关闭个人设置" title="关闭"><i data-lucide="x" aria-hidden="true"></i></button>

@@ -16,9 +16,9 @@ describe('知识中心大纲管理前端契约', () => {
   test('列表产品与知识资产一致且只保留四个必要字段', () => {
     const source = view();
     const api = read('apps/knowledge-center-web/frontend/knowledge-center/common/api/platform-api.js');
-    expect(api).toContain('productsByHandbook');
-    expect(api).toContain('item.productName || item.product?.name || item.productType ||');
-    expect(api).toContain('未指定产品');
+    expect(api).toContain('/knowledge-center/api/outline/catalog');
+    expect(api).toContain('snapshotVersion');
+    expect(source).toContain('productDisplayName');
     expect(source).toContain('data-table-view-id="outline-catalog"');
     for (const label of ['手册', '产品', '状态', '更新时间']) expect(source).toContain(`data-table-column-label="${label}"`);
     expect(source).not.toContain('<th>产品 / 业务版本</th>');
@@ -38,7 +38,7 @@ describe('知识中心大纲管理前端契约', () => {
   });
   test('从独立大纲治理接口加载列表和详情', () => {
     const api = read('apps/knowledge-center-web/frontend/knowledge-center/common/api/platform-api.js');
-    expect(api).toContain('/knowledge-center/api/outline/governance');
+    expect(api).toContain('/knowledge-center/api/outline/catalog');
     expect(api).toContain('loadOutlineData');
     expect(api).toContain('encodeURIComponent(selectedId)');
   });
@@ -81,6 +81,14 @@ describe('知识中心大纲管理前端契约', () => {
     expect(source).toContain('data-outline-description');
     expect(api).toContain("method: 'DELETE'");
   });
+  test('可恢复删除允许发布版本，排除只读来源和回收站版本', () => {
+    const source = view();
+    const route = read('packages/agent-runner-core/routes/outline.js');
+    expect(source).toContain('!item.readOnly && !item.deletedAt');
+    expect(source).toContain('移入回收站');
+    expect(route).toContain('function publicOutlineState(value, fallback = \'published\')');
+    expect(route).toContain('state: publicOutlineState(governance.state || normalized.state, normalized.state)');
+  });
   test('删除异常按过期数据和网络故障展示中文提示', () => {
     const api = read('apps/knowledge-center-web/frontend/knowledge-center/common/api/platform-api.js');
     const app = read('apps/knowledge-center-web/frontend/knowledge-center/app.js');
@@ -89,6 +97,15 @@ describe('知识中心大纲管理前端契约', () => {
     expect(api).toContain('failed to fetch');
     expect(api).toContain('无法连接大纲服务');
     expect(app).toContain("title: '删除失败'");
+    expect(api).toContain('当前大纲版本已发布或已被替代');
+  });
+  test('删除 API 保留版本治理恢复提示，不被后端原始 message 覆盖', async () => {
+    const api = read('apps/knowledge-center-web/frontend/knowledge-center/common/api/platform-api.js');
+    const normalize = api.slice(api.indexOf('function normalizeOutlineError('), api.indexOf('\nexport async function loadPlatformData'));
+    const deletion = api.slice(api.indexOf('export async function deleteOutline('), api.indexOf('\nexport async function loadOutlineRecycle(')).replace('export ', '');
+    const fetch = jest.fn().mockResolvedValue({ ok: false, status: 409, json: async () => ({ error: { code: 'OUTLINE_IMMUTABLE', message: '当前大纲版本不可修改或删除' } }) });
+    const deleteOutline = new Function('fetch', 'outlineEndpoint', `${normalize}\n${deletion}\nreturn deleteOutline;`)(fetch, '/outline');
+    await expect(deleteOutline('published-version')).rejects.toMatchObject({ code: 'OUTLINE_IMMUTABLE', status: 409, message: '当前大纲版本已发布或已被替代，不能修改结构；如需调整，请导入新的候选版本。' });
   });
   test('删除和发布成功不复用平台不可用错误样式', () => {
     const app = read('apps/knowledge-center-web/frontend/knowledge-center/app.js');
@@ -96,7 +113,7 @@ describe('知识中心大纲管理前端契约', () => {
     expect(app).toContain("panel.className = `notice notice-${tone}`");
     expect(app).toContain("byId('error-title').textContent = options.title || '操作提示'");
     expect(app).toContain("byId('retry').hidden = options.retry !== true");
-    expect(app).toContain("showAppNotice('候选大纲已删除', { title: '操作已完成', tone: 'success' })");
+    expect(app).toContain("showAppNotice('大纲已移入回收站', { title: '操作已完成', tone: 'success' })");
     expect(app).toContain("showAppNotice('大纲已发布，领域建设任务已生成。', { title: '发布完成', tone: 'success' })");
     expect(app).toContain("showAppNotice('当前无法读取平台数据，请稍后重新检查。', { title: '平台数据暂时不可用', tone: 'danger', retry: true })");
   });
@@ -121,12 +138,15 @@ describe('知识中心大纲管理前端契约', () => {
     const app = read('apps/knowledge-center-web/frontend/knowledge-center/app.js');
     expect(navigation).toContain("startsWith('/knowledge-center/outlines/')");
     expect(api).toContain("status: 'not_found'");
-    expect(api).toContain('handbooksEndpoint}?page=1&pageSize=100`).catch');
+    expect(api).toContain('/knowledge-center/api/outline/catalog');
     expect(app).toContain('outlineLoadSequence');
     expect(app).toContain('sequence !== outlineLoadSequence');
+    expect(app).toContain("'outline:list'");
+    expect(app).toContain('outlineProjectionKey(current) !== routeKey');
+    expect(app).toContain('appState.outlineProjection.routeKey !== outlineProjectionKey()');
     expect(app).toContain("url.searchParams.set('tab'");
     expect(app).toContain('outlineListState.scrollPosition');
-    expect(app).toContain("if (view === 'outlines' && outlineRouteState().isDetail) appState.outlineProjection = null");
+    expect(app).toContain("if (view === 'outlines' && wasOutlineDetail) appState.outlineProjection = null");
   });
   test('文档总览使用三栏节点治理并恢复当前 node', () => {
     const source = view();

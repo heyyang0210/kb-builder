@@ -8,7 +8,7 @@ function normalizeCodeBlocks(html) {
     const normalizedLanguage = String(language || '').trim();
     const attributes = normalizedLanguage ? ` data-language="${normalizedLanguage}"` : '';
     const className = `language-${normalizedLanguage || 'text'}`;
-    return `<pre class="repository-code"${attributes}><code class="${className}">${body}</code></pre>`;
+    return `<pre class="repository-code"${attributes} data-scroll-region="panel"><code class="${className}">${body}</code></pre>`;
   });
 }
 

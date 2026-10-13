@@ -14,6 +14,42 @@ function loadApi(fetch) {
 }
 
 describe('知识中心用户权限赋权契约', () => {
+  test('原 admin 保留身份密码并补齐超级权限，普通平台管理员不能授予或撤销超级权限', async () => {
+    const repository = new MemoryAuthRepository();
+    const admin = repository.ensureAdmin('admin', 'original-password');
+    const identity = { id: admin.id, passwordHash: admin.passwordHash };
+    admin.roles = ['PLATFORM_ADMIN', 'REVIEWER'];
+    repository.ensureAdmin('admin', 'different-password');
+    expect(admin).toMatchObject(identity);
+    expect(admin.roles).toEqual(['PLATFORM_ADMIN', 'REVIEWER', 'SUPER_ADMIN']);
+    expect(repository.listUsers().filter(user => user.loginName === 'admin')).toHaveLength(1);
+    const ordinary = { id: 'ordinary', identitySource: 'cas', loginName: 'ordinary', enabled: true, roles: ['PLATFORM_ADMIN'] };
+    const target = { id: 'target', identitySource: 'cas', loginName: 'target', enabled: true, roles: ['KNOWLEDGE_EDITOR'] };
+    repository.state.users.push(ordinary, target);
+    const ordinaryToken = repository.createSession(ordinary, 60000);
+    const adminToken = repository.createSession(admin, 60000);
+    const service = createKnowledgeCenterAuthService({ repository, adminPassword: 'original-password', casBaseUrl: 'http://cas.test', serviceUrl: 'http://app.test/callback', secureCookie: false });
+    const server = http.createServer(service.handler);
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const base = `http://127.0.0.1:${server.address().port}/knowledge-center/api/auth`;
+    const headers = token => ({ cookie: `kc_session=${token}`, 'Content-Type': 'application/json' });
+    try {
+      const session = await (await fetch(`${base}/session`, { headers: headers(adminToken) })).json();
+      expect(session.content.allowedActions).toContain('outline:purge');
+      const users = await (await fetch(`${base}/users`, { headers: headers(ordinaryToken) })).json();
+      expect(users.content.assignableRoles).not.toContain('SUPER_ADMIN');
+      const grant = await fetch(`${base}/users/target/roles`, { method: 'PATCH', headers: headers(ordinaryToken), body: JSON.stringify({ roles: ['SUPER_ADMIN'] }) });
+      expect(grant.status).toBe(403);
+      const promote = await fetch(`${base}/users/target/roles`, { method: 'PATCH', headers: headers(adminToken), body: JSON.stringify({ roles: ['SUPER_ADMIN'] }) });
+      expect(promote.status).toBe(200);
+      const revoke = await fetch(`${base}/users/target/roles`, { method: 'PATCH', headers: headers(ordinaryToken), body: JSON.stringify({ roles: ['KNOWLEDGE_EDITOR'] }) });
+      expect(revoke.status).toBe(403);
+      expect(target.roles).toEqual(['SUPER_ADMIN']);
+    } finally {
+      server.closeAllConnections();
+      await new Promise(resolve => server.close(resolve));
+    }
+  });
   test('角色保存使用行版本和幂等键，避免接口返回 428/400', () => {
     const api = read('apps/knowledge-center-web/frontend/knowledge-center/common/api/platform-api.js');
     expect(api).toContain("'If-Match': String(rowVersion)");
@@ -54,6 +90,7 @@ describe('知识中心用户权限赋权契约', () => {
     const databaseUser = { id: 'cas-legacy', identitySource: 'cas', enabled: true, loginName: 'cas-user', rowVersion: 3, roles: ['KNOWLEDGE_EDITOR'] };
     local.state.users.push({ ...databaseUser });
     const domainStore = {
+      readPlatformAuthUsersAsync: jest.fn(async () => ({ items: [databaseUser] })),
       replacePlatformUserRolesAsync: jest.fn(async (id, roles) => ({ ...databaseUser, roles })),
     };
     const repository = new HybridAuthRepository(local, domainStore);

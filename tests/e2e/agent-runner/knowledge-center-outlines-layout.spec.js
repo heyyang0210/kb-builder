@@ -321,8 +321,15 @@ test('P0：移动端目录为单列且不暴露拖拽条', async ({ page, browse
 });
 
 test('从详情通过侧栏返回时恢复完整列表和知识资产产品', async ({ page }) => {
+  const response = await page.request.get(`${baseUrl}/knowledge-center/api/outline/catalog`);
+  expect(response.ok()).toBe(true);
+  const { data: catalog } = await response.json();
+  const expectedIds = catalog.items.map(item => String(item.handbookId || item.id || item.outlineId));
+  expect(expectedIds.length).toBeGreaterThan(0);
   await page.goto(`${baseUrl}/knowledge-center/outlines`);
-  await expect(page.locator('[data-outline-row]')).toHaveCount(2);
+  await expect(page.locator('[data-outline-row]')).toHaveCount(expectedIds.length);
+  const renderedIds = () => page.locator('[data-outline-row] [data-outline-id]').evaluateAll(nodes => nodes.map(node => node.dataset.outlineId));
+  expect(await renderedIds()).toEqual(expectedIds);
   await expect(page.locator('.outline-table thead')).toContainText('手册');
   await expect(page.locator('.outline-table thead')).toContainText('产品');
   await expect(page.locator('.outline-table thead')).toContainText('状态');
@@ -331,7 +338,7 @@ test('从详情通过侧栏返回时恢复完整列表和知识资产产品', as
   await expect(page.locator('.outline-table thead')).not.toContainText('待处理');
   await expect(page.locator('.outline-table thead')).not.toContainText('下一步');
   await expect(page.locator('.outline-list-summary')).not.toContainText('待处理问题');
-  await expect(page.locator('[data-outline-row] td:nth-child(2)')).toHaveText(['DB', 'DB']);
+  await expect(page.locator('[data-outline-row] td:nth-child(2)')).toHaveText(catalog.items.map(item => item.productDisplayName || item.productName || '未指定产品'));
 
   const outlineName = page.locator('.outline-list-link').first();
   const outlineStyle = await outlineName.evaluate(element => {
@@ -351,7 +358,8 @@ test('从详情通过侧栏返回时恢复完整列表和知识资产产品', as
   await expect(page.locator('.outline-detail-shell')).toBeVisible();
   await page.locator('[data-view="outlines"]').click();
   await expect(page).toHaveURL(`${baseUrl}/knowledge-center/outlines`);
-  await expect(page.locator('[data-outline-row]')).toHaveCount(2);
+  await expect(page.locator('[data-outline-row]')).toHaveCount(expectedIds.length);
+  expect(await renderedIds()).toEqual(expectedIds);
 });
 
 test('无效大纲深链不会回退到第一本手册', async ({ page }) => {

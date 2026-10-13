@@ -67,6 +67,7 @@ function enhance(select) {
   const listbox = document.createElement('div');
   listbox.id = `${id}-listbox`;
   listbox.className = 'searchable-combobox-listbox';
+  listbox.dataset.scrollRegion = 'panel';
   listbox.dataset.searchableComboboxListbox = '';
   listbox.setAttribute('role', 'listbox');
   listbox.hidden = true;

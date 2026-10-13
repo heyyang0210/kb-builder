@@ -60,6 +60,37 @@ select:focus-visible,
 .icon-wrap .icon {
   color: currentColor;
 }
+/* Close controls share one visible icon and one predictable hit target. */
+button.icon-button[aria-label^="关闭"],
+button.sidebar-control[aria-label^="关闭"],
+#sidebar-hide {
+  place-items: center;
+  flex: 0 0 44px;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  border-color: transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-danger);
+}
+button.icon-button[aria-label^="关闭"] { display: inline-grid; }
+button.icon-button[aria-label^="关闭"]:is(:hover, :focus-visible),
+button.sidebar-control[aria-label^="关闭"]:is(:hover, :focus-visible),
+#sidebar-hide:is(:hover, :focus-visible) {
+  border-color: transparent;
+  background: var(--color-danger-subtle);
+  color: var(--color-danger);
+}
+button.icon-button[aria-label^="关闭"] svg,
+button.sidebar-control[aria-label^="关闭"] svg,
+#sidebar-hide svg {
+  width: 20px;
+  height: 20px;
+  stroke-width: 2;
+}
 @media (max-width: 900px) {
   body { font-size: 16px; }
 }
@@ -71,3 +102,12 @@ select:focus-visible,
     animation-iteration-count: 1 !important;
   }
 }
+:root { --kc-viewport-height: 100vh; --kc-scroll-top: 16px; --kc-scroll-bottom: 16px; }
+@supports (height: 100dvh) { :root { --kc-viewport-height: 100dvh; } }
+html, [data-scroll-owner], [data-scroll-region] {
+  scroll-padding-top: var(--kc-scroll-top, 16px);
+  scroll-padding-bottom: var(--kc-scroll-bottom, 16px);
+}
+[data-scroll-owner] :focus, [data-scroll-region] :focus, [id] { scroll-margin-block: 16px; }
+html[data-scroll-mode="document"] .app-shell { height: auto; min-height: var(--kc-viewport-height); overflow: visible; }
+html[data-scroll-mode="document"] .main-shell { overflow: visible; }

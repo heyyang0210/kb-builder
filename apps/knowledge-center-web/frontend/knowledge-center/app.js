@@ -6,6 +6,7 @@ import { sha256Text } from './common/utils/sha256.js';
 import { bootstrapAuth, consumeRememberedTarget, performLogout, rememberCurrentTarget, startCasLogin, submitAdminLogin } from './common/auth/auth-controller.js';
 import { appState, views } from './common/state/app-state.js';
 import { authState, canAccessView, canPerform, clearSession, displayName, firstAccessibleView, isPlatformAdmin } from './common/state/auth-state.js';
+import { loadOutlineRecycle, outlineLifecycle } from './common/api/platform-api.js';
 import { pathForView, viewFromPath, platformTabFromSearch } from './common/state/navigation.js';
 import { onKnowledgeDataChanged } from './common/state/data-change.js';
 import { byId, escapeHtml } from './common/utils/dom.js';
@@ -13,6 +14,13 @@ import { cleanupSearchableSelects, markDynamicSelects } from './common/searchabl
 import { enhanceTableViews } from './common/table-view-configurator.js';
 import { enhanceResizableNavigation } from './common/resizable-navigation-pane.js';
 import { enhanceDirectoryTrees } from './common/directory-tree.js';
+import { initViewportRuntime } from './common/viewport-runtime.js';
+import { initScrollRuntime } from './common/scroll-runtime.js';
+const viewportRuntime = initViewportRuntime();
+const scrollRuntime = initScrollRuntime();
+window.addEventListener('pagehide', event => {
+  if (!event.persisted) { scrollRuntime.destroy(); viewportRuntime.destroy(); }
+});
 import { renderReviewPublishing, renderReviewRepositoryRegion } from './modules/review-publishing/view.js';
 
 const renderers = {
@@ -184,6 +192,11 @@ function productionRouteState() {
 let assetRenderDeferred = false;
 let openDomainTaskId = null;
 let outlineLoadSequence = 0;
+let outlineLoadPromise = null;
+
+function outlineProjectionKey(route = outlineRouteState()) {
+  return route.isDetail ? `outline:detail:${route.handbookId}` : 'outline:list';
+}
 
     function render() {
   if (appState.activeView === 'assets' && document.querySelector('.asset-dialog[open]')) {
@@ -224,8 +237,10 @@ let outlineLoadSequence = 0;
   });
   document.querySelector('.nav-caption.governance').hidden = !canAccessView('platform');
   const outlineView = appState.activeView === 'outlines' ? outlineRouteState() : {};
+  const outlineProjection = appState.activeView === 'outlines' && appState.outlineProjection?.routeKey === outlineProjectionKey(outlineView)
+    ? appState.outlineProjection : null;
   const databasePasswordDraft = document.querySelector('[data-database-dialog] [data-database-field="password"]')?.value || '';
-      byId('view-root').innerHTML = renderer({ projection: appState.activeView === 'repository' ? appState.gitlabProjection : appState.projection, templateProjection: appState.templateProjection, cleaningProjection: appState.cleaningProjection, cleaningCanWrite: isPlatformAdmin(), reviewProjection: appState.reviewProjection, reviewUi: appState.reviewUi, outlineProjection: appState.outlineProjection, assetCatalog: appState.assetCatalog, principalProjection: appState.principalProjection, principalListState: appState.principalListState, teamGroupProjection: appState.teamGroupProjection, teamGroupView: new URLSearchParams(window.location.search).get('view') || 'people', teamGroupUi: appState.teamGroupUi, incrementalProjection: appState.incrementalProjection, handbookProductionUi: appState.handbookProductionUi, currentUser: { ...(authState.session?.user || {}), displayName: displayName() }, domainBuildTaskProjection: appState.domainBuildTaskProjection, gitlabProjection: appState.gitlabProjection, permissionProjection: appState.permissionProjection, governanceProjection: appState.platformGovernance, databaseConnectionProjection: appState.databaseConnectionProjection, databaseConnectionDrawerOpen: appState.databaseConnectionDrawerOpen, databaseConnectionAdvancedOpen: appState.databaseConnectionAdvancedOpen, databaseConnectionForm: appState.databaseConnectionForm, databaseConnectionStatus: appState.databaseConnectionStatus, selectedPermissionUserId: appState.selectedPermissionUserId, permissionSaveStatus: appState.permissionSaveStatus, permissionUserSearch: appState.permissionUserSearch, permissionListState: appState.permissionListState, gitlabVerification: appState.gitlabVerification, platformAdmin: isPlatformAdmin(), platformTab: appState.platformTab, gitlabListState: appState.gitlabListState, gitlabAddingConnection: appState.gitlabAddingConnection, gitlabEditingConnection: appState.gitlabEditingConnection, outlinePermissions: { create: canPerform('outline:create'), delete: canPerform('outline:delete'), platformAdmin: isPlatformAdmin() }, outlineView });
+      byId('view-root').innerHTML = renderer({ projection: appState.activeView === 'repository' ? appState.gitlabProjection : appState.projection, templateProjection: appState.templateProjection, cleaningProjection: appState.cleaningProjection, cleaningCanWrite: isPlatformAdmin(), reviewProjection: appState.reviewProjection, reviewUi: appState.reviewUi, outlineProjection, assetCatalog: appState.assetCatalog, principalProjection: appState.principalProjection, principalListState: appState.principalListState, teamGroupProjection: appState.teamGroupProjection, teamGroupView: new URLSearchParams(window.location.search).get('view') || 'people', teamGroupUi: appState.teamGroupUi, incrementalProjection: appState.incrementalProjection, handbookProductionUi: appState.handbookProductionUi, currentUser: { ...(authState.session?.user || {}), displayName: displayName() }, domainBuildTaskProjection: appState.domainBuildTaskProjection, gitlabProjection: appState.gitlabProjection, permissionProjection: appState.permissionProjection, governanceProjection: appState.platformGovernance, databaseConnectionProjection: appState.databaseConnectionProjection, databaseConnectionDrawerOpen: appState.databaseConnectionDrawerOpen, databaseConnectionAdvancedOpen: appState.databaseConnectionAdvancedOpen, databaseConnectionForm: appState.databaseConnectionForm, databaseConnectionStatus: appState.databaseConnectionStatus, selectedPermissionUserId: appState.selectedPermissionUserId, permissionSaveStatus: appState.permissionSaveStatus, permissionUserSearch: appState.permissionUserSearch, permissionListState: appState.permissionListState, gitlabVerification: appState.gitlabVerification, platformAdmin: isPlatformAdmin(), platformTab: appState.platformTab, gitlabListState: appState.gitlabListState, gitlabAddingConnection: appState.gitlabAddingConnection, gitlabEditingConnection: appState.gitlabEditingConnection, outlinePermissions: { create: canPerform('outline:create'), delete: canPerform('outline:delete'), purge: canPerform('outline:purge'), platformAdmin: isPlatformAdmin() }, outlineView });
       cleanupSearchableSelects();
       markDynamicSelects(document);
       enhanceTableViews(byId('view-root'), {
@@ -356,10 +371,11 @@ async function navigate(view, updateHistory = true) {
     if (!fallback || fallback === view) return;
     return navigate(fallback, updateHistory);
   }
-  if (view === 'outlines' && outlineRouteState().isDetail) appState.outlineProjection = null;
+  const targetPath = view === "platform" ? pathForView(view, { tab: appState.platformTab }) : pathForView(view);
+  const wasOutlineDetail = appState.activeView === 'outlines' && outlineRouteState().isDetail;
+  if (view === 'outlines' && wasOutlineDetail) appState.outlineProjection = null;
   appState.activeView = view;
   ensureRouteStyles(view);
-  const targetPath = view === "platform" ? pathForView(view, { tab: appState.platformTab }) : pathForView(view);
   if (updateHistory && (window.location.pathname + window.location.search) !== targetPath) window.history.pushState({ view, tab: appState.platformTab }, '', targetPath);
   await ensureRenderer(view);
   render();
@@ -367,7 +383,7 @@ async function navigate(view, updateHistory = true) {
     appState.cleaningProjection = { status: 'loading' };
     loadCleaningWorkspace().then(data => { appState.cleaningProjection = { status: 'ok', ...data, asOf: new Date().toISOString() }; render(); }).catch(error => { appState.cleaningProjection = { status: 'unavailable', error: { message: error.message, code: error.code } }; render(); });
   }
-  if (view === 'outlines' && (!appState.outlineProjection || outlineRouteState().isDetail)) loadOutlines();
+  if (view === 'outlines' && (!appState.outlineProjection || appState.outlineProjection.routeKey !== outlineProjectionKey())) loadOutlines();
   if (view === 'assets') loadAssetCatalog();
   if (view === 'dashboard') {
     load(['context', 'overview']);
@@ -442,17 +458,34 @@ async function loadRepositoryWorkspace() {
 }
 
 async function loadOutlines() {
-  const { handbookId } = outlineRouteState();
+  const route = outlineRouteState();
+  const { handbookId } = route;
+  const routeKey = outlineProjectionKey(route);
+  if (outlineLoadPromise?.routeKey === routeKey) return outlineLoadPromise.promise;
   const sequence = ++outlineLoadSequence;
-  const [projection, domainTasks] = await Promise.all([
-    loadOutlineData(handbookId),
-    handbookId ? fetchDomainBuildTasks().catch(error => ({ status: 'unavailable', tasks: [], error: { message: error.message } })) : Promise.resolve(null),
-  ]);
-  const current = outlineRouteState();
-  if (sequence !== outlineLoadSequence || String(current.handbookId || '') !== String(handbookId || '')) return;
-  appState.outlineProjection = projection;
-  if (handbookId && domainTasks) appState.domainBuildTaskProjection = domainTasks.status === 'unavailable' ? domainTasks : { status: 'ok', ...domainTasks };
+  appState.outlineProjection = { status: 'loading', routeKey, handbookId };
   if (appState.activeView === 'outlines') render();
+  const promise = (async () => {
+    const [projection, domainTasks] = await Promise.all([
+      loadOutlineData(handbookId),
+      handbookId ? fetchDomainBuildTasks().catch(error => ({ status: 'unavailable', tasks: [], error: { message: error.message } })) : Promise.resolve(null),
+    ]);
+    const current = outlineRouteState();
+    if (sequence !== outlineLoadSequence || outlineProjectionKey(current) !== routeKey) return;
+    appState.outlineProjection = { ...projection, routeKey, handbookId };
+    if (!handbookId && appState.outlineRecycleOpen) {
+      try {
+        const recycleItems = await loadOutlineRecycle();
+        if (sequence !== outlineLoadSequence || outlineProjectionKey() !== routeKey) return;
+        appState.outlineProjection.recycleItems = recycleItems;
+      }
+      catch (error) { showAppNotice(error.message, { title: '回收站读取失败', tone: 'danger' }); }
+    }
+    if (handbookId && domainTasks) appState.domainBuildTaskProjection = domainTasks.status === 'unavailable' ? domainTasks : { status: 'ok', ...domainTasks };
+    if (appState.activeView === 'outlines') render();
+  })().finally(() => { if (outlineLoadPromise?.promise === promise) outlineLoadPromise = null; });
+  outlineLoadPromise = { routeKey, promise };
+  return promise;
 }
 
 async function loadDomainBuildTasksWorkspace() {
@@ -824,6 +857,10 @@ async function mountHandbookVditor() {
       cdn: `${window.location.origin}/knowledge-center/common/vendor/vditor`,
       mode: 'wysiwyg', lang: 'zh_CN', value: currentHandbookMarkdown(documentId),
       minHeight: 480, cache: { enable: false }, counter: { enable: true },
+      after: () => {
+        target.querySelector('.vditor-toolbar')?.setAttribute('data-scroll-obstacle', '');
+        scrollRuntime.refresh();
+      },
       toolbar: ['headings', 'bold', 'italic', '|', 'list', 'ordered-list', 'table', 'code', 'link', 'upload', '|', 'undo', 'redo'],
       upload: {
         accept: '.png,.jpg,.jpeg,.webp,.gif,.md,.markdown,.pdf,.docx,.xlsx',
@@ -1230,6 +1267,7 @@ function showAuth(error = null, status = '') {
 }
 
 function showApplication() {
+  viewportRuntime.update();
   const appShell = byId('app-shell');
   if (appShell.dataset.sidebarReady !== 'true') {
     applySidebar({ restoring: true });
@@ -1238,6 +1276,7 @@ function showApplication() {
   byId('auth-loading').hidden = true;
   byId('auth-shell').hidden = true;
   appShell.hidden = false;
+  scrollRuntime.refresh();
   byId('skip-to-main').hidden = false;
   byId('sidebar-user').textContent = displayName();
 }
@@ -1252,7 +1291,7 @@ function renderGitLabAccountDialog() {
   } else {
     const items = projection.items || [];
     if (!items.length) root.innerHTML = '<section class="external-account-empty"><i data-lucide="git-branch" aria-hidden="true"></i><strong>暂无可连接的 GitLab</strong><p>请联系平台管理员配置可用的仓库连接。</p></section>';
-    else root.innerHTML = `<div class="external-account-list">${items.map(item => {
+    else root.innerHTML = `<div class="external-account-list" data-scroll-region="panel">${items.map(item => {
       const labels = { connected: '已连接', disconnected: '未连接', temporarily_unavailable: '暂时不可用', reauthorization_required: '需要重新连接', platform_disabled: '平台已停用' };
       const lastUsed = item.lastUsedAt ? new Date(item.lastUsedAt).toLocaleString('zh-CN', { hour12: false }) : '';
       const connected = item.status === 'connected';
@@ -2116,17 +2155,60 @@ document.addEventListener('click', async event => {
     window.history.replaceState({ ...window.history.state, document: selectedId }, document.title, `${url.pathname}${url.search}`);
     return;
   }
+  const recycleButton = event.target.closest('[data-outline-recycle]');
+  if (recycleButton) {
+    appState.outlineRecycleOpen = !appState.outlineRecycleOpen;
+    await loadOutlines();
+    return;
+  }
+  const restoreButton = event.target.closest('[data-outline-restore]');
+  if (restoreButton) {
+    restoreButton.disabled = true;
+    try { await outlineLifecycle(restoreButton.dataset.outlineRestore, 'restore'); await loadOutlines(); showAppNotice('大纲已恢复', { title: '操作已完成', tone: 'success' }); }
+    catch (error) { restoreButton.disabled = false; showAppNotice(error.message, { title: '恢复失败', tone: 'danger' }); }
+    return;
+  }
+  const purgeButton = event.target.closest('[data-outline-purge]');
+  if (purgeButton) {
+    purgeButton.disabled = true;
+    try {
+      const id = purgeButton.dataset.outlinePurge;
+      const impact = await outlineLifecycle(id, 'purge-preflight');
+      const dialog = document.querySelector('[data-outline-purge-dialog]');
+      dialog.dataset.outlineId = id;
+      dialog.querySelector('form').reset();
+      dialog.querySelector('[data-outline-purge-impact]').textContent = `目标 ID：${id}；引用阻断：${impact.references} 项。`;
+      dialog.querySelector('[data-outline-purge-error]').textContent = impact.canPurge ? '' : '当前存在关联引用，不能彻底删除。';
+      dialog.querySelector('[data-outline-purge-confirm]').disabled = !impact.canPurge;
+      dialog.showModal();
+    } catch (error) { showAppNotice(error.message, { title: '删除检查失败', tone: 'danger' }); }
+    finally { purgeButton.disabled = false; }
+    return;
+  }
+  if (event.target.closest('[data-outline-purge-cancel]')) { document.querySelector('[data-outline-purge-dialog]')?.close(); return; }
+  const purgeConfirm = event.target.closest('[data-outline-purge-confirm]');
+  if (purgeConfirm) {
+    const dialog = purgeConfirm.closest('dialog');
+    const form = dialog.querySelector('form');
+    if (!form.reportValidity()) return;
+    const payload = Object.fromEntries(new FormData(form));
+    if (payload.confirmId !== dialog.dataset.outlineId || !payload.reason.trim()) { dialog.querySelector('[data-outline-purge-error]').textContent = '请准确输入目标 ID 并填写删除原因。'; return; }
+    purgeConfirm.disabled = true;
+    try { await outlineLifecycle(dialog.dataset.outlineId, 'purge', payload); dialog.close(); await loadOutlines(); showAppNotice('大纲已彻底删除', { title: '操作已完成', tone: 'success' }); }
+    catch (error) { dialog.querySelector('[data-outline-purge-error]').textContent = error.message; purgeConfirm.disabled = false; }
+    return;
+  }
   const outlineDelete = event.target.closest('[data-outline-delete]');
   if (outlineDelete) {
     const id = outlineDelete.dataset.outlineDelete;
-    const name = outlineDelete.dataset.outlineDeleteName || '该候选大纲';
-    if (!id || !window.confirm(`确认删除“${name}”吗？仅未发布候选可删除，此操作不可恢复。`)) return;
+    const name = outlineDelete.dataset.outlineDeleteName || '该大纲';
+    if (!id || !window.confirm(`确认将“${name}”移入回收站吗？当前大纲将停止使用，发布历史保留，可在回收站恢复。`)) return;
     outlineDelete.disabled = true;
     const originalText = outlineDelete.textContent;
     outlineDelete.textContent = '删除中…';
     try {
       await deleteOutline(id);
-      showAppNotice('候选大纲已删除', { title: '操作已完成', tone: 'success' });
+      showAppNotice('大纲已移入回收站', { title: '操作已完成', tone: 'success' });
       appState.outlineProjection = null;
       if (outlineRouteState().isDetail) window.history.replaceState({ view: 'outlines' }, document.title, '/knowledge-center/outlines');
       await loadOutlines();
@@ -3023,6 +3105,11 @@ async function savePrincipalEditor(form, payload, correctionDialog = null) {
 }
 
 document.addEventListener('submit', async event => {
+  if (event.target.matches('[data-outline-purge-form]')) {
+    event.preventDefault();
+    event.target.querySelector('[data-outline-purge-confirm]')?.click();
+    return;
+  }
   const teamCreateForm = event.target.closest('[data-team-group-create-form]');
   if (teamCreateForm) {
     event.preventDefault();
@@ -4511,7 +4598,7 @@ window.addEventListener('popstate', () => {
       updateAssetSelection(new URLSearchParams(window.location.search).get('handbookId'));
       return;
     }
-    appState.outlineProjection = view === 'outlines' ? null : appState.outlineProjection;
+    if (view !== 'outlines') appState.outlineProjection = null;
     navigate(view, false);
   }
 });

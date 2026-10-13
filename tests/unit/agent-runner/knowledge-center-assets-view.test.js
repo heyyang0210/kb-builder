@@ -62,7 +62,11 @@ describe('知识资产工作台前端契约', () => {
     expect(css).toContain('.asset-name-link { color: var(--color-brand)');
     expect(css).toContain('.asset-action-card {');
     expect(css).toContain('.asset-action-row {');
-    expect(css).toContain('.icon-button.asset-detail-close svg { width: 16px; height: 16px; }');
+    const base = read('apps/knowledge-center-web/frontend/knowledge-center/common/base.css');
+    expect(base).toContain('button.icon-button[aria-label^="关闭"] svg');
+    expect(base).toContain('width: 20px;');
+    expect(base).toContain('min-width: 44px;');
+    expect(base).toContain('color: var(--color-danger);');
   });
 
   test('静态上下文标签不使用蓝色，新增手册使用蓝色交互样式', () => {
@@ -178,7 +182,7 @@ describe('知识资产工作台前端契约', () => {
     const css = read('apps/knowledge-center-web/frontend/knowledge-center/styles.css');
     expect(css).toContain('@media (min-width: 1101px)');
     expect(css).toContain('.asset-workspace-detail { position: sticky; top: 14px;');
-    expect(css).toContain('max-height: calc(100dvh - 28px)');
+    expect(css).toContain('max-height: calc(var(--kc-viewport-height) - 28px)');
     expect(css).toContain('.asset-workspace.asset-detail-open .asset-workspace-detail { position: static;');
     expect(css).toContain('max-height: none; overflow: visible;');
   });

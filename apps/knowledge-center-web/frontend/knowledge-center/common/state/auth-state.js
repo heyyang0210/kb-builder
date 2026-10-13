@@ -39,7 +39,7 @@ export function displayName() {
 }
 
 export function isPlatformAdmin() {
-  return Array.isArray(authState.session?.roles) && authState.session.roles.includes('PLATFORM_ADMIN');
+  return Array.isArray(authState.session?.roles) && authState.session.roles.some(role => ['PLATFORM_ADMIN', 'SUPER_ADMIN'].includes(role));
 }
 
 export function canPerform(action) {

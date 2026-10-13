@@ -73,4 +73,16 @@ describe('知识中心刷新性能契约', () => {
     expect(domainStore).toContain("await fetch(target");
     expect(frontendServer).toContain('readAsync: () => domainStore.readHandbooksAsync()');
   });
+
+  test('大纲目录使用轻量单查询读模型和异步 Storage 链路', () => {
+    const outlineRoute = read('packages/agent-runner-core/routes/outline.js');
+    expect(storage).toContain('/v1/domain/outlines/catalog');
+    expect(storage).toContain('projectOutlineCatalog(connection, timings)');
+    expect(storage).toContain('SUM(CASE WHEN N.NODE_TYPE=\'DOCUMENT\' THEN 1 ELSE 0 END)');
+    expect(storage).not.toMatch(/projectOutlineCatalog[\s\S]{0,500}outlineNodes\(/);
+    expect(domainStore).toContain('async readOutlineCatalogAsync()');
+    expect(outlineRoute).toContain('await handbookDomainStore.readOutlineCatalogAsync()');
+    expect(outlineRoute).toContain("router.get('/catalog', async");
+    expect(routes).toContain("pathname === '/knowledge-center/api/outline/catalog'");
+  });
 });

@@ -604,6 +604,8 @@ function normalizeOutline(outline) {
   const nodes = outlineNodes(outline, outline.id);
   return {
     id: outline.id,
+    deletedAt: outline.deletedAt || null,
+    deletedBy: outline.deletedBy || null,
     handbookId: outline.handbookId || outline.id,
     manualId: outline.manualId || outline.manual_id || null,
     name: outline.name,

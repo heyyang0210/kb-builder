@@ -13,6 +13,7 @@
   --success: #16a34a; --success-light: #dcfce7;
   --warning: #ea580c; --warning-light: #fff7ed;
   --accent: #7c3aed; --accent-light: #ede9fe;
+  --close-color: #b42318; --close-hover: #fff0ee;
   --radius: 8px; --shadow: 0 1px 3px rgba(0,0,0,.08);
 }
 [data-theme="dark"] {
@@ -22,6 +23,7 @@
   --success: #22c55e; --success-light: #14532d;
   --warning: #f97316; --warning-light: #431407;
   --accent: #a78bfa; --accent-light: #2e1065;
+  --close-color: #ff8a80; --close-hover: #431e1e;
   --shadow: 0 1px 3px rgba(0,0,0,.3);
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -910,7 +912,10 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sa
   border: 0; background: transparent; color: var(--text-secondary); cursor: pointer;
 }
 .doc-comments-close { width: 28px; height: 28px; font-size: 20px; }
-.doc-comments-close:hover, .doc-comment-delete:hover { color: var(--warning); }
+.doc-comment-delete:hover { color: var(--warning); }
+.modal-close, .doc-comments-close { display: inline-grid; place-items: center; width: 44px; height: 44px; min-width: 44px; min-height: 44px; padding: 0; background: transparent; color: var(--close-color); }
+.modal-close:hover, .modal-close:focus-visible, .doc-comments-close:hover, .doc-comments-close:focus-visible { background: var(--close-hover); color: var(--close-color); }
+.modal-close svg, .doc-comments-close svg { width: 20px; height: 20px; stroke-width: 2; }
 .doc-comment-form { padding: 12px 14px; border-bottom: 1px solid var(--border); }
 .doc-comment-form label {
   display: block; margin-bottom: 4px; font-size: 11px; color: var(--text-secondary);
@@ -1591,7 +1596,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sa
           <aside class="doc-comments-panel" id="docCommentsPanel" aria-label="文档评论">
             <div class="doc-comments-header">
               <div class="doc-comments-title">评论</div>
-              <button class="doc-comments-close" type="button" onclick="toggleDocumentComments(false)" title="关闭评论">×</button>
+              <button class="doc-comments-close" type="button" onclick="toggleDocumentComments(false)" aria-label="关闭评论" title="关闭评论"><i data-lucide="x" aria-hidden="true"></i></button>
             </div>
             <div class="doc-comment-form">
               <label for="docCommentQuote">引用文本（可选）</label>
@@ -1649,7 +1654,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sa
   <div class="modal paths-manage-modal">
     <div class="modal-header">
       <h3>📂 管理文档路径</h3>
-      <button class="modal-close" onclick="closePathsManageDialog()">&times;</button>
+      <button class="modal-close" type="button" onclick="closePathsManageDialog()" aria-label="关闭路径管理" title="关闭路径管理"><i data-lucide="x" aria-hidden="true"></i></button>
     </div>
     <div class="modal-body">
       <p style="font-size:12px;color:var(--text-secondary);margin-bottom:8px">配置文档管理中展示的目录路径。生成文档始终保存在默认输出目录中，外部路径默认为只读。</p>
@@ -1673,7 +1678,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sa
   <div class="modal-content">
     <div class="modal-header">
       <h3>⚙️ 配置</h3>
-      <button class="modal-close" onclick="closeConfigModal()">✕</button>
+      <button class="modal-close" type="button" onclick="closeConfigModal()" aria-label="关闭配置" title="关闭配置"><i data-lucide="x" aria-hidden="true"></i></button>
     </div>
     <div class="modal-tabs">
       <button class="modal-tab active" onclick="switchConfigTab('model')">🤖 模型配置</button>
@@ -8055,7 +8060,7 @@ function showToast(msg) {
   <div class="modal-dialog">
     <div class="modal-header">
       <div class="modal-title">🔨 从大纲生成提示词</div>
-      <button class="modal-close" onclick="closeGeneratePromptDialog()">×</button>
+      <button class="modal-close" type="button" onclick="closeGeneratePromptDialog()" aria-label="关闭提示词生成" title="关闭提示词生成"><i data-lucide="x" aria-hidden="true"></i></button>
     </div>
     <div class="modal-body">
       <div style="margin-bottom: 16px;">
@@ -8102,7 +8107,7 @@ function showToast(msg) {
   <div class="modal-dialog" style="max-width: 900px;">
     <div class="modal-header">
       <div class="modal-title">✅ 生成的提示词</div>
-      <button class="modal-close" onclick="closeGeneratedPromptsResult()">×</button>
+      <button class="modal-close" type="button" onclick="closeGeneratedPromptsResult()" aria-label="关闭生成结果" title="关闭生成结果"><i data-lucide="x" aria-hidden="true"></i></button>
     </div>
     <div class="modal-body">
       <div id="generatedPromptsResultContent"></div>
@@ -9941,5 +9946,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 </script>
 
+<script src="/knowledge-center/common/vendor/lucide.min.js"></script>
+<script>window.lucide?.createIcons();</script>
 </body>
 </html>

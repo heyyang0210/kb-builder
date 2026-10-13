@@ -56,6 +56,8 @@ CAS 首次登录只绑定人员目录中唯一的同名、启用且尚未绑定 
 
 手册列表投影由 `HandbookProjectionRepository` 集中维护命名 SQL、结果行 DTO 和查询计时，使用单条联表查询同时读取当前大纲业务 ID 和主/协同负责人，禁止按手册逐条查询负责人或大纲版本。响应通过 `Server-Timing` 输出 JDBC 连接获取、SQL 执行、行映射、JSON 序列化和 Storage 总耗时，`PERF_TRACE=1` 时同步写入性能日志。知识资产与审核刷新关键路径中的手册只读调用由 Node 使用原生异步 HTTP，不能通过同步子进程阻塞平台事件循环。
 
+大纲列表通过 `/v1/domain/outlines/catalog` 返回轻量一致读模型：在单条 SQL 中联接每本手册的当前大纲版本并聚合节点/知识点数量，响应含 `items`、`total`、`snapshotVersion` 和 `generatedAt`，不读取节点描述或调用节点树投影。该 Node 读取路径必须调用 `DomainStore.requestAsync()`，禁止同步 curl。
+
 SQL 迁移目录：
 
 | 文件 | 用途 |
@@ -129,6 +131,8 @@ MIGRATION_APPROVAL_REF=审批单号 MIGRATION_MAINTENANCE_WINDOW=true \
 - `/v1/domain/build-tasks` 从已发布大纲的当前责任项实时投影，`PATCH` 改派直接更新责任项，不依赖旧建设任务表。
 # 启动入口说明
 
+大纲回收站依赖 `sql/013_outline_recycle_super_admin.sql`（提交 `3c35ccf`），增加独立删除标记和超级管理员角色/动作。先备份目标库，统一构建后显式执行 `apps/yashandb-storage/start.sh migrate`，再启动新服务；普通启动不会替你迁移。DELETE 保留节点和历史并清空被删当前指针；restore 遇到新当前版本拒绝恢复；purge 在事务中重新检查基线、责任版本和生产记录引用，独立审计继续保留。生产记录写入与清理共享版本锁，已删除基线不可写入。回退前先恢复所需活动版本，禁止直接回退到忽略删除标记的旧代码。
+
 `start.sh` 是本模块的启动入口，负责启动 YashanDB 业务存储 HTTP 服务（默认端口 `14210`），不编译源码，不启动或停止 YashanDB 数据库实例，也不默认执行迁移。数据库 JDBC 地址、用户名和密码由 `config/database/` 统一配置，环境变量可覆盖配置；class、JDBC 和 SQL 默认从 `runtime/build/knowledge-center/current/java/` 读取。
 
 常用操作：
@@ -139,3 +143,7 @@ apps/yashandb-storage/start.sh
 ```
 
 启动前需要可用的 JDK/JDBC 驱动和 `YASDB_JDBC_URL`、`YASDB_USERNAME`；密码由统一环境加载器或外部密钥注入。平台级服务应优先使用根目录 `knowledge-center.sh` 统一启停。
+
+### 错误定位补充（2026-10-13）
+
+聚合引用校验拒绝返回 HTTP 409，错误消息与 details 包含 namespace、key、outlineVersionId，涵盖历史引用，便于定位。

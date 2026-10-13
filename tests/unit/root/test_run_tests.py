@@ -47,6 +47,8 @@ class RepositoryTestRunnerTests(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertEqual(expected, RUNNER.classify_name(Path(name), "jest"))
         self.assertEqual("e2e", RUNNER.classify_name(Path("workflow.spec.js"), "playwright"))
+        self.assertEqual("e2e", RUNNER.classify_name(Path("knowledge-center-scroll-contract.spec.js"), "playwright"))
+        self.assertEqual("gate", RUNNER.classify_name(Path("performance.gate.spec.js"), "playwright"))
 
     def test_full_plan_has_no_duplicate_files(self):
         tasks = RUNNER.build_tasks("full")

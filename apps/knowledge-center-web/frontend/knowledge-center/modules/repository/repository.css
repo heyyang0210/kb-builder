@@ -1,4 +1,4 @@
-.repository-page { display:grid; gap:0; min-height:calc(100dvh - 96px); }
+.repository-page { display:grid; gap:0; min-height:calc(var(--kc-viewport-height) - 96px); }
 .repository-header { display:grid; gap:18px; padding-bottom:16px; border-bottom:1px solid var(--color-border); }
 .repository-header h2 { margin:0; font-size:24px; }
 .repository-back { color:var(--color-brand); font-size:13px; text-decoration:none; }

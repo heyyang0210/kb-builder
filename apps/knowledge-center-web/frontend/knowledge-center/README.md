@@ -1,5 +1,15 @@
 # 知识中心管理前端
 
+大纲删除使用“移入回收站”，已发布版本同样可恢复删除。列表提供回收站和恢复入口；彻底删除仅超级管理员可见，需引用预检查、准确输入目标 ID 和非空原因。详情和历史读取保留原版本状态，恢复冲突和关联引用阻断通过中文提示展示。
+
+## 视口与滚动公共契约
+
+`common/viewport-runtime.js` 提供 `--kc-viewport-height` 的原生 dvh / vh / 测量回退与窗口生命周期；`common/scroll-runtime.js` 提供 `getScrollOwner`、`inspectScrollRegion`、`inspectScrollContract` 和初始化/清理。桌面主区用 `data-scroll-owner="main"`，窄屏保留 document 滚动；局部区域声明 `data-scroll-region="panel|dialog|drawer"`，吸顶控制栏声明 `data-scroll-obstacle`。模块不得自行重建视口计算或应用壳规则。诊断只输出中文脱敏几何告警；业务滚动位置仍由原状态层管理。入口隐藏/高度异常时自动解除 body 锁定，短内容不需要显示滚动条。支持不识别 dvh 但具备现有 ES 模块能力的 Chromium/WebView，不包含 IE11；系统自动隐藏滚动条不属于滚动失效。
+
+关闭弹窗、抽屉和侧栏的 X 统一使用 Lucide `x` 与以“关闭”开头的可访问名称；公共样式在 `common/base.css`，使用危险色令牌、20px 图标及 44px 点击区。收起导航和移除项目不属于关闭 X。详细约束见前端详细设计文档。
+
+同源独立页面 `/document-generation-workbench.html` 保留原有业务入口，关闭 X 使用该页面的主题令牌和本地 Lucide 脚本同步遵守 20px/44px 规则。
+
 平台管理通过“人员管理”下拉导航承载“人员管理 / 团队小组”两个二级页面。不设独立下拉箭头，点击“人员管理”本身展开子菜单。团队小组维护负责人和成员；技术领域通过后端唯一关系 `KC_TECH_DOMAIN.TEAM_GROUP_ID` 引用负责团队，页面只展示“关联领域”，不按团队名称猜测绑定。详情页操作顺序固定为左侧“保存”、右侧“取消”。“取消”只撤销当前名册草稿，人员与团队之间的页面切换统一由下拉导航完成。
 
 ## 模板上传（2026-09-14）
@@ -140,3 +150,7 @@ GitLab 阅读路由为 `/knowledge-center/assets/:handbookId/repository`。平�
 `common/resizable-navigation-pane.js` 提供常驻目录面板的鼠标/键盘调宽、折叠、默认恢复和本地偏好能力。业务页面通过 `data-navigation-layout` 声明自己的尺寸范围；目标选择弹框不强制接入该面板控制器。
 
 `common/directory-tree.js` 提供目录搜索、命中节点保留、祖先展开、搜索清空后的展开状态恢复和当前项滚动可见能力。常驻导航、层级过滤和目标选择树由业务模块分别声明语义，不在公共层混合权限、分派或路径选择规则。
+
+### Markdown 增强诊断
+
+代码块增强未生成复制工具栏时，保留原 HTML，在浏览器控制台输出 `MARKDOWN_CODE_ENHANCEMENT_FAILED` 及未增强代码块数量；不记录代码正文。此诊断仅报告增强缺失，不改变现有匹配规则或中断文档展示。

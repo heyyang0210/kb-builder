@@ -176,14 +176,14 @@ def classify_name(path: Path, framework: str) -> str:
         return "integration"
     if ".gate." in name:
         return "gate"
+    if framework == "playwright":
+        return "e2e"
     if "contract" in name or "compatibility" in name:
         return "contract"
     if "integration" in name:
         return "integration"
     if "system" in name or "performance" in name or (framework == "jest" and "e2e" in name):
         return "system"
-    if framework == "playwright":
-        return "e2e"
     return "unit"
 
 
@@ -250,12 +250,15 @@ def discover_test_files() -> dict[str, dict[str, list[Path]]]:
 
 
 E2E_RESOURCE_BY_FILE = {
+    "knowledge-center-outline-catalog.spec.js": "service-read",
+    "knowledge-center-scroll-contract.spec.js": "service-read",
     "knowledge-center-cleaning-upload-real.spec.js": "database-write",
     "knowledge-center-incremental-flow.spec.js": "database-write",
     "knowledge-center-personnel.spec.js": "database-write",
     "knowledge-center-review-publishing.spec.js": "database-write",
     "knowledge-center-template-management.spec.js": "database-write",
     "knowledge-center-handbook-production-p0p1.spec.js": "database-write",
+    "knowledge-center-outline-delete-candidate.spec.js": "database-write",
     "knowledge-assets-workspace.spec.js": "service-read",
     "knowledge-center-gitlab.spec.js": "service-read",
     "knowledge-center-authentication.spec.js": "service-read",

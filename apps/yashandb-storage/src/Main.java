@@ -318,12 +318,35 @@ public final class Main {
             ));
         } catch (RevisionConflict error) {
             failure(exchange, 409, "REVISION_CONFLICT", "记录已被其他请求修改");
+        } catch (OutlineReferenceRejected error) {
+            String reason = "OUTLINE_DELETED".equals(error.getMessage()) ? "已删除" : "不存在";
+            sendJson(exchange, 409, mapOf("success", false, "error", mapOf(
+                "code", error.getMessage(),
+                "message", "记录 " + namespace + "/" + key + " 引用了" + reason + "的大纲版本 " + error.outlineVersionId
+                    + "，不能保存关联生产数据；聚合中的历史引用也会触发此校验，请核对该引用及大纲状态",
+                "details", mapOf("namespace", namespace, "key", key, "outlineVersionId", error.outlineVersionId))));
         } catch (Exception error) {
-            failure(exchange, 503, "DATABASE_UNAVAILABLE", "写入数据库记录失败");
+            if ("OUTLINE_DELETED".equals(error.getMessage()) || "OUTLINE_NOT_FOUND".equals(error.getMessage())) {
+                failure(exchange, 409, error.getMessage(), "大纲已删除或不存在，不能新增或修改关联生产数据");
+            } else failure(exchange, 503, "DATABASE_UNAVAILABLE", "写入数据库记录失败");
         }
     }
 
     private long upsertRecord(Connection connection, String namespace, String key, String payload, String digest, Long expected) throws Exception {
+        if (!Set.of("outline-lifecycle-audit", "auth", "outlines").contains(namespace)) {
+            Set<String> ids = new java.util.TreeSet<>();
+            collectOutlineReferences(Json.parse(payload), "", ids);
+            for (String id : ids) {
+                // Same version lock as delete/purge: a concurrent producer cannot insert a dangling reference.
+                try (PreparedStatement lock = connection.prepareStatement("SELECT DELETED_AT FROM KC_MANUAL_OUTLINE_VERSION WHERE SOURCE_REF=? OR TO_CHAR(OUTLINE_VERSION_ID)=? FOR UPDATE")) {
+                    lock.setString(1, id); lock.setString(2, id);
+                    try (ResultSet row = lock.executeQuery()) {
+                        if (!row.next()) throw new OutlineReferenceRejected("OUTLINE_NOT_FOUND", id);
+                        if (row.getTimestamp(1) != null) throw new OutlineReferenceRejected("OUTLINE_DELETED", id);
+                    }
+                }
+            }
+        }
         Long current = null;
         String currentDigest = null;
         boolean currentDeleted = false;
@@ -570,6 +593,25 @@ public final class Main {
     private void domainOutlines(HttpExchange exchange) throws IOException {
         String path = exchange.getRequestURI().getRawPath();
         try {
+            if ("GET".equals(exchange.getRequestMethod()) && "/v1/domain/outlines/catalog".equals(path)) {
+                long requestStarted = System.nanoTime();
+                long connectionStarted = System.nanoTime();
+                try (Connection connection = connection()) {
+                    double connectionMs = (System.nanoTime() - connectionStarted) / 1e6;
+                    Map<String, Double> timings = new LinkedHashMap<>();
+                    Map<String, Object> catalog = projectOutlineCatalog(connection, timings);
+                    connection.commit();
+                    long serializationStarted = System.nanoTime();
+                    String body = Json.stringify(mapOf("success", true, "data", catalog));
+                    double serializationMs = (System.nanoTime() - serializationStarted) / 1e6;
+                    double totalMs = (System.nanoTime() - requestStarted) / 1e6;
+                    exchange.getResponseHeaders().set("Server-Timing", String.format(Locale.ROOT,
+                        "db-connection;dur=%.3f, db-query;dur=%.3f, row-mapping;dur=%.3f, json-serialization;dur=%.3f, storage-total;dur=%.3f",
+                        connectionMs, timings.getOrDefault("queryMs", 0d), timings.getOrDefault("mappingMs", 0d), serializationMs, totalMs));
+                    send(exchange, 200, body);
+                }
+                return;
+            }
             if ("GET".equals(exchange.getRequestMethod()) && "/v1/domain/outlines".equals(path)) {
                 try (Connection connection = connection()) {
                     sendJson(exchange, 200, projectOutlines(connection));
@@ -616,10 +658,22 @@ public final class Main {
                 }
                 return;
             }
+            if (path.startsWith("/v1/domain/outlines/") && (path.endsWith("/restore") || path.endsWith("/purge") || path.endsWith("/purge-preflight"))) {
+                String action = path.substring(path.lastIndexOf('/') + 1);
+                String id = decode(path.substring("/v1/domain/outlines/".length(), path.lastIndexOf('/')));
+                if (!("purge-preflight".equals(action) ? "GET" : "POST").equals(exchange.getRequestMethod())) { methodNotAllowed(exchange); return; }
+                Map<String, Object> payload = "GET".equals(exchange.getRequestMethod()) ? new LinkedHashMap<>() : readJsonObject(exchange);
+                try (Connection connection = connection()) {
+                    Map<String, Object> data = outlineLifecycle(connection, id, action, payload);
+                    connection.commit(); sendJson(exchange, 200, mapOf("success", true, "data", data));
+                }
+                return;
+            }
             if ("DELETE".equals(exchange.getRequestMethod()) && path.startsWith("/v1/domain/outlines/") && path.length() > "/v1/domain/outlines/".length()) {
                 String id = decode(path.substring("/v1/domain/outlines/".length()));
+                Map<String, Object> payload = readJsonObject(exchange);
                 try (Connection connection = connection()) {
-                    Map<String, Object> data = deleteOutline(connection, id);
+                    Map<String, Object> data = outlineLifecycle(connection, id, "delete", payload);
                     connection.commit();
                     sendJson(exchange, 200, mapOf("success", true, "data", data));
                 }
@@ -637,6 +691,14 @@ public final class Main {
             String code = error.getMessage();
             if ("OUTLINE_NOT_FOUND".equals(code)) {
                 failure(exchange, 404, "OUTLINE_NOT_FOUND", "大纲不存在");
+            } else if ("OUTLINE_DELETED".equals(code)) {
+                failure(exchange, 409, code, "大纲已移入回收站，请先恢复后再操作");
+            } else if ("OUTLINE_RESTORE_CONFLICT".equals(code)) {
+                failure(exchange, 409, code, "已有新的当前大纲，不能恢复并覆盖，请先处理当前版本");
+            } else if ("OUTLINE_PURGE_REFERENCED".equals(code)) {
+                failure(exchange, 409, code, "大纲仍被其他版本、建设任务或生产历史引用，不能彻底删除");
+            } else if ("OUTLINE_PURGE_CONFIRM_REQUIRED".equals(code)) {
+                failure(exchange, 422, code, "彻底删除须先移入回收站、确认目标 ID 并填写原因");
             } else if ("OUTLINE_IMMUTABLE".equals(code)) {
                 failure(exchange, 409, "OUTLINE_IMMUTABLE", "当前大纲版本不可修改或删除");
             } else if ("OUTLINE_DOCUMENT_REQUIRED".equals(code)) {
@@ -1084,9 +1146,9 @@ public final class Main {
 
     private Map<String, Object> outlineHeader(Connection connection, String outlineId) throws SQLException {
         String sql = "SELECT V.OUTLINE_VERSION_ID, M.MANUAL_CODE, V.STATE, V.ROW_VERSION, O.OUTLINE_ID, "
-            + "COALESCE(V.SOURCE_REF, TO_CHAR(V.OUTLINE_VERSION_ID)) "
+            + "COALESCE(V.SOURCE_REF, TO_CHAR(V.OUTLINE_VERSION_ID)), V.DELETED_AT "
             + "FROM KC_MANUAL_OUTLINE_VERSION V JOIN KC_MANUAL_OUTLINE O ON O.OUTLINE_ID=V.OUTLINE_ID "
-            + "JOIN KC_MANUAL M ON M.MANUAL_ID=O.MANUAL_ID WHERE V.OUTLINE_VERSION_ID = ?";
+            + "JOIN KC_MANUAL M ON M.MANUAL_ID=O.MANUAL_ID WHERE V.OUTLINE_VERSION_ID = ? FOR UPDATE";
         long internalId = resolveOutlineVersionId(connection, outlineId);
         try (PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setLong(1, internalId);
@@ -1100,7 +1162,7 @@ public final class Main {
                     "manualId", result.getString(2),
                     "state", result.getString(3),
                     "editVersion", result.getLong(4),
-                    "outlineSubjectId", result.getLong(5)
+                    "outlineSubjectId", result.getLong(5), "deletedAt", timestampToString(result.getTimestamp(7))
                 );
             }
         }
@@ -1208,6 +1270,7 @@ public final class Main {
         body.put("outlineId", outlineId);
         body.put("manualId", header.get("manualId"));
         body.put("state", header.get("state"));
+        body.put("deletedAt", header.get("deletedAt"));
         body.put("editVersion", header.get("editVersion"));
         body.put("nodes", nodes);
         body.put("assignments", assignments);
@@ -1269,6 +1332,7 @@ public final class Main {
 
     private Map<String, Object> saveOutlineGovernance(Connection connection, String outlineId, Map<String, Object> payload) throws SQLException {
         Map<String, Object> header = outlineHeader(connection, outlineId);
+        if (header.get("deletedAt") != null) throw new SQLException("OUTLINE_DELETED");
         long internalOutlineId = ((Number) header.get("internalId")).longValue();
         boolean published = "PUBLISHED".equals(header.get("state"));
         if ("SUPERSEDED".equals(header.get("state")) || "ARCHIVED".equals(header.get("state"))) {
@@ -1409,6 +1473,7 @@ public final class Main {
 
     private Map<String, Object> publishOutline(Connection connection, String outlineId, Map<String, Object> payload) throws SQLException {
         Map<String, Object> header = outlineHeader(connection, outlineId);
+        if (header.get("deletedAt") != null) throw new SQLException("OUTLINE_DELETED");
         long internalOutlineId = ((Number) header.get("internalId")).longValue();
         if ("PUBLISHED".equals(header.get("state"))) {
             return projectOutlineGovernance(connection, outlineId);
@@ -1433,7 +1498,7 @@ public final class Main {
         }
         String actor = coalesce(payload.get("principalId"), payload.get("publishedBy"), "system:api");
         long subjectId = ((Number) header.get("outlineSubjectId")).longValue();
-        try (PreparedStatement update = connection.prepareStatement("UPDATE KC_MANUAL_OUTLINE_VERSION SET STATE='SUPERSEDED', UPDATED_BY=?, UPDATED_AT=CURRENT_TIMESTAMP WHERE OUTLINE_ID=? AND OUTLINE_VERSION_ID<>? AND STATE='PUBLISHED'")) {
+        try (PreparedStatement update = connection.prepareStatement("UPDATE KC_MANUAL_OUTLINE_VERSION SET STATE='SUPERSEDED', UPDATED_BY=?, UPDATED_AT=CURRENT_TIMESTAMP WHERE OUTLINE_ID=? AND OUTLINE_VERSION_ID<>? AND STATE='PUBLISHED' AND DELETED_AT IS NULL")) {
             update.setString(1, actor);
             update.setLong(2, subjectId);
             update.setLong(3, internalOutlineId);
@@ -1620,6 +1685,7 @@ public final class Main {
     private Map<String, Object> updateBuildTaskItem(Connection connection, String taskId, String itemId, Map<String, Object> payload) throws SQLException {
         Map<String, Object> task = projectBuildTask(connection, taskId);
         if (task == null) throw new SQLException("BUILD_TASK_NOT_FOUND");
+        if (outlineHeader(connection, String.valueOf(task.get("outlineVersionId"))).get("deletedAt") != null) throw new SQLException("OUTLINE_DELETED");
         Map<String, Object> selected = null;
         for (Map<String, Object> item : listOfMaps(task.get("items"))) if (itemId.equals(item.get("id"))) selected = item;
         if (selected == null) throw new SQLException("BUILD_TASK_ITEM_NOT_FOUND");
@@ -1755,7 +1821,7 @@ public final class Main {
             + "CASE WHEN O.CURRENT_OUTLINE_VERSION_ID IS NULL THEN 'DRAFT' ELSE 'ACTIVE' END, O.CURRENT_OUTLINE_VERSION_ID, "
             + "V.OUTLINE_VERSION_ID, V.VERSION_CODE, M.MANUAL_NAME, V.STATE, V.BASE_OUTLINE_VERSION_ID, "
             + "V.SOURCE_TYPE, V.SOURCE_SHA256, V.PARSER_VERSION, V.RULE_VERSION, V.ROW_VERSION, "
-            + "V.PUBLISHED_AT, O.CREATED_AT, O.UPDATED_AT, V.SOURCE_REF "
+            + "V.PUBLISHED_AT, O.CREATED_AT, O.UPDATED_AT, V.SOURCE_REF, V.DELETED_AT, V.DELETED_BY "
             + "FROM KC_MANUAL_OUTLINE O JOIN KC_MANUAL M ON M.MANUAL_ID=O.MANUAL_ID "
             + "LEFT JOIN KC_MANUAL_OUTLINE_VERSION V ON V.OUTLINE_ID = O.OUTLINE_ID "
             + "ORDER BY O.CREATED_AT, O.OUTLINE_ID, V.CREATED_AT, V.OUTLINE_VERSION_ID";
@@ -1767,6 +1833,58 @@ public final class Main {
             }
         }
         return body;
+    }
+
+    private Map<String, Object> projectOutlineCatalog(Connection connection, Map<String, Double> timings) throws SQLException {
+        long queryStarted = System.nanoTime();
+        String sql = "SELECT M.MANUAL_CODE, M.MANUAL_NAME, M.PRODUCT_ID, M.PRODUCT_NAME, M.STATE, M.ARCHIVED_AT, "
+            + "M.UPDATED_AT, O.OUTLINE_ID, V.SOURCE_REF, V.VERSION_CODE, V.STATE, V.ROW_VERSION, V.PUBLISHED_AT, V.UPDATED_AT, "
+            + "COALESCE(N.NODE_COUNT, 0), COALESCE(N.DOCUMENT_COUNT, 0) "
+            + "FROM KC_MANUAL M LEFT JOIN KC_MANUAL_OUTLINE O ON O.MANUAL_ID=M.MANUAL_ID "
+            + "LEFT JOIN KC_MANUAL_OUTLINE_VERSION V ON V.OUTLINE_VERSION_ID=O.CURRENT_OUTLINE_VERSION_ID "
+            + "LEFT JOIN (SELECT N.OUTLINE_VERSION_ID, COUNT(*) NODE_COUNT, SUM(CASE WHEN N.NODE_TYPE='DOCUMENT' THEN 1 ELSE 0 END) DOCUMENT_COUNT "
+            + "FROM KC_MANUAL_OUTLINE_NODE N JOIN KC_MANUAL_OUTLINE_VERSION CV ON CV.OUTLINE_VERSION_ID=N.OUTLINE_VERSION_ID "
+            + "JOIN KC_MANUAL_OUTLINE CO ON CO.CURRENT_OUTLINE_VERSION_ID=CV.OUTLINE_VERSION_ID GROUP BY N.OUTLINE_VERSION_ID) N ON N.OUTLINE_VERSION_ID=V.OUTLINE_VERSION_ID "
+            + "WHERE M.ARCHIVED_AT IS NULL AND V.OUTLINE_VERSION_ID IS NOT NULL AND V.DELETED_AT IS NULL ORDER BY M.CREATED_AT, M.MANUAL_ID";
+        List<Object> items = new ArrayList<>();
+        long mappingStarted;
+        try (PreparedStatement statement = connection.prepareStatement(sql); ResultSet result = statement.executeQuery()) {
+            mappingStarted = System.nanoTime();
+            while (result.next()) {
+                String manualCode = result.getString(1);
+                String outlineId = result.getString(9);
+                Map<String, Object> item = new LinkedHashMap<>();
+                item.put("id", outlineId == null ? manualCode : outlineId);
+                item.put("outlineId", outlineId == null ? manualCode : outlineId);
+                item.put("handbookId", manualCode);
+                item.put("manualId", manualCode);
+                item.put("name", result.getString(2));
+                item.put("productId", result.getString(3));
+                item.put("productName", result.getString(4));
+                item.put("productDisplayName", result.getString(4));
+                item.put("manualStatus", result.getString(5).toLowerCase(Locale.ROOT));
+                item.put("state", result.getString(11) == null ? "draft" : result.getString(11).toLowerCase(Locale.ROOT));
+                item.put("status", item.get("state"));
+                item.put("outlineStructureVersion", result.getString(10));
+                item.put("versionName", result.getString(10));
+                item.put("editVersion", result.getLong(12));
+                item.put("published_at", timestampToString(result.getTimestamp(13)));
+                item.put("updated_at", timestampToString(result.getTimestamp(14) == null ? result.getTimestamp(7) : result.getTimestamp(14)));
+                item.put("nodeCount", result.getLong(15));
+                item.put("kp_count", result.getLong(16));
+                items.add(item);
+            }
+        }
+        double queryMs = (mappingStarted - queryStarted) / 1e6;
+        double mappingMs = (System.nanoTime() - mappingStarted) / 1e6;
+        timings.put("queryMs", queryMs);
+        timings.put("mappingMs", mappingMs);
+        Map<String, Object> catalog = new LinkedHashMap<>();
+        catalog.put("items", items);
+        catalog.put("total", items.size());
+        catalog.put("snapshotVersion", Instant.now().toString());
+        catalog.put("generatedAt", Instant.now().toString());
+        return catalog;
     }
 
     private Map<String, Object> projectOutline(Connection connection, ResultSet result) throws SQLException {
@@ -1792,6 +1910,8 @@ public final class Main {
             body.put("published_at", timestampToString(result.getTimestamp(16)));
             body.put("created_at", timestampToString(result.getTimestamp(17)));
             body.put("updated_at", timestampToString(result.getTimestamp(18)));
+            body.put("deletedAt", timestampToString(result.getTimestamp(20)));
+            body.put("deletedBy", result.getString(21));
             List<Map<String, Object>> nodes = internalVersionId == null ? new ArrayList<>() : outlineNodes(connection, Long.parseLong(internalVersionId));
             body.put("nodes", nodes);
             body.put("kp_count", countNodesByKind(nodes, "document"));
@@ -1801,33 +1921,101 @@ public final class Main {
         }
     }
 
-    private Map<String, Object> deleteOutline(Connection connection, String outlineId) throws SQLException {
-        String sql = "SELECT O.MANUAL_ID, V.STATE FROM KC_MANUAL_OUTLINE_VERSION V JOIN KC_MANUAL_OUTLINE O ON O.OUTLINE_ID=V.OUTLINE_ID WHERE V.OUTLINE_VERSION_ID = ? FOR UPDATE";
-        long internalOutlineId = resolveOutlineVersionId(connection, outlineId);
-        long manualId;
-        String state;
-        try (PreparedStatement statement = connection.prepareStatement(sql)) {
-            statement.setLong(1, internalOutlineId);
-            try (ResultSet result = statement.executeQuery()) {
-                if (!result.next()) {
-                    throw new SQLException("OUTLINE_NOT_FOUND");
-                }
-                manualId = result.getLong(1);
-                state = result.getString(2);
+    private Map<String, Object> outlineLifecycle(Connection connection, String outlineId, String action, Map<String, Object> payload) throws SQLException {
+        long id = resolveOutlineVersionId(connection, outlineId);
+        long subjectId;
+        Long currentId = null;
+        // All lifecycle transitions and current-pointer writers lock the same subject.
+        try (PreparedStatement query = connection.prepareStatement("SELECT O.OUTLINE_ID,O.CURRENT_OUTLINE_VERSION_ID FROM KC_MANUAL_OUTLINE O JOIN KC_MANUAL_OUTLINE_VERSION V ON V.OUTLINE_ID=O.OUTLINE_ID WHERE V.OUTLINE_VERSION_ID=? FOR UPDATE")) {
+            query.setLong(1, id);
+            try (ResultSet row = query.executeQuery()) {
+                if (!row.next()) throw new SQLException("OUTLINE_NOT_FOUND");
+                subjectId = row.getLong(1); long value = row.getLong(2); if (!row.wasNull()) currentId = value;
             }
-        } catch (SQLException error) {
-            throw error;
         }
-        if ("PUBLISHED".equals(state) || "SUPERSEDED".equals(state)) {
-            throw new SQLException("OUTLINE_IMMUTABLE");
+        Map<String, Object> header = outlineHeader(connection, outlineId);
+        boolean deleted = header.get("deletedAt") != null;
+        boolean wasCurrent = false;
+        try (PreparedStatement query = connection.prepareStatement("SELECT DELETED_WAS_CURRENT FROM KC_MANUAL_OUTLINE_VERSION WHERE OUTLINE_VERSION_ID=? FOR UPDATE")) {
+            query.setLong(1, id); try (ResultSet row = query.executeQuery()) { if (row.next()) wasCurrent = "Y".equals(row.getString(1)); }
         }
-        deleteOutlineChildren(connection, internalOutlineId);
-        try (PreparedStatement delete = connection.prepareStatement("DELETE FROM KC_MANUAL_OUTLINE_VERSION WHERE OUTLINE_VERSION_ID = ?")) {
-            delete.setLong(1, internalOutlineId);
-            delete.executeUpdate();
+        String actor = coalesce(payload.get("actor"), "system:api");
+        if ("purge-preflight".equals(action) || "purge".equals(action)) {
+            int references = outlinePurgeReferences(connection, id, outlineId);
+            if ("purge-preflight".equals(action)) return mapOf("id", outlineId, "deleted", deleted, "references", references, "canPurge", deleted && references == 0, "state", header.get("state"));
+            String reason = coalesce(payload.get("reason"));
+            if (!deleted || !outlineId.equals(payload.get("confirmId")) || reason == null || reason.trim().isEmpty() || reason.length() > 1000) throw new SQLException("OUTLINE_PURGE_CONFIRM_REQUIRED");
+            if (references > 0) throw new SQLException("OUTLINE_PURGE_REFERENCED");
+            String auditId = lifecycleAudit(connection, outlineId, action, actor, reason, header);
+            try (PreparedStatement update = connection.prepareStatement("UPDATE KC_MANUAL_OUTLINE_VERSION SET CURRENT_RESP_VERSION_ID=NULL WHERE OUTLINE_VERSION_ID=?")) { update.setLong(1, id); update.executeUpdate(); }
+            deleteOutlineChildren(connection, id);
+            try (PreparedStatement delete = connection.prepareStatement("DELETE FROM KC_MANUAL_OUTLINE_VERSION WHERE OUTLINE_VERSION_ID=?")) { delete.setLong(1, id); delete.executeUpdate(); }
+            return mapOf("id", outlineId, "purged", true, "auditId", auditId);
         }
-        updateCurrentOutlinePointer(connection, manualId);
-        return mapOf("id", outlineId, "deleted", true);
+        if ("delete".equals(action)) {
+            if (deleted) return mapOf("id", outlineId, "deleted", true);
+            boolean isCurrent = currentId != null && currentId == id;
+            try (PreparedStatement update = connection.prepareStatement("UPDATE KC_MANUAL_OUTLINE_VERSION SET DELETED_AT=CURRENT_TIMESTAMP,DELETED_BY=?,DELETION_REASON=?,DELETED_WAS_CURRENT=?,ROW_VERSION=ROW_VERSION+1 WHERE OUTLINE_VERSION_ID=?")) {
+                update.setString(1, actor); update.setString(2, coalesce(payload.get("reason"))); update.setString(3, isCurrent ? "Y" : "N"); update.setLong(4, id); update.executeUpdate();
+            }
+            if (isCurrent) setLifecyclePointer(connection, subjectId, null);
+        } else {
+            if (!deleted) return mapOf("id", outlineId, "restored", true);
+            if (wasCurrent && currentId != null && currentId != id) throw new SQLException("OUTLINE_RESTORE_CONFLICT");
+            try (PreparedStatement update = connection.prepareStatement("UPDATE KC_MANUAL_OUTLINE_VERSION SET DELETED_AT=NULL,DELETED_BY=NULL,DELETION_REASON=NULL,DELETED_WAS_CURRENT='N',ROW_VERSION=ROW_VERSION+1 WHERE OUTLINE_VERSION_ID=?")) { update.setLong(1, id); update.executeUpdate(); }
+            if (wasCurrent) setLifecyclePointer(connection, subjectId, id);
+        }
+        lifecycleAudit(connection, outlineId, action, actor, coalesce(payload.get("reason")), header);
+        return mapOf("id", outlineId, "deleted", "delete".equals(action), "restored", "restore".equals(action));
+    }
+
+    private void setLifecyclePointer(Connection connection, long subjectId, Long versionId) throws SQLException {
+        try (PreparedStatement update = connection.prepareStatement("UPDATE KC_MANUAL_OUTLINE SET CURRENT_OUTLINE_VERSION_ID=?,UPDATED_AT=CURRENT_TIMESTAMP WHERE OUTLINE_ID=?")) {
+            if (versionId == null) update.setNull(1, java.sql.Types.BIGINT); else update.setLong(1, versionId);
+            update.setLong(2, subjectId); update.executeUpdate();
+        }
+    }
+
+    private int outlinePurgeReferences(Connection connection, long id, String externalId) throws SQLException {
+        int references = 0;
+        for (String sql : List.of("SELECT COUNT(*) FROM KC_MANUAL_OUTLINE_VERSION WHERE BASE_OUTLINE_VERSION_ID=?", "SELECT COUNT(*) FROM KC_MANUAL_OUTLINE_RESP_VERSION WHERE OUTLINE_VERSION_ID=? AND STATE IN ('PUBLISHED','SUPERSEDED')")) {
+            try (PreparedStatement query = connection.prepareStatement(sql)) { query.setLong(1, id); try (ResultSet row = query.executeQuery()) { row.next(); references += row.getInt(1); } }
+        }
+        // Fail closed for persisted downstream aggregates, including soft-deleted history.
+        try (PreparedStatement query = connection.prepareStatement("SELECT NAMESPACE,PAYLOAD FROM KC_RECORD WHERE NAMESPACE NOT IN ('outline-lifecycle-audit','auth','outlines')"); ResultSet rows = query.executeQuery()) {
+            while (rows.next()) {
+                String json;
+                try { json = readClob(rows.getClob(2)); }
+                catch (Exception error) { throw new SQLException("读取关联记录失败", error); }
+                if (json != null) {
+                    Set<String> ids = new java.util.HashSet<>();
+                    try { collectOutlineReferences(Json.parse(json), "", ids); }
+                    catch (Exception error) { throw new SQLException("关联记录解析失败，禁止彻底删除", error); }
+                    if (ids.contains(externalId) || ids.contains(String.valueOf(id))) references++;
+                }
+            }
+        }
+        return references;
+    }
+
+    private String lifecycleAudit(Connection connection, String id, String action, String actor, String reason, Map<String, Object> header) throws SQLException {
+        String auditId = java.util.UUID.randomUUID().toString();
+        String json = Json.stringify(mapOf("outlineId", id, "action", action, "actor", actor, "reason", reason, "state", header.get("state"), "at", Instant.now().toString()));
+        try { upsertRecord(connection, "outline-lifecycle-audit", auditId, json, sha256(json), 0L); }
+        catch (Exception error) { throw new SQLException("大纲生命周期审计保存失败", error); }
+        return auditId;
+    }
+
+    private void collectOutlineReferences(Object value, String field, Set<String> ids) {
+        if (value instanceof Map<?, ?> map) {
+            for (Map.Entry<?, ?> entry : map.entrySet()) collectOutlineReferences(entry.getValue(), String.valueOf(entry.getKey()), ids);
+        } else if (value instanceof List<?> list) {
+            for (Object item : list) collectOutlineReferences(item, field, ids);
+        } else if (value != null) {
+            String text = String.valueOf(value);
+            if (text.startsWith("outline_") || Set.of("outlineVersionId", "baseOutlineVersionId").contains(field) && !text.isBlank()) ids.add(text);
+            if ("outlineStructureVersion".equals(field) && text.startsWith("outline-v1-outline_")) ids.add(text.substring("outline-v1-".length()));
+        }
     }
 
     private void upsertManual(Connection connection, Map<String, Object> handbook, Map<String, Object> snapshot) throws SQLException, JsonParseException {
@@ -2063,10 +2251,12 @@ public final class Main {
         String actor = coalesce(snapshot.get("principalId"), snapshot.get("updatedBy"), "system:api");
         long subjectId = outlineSubjectId(connection, manualId);
         String structureSha = sha256(Json.stringify(outline.get("content") == null ? Map.of() : outline.get("content")));
-        try (PreparedStatement query = connection.prepareStatement("SELECT OUTLINE_VERSION_ID, ROW_VERSION FROM KC_MANUAL_OUTLINE_VERSION WHERE SOURCE_REF = ? FOR UPDATE")) {
+        try (PreparedStatement lock = connection.prepareStatement("SELECT OUTLINE_ID FROM KC_MANUAL_OUTLINE WHERE OUTLINE_ID=? FOR UPDATE")) { lock.setLong(1, subjectId); try (ResultSet ignored = lock.executeQuery()) { if (!ignored.next()) throw new SQLException("OUTLINE_NOT_FOUND"); } }
+        try (PreparedStatement query = connection.prepareStatement("SELECT OUTLINE_VERSION_ID, ROW_VERSION, DELETED_AT FROM KC_MANUAL_OUTLINE_VERSION WHERE SOURCE_REF = ? FOR UPDATE")) {
             query.setString(1, outlineId);
             try (ResultSet result = query.executeQuery()) {
                 if (result.next()) {
+                    if (result.getTimestamp(3) != null) throw new SQLException("OUTLINE_DELETED");
                     long internalId = result.getLong(1);
                     long editVersion = result.getLong(2) + 1;
                     try (PreparedStatement update = connection.prepareStatement(
@@ -2382,9 +2572,17 @@ public final class Main {
 
     private void updateCurrentOutlinePointer(Connection connection, long manualId) throws SQLException {
         long subjectId = outlineSubjectId(connection, manualId);
-        Long outlineId = null;
-        try (PreparedStatement query = connection.prepareStatement("SELECT OUTLINE_VERSION_ID FROM KC_MANUAL_OUTLINE_VERSION WHERE OUTLINE_ID = ? AND STATE = 'PUBLISHED' ORDER BY UPDATED_AT DESC")) {
+        Timestamp deletedCurrentAt = null;
+        try (PreparedStatement query = connection.prepareStatement("SELECT MAX(DELETED_AT) FROM KC_MANUAL_OUTLINE_VERSION WHERE OUTLINE_ID=? AND DELETED_WAS_CURRENT='Y'")) {
             query.setLong(1, subjectId);
+            try (ResultSet row = query.executeQuery()) { if (row.next()) deletedCurrentAt = row.getTimestamp(1); }
+        }
+        // A snapshot write must not silently activate an older version after current deletion.
+        String eligible = deletedCurrentAt == null ? "" : " AND CREATED_AT > ?";
+        Long outlineId = null;
+        try (PreparedStatement query = connection.prepareStatement("SELECT OUTLINE_VERSION_ID FROM KC_MANUAL_OUTLINE_VERSION WHERE OUTLINE_ID = ? AND STATE = 'PUBLISHED' AND DELETED_AT IS NULL" + eligible + " ORDER BY UPDATED_AT DESC")) {
+            query.setLong(1, subjectId);
+            if (deletedCurrentAt != null) query.setTimestamp(2, deletedCurrentAt);
             try (ResultSet result = query.executeQuery()) {
                 if (result.next()) {
                     outlineId = result.getLong(1);
@@ -2392,8 +2590,9 @@ public final class Main {
             }
         }
         if (outlineId == null) {
-            try (PreparedStatement query = connection.prepareStatement("SELECT OUTLINE_VERSION_ID FROM KC_MANUAL_OUTLINE_VERSION WHERE OUTLINE_ID = ? ORDER BY UPDATED_AT DESC")) {
+            try (PreparedStatement query = connection.prepareStatement("SELECT OUTLINE_VERSION_ID FROM KC_MANUAL_OUTLINE_VERSION WHERE OUTLINE_ID = ? AND DELETED_AT IS NULL" + eligible + " ORDER BY UPDATED_AT DESC")) {
                 query.setLong(1, subjectId);
+                if (deletedCurrentAt != null) query.setTimestamp(2, deletedCurrentAt);
                 try (ResultSet result = query.executeQuery()) {
                     if (result.next()) {
                         outlineId = result.getLong(1);
@@ -2838,6 +3037,14 @@ public final class Main {
         }
         synchronized void closeAll() { idle.forEach(connection -> { try { connection.close(); } catch (Exception ignored) {} }); idle.clear(); created = 0; }
     }
+    private static final class OutlineReferenceRejected extends SQLException {
+        final String outlineVersionId;
+        OutlineReferenceRejected(String code, String outlineVersionId) {
+            super(code);
+            this.outlineVersionId = outlineVersionId;
+        }
+    }
+
     private static final class RevisionConflict extends Exception {}
     private static final class BodyTooLarge extends Exception {}
     private static final class GovernanceValidationException extends SQLException {

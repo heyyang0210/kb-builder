@@ -38,6 +38,16 @@ function outlineError(res, error, fallbackCode, fallbackMessage) {
   });
 }
 
+// Storage uses uppercase enum values while the public outline contract uses
+// lowercase values. Keep the boundary canonical so list and detail projections
+// cannot disagree about whether a version is a deletable candidate.
+function publicOutlineState(value, fallback = 'published') {
+  const normalized = String(value || '').trim().toLowerCase();
+  return ['draft', 'parsing', 'preflight_failed', 'pending_confirmation', 'confirmed', 'published', 'superseded', 'archived'].includes(normalized)
+    ? normalized
+    : fallback;
+}
+
 // Configure multer for file uploads
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -207,6 +217,18 @@ function createCandidate({ name, content, productId, businessVersionTags, handbo
 }
 
 // POST /api/outline/upload - Upload outline file
+router.use((req, res, next) => {
+  const mutating = ['POST', 'PUT', 'PATCH'].includes(req.method) || /^\/candidates\/[^/]+\/preflight$/.test(req.path);
+  if (!mutating || /^\/governance\/[^/]+\/(restore|purge)$/.test(req.path)) return next();
+  const match = req.path.match(/^\/(?:governance|versions|candidates)\/([^/]+)/);
+  const id = match ? decodeURIComponent(match[1]) : req.body?.outline_id;
+  if (!id) return next();
+  try {
+    if (readMetadata().outlines.find(item => item.id === id)?.deletedAt) return res.status(409).json({ success: false, error: { code: 'OUTLINE_DELETED', message: '大纲已移入回收站，请恢复后再操作' } });
+    return next();
+  } catch (error) { return outlineError(res, error, 'OUTLINE_UNAVAILABLE', '大纲不可用'); }
+});
+
 router.post('/upload', upload.single('file'), async (req, res) => {
   return res.status(410).json({ success: false, error: { code: 'OUTLINE_UPLOAD_DEPRECATED', message: '旧上传接口已下线，请使用 POST /api/outline/import' } });
   /* istanbul ignore next - legacy implementation retained for source compatibility */
@@ -377,13 +399,13 @@ router.post('/versions/:id/publish', (req, res) => {
   if (req.body?.editVersion !== undefined && Number(req.body.editVersion) !== Number(outline.editVersion || 1)) return res.status(409).json({ success: false, error: { code: 'OUTLINE_EDIT_CONFLICT', message: '候选版本已被其他操作更新' } });
   const result = validateCandidate(outline);
   if (!result.passed) return res.status(422).json({ success: false, error: { code: 'OUTLINE_PREFLIGHT_FAILED', message: '发布前预检未通过', details: result.errors } });
-  metadata.outlines.forEach(item => { if (item.handbookId === outline.handbookId && item.id !== outline.id && item.state === 'published') item.state = 'superseded'; });
+  metadata.outlines.forEach(item => { if (item.handbookId === outline.handbookId && item.id !== outline.id && !item.deletedAt && item.state === 'published') item.state = 'superseded'; });
   outline.state = 'published'; outline.updated_at = new Date().toISOString(); outline.published_at = outline.updated_at;
   writeMetadata(metadata); res.json({ success: true, data: normalizeOutline(outline) });
 });
 
 function findOutlineForGovernance(id) {
-  return readMetadata().outlines.find(item => item.id === id);
+  return readMetadata().outlines.find(item => item.id === id && !item.deletedAt);
 }
 
 router.get('/governance/:id/governance', (req, res) => {
@@ -428,7 +450,7 @@ router.post('/governance/:id/publish', (req, res) => {
     if (!outline) return res.status(404).json({ success: false, error: { code: 'OUTLINE_NOT_FOUND', message: '大纲不存在' } });
     publishFileGovernance(outline, req.body || {});
     metadata.outlines.forEach(item => {
-      if (item.handbookId === outline.handbookId && item.id !== outline.id && item.state === 'published') item.state = 'superseded';
+      if (item.handbookId === outline.handbookId && item.id !== outline.id && !item.deletedAt && item.state === 'published') item.state = 'superseded';
     });
     writeMetadata(metadata);
     return res.json({ success: true, data: buildOutlineGovernance(outline), message: '大纲已发布，领域建设任务已生成', generatedAt: new Date().toISOString() });
@@ -507,13 +529,35 @@ router.get('/governance/list', (req, res) => {
   try {
     const metadata = readMetadata();
     const outlines = isDatabaseMode() ? metadata.outlines.filter(hasPersistedOutlineVersion) : metadata.outlines;
-    let items = outlines.map(normalizeOutline);
+    let items = outlines.filter(item => !item.deletedAt).map(normalizeOutline);
     if (req.query.productId) items = items.filter(item => item.productId === req.query.productId);
     res.json({ success: true, data: items, generatedAt: new Date().toISOString() });
   } catch (error) { outlineError(res, error, 'OUTLINE_LIST_FAILED', '大纲列表不可用'); }
 });
 
-router.get('/governance/:id', (req, res) => {
+router.get('/catalog', async (req, res) => {
+  try {
+    let catalog;
+    if (isDatabaseMode()) {
+      catalog = await handbookDomainStore.readOutlineCatalogAsync();
+    } else {
+      const metadata = readMetadata();
+      const items = metadata.outlines.filter(item => !item.deletedAt && hasPersistedOutlineVersion(item)).map(outline => ({
+        ...normalizeOutline(outline),
+        productName: String(outline.productName || outline.productDisplayName || outline.productId || '').trim() || '未指定产品',
+        productDisplayName: String(outline.productName || outline.productDisplayName || outline.productId || '').trim() || '未指定产品',
+      }));
+      const generatedAt = new Date().toISOString();
+      catalog = { items, total: items.length, snapshotVersion: generatedAt, generatedAt };
+    }
+    const generatedAt = catalog.generatedAt || new Date().toISOString();
+    const items = Array.isArray(catalog.items) ? catalog.items : [];
+    res.json({ success: true, data: { items, total: Number(catalog.total ?? items.length), snapshotVersion: catalog.snapshotVersion || generatedAt, generatedAt } });
+  } catch (error) { outlineError(res, error, 'OUTLINE_CATALOG_FAILED', '大纲目录不可用'); }
+});
+
+router.get('/governance/:id', (req, res, next) => {
+  if (req.params.id === 'recycle') return next();
   try {
     const outline = readMetadata().outlines.find(item => item.id === req.params.id);
     if (!outline) return res.status(404).json({ success: false, error: { code: 'OUTLINE_NOT_FOUND', message: '大纲不存在' } });
@@ -524,7 +568,7 @@ router.get('/governance/:id', (req, res) => {
     const detail = {
       ...normalized,
       handbookId: governance.manualId || normalized.handbookId,
-      state: governance.state || normalized.state,
+      state: publicOutlineState(governance.state || normalized.state, normalized.state),
       editVersion: governance.editVersion ?? normalized.editVersion,
       nodes: isDatabaseMode()
         ? (Array.isArray(governance.nodes) ? governance.nodes : outlineNodes(outline))
@@ -537,40 +581,45 @@ router.get('/governance/:id', (req, res) => {
   } catch (error) { outlineError(res, error, 'OUTLINE_DETAIL_FAILED', '大纲详情不可用'); }
 });
 
-router.delete('/governance/:id', (req, res) => {
-  let stagedFile = null;
-  let originalFile = null;
-  try {
-    if (isDatabaseMode()) {
-      const data = handbookDomainStore.deleteOutline(req.params.id);
-      return res.json({ success: true, data, message: '候选大纲已删除' });
-    }
-    let outline;
-    repository.update(metadata => {
-      const index = metadata.outlines.findIndex(item => item.id === req.params.id);
-      if (index < 0) throw Object.assign(new Error('大纲不存在'), { status: 404, code: 'OUTLINE_NOT_FOUND' });
-      outline = metadata.outlines[index];
-      if (outline.readOnly) throw Object.assign(new Error('来源大纲为只读，不能删除'), { status: 409, code: 'OUTLINE_SOURCE_READ_ONLY' });
-      if (outline.state === 'published' || outline.state === 'superseded') throw Object.assign(new Error('已发布大纲不可删除，请通过版本或归档流程治理'), { status: 409, code: 'OUTLINE_IMMUTABLE' });
-      if (outline.file) {
-        originalFile = path.resolve(repository.rootDir, path.basename(outline.file));
-        if (originalFile.startsWith(`${path.resolve(repository.rootDir)}${path.sep}`) && fs.existsSync(originalFile)) {
-          stagedFile = `${originalFile}.deleting-${process.pid}-${Date.now()}`;
-          fs.renameSync(originalFile, stagedFile);
-        }
-      }
-      metadata.outlines.splice(index, 1);
-      return metadata;
-    });
-    if (stagedFile && fs.existsSync(stagedFile)) fs.unlinkSync(stagedFile);
-    return res.json({ success: true, data: { id: outline.id, deleted: true }, message: '候选大纲已删除' });
-  } catch (error) {
-    if (stagedFile && originalFile && fs.existsSync(stagedFile) && !fs.existsSync(originalFile)) {
-      try { fs.renameSync(stagedFile, originalFile); } catch (_) { /* preserve primary error */ }
-    }
-    return res.status(error.status || 500).json({ success: false, error: { code: error.code || 'OUTLINE_DELETE_FAILED', message: error.message } });
-  }
+router.get('/governance/recycle', (req, res) => {
+  try { res.json({ success: true, data: readMetadata().outlines.filter(item => item.deletedAt).map(item => ({ ...normalizeOutline(item), deletedAt: item.deletedAt, deletedBy: item.deletedBy })) }); }
+  catch (error) { outlineError(res, error, 'OUTLINE_RECYCLE_FAILED', '回收站读取失败'); }
 });
+
+function mutateOutlineLifecycle(req, res, action) {
+  try {
+    const id = req.params.id;
+    const outline = readMetadata().outlines.find(item => item.id === id);
+    if (!outline) throw Object.assign(new Error('大纲不存在'), { status: 404, code: 'OUTLINE_NOT_FOUND' });
+    if (outline.readOnly) throw Object.assign(new Error('来源大纲为只读，不能删除'), { status: 409, code: 'OUTLINE_SOURCE_READ_ONLY' });
+    const required = action.startsWith('purge') ? 'outline:purge' : 'outline:delete';
+    if (!String(req.get('x-outline-actions') || '').split(',').includes(required)) throw Object.assign(new Error(action.startsWith('purge') ? '只有超级管理员可以彻底删除大纲' : '无大纲删除权限'), { status: 403, code: 'OUTLINE_PERMISSION_DENIED' });
+    const payload = { ...(req.body || {}), actor: req.get('x-actor-id') };
+    let data;
+    if (isDatabaseMode()) data = action === 'delete' ? handbookDomainStore.deleteOutline(id, payload) : handbookDomainStore.outlineLifecycle(id, action, payload);
+    else {
+      // File installations have no transactional cross-module dependency index.
+      // Fail closed for irreversible cleanup; soft delete/restore remain available.
+      if (action.startsWith('purge')) throw Object.assign(new Error('文件模式缺少完整引用索引，不能安全彻底删除；请使用数据库模式'), { status: 409, code: 'OUTLINE_PURGE_UNAVAILABLE' });
+      repository.update(metadata => {
+        const item = metadata.outlines.find(value => value.id === id);
+        if (action === 'delete' && !item.deletedAt) { item.deletedAt = new Date().toISOString(); item.deletedBy = payload.actor; }
+        if (action === 'restore') {
+          if (item.deletedAt && String(item.state).toLowerCase() === 'published' && metadata.outlines.some(other => other.id !== id && !other.deletedAt && other.handbookId === item.handbookId && String(other.state).toLowerCase() === 'published')) throw Object.assign(new Error('已有新的当前版本，不能恢复旧的当前版本'), { status: 409, code: 'OUTLINE_RESTORE_CONFLICT' });
+          item.deletedAt = null; item.deletedBy = null;
+        }
+        (metadata.lifecycleAudits ||= []).push({ id, action, actor: payload.actor, at: new Date().toISOString() });
+        return metadata;
+      });
+      data = { id, deleted: action === 'delete', restored: action === 'restore' };
+    }
+    return res.json({ success: true, data, message: action === 'delete' ? '大纲已移入回收站' : action === 'restore' ? '大纲已恢复' : action === 'purge' ? '大纲已彻底删除' : undefined });
+  } catch (error) { return outlineError(res, error, 'OUTLINE_LIFECYCLE_FAILED', '大纲操作失败'); }
+}
+router.delete('/governance/:id', (req, res) => mutateOutlineLifecycle(req, res, 'delete'));
+router.post('/governance/:id/restore', (req, res) => mutateOutlineLifecycle(req, res, 'restore'));
+router.get('/governance/:id/purge-preflight', (req, res) => mutateOutlineLifecycle(req, res, 'purge-preflight'));
+router.post('/governance/:id/purge', (req, res) => mutateOutlineLifecycle(req, res, 'purge'));
 
 router.get('/governance/:id/responsibility', (req, res) => {
   try {
@@ -611,7 +660,7 @@ router.get('/list', (req, res) => {
         }
       }
     });
-    res.json({ success: true, data: metadata.outlines });
+    res.json({ success: true, data: metadata.outlines.filter(item => !item.deletedAt) });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -634,33 +683,7 @@ router.get('/:id', (req, res) => {
 });
 
 // DELETE /api/outline/:id - Delete outline
-router.delete('/:id', (req, res) => {
-  try {
-    const metadata = readMetadata();
-    const outlineIndex = metadata.outlines.findIndex(o => o.id === req.params.id);
-    
-    if (outlineIndex === -1) {
-      return res.status(404).json({ success: false, message: '大纲不存在' });
-    }
-    
-    const outline = metadata.outlines[outlineIndex];
-    
-    if (process.env.KNOWLEDGE_STORAGE_MODE !== 'database' && outline.file) {
-      const filePath = path.join(__dirname, '..', 'outlines', outline.file);
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
-      }
-    }
-    
-    // Remove from metadata
-    metadata.outlines.splice(outlineIndex, 1);
-    writeMetadata(metadata);
-    
-    res.json({ success: true, message: '大纲已删除' });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-});
+router.delete('/:id', (req, res) => mutateOutlineLifecycle(req, res, 'delete'));
 
 const parseMarkdownOutline = parseOutlineFile;
 

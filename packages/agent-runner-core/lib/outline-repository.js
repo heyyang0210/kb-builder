@@ -18,7 +18,7 @@ function hasWritableSnapshotContent(outline = {}) {
 }
 
 function writableSnapshot(metadata = {}) {
-  return { ...metadata, outlines: list(metadata.outlines).filter(hasWritableSnapshotContent) };
+  return { ...metadata, outlines: list(metadata.outlines).filter(item => !item.deletedAt && hasWritableSnapshotContent(item)) };
 }
 
 /** File-backed repository used by outline routes until the database adapter is ready. */

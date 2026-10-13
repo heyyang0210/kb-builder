@@ -18,6 +18,10 @@ class AggregateStoreError extends Error {
   }
 }
 
+function storageErrorStatus(code) {
+  return ['REVISION_CONFLICT', 'OUTLINE_DELETED', 'OUTLINE_NOT_FOUND'].includes(code) ? 409 : 503;
+}
+
 function storageMode() {
   const mode = String(process.env.KNOWLEDGE_STORAGE_MODE || 'file').trim().toLowerCase();
   if (!['file', 'database'].includes(mode)) throw new AggregateStoreError('STORAGE_MODE_INVALID', `不支持的存储模式：${mode}`);
@@ -84,7 +88,7 @@ class DatabaseAggregateStore {
       });
       const parsed = JSON.parse(output || '{}');
       if (parsed && parsed.success === false) {
-        throw new AggregateStoreError(parsed.error?.code || 'STORAGE_REQUEST_FAILED', parsed.error?.message || '存储服务请求失败', parsed.error?.code === 'REVISION_CONFLICT' ? 409 : 503, parsed.error?.details);
+        throw new AggregateStoreError(parsed.error?.code || 'STORAGE_REQUEST_FAILED', parsed.error?.message || '存储服务请求失败', storageErrorStatus(parsed.error?.code), parsed.error?.details);
       }
       perfTrace('storage request', { namespace: this.namespace, key: this.key, method, durationMs: Number(process.hrtime.bigint() - startedAt) / 1e6 });
       return parsed;
@@ -97,7 +101,7 @@ class DatabaseAggregateStore {
       throw new AggregateStoreError(
         response?.error?.code || 'STORAGE_UNAVAILABLE',
         response?.error?.message || 'YashanDB 存储服务不可用',
-        response?.error?.code === 'REVISION_CONFLICT' ? 409 : 503,
+        storageErrorStatus(response?.error?.code),
         response?.error?.details,
       );
     }
@@ -117,7 +121,7 @@ class DatabaseAggregateStore {
       }
       try {
         const parsed = JSON.parse(stdout || '{}');
-        if (parsed?.success === false) throw new AggregateStoreError(parsed.error?.code || 'STORAGE_REQUEST_FAILED', parsed.error?.message || '存储服务请求失败', parsed.error?.code === 'REVISION_CONFLICT' ? 409 : 503);
+        if (parsed?.success === false) throw new AggregateStoreError(parsed.error?.code || 'STORAGE_REQUEST_FAILED', parsed.error?.message || '存储服务请求失败', storageErrorStatus(parsed.error?.code), parsed.error?.details);
         perfTrace('storage async request', { namespace: this.namespace, key: this.key, durationMs: Number(process.hrtime.bigint() - startedAt) / 1e6 });
         resolve(parsed);
       } catch (parseError) { reject(parseError); }

@@ -74,7 +74,7 @@ export function renderDashboard(args) {
     const pending = Math.max(total - assigned, 0);
     const taskId = String(task.id || '');
     const dialogId = `domain-task-dialog-${taskId.replace(/[^a-zA-Z0-9_-]/g, '-') || 'unknown'}`;
-    return `<dialog class="domain-task-dialog" id="${escapeHtml(dialogId)}" data-domain-task-dialog="${escapeHtml(taskId)}" data-domain-task aria-labelledby="${escapeHtml(dialogId)}-title">
+    return `<dialog class="domain-task-dialog" id="${escapeHtml(dialogId)}" data-domain-task-dialog="${escapeHtml(taskId)}" data-domain-task aria-labelledby="${escapeHtml(dialogId)}-title" data-scroll-region="dialog">
       <div class="domain-task-dialog-shell">
         <header class="domain-task-dialog-header">
           <div><span class="domain-task-eyebrow">领域建设任务</span><h2 id="${escapeHtml(dialogId)}-title">${escapeHtml(task.techDomainName || task.techDomainId || '技术领域')}</h2><p>负责人：${escapeHtml(task.domainLeaderName || '待配置负责人')} · ${total} 个页面</p></div>

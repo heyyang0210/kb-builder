@@ -89,6 +89,8 @@ class DomainStore {
   }
 
   statusForCode(code) {
+    if (['OUTLINE_DELETED', 'OUTLINE_RESTORE_CONFLICT', 'OUTLINE_PURGE_REFERENCED', 'OUTLINE_PURGE_UNAVAILABLE'].includes(code)) return 409;
+    if (code === 'OUTLINE_PURGE_CONFIRM_REQUIRED') return 422;
     if (code === 'OUTLINE_NOT_FOUND' || code === 'ASSET_NOT_FOUND') return 404;
     if (code === 'BUILD_TASK_NOT_FOUND' || code === 'BUILD_TASK_ITEM_NOT_FOUND') return 404;
     if (code === 'REVISION_CONFLICT' || code === 'OUTLINE_VERSION_CONFLICT' || code === 'OUTLINE_EDIT_CONFLICT' || code === 'OUTLINE_GOVERNANCE_CONFLICT' || code === 'OUTLINE_IMMUTABLE' || code === 'PUBLISHED_CONTENT_LOCKED'
@@ -144,13 +146,23 @@ class DomainStore {
     return result.data || result;
   }
 
+  async readOutlineCatalogAsync() {
+    const result = await this.requestAsync('GET', '/v1/domain/outlines/catalog');
+    return result.data || result;
+  }
+
   writeOutlinesSnapshot(payload) {
     const result = this.request('PUT', '/v1/domain/outlines/snapshot', payload);
     return result.data || result;
   }
 
-  deleteOutline(id) {
-    const result = this.request('DELETE', `/v1/domain/outlines/${encodeURIComponent(id)}`);
+  deleteOutline(id, payload = {}) {
+    const result = this.request('DELETE', `/v1/domain/outlines/${encodeURIComponent(id)}`, payload);
+    return result.data || result;
+  }
+
+  outlineLifecycle(id, action, payload = {}) {
+    const result = this.request(action === 'purge-preflight' ? 'GET' : 'POST', `/v1/domain/outlines/${encodeURIComponent(id)}/${action}`, action === 'purge-preflight' ? undefined : payload);
     return result.data || result;
   }
 
@@ -184,6 +196,11 @@ class DomainStore {
 
   readOutlineGovernance(outlineId) {
     const result = this.request('GET', `/v1/domain/outlines/${encodeURIComponent(outlineId)}/governance`);
+    return result.data || result;
+  }
+
+  async readOutlineGovernanceAsync(outlineId) {
+    const result = await this.requestAsync('GET', `/v1/domain/outlines/${encodeURIComponent(outlineId)}/governance`);
     return result.data || result;
   }
 
