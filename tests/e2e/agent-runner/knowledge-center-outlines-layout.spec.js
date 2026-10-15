@@ -1,6 +1,7 @@
 const { test, expect } = require('@playwright/test');
 const fs = require('fs');
 const path = require('path');
+const XLSX = require('xlsx');
 
 const baseUrl = process.env.KPG_BASE_URL;
 const viewports = [
@@ -16,6 +17,150 @@ function evidencePath(name, browserName) {
 test.beforeEach(async ({ page }) => {
   const response = await page.request.post(`${baseUrl}/knowledge-center/api/auth/admin/login`, { data: { username: 'admin', password: 'admin' } });
   expect(response.ok()).toBe(true);
+});
+
+for (const width of [1440, 375]) {
+  test(`${width}px导入面板支持外部点击与Esc退出，内部选文件和入口切换正常`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const mutations = [];
+    page.on('request', request => {
+      if (request.method() !== 'GET' && /\/api\/outline\//.test(request.url())) mutations.push(request.url());
+    });
+    await page.goto(`${baseUrl}/knowledge-center/outlines/DB-002`);
+    await page.waitForLoadState('networkidle');
+    const menu = page.locator('.outline-import');
+    const trigger = menu.locator('summary');
+    const file = menu.locator('input[type="file"]');
+    const heading = page.getByRole('heading', { name: '概念手册', level: 2 });
+
+    await expect(menu).not.toHaveAttribute('open', '');
+    await trigger.click();
+    await expect(menu).toHaveAttribute('open', '');
+    await menu.getByText('选择 XLSX 大纲模板', { exact: true }).click();
+    await expect(menu).toHaveAttribute('open', '');
+    await file.setInputFiles({ name: '交互验证.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: Buffer.from('仅用于选择文件，不提交') });
+    await expect(menu).toHaveAttribute('open', '');
+    await heading.click();
+    await expect(menu).not.toHaveAttribute('open', '');
+
+    await trigger.click();
+    await expect(file.evaluate(input => input.files[0]?.name)).resolves.toBe('交互验证.xlsx');
+    await file.focus();
+    await page.keyboard.press('Escape');
+    await expect(menu).not.toHaveAttribute('open', '');
+    await expect(trigger).toBeFocused();
+    await trigger.press('Enter');
+    await expect(menu).toHaveAttribute('open', '');
+    await trigger.click();
+    await expect(menu).not.toHaveAttribute('open', '');
+    await expect(file.evaluate(input => input.files[0]?.name)).resolves.toBe('交互验证.xlsx');
+    expect(mutations).toEqual([]);
+  });
+}
+
+test('收起导入面板不取消真实校验请求，重开保留文件与校验反馈', async ({ page }) => {
+  let release, fetched;
+  const hold = new Promise(resolve => { release = resolve; });
+  const started = new Promise(resolve => { fetched = resolve; });
+  await page.route('**/knowledge-center/api/outline/validate', async route => {
+    const response = await route.fetch();
+    fetched(response.status());
+    await hold;
+    await route.fulfill({ response });
+  });
+  await page.goto(`${baseUrl}/knowledge-center/outlines/DB-002`);
+  await page.waitForLoadState('networkidle');
+  const menu = page.locator('.outline-import');
+  const trigger = menu.locator('summary');
+  await trigger.click();
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([
+    ['路径层级1', '路径层级2', '路径层级3', '路径层级4', '内容说明', '技术领域分工'],
+    ['00概念手册.md', '', '', '', '仅校验、不创建候选', ''],
+  ]), '大纲模板');
+  await menu.locator('input[type="file"]').setInputFiles({ name: '概念手册校验.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }) });
+  try {
+    await menu.getByRole('button', { name: '校验大纲', exact: true }).click();
+    expect(await started).toBe(200);
+    await expect(menu).toHaveAttribute('open', '');
+    await page.getByRole('heading', { name: '概念手册', level: 2 }).click();
+    await expect(menu).not.toHaveAttribute('open', '');
+    release();
+    await trigger.click();
+    await expect(menu.locator('[data-outline-import-results]')).toContainText('校验通过，1篇文档；尚未创建候选。');
+    await expect(menu.locator('input[type="file"]').evaluate(input => input.files[0]?.name)).resolves.toBe('概念手册校验.xlsx');
+    await expect(menu.getByRole('button', { name: '导入候选', exact: true })).toBeEnabled();
+  } finally { release(); }
+});
+
+test('SQL参考手册详情等待真实响应时显示读取中，不误报服务不可用', async ({ page }) => {
+  let releaseList;
+  const holdList = new Promise(resolve => { releaseList = resolve; });
+  await page.route('**/knowledge-center/api/outline/catalog', async route => {
+    const response = await route.fetch();
+    await holdList;
+    await route.fulfill({ response });
+  });
+
+  await page.goto(`${baseUrl}/knowledge-center/outlines/DB-004`, { waitUntil: 'domcontentloaded' });
+  await expect(page.getByText('正在读取大纲', { exact: true })).toBeVisible();
+  await expect(page.getByText('大纲服务不可用', { exact: true })).toHaveCount(0);
+  releaseList();
+  await expect(page.getByRole('heading', { name: 'SQL参考手册', level: 2 })).toBeVisible();
+  await expect(page.getByText('大纲服务不可用', { exact: true })).toHaveCount(0);
+});
+
+test('SQL参考手册使用精简详情，领域任务未返回也能显示目录和分工', async ({ page }) => {
+  let release;
+  const hold = new Promise(resolve => { release = resolve; });
+  const requests = [];
+  const errors = [];
+  page.on('request', request => { if (request.url().includes('/api/outline/')) requests.push(request.url()); });
+  page.on('pageerror', error => errors.push(error.message));
+  await page.route('**/knowledge-center/api/outline/build-tasks', async route => {
+    const response = await route.fetch();
+    await hold;
+    await route.fulfill({ response });
+  });
+  try {
+    await page.goto(`${baseUrl}/knowledge-center/outlines/DB-004`, { waitUntil: 'domcontentloaded' });
+    await expect(page.getByRole('heading', { name: 'SQL参考手册', level: 2 })).toBeVisible();
+    await expect(page.getByText('00SQL参考手册.md', { exact: true }).first()).toBeVisible();
+    await page.getByRole('tab', { name: '分工管理', exact: true }).click();
+    await expect(page.locator('.outline-responsibility-table')).toBeVisible();
+    expect(requests.some(url => url.includes('?view=compact'))).toBe(true);
+    expect(requests.some(url => url.endsWith('/governance/list'))).toBe(false);
+    expect(errors).toEqual([]);
+  } finally { release(); }
+});
+
+test('详情真实失败仍提示服务不可用，而不是不存在或尚无大纲', async ({ page }) => {
+  await page.route('**/knowledge-center/api/outline/catalog', route => route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ success: false, error: { code: 'OUTLINE_SERVICE_UNAVAILABLE' } }) }));
+  await page.goto(`${baseUrl}/knowledge-center/outlines/DB-004`);
+  await expect(page.getByText('大纲服务不可用', { exact: true })).toBeVisible();
+  await expect(page.getByText('尚无大纲', { exact: true })).toHaveCount(0);
+});
+
+test('从知识资产进入尚无大纲的概念手册后可打开并关闭模板填写说明', async ({ page }) => {
+  await page.goto(`${baseUrl}/knowledge-center/assets`);
+  await page.getByText('概念手册', { exact: true }).first().click();
+  await page.locator('a.asset-action-row', { hasText: '大纲管理' }).click();
+  await expect(page).toHaveURL(`${baseUrl}/knowledge-center/outlines/DB-002`);
+  await expect(page.getByRole('heading', { name: '概念手册', level: 2 })).toBeVisible();
+
+  const help = page.getByRole('button', { name: '查看大纲模板字段填写说明' });
+  const panel = page.locator('[data-outline-template-help-panel]');
+  await expect(panel).toBeHidden();
+  await help.click();
+  await expect(panel).toBeVisible();
+  await expect(page.getByRole('heading', { name: '大纲模板填写说明' })).toBeVisible();
+  await expect(help).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.getByRole('button', { name: '关闭大纲模板填写说明' })).toBeFocused();
+
+  await page.getByRole('button', { name: '关闭大纲模板填写说明' }).click();
+  await expect(panel).toBeHidden();
+  await expect(help).toHaveAttribute('aria-expanded', 'false');
+  await expect(help).toBeFocused();
 });
 
 test('刷新首帧恢复收缩导航且隐藏导航恢复入口不覆盖页面标题', async ({ page }) => {
@@ -73,7 +218,7 @@ test('大纲版本标签中的空值不会导致详情视图渲染中断', async
     contentType: 'application/json',
     body: JSON.stringify({ success: true, data: { items: [{ handbookId: 'null-tags', name: '空版本标签回归手册' }] } }),
   }));
-  await page.route('**/knowledge-center/api/outline/governance/outline-null-tags', route => route.fulfill({
+  await page.route('**/knowledge-center/api/outline/governance/outline-null-tags*', route => route.fulfill({
     status: 200,
     contentType: 'application/json',
     body: JSON.stringify({ success: true, data: { id: 'outline-null-tags', handbookId: 'null-tags', name: '空标签大纲', state: 'draft', businessVersionTags: [null], nodes: [], governance: {} } }),

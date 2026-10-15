@@ -1185,6 +1185,15 @@ public final class Main {
         return assignments;
     }
 
+    private Map<String, String> techDomainNames(Connection connection) throws SQLException {
+        Map<String, String> names = new LinkedHashMap<>();
+        try (PreparedStatement statement = connection.prepareStatement("SELECT TECH_DOMAIN_ID, DOMAIN_NAME FROM KC_TECH_DOMAIN");
+             ResultSet result = statement.executeQuery()) {
+            while (result.next()) names.put(result.getString(1), result.getString(2));
+        }
+        return names;
+    }
+
     private Map<String, Object> projectOutlineGovernance(Connection connection, String outlineId) throws SQLException {
         Map<String, Object> header = outlineHeader(connection, outlineId);
         List<Map<String, Object>> nodes = outlineNodes(connection, outlineId);
@@ -1233,6 +1242,7 @@ public final class Main {
         // 以前这里只投影了前者，并把负责人固定为 null，导致生产页的“只看我负责”
         // 永远无法命中真实分工。先读取同一大纲的任务投影，再按页面和技术领域合并。
         List<Map<String, Object>> outlineTasks = projectBuildTasksForOutline(connection, outlineId);
+        Map<String, String> domainNames = techDomainNames(connection);
         Map<String, Map<String, Object>> taskItemsByDocumentDomain = new LinkedHashMap<>();
         for (Map<String, Object> task : outlineTasks) {
             for (Map<String, Object> taskItem : listOfMaps(task.get("items"))) {
@@ -1253,7 +1263,7 @@ public final class Main {
                 Map<String, Object> taskItem = taskItemsByDocumentDomain.get(documentId + "|" + domainId);
                 Map<String, Object> ownership = new LinkedHashMap<>();
                 ownership.put("techDomainId", domainId);
-                ownership.put("techDomainName", techDomainName(connection, domainId));
+                ownership.put("techDomainName", domainNames.getOrDefault(domainId, domainId));
                 ownership.put("taskId", taskItem == null ? null : taskItem.get("taskId"));
                 ownership.put("assigneeId", taskItem == null ? null : taskItem.get("assigneeId"));
                 ownership.put("assigneeName", taskItem == null ? null : taskItem.get("assigneeName"));
@@ -1592,15 +1602,6 @@ public final class Main {
         return tasks;
     }
 
-    private String techDomainName(Connection connection, String domainId) throws SQLException {
-        try (PreparedStatement statement = connection.prepareStatement("SELECT DOMAIN_NAME FROM KC_TECH_DOMAIN WHERE TECH_DOMAIN_ID = ?")) {
-            statement.setString(1, domainId);
-            try (ResultSet result = statement.executeQuery()) {
-                return result.next() ? result.getString(1) : domainId;
-            }
-        }
-    }
-
     private Map<String, Object> projectBuildTaskRow(Connection connection, ResultSet result) throws SQLException {
         long outlineVersionId = result.getLong(1);
         String externalOutlineId = result.getString(2);
@@ -1798,18 +1799,29 @@ public final class Main {
 
     private Map<String, Object> saveOutlinesSnapshot(Connection connection, Map<String, Object> payload) throws SQLException, JsonParseException {
         List<Map<String, Object>> outlines = listOfMaps(payload.get("outlines"));
+        boolean insertOnly = Boolean.TRUE.equals(payload.get("insertOnly"));
         Set<Long> manualIds = new java.util.HashSet<>();
         for (Map<String, Object> outline : outlines) {
             validateOutlineSnapshot(outline);
             String outlineId = outlineId(outline);
+            if (insertOnly) {
+                try (PreparedStatement query = connection.prepareStatement("SELECT OUTLINE_VERSION_ID FROM KC_MANUAL_OUTLINE_VERSION WHERE SOURCE_REF=? OR TO_CHAR(OUTLINE_VERSION_ID)=?")) {
+                    query.setString(1, outlineId);
+                    query.setString(2, outlineId);
+                    try (ResultSet existing = query.executeQuery()) {
+                        if (existing.next()) throw new SQLException("OUTLINE_VERSION_CONFLICT");
+                    }
+                }
+            }
             String handbookId = handbookIdFromOutline(outline, outlineId);
             long manualId = requireExistingManual(connection, handbookId);
             long outlineVersionId = upsertOutlineVersion(connection, manualId, outlineId, outline, payload);
             manualIds.add(manualId);
-            rebuildOutlineChildren(connection, outlineVersionId, outlineId, outline);
+            rebuildOutlineChildren(connection, outlineVersionId, outlineId, outline, !insertOnly);
             replaceOutlineAssignmentsFromSnapshot(connection, outlineVersionId, outlineId, outline, coalesce(payload.get("principalId"), payload.get("updatedBy"), "system:api"));
         }
-        updateCurrentOutlinePointers(connection, manualIds);
+        // 导入只新增候选；不改写已有当前版本指针或既有大纲内容。
+        if (!insertOnly) updateCurrentOutlinePointers(connection, manualIds);
         return projectOutlines(connection);
     }
 
@@ -2257,6 +2269,7 @@ public final class Main {
             try (ResultSet result = query.executeQuery()) {
                 if (result.next()) {
                     if (result.getTimestamp(3) != null) throw new SQLException("OUTLINE_DELETED");
+                    if (Boolean.TRUE.equals(snapshot.get("insertOnly"))) throw new SQLException("OUTLINE_VERSION_CONFLICT");
                     long internalId = result.getLong(1);
                     long editVersion = result.getLong(2) + 1;
                     try (PreparedStatement update = connection.prepareStatement(
@@ -2323,9 +2336,22 @@ public final class Main {
         };
     }
 
-    private void rebuildOutlineChildren(Connection connection, long outlineVersionId, String externalOutlineId, Map<String, Object> outline) throws SQLException {
-        deleteOutlineChildren(connection, outlineVersionId);
+    private void rebuildOutlineChildren(Connection connection, long outlineVersionId, String externalOutlineId, Map<String, Object> outline, boolean replaceExisting) throws SQLException {
+        if (replaceExisting) deleteOutlineChildren(connection, outlineVersionId);
         Map<String, Object> content = asMapOrEmpty(outline.get("content"));
+        if (content.get("nodes") instanceof List<?>) {
+            Map<String, Long> internalIds = new LinkedHashMap<>();
+            for (Map<String, Object> node : OutlineNodeSnapshot.normalize(listOfMaps(content.get("nodes")))) {
+                String parentKey = coalesce(node.get("parentId"));
+                String key = coalesce(node.get("id"));
+                long internalId = insertOutlineNode(connection, key, outlineVersionId,
+                    parentKey == null ? null : internalIds.get(parentKey), coalesce(node.get("kind")),
+                    coalesce(node.get("title")), coalesce(node.get("description")),
+                    ((Number) node.get("level")).intValue(), ((Number) node.get("order")).longValue());
+                internalIds.put(key, internalId);
+            }
+            return;
+        }
         List<Map<String, Object>> parts = listOfMaps(content.get("parts"));
         long order = 0;
         for (int partIndex = 0; partIndex < parts.size(); partIndex++) {
@@ -2403,6 +2429,14 @@ public final class Main {
     private List<Map<String, Object>> assignmentsFromContent(Object content, String outlineId) {
         List<Map<String, Object>> assignments = new ArrayList<>();
         Map<String, Object> value = asMapOrEmpty(content);
+        if (value.get("nodes") instanceof List<?>) {
+            for (Map<String, Object> node : listOfMaps(value.get("nodes"))) {
+                if ("document".equals(node.get("kind")) && !listValues(node.get("techDomainIds")).isEmpty()) {
+                    assignments.add(mapOf("nodeId", node.get("id"), "techDomainIds", listValues(node.get("techDomainIds"))));
+                }
+            }
+            return assignments;
+        }
         List<Map<String, Object>> parts = listOfMaps(value.get("parts"));
         for (int partIndex = 0; partIndex < parts.size(); partIndex++) {
             Map<String, Object> part = parts.get(partIndex);
@@ -2523,6 +2557,13 @@ public final class Main {
         } catch (Exception error) {
             throw new SQLException("读取大纲节点失败", error);
         }
+        Map<String, String> pathsById = new LinkedHashMap<>();
+        for (Map<String, Object> node : nodes) {
+            String parentPath = pathsById.get(coalesce(node.get("parentId")));
+            String path = parentPath == null ? String.valueOf(node.get("title")) : parentPath + "/" + node.get("title");
+            node.put("path", path);
+            pathsById.put(String.valueOf(node.get("id")), path);
+        }
         return nodes;
     }
 
@@ -2615,6 +2656,7 @@ public final class Main {
 
     private int countLeafDocuments(Object content) {
         Map<String, Object> outline = asMapOrEmpty(content);
+        if (outline.get("nodes") instanceof List<?>) return (int) listOfMaps(outline.get("nodes")).stream().filter(node -> "document".equals(node.get("kind"))).count();
         int count = 0;
         for (Map<String, Object> part : listOfMaps(outline.get("parts"))) {
             for (Map<String, Object> chapter : listOfMaps(part.get("chapters"))) {

@@ -1,4 +1,16 @@
 {
+  "outlineTemplate": {
+    "version": "natural-path-v1",
+    "headers": ["路径层级1", "路径层级2", "路径层级3", "路径层级4", "内容说明", "技术领域分工"],
+    "maxDepth": 4,
+    "extension": ".md",
+    "introPrefix": "00",
+    "excludedNames": ["_index.md"],
+    "templatePath": "knowledge/outlines/大纲模板.xlsx",
+    "sampleSource": "documents/DB-004 SQL参考手册.xlsx",
+    "sampleDownloadPath": "knowledge/outlines/SQL参考手册大纲示例.xlsx",
+    "sampleDownloadName": "SQL参考手册大纲示例.xlsx"
+  },
   "gitlabVerificationErrors": {
     "default": "检查 GitLab 地址、项目路径、认证配置和服务日志，修复后点击“重新验证”。",
     "GITLAB_OAUTH_REQUIRED": "点击“用我的 GitLab 验证连接”完成当前管理员账号授权，然后重新验证。",

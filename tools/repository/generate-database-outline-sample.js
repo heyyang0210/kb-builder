@@ -9,7 +9,7 @@ const sourcePath = process.env.OUTLINE_SAMPLE_SOURCE
   : path.join(root, 'YashanDB_23.5.4_数据库管理手册目录结构.xlsx');
 const outputPath = process.env.OUTLINE_SAMPLE_OUTPUT
   ? path.resolve(process.env.OUTLINE_SAMPLE_OUTPUT)
-  : path.join(root, '基本数据库管理手册大纲示例.xlsx');
+  : path.join(root, 'knowledge/outlines/基本数据库管理手册大纲示例.xlsx');
 const headers = ['一级目录', '二级目录', '三级目录', '页面', '内容说明', '技术领域分工'];
 
 function asText(value) {

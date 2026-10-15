@@ -6,8 +6,8 @@ const { createKnowledgeCenterHandler } = require('../../../packages/agent-runner
 const { createTemplateStore } = require('../../../packages/agent-runner-core/lib/template-store');
 const root = path.resolve(__dirname, '../../..');
 const outlineWorkbookConfig = {
-  OUTLINE_TEMPLATE_PATH: path.join(root, '大纲模板.xlsx'),
-  OUTLINE_SAMPLE_PATH: path.join(root, '基本数据库管理手册大纲示例.xlsx'),
+  OUTLINE_TEMPLATE_PATH: path.join(root, 'knowledge/outlines/大纲模板.xlsx'),
+  OUTLINE_SAMPLE_PATH: path.join(root, 'knowledge/outlines/基本数据库管理手册大纲示例.xlsx'),
 };
 
 // Real HTTP route and domain implementation. Authentication and aggregate

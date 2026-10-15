@@ -173,7 +173,7 @@ describe('知识资产工作台前端契约', () => {
     expect(html).toContain('id="notice-action"');
     expect(app).toContain("actionLabel: '查看已停用资产'");
     expect(app).toContain("actionHref: '/knowledge-center/assets?lifecycle=inactive'");
-    expect(app).toContain("document.querySelector('[data-asset-more-menu][open]')");
+    expect(app).toContain("document.querySelector('[data-asset-more-menu][open], .outline-import[open]')");
     expect(css).toContain('.asset-more-menu-panel { position: absolute;');
     expect(css).toContain('.asset-more-trigger { min-height: 44px;');
   });

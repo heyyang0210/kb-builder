@@ -215,15 +215,15 @@ describe('大纲治理投影', () => {
   });
 
   test('正式模板只有通用六列表头，不携带具体手册内容', () => {
-    const filePath = path.resolve(__dirname, '../../../大纲模板.xlsx');
+    const filePath = path.resolve(__dirname, '../../../knowledge/outlines/大纲模板.xlsx');
     const workbook = XLSX.readFile(filePath);
     const rows = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { header: 1 });
-    expect(rows[0]).toEqual(['一级目录', '二级目录', '三级目录', '页面', '内容说明', '技术领域分工']);
+    expect(rows[0]).toEqual(['路径层级1', '路径层级2', '路径层级3', '路径层级4', '内容说明', '技术领域分工']);
     expect(rows).toHaveLength(1);
   });
 
   test('数据库管理手册样例按六列模板保留 77 个页面', () => {
-    const filePath = path.resolve(__dirname, '../../../基本数据库管理手册大纲示例.xlsx');
+    const filePath = path.resolve(__dirname, '../../../knowledge/outlines/基本数据库管理手册大纲示例.xlsx');
     const workbook = XLSX.readFile(filePath);
     const rows = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { header: 1, defval: '' });
     expect(rows[0]).toEqual(['一级目录', '二级目录', '三级目录', '页面', '内容说明', '技术领域分工']);
@@ -246,7 +246,7 @@ describe('大纲治理投影', () => {
   });
 
   test('XLSX 样例转换为包含 document 叶子的三级目录树', () => {
-    const filePath = path.resolve(__dirname, '../../../基本数据库管理手册大纲示例.xlsx');
+    const filePath = path.resolve(__dirname, '../../../knowledge/outlines/基本数据库管理手册大纲示例.xlsx');
     const parsed = parseXlsxOutlineFile(filePath);
     const nodes = nodesFromContent(parsed, 'xlsx-fixture');
     const documentNodes = nodes.filter(node => node.kind === 'document');
@@ -277,7 +277,7 @@ describe('大纲治理投影', () => {
   });
 
   test('XLSX 可以使用原始文件名作为候选标题', () => {
-    const filePath = path.resolve(__dirname, '../../../基本数据库管理手册大纲示例.xlsx');
+    const filePath = path.resolve(__dirname, '../../../knowledge/outlines/基本数据库管理手册大纲示例.xlsx');
     expect(parseXlsxOutlineFile(filePath, '数据库管理手册').title).toBe('数据库管理手册');
   });
 
@@ -368,7 +368,7 @@ describe('大纲治理投影', () => {
   test('知识中心导入以已有手册名称为准，不使用 Excel 文件名', () => {
     const source = fs.readFileSync(path.resolve(__dirname, '../../../packages/agent-runner-core/routes/outline.js'), 'utf8');
     expect(source).toContain('const name = handbookName(handbookId);');
-    expect(source).toContain('parseBodyContent({}, file.path, name)');
+    expect(source).toContain('parseBodyContent({}, input.file.path, name)');
     expect(source).toContain('createCandidate({ name, content: input.content');
     expect(source).toContain('candidate.sourceFileName = fileName');
     expect(source).not.toContain('const inferredName = input.content?.title');

@@ -146,6 +146,11 @@ class DomainStore {
     return result.data || result;
   }
 
+  async readOutlinesAsync() {
+    const result = await this.requestAsync('GET', '/v1/domain/outlines');
+    return result.data || result;
+  }
+
   async readOutlineCatalogAsync() {
     const result = await this.requestAsync('GET', '/v1/domain/outlines/catalog');
     return result.data || result;

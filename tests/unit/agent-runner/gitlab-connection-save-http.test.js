@@ -16,7 +16,7 @@ describe('GitLab 连接保存 HTTP 契约', () => {
       readPlatformGitLabConnection: () => ({ ...saved.payload, id: 'test-repo', rowVersion: 1, credentialRef: 'configured_token' }),
     };
     const handler = createKnowledgeCenterHandler({
-      config: { KNOWLEDGE_CENTER_PREFIX: '/knowledge-center', OUTLINE_TEMPLATE_PATH: require('path').resolve('大纲模板.xlsx'), OUTLINE_SAMPLE_PATH: require('path').resolve('基本数据库管理手册大纲示例.xlsx') },
+      config: { KNOWLEDGE_CENTER_PREFIX: '/knowledge-center', OUTLINE_TEMPLATE_PATH: require('path').resolve('knowledge/outlines/大纲模板.xlsx'), OUTLINE_SAMPLE_PATH: require('path').resolve('knowledge/outlines/基本数据库管理手册大纲示例.xlsx') },
       stores: { domainStore }, modules: { auth },
     });
     server = http.createServer(handler);
