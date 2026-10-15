@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const { rules: pathRules, OutlineTemplateError, parseNaturalPathRows } = require('../lib/outline-path-template');
 
 const OUTLINE_STATES = new Set([
   'draft', 'parsing', 'preflight_failed', 'pending_confirmation',
@@ -53,6 +54,9 @@ function normalizeDirectory(source, fallbackName = '未命名章节') {
 
 function normalizeContent(content, fallbackTitle = '上传的大纲') {
   const source = content && typeof content === 'object' ? content : {};
+  if (source.schemaVersion === pathRules.version && Array.isArray(source.nodes)) {
+    return { ...source, title: String(source.title || fallbackTitle), nodes: source.nodes.map(node => ({ ...node, techDomainIds: normalizeTechDomainValues(node.techDomainIds) })) };
+  }
   const sourceParts = Array.isArray(source.parts)
     ? source.parts
     : Array.isArray(source.chapters) ? [{ part: '默认部分', chapters: source.chapters }] : [];
@@ -210,17 +214,22 @@ function parseXlsxOutlineFile(filePath, fallbackTitle = path.basename(filePath, 
     return sheet && String(sheet['!ref'] || '').trim();
   });
   if (sheetNames.length !== 1) {
-    throw new Error(`XLSX 大纲模板必须包含一个非空 Sheet，当前为 ${sheetNames.length} 个`);
+    throw new OutlineTemplateError([{ code: 'SHEET_COUNT', row: 1, column: '工作表', message: `XLSX 大纲模板必须包含一个非空可见工作表，当前为 ${sheetNames.length} 个`, suggestion: '保留一个大纲工作表；辅助选项表应隐藏。' }]);
   }
 
   const sheet = workbook.Sheets[sheetNames[0]];
-  const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: false });
+  const range = XLSX.utils.decode_range(sheet['!ref']);
+  range.s = { r: 0, c: 0 };
+  const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: false, range });
   const legacyHeaders = ['一级目录', '二级目录', '三级目录', '页面', '内容说明'];
   const legacyHeadersWithTechDomain = [...legacyHeaders, '技术领域分工'];
   const columnarHeaders = ['一级目录', '二级目录', '三级目录', '页面', '内容说明', '技术领域分工'];
   const legacyColumnarHeaders = ['一级目录', '二级目录', '三级目录', '四级目录', '页面', '内容说明', '技术领域分工'];
   const hierarchicalHeaders = ['层级', '节点名称', '节点类型', '内容说明', '技术领域分工'];
   const headers = (rows.shift() || []).map(cell => String(cell || '').trim().replace(/^\uFEFF/, ''));
+  if (headers.length === pathRules.headers.length && pathRules.headers.every((header, index) => headers[index] === header)) {
+    return parseNaturalPathRows(rows, fallbackTitle, sheet['!merges'] || []);
+  }
   if (headers.length === columnarHeaders.length && columnarHeaders.every((header, index) => headers[index] === header)) {
     return parseColumnarXlsxOutlineRows(rows, fallbackTitle);
   }
@@ -235,7 +244,7 @@ function parseXlsxOutlineFile(filePath, fallbackTitle = path.basename(filePath, 
   const isLegacyTemplate = headers.length === legacyHeaders.length
     && legacyHeaders.every((header, index) => headers[index] === header);
   if (!hasTechDomainColumn && !isLegacyTemplate) {
-    throw new Error(`XLSX 大纲模板表头必须为：${columnarHeaders.join('、')}`);
+    throw new OutlineTemplateError([{ code: 'HEADERS_INVALID', row: 1, column: '表头', message: `XLSX 大纲模板表头必须为：${pathRules.headers.join('、')}`, suggestion: '重新下载大纲模板，保留六列表头名称与顺序，再填写内容。' }]);
   }
 
   const parts = [];
@@ -535,6 +544,7 @@ function parseOutlineFile(filePath, options = {}) {
 }
 
 function nodesFromContent(content, outlineId = 'candidate') {
+  if (content?.schemaVersion === pathRules.version && Array.isArray(content.nodes)) return content.nodes;
   const nodes = [];
   let order = 0;
   const appendDocuments = (documents, parentId, parentPath, level) => {
@@ -776,6 +786,10 @@ function updateContentDescription(content, outlineId, nodeId, description) {
   const nodes = nodesFromContent(content, outlineId);
   const target = nodes.find(node => String(node.id) === String(nodeId));
   if (!target || !isDocumentNode(target)) return false;
+  if (content?.schemaVersion === pathRules.version) {
+    target.description = description;
+    return true;
+  }
   const sourceId = String(target.sourceId || '');
   const visitDocuments = documents => {
     for (const document of Array.isArray(documents) ? documents : []) {
@@ -816,6 +830,19 @@ function domainAliasMap(techDomains = readTechDomainConfig()) {
 function normalizeImportedTechDomains(content, techDomains = readTechDomainConfig()) {
   const aliases = domainAliasMap(techDomains);
   const unknown = new Set();
+  if (content?.schemaVersion === pathRules.version) {
+    const errors = [];
+    for (const node of content.nodes || []) {
+      node.techDomainIds = normalizeTechDomainValues(node.techDomainIds).map(value => {
+        const resolved = aliases.get(value.toLowerCase());
+        if (!resolved) errors.push({ code: 'INVALID_TECH_DOMAIN_ASSIGNMENT', row: node.sourceRow, column: '技术领域分工', path: node.path,
+          message: `技术领域“${value}”未配置`, suggestion: `请填写平台已有的技术领域名称或编码：${techDomains.map(domain => domain.name || domain.code || domain.id).join('、')}；也可暂时留空，在发布前完成分工。` });
+        return resolved || value;
+      });
+    }
+    if (errors.length) throw new OutlineTemplateError(errors);
+    return content;
+  }
   const visit = documents => {
     for (const document of Array.isArray(documents) ? documents : []) {
       const values = normalizeTechDomainValues(document.techDomainIds);
@@ -1009,9 +1036,13 @@ function saveFileGovernance(outline, payload, techDomains = readTechDomainConfig
     return outline;
   }
   for (const item of Array.isArray(payload.descriptions) ? payload.descriptions : []) {
-    if (!updateContentDescription(outline.content, outline.id, item.nodeId, String(item.description || ''))) {
+    const description = String(item.description || '');
+    if (!updateContentDescription(outline.content, outline.id, item.nodeId, description)) {
       throw Object.assign(new Error('内容说明对应的 document 不存在'), { status: 422, code: 'INVALID_DOMAIN_PAYLOAD' });
     }
+    // 目录保存后的独立节点投影会随 JSON 重读与 content.nodes 分离。
+    const projected = nodes.find(node => String(node.id) === String(item.nodeId));
+    if (projected) projected.description = description;
   }
   outline.governance = {
     ...(outline.governance || {}),
@@ -1086,7 +1117,7 @@ function buildImpactProjection(outline) {
   };
 }
 
-function validateCandidate({ content, productId, businessVersionTags, requireGovernance = true }) {
+function validateCandidate({ content, nodes: sourceNodes, productId, businessVersionTags, requireGovernance = true }) {
   const errors = [];
   if (requireGovernance) {
     if (!productId) errors.push({ code: 'PRODUCT_REQUIRED', field: 'productId', message: '必须选择适用产品' });
@@ -1094,7 +1125,7 @@ function validateCandidate({ content, productId, businessVersionTags, requireGov
       errors.push({ code: 'BUSINESS_VERSION_REQUIRED', field: 'businessVersionTags', message: '必须至少选择一个业务版本标签' });
     }
   }
-  const nodes = outlineNodes({ content });
+  const nodes = outlineNodes({ content, nodes: sourceNodes });
   if (!nodes.length) errors.push({ code: 'OUTLINE_EMPTY', field: 'content', message: '未解析出有效目录节点' });
   const documentNodes = nodes.filter(isDocumentNode);
   if (documentNodes.length === 0) errors.push({ code: 'OUTLINE_DOCUMENT_REQUIRED', field: 'content', message: '大纲至少需要一个 document 叶子节点' });

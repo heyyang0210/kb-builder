@@ -26,8 +26,8 @@ describe('数据库配置模式 GitLab 验证运行时事实 HTTP 回归', () =>
     const handler = createKnowledgeCenterHandler({
       config: {
         KNOWLEDGE_CENTER_PREFIX: '/knowledge-center',
-        OUTLINE_TEMPLATE_PATH: path.resolve('大纲模板.xlsx'),
-        OUTLINE_SAMPLE_PATH: path.resolve('基本数据库管理手册大纲示例.xlsx'),
+        OUTLINE_TEMPLATE_PATH: path.resolve('knowledge/outlines/大纲模板.xlsx'),
+        OUTLINE_SAMPLE_PATH: path.resolve('knowledge/outlines/基本数据库管理手册大纲示例.xlsx'),
       },
       stores: { domainStore: { readPlatformGitLabConnections: () => ({ items: [{ ...connection }] }), readPlatformGitLabConnection: () => ({ ...connection }) } },
       modules: { auth: { authorize: async () => ({ user: { id: 'test-admin', roles: ['PLATFORM_ADMIN'] }, roles: ['PLATFORM_ADMIN'] }) } },

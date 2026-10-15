@@ -9,6 +9,7 @@ const { assignmentsFromContent, buildCatalog, buildImpactProjection, buildOutlin
 const { OutlineRepository } = require('../lib/outline-repository');
 const repository = new OutlineRepository(process.env.OUTLINE_REPOSITORY_DIR ? path.resolve(process.env.OUTLINE_REPOSITORY_DIR) : undefined);
 const handbookDomainStore = createDomainStore();
+const { rules: pathRules, pathId } = require('../lib/outline-path-template');
 
 function isDatabaseMode() {
   return String(process.env.KNOWLEDGE_STORAGE_MODE || '').toLowerCase() === 'database';
@@ -134,7 +135,7 @@ function parseBodyContent(body, filePath, fallbackTitle) {
     try { return typeof body.content === 'string' ? JSON.parse(body.content) : body.content; } catch (_) { /* fallback */ }
   }
   if (filePath) {
-    try { return parseOutlineFile(filePath, { fallbackTitle }); } catch (_) { /* caller validates */ }
+    return parseOutlineFile(filePath, { fallbackTitle });
   }
   return null;
 }
@@ -193,6 +194,10 @@ function candidateDetail(candidate) { return { ...normalizeOutline(candidate), c
 function createCandidate({ name, content, productId, businessVersionTags, handbookId, sourceType = 'manual', file }) {
   const now = new Date().toISOString();
   const id = `outline_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  if (content?.schemaVersion === pathRules.version) {
+    const ids = new Map(content.nodes.map(node => [node.id, pathId(handbookId, node.path)]));
+    content = { ...content, nodes: content.nodes.map(node => ({ ...node, id: ids.get(node.id), sourceId: ids.get(node.id), parentId: node.parentId ? ids.get(node.parentId) : null })) };
+  }
   const assignments = assignmentsFromContent(content, id);
   return {
     id,
@@ -209,8 +214,8 @@ function createCandidate({ name, content, productId, businessVersionTags, handbo
     state: 'draft',
     created_at: now,
     updated_at: now,
-    parserVersion: 'governance-v1',
-    ruleVersion: 'governance-v1',
+    parserVersion: content?.schemaVersion || 'governance-v1',
+    ruleVersion: content?.schemaVersion || 'governance-v1',
     editVersion: 1,
     governance: assignments.length ? { assignments, tasks: [] } : undefined
   };
@@ -313,6 +318,26 @@ router.post('/handbooks', (req, res) => {
   res.status(201).json(response);
 });
 
+// 上传校验只读取手册/领域，不写大纲；临时上传文件始终清理。
+router.post('/validate', upload.single('file'), (req, res) => {
+  try {
+    const handbookId = requireExistingHandbook(req.body?.handbookId);
+    if (!req.file) throw Object.assign(new Error('请选择 XLSX 大纲文件'), { status: 422, code: 'FILE_REQUIRED' });
+    const content = parseOutlineFile(req.file.path, { fallbackTitle: handbookName(handbookId) });
+    normalizeImportedTechDomains(content, readActiveTechDomains());
+    const check = validateCandidate({ content, requireGovernance: false });
+    res.status(check.passed ? 200 : 422).json({ success: check.passed, data: {
+      passed: check.passed, errors: check.errors, documentCount: check.nodes.filter(node => node.kind === 'document').length,
+      nodeCount: check.nodes.length, parserVersion: content.schemaVersion || 'governance-v1'
+    } });
+  } catch (error) {
+    res.status(error.status || 422).json({ success: false, data: { passed: false, errors: error.details || [{
+      code: error.code || 'OUTLINE_PARSE_FAILED', row: null, column: '文件', message: error.message,
+      suggestion: '使用下载的大纲模板，检查文件格式和所选手册后重新校验。'
+    }] } });
+  } finally { removeUploadedFile(req.file); }
+});
+
 // Import a file as a candidate. Supports multipart file or JSON content.
 router.post('/import', upload.fields([{ name: 'file', maxCount: 1 }, { name: 'files', maxCount: 20 }]), (req, res) => {
   try {
@@ -326,22 +351,21 @@ router.post('/import', upload.fields([{ name: 'file', maxCount: 1 }, { name: 'fi
     let tags = req.body && req.body.businessVersionTags;
     if (typeof tags === 'string') { try { tags = JSON.parse(tags); } catch (_) { tags = []; } }
     const metadata = repository.read(); const key = requestKey(req);
-    if (replay(metadata, key, res)) return;
+    if (replay(metadata, key, res)) { files.forEach(removeUploadedFile); return; }
     const name = handbookName(handbookId);
     const inputs = files.length
-      ? files.map(file => ({
-          file,
-          content: parseBodyContent({}, file.path, name)
-        }))
+      ? files.map(file => ({ file }))
       : [{ file: null, content: parseBodyContent(req.body) }];
     const results = [];
+    const candidates = [];
     for (const input of inputs) {
       const fileName = input.file?.originalname || null;
       try {
+        if (input.file) input.content = parseBodyContent({}, input.file.path, name);
         input.content = normalizeImportedTechDomains(input.content, readActiveTechDomains());
       } catch (error) {
         removeUploadedFile(input.file);
-        results.push({ fileName, status: 'failed', error: { code: error.code || 'INVALID_TECH_DOMAIN_ASSIGNMENT', message: error.message, details: error.details } });
+        results.push({ fileName, status: 'failed', error: { code: error.code || 'OUTLINE_PARSE_FAILED', message: error.message, details: error.details || [{ code: error.code || 'OUTLINE_PARSE_FAILED', column: '文件', message: error.message, suggestion: '重新下载模板，检查工作表、路径和技术领域后重试。' }] } });
         continue;
       }
       const check = validateCandidate({ content: input.content, productId: req.body?.productId, businessVersionTags: tags, requireGovernance: false });
@@ -351,12 +375,12 @@ router.post('/import', upload.fields([{ name: 'file', maxCount: 1 }, { name: 'fi
       if (duplicate && !isConfirmed(req.body?.confirmDuplicate)) { removeUploadedFile(input.file); results.push({ fileName, status: 'duplicate_confirmation_required', duplicateOf: { id: duplicate.id, handbookId: duplicate.handbookId, name: duplicate.name }, fingerprint }); continue; }
       const candidate = createCandidate({ name, content: input.content, productId: req.body?.productId, businessVersionTags: tags, handbookId, sourceType: 'import', file: input.file?.filename });
       candidate.sourceFileName = fileName;
-      candidate.sourceFingerprint = fingerprint; metadata.outlines.push(candidate); results.push({ fileName, status: 'imported', data: candidateDetail(candidate) });
+      candidate.sourceFingerprint = fingerprint; metadata.outlines.push(candidate); candidates.push(candidate); results.push({ fileName, status: 'imported', data: candidateDetail(candidate) });
     }
     const imported = results.filter(item => item.status === 'imported'); const summary = { total: results.length, imported: imported.length, failed: results.length - imported.length };
     const first = imported[0]?.data; const response = { success: imported.length > 0, data: { ...(inputs.length === 1 && first ? first : {}), items: results, summary } };
     const status = imported.length === results.length ? 201 : imported.length ? 207 : results.some(item => item.status === 'duplicate_confirmation_required') ? 409 : 422;
-    remember(metadata, key, status, response); writeMetadata(metadata); res.status(status).json(response);
+    remember(metadata, key, status, response); repository.append(candidates, metadata); res.status(status).json(response);
   } catch (error) { res.status(error.status || 400).json({ success: false, error: { code: error.code || 'OUTLINE_IMPORT_FAILED', message: error.message } }); }
 });
 
@@ -556,26 +580,40 @@ router.get('/catalog', async (req, res) => {
   } catch (error) { outlineError(res, error, 'OUTLINE_CATALOG_FAILED', '大纲目录不可用'); }
 });
 
-router.get('/governance/:id', (req, res, next) => {
+router.get('/governance/:id', async (req, res, next) => {
   if (req.params.id === 'recycle') return next();
   try {
-    const outline = readMetadata().outlines.find(item => item.id === req.params.id);
+    const databaseMode = isDatabaseMode();
+    let outline;
+    let governance;
+    if (databaseMode) {
+      const [metadata, projected] = await Promise.all([
+        handbookDomainStore.readOutlinesAsync(),
+        handbookDomainStore.readOutlineGovernanceAsync(req.params.id),
+      ]);
+      governance = projected;
+      outline = metadata.outlines.find(item => item.id === req.params.id);
+    } else {
+      outline = readMetadata().outlines.find(item => item.id === req.params.id);
+      governance = outline ? buildOutlineGovernance(outline) : null;
+    }
     if (!outline) return res.status(404).json({ success: false, error: { code: 'OUTLINE_NOT_FOUND', message: '大纲不存在' } });
-    const governance = isDatabaseMode()
-      ? handbookDomainStore.readOutlineGovernance(req.params.id)
-      : buildOutlineGovernance(outline);
     const normalized = normalizeOutline(outline);
+    const projectedNodes = databaseMode
+      ? (Array.isArray(governance.nodes) ? governance.nodes : outlineNodes(outline))
+      : outlineNodes(outline);
+    const { nodes: _governanceNodes, ...governanceProjection } = governance;
     const detail = {
       ...normalized,
       handbookId: governance.manualId || normalized.handbookId,
       state: publicOutlineState(governance.state || normalized.state, normalized.state),
       editVersion: governance.editVersion ?? normalized.editVersion,
-      nodes: isDatabaseMode()
-        ? (Array.isArray(governance.nodes) ? governance.nodes : outlineNodes(outline))
-        : outlineNodes(outline),
-      governance,
-      responsibility: governance,
-      impact: buildImpactProjection({ ...outline, governance })
+      nodes: projectedNodes,
+      governance: req.query.view === 'compact' ? governanceProjection : governance,
+      ...(req.query.view === 'compact' ? {} : {
+        responsibility: governance,
+        impact: buildImpactProjection({ ...outline, governance }),
+      })
     };
     res.json({ success: true, data: detail, generatedAt: new Date().toISOString() });
   } catch (error) { outlineError(res, error, 'OUTLINE_DETAIL_FAILED', '大纲详情不可用'); }
@@ -830,6 +868,15 @@ router.post('/generate-prompts', (req, res) => {
 
 // Extract knowledge point details from outline content
 function extractKnowledgePoints(outlineContent, selectedKps) {
+  if (outlineContent?.schemaVersion === pathRules.version) {
+    const nodes = outlineContent.nodes || [];
+    return selectedKps.flatMap(selected => {
+      const node = nodes.find(item => item.kind === 'document' && [item.id, item.path].includes(selected.documentId || selected.kp_id || selected.path));
+      if (!node) return [];
+      const parent = nodes.find(item => item.id === node.parentId);
+      return [{ id: node.id, name: node.title, desc: node.description, part: outlineContent.title, chapter: parent?.title || '', path: node.path }];
+    });
+  }
   const result = [];
   const parts = outlineContent.parts || [];
 
@@ -855,5 +902,12 @@ function extractKnowledgePoints(outlineContent, selectedKps) {
 
   return result;
 }
+
+router.use((error, req, res, next) => {
+  if (res.headersSent) return next(error);
+  const issue = { code: error.code || 'OUTLINE_UPLOAD_INVALID', row: null, column: '文件', message: error.message,
+    suggestion: error.code === 'LIMIT_FILE_SIZE' ? '文件不能超过10MB，请减少无关内容后上传。' : '请上传下载模板填写的.xlsx文件，并检查上传文件数量。' };
+  res.status(422).json({ success: false, data: { passed: false, errors: [issue] }, error: { code: issue.code, message: issue.message, details: [issue] } });
+});
 
 module.exports = router;

@@ -1,5 +1,7 @@
 # 知识中心配置
 
+`content-rules.json#/outlineTemplate` 定义自然路径大纲模板的版本、六列表头、最大深度、Markdown 扩展名、介绍文件前缀和 SQL 示例源。每行完整路径、不继承空白；Excel 行序是文档顺序。根介绍和目录介绍均须在各自文档范围内排首位。正式模板和下载样例统一存放在 `knowledge/outlines/`，不得生成到仓库根目录；`templatePath` 与 `sampleDownloadPath` 是仓库内资源路径，`sampleDownloadName` 仅是用户下载文件名。示例下载副本通过 `tools/repository/generate-sql-outline-sample.js` 生成，原始 Excel 不修改。
+
 `config/knowledge-center/` 是面向运维的知识中心控制面，只保留三份英文命名的业务配置：
 
 - `product.json`（产品配置）：产品身份、模块、工作台、能力清单和资源引用。

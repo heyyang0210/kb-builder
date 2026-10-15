@@ -52,7 +52,7 @@ async function templateRequest(suffix, options = {}) {
   return result;
 }
 
-async function getJson(url, options = {}) {
+async function getJson(url, options = {}, strict = false) {
   const response = await fetch(url, { cache: 'no-store', credentials: 'same-origin', ...options });
   if (response.status === 401) {
     window.dispatchEvent(new CustomEvent('knowledge-center:session-expired'));
@@ -63,8 +63,12 @@ async function getJson(url, options = {}) {
     throw Object.assign(new Error('没有执行此操作的权限'), { status: 403 });
   }
   if (!response.ok && response.status !== 503) throw Object.assign(new Error(`HTTP ${response.status}`), { status: response.status });
-  return response.json();
+  const result = await response.json();
+  if (strict && (!response.ok || result?.success === false || !result)) throw Object.assign(new Error(result?.error?.message || `HTTP ${response.status}`), { status: response.status, code: result?.error?.code, payload: result });
+  return result;
 }
+
+const outlineGetJson = url => getJson(url, {}, true);
 
 function normalizeOutlineError(error = {}) {
   const code = error.code || error.payload?.error?.code;
@@ -101,17 +105,27 @@ export async function loadPlatformData(scopes = ['context', 'overview']) {
   };
 }
 
-export async function loadOutlineData(handbookId = null) {
+export async function loadOutlineData(handbookId = null, outlineVersionId = null) {
   try {
     if (!handbookId) {
-      const response = await getJson('/knowledge-center/api/outline/catalog');
+      const response = await outlineGetJson('/knowledge-center/api/outline/catalog');
       const catalog = response?.data || response || {};
       return { status: 'ok', items: Array.isArray(catalog.items) ? catalog.items : [], total: Number(catalog.total || 0), snapshotVersion: catalog.snapshotVersion || null, detail: null, selectedId: null, asOf: catalog.generatedAt || new Date().toISOString() };
     }
-    const list = await getJson(`${outlineEndpoint}/list`);
+    if (outlineVersionId == null) {
+      const response = await outlineGetJson('/knowledge-center/api/outline/catalog');
+      const catalog = response?.data || response || {};
+      const selected = (catalog.items || []).find(item => String(item.handbookId || item.manualId) === String(handbookId));
+      if (selected) {
+        const selectedId = selected.id || selected.outlineId;
+        const detail = await outlineGetJson(`${outlineEndpoint}/${encodeURIComponent(selectedId)}?view=compact`);
+        return { status: 'ok', items: [selected], handbook: { handbookId, name: selected.name }, detail: detail?.data || null, selectedId, asOf: detail?.generatedAt || catalog.generatedAt || new Date().toISOString() };
+      }
+    }
+    const list = await outlineGetJson(`${outlineEndpoint}/list`);
     const allItems = Array.isArray(list?.data) ? list.data : [];
     let handbookError = null;
-    const handbooksResponse = await getJson(`${handbooksEndpoint}?page=1&pageSize=100`).catch(error => { handbookError = error; return null; });
+    const handbooksResponse = await outlineGetJson(`${handbooksEndpoint}?page=1&pageSize=100`).catch(error => { handbookError = error; return null; });
     const handbooksPayload = handbooksResponse?.data || handbooksResponse || {};
     const handbooks = Array.isArray(handbooksPayload.items) ? handbooksPayload.items : Array.isArray(handbooksPayload.handbooks) ? handbooksPayload.handbooks : [];
     const handbook = handbooks.find(item => String(item.handbookId || item.id) === String(handbookId)) || null;
@@ -119,14 +133,16 @@ export async function loadOutlineData(handbookId = null) {
     if (!handbook && !items.length && !handbookError) return { status: 'not_found', items: [], selectedId: handbookId, asOf: list?.generatedAt || new Date().toISOString() };
     if (!handbook && !items.length && handbookError) return { status: 'empty', items: [], handbook: { handbookId, name: handbookId }, selectedId: null, asOf: list?.generatedAt || new Date().toISOString() };
     if (!items.length) return { status: 'empty', items: [], handbook, selectedId: null, asOf: list?.generatedAt || new Date().toISOString() };
-    const selected = [...items].sort((left, right) => {
+    const requestedVersion = outlineVersionId == null ? null : items.find(item => String(item.id || item.outlineId) === String(outlineVersionId));
+    if (outlineVersionId != null && !requestedVersion) return { status: 'not_found', items, handbook, selectedId: null, asOf: list?.generatedAt || new Date().toISOString() };
+    const selected = requestedVersion || [...items].sort((left, right) => {
       const leftPublished = String(left.state || left.status).toLowerCase() === 'published' ? 1 : 0;
       const rightPublished = String(right.state || right.status).toLowerCase() === 'published' ? 1 : 0;
       if (leftPublished !== rightPublished) return rightPublished - leftPublished;
       return new Date(right.updated_at || right.updatedAt || 0).getTime() - new Date(left.updated_at || left.updatedAt || 0).getTime();
     })[0];
     const selectedId = selected?.id || selected?.outlineId;
-    const detail = selectedId ? await getJson(`${outlineEndpoint}/${encodeURIComponent(selectedId)}`) : null;
+    const detail = selectedId ? await outlineGetJson(`${outlineEndpoint}/${encodeURIComponent(selectedId)}?view=compact`) : null;
     return { status: 'ok', items, handbook, detail: detail?.data || null, selectedId: selectedId || null, asOf: detail?.generatedAt || list?.generatedAt || new Date().toISOString() };
   } catch (error) {
     return { status: error?.status === 403 ? 'forbidden' : 'unavailable', items: [], error: { message: normalizeOutlineError(error), code: error?.code } };
@@ -145,6 +161,13 @@ export async function importOutline(formData) {
     const message = result?.error?.message || result?.message || failedMessages.join('；') || `导入失败（HTTP ${response.status}）`;
     throw Object.assign(new Error(message), { status: response.status, details: result?.error?.details || [], payload: result });
   }
+  return result;
+}
+
+export async function validateOutline(formData) {
+  const response = await fetch('/knowledge-center/api/outline/validate', { method: 'POST', body: formData, credentials: 'same-origin' });
+  const result = await response.json().catch(() => null);
+  if (!response.ok) throw Object.assign(new Error(result?.error?.message || '校验未通过，请按提示修改'), { status: response.status, payload: result });
   return result;
 }
 

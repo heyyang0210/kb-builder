@@ -36,11 +36,81 @@ describe('知识中心大纲管理前端契约', () => {
     expect(view()).toContain('尚无大纲');
     expect(view()).not.toContain('23.4.5.100');
   });
+  test('详情加载中不误报服务不可用，真实失败和权限不足保持独立语义', () => {
+    const source = view()
+      .replace(/^import .*;$/gm, '')
+      .replace('export function renderOutlines', 'function renderOutlines');
+    const pendingState = (title, description) => `<state><strong>${title}</strong><span>${description}</span></state>`;
+    const renderOutlines = new Function('dataNote', 'pendingState', 'escapeHtml', 'renderDirectoryTree',
+      `${source}\nreturn renderOutlines;`)(() => '', pendingState, value => String(value ?? ''), () => '');
+    const args = status => ({ outlineProjection: { status }, outlineView: { isDetail: true, handbookId: 'DB-004' }, outlinePermissions: {} });
+    const loading = renderOutlines(args('loading'));
+    expect(loading).toContain('正在读取大纲');
+    expect(loading).not.toContain('大纲服务不可用');
+    expect(renderOutlines(args('unavailable'))).toContain('大纲服务不可用');
+    expect(renderOutlines(args('forbidden'))).toContain('无权查看大纲');
+    expect(renderOutlines(args('unexpected'))).toContain('暂时无法读取大纲');
+  });
+  test('尚未建立大纲时问号与填写说明面板成对渲染', () => {
+    const source = view()
+      .replace(/^import .*;$/gm, '')
+      .replace('export function renderOutlines', 'function renderOutlines');
+    const renderOutlines = new Function('dataNote', 'pendingState', 'escapeHtml', 'renderDirectoryTree',
+      `${source}\nreturn renderOutlines;`)(() => '', (title, description) => `<state>${title}${description}</state>`, value => String(value ?? ''), () => '');
+    const html = renderOutlines({
+      outlineProjection: { status: 'empty', handbook: { name: '概念手册' } },
+      outlineView: { isDetail: true, handbookId: 'DB-002' },
+      outlinePermissions: { create: true },
+    });
+    expect(html).toContain('data-outline-template-help');
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).toContain('data-outline-template-help-panel');
+    expect(html).toContain('大纲模板填写说明');
+  });
+  test('导入面板沿用外部点击关闭逻辑，不阻止内部交互或清空表单', () => {
+    const app = read('apps/knowledge-center-web/frontend/knowledge-center/app.js');
+    const start = app.indexOf("  document.querySelectorAll('[data-asset-more-menu][open], .outline-import[open]')");
+    expect(start).toBeGreaterThan(0);
+    const source = app.slice(start, app.indexOf("  document.querySelectorAll('.platform-tab-menu", start));
+    const menu = { contains: jest.fn(), removeAttribute: jest.fn(), querySelector: jest.fn() };
+    const document = { querySelectorAll: jest.fn(() => [menu]) };
+    const handler = new Function('document', 'event', source);
+    const event = { target: {}, preventDefault: jest.fn(), stopPropagation: jest.fn() };
+    menu.contains.mockReturnValue(true);
+    handler(document, event);
+    expect(menu.removeAttribute).not.toHaveBeenCalled();
+    menu.contains.mockReturnValue(false);
+    handler(document, event);
+    expect(menu.removeAttribute).toHaveBeenCalledWith('open');
+    expect(menu.querySelector).not.toHaveBeenCalled();
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(event.stopPropagation).not.toHaveBeenCalled();
+  });
+  test('Esc 收起导入面板并恢复入口焦点，其他按键不误关', () => {
+    const app = read('apps/knowledge-center-web/frontend/knowledge-center/app.js');
+    const start = app.indexOf('  const dismissibleMenu =');
+    expect(start).toBeGreaterThan(0);
+    const source = app.slice(start, app.indexOf("  const infoDrawer =", start));
+    const trigger = { focus: jest.fn() };
+    const menu = { removeAttribute: jest.fn(), querySelector: jest.fn(() => trigger) };
+    const document = { querySelector: jest.fn(() => menu) };
+    const handler = new Function('document', 'event', source);
+    handler(document, { key: 'Enter' });
+    expect(menu.removeAttribute).not.toHaveBeenCalled();
+    handler(document, { key: 'Escape' });
+    expect(menu.removeAttribute).toHaveBeenCalledWith('open');
+    expect(trigger.focus).toHaveBeenCalledTimes(1);
+    document.querySelector.mockReturnValue(null);
+    expect(() => handler(document, { key: 'Escape' })).not.toThrow();
+  });
   test('从独立大纲治理接口加载列表和详情', () => {
     const api = read('apps/knowledge-center-web/frontend/knowledge-center/common/api/platform-api.js');
     expect(api).toContain('/knowledge-center/api/outline/catalog');
     expect(api).toContain('loadOutlineData');
     expect(api).toContain('encodeURIComponent(selectedId)');
+    expect(api).toContain('const requestedVersion = outlineVersionId == null ? null : items.find');
+    expect(api).toContain('requestedVersion || [...items].sort');
+    expect(read('apps/knowledge-center-web/frontend/knowledge-center/app.js')).toContain("outlineVersionId: parameters.get('version') || null");
   });
   test('两个职责型工作区和管理边界明确', () => {
     for (const label of ['文档总览', '分工管理', '主责技术领域', '协作技术领域']) expect(view()).toContain(label);
@@ -53,6 +123,51 @@ describe('知识中心大纲管理前端契约', () => {
     expect(view()).not.toContain("{ key: 'changes'");
     expect(view()).not.toContain('Codex/Claude Code');
     expect(view()).not.toContain('不调用旧接口冒充正式治理流程');
+  });
+
+  test('同版本请求去重，切换候选版本后旧响应不能覆盖新投影', async () => {
+    const app = read('apps/knowledge-center-web/frontend/knowledge-center/app.js');
+    const state = app.slice(app.indexOf('let outlineLoadSequence ='), app.indexOf('\n    function render()'));
+    const loader = app.slice(app.indexOf('async function loadOutlines()'), app.indexOf('\nasync function loadDomainBuildTasksWorkspace()'));
+    const appState = { activeView: 'outlines' };
+    let route = { isDetail: true, handbookId: 'DB-004', outlineVersionId: 'published' };
+    const pending = new Map();
+    const loadOutlineData = jest.fn((_handbookId, versionId) => new Promise(resolve => pending.set(versionId, resolve)));
+    const load = new Function('appState', 'outlineRouteState', 'loadOutlineData', 'fetchDomainBuildTasks', 'render',
+      `${state}\n${loader}\nreturn loadOutlines;`)(appState, () => route, loadOutlineData, async () => ({ tasks: [] }), () => {});
+    const oldRequest = load();
+    const duplicateRequest = load();
+    expect(loadOutlineData).toHaveBeenCalledTimes(1);
+    route = { ...route, outlineVersionId: 'candidate' };
+    const newRequest = load();
+    expect(loadOutlineData).toHaveBeenCalledTimes(2);
+    expect(loadOutlineData).toHaveBeenLastCalledWith('DB-004', 'candidate');
+    pending.get('candidate')({ status: 'ok', selectedId: 'candidate' });
+    await newRequest;
+    expect(appState.outlineProjection.selectedId).toBe('candidate');
+    pending.get('published')({ status: 'ok', selectedId: 'published' });
+    await Promise.all([oldRequest, duplicateRequest]);
+    expect(appState.outlineProjection.selectedId).toBe('candidate');
+  });
+  test('详情投影先于领域任务完成并立即渲染', async () => {
+    const app = read('apps/knowledge-center-web/frontend/knowledge-center/app.js');
+    const state = app.slice(app.indexOf('let outlineLoadSequence ='), app.indexOf('\n    function render()'));
+    const loader = app.slice(app.indexOf('async function loadOutlines()'), app.indexOf('\nasync function loadDomainBuildTasksWorkspace()'));
+    const appState = { activeView: 'outlines' };
+    const route = { isDetail: true, handbookId: 'DB-004', outlineVersionId: null };
+    let resolveTasks;
+    const tasks = new Promise(resolve => { resolveTasks = resolve; });
+    const render = jest.fn();
+    const load = new Function('appState', 'outlineRouteState', 'loadOutlineData', 'fetchDomainBuildTasks', 'render',
+      `${state}\n${loader}\nreturn loadOutlines;`)(appState, () => route, async () => ({ status: 'ok', selectedId: 'published' }), () => tasks, render);
+    const pending = load();
+    await new Promise(resolve => setImmediate(resolve));
+    expect(appState.outlineProjection).toMatchObject({ status: 'ok', selectedId: 'published' });
+    expect(render).toHaveBeenCalledTimes(2);
+    resolveTasks({ tasks: [] });
+    await pending;
+    expect(appState.domainBuildTaskProjection).toMatchObject({ status: 'ok', tasks: [] });
+    expect(render).toHaveBeenCalledTimes(3);
   });
   test('上传文件由管理员创建候选并由服务端统一解析', () => {
     const source = view();
@@ -199,7 +314,13 @@ describe('知识中心大纲管理前端契约', () => {
     expect(source).toContain('已发布大纲的内容说明不可修改');
     expect(source).toContain('readonly');
     expect(route).toContain('editVersion: governance.editVersion');
-    expect(route).toContain('nodes: isDatabaseMode()');
+    expect(route).toContain('const projectedNodes = databaseMode');
+    expect(route).toContain('nodes: projectedNodes');
+    expect(route).toContain("governance: req.query.view === 'compact' ? governanceProjection : governance");
+    expect(route).toContain("...(req.query.view === 'compact' ? {} : {");
+    expect(route).toContain('readOutlinesAsync()');
+    expect(route).toContain('readOutlineGovernanceAsync(req.params.id)');
+    expect(route).toContain('impact: buildImpactProjection({ ...outline, governance })');
   });
 
   test('目录导航只负责定位，支持搜索、目录兼页面和单一展开切换', () => {
@@ -298,24 +419,30 @@ describe('知识中心大纲管理前端契约', () => {
     expect(source).toContain('download="大纲模板.xlsx"');
     expect(source).toContain('data-outline-template-help');
     expect(source).not.toContain('<dt>四级目录</dt>');
-    for (const header of ['一级目录', '二级目录', '三级目录', '页面', '内容说明', '技术领域分工']) {
+    for (const header of ['路径层级1', '路径层级2', '路径层级3', '路径层级4', '内容说明', '技术领域分工']) {
       expect(source).toContain(header);
     }
     expect(server).toContain("pathname === '/knowledge-center/api/outline/template'");
     expect(server).toContain('OUTLINE_TEMPLATE_UNAVAILABLE');
     expect(gateway).toContain('KNOWLEDGE_CENTER_OUTLINE_TEMPLATE_PATH');
+    expect(gateway).toContain('outlineTemplateRules.templatePath');
   });
-  test('大纲管理提供按六列模板填充的数据库管理手册样例下载入口', () => {
+  test('大纲管理提供自然路径SQL参考手册样例下载入口', () => {
     const source = view();
     const server = read('packages/agent-runner-core/routes/knowledge-center.js');
     const gateway = read('apps/knowledge-center-web/frontend-server.js');
-    expect(source).toContain('下载数据库管理手册示例');
+    expect(source).toContain('下载SQL参考手册示例');
     expect(source).toContain('/knowledge-center/api/outline/sample');
-    expect(source).toContain('download="基本数据库管理手册大纲示例.xlsx"');
+    expect(source).toContain('download="SQL参考手册大纲示例.xlsx"');
     expect(server).toContain("pathname === '/knowledge-center/api/outline/sample'");
     expect(server).toContain('OUTLINE_SAMPLE_UNAVAILABLE');
     expect(gateway).toContain('KNOWLEDGE_CENTER_OUTLINE_SAMPLE_PATH');
-    expect(read('tools/repository/generate-database-outline-sample.js')).toContain("const headers = ['一级目录', '二级目录', '三级目录', '页面', '内容说明', '技术领域分工'];");
+    expect(gateway).toContain('outlineTemplateRules.sampleDownloadPath');
+    expect(read('tools/repository/generate-sql-outline-sample.js')).toContain('rules.sampleSource');
+    expect(source).toContain('data-outline-validate');
+    expect(source).toContain('校验不创建候选');
+    expect(source).toContain('排在该目录其他页面和子目录内容之前');
+    expect(server).toContain("pathname === '/knowledge-center/api/outline/validate'");
   });
 
   test('模板与样例路径显式注入路由模块且下载不会击穿平台进程', async () => {
@@ -351,6 +478,8 @@ describe('知识中心大纲管理前端契约', () => {
       expect(workbookXml).toContain('TECH_DOMAIN_OPTIONS');
       expect(sheetXml).toContain('dataValidations');
       expect(sheetXml).toContain('sqref="F2:F1000"');
+      expect(sheetXml).toContain('路径层级1');
+      expect(sheetXml).not.toContain('一级目录');
       expect(domainSheetXml).toContain('内核');
       expect(domainSheetXml).toContain('SQL 引擎');
       const sample = await fetch(`http://127.0.0.1:${server.address().port}/knowledge-center/api/outline/sample`);
@@ -376,7 +505,7 @@ describe('知识中心大纲管理前端契约', () => {
     };
     expect(() => createKnowledgeCenterHandler(options)).toThrow(KnowledgeCenterConfigError);
     expect(() => createKnowledgeCenterHandler(options)).toThrow('OUTLINE_TEMPLATE_PATH 缺失');
-    options.config.OUTLINE_TEMPLATE_PATH = path.join(root, '大纲模板.xlsx');
+    options.config.OUTLINE_TEMPLATE_PATH = path.join(root, 'knowledge/outlines/大纲模板.xlsx');
     expect(() => createKnowledgeCenterHandler(options)).toThrow('OUTLINE_SAMPLE_PATH 缺失');
     options.config.OUTLINE_SAMPLE_PATH = 'sample.xlsx';
     expect(() => createKnowledgeCenterHandler(options)).toThrow('OUTLINE_SAMPLE_PATH 必须为绝对路径');
@@ -393,5 +522,45 @@ describe('知识中心大纲管理前端契约', () => {
     } finally {
       fs.rmSync(directoryFixture, { recursive: true, force: true });
     }
+  });
+
+  test('导入、预检和创建手册的真实HTTP请求均校验动作并传递实时会话', async () => {
+    let session = null;
+    const proxyOutline = jest.fn((_req, res, currentSession) => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ actor: currentSession.user.id }));
+    });
+    const handler = createKnowledgeCenterHandler({
+      config: {
+        KNOWLEDGE_CENTER_PREFIX: '/knowledge-center', KNOWLEDGE_CENTER_ROOT: root, KNOWLEDGE_CENTER_ENTRY: 'index.html',
+        OUTLINE_TEMPLATE_PATH: path.join(root, 'knowledge/outlines/大纲模板.xlsx'), OUTLINE_SAMPLE_PATH: path.join(root, 'knowledge/outlines/SQL参考手册大纲示例.xlsx'),
+        PINGCODE_PREFIX: '/pingcode', PINGCODE_ROOT: root,
+      },
+      stores: { knowledgeAssetsStore: { read: () => ({ handbooks: [] }), write() {} }, brandIconStore: {} },
+      moduleRegistry: { get: () => ({ authorize: async () => session }) },
+      sendFile() {}, proxyAuth() {}, proxyCleaning() {}, proxyOutline, proxyPermission() {}, handleIncrementalBuild() {},
+    });
+    const server = http.createServer(handler);
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    try {
+      for (const endpoint of ['import', 'validate', 'handbooks']) {
+        session = null;
+        const anonymous = await fetch(`${base}/knowledge-center/api/outline/${endpoint}`, { method: 'POST' });
+        expect(anonymous.status).toBe(401);
+        session = { allowedActions: ['outline:read'], user: { id: 'reader' } };
+        const denied = await fetch(`${base}/knowledge-center/api/outline/${endpoint}`, { method: 'POST' });
+        expect(denied.status).toBe(403);
+        expect((await denied.json()).error.code).toBe('OUTLINE_PERMISSION_DENIED');
+        session = { allowedActions: ['outline:create'], user: { id: 'creator' } };
+        const before = proxyOutline.mock.calls.length;
+        const allowed = await fetch(`${base}/knowledge-center/api/outline/${endpoint}`, { method: 'POST', headers: { 'x-outline-actor': 'forged' } });
+        expect(allowed.status).toBe(200);
+        expect(await allowed.json()).toEqual({ actor: 'creator' });
+        expect(proxyOutline).toHaveBeenCalledTimes(before + 1);
+        expect(proxyOutline.mock.calls.at(-1)[2]).toBe(session);
+      }
+      expect(proxyOutline).toHaveBeenCalledTimes(3);
+    } finally { await new Promise(resolve => server.close(resolve)); }
   });
 });

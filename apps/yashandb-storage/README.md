@@ -126,6 +126,10 @@ MIGRATION_APPROVAL_REF=审批单号 MIGRATION_MAINTENANCE_WINDOW=true \
 
 ### 大纲与建设任务存储契约
 
+自然路径模板以 `content.nodes` 保存混合根目录/文件和实际深度，`OutlineNodeSnapshot` 负责无数据库依赖的结构校验。导入快照使用 `insertOnly: true`，只提交新候选；已存在版本拒绝覆盖，不更新当前版本指针、不改写旧节点/责任项，不执行 DDL 或数据迁移。旧 parts/chapters 快照保持兼容。
+
+大纲治理读取一次性加载技术领域名称并复用于全部文档责任投影，禁止按文档或文档领域组合重复查询 `KC_TECH_DOMAIN`。该优化只改变查询次数，不改变节点、领域、人员或任务字段。
+
 - `/v1/domain/outlines` 对外使用手册 `MANUAL_CODE`、大纲版本 `SOURCE_REF` 和节点 `NODE_KEY`；表间关联仅使用 BIGINT 内部键。
 - 大纲快照导入与技术领域责任分工在同一数据库事务内写入。
 - `/v1/domain/build-tasks` 从已发布大纲的当前责任项实时投影，`PATCH` 改派直接更新责任项，不依赖旧建设任务表。

@@ -30,12 +30,13 @@ const PINGCODE_ROOT = process.env.PINGCODE_WEB_DIST_DIR
 const PINGCODE_PREFIX = '/pingcode-materials';
 const KNOWLEDGE_CENTER_PREFIX = '/knowledge-center';
 const KNOWLEDGE_CENTER_ROOT = path.join(ROOT, 'knowledge-center');
+const outlineTemplateRules = require('../../config/knowledge-center/content-rules.json').outlineTemplate;
 const OUTLINE_TEMPLATE_PATH = process.env.KNOWLEDGE_CENTER_OUTLINE_TEMPLATE_PATH
   ? path.resolve(process.env.KNOWLEDGE_CENTER_OUTLINE_TEMPLATE_PATH)
-  : path.join(REPOSITORY_ROOT, '大纲模板.xlsx');
+  : path.join(REPOSITORY_ROOT, outlineTemplateRules.templatePath);
 const OUTLINE_SAMPLE_PATH = process.env.KNOWLEDGE_CENTER_OUTLINE_SAMPLE_PATH
   ? path.resolve(process.env.KNOWLEDGE_CENTER_OUTLINE_SAMPLE_PATH)
-  : path.join(REPOSITORY_ROOT, '基本数据库管理手册大纲示例.xlsx');
+  : path.join(REPOSITORY_ROOT, outlineTemplateRules.sampleDownloadPath);
 // Keep the directory URL stable while using a descriptive source filename.
 // This avoids relying on an ambiguous generic index.html in the platform bundle.
 const KNOWLEDGE_CENTER_ENTRY = 'knowledge-center-management.html';

@@ -1,4 +1,4 @@
-import { archiveAsset, createAsset, createPrincipal, createTeamGroup, deleteOutline, importOutline, importPrincipals, loadAssets, loadOutlineData, loadPlatformData, loadPrincipals, loadTeamGroups, loadTeamGroup, saveTeamRoster, publishOutlineGovernance, resolveAssetStatus, restoreAsset, saveOutlineGovernance, updateAsset, updateAssetStatus, updateDomainBuildTaskItem, loadDomainBuildTasks as fetchDomainBuildTasks, loadPlatformPermissions, updatePlatformUserPermissions, updatePrincipal, loadDatabaseConnectionStatus, testDatabaseConnection, saveDatabaseConnection, loadTemplates, loadTemplate } from './common/api/platform-api.js';
+import { archiveAsset, createAsset, createPrincipal, createTeamGroup, deleteOutline, importOutline, validateOutline, importPrincipals, loadAssets, loadOutlineData, loadPlatformData, loadPrincipals, loadTeamGroups, loadTeamGroup, saveTeamRoster, publishOutlineGovernance, resolveAssetStatus, restoreAsset, saveOutlineGovernance, updateAsset, updateAssetStatus, updateDomainBuildTaskItem, loadDomainBuildTasks as fetchDomainBuildTasks, loadPlatformPermissions, updatePlatformUserPermissions, updatePrincipal, loadDatabaseConnectionStatus, testDatabaseConnection, saveDatabaseConnection, loadTemplates, loadTemplate } from './common/api/platform-api.js';
 import { disconnectGitLabOAuth, gitLabOAuthHref, loadGitLabBranches, loadGitLabConnections, loadGitLabOAuthAccounts, loadGitLabOAuthStatus, loadGitLabOAuthConfig, loadGitLabTree, loadHandbookGitLabAccess, loadHandbookRepository, loadHandbookRepositoryCommits, loadHandbookRepositoryFile, loadHandbookRepositoryMapping, loadHandbookRepositoryStatistics, loadHandbookRepositoryTree, loadReviewRepositoryContext, saveGitLabConnection, saveHandbookRepositoryMapping, createGitLabConnection, updateGitLabConnection, verifyGitLabConnection, disableGitLabConnection, enableGitLabConnection, searchGitLabConnections } from './common/api/gitlab-api.js';
 import { addIncrementalSource, bootstrapBaseline, commentIncrementalReview, createIncrementalReview, createIncrementalRevision, createIncrementalTask, createOnlineReview, decideIncrementalReview, loadCandidateDiff, loadHandbookReviewSummary, loadIncrementalBaselines, loadIncrementalTask, loadIncrementalTasks, loadMyGenerations, loadReviewBootstrap, publishIncrementalTask, recordIncrementalEvidence, reopenIncrementalReviewComment, replyIncrementalReviewComment, resolveIncrementalReviewComment, runIncrementalChecks, saveIncrementalDraft, submitIncrementalCandidate, updateIncrementalTarget } from './common/api/incremental-api.js';
 import { createHandbookReviewBatch, loadHandbookDraft, loadHandbookDraftRevisions, loadHandbookReviewers, restoreHandbookDraftRevision, saveHandbookDraft, uploadHandbookDraftAttachment } from './common/api/handbook-production-api.js';
@@ -99,6 +99,7 @@ function outlineRouteState() {
   const handbookId = parts[1] === 'outlines' ? (parts[2] || parameters.get('handbookId') || null) : null;
   return {
     handbookId,
+    outlineVersionId: parameters.get('version') || null,
     isDetail: Boolean(handbookId),
     documentId: parameters.get('document') || null,
     nodeId: parameters.get('node') || parameters.get('document') || null,
@@ -195,7 +196,7 @@ let outlineLoadSequence = 0;
 let outlineLoadPromise = null;
 
 function outlineProjectionKey(route = outlineRouteState()) {
-  return route.isDetail ? `outline:detail:${route.handbookId}` : 'outline:list';
+  return route.isDetail ? `outline:detail:${route.handbookId}:${route.outlineVersionId || ''}` : 'outline:list';
 }
 
     function render() {
@@ -459,17 +460,15 @@ async function loadRepositoryWorkspace() {
 
 async function loadOutlines() {
   const route = outlineRouteState();
-  const { handbookId } = route;
+  const { handbookId, outlineVersionId } = route;
   const routeKey = outlineProjectionKey(route);
   if (outlineLoadPromise?.routeKey === routeKey) return outlineLoadPromise.promise;
   const sequence = ++outlineLoadSequence;
   appState.outlineProjection = { status: 'loading', routeKey, handbookId };
+  if (handbookId) appState.domainBuildTaskProjection = { status: 'loading', tasks: [] };
   if (appState.activeView === 'outlines') render();
   const promise = (async () => {
-    const [projection, domainTasks] = await Promise.all([
-      loadOutlineData(handbookId),
-      handbookId ? fetchDomainBuildTasks().catch(error => ({ status: 'unavailable', tasks: [], error: { message: error.message } })) : Promise.resolve(null),
-    ]);
+    const projection = await loadOutlineData(handbookId, outlineVersionId);
     const current = outlineRouteState();
     if (sequence !== outlineLoadSequence || outlineProjectionKey(current) !== routeKey) return;
     appState.outlineProjection = { ...projection, routeKey, handbookId };
@@ -481,8 +480,13 @@ async function loadOutlines() {
       }
       catch (error) { showAppNotice(error.message, { title: '回收站读取失败', tone: 'danger' }); }
     }
-    if (handbookId && domainTasks) appState.domainBuildTaskProjection = domainTasks.status === 'unavailable' ? domainTasks : { status: 'ok', ...domainTasks };
     if (appState.activeView === 'outlines') render();
+    if (handbookId) {
+      const domainTasks = await fetchDomainBuildTasks().catch(error => ({ status: 'unavailable', tasks: [], error: { message: error.message } }));
+      if (sequence !== outlineLoadSequence || outlineProjectionKey() !== routeKey) return;
+      appState.domainBuildTaskProjection = domainTasks.status === 'unavailable' ? domainTasks : { status: 'ok', ...domainTasks };
+      if (appState.activeView === 'outlines') render();
+    }
   })().finally(() => { if (outlineLoadPromise?.promise === promise) outlineLoadPromise = null; });
   outlineLoadPromise = { routeKey, promise };
   return promise;
@@ -1433,7 +1437,7 @@ document.addEventListener('click', async event => {
   const platformSummary = event.target.closest('.platform-tab-summary');
   const openOutlineMenu = document.querySelector('[data-outline-context-menu]:not([hidden])');
   if (openOutlineMenu && !openOutlineMenu.contains(event.target)) openOutlineMenu.hidden = true;
-  document.querySelectorAll('[data-asset-more-menu][open]').forEach(menu => {
+  document.querySelectorAll('[data-asset-more-menu][open], .outline-import[open]').forEach(menu => {
     if (!menu.contains(event.target)) menu.removeAttribute('open');
   });
   document.querySelectorAll('.platform-tab-menu details[open]').forEach(menu => {
@@ -2035,14 +2039,16 @@ document.addEventListener('click', async event => {
   const outlineTemplateHelp = event.target.closest('[data-outline-template-help]');
   if (outlineTemplateHelp) {
     const panel = document.querySelector('[data-outline-template-help-panel]');
-    if (panel) { panel.hidden = false; panel.querySelector('[data-outline-template-help-close]')?.focus(); }
+    if (panel) { panel.hidden = false; outlineTemplateHelp.setAttribute('aria-expanded', 'true'); panel.querySelector('[data-outline-template-help-close]')?.focus(); }
     return;
   }
   const outlineTemplateHelpClose = event.target.closest('[data-outline-template-help-close]');
   if (outlineTemplateHelpClose) {
     const panel = outlineTemplateHelpClose.closest('[data-outline-template-help-panel]');
     if (panel) panel.hidden = true;
-    panel?.previousElementSibling?.querySelector('[data-outline-template-help]')?.focus();
+    const trigger = document.querySelector('[data-outline-template-help]');
+    trigger?.setAttribute('aria-expanded', 'false');
+    trigger?.focus();
     return;
   }
   const outlineGovernanceSave = event.target.closest('[data-outline-governance-save]');
@@ -3643,14 +3649,15 @@ document.addEventListener('submit', async event => {
   const handbookId = String(form.dataset.handbookId || '').trim();
   const status = form.querySelector('[data-outline-import-status]');
   const results = form.querySelector('[data-outline-import-results]');
-  const submit = form.querySelector('button[type="submit"]');
+  const validateOnly = Boolean(event.submitter?.matches('[data-outline-validate]'));
+  const buttons = form.querySelectorAll('button[type="submit"]');
   if (!files.length) { status.textContent = '请选择要导入的文件'; return; }
-  submit.disabled = true;
+  buttons.forEach(button => { button.disabled = true; });
   if (results) results.innerHTML = '';
   const succeeded = [];
   try {
     for (const [index, file] of files.entries()) {
-      status.textContent = `正在导入 ${index + 1}/${files.length}：${file.name}`;
+      status.textContent = `正在${validateOnly ? '校验' : '导入'} ${index + 1}/${files.length}：${file.name}`;
       const row = document.createElement('li');
       row.textContent = `${file.name}：解析中`;
       results?.appendChild(row);
@@ -3660,7 +3667,7 @@ document.addEventListener('submit', async event => {
       try {
         let response;
         try {
-          response = await importOutline(payload);
+          response = await (validateOnly ? validateOutline(payload) : importOutline(payload));
         } catch (error) {
           const duplicate = error?.payload?.data?.items?.find(item => item.status === 'duplicate_confirmation_required');
           if (!duplicate || !window.confirm(`文件“${file.name}”已有候选版本，是否仍然导入？`)) throw error;
@@ -3668,22 +3675,35 @@ document.addEventListener('submit', async event => {
           response = await importOutline(retry);
         }
         const candidate = response?.data || {};
-        row.textContent = `${file.name}：导入成功，${candidate.name || '候选大纲已创建'}`;
+        row.textContent = validateOnly ? `${file.name}：校验通过，${candidate.documentCount}篇文档；尚未创建候选。` : `${file.name}：导入成功，${candidate.name || '候选大纲已创建'}`;
         succeeded.push(candidate);
       } catch (error) {
-        row.textContent = `${file.name}：导入失败，${error?.message || '请稍后重试'}`;
+        row.textContent = `${file.name}：${validateOnly ? '校验' : '导入'}未通过，${error?.message || '请稍后重试'}`;
+        const issues = error?.payload?.data?.errors || error?.payload?.error?.details ||
+          (error?.payload?.data?.items || []).flatMap(item => item.error?.details || []);
+        if (Array.isArray(issues) && issues.length) {
+          const list = document.createElement('ul');
+          for (const issue of issues) {
+            const entry = document.createElement('li');
+            entry.textContent = `${issue.row ? `第${issue.row}行 · ` : ''}${issue.column || issue.field || '文件'}：${issue.message || ''}${issue.path ? `（${issue.path}）` : ''}${issue.suggestion ? `；建议：${issue.suggestion}` : ''}`;
+            list.appendChild(entry);
+          }
+          row.appendChild(list);
+        }
       }
     }
-    status.textContent = `导入完成：成功 ${succeeded.length} 个，失败 ${files.length - succeeded.length} 个`;
-    if (!succeeded.length) return;
+    status.textContent = `${validateOnly ? '校验' : '导入'}完成：通过 ${succeeded.length} 个，未通过 ${files.length - succeeded.length} 个`;
+    if (validateOnly || !succeeded.length) return;
     appState.outlineProjection = null;
     const latest = succeeded[succeeded.length - 1];
     if (latest?.id || latest?.handbookId) {
       const id = latest.handbookId || latest.id;
-      window.history.pushState({ view: 'outlines' }, '', `/knowledge-center/outlines/${encodeURIComponent(id)}`);
+      const detailUrl = new URL(`/knowledge-center/outlines/${encodeURIComponent(id)}`, window.location.origin);
+      if (latest.id) detailUrl.searchParams.set('version', latest.id);
+      window.history.pushState({ view: 'outlines' }, '', `${detailUrl.pathname}${detailUrl.search}`);
     }
     await loadOutlines();
-  } finally { submit.disabled = false; }
+  } finally { buttons.forEach(button => { button.disabled = false; }); }
 });
 
 
@@ -4531,10 +4551,10 @@ document.addEventListener('keydown', event => {
     document.querySelector(`[data-outline-document="${CSS.escape(outlineContextMenu.dataset.documentId || '')}"]`)?.focus();
     return;
   }
-  const assetMoreMenu = document.querySelector('[data-asset-more-menu][open]');
-  if (event.key === 'Escape' && assetMoreMenu) {
-    assetMoreMenu.removeAttribute('open');
-    assetMoreMenu.querySelector('summary')?.focus();
+  const dismissibleMenu = document.querySelector('[data-asset-more-menu][open], .outline-import[open]');
+  if (event.key === 'Escape' && dismissibleMenu) {
+    dismissibleMenu.removeAttribute('open');
+    dismissibleMenu.querySelector('summary')?.focus();
     return;
   }
   const infoDrawer = byId('outline-handbook-info');

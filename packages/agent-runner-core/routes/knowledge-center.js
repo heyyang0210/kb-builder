@@ -13,6 +13,7 @@ const { REPOSITORY_ROOT } = require('../lib/repo-paths');
 const { createGitLabVerificationStore } = require('../lib/gitlab-verification-store');
 const verificationRepairs = require('../../../config/knowledge-center/content-rules.json').gitlabVerificationErrors;
 const { readTechDomainConfig } = require('./outline-management');
+const { rules: outlineTemplateRules } = require('../lib/outline-path-template');
 const { createDatabaseConnectionGovernance } = require('../lib/platform-management/database-connection-governance');
 const { createHandbookProductionService } = require('../lib/handbook-production-service');
 let logger;
@@ -375,7 +376,7 @@ function createKnowledgeCenterHandler(options) {
 
   function outlineTemplateWorkbookBuffer() {
     const XLSX = workbookPackage('xlsx');
-    const headers = ['一级目录', '二级目录', '三级目录', '页面', '内容说明', '技术领域分工'];
+    const headers = outlineTemplateRules.headers;
     const domainNames = configuredTechDomainNames();
     const workbook = XLSX.utils.book_new();
     const sheet = XLSX.utils.aoa_to_sheet([headers]);
@@ -1588,7 +1589,7 @@ function createKnowledgeCenterHandler(options) {
       requireSession(req, res, session => { if (!forbidUnlessOutlineAction(res, session, 'outline:read')) serveOutlineTemplateWorkbook(res); }); return;
     }
     if (req.method === 'GET' && pathname === '/knowledge-center/api/outline/sample') {
-      requireSession(req, res, session => { if (!forbidUnlessOutlineAction(res, session, 'outline:read')) serveOutlineWorkbook(res, OUTLINE_SAMPLE_PATH, '基本数据库管理手册大纲示例.xlsx', 'OUTLINE_SAMPLE_UNAVAILABLE'); }); return;
+      requireSession(req, res, session => { if (!forbidUnlessOutlineAction(res, session, 'outline:read')) serveOutlineWorkbook(res, OUTLINE_SAMPLE_PATH, outlineTemplateRules.sampleDownloadName, 'OUTLINE_SAMPLE_UNAVAILABLE'); }); return;
     }
     if ((req.method === 'POST' && /^\/knowledge-center\/api\/outline\/governance\/[^/]+\/purge$/.test(pathname)) || (req.method === 'GET' && pathname.endsWith('/purge-preflight') && pathname.startsWith('/knowledge-center/api/outline/governance/'))) {
       requireSession(req, res, session => { if (!forbidUnlessOutlineAction(res, session, 'outline:purge')) proxyOutline(req, res, session); }); return;
@@ -1607,7 +1608,7 @@ function createKnowledgeCenterHandler(options) {
     if (pathname === '/knowledge-center/api/templates' || pathname.startsWith('/knowledge-center/api/templates/')) {
       requireSession(req, res, session => handleTemplates(req, res, session)); return;
     }
-    if (req.method === 'POST' && (pathname === '/knowledge-center/api/outline/import' || pathname === '/knowledge-center/api/outline/handbooks')) {
+    if (req.method === 'POST' && (pathname === '/knowledge-center/api/outline/import' || pathname === '/knowledge-center/api/outline/validate' || pathname === '/knowledge-center/api/outline/handbooks')) {
       requireSession(req, res, session => { if (!forbidUnlessOutlineAction(res, session, 'outline:create')) proxyOutline(req, res, session); }); return;
     }
     if (req.method === 'DELETE' && /^\/knowledge-center\/api\/outline\/governance\/[^/]+$/.test(pathname)) {

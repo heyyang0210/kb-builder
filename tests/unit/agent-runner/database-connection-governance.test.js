@@ -207,7 +207,7 @@ describe('数据库连接治理', () => {
     const handler = createKnowledgeCenterHandler({
       config: {
         KNOWLEDGE_CENTER_PREFIX: '/knowledge-center', KNOWLEDGE_CENTER_ROOT: repositoryRoot, KNOWLEDGE_CENTER_ENTRY: 'index.html',
-        OUTLINE_TEMPLATE_PATH: path.join(repositoryRoot, '大纲模板.xlsx'), OUTLINE_SAMPLE_PATH: path.join(repositoryRoot, '基本数据库管理手册大纲示例.xlsx'),
+        OUTLINE_TEMPLATE_PATH: path.join(repositoryRoot, 'knowledge/outlines/大纲模板.xlsx'), OUTLINE_SAMPLE_PATH: path.join(repositoryRoot, 'knowledge/outlines/基本数据库管理手册大纲示例.xlsx'),
         PINGCODE_PREFIX: '/pingcode', PINGCODE_ROOT: repositoryRoot, DOCUMENT_API_HOST: '127.0.0.1', DOCUMENT_API_PORT: 1,
         PINGCODE_API_HOST: '127.0.0.1', PINGCODE_API_PORT: 1, PLATFORM_CONTEXT_TIMEOUT_MS: 1000,
         AUTH_API_HOST: '127.0.0.1', AUTH_API_PORT: 1, GITLAB_CONFIG_PATH: '/tmp/not-used', GITLAB_DOCUMENT_TYPES_PATH: '/tmp/not-used',

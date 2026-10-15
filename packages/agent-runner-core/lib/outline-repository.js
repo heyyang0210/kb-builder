@@ -14,6 +14,7 @@ function hasLeafDocuments(directory = {}) {
 }
 
 function hasWritableSnapshotContent(outline = {}) {
+  if (outline.content?.schemaVersion && Array.isArray(outline.content.nodes)) return outline.content.nodes.some(node => node.kind === 'document');
   return list(outline.content?.parts).some(part => list(part.documents).length || list(part.chapters).some(hasLeafDocuments) || list(part.children).some(hasLeafDocuments));
 }
 
@@ -60,6 +61,21 @@ class OutlineRepository {
         try { fs.unlinkSync(this.lockPath); } catch (_) { /* lock already cleared */ }
       }
     }
+  }
+
+  append(outlines, metadata) {
+    if (!outlines.length) return;
+    if (process.env.KNOWLEDGE_STORAGE_MODE === 'database') {
+      return this.domainStore.writeOutlinesSnapshot({ outlines, insertOnly: true });
+    }
+    // 文件模式通过锁内追加保护已有条目；不将请求开始时的陈旧快照写回。
+    return this.update(current => {
+      const ids = new Set(current.outlines.map(outline => outline.id));
+      if (outlines.some(outline => ids.has(outline.id))) throw new Error('候选ID已存在，拒绝覆盖');
+      current.outlines.push(...outlines);
+      if (metadata?.idempotency) current.idempotency = { ...current.idempotency, ...metadata.idempotency };
+      return current;
+    });
   }
 
   writeUnlocked(metadata) {
