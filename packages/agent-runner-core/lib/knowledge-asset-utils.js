@@ -8,6 +8,9 @@ const ASSET_STATUS_LABELS = {
   handbook_published: '已发布',
 };
 
+// Canonical lifecycle membership for the review workbench.
+const REVIEW_ASSET_STATUSES = new Set(['content_building', 'handbook_published']);
+
 function systemAssetStatus(item) {
   const documents = item.documentSummary || {};
   if (Number(documents.total) > 0 && Number(documents.published) === Number(documents.total)) return 'handbook_published';
@@ -98,4 +101,4 @@ function isPlatformAdmin(session) {
   return roles.includes('PLATFORM_ADMIN') || actions.includes('platform:manage');
 }
 
-module.exports = { ASSET_STATUS_LABELS, systemAssetStatus, assetStatus, assetCounts, projectAsset, queryKnowledgeAssets, isPlatformAdmin };
+module.exports = { REVIEW_ASSET_STATUSES, ASSET_STATUS_LABELS, systemAssetStatus, assetStatus, assetCounts, projectAsset, queryKnowledgeAssets, isPlatformAdmin };

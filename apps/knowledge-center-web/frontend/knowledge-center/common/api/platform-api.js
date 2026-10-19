@@ -191,7 +191,7 @@ export async function deleteOutline(outlineId) {
 export async function loadOutlineRecycle() {
   const response = await fetch(`${outlineEndpoint}/recycle`, { credentials: 'same-origin', headers: { Accept: 'application/json' } });
   const result = await response.json();
-  if (!response.ok) throw new Error(result.error?.message || '回收站读取失败');
+  if (!response.ok) throw Object.assign(new Error(result.error?.message || '回收站读取失败'), { status: response.status });
   return result.data || [];
 }
 

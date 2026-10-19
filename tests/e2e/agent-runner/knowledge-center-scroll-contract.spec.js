@@ -45,7 +45,7 @@ for (const viewport of viewports) for (const legacy of [false, true]) {
     await page.evaluate(() => document.querySelector('#scroll-contract-fixture').remove());
     await page.setViewportSize({ width: 1440, height: 700 });
     await expect(page.locator('html')).toHaveAttribute('data-scroll-mode', 'main');
-    expect(await page.locator('#main-shell').evaluate(el => el.clientHeight)).toBeLessThanOrEqual(702);
+    await expect.poll(() => page.locator('#main-shell').evaluate(el => el.clientHeight)).toBeLessThanOrEqual(702);
   });
 }
 test('八个模块使用公共契约且无未声明纵向滚动', async ({ page }) => {

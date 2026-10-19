@@ -6,6 +6,28 @@ import { renderDatabaseMarkdown } from '../../common/markdown/markdown-renderer.
 const first = (...values) => values.find(value => value !== undefined && value !== null && value !== '');
 const list = value => Array.isArray(value) ? value : [];
 
+export function canSaveHandbookDraft(documentId, ui) {
+  const server = ui.serverDrafts?.[documentId];
+  return ui.draftLoadState?.[documentId] === 'ready'
+    && server?.capabilities?.canEdit !== false
+    && ui.draftSaveState?.[documentId]?.status !== 'saving'
+    && Boolean(ui.dirtyDocuments?.includes(documentId) || !server?.exists);
+}
+
+export function handbookReviewAction(documentId, ui) {
+  const server = ui.serverDrafts?.[documentId];
+  const dirty = ui.dirtyDocuments?.includes(documentId);
+  const loadState = ui.draftLoadState?.[documentId];
+  const saving = ui.draftSaveState?.[documentId]?.status === 'saving';
+  let reason = '';
+  if (loadState === 'forbidden' || server?.capabilities?.canSubmitReview === false || server?.capabilities?.canEdit === false) reason = '当前账号无编辑或送审权限';
+  else if (loadState === 'failed') reason = '共享草稿读取失败，请刷新后重试';
+  else if (loadState !== 'ready') reason = '正在读取共享草稿';
+  else if (saving) reason = '正在保存，请稍候';
+  else if (!server?.exists && !dirty) reason = '当前正文尚未保存为共享草稿，请点击“保存”';
+  return { disabled: Boolean(reason), label: dirty ? '保存并发起评审' : '发起评审', reason, hint: reason || (dirty ? '保存成功后确认审核人和仓库路径' : '提交当前已保存文档') };
+}
+
 function nodeChildren(item = {}) {
   return [...list(item.children), ...list(item.nodes), ...list(item.chapters), ...list(item.documents), ...list(item.knowledgePoints)];
 }
@@ -111,14 +133,6 @@ function repositoryDocument(repository, documentId) {
   return repository?.filesByDocument?.[documentId] || null;
 }
 
-function safeDraftHtml(value) {
-  return String(value || '')
-    .replace(/<(script|style|iframe|object|embed|form)\b[\s\S]*?<\/\1>/gi, '')
-    .replace(/\son[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
-    .replace(/\s(?:href|src)\s*=\s*["']\s*(?:javascript|vbscript|data):[^"']*["']/gi, '')
-    .replace(/<(?!\/?(?:article|h[1-6]|p|ul|ol|li|blockquote|pre|code|table|thead|tbody|tr|th|td|a|img|strong|em|del|br|hr)(?:\s|>|\/))/gi, '&lt;');
-}
-
 function selectedTemplate(document, ui, templateProjection) {
   const templates = list(templateProjection?.items).filter(item => item.status !== 'disabled');
   const templateId = ui?.templateByDocument?.[document.id] || first(templates.find(item => item.status === 'active')?.id, templates[0]?.id, '');
@@ -206,7 +220,7 @@ function directory(outline, documents, selectedId, mode, ui, currentUser) {
     ? directoryProjection(documents)
     : outlineNodes(outline);
   const tree = sourceNodes.map((item, index) => directoryNode(item, context, 0, index)).filter(Boolean).join('');
-  return `<aside class="handbook-production-directory" data-navigation-pane data-directory-tree aria-label="当前手册目录"><header><div><h2>文档目录</h2><span>${mode === 'mine' ? `只看我负责 · ${visible.length} 篇` : `${visible.length} 篇文档`}</span></div><div class="handbook-production-directory-mode" role="group" aria-label="目录显示范围"><button type="button" data-handbook-directory-mode="all" aria-pressed="${mode === 'all'}">全部文档</button><button type="button" data-handbook-directory-mode="mine" aria-pressed="${mode === 'mine'}">只看我负责</button></div><label class="handbook-directory-search"><span class="sr-only">搜索文档目录</span><input type="search" placeholder="搜索文档目录" data-directory-search data-handbook-directory-search></label><button class="icon-button handbook-directory-collapse" type="button" data-navigation-pane-toggle aria-label="收起文档目录" title="收起文档目录"><i data-lucide="panel-left-close" aria-hidden="true"></i></button></header><div class="handbook-production-directory-scroll" data-scroll-region="panel">${tree ? `<ul>${tree}</ul>` : `<div class="handbook-production-empty"><i data-lucide="inbox" aria-hidden="true"></i><strong>${mode === 'mine' ? '当前没有由你负责的文档' : '当前手册没有可编辑文档'}</strong><span>${mode === 'mine' ? '可以切换到“全部文档”查看完整目录。' : '请先在大纲管理中建立并发布目录。'}</span>${mode === 'mine' ? '<button class="button tertiary compact" type="button" data-handbook-directory-mode="all">查看全部文档</button>' : ''}</div>`}</div><div class="handbook-directory-resizer" data-navigation-pane-resizer role="separator" aria-orientation="vertical" aria-label="调整手册文档目录宽度" aria-valuemin="220" aria-valuemax="360" aria-valuenow="260" tabindex="0"></div><footer><button class="button tertiary compact" type="button" data-handbook-add-chapter><i data-lucide="plus" aria-hidden="true"></i>新增章节</button><span>需先更新发布大纲</span></footer></aside>`;
+  return `<button class="handbook-directory-backdrop${ui.directoryDrawerOpen ? ' is-open' : ''}" type="button" data-handbook-directory-close aria-label="关闭文档目录"></button><aside class="handbook-production-directory${ui.directoryDrawerOpen ? ' is-open' : ''}" id="handbook-directory-drawer" data-directory-tree data-scroll-region="drawer" aria-label="当前手册目录" aria-hidden="${!ui.directoryDrawerOpen}"><header><div><h2>文档目录</h2><span>${mode === 'mine' ? `只看我负责 · ${visible.length} 篇` : `${visible.length} 篇文档`}</span></div><button class="icon-button handbook-directory-collapse" type="button" data-handbook-directory-close aria-label="关闭文档目录"><i data-lucide="x" aria-hidden="true"></i></button><div class="handbook-production-directory-mode" role="group" aria-label="目录显示范围"><button type="button" data-handbook-directory-mode="all" aria-pressed="${mode === 'all'}">全部文档</button><button type="button" data-handbook-directory-mode="mine" aria-pressed="${mode === 'mine'}">只看我负责</button></div><label class="handbook-directory-search"><span class="sr-only">搜索文档目录</span><input type="search" placeholder="搜索文档目录" data-directory-search data-handbook-directory-search></label></header><div class="handbook-production-directory-scroll" data-scroll-region="panel">${tree ? `<ul>${tree}</ul>` : `<div class="handbook-production-empty"><i data-lucide="inbox" aria-hidden="true"></i><strong>${mode === 'mine' ? '当前没有由你负责的文档' : '当前手册没有可编辑文档'}</strong><span>${mode === 'mine' ? '可以切换到“全部文档”查看完整目录。' : '请先在大纲管理中建立并发布目录。'}</span>${mode === 'mine' ? '<button class="button tertiary compact" type="button" data-handbook-directory-mode="all">查看全部文档</button>' : ''}</div>`}</div><footer><button class="button tertiary compact" type="button" data-handbook-add-chapter><i data-lucide="plus" aria-hidden="true"></i>新增章节</button><span>需先更新发布大纲</span></footer></aside>`;
 }
 
 function references(documentId, ui) {
@@ -216,17 +230,15 @@ function references(documentId, ui) {
 }
 
 function editor(document, outline, ui, templateProjection) {
-  if (!document) return `<main class="handbook-production-editor">${emptyState('选择一个文档', '从左侧目录选择需要编写的文档。')}</main>`;
+  if (!document) return `<main class="handbook-production-editor"><div class="handbook-production-empty-actions"><button class="button secondary" type="button" data-handbook-directory-open aria-controls="handbook-directory-drawer" aria-expanded="${Boolean(ui.directoryDrawerOpen)}"><i data-lucide="panel-left-open" aria-hidden="true"></i>打开文档目录</button></div>${emptyState('选择一个文档', '从文档目录选择需要编写的文档。')}</main>`;
   const repo = repositoryFor(ui);
   const branch = repo.branch || '';
   const mode = ui.modeByDocument?.[document.id] === 'edit' ? 'edit' : 'read';
-  const branchDraft = ui.draftBranchByDocument?.[document.id] === branch;
   const server = ui.serverDrafts?.[document.id];
-  const revision = server?.draft?.revision;
-  const draftHtml = branchDraft ? (ui.draftHtml?.[document.id] || revision?.htmlSnapshot || '') : (revision?.htmlSnapshot || '');
   const status = documentStatus(document, ui);
   const dirty = ui.dirtyDocuments?.includes(document.id);
-  const content = draftHtml ? safeDraftHtml(draftHtml) : renderedDocument(document, ui, templateProjection);
+  // Markdown 是草稿与审核快照的正文事实源；预览统一走审核页的共享渲染器。
+  const content = renderedDocument(document, ui, templateProjection);
   const shownTitle = displayTitle(document.title);
   const templates = list(templateProjection?.items).filter(item => item.status !== 'disabled');
   const template = selectedTemplate(document, ui, templateProjection);
@@ -235,7 +247,7 @@ function editor(document, outline, ui, templateProjection) {
     : '<option value="">暂无可用模板</option>';
   const templateStatusBase = ui.templateStatus || (template.id && !template.detail ? '正在读取模板…' : '');
   const reviewStatus = server?.draft?.reviewState?.revisionId
-    ? `评审中 v${Math.max(1, Number(server.draft.editVersion || 1) - 1)} · 工作草稿 v${server.draft.editVersion}` : '';
+    ? `已提交评审 v${server.draft.reviewState.editVersion || Math.max(1, Number(server.draft.editVersion || 1) - 1)} · 工作草稿 v${server.draft.editVersion}` : '';
   const templateStatus = [templateStatusBase, reviewStatus].filter(Boolean).join('；');
   const saveState = ui.draftSaveState?.[document.id];
   const draftLoadState = ui.draftLoadState?.[document.id];
@@ -245,7 +257,7 @@ function editor(document, outline, ui, templateProjection) {
     : saveState?.status === 'failed' ? '保存失败'
       : saveState?.status === 'conflict' ? '版本冲突'
         : dirty ? '有未保存修改'
-          : server?.exists ? `已保存 v${server.draft.editVersion} · ${savedTime}` : '未修改';
+          : server?.exists ? `已保存 v${server.draft.editVersion} · ${savedTime}` : '尚未保存为共享草稿';
   const canEdit = server?.capabilities?.canEdit !== false;
   const outlineId = first(outline.id, outline.outlineId, outline.versionId, '');
   const saveError = ['failed', 'conflict'].includes(saveState?.status);
@@ -257,11 +269,12 @@ function editor(document, outline, ui, templateProjection) {
   const historyAction = server?.exists
     ? `<button class="icon-button" type="button" data-handbook-history="${escapeHtml(document.id)}" aria-label="查看草稿历史" title="查看草稿历史"><i data-lucide="history" aria-hidden="true"></i></button>`
     : '';
-  const documentContext = `<div class="handbook-command-document"><a href="#handbook-production-directory" class="handbook-production-mobile-back" data-handbook-mobile-directory><i data-lucide="arrow-left" aria-hidden="true"></i>返回目录</a><div><h2>${escapeHtml(shownTitle)}</h2><p>${escapeHtml(document.path.join(' / ') || '手册根目录')}</p></div><span class="handbook-production-document-state ${statusClass(status)}">${escapeHtml(status)}</span></div>`;
-  const toolbarActions = `<div class="handbook-toolbar-actions"><div class="handbook-production-mode" role="group" aria-label="正文显示模式"><button type="button" data-handbook-mode="read" data-document-id="${escapeHtml(document.id)}" aria-pressed="${mode === 'read'}">预览</button><button type="button" data-handbook-mode="edit" data-document-id="${escapeHtml(document.id)}" aria-pressed="${mode === 'edit'}" ${canEdit ? '' : 'disabled'}>编辑</button></div><span class="handbook-save-status${saveError ? ' is-error' : ''}" data-handbook-save-status role="${saveError ? 'alert' : 'status'}">${escapeHtml(saveStatus)}</span><button class="button compact" type="button" data-handbook-draft-save="${escapeHtml(document.id)}" title="${draftServiceAvailable ? '保存共享草稿' : '共享草稿服务恢复后可保存'}" ${dirty && draftServiceAvailable && saveState?.status !== 'saving' ? '' : 'disabled'}>保存</button><button class="icon-button handbook-assistant-mobile-open" type="button" data-handbook-assistant-open aria-label="打开辅助工具" title="打开辅助工具"><i data-lucide="panel-right-open" aria-hidden="true"></i></button></div>`;
+  const documentContext = `<div class="handbook-command-document"><button class="button tertiary compact handbook-directory-entry" type="button" data-handbook-directory-open aria-controls="handbook-directory-drawer" aria-expanded="${Boolean(ui.directoryDrawerOpen)}"><i data-lucide="panel-left-open" aria-hidden="true"></i>目录</button><div><h2>${escapeHtml(shownTitle)}</h2><p>${escapeHtml(document.path.join(' / ') || '手册根目录')}</p></div><span class="handbook-production-document-state ${statusClass(status)}">${escapeHtml(status)}</span></div>`;
+  const reviewAction = handbookReviewAction(document.id, ui);
+  const toolbarActions = `<div class="handbook-toolbar-actions"><div class="handbook-production-mode" role="group" aria-label="正文显示模式"><button type="button" data-handbook-mode="read" data-document-id="${escapeHtml(document.id)}" aria-pressed="${mode === 'read'}">预览</button><button type="button" data-handbook-mode="edit" data-document-id="${escapeHtml(document.id)}" aria-pressed="${mode === 'edit'}" ${canEdit ? '' : 'disabled'}>编辑</button></div><span class="handbook-save-status${saveError ? ' is-error' : ''}" data-handbook-save-status role="${saveError ? 'alert' : 'status'}">${escapeHtml(saveStatus)}</span><button class="button secondary compact" type="button" data-handbook-draft-save="${escapeHtml(document.id)}" title="${draftServiceAvailable ? '保存共享草稿' : '共享草稿服务恢复后可保存'}" ${canSaveHandbookDraft(document.id, ui) ? '' : 'disabled'}>保存</button>${server?.draft?.reviewState?.taskId && server.draft.reviewState.revisionId === server.draft.currentRevisionId && !dirty ? `<a class="button compact" href="${escapeHtml(server.draft.reviewState.reviewHref)}">查看审核任务</a>` : `<button class="button compact" type="button" data-handbook-review-current="${escapeHtml(document.id)}" ${reviewAction.disabled ? 'disabled' : ''} aria-describedby="handbook-review-hint" title="${escapeHtml(reviewAction.hint)}">${escapeHtml(reviewAction.label)}</button>`}<button class="button tertiary compact handbook-assistant-mobile-open" type="button" data-handbook-assistant-open aria-controls="handbook-assistant-drawer" aria-expanded="${Boolean(ui.assistantOpen)}"><i data-lucide="panel-right-open" aria-hidden="true"></i>工具</button></div>`;
   const secondaryActions = `<div class="handbook-document-options-actions">${historyAction}<label class="icon-button handbook-attachment-button" aria-label="上传图片或附件" title="上传图片或附件"><i data-lucide="paperclip" aria-hidden="true"></i><input type="file" data-handbook-attachment multiple accept=".png,.jpg,.jpeg,.webp,.gif,.md,.markdown,.pdf,.docx,.xlsx" ${canEdit && draftServiceAvailable ? '' : 'disabled'}></label><button class="button tertiary compact" type="button" data-handbook-discard="${escapeHtml(document.id)}" ${dirty ? '' : 'disabled'}>取消</button><button class="icon-button handbook-global-preview" type="button" data-handbook-focus-toggle aria-label="${ui.focusMode ? '退出全局预览' : '全局预览'}" title="${ui.focusMode ? '退出全局预览' : '全局预览'}" aria-pressed="${Boolean(ui.focusMode)}"><i data-lucide="${ui.focusMode ? 'minimize-2' : 'maximize-2'}" aria-hidden="true"></i></button></div>`;
   const templateContext = `<div class="handbook-document-options"><input type="hidden" name="outlineId" value="${escapeHtml(outlineId)}"><label class="handbook-document-template"><span>文档模板</span><select name="templateId" data-handbook-template data-document-id="${escapeHtml(document.id)}" ${templates.length ? '' : 'disabled'}>${templateOptions}</select></label><span class="handbook-template-status" role="status">${escapeHtml(templateStatus)}</span>${draftAvailability}${secondaryActions}</div>`;
-  return `<main class="handbook-production-editor ${mode === 'edit' ? 'is-editing' : 'is-reading'}" data-handbook-current-document="${escapeHtml(document.id)}" data-outline-version-id="${escapeHtml(outlineId)}"><header class="handbook-production-toolbar" data-scroll-obstacle>${documentContext}${toolbarActions}</header>${templateContext}<section class="handbook-production-writing"><div class="handbook-production-content ${mode === 'edit' ? 'is-editing' : 'is-reading'}" ${mode === 'edit' ? `data-handbook-vditor data-document-id="${escapeHtml(document.id)}"` : ''}>${mode === 'edit' ? '<div class="handbook-editor-loading" role="status">正在加载编辑器…</div>' : content}</div><div class="handbook-attachment-progress" data-handbook-attachment-progress role="status"></div></section></main>`;
+  return `<main class="handbook-production-editor ${mode === 'edit' ? 'is-editing' : 'is-reading'}" data-handbook-current-document="${escapeHtml(document.id)}" data-outline-version-id="${escapeHtml(outlineId)}"><header class="handbook-production-toolbar" data-scroll-obstacle>${documentContext}${toolbarActions}</header><p class="handbook-review-hint" id="handbook-review-hint" data-handbook-review-hint role="status" ${reviewAction.reason ? '' : 'hidden'}>${escapeHtml(reviewAction.reason)}</p>${templateContext}<section class="handbook-production-writing"><div class="handbook-production-content ${mode === 'edit' ? 'is-editing' : 'is-reading'}" ${mode === 'edit' ? `data-handbook-vditor data-document-id="${escapeHtml(document.id)}"` : ''}>${mode === 'edit' ? '<div class="handbook-editor-loading" role="status">正在加载编辑器…</div>' : content}</div><div class="handbook-attachment-progress" data-handbook-attachment-progress role="status"></div></section></main>`;
 }
 
 function assistantPanel(document, outline, ui) {
@@ -272,7 +285,7 @@ function assistantPanel(document, outline, ui) {
   const ai = `<section class="handbook-assistant-section"><header><i data-lucide="sparkles" aria-hidden="true"></i><div><h3>AI助手</h3><p>仅作用于当前文档草稿</p></div></header><div class="handbook-ai-actions"><button type="button" data-handbook-ai-action="generate"><i data-lucide="wand-sparkles" aria-hidden="true"></i><span><strong>生成本节</strong><small>基于大纲、模板和引用资料</small></span></button><button type="button" data-handbook-ai-action="polish"><i data-lucide="pen-line" aria-hidden="true"></i><span><strong>润色</strong><small>优化当前正文表达</small></span></button><button type="button" data-handbook-ai-action="check"><i data-lucide="badge-check" aria-hidden="true"></i><span><strong>检查</strong><small>检查结构、占位符和规范</small></span></button></div><p class="handbook-assistant-status" role="status">${escapeHtml(ui.assistantStatus || 'AI 生成接口待接入，人工编辑可正常使用。')}</p></section>`;
   const properties = `<section class="handbook-assistant-section"><header><i data-lucide="sliders-horizontal" aria-hidden="true"></i><div><h3>文档属性</h3><p>当前文档的业务信息</p></div></header><dl class="handbook-property-list"><div><dt>路径</dt><dd>${escapeHtml(document.path.join(' / ') || '手册根目录')}</dd></div><div><dt>责任人</dt><dd>${escapeHtml(owners.map(item => item.name).join('、') || '未分配')}</dd></div><div><dt>草稿状态</dt><dd>${escapeHtml(documentStatus(document, ui))}</dd></div></dl></section>`;
   const refs = `<section class="handbook-assistant-section"><header><i data-lucide="paperclip" aria-hidden="true"></i><div><h3>引用资料</h3><p>PingCode 页面或 Markdown 文件</p></div></header>${references(document.id, ui)}<button class="button secondary handbook-reference-add" type="button" data-handbook-reference-open="${escapeHtml(document.id)}"><i data-lucide="plus" aria-hidden="true"></i>引用资料</button><div class="handbook-related-knowledge"><h4><i data-lucide="network" aria-hidden="true"></i>关联知识</h4><p>关联知识检索能力待接入。</p></div></section>`;
-  return `<button class="handbook-assistant-backdrop${ui.assistantOpen ? ' is-open' : ''}" type="button" data-handbook-assistant-close aria-label="关闭辅助工具"></button><aside class="handbook-assistant-panel${ui.assistantOpen ? ' is-open' : ''}" data-scroll-region="drawer" aria-label="AI、属性和引用资料"><header class="handbook-assistant-mobile-header"><strong>辅助工具</strong><button class="icon-button" type="button" data-handbook-assistant-close aria-label="关闭辅助工具"><i data-lucide="x" aria-hidden="true"></i></button></header><nav role="tablist" aria-label="文档辅助面板">${tabs.map(([key, label]) => `<button type="button" role="tab" data-handbook-assistant-tab="${key}" aria-selected="${active === key}">${label}</button>`).join('')}</nav>${active === 'properties' ? properties : active === 'references' ? refs : ai}</aside>`;
+  return `<button class="handbook-assistant-backdrop${ui.assistantOpen ? ' is-open' : ''}" type="button" data-handbook-assistant-close aria-label="关闭辅助工具"></button><aside class="handbook-assistant-panel${ui.assistantOpen ? ' is-open' : ''}" id="handbook-assistant-drawer" data-scroll-region="drawer" aria-label="AI、属性和引用资料" aria-hidden="${!ui.assistantOpen}"><header class="handbook-assistant-mobile-header"><strong>辅助工具</strong><button class="icon-button" type="button" data-handbook-assistant-close aria-label="关闭辅助工具"><i data-lucide="x" aria-hidden="true"></i></button></header><nav role="tablist" aria-label="文档辅助面板">${tabs.map(([key, label]) => `<button type="button" role="tab" data-handbook-assistant-tab="${key}" aria-selected="${active === key}">${label}</button>`).join('')}</nav><div data-handbook-assistant-content="ai" ${active === 'ai' ? '' : 'hidden'}>${ai}</div><div data-handbook-assistant-content="properties" ${active === 'properties' ? '' : 'hidden'}>${properties}</div><div data-handbook-assistant-content="references" ${active === 'references' ? '' : 'hidden'}>${refs}</div></aside>`;
 }
 
 function reviewTray(documents, ui) {
@@ -295,7 +308,7 @@ function referenceDialog() {
 }
 
 function reviewDialog() {
-  return `<dialog class="asset-dialog handbook-review-dialog" data-handbook-review-dialog aria-labelledby="handbook-review-dialog-title" data-scroll-region="dialog"><form data-handbook-review-form><header class="asset-dialog-heading"><div><h2 id="handbook-review-dialog-title">提交评审</h2><p>提交后冻结所选草稿版本，并创建下一工作草稿。</p></div><button class="icon-button asset-dialog-close" type="button" data-handbook-review-close aria-label="关闭"><i data-lucide="x" aria-hidden="true"></i></button></header><div class="handbook-review-confirmation"><strong data-handbook-review-count>已选择 0 篇文档</strong><label>默认审核人<select name="reviewerId" data-handbook-reviewer required><option value="">请选择非提交者审核人</option></select></label><div class="handbook-review-overrides" data-handbook-review-overrides aria-label="逐篇审核人设置"></div><label>提交说明<textarea name="note" rows="3" maxlength="500"></textarea></label><p role="status" data-handbook-review-dialog-status></p></div><footer><button class="button tertiary" type="button" data-handbook-review-close>取消</button><button class="button" type="submit">确认提交</button></footer></form></dialog>`;
+  return `<dialog class="asset-dialog handbook-review-dialog" data-handbook-review-dialog aria-labelledby="handbook-review-dialog-title" data-scroll-region="dialog"><form data-handbook-review-form><header class="asset-dialog-heading"><div><h2 id="handbook-review-dialog-title">提交评审</h2><p>提交已保存版本到审核任务；继续编辑不会改变审核内容。审核通过后发布为 GitLab MR。</p></div><button class="icon-button asset-dialog-close" type="button" data-handbook-review-close aria-label="关闭"><i data-lucide="x" aria-hidden="true"></i></button></header><div class="handbook-review-confirmation"><strong data-handbook-review-count>已选择 0 篇文档</strong><label>默认审核人<select name="reviewerId" data-handbook-reviewer required><option value="">请选择审核人（可以是本人）</option></select></label><div class="handbook-review-overrides" data-handbook-review-overrides aria-label="逐篇审核人设置"></div><label>提交说明<textarea name="note" rows="3" maxlength="500"></textarea></label><p role="status" data-handbook-review-dialog-status></p></div><footer><button class="button tertiary" type="button" data-handbook-review-close>取消</button><button class="button" type="submit">确认提交</button></footer></form></dialog>`;
 }
 
 function draftDialogs(ui) {
@@ -309,16 +322,23 @@ export function renderHandbookProduction({ projection, currentUser, ui = {}, tem
   const handbookId = projection?.requestedHandbookId || '';
   if (projection?.status === 'loading') return '<section class="handbook-production-loading" role="status"><span></span><p>正在读取手册目录…</p></section>';
   if (!handbookWorkspace) return `<section class="handbook-production-error"><a href="/knowledge-center/assets">返回知识资产</a>${emptyState('手册工作区暂时不可用', projection?.error?.message || '请稍后重新读取。')}</section>`;
-  if (handbookWorkspace.status !== 'ok') return `<section class="handbook-production-error"><a href="/knowledge-center/assets">返回知识资产</a>${emptyState(handbookWorkspace.status === 'forbidden' ? '无权访问当前手册' : handbookWorkspace.status === 'empty' ? '当前手册尚未建立大纲' : '手册目录暂时不可用', handbookWorkspace.error?.message || '请先完成大纲建设，或稍后重新读取。')}</section>`;
+  if (handbookWorkspace.status !== 'ok') return `<section class="handbook-production-error"><a href="/knowledge-center/assets">返回知识资产</a>${emptyState(handbookWorkspace.status === 'forbidden' ? '无权访问当前手册' : handbookWorkspace.status === 'not_found' ? '当前手册不存在' : handbookWorkspace.status === 'empty' ? '当前手册尚未建立大纲' : '手册目录暂时不可用', handbookWorkspace.error?.message || '请先完成大纲建设，或稍后重新读取。')}</section>`;
   const outline = handbookWorkspace.detail || {};
   const documents = collectDocuments(outlineNodes(outline));
   const params = new URLSearchParams(window.location.search);
   const mode = params.get('view') === 'mine' ? 'mine' : 'all';
   const visible = mode === 'mine' ? documents.filter(document => ownedByCurrentUser(outline, document.id, currentUser)) : documents;
   const requestedId = params.get('documentId');
-  const selected = visible.find(document => document.id === requestedId) || visible[0] || null;
   const handbookName = first(handbookWorkspace.handbook?.name, outline.handbookName, outline.name, handbookId, '当前手册');
-  const editorWorkspace = `<div class="handbook-production-layout${ui.directoryCollapsed ? ' navigation-pane-collapsed' : ''}" id="handbook-production-directory" data-navigation-layout data-navigation-layout-id="production-handbook" data-navigation-pane-label="手册文档目录" data-navigation-min="220" data-navigation-max="360" data-navigation-default="260" data-navigation-width-variable="--handbook-directory-width" style="--handbook-directory-width:${Number(ui.directoryWidth) || 260}px">${directory(outline, documents, selected?.id || '', mode, ui, currentUser)}${editor(selected, outline, ui, templateProjection)}${assistantPanel(selected, outline, ui)}</div>${reviewTray(documents, ui)}`;
+  if (requestedId && !documents.some(document => document.id === requestedId)) {
+    const reason = '当前文档不在这本手册的已发布大纲中，可能已被移除。请从目录选择现有文档。';
+    return `<div class="handbook-production-page"><header class="handbook-production-header"><div><a href="/knowledge-center/assets?handbookId=${encodeURIComponent(handbookId)}"><i data-lucide="arrow-left" aria-hidden="true"></i>返回知识资产</a><h1>${escapeHtml(handbookName)}</h1></div></header><section class="handbook-production-error" role="alert"><h2>无法打开当前文档</h2><p>${escapeHtml(reason)}</p><a class="button secondary" href="/knowledge-center/production/handbook/${encodeURIComponent(handbookId)}">打开可访问目录</a></section></div>`;
+  }
+  if (requestedId && mode === 'mine' && !visible.some(document => document.id === requestedId)) {
+    return `<div class="handbook-production-page"><header class="handbook-production-header"><div><a href="/knowledge-center/assets?handbookId=${encodeURIComponent(handbookId)}"><i data-lucide="arrow-left" aria-hidden="true"></i>返回知识资产</a><h1>${escapeHtml(handbookName)}</h1></div></header><section class="handbook-production-error" role="status"><h2>当前文档不在“只看我负责”范围</h2><p>这是一项目录过滤条件，不代表文档访问权限。切换到全部文档后可继续查看。</p><a class="button secondary" href="/knowledge-center/production/handbook/${encodeURIComponent(handbookId)}?documentId=${encodeURIComponent(requestedId)}">查看全部文档</a></section></div>`;
+  }
+  const selected = visible.find(document => document.id === requestedId) || visible[0] || null;
+  const editorWorkspace = `<div class="handbook-production-layout" id="handbook-production-directory">${directory(outline, documents, selected?.id || '', mode, ui, currentUser)}${editor(selected, outline, ui, templateProjection)}${assistantPanel(selected, outline, ui)}</div>${reviewTray(documents, ui)}`;
   return `<div class="handbook-production-page${ui.focusMode ? ' is-focus-mode' : ''}"><header class="handbook-production-header"><div><a href="/knowledge-center/assets?handbookId=${encodeURIComponent(handbookId)}"><i data-lucide="arrow-left" aria-hidden="true"></i>返回知识资产</a><h1>${escapeHtml(handbookName)}</h1></div></header>${editorWorkspace}${referenceDialog()}${reviewDialog()}${draftDialogs(ui)}</div>`;
 }
 

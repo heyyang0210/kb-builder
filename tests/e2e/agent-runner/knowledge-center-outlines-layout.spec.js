@@ -143,10 +143,16 @@ test('详情真实失败仍提示服务不可用，而不是不存在或尚无�
 
 test('从知识资产进入尚无大纲的概念手册后可打开并关闭模板填写说明', async ({ page }) => {
   await page.goto(`${baseUrl}/knowledge-center/assets`);
+  const domainTaskRequests = [];
+  page.on('request', request => {
+    if (new URL(request.url()).pathname === '/knowledge-center/api/outline/build-tasks') domainTaskRequests.push(request.url());
+  });
   await page.getByText('概念手册', { exact: true }).first().click();
   await page.locator('a.asset-action-row', { hasText: '大纲管理' }).click();
   await expect(page).toHaveURL(`${baseUrl}/knowledge-center/outlines/DB-002`);
   await expect(page.getByRole('heading', { name: '概念手册', level: 2 })).toBeVisible();
+  await page.waitForLoadState('networkidle');
+  expect(domainTaskRequests).toHaveLength(0);
 
   const help = page.getByRole('button', { name: '查看大纲模板字段填写说明' });
   const panel = page.locator('[data-outline-template-help-panel]');
@@ -404,11 +410,16 @@ test('P0：目录鼠标拖动可提交，Escape 和 pointercancel 可回退，�
   let layout = page.locator('[data-navigation-layout-id="outline-overview"]');
   let handle = layout.locator('[data-navigation-pane-resizer]');
   await expect(handle).toBeVisible();
+  let box;
+  let layoutBox;
+  // The detail and domain-task projections can redraw between visibility
+  // checks and geometry reads. Sample usable current boxes in the same poll.
+  await expect.poll(async () => {
+    [box, layoutBox] = await Promise.all([handle.boundingBox(), layout.boundingBox()]);
+    return Boolean(box && box.width > 0 && box.height > 0 && layoutBox && layoutBox.width > 0 && layoutBox.height > 0);
+  }).toBe(true);
   const initial = Number(await handle.getAttribute('aria-valuenow'));
-  const box = await handle.boundingBox();
   expect(box).toBeTruthy();
-
-  const layoutBox = await layout.boundingBox();
   expect(layoutBox).toBeTruthy();
   await handle.evaluate((element, coordinates) => {
     element.setPointerCapture = () => {};

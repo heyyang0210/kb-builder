@@ -232,7 +232,8 @@ async function request(connection, apiPath, options = {}) {
     const headers = { Accept: 'application/json' };
     if (oauthToken) headers.Authorization = `Bearer ${oauthToken}`;
     else headers['PRIVATE-TOKEN'] = token;
-    response = await fetch(url, { headers });
+    if (options.body) headers['Content-Type'] = 'application/json';
+    response = await fetch(url, { headers, method: options.method || 'GET', ...(options.body ? { body: JSON.stringify(options.body) } : {}) });
   } catch (error) {
     throw new GitLabConnectorError('GITLAB_UNAVAILABLE', 'GitLab 服务暂时不可达', 502, { cause: error.message });
   }
@@ -318,4 +319,65 @@ function authorizeMappedRequest(mapping, ref, language, requestedPath = '') {
   return clean;
 }
 
-module.exports = { GitLabConnectorError, readConfig, writeConfig, sanitizeConnection, normalizeGitLabAddress, upsertConnection, recordVerification, setConnectionStatus, upsertMapping, findMapping, findConnection, listBranches, listTree, readFile, listCommits, authorizeMappedRequest, request };
+async function submitDocumentMergeRequest(connection, input, options = {}) {
+  if (connection.purpose !== 'read_write') throw new GitLabConnectorError('GITLAB_WRITE_REQUIRED', '仓库连接需配置为读写用途', 403);
+  if (!input.documents?.length) throw new GitLabConnectorError('GITLAB_NO_CHANGES', '候选没有可提交的文档', 422);
+  const project = `/projects/${projectPath(connection)}`;
+  const sourceBranch = `knowledge-review/${input.taskId}`;
+  const query = `?state=all&source_branch=${encodeURIComponent(sourceBranch)}&target_branch=${encodeURIComponent(input.branch)}`;
+  const existing = await request(connection, `${project}/merge_requests${query}`, options);
+  const previous = existing.find(item => item.source_branch === sourceBranch && item.target_branch === input.branch);
+  async function validateExisting(previous) {
+    if (!previous.iid || !previous.web_url || previous.description !== `审核候选：${input.candidateDigest}`) throw new GitLabConnectorError('GITLAB_MR_CANDIDATE_CONFLICT', '已有 MR 与审核候选不一致', 409);
+    for (const document of input.documents) {
+      const current = await readFile(connection, sourceBranch, document.filePath, options);
+      if (current.content !== document.markdown) throw new GitLabConnectorError('GITLAB_SOURCE_CHANGED', 'MR 正文已变化，请重新评审', 409);
+    }
+    if (!['opened', 'merged'].includes(previous.state)) throw new GitLabConnectorError('GITLAB_MR_CLOSED', '关联 MR 已关闭，请创建新的审核任务', 409);
+    return { iid: previous.iid, webUrl: previous.web_url, state: previous.state, sourceBranch, targetBranch: input.branch };
+  }
+  if (previous) return validateExisting(previous);
+  const branch = await request(connection, `${project}/repository/branches/${encodeURIComponent(input.branch)}`, options);
+  if (branch.commit?.id !== input.commitSha) throw new GitLabConnectorError('GITLAB_BASELINE_CHANGED', '目标分支已变化，请重新读取基线并评审', 409);
+  if (!input.documents.some(document => document.markdown !== document.baselineContent)) {
+    throw new GitLabConnectorError('GITLAB_NO_CHANGES', '候选正文与目标分支完全一致，没有可提交的变更', 422);
+  }
+  let workBranch;
+  try { workBranch = await request(connection, `${project}/repository/branches/${encodeURIComponent(sourceBranch)}`, options); }
+  catch (error) { if (error.status !== 404) throw error; }
+  if (!workBranch) {
+    try { await request(connection, `${project}/repository/branches`, { ...options, method: 'POST', body: { branch: sourceBranch, ref: input.commitSha } }); }
+    catch (error) {
+      // Another request may have created the deterministic task branch.
+      if (![400, 409].includes(error.status)) throw error;
+      await request(connection, `${project}/repository/branches/${encodeURIComponent(sourceBranch)}`, options);
+    }
+  }
+  const actions = [];
+  for (const document of input.documents) {
+    const current = await readFile(connection, sourceBranch, document.filePath, options).catch(error => {
+      if (error.status === 404 && document.action === 'create') return null;
+      throw error;
+    });
+    if (current?.content === document.markdown) continue;
+    if ((current?.content ?? null) !== (document.baselineContent ?? null)) throw new GitLabConnectorError('GITLAB_SOURCE_CHANGED', '任务分支内容已变化，不能覆盖', 409);
+    actions.push({ action: document.action, file_path: document.filePath, content: document.markdown, ...(current?.commitId ? { last_commit_id: current.commitId } : {}) });
+  }
+  if (actions.length) await request(connection, `${project}/repository/commits`, { ...options, method: 'POST', body: { branch: sourceBranch, commit_message: input.title, actions } });
+  // Recheck after the commit so concurrent target changes cannot be reported as
+  // a successfully delivered reviewed baseline.
+  const latest = await request(connection, `${project}/repository/branches/${encodeURIComponent(input.branch)}`, options);
+  if (latest.commit?.id !== input.commitSha) throw new GitLabConnectorError('GITLAB_BASELINE_CHANGED', '目标分支已变化，请重新评审', 409);
+  let mr;
+  try { mr = await request(connection, `${project}/merge_requests`, { ...options, method: 'POST', body: { source_branch: sourceBranch, target_branch: input.branch, title: input.title, description: `审核候选：${input.candidateDigest}`, remove_source_branch: true } }); }
+  catch (error) {
+    const recovered = await request(connection, `${project}/merge_requests${query}`, options);
+    mr = recovered.find(item => item.source_branch === sourceBranch && item.target_branch === input.branch && item.state === 'opened');
+    if (!mr) throw error;
+    return validateExisting(mr);
+  }
+  if (!mr.iid || !mr.web_url) throw new GitLabConnectorError('GITLAB_MR_RESPONSE_INVALID', 'GitLab 未返回有效 MR 凭据', 502);
+  return { iid: mr.iid, webUrl: mr.web_url, state: mr.state, sourceBranch, targetBranch: input.branch };
+}
+
+module.exports = { GitLabConnectorError, readConfig, writeConfig, sanitizeConnection, normalizeGitLabAddress, upsertConnection, recordVerification, setConnectionStatus, upsertMapping, findMapping, findConnection, listBranches, listTree, readFile, listCommits, authorizeMappedRequest, request, submitDocumentMergeRequest };

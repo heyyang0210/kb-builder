@@ -53,6 +53,7 @@ CLIENT_ID="${KNOWLEDGE_CENTER_GITLAB_OAUTH_CLIENT_ID:-}"
 CLIENT_SECRET="${KNOWLEDGE_CENTER_GITLAB_OAUTH_CLIENT_SECRET:-}"
 REDIRECT_URI="${KNOWLEDGE_CENTER_GITLAB_OAUTH_REDIRECT_URI:-}"
 DEV_HTTP="${KNOWLEDGE_CENTER_GITLAB_OAUTH_DEV_HTTP:-}"
+OAUTH_SCOPES="${KNOWLEDGE_CENTER_GITLAB_OAUTH_SCOPES:-api}"
 
 if [[ -n "$CLIENT_ID" ]]; then
     echo "   ✅ Client ID:     ${CLIENT_ID:0:8}..."
@@ -73,9 +74,14 @@ else
 fi
 
 echo "   ℹ️  Dev HTTP:      ${DEV_HTTP:-false}"
+if [[ " $OAUTH_SCOPES " == *" api "* ]]; then
+    echo "   ✅ REST 写入范围: api"
+else
+    echo "   ❌ REST 写入范围: 缺少 api（当前 OAuth 授权无法创建分支、提交或 MR）"
+fi
 echo ""
 
-if [[ -n "$CLIENT_ID" && -n "$CLIENT_SECRET" && -n "$REDIRECT_URI" ]]; then
+if [[ -n "$CLIENT_ID" && -n "$CLIENT_SECRET" && -n "$REDIRECT_URI" && " $OAUTH_SCOPES " == *" api "* ]]; then
     echo "✅ OAuth 配置完整"
 else
     echo "❌ OAuth 配置不完整，请运行："

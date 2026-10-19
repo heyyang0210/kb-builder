@@ -256,6 +256,7 @@ E2E_RESOURCE_BY_FILE = {
     "knowledge-center-incremental-flow.spec.js": "database-write",
     "knowledge-center-personnel.spec.js": "database-write",
     "knowledge-center-review-publishing.spec.js": "database-write",
+    "knowledge-center-review-workbench.spec.js": "service-read",
     "knowledge-center-template-management.spec.js": "database-write",
     "knowledge-center-handbook-production-p0p1.spec.js": "database-write",
     "knowledge-center-outline-delete-candidate.spec.js": "database-write",

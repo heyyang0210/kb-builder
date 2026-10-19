@@ -1,4 +1,7 @@
+const { REVIEW_ASSET_STATUSES } = require('../lib/knowledge-asset-utils');
 const http = require('http');
+const crypto = require('crypto');
+const { submitDocumentMergeRequest } = require('../lib/gitlab-connector');
 const fs = require('fs');
 const path = require('path');
 const { loadPlatformContext, loadPlatformProjection } = require('../lib/platform-context-gateway');
@@ -571,14 +574,15 @@ function createKnowledgeCenterHandler(options) {
     const users = await Promise.resolve(authModule?.repository?.listUsers?.() || []);
     return users.filter(user => {
       const roles = new Set(user.roles || []);
-      return roles.has('REVIEWER') || roles.has('PLATFORM_ADMIN');
+      const visible = user.visibleHandbookIds;
+      return (!Array.isArray(visible) || visible.map(String).includes(String(handbookId))) && (roles.has('REVIEWER') || roles.has('PLATFORM_ADMIN') || user.allowedActions?.includes('review:manage'));
     }).map(user => ({
       id: String(user.principalId || user.id || user.userId),
       displayName: String(user.displayName || user.name || user.loginName || '未命名审核人'),
       roles: user.roles || [],
       handbookId,
-      disabled: String(user.principalId || user.id || user.userId) === String(session?.user?.principalId || session?.user?.id),
-      disabledReason: String(user.principalId || user.id || user.userId) === String(session?.user?.principalId || session?.user?.id) ? '提交者不能成为唯一审核人' : null,
+      disabled: false,
+      disabledReason: null,
     }));
   }
 
@@ -596,8 +600,17 @@ function createKnowledgeCenterHandler(options) {
     const documentMatch = pathname.match(/^\/knowledge-center\/api\/production\/handbooks\/([^/]+)\/documents\/([^/]+)\/draft(?:\/(revisions|restore))?$/);
     const attachmentMatch = pathname.match(/^\/knowledge-center\/api\/production\/handbooks\/([^/]+)\/documents\/([^/]+)\/draft-attachments$/);
     const reviewersMatch = pathname.match(/^\/knowledge-center\/api\/production\/handbooks\/([^/]+)\/reviewers$/);
+    const incrementalReviewMatch = pathname.match(/^\/knowledge-center\/api\/production\/handbooks\/([^/]+)\/incremental-reviews$/);
+    const reviewDraftsMatch = pathname.match(/^\/knowledge-center\/api\/production\/handbooks\/([^/]+)\/review-drafts$/);
     const reviewBatchMatch = pathname.match(/^\/knowledge-center\/api\/production\/handbooks\/([^/]+)\/review-batches$/);
-    if (!documentMatch && !attachmentMatch && !reviewersMatch && !reviewBatchMatch && !storedAttachmentMatch) return false;
+    if (!documentMatch && !attachmentMatch && !reviewersMatch && !reviewBatchMatch && !incrementalReviewMatch && !reviewDraftsMatch && !storedAttachmentMatch) return false;
+
+    if (reviewDraftsMatch && req.method === 'GET') {
+      const handbookId = decodeURIComponent(reviewDraftsMatch[1]);
+      await requireHandbookReadAsync(session, handbookId);
+      sendProductionData(res, { items: handbookProductionService.listReviewDrafts(handbookId, session) });
+      return true;
+    }
 
     if (storedAttachmentMatch && req.method === 'GET') {
       const result = handbookProductionService.readAttachment(decodeURIComponent(storedAttachmentMatch[1]), session);
@@ -614,6 +627,72 @@ function createKnowledgeCenterHandler(options) {
 
     if (reviewersMatch && req.method === 'GET') {
       sendProductionData(res, { items: await eligibleReviewers(decodeURIComponent(reviewersMatch[1]), session), capabilities: handbookProductionService.capabilities(session) });
+      return true;
+    }
+    if (incrementalReviewMatch && req.method === 'POST') {
+      const handbookId = decodeURIComponent(incrementalReviewMatch[1]);
+      await requireHandbookReadAsync(session, handbookId);
+      if (!hasAction(session, 'knowledge:write')) throw Object.assign(new Error('没有提交评审权限'), { status: 403 });
+      const key = req.headers['idempotency-key'];
+      if (!key) throw Object.assign(new Error('提交评审需要幂等键'), { status: 400 });
+      const body = await readJsonBody(req);
+      if (body.reviewMode && body.reviewMode !== 'online_review') throw Object.assign(new Error('不支持的评审模式'), { status: 422 });
+      await assertActiveProductionOutline(body);
+      if (!Array.isArray(body.documents) || !body.documents.length) throw Object.assign(new Error('至少选择一篇已保存文档'), { status: 422 });
+      if (body.reviewMode === 'online_review' && (!['document', 'handbook'].includes(body.scope) || (body.scope === 'document' && body.documents.length !== 1))) throw Object.assign(new Error('在线评审范围与所选文档不一致'), { status: 422, code: 'ONLINE_REVIEW_SCOPE_INVALID' });
+      const service = handleIncrementalBuild?.service;
+      if (!service) throw Object.assign(new Error('增量审核服务暂不可用'), { status: 503 });
+      const { mapping, connection } = findMapping(handbookId, GITLAB_CONFIG_PATH);
+      const branch = body.documents[0].branch;
+      if (body.documents.some(item => item.branch !== branch)) throw Object.assign(new Error('一次评审只能提交同一分支'), { status: 422 });
+      const eligible = new Set((await eligibleReviewers(handbookId, session)).map(item => item.id));
+      const documents = body.documents.map(item => {
+        const result = handbookProductionService.getDraft({ ...item, handbookId }, session);
+        if (!result.capabilities.canSubmitReview || !result.exists || result.draft.currentRevisionId !== item.draftRevisionId) throw Object.assign(new Error('草稿版本已变化，请刷新后重新提交'), { status: 409, code: 'REVIEW_REVISION_STALE' });
+        if (result.draft.revision.attachmentIds?.length || /\/knowledge-center\/api\/production\/attachments\//.test(result.draft.revision.markdown)) throw Object.assign(new Error('当前 MR 交付不支持平台临时附件，请先改为仓库内有效链接并重新保存'), { status: 422, code: 'ATTACHMENT_DELIVERY_UNSUPPORTED' });
+        const filePath = authorizeMappedRequest(mapping, branch, 'zh', item.filePath);
+        if (!filePath || !/\.(md|markdown)$/i.test(filePath)) throw Object.assign(new Error('请选择映射目录中的 Markdown 文件路径'), { status: 422 });
+        const reviewerIds = item.reviewerIds || body.defaultReviewerIds || [];
+        if (!reviewerIds.length || reviewerIds.some(id => !eligible.has(String(id)))) throw Object.assign(new Error('请选择有审核权限的审核人（可以是本人）'), { status: 422 });
+        return { ...item, filePath, reviewerIds, markdown: result.draft.revision.markdown, templateVersionId: result.draft.revision.templateVersionId, baselineDigest: result.draft.revision.baselineDigest };
+      });
+      if (new Set(documents.map(item => item.documentId)).size !== documents.length) throw Object.assign(new Error('文档不能重复提交'), { status: 422 });
+      if (new Set(documents.map(item => item.filePath)).size !== documents.length) throw Object.assign(new Error('多个文档不能映射同一仓库文件'), { status: 422 });
+      const submissionIdentity = [handbookId, documents.map(item => [item.documentId, item.draftRevisionId, item.filePath])];
+      if (body.reviewMode === 'online_review') submissionIdentity.push(body.reviewMode, body.scope);
+      const submissionId = crypto.createHash('sha256').update(JSON.stringify(submissionIdentity)).digest('hex');
+      // A retry returns the original frozen task even if the repository has
+      // moved since its creation; it never creates another candidate.
+      const previous = service.repository.read().tasks.find(item => item.handbookSource?.submissionId === submissionId && service.isOwner(session, item));
+      let task = previous ? service.get(session, previous.id) : null;
+      if (!task) {
+        const branches = await gitLabRequestForUser(session, connection, options => listBranches(connection, options));
+        const commitSha = branches.find(item => item.name === branch)?.commitSha;
+        if (!commitSha) throw Object.assign(new Error('目标分支不可读取'), { status: 409 });
+        for (const document of documents) {
+          authorizeMappedRequest(mapping, branch, 'zh', document.filePath);
+          const file = await gitLabRequestForUser(session, connection, options => readGitLabFile(connection, commitSha, document.filePath, options)).catch(error => {
+            if (error.status === 404) return null;
+            throw error;
+          });
+          document.baselineContent = file?.content ?? null;
+          document.action = file ? 'update' : 'create';
+          const actualDigest = crypto.createHash('sha256').update(document.baselineContent || '').digest('hex');
+          if (actualDigest !== document.baselineDigest) throw Object.assign(new Error('仓库正文与保存时基线不同，请重新加载并保存'), { status: 409, code: 'GITLAB_BASELINE_CHANGED' });
+          if (document.markdown === document.baselineContent) throw Object.assign(new Error('候选正文与 GitLab 内容完全一致，没有可提交的变更'), { status: 422, code: 'GITLAB_NO_CHANGES' });
+        }
+        const content = documents.length === 1 ? documents[0].markdown : documents.map(item => `# ${item.filePath}\n\n${item.markdown}`).join('\n\n');
+        const baselineContent = documents.length === 1 ? documents[0].baselineContent || '\n' : documents.map(item => `# ${item.filePath}\n\n${item.baselineContent || ''}`).join('\n\n');
+        task = service.createHandbookReview(session, key, {
+          handbookId, branch, commitSha, submissionId, documents, content, baselineContent, reviewMode: body.reviewMode || null,
+          repositoryIdentity: { connectionId: connection.id, host: connection.host, project: connection.projectPath || connection.project },
+          name: body.note || `手册文档评审：${documents.map(item => item.filePath).join('、')}`,
+          operations: documents.map(item => ({ type: item.action === 'create' ? 'add' : 'update', documentId: item.documentId, nodeId: item.documentId, beforeDigest: item.baselineDigest, after: { content: item.markdown } })),
+        });
+      }
+      const reviewHref = `/knowledge-center/review?handbookId=${encodeURIComponent(handbookId)}&taskId=${encodeURIComponent(task.id)}`;
+      documents.forEach(item => handbookProductionService.linkIncrementalReview({ ...item, handbookId, taskId: task.id, reviewHref }, session));
+      sendProductionData(res, { tasks: [task], reviewHref }, 201);
       return true;
     }
     if (reviewBatchMatch && req.method === 'POST') {
@@ -1227,23 +1306,74 @@ function createKnowledgeCenterHandler(options) {
       const handbookId = String(params.get('handbookId') || '');
       const requestedTaskId = String(params.get('taskId') || '');
       const step = params.get('step') || 'read';
-      const review = service.reviewBootstrap(session, { handbookId, taskId: requestedTaskId });
-      const selectedId = requestedTaskId || review.items[0]?.id || '';
-      const assetProjection = review.detail
-        ? { items: [] }
-        : await readReviewAssetsAsync().then(payload => queryKnowledgeAssets(payload, new URLSearchParams({ pageSize: '100' }), isPlatformAdmin(session)));
-      const reviewHandbooks = (assetProjection.items || []).filter(item => item.repositoryMapped);
-      const resolvedHandbookId = review.readerHandbookId || reviewHandbooks[0]?.handbookId || '';
+      const view = params.get('view') || (requestedTaskId ? 'reader' : handbookId ? 'reader' : 'handbooks');
+      if (!['handbooks', 'mine', 'documents', 'reader'].includes(view)) throw Object.assign(new Error('未知审核视图'), { status: 400 });
+      const review = service.reviewBootstrap(session, { handbookId: view === 'mine' ? '' : handbookId, taskId: requestedTaskId, view, documentId: params.get('documentId'), path: params.get('path') });
+      const selectedId = requestedTaskId;
+      const assets = await readReviewAssetsAsync();
+      const visible = session?.visibleHandbookIds || session?.user?.visibleHandbookIds;
+      const permittedAssets = { ...assets, handbooks: assets.handbooks.filter(item => !Array.isArray(visible) || visible.map(String).includes(String(item.handbookId))) };
+      // A pending review is an authoritative workflow fact. The asset stage
+      // projection can lag behind it, so do not hide an actionable review.
+      const pendingReviewHandbookIds = new Set(review.documents.filter(item => item.state === 'under_review').map(item => String(item.handbookId)));
+      const reviewHandbooks = [];
+      let page = 1;
+      let projection;
+      do {
+        projection = queryKnowledgeAssets(permittedAssets, new URLSearchParams({ pageSize: '100', page: String(page++) }), isPlatformAdmin(session), GITLAB_CONFIG_PATH);
+        reviewHandbooks.push(...projection.items.filter(item => REVIEW_ASSET_STATUSES.has(item.status) || pendingReviewHandbookIds.has(String(item.handbookId))));
+      } while (page <= Math.ceil(projection.total / projection.pageSize));
+      const eligibleIds = new Set(reviewHandbooks.map(item => String(item.handbookId)));
+      const users = await Promise.resolve(authModule?.repository?.listUsers?.() || []);
+      const reviewerNames = new Map();
+      for (const user of users) {
+        const name = String(user.displayName || user.name || user.loginName || '').trim();
+        if (!name) continue;
+        for (const id of [user.principalId, user.id, user.userId]) {
+          if (id !== undefined && id !== null) reviewerNames.set(String(id), name);
+        }
+      }
+      const documents = review.documents.filter(item => eligibleIds.has(String(item.handbookId))).map(item => ({
+        ...item,
+        reviewerDisplay: (item.decidedBy?.id && reviewerNames.get(String(item.decidedBy.id))) || (item.decidedBy?.displayName !== '未知用户' && item.decidedBy?.displayName) || item.decidedBy?.name
+          || (item.decidedBy ? '人员未匹配' : item.reviewerIds.length ? item.reviewerIds.map(id => reviewerNames.get(String(id)) || '人员未匹配').join('、') : '未明确指派'),
+      }));
+      const handbooks = reviewHandbooks.map(item => {
+        const rows = documents.filter(document => document.handbookId === item.handbookId);
+        return { ...item, reviewCount: rows.length, pendingCount: rows.filter(document => document.state === 'under_review').length,
+          pendingPublishCount: rows.filter(document => document.state === 'approved').length,
+          updatedAt: rows.map(document => document.updatedAt || document.submittedAt).filter(Boolean).sort().at(-1) || null };
+      });
+      const resolvedHandbookId = review.readerHandbookId || '';
       const diff = selectedId && step === 'diff' ? service.getCandidateDiff(session, selectedId) : null;
       const totalMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
       res.writeHead(200, {
         'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store',
         'Server-Timing': `review-bootstrap;dur=${totalMs.toFixed(3)}`,
       });
-      res.end(JSON.stringify({ success: true, data: { items: review.items, allItems: review.allItems, detail: review.detail ? { task: review.detail } : null, handbookId: resolvedHandbookId, reviewHandbooks, onlineReviewBaselines: review.baselines, onlineReviewBaselineError: null, diff } }));
+      const overview = view === 'reader' && !requestedTaskId && eligibleIds.has(handbookId)
+        ? service.reviewOverview(session, documents.filter(item => item.handbookId === handbookId))
+        : null;
+      res.end(JSON.stringify({ success: true, data: { view, workbench: { handbooks, documents, mine: documents.filter(item => item.assignedToMe), ...(overview ? { overview } : {}) }, items: review.items, allItems: review.allItems, detail: review.detail ? { task: review.detail } : null, handbookId: resolvedHandbookId, reviewHandbooks, onlineReviewBaselines: review.baselines, onlineReviewBaselineError: null, diff } }));
     } catch (error) {
       res.writeHead(error.status || 500, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
       res.end(JSON.stringify({ success: false, error: { code: error.code || 'REVIEW_BOOTSTRAP_FAILED', message: error.message || '审核工作区读取失败' } }));
+    }
+  }
+
+  async function serveReviewReassignment(req, res, session, taskId, reviewId) {
+    try {
+      const service = handleIncrementalBuild?.service;
+      if (!service) throw Object.assign(new Error('审核服务暂不可用'), { status: 503 });
+      const key = req.headers['idempotency-key'];
+      const body = await readJsonBody(req);
+      const task = service.get(session, taskId);
+      const eligible = new Set((await eligibleReviewers(task.handbookId, session)).map(item => String(item.id)));
+      const data = service.updateReviewers(session, taskId, reviewId, key, body, eligible);
+      sendProductionData(res, data);
+    } catch (error) {
+      res.writeHead(error.status || 500, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+      res.end(JSON.stringify({ success: false, error: { code: error.code || 'REVIEW_REASSIGN_FAILED', message: error.status ? error.message : '修改审核人失败' } }));
     }
   }
 
@@ -1289,11 +1419,16 @@ function createKnowledgeCenterHandler(options) {
       const treeMs = Number(process.hrtime.bigint() - treeStartedAt) / 1e6;
       const preferred = params.get('path') || params.get('preferredPath') || tree.find(item => item.type !== 'tree' && /\.md$/i.test(item.path || item.name))?.path || '';
       let file = null;
+      let fileError = null;
       let fileMs = 0;
       if (preferred) {
         const requested = authorizeMappedRequest(mapping, branch, language, preferred);
         const fileStartedAt = process.hrtime.bigint();
-        file = await gitLabRequestForUser(session, connection, options => readGitLabFile(connection, branch, requested, options));
+        file = await gitLabRequestForUser(session, connection, options => readGitLabFile(connection, branch, requested, options)).catch(error => {
+          if (error.status !== 404) throw error;
+          fileError = { code: error.code || 'GITLAB_FILE_NOT_FOUND', message: '当前文档尚不存在于仓库；已保留手册目录，审核文档仍可读取冻结快照。' };
+          return null;
+        });
         fileMs = Number(process.hrtime.bigint() - fileStartedAt) / 1e6;
       }
       const totalMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
@@ -1301,7 +1436,7 @@ function createKnowledgeCenterHandler(options) {
         status: 'ok', handbookId, handbookName: asset?.name || handbookId,
         connectionName: projected.name, project: projected.project,
         languages: { zh: mapping.zhPaths.length > 0, en: mapping.enPaths.length > 0 },
-        branches, branch, language, tree, file, requestedPath: preferred,
+        branches, branch, language, tree, file, error: fileError, requestedPath: preferred,
         commitSha: file?.commitId || branches.find(item => item.name === branch)?.commitSha || null,
         updatedAt: file?.updatedAt || null,
       };
@@ -1515,6 +1650,10 @@ function createKnowledgeCenterHandler(options) {
     if (req.method === 'GET' && pathname === '/knowledge-center/api/review/bootstrap') {
       requireSession(req, res, session => serveReviewBootstrap(req, res, session)); return;
     }
+    const reassignMatch = pathname.match(/^\/knowledge-center\/api\/review\/tasks\/([^/]+)\/reviews\/([^/]+)\/reviewers$/);
+    if (req.method === 'PUT' && reassignMatch) {
+      requireSession(req, res, session => serveReviewReassignment(req, res, session, decodeURIComponent(reassignMatch[1]), decodeURIComponent(reassignMatch[2]))); return;
+    }
     if (req.method === 'GET' && pathname === '/knowledge-center/api/review/repository-context') {
       requireSession(req, res, session => serveReviewRepositoryContext(req, res, session)); return;
     }
@@ -1619,6 +1758,34 @@ function createKnowledgeCenterHandler(options) {
     }
     if (pathname.startsWith('/knowledge-center/api/production/handbooks/') || pathname.startsWith('/knowledge-center/api/production/attachments/')) {
       requireSession(req, res, session => handleHandbookProduction(req, res, session, pathname)); return;
+    }
+    const mrPublish = pathname.match(/^\/knowledge-center\/api\/incremental-tasks\/([^/]+)\/publish$/);
+    if (mrPublish && req.method === 'POST') {
+      requireSession(req, res, async session => {
+        const service = handleIncrementalBuild?.service;
+        const task = service?.get(session, decodeURIComponent(mrPublish[1]));
+        if (!task?.handbookSource) {
+          if (task?.reviewMode === 'online_review') throw Object.assign(new Error('候选正文与 GitLab 内容完全一致，没有可提交的变更；请在文档生产修改并重新送审'), { status: 422, code: 'GITLAB_NO_CHANGES' });
+          return handleIncrementalBuild(req, res, session);
+        }
+        if (!hasAction(session, 'publish:manage')) throw Object.assign(new Error('没有发布权限'), { status: 403 });
+        await requireHandbookReadAsync(session, task.handbookId);
+        const body = await readJsonBody(req);
+        const key = req.headers['idempotency-key'];
+        if (!key) throw Object.assign(new Error('发布需要幂等键'), { status: 400 });
+        if (body.expectedCandidateDigest !== task.candidate?.digest) throw Object.assign(new Error('候选版本已变化'), { status: 409 });
+        if (task.state === 'mr_submitted') return sendProductionData(res, task.mergeRequest);
+        if (task.state !== 'approved' || !task.reviews.some(item => item.status === 'approved' && item.candidateDigest === task.candidate.digest)) throw Object.assign(new Error('候选必须通过审核'), { status: 409 });
+        const { mapping, connection } = findMapping(task.handbookId, GITLAB_CONFIG_PATH);
+        const identity = { connectionId: connection.id, host: connection.host, project: connection.projectPath || connection.project };
+        if (JSON.stringify(identity) !== JSON.stringify(task.handbookSource.repositoryIdentity)) throw Object.assign(new Error('仓库映射已变化，请重新发起评审'), { status: 409 });
+        if (task.candidate.content !== task.handbookSource.content || JSON.stringify(task.candidate.operations) !== JSON.stringify(task.handbookSource.operations)) throw Object.assign(new Error('候选与保存快照不一致，请返回手册重新提交'), { status: 409 });
+        task.handbookSource.documents.forEach(item => authorizeMappedRequest(mapping, task.handbookSource.branch, 'zh', item.filePath));
+        const mergeRequest = await gitLabRequestForUser(session, connection, options => submitDocumentMergeRequest(connection, {
+          ...task.handbookSource, taskId: task.id, title: task.name, candidateDigest: task.candidate.digest,
+        }, options));
+        sendProductionData(res, service.recordMergeRequest(session, task.id, key, { expectedCandidateDigest: body.expectedCandidateDigest, mergeRequest }));
+      }); return;
     }
     if (pathname === '/knowledge-center/api/incremental-tasks' || pathname.startsWith('/knowledge-center/api/incremental-tasks/')) {
       requireSession(req, res, session => handleIncrementalBuild(req, res, session)); return;

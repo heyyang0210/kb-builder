@@ -16,6 +16,8 @@
 
 `.env.example` 只描述环境注入契约；本地 `.env` 可保存本机凭据但不得提交，生产密钥应由环境变量或密钥系统注入。对外访问地址通过 `KNOWLEDGE_CENTER_PUBLIC_BASE_URL` 统一配置，可使用完整的 IP URL（例如 `http://192.0.2.10:13510`）或域名 URL；平台地址、CAS service 和默认 GitLab OAuth 回调由它派生。
 
+GitLab 审核发布使用 REST API 写入任务分支、提交和 MR，OAuth 应用及 `KNOWLEDGE_CENTER_GITLAB_OAUTH_SCOPES` 需包含 `api`；修改配置后，已有用户须重新连接 GitLab 账号才能取得新范围。`write_repository` 不能替代 REST API 写权限。
+
 环境和内部端口使用统一前缀：`KNOWLEDGE_CENTER_ENV`、`KNOWLEDGE_CENTER_FRONTEND_PORT`、`KNOWLEDGE_CENTER_DOCUMENT_API_PORT`、`KNOWLEDGE_CENTER_PINGCODE_API_PORT`、`KNOWLEDGE_CENTER_INTERNAL_HOST` 和 `KNOWLEDGE_CENTER_PINGCODE_HOST`。旧 `KNOWLEDGE_CENTER_PUBLIC_HOST` 仅作一个兼容周期的输入，不应写入新配置。
 
 `KNOWLEDGE_CENTER_ENV` 是环境名称的唯一外部配置项；运维入口会将其规范化为进程内的 `KNOWLEDGE_CENTER_ENVIRONMENT` 并显式传递给前端网关。项目安装器将 Playwright 浏览器制品放在 `runtime/browsers/playwright/`，已有环境也可保持 Playwright 默认缓存或用 `PLAYWRIGHT_BROWSERS_PATH` 显式覆盖。

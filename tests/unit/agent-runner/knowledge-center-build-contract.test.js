@@ -106,7 +106,14 @@ describe('knowledge center unified build contract', () => {
 
   test('restricts artifacts to a repository-relative runtime build path', () => {
     expect(buildScript).toContain('[[ "$value" == runtime/build/* ]]');
-    expect(buildScript).toContain('/*|[A-Za-z]:*|\\\\*|//*');
+    for (const invalidRoot of ['/tmp/kc-build', '//server/share', 'C:\\kc-build', '\\\\server\\share', 'runtime/build/../escape', 'runtime/build//empty']) {
+      const result = childProcess.spawnSync('bash', [buildScriptPath], {
+        cwd: repoRoot, encoding: 'utf8',
+        env: { ...process.env, KNOWLEDGE_CENTER_BUILD_ROOT: invalidRoot },
+      });
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toMatch(/构建目录/);
+    }
     expect(buildScript).toContain('"$segment" != ".."');
     expect(platformScript).toContain('KNOWLEDGE_CENTER_FRONTEND_ROOT="$BUILD_DIR/web/platform"');
     expect(platformScript).toContain('YASDB_STORAGE_CLASSES_DIR="$BUILD_DIR/java/classes"');

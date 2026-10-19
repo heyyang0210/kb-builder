@@ -144,6 +144,16 @@ function createHandbookProductionService(options = {}) {
     return projectDraft(state.drafts?.[contextKey(input)] || null, session);
   }
 
+  function listReviewDrafts(handbookId, session) {
+    requireCapability(session, 'canRead');
+    return Object.values(store.read().drafts || {})
+      .filter(draft => String(draft.context?.handbookId) === String(handbookId))
+      .map(draft => {
+        const revision = draft.revisions.find(item => item.revisionId === draft.currentRevisionId);
+        return revision ? { ...draft.context, draftRevisionId: revision.revisionId, editVersion: revision.version, updatedAt: draft.updatedAt, reviewState: draft.reviewState || null } : null;
+      }).filter(Boolean);
+  }
+
   function saveDraft(input, session, idempotencyKey) {
     requireCapability(session, 'canEdit');
     const ctx = context(input);
@@ -292,8 +302,8 @@ function createHandbookProductionService(options = {}) {
         const revision = draft.revisions.find(entry => entry.revisionId === String(item.draftRevisionId));
         if (!revision || revision.revisionId !== draft.currentRevisionId) throw new HandbookProductionError('REVIEW_REVISION_STALE', '所选草稿版本不是当前已保存版本', 409, { documentId: ctx.documentId });
         const reviewerIds = [...new Set((item.reviewerIds || input.defaultReviewerIds || []).map(String))]
-          .filter(id => id && id !== submittedBy.id && eligibleIds.has(id));
-        if (!reviewerIds.length) throw new HandbookProductionError('INDEPENDENT_REVIEWER_REQUIRED', '每篇文档至少需要一名有权限且非提交者的审核人', 422, { documentId: ctx.documentId });
+          .filter(id => id && eligibleIds.has(id));
+        if (!reviewerIds.length) throw new HandbookProductionError('REVIEWER_REQUIRED', '每篇文档至少需要一名有审核权限的审核人', 422, { documentId: ctx.documentId });
         return { ctx, draft, revision, reviewerIds };
       });
       const now = new Date().toISOString(); const batchId = randomId('review-batch');
@@ -312,7 +322,20 @@ function createHandbookProductionService(options = {}) {
     });
   }
 
-  return { getDraft, saveDraft, listRevisions, restoreRevision, stageAttachment, readAttachment, createReviewBatch, capabilities, attachmentRoot };
+  function linkIncrementalReview(input, session) {
+    requireCapability(session, 'canSubmitReview');
+    return store.transaction(state => {
+      const draft = state.drafts?.[contextKey(input)];
+      const revision = draft?.revisions.find(item => item.revisionId === input.draftRevisionId);
+      if (!revision) throw new HandbookProductionError('REVIEW_REVISION_STALE', '草稿修订不存在', 409);
+      draft.reviewRevisionIds ||= [];
+      if (!draft.reviewRevisionIds.includes(revision.revisionId)) draft.reviewRevisionIds.push(revision.revisionId);
+      draft.reviewState = { state: 'in_review', revisionId: revision.revisionId, editVersion: revision.version, taskId: input.taskId, reviewHref: input.reviewHref };
+      return draft.reviewState;
+    });
+  }
+
+  return { getDraft, listReviewDrafts, saveDraft, listRevisions, restoreRevision, stageAttachment, readAttachment, createReviewBatch, linkIncrementalReview, capabilities, attachmentRoot };
 }
 
 module.exports = {

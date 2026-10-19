@@ -273,7 +273,7 @@ describe('P0 平台内增量构建 API', () => {
     expect(decision).toMatchObject({ status: 200, body: { data: { status: 'approved', decision: { decidedBy: { id: 'reviewer-1' } } } } });
   });
 
-  test('真实 HTTP：从已发布正文创建在线评审快照，幂等、行级意见和自审闭环可用', async () => {
+  test('真实 HTTP：无差异正式正文不能直接创建在线评审任务', async () => {
     const payload = {
       name: 'YashanDB 物理规格在线评审',
       handbookId: 'DB-001',
@@ -285,43 +285,10 @@ describe('P0 平台内增量构建 API', () => {
     };
     const first = await request(api.baseUrl, 'POST', '/knowledge-center/api/incremental-tasks/online-reviews', payload, 'online-review-create', 'reviewer');
     const replay = await request(api.baseUrl, 'POST', '/knowledge-center/api/incremental-tasks/online-reviews', payload, 'online-review-create', 'reviewer');
-    expect(first).toMatchObject({
-      status: 200,
-      body: {
-        success: true,
-        data: {
-          reviewMode: 'online_review',
-          state: 'under_review',
-          baselineVersionId: 'v1',
-          target: { scope: 'document', documentIds: ['doc-product-spec'] },
-          candidate: { content: '# YashanDB 产品规格\n\n<span id="YFS"></span>物理规格正文。', operations: [] },
-          reviews: [{ status: 'pending', comments: [] }],
-          capabilities: { canEdit: false, canReview: true },
-        },
-      },
-    });
-    expect(replay.body.data.id).toBe(first.body.data.id);
-
-    const task = first.body.data;
-    const review = task.reviews[0];
-    const comment = await request(api.baseUrl, 'POST', `/knowledge-center/api/incremental-tasks/${task.id}/reviews/${review.id}/comments`, {
-      comment: '请确认物理规格的容量单位。',
-      commentType: 'issue',
-      candidateDigest: task.candidate.digest,
-      anchor: {
-        documentId: 'doc-product-spec',
-        nodeId: 'YFS',
-        anchorKind: 'document_span',
-        lineRange: { startLine: 3, endLine: 3 },
-        contextBefore: 'YashanDB 产品规格',
-        contextAfter: '物理规格正文。',
-      },
-    }, 'online-review-comment', 'reviewer');
-    expect(comment).toMatchObject({ status: 200, body: { data: { mode: 'anchored', anchorStatus: 'needs_manual_confirmation' } } });
-
-    const decision = await request(api.baseUrl, 'POST', `/knowledge-center/api/incremental-tasks/${task.id}/reviews/${review.id}/decision`, { decision: 'approve', comment: '本人完成在线评审' }, 'online-review-decision', 'reviewer');
-    expect(decision).toMatchObject({ status: 200, body: { data: { status: 'approved', decision: { decidedBy: { id: 'reviewer-1' } } } } });
-    expect(api.repository.read().audits).toEqual(expect.arrayContaining([expect.objectContaining({ action: 'ONLINE_REVIEW_SNAPSHOT_CREATED', taskId: task.id })]));
+    expect(first).toMatchObject({ status: 422, body: { success: false, error: { code: 'GITLAB_NO_CHANGES' } } });
+    expect(replay).toMatchObject({ status: 422, body: { success: false, error: { code: 'GITLAB_NO_CHANGES' } } });
+    expect(api.repository.read().tasks).toHaveLength(0);
+    expect(api.repository.read().audits).not.toEqual(expect.arrayContaining([expect.objectContaining({ action: 'ONLINE_REVIEW_SNAPSHOT_CREATED' })]));
   });
 
   test('在线评审快照在已发布版本缺少正文时返回明确冲突', async () => {

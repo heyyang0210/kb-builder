@@ -70,12 +70,13 @@ test('浏览器回收站恢复与超级管理员确认彻底删除', async ({ pa
   await page.getByRole('button', { name: '移入回收站' }).click();
   await expect(page.getByText('大纲已移入回收站', { exact: true })).toBeVisible();
   await page.goto(`${base}/knowledge-center/outlines`);
-  await page.getByRole('button', { name: '回收站', exact: true }).click();
+  await page.getByRole('link', { name: '回收站', exact: true }).click();
+  await expect(page).toHaveURL(/\/knowledge-center\/outlines\/recycle$/);
   await page.locator(`[data-outline-restore="${candidate.id}"]`).click();
   await expect(page.getByText('大纲已恢复', { exact: true })).toBeVisible();
   expect((await page.request.delete(api(path))).status()).toBe(200);
   await page.reload();
-  await page.getByRole('button', { name: '回收站', exact: true }).click();
+  await expect(page).toHaveURL(/\/knowledge-center\/outlines\/recycle$/);
   await page.locator(`[data-outline-purge="${candidate.id}"]`).click();
   const dialog = page.locator('[data-outline-purge-dialog]');
   await expect(dialog).toBeVisible();

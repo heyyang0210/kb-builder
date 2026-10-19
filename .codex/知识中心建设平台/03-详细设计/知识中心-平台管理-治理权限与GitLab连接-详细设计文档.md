@@ -1,5 +1,20 @@
 # 知识中心-平台管理-治理权限与GitLab连接-详细设计文档
 
+### 审核发布的 OAuth 授权范围（2026-10-16）
+
+- `read_write` 连接的发布链路通过 GitLab REST API 创建任务分支、提交文件并创建 MR。用户 OAuth 应用及授权请求必须包含 GitLab `api` scope；`write_repository` 只覆盖 Git over HTTP 等仓库写入，不能代替 REST 写权限。`api` 已包含仓库读取所需的 API 能力，不再叠加只读 scope。
+- 更改授权请求范围不会升级已签发令牌。原有只读令牌必须由用户在个人设置中重新连接 GitLab 账号，回调后才能继续发布。平台不得代替用户使用其他身份发布，也不得把当前 `read_write` 配置当成实际令牌写权限证明。
+- 验收顺序：确认 GitLab OAuth 应用已允许 `api`，用户重新授权，读取令牌实际 scope 与仓库项目写权限，再按冻结审核候选调用发布；回读任务分支、正文、MR 和平台状态。任一步失败时保留审核候选与已生成的任务分支供幂等重试，不自动合并 MR。
+
+```text
+publish(reviewTask):
+  assert reviewedCandidateIsFrozen(reviewTask)
+  token = tokenForUser(publisher, mappedConnection)
+  # OAuth 授权入口请求 api；真实 scope 与项目权限由验收实测确认
+  createOrReuseTaskBranchAndMergeRequest(reviewTask, token)
+  verify remote branch, document, MR and local published state
+```
+
 > 设计编号：KC-M08-DETAIL-002
 > 状态：平台管理当前实施基线；012 已完成领域到团队唯一关系迁移并通过真实 API、改派和浏览器验收；数据库连接配置待运行验收
 > 版本：0.4.1
@@ -132,6 +147,10 @@
 提供用户搜索、用户列表、账号状态、来源、角色编辑和审计摘要。CAS 登录成功的用户由后端写入平台用户目录后才可被授权；本页不展示 CAS Ticket、密码或 GitLab Token。只有平台管理员可编辑，后端写接口必须再次校验角色。
 
 角色保存必须携带当前用户投影中的 `rowVersion`，通过 `If-Match` 防止覆盖并发修改，并携带每次提交唯一的 `Idempotency-Key` 防止重复提交。前端只提交角色列表，版本和幂等标识放在请求头；缺少版本时阻止提交并提示刷新，接口返回失败时使用可读的错误反馈并保留当前页面。
+
+权限编辑草稿使用 `permissionRoleDraft={userId, roles}` 保存。复选框变更时更新草稿；平台概览迟到、保存提示消失等后台重绘后，仅为同一选中用户恢复可编辑角色，禁用角色不恢复。切换选中用户时清空草稿，保存成功后清空并重新读取权威投影及最新行版本；保存失败保留草稿和中文错误。后台读取与提示清理不得覆盖未保存的角色选择。
+
+伪代码：角色 change → 保存当前用户及所选角色 → render 后校验用户一致且控件可编辑再恢复；submit → 使用最新版本与新幂等键保存 → 成功清空草稿并回读 / 失败保留草稿。浏览器验收延迟真实概览响应，先赋权保存再取消角色，释放概览引发重绘后，取消状态与第二次写请求必须保持一致；冲突失败后保留尚未保存的角色。
 
 本地账号角色保持只读。混合认证仓储中，历史文件遗留的 CAS 用户记录不能被误判为本地账号；数据库角色更新以数据库用户目录为准，仅 `identitySource=local` 的本地账号禁止进入数据库角色接口。
 

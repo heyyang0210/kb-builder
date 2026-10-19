@@ -67,8 +67,9 @@ export const uploadHandbookDraftAttachment = (context, file, onProgress) => new 
 });
 
 export const loadHandbookReviewers = handbookId => request(`${base}/${encodeURIComponent(handbookId)}/reviewers`);
+export const loadHandbookReviewDrafts = handbookId => request(`${base}/${encodeURIComponent(handbookId)}/review-drafts`);
 
-export const createHandbookReviewBatch = (handbookId, body) => request(`${base}/${encodeURIComponent(handbookId)}/review-batches`, {
+export const createHandbookIncrementalReview = (handbookId, body) => request(`${base}/${encodeURIComponent(handbookId)}/incremental-reviews`, {
   method: 'POST',
   headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey() },
   body: JSON.stringify(body),

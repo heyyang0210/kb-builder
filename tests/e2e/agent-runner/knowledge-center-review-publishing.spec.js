@@ -92,6 +92,11 @@ async function seedCandidateReady(api) {
 }
 
 async function installGitLabFixture(page) {
+  await page.route('**/knowledge-center/api/gitlab/handbooks/DB-001/commits**', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ success: true, data: [{ sha: 'abcdef123456', shortSha: 'abcdef12', title: 'E2E 安装手册基线', authorName: 'E2E', authoredDate: '2026-09-06T10:00:00.000Z' }] }),
+  }));
   await page.route('**/knowledge-center/api/gitlab/handbooks/DB-001/file**', route => route.fulfill({
     status: 200,
     contentType: 'application/json',
@@ -119,11 +124,14 @@ async function installGitLabFixture(page) {
   });
 }
 
-async function isolateInitialEmptyReview(page, handbookId = 'DB-001') {
+async function isolateInitialEmptyReview(page, handbookId = 'DB-001', { withoutBaseline = false } = {}) {
   await page.route('**/knowledge-center/api/review/bootstrap**', async route => {
     const response = await route.fetch();
     const payload = await response.json();
-    payload.data = { ...payload.data, items: [], allItems: [], detail: null, handbookId };
+    payload.data = { ...payload.data, items: [], allItems: [], detail: null, handbookId, workbench: { ...payload.data.workbench, documents: [], mine: [] } };
+    // This scenario starts before the first baseline; other suites may have
+    // legitimately created versions for this handbook in the shared database.
+    if (withoutBaseline) Object.assign(payload.data, { onlineReviewBaselines: [], onlineReviewBaselineError: null });
     await route.fulfill({ response, json: payload });
   }, { times: 1 });
 }
@@ -133,7 +141,7 @@ test.describe('审核与发布多角色 E2E', () => {
     await login(page.context().request, 'admin', 'admin');
     await installGitLabFixture(page);
     await isolateInitialEmptyReview(page);
-    await page.goto(`${baseUrl}/knowledge-center/review`);
+    await page.goto(`${baseUrl}/knowledge-center/review?view=reader&handbookId=DB-001&showAll=1`);
     let layout = page.locator('[data-navigation-layout-id="review"]');
     let handle = layout.locator('[data-navigation-pane-resizer]');
     await expect(handle).toBeVisible();
@@ -193,16 +201,16 @@ test.describe('审核与发布多角色 E2E', () => {
     });
   });
 
-  test('全局入口无待办时自动进入可见手册阅读工作台', async ({ page }) => {
+  test('显式手册阅读入口无待办时仍可读取仓库完整正文', async ({ page }) => {
     await login(page.context().request, 'admin', 'admin');
     await installGitLabFixture(page);
     await isolateInitialEmptyReview(page);
-    await page.goto(`${baseUrl}/knowledge-center/review`);
+    await page.goto(`${baseUrl}/knowledge-center/review?view=reader&handbookId=DB-001&showAll=1`);
     await expect(page.getByRole('heading', { name: '产品描述手册' })).toBeVisible();
     await expect(page.getByRole('heading', { name: '尚无待审核修改稿' })).toBeVisible();
     await expect(page.getByText('YAS_PORT')).toBeVisible();
     await expect(page.getByText('准备环境')).toBeVisible();
-    await expect(page.locator('input[type="checkbox"]')).toHaveCount(2);
+    await expect(page.locator('.repository-markdown input[type="checkbox"]')).toHaveCount(2);
     await expect(page.locator('blockquote')).toContainText('数据库版本');
     await expect(page.locator('hr')).toHaveCount(1);
     await expect(page.locator('pre[data-language="sql"]')).toContainText('SELECT 1');
@@ -214,7 +222,7 @@ test.describe('审核与发布多角色 E2E', () => {
   test('手册无候选时保留阅读工作台并提供发起评审入口', async ({ page }) => {
     await login(page.context().request, 'admin', 'admin');
     await installGitLabFixture(page);
-    await page.goto(`${baseUrl}/knowledge-center/review?handbookId=DB-NOT-FOUND`);
+    await page.goto(`${baseUrl}/knowledge-center/review?view=reader&handbookId=DB-NOT-FOUND&showAll=1`);
     await expect(page.getByRole('heading', { name: 'DB-NOT-FOUND' })).toBeVisible();
     await expect(page.getByRole('heading', { name: '尚无待审核修改稿' })).toBeVisible();
     await expect(page.getByRole('link', { name: '前往文档生产' })).toHaveAttribute('href', '/knowledge-center/production?handbookId=DB-NOT-FOUND');
@@ -230,69 +238,29 @@ test.describe('审核与发布多角色 E2E', () => {
     const task = await seedCandidateReady(request);
     await login(page.context().request, 'test', 'test');
     await installGitLabFixture(page);
-    await page.goto(`${baseUrl}/knowledge-center/review?taskId=${encodeURIComponent(task.id)}&handbookId=DB-001`);
+    await page.goto(`${baseUrl}/knowledge-center/review?taskId=${encodeURIComponent(task.id)}&handbookId=DB-001&showAll=1`);
     await expect(page.locator('#view-root').getByRole('heading', { name: task.name })).toBeVisible();
     await expect(page.getByText('当前没有待处理审核事项')).toHaveCount(0);
     await expect(page.getByText('YAS_PORT')).toBeVisible();
   });
 
-  test('存量手册可从阅读页发起在线评审，并对快照提出行级意见', async ({ page }) => {
+  test('存量手册阅读页提供当前文档编辑送审入口，不直接创建无差异快照', async ({ page }) => {
     await login(page.context().request, 'test', 'test');
     await installGitLabFixture(page);
-    await isolateInitialEmptyReview(page);
-    await page.goto(`${baseUrl}/knowledge-center/review?handbookId=DB-001`);
+    await isolateInitialEmptyReview(page, 'DB-001', { withoutBaseline: true });
+    await page.goto(`${baseUrl}/knowledge-center/review?view=reader&handbookId=DB-001&showAll=1`);
 
     await expect(page.getByText('YAS_PORT')).toBeVisible();
-    const dialog = page.getByRole('dialog', { name: '发起在线评审' });
-    await expect.poll(async () => {
-      if (!await dialog.isVisible()) await page.getByRole('button', { name: '发起在线评审' }).click();
-      return dialog.isVisible();
-    }).toBe(true);
-    await expect(dialog.getByText('产品', { exact: true })).toBeVisible();
-    await expect(dialog.getByText('YashanDB')).toBeVisible();
-    await expect(dialog.getByRole('group', { name: '选择 Git 提交作为基线来源' })).toBeVisible();
-    await expect(dialog.getByRole('textbox', { name: /业务版本/ })).toHaveValue(/\S+/);
-    await expect(dialog.getByRole('radio', { name: /当前文档/ })).toBeChecked();
-    await dialog.getByRole('textbox', { name: '评审说明（可选）' }).fill('核对 23.4 参数依赖与运维命令');
-    await dialog.getByRole('button', { name: '创建评审快照' }).click();
-
-    await expect(page).toHaveURL(/taskId=inc_/);
-    await expect(page).toHaveURL(/step=read/);
-    const taskId = new URL(page.url()).searchParams.get('taskId');
-    expect(taskId).toBeTruthy();
-    const task = await call(page.context().request, 'GET', `/knowledge-center/api/incremental-tasks/${taskId}`);
-    expect(task).toMatchObject({
-      id: taskId,
-      state: 'under_review',
-      reviewMode: 'online_review',
-      target: { scope: 'document', documentIds: ['doc/install.md'] },
-      candidate: { snapshotOfPublishedVersionId: expect.any(String), operations: [] },
-    });
-
-    await expect(page.locator('#view-root').getByRole('heading', { name: task.name })).toBeVisible();
-    await expect(page.locator('[data-review-document-id="doc/install.md"]')).toHaveCount(1);
-    await expect(page.getByText('当前显示正式版本评审快照')).toBeVisible();
-    await expect(page.getByRole('heading', { name: '安装手册' })).toBeVisible();
-    await expect(page.getByText('准备环境')).toBeVisible();
-    await page.locator('#YFS').evaluate(element => {
-      const selection = window.getSelection();
-      const range = document.createRange();
-      range.selectNodeContents(element);
-      selection.removeAllRanges();
-      selection.addRange(range);
-      element.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
-    });
-    const bubble = page.locator('[data-review-selection-bubble]');
-    await expect(bubble).toBeVisible();
-    await bubble.getByRole('button', { name: '对选中文字提出意见' }).click();
-    const inlineForm = page.locator('[data-review-inline-form]');
-    await expect(inlineForm).toBeVisible();
-    await expect(inlineForm.locator('..').locator('.review-inline-input-quote')).toContainText('YFS 参数说明');
-    await inlineForm.locator('textarea[name="comment"]').fill('请核对 YFS 参数说明的版本依赖。');
-    await inlineForm.getByRole('button', { name: '提交意见' }).click();
-    await expect(page.locator('[data-review-inline-form]')).toHaveCount(0);
-    await page.getByRole('button', { name: /3 处理审核意见/ }).click();
-    await expect(page.locator('[data-review-opinion]').filter({ hasText: '请核对 YFS 参数说明的版本依赖。' })).toBeVisible();
+    const entry = page.getByRole('link', { name: '编辑此文档并发起评审' });
+    await expect(entry).toHaveAttribute('href', /\/knowledge-center\/production\/handbook\/DB-001\?reviewPath=doc%2Finstall\.md&branch=master/);
+    await expect(page.getByRole('button', { name: '发起在线评审' })).toBeVisible();
+    await expect(page.getByRole('dialog', { name: '发起在线评审' })).toHaveCount(0);
+    const before = await call(page.context().request, 'GET', '/knowledge-center/api/incremental-tasks?handbookId=DB-001');
+    await entry.click();
+    await expect(page).toHaveURL(/\/knowledge-center\/production\/handbook\/DB-001/);
+    await expect(page).toHaveURL(/reviewPath=doc%2Finstall\.md/);
+    const after = await call(page.context().request, 'GET', '/knowledge-center/api/incremental-tasks?handbookId=DB-001');
+    expect(after.map(item => item.id)).toEqual(before.map(item => item.id));
   });
 
   test('阅读、差异、行级意见、审核和发布均由真实后端驱动', async ({ page, request }) => {
@@ -300,7 +268,7 @@ test.describe('审核与发布多角色 E2E', () => {
     const seeded = await seedUnderReview(request);
     await login(page.context().request, 'admin', 'admin');
     await installGitLabFixture(page);
-    await page.goto(`${baseUrl}/knowledge-center/review?taskId=${encodeURIComponent(seeded.task.id)}&handbookId=DB-001&step=read`);
+    await page.goto(`${baseUrl}/knowledge-center/review?taskId=${encodeURIComponent(seeded.task.id)}&handbookId=DB-001&step=read&showAll=1`);
 
     await expect(page.locator('#view-root').getByRole('heading', { name: seeded.task.name })).toBeVisible();
     await expect(page.getByText('待审核版本：修改稿')).toBeVisible();
@@ -389,7 +357,7 @@ test.describe('审核与发布多角色 E2E', () => {
     const seeded = await seedUnderReview(request);
     await login(page.context().request, 'test', 'test');
     await installGitLabFixture(page);
-    await page.goto(`${baseUrl}/knowledge-center/review?taskId=${encodeURIComponent(seeded.task.id)}&handbookId=DB-001`);
+    await page.goto(`${baseUrl}/knowledge-center/review?taskId=${encodeURIComponent(seeded.task.id)}&handbookId=DB-001&showAll=1`);
     await expect(page.locator('[data-role-card="reviewer"]')).toContainText('不可用');
     await expect(page.locator('[data-role-card="publisher"]')).toContainText('不可用');
     await page.getByRole('button', { name: '3 处理审核意见' }).click();

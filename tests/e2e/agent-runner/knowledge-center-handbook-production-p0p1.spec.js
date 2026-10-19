@@ -99,9 +99,12 @@ test.describe('手册级文档生成页面 P0/P1', () => {
     if (!await ensureWorkspace(page, testInfo)) return;
 
     // 目录必须由大纲节点的 parentId 组装为树，而不是平铺文件列表。
+    await page.getByRole('button', { name: '目录', exact: true }).click();
     await expect(page.locator('[data-handbook-directory-group]').first()).toBeVisible({ timeout: 10000 });
     expect(await page.locator('[data-handbook-directory-group] ul').count()).toBeGreaterThan(0);
     await expect(page.locator('[data-handbook-directory-group] summary').first()).toBeVisible();
+    const documentRowHeight = await page.locator('.handbook-production-document button').first().evaluate(node => node.getBoundingClientRect().height);
+    expect(documentRowHeight).toBeLessThanOrEqual(44);
 
     const currentTitle = page.locator('.handbook-production-editor h2').first();
     await expect(currentTitle).toBeVisible();
@@ -111,6 +114,8 @@ test.describe('手册级文档生成页面 P0/P1', () => {
     await expect(page.getByText('GitLab 未匹配正文', { exact: true })).toHaveCount(0);
     await expect(page.getByText('GitLab 中未找到对应正文', { exact: true })).toHaveCount(0);
     await expect(page.getByText('Markdown / 富文本', { exact: true })).toHaveCount(0);
+    await page.getByRole('button', { name: '关闭文档目录', exact: true }).last().click();
+    await page.getByRole('button', { name: '工具', exact: true }).click();
     await expect(page.getByRole('tab', { name: 'AI助手' })).toBeVisible();
     await expect(page.getByRole('tab', { name: '引用资料' })).toBeVisible();
     await page.getByRole('tab', { name: '引用资料' }).click();
@@ -123,6 +128,7 @@ test.describe('手册级文档生成页面 P0/P1', () => {
     });
     await expect(referenceDialog.getByLabel('内容预览')).toHaveValue(/E2E 参考资料/);
     await referenceDialog.getByRole('button', { name: '取消' }).click();
+    await page.getByRole('button', { name: '关闭辅助工具', exact: true }).last().click();
     await expect(page.getByText('预览', { exact: true })).toBeVisible();
     await expect(page.getByText('编辑', { exact: true })).toBeVisible();
     await expect(page.getByText(/尚未形成共享草稿|共享草稿 ·/)).toBeVisible();
@@ -148,7 +154,8 @@ test.describe('手册级文档生成页面 P0/P1', () => {
     await page.goto(`${baseUrl}/knowledge-center/production/handbook/${encodeURIComponent(outline.handbookId)}`, { waitUntil: 'networkidle' });
     if (!await ensureWorkspace(page, testInfo)) return;
 
-    await expect(page.getByText('未修改', { exact: true })).toBeVisible();
+    await expect(page.locator('[data-handbook-save-status]')).toHaveText('尚未保存为共享草稿');
+    await expect(page.locator('[data-handbook-draft-save]')).toBeEnabled();
     await expect(page.getByText('草稿读取失败', { exact: true })).toHaveCount(0);
     await expect(page.getByText(/共享草稿服务暂不可用/)).toHaveCount(0);
     await expect(page.getByRole('button', { name: '查看草稿历史' })).toHaveCount(0);
@@ -198,10 +205,14 @@ test.describe('手册级文档生成页面 P0/P1', () => {
     await page.getByRole('button', { name: '保存', exact: true }).click();
     await expect(page.getByText(/已保存 v\d+ ·/)).toBeVisible();
     await expect(page.getByText(/共享草稿 · /)).toBeVisible();
+    await page.getByRole('button', { name: '预览', exact: true }).click();
+    await expect(page.locator('.handbook-production-content.is-reading .repository-markdown')).toContainText(marker);
+    await expect(page.locator('.handbook-production-content.is-reading .repository-markdown')).toHaveCSS('line-height', '28px');
     expect(apiCalls.some(item => item.method === 'PUT' && item.url.includes('/draft'))).toBeTruthy();
     expect(apiCalls.some(item => item.url.includes('/gitlab/') && item.method !== 'GET')).toBeFalsy();
 
     await page.reload({ waitUntil: 'networkidle' });
+    await expect(page.locator('.handbook-production-content.is-reading .repository-markdown')).toContainText(marker);
     await page.getByRole('button', { name: '编辑', exact: true }).click();
     await expect(page.locator('[data-handbook-vditor] .vditor-wysiwyg')).toContainText(marker);
     await expect(page.getByRole('button', { name: '恢复原文', exact: true })).toHaveCount(0);
@@ -242,6 +253,9 @@ test.describe('手册级文档生成页面 P0/P1', () => {
     expect(canvasBox.width).toBeLessThanOrEqual(861);
 
     const reviewTray = page.locator('.handbook-review-tray');
+    // 真实保存用例会留下共享草稿，有草稿时评审区按业务规则默认展开。
+    // 先显式收起以建立交互前提，再验证展开/收起，不依赖共享fixture初始状态。
+    if (await reviewTray.getAttribute('open') !== null) await reviewTray.locator('summary').click();
     await expect(reviewTray).not.toHaveAttribute('open', '');
     await reviewTray.locator('summary').click();
     await expect(reviewTray).toHaveAttribute('open', '');
@@ -255,91 +269,104 @@ test.describe('手册级文档生成页面 P0/P1', () => {
     }
   });
 
-  test('P1：责任人过滤、sticky 辅助栏、全局预览、单滚动和移动端抽屉', async ({ page, browserName }, testInfo) => {
+  test('P1：沉浸布局、抽屉互斥、键盘返回与移动端', async ({ page, browserName }, testInfo) => {
     const outline = await handbookFixture(page.context().request, testInfo);
     if (!outline) return;
     await page.goto(`${baseUrl}/knowledge-center/production/handbook/${encodeURIComponent(outline.handbookId)}`, { waitUntil: 'networkidle' });
     if (!await ensureWorkspace(page, testInfo)) return;
-
-    const mine = page.getByRole('button', { name: '只看我负责', exact: true });
-    await mine.click();
-    await expect(page.locator('.handbook-production-directory').getByText(/只看我负责 · \d+ 篇/).first()).toBeVisible();
+    const directory = page.locator('.handbook-production-directory');
+    const assistant = page.locator('.handbook-assistant-panel');
+    await expect(directory).toBeHidden();
+    await expect(assistant).toBeHidden();
+    await expect(page.locator('.handbook-review-tray')).not.toHaveAttribute('open');
+    await page.getByRole('button', { name: '目录', exact: true }).click();
+    await expect(directory).toBeVisible();
+    await page.getByRole('button', { name: '只看我负责', exact: true }).click();
+    await expect(directory.getByText(/只看我负责 · \d+ 篇/).first()).toBeVisible();
     await page.getByRole('button', { name: '全部文档', exact: true }).click();
-    await expect(page.getByText(/\d+ 篇文档/).first()).toBeVisible();
-
-    const overflowModes = await page.evaluate(() => ({
-      root: getComputedStyle(document.documentElement).overflowY,
-      body: getComputedStyle(document.body).overflowY,
-      main: getComputedStyle(document.querySelector('.main-shell')).overflowY,
-      directory: getComputedStyle(document.querySelector('.handbook-production-directory-scroll')).overflowY,
-      assistant: getComputedStyle(document.querySelector('.handbook-assistant-panel')).overflowY,
-    }));
-    expect(overflowModes.root).toBe('hidden');
-    expect(overflowModes.body).toBe('hidden');
-    expect(overflowModes.main).toBe('auto');
-    expect(['auto', 'scroll']).not.toContain(overflowModes.directory);
-    expect(['auto', 'scroll']).not.toContain(overflowModes.assistant);
-
-    const assistantTopBefore = await page.locator('.handbook-assistant-panel').evaluate(element => element.getBoundingClientRect().top);
-    await page.locator('.main-shell').evaluate(element => { element.scrollTop = 900; element.dispatchEvent(new Event('scroll')); });
-    await page.waitForTimeout(100);
-    const assistantTopAfter = await page.locator('.handbook-assistant-panel').evaluate(element => element.getBoundingClientRect().top);
-    expect(Math.abs(assistantTopAfter - 16)).toBeLessThanOrEqual(2);
-    expect(assistantTopAfter).toBeLessThan(assistantTopBefore);
-
-    // 全局预览属于可滚离的次级操作，返回文档顶部后再触发。
-    await page.locator('.main-shell').evaluate(element => { element.scrollTop = 0; element.dispatchEvent(new Event('scroll')); });
-    await page.waitForTimeout(100);
+    await page.keyboard.press('Escape');
+    await expect(directory).toBeHidden();
+    await expect(page.getByRole('button', { name: '目录', exact: true })).toBeFocused();
+    await page.getByRole('button', { name: '工具', exact: true }).click();
+    await expect(assistant).toBeVisible();
+    await expect(directory).toBeHidden();
+    await page.keyboard.press('Escape');
+    await expect(assistant).toBeHidden();
+    await expect(page.getByRole('button', { name: '工具', exact: true })).toBeFocused();
     await page.getByRole('button', { name: '全局预览', exact: true }).click();
-    await expect(page.locator('.handbook-production-directory')).toBeHidden();
-    await expect(page.locator('.handbook-assistant-panel')).toBeHidden();
     await expect(page.locator('.sidebar')).toBeHidden();
     await expect(page.locator('.handbook-production-editor')).toBeVisible();
     await page.getByRole('button', { name: '退出全局预览', exact: true }).click();
-    await expect(page.locator('.handbook-production-directory')).toBeVisible();
-
     await page.setViewportSize({ width: 390, height: 844 });
     await page.reload({ waitUntil: 'networkidle' });
-    await page.getByRole('button', { name: '打开辅助工具', exact: true }).click();
-    await expect(page.locator('.handbook-assistant-panel')).toHaveClass(/is-open/);
-    await page.getByRole('button', { name: '关闭辅助工具', exact: true }).last().click();
-    await expect(page.locator('.handbook-assistant-panel')).not.toHaveClass(/is-open/);
+    await expect(page.getByRole('button', { name: '目录', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: '目录', exact: true }).click();
+    await expect(directory).toBeVisible();
+    await page.getByRole('button', { name: '关闭文档目录', exact: true }).last().click();
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
     expect(overflow).toBeFalsy();
-    const mobileScreenshot = await page.screenshot({ fullPage: true, path: evidencePath('handbook-mobile', browserName) });
-    await testInfo.attach('手册生产移动端辅助抽屉', {
-      body: mobileScreenshot,
-      contentType: 'image/png',
-    });
+    const screenshot = await page.screenshot({ fullPage: true, path: evidencePath('handbook-mobile', browserName) });
+    await testInfo.attach('手册生产移动端沉浸布局', { body: screenshot, contentType: 'image/png' });
   });
 
-  test('P0：手册目录支持搜索、独立宽度和显式收起', async ({ page }, testInfo) => {
+  test('P0：目录抽屉支持搜索和显式关闭', async ({ page }, testInfo) => {
     const outline = await handbookFixture(page.context().request, testInfo);
     if (!outline) return;
     await page.goto(`${baseUrl}/knowledge-center/production/handbook/${encodeURIComponent(outline.handbookId)}`, { waitUntil: 'networkidle' });
     if (!await ensureWorkspace(page, testInfo)) return;
-    const layout = page.locator('[data-navigation-layout-id="production-handbook"]');
-    await expect(layout).toBeVisible();
-    await expect(layout.locator('[data-handbook-directory-search]')).toBeVisible();
-    const handle = layout.locator('[data-navigation-pane-resizer]');
-    await expect(handle).toHaveAttribute('aria-valuemin', '220');
-    await expect(handle).toHaveAttribute('aria-valuemax', '360');
-    await layout.locator('[data-handbook-directory-search]').fill('不存在的文档');
-    await expect(layout.locator('.handbook-production-directory-scroll li:visible')).toHaveCount(0);
-    await layout.locator('[data-handbook-directory-search]').fill('');
-    await page.getByRole('button', { name: '只看我负责', exact: true }).click();
-    await page.getByRole('button', { name: '全部文档', exact: true }).click();
-    const redrawnHandle = page.locator('[data-navigation-layout-id="production-handbook"] [data-navigation-pane-resizer]');
-    await expect(redrawnHandle).toBeVisible();
-    const redrawnWidth = Number(await redrawnHandle.getAttribute('aria-valuenow'));
-    await redrawnHandle.focus();
-    await page.keyboard.press('ArrowRight');
-    await expect(redrawnHandle).toHaveAttribute('aria-valuenow', String(Math.min(360, redrawnWidth + 16)));
-    await layout.locator('[data-navigation-pane-toggle]').click();
-    await expect(layout).toHaveClass(/navigation-pane-collapsed/);
-    await expect(layout.locator('[data-navigation-pane-toggle] [data-lucide]')).toHaveAttribute('data-lucide', 'panel-left-open');
-    await layout.locator('[data-navigation-pane-toggle]').click();
-    await expect(layout).not.toHaveClass(/navigation-pane-collapsed/);
-    await expect(layout.locator('[data-navigation-pane-toggle] [data-lucide]')).toHaveAttribute('data-lucide', 'panel-left-close');
+    await page.getByRole('button', { name: '目录', exact: true }).click();
+    const directory = page.locator('.handbook-production-directory');
+    await directory.locator('[data-handbook-directory-search]').fill('不存在的文档');
+    await expect(directory.locator('.handbook-production-directory-scroll li:visible')).toHaveCount(0);
+    await directory.locator('[data-handbook-directory-search]').fill('');
+    await expect(directory.locator('[data-handbook-directory-group]').first()).toBeVisible();
+    await page.getByRole('button', { name: '关闭文档目录', exact: true }).last().click();
+    await expect(directory).toBeHidden();
   });
+
+  test('P1：无效 documentId 显示明确错误且不静默切换文档', async ({ page }, testInfo) => {
+    const outline = await handbookFixture(page.context().request, testInfo);
+    if (!outline) return;
+    await page.goto(`${baseUrl}/knowledge-center/production/handbook/${encodeURIComponent(outline.handbookId)}?documentId=missing-document-for-e2e`, { waitUntil: 'networkidle' });
+    await expect(page.getByRole('heading', { name: '无法打开当前文档' })).toBeVisible();
+    await expect(page.getByText('当前文档不在这本手册的已发布大纲中，可能已被移除。请从目录选择现有文档。')).toBeVisible();
+    await expect(page.locator('[data-handbook-current-document]')).toHaveCount(0);
+  });
+
+  test('P1：手册目录返回 403 时显示无权访问而非文档不存在', async ({ page }, testInfo) => {
+    const outline = await handbookFixture(page.context().request, testInfo);
+    if (!outline) return;
+    await page.route(`**/knowledge-center/api/outline/governance/${encodeURIComponent(outline.id)}?view=compact`, route => route.fulfill({
+      status: 403,
+      contentType: 'application/json',
+      body: JSON.stringify({ success: false, error: { code: 'FORBIDDEN', message: '没有权限读取当前手册目录' } }),
+    }));
+    await page.goto(`${baseUrl}/knowledge-center/production/handbook/${encodeURIComponent(outline.handbookId)}?documentId=missing-document-for-e2e`, { waitUntil: 'networkidle' });
+    await expect(page.getByText('无权访问当前手册')).toBeVisible();
+    await expect(page.getByText('无法打开当前文档')).toHaveCount(0);
+  });
+
+  test('P0：写作时抽屉和辅助标签不重建编辑器，离开后恢复导航状态', async ({ page }, testInfo) => {
+    const outline = await handbookFixture(page.context().request, testInfo);
+    if (!outline) return;
+    await page.goto(`${baseUrl}/knowledge-center/production`, { waitUntil: 'networkidle' });
+    await expect(page.locator('#app-shell')).not.toHaveClass(/sidebar-collapsed/);
+    await page.goto(`${baseUrl}/knowledge-center/production/handbook/${encodeURIComponent(outline.handbookId)}`, { waitUntil: 'networkidle' });
+    if (!await ensureWorkspace(page, testInfo)) return;
+    await expect(page.locator('#app-shell')).toHaveClass(/sidebar-collapsed/);
+    await page.getByRole('button', { name: '编辑', exact: true }).click();
+    const canvas = page.locator('[data-handbook-vditor] .vditor-wysiwyg');
+    await expect(canvas).toBeVisible();
+    await canvas.evaluate(element => { window.__handbookCanvasBeforeDrawer = element; });
+    await page.getByRole('button', { name: '目录', exact: true }).click();
+    await page.keyboard.press('Escape');
+    await page.getByRole('button', { name: '工具', exact: true }).click();
+    await page.getByRole('tab', { name: '属性' }).click();
+    await page.getByRole('tab', { name: '引用资料' }).click();
+    await page.keyboard.press('Escape');
+    expect(await canvas.evaluate(element => element === window.__handbookCanvasBeforeDrawer)).toBeTruthy();
+    await page.getByRole('button', { name: '文档生产', exact: true }).click();
+    await expect(page.locator('#app-shell')).not.toHaveClass(/sidebar-collapsed/);
+  });
+
 });

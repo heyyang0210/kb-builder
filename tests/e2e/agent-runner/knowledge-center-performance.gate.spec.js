@@ -24,7 +24,7 @@ const routes = [
   ['/knowledge-center/assets', '知识资产', '[data-asset-loaded="true"]'],
   ['/knowledge-center/outlines', '大纲管理', '.outline-list'],
   ['/knowledge-center/templates', '模板管理', '[data-template-id]'],
-  ['/knowledge-center/review', '审核与发布', '.review-workspace, .review-zero-state'],
+  ['/knowledge-center/review', '审核与发布', '.review-hub'],
 ];
 const percentile = (values, value) => values.slice().sort((a, b) => a - b)[Math.ceil(values.length * value) - 1];
 const parseServerTiming = header => Object.fromEntries(String(header || '').split(',').map(item => {
@@ -74,13 +74,27 @@ test.describe('知识中心刷新性能门禁', () => {
   });
 
   test(`审核主体与仓库正文分层性能门禁`, async ({ page }, testInfo) => {
+    const response = await page.context().request.get(`${baseUrl}/knowledge-center/api/review/bootstrap?view=handbooks`);
+    expect(response.ok()).toBeTruthy();
+    const projection = (await response.json()).data;
+    let handbookId = projection.workbench.handbooks[0]?.handbookId;
+    // 列表阶段准入与既有手册的直接阅读是独立契约；隔离快照可能尚无构建阶段手册。
+    if (!handbookId) {
+      const assetsResponse = await page.context().request.get(`${baseUrl}/knowledge-center/api/assets/handbooks?page=1&pageSize=100`);
+      expect(assetsResponse.ok()).toBeTruthy();
+      const assets = (await assetsResponse.json()).data;
+      const handbook = (assets.items || assets.handbooks || []).find(item => !item.archivedAt && item.status !== 'archived');
+      handbookId = handbook?.handbookId || handbook?.id;
+    }
+    expect(handbookId, '阅读性能门禁需要至少一本有读取权限的手册').toBeTruthy();
+    const readerUrl = `${baseUrl}/knowledge-center/review?view=reader&handbookId=${encodeURIComponent(handbookId)}&showAll=1`;
     const samples = [];
     // 刷新体验使用已加载过一次的静态资源缓存；冷启动另由资源体积和请求数门禁看护。
-    await page.goto(`${baseUrl}/knowledge-center/review`, { waitUntil: 'domcontentloaded' });
+    await page.goto(readerUrl, { waitUntil: 'domcontentloaded' });
     await expect(page.locator('[data-review-repository-region]:not([data-repository-status="loading"])')).toBeVisible();
     await page.waitForLoadState('networkidle');
     for (let round = 1; round <= 5; round += 1) {
-      await page.goto(`${baseUrl}/knowledge-center/review`, { waitUntil: 'domcontentloaded' });
+      await page.goto(readerUrl, { waitUntil: 'domcontentloaded' });
       await expect(page.locator('.review-workspace, .review-zero-state').first()).toBeVisible();
       await expect(page.locator('[data-review-repository-region]:not([data-repository-status="loading"])')).toBeVisible();
       const sample = await page.evaluate(roundNumber => {
@@ -105,6 +119,17 @@ test.describe('知识中心刷新性能门禁', () => {
     expect(interactiveP95).toBeLessThanOrEqual(reviewInteractiveBudgetMs);
     if (requireReadableReviewRepository) expect(readableSamples).toHaveLength(samples.length);
     if (repositoryP95 !== null) expect(repositoryP95).toBeLessThanOrEqual(reviewRepositoryBudgetMs);
+  });
+
+  test('审核全局入口只加载手册工作台，不请求仓库正文', async ({ page }) => {
+    const repositoryRequests = [];
+    page.on('request', request => {
+      if (new URL(request.url()).pathname.endsWith('/review/repository-context')) repositoryRequests.push(request.url());
+    });
+    await page.goto(`${baseUrl}/knowledge-center/review`, { waitUntil: 'networkidle' });
+    await expect(page.locator('.review-hub')).toBeVisible();
+    await expect(page.locator('[data-review-repository-region]')).toHaveCount(0);
+    expect(repositoryRequests).toEqual([]);
   });
 
   for (const [route, title, readySelector] of routes) {

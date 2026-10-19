@@ -1,3 +1,4 @@
+const { reviewDocuments } = require('./review-workbench');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
@@ -29,6 +30,16 @@ function now() {
 function actor(session) {
   const user = session?.user || session || {};
   return { id: user.id || user.loginName || 'unknown', displayName: user.displayName || user.loginName || '未知用户' };
+}
+
+function reviewerIdentityIds(session) {
+  const user = session?.user || session || {};
+  return [...new Set([user.id, user.principalId, session?.principalId].filter(value => value !== undefined && value !== null && value !== '').map(String))];
+}
+
+function isAssignedReviewer(session, reviewerIds = []) {
+  const identities = reviewerIdentityIds(session);
+  return (reviewerIds || []).some(id => identities.includes(String(id)));
 }
 
 function principalId(value) {
@@ -212,6 +223,62 @@ class IncrementalBuildService {
     this.baselines = options.baselineProvider || new RepositoryBaselineProvider();
   }
 
+  // Reuse the ordinary task commands inside one repository transaction so a
+  // failed conversion cannot leave a half-created task visible to reviewers.
+  createHandbookReview(session, key, body) {
+    requireAction(session, 'knowledge:write');
+    return this.withIdempotency(session, key, 'handbook-review', body, state => {
+      const existing = state.tasks.find(task => task.handbookSource?.submissionId === body.submissionId && this.isOwner(session, task));
+      if (existing) return this.project(existing, session);
+      const repository = new MemoryIncrementalBuildRepository(state);
+      const service = new IncrementalBuildService(repository);
+      const baseline = service.createSyntheticBaseline(session, `${key}:baseline`, {
+        handbookId: body.handbookId, businessVersion: body.branch,
+        content: body.baselineContent, branch: body.branch, commitSha: body.commitSha,
+      });
+      // A comparison snapshot is local to this submission, not a new official
+      // release. Keep the previous current baseline unchanged.
+      repository.state.publishedVersions.forEach(item => {
+        const original = state.publishedVersions.find(value => value.id === item.id);
+        if (original) item.current = original.current;
+      });
+      const task = service.create(session, `${key}:task`, {
+        name: body.name, handbookId: body.handbookId, businessVersion: body.branch, baselineVersionId: baseline.id,
+      });
+      service.addSource(session, task.id, `${key}:source`, { sourceType: 'manual', label: '手册已保存修订', content: body.content, reference: body.submissionId });
+      service.updateTarget(session, task.id, `${key}:target`, { documentIds: body.documents.map(item => item.documentId) });
+      service.saveDraft(session, task.id, `${key}:draft`, { editVersion: 0, content: body.content, operations: body.operations });
+      const checks = service.runChecks(session, task.id, `${key}:checks`);
+      if (!checks.passed) throw new IncrementalBuildError('CHECK_REQUIRED', '手册修订转换未通过完整性检查', 409, checks);
+      service.createCandidate(session, task.id, `${key}:candidate`);
+      service.submitReview(session, task.id, `${key}:review`);
+      const next = repository.read();
+      const created = next.tasks.find(item => item.id === task.id);
+      if (body.reviewMode === 'online_review') created.reviewMode = 'online_review';
+      created.reviews[0].reviewerIds = [...new Set(body.documents.flatMap(item => item.reviewerIds).map(String))];
+      created.handbookSource = structuredClone(body);
+      next.publishedVersions.find(item => item.id === baseline.id).current = false;
+      next.publishedVersions.find(item => item.id === baseline.id).comparisonOnly = true;
+      Object.assign(state, next);
+      return this.project(created, session);
+    });
+  }
+
+  recordMergeRequest(session, taskId, key, body) {
+    requireAction(session, 'publish:manage');
+    return this.withIdempotency(session, key, `merge-request:${taskId}`, body, state => {
+      const task = this.task(state, taskId);
+      this.requireReadable(session, task);
+      if (!task.handbookSource || task.state !== 'approved' || body.expectedCandidateDigest !== task.candidate?.digest) {
+        throw new IncrementalBuildError('APPROVAL_REQUIRED', '必须提交已审核的同一手册候选版本', 409);
+      }
+      task.mergeRequest = body.mergeRequest;
+      task.state = 'mr_submitted'; task.updatedAt = now();
+      this.audit(state, 'GITLAB_MR_SUBMITTED', taskId, session, { mergeRequest: body.mergeRequest });
+      return task.mergeRequest;
+    });
+  }
+
   withIdempotency(session, key, action, request, operation) {
     if (!key) throw new IncrementalBuildError('IDEMPOTENCY_KEY_REQUIRED', '写操作必须携带 Idempotency-Key', 400);
     const owner = actor(session).id;
@@ -244,12 +311,16 @@ class IncrementalBuildService {
   }
 
   canRead(session, task) {
+    const visible = session?.visibleHandbookIds || session?.user?.visibleHandbookIds;
+    if (Array.isArray(visible) && !visible.map(String).includes(String(task.handbookId))) return false;
     if (this.isOwner(session, task)) return true;
+    // 明确受指派者保留候选只读历史，决定后仍可返回清单并继续下一项。
+    if (hasAction(session, 'knowledge:read') && (task.reviews || []).some(review => isAssignedReviewer(session, review.reviewerIds))) return true;
     // 审核中的候选允许知识编辑者只读参与并提出意见；编辑、审核决定和发布
     // 仍由各自 capability 控制，不能由此取得写入候选或发布权限。
     if (hasAction(session, 'knowledge:write') && task.state === 'under_review') return true;
     if (hasAction(session, 'review:manage') && task.state === 'under_review') return true;
-    if (hasAction(session, 'publish:manage') && ['approved', 'published'].includes(task.state)) return true;
+    if (hasAction(session, 'publish:manage') && ['approved', 'published', 'mr_submitted'].includes(task.state)) return true;
     return false;
   }
 
@@ -292,18 +363,6 @@ class IncrementalBuildService {
     required(body.handbookId, 'handbookId', '必须选择手册');
     required(body.businessVersion, 'businessVersion', '必须选择业务版本');
     required(body.baselineVersionId, 'baselineVersionId', '必须选择已发布正式版本');
-    const scope = body.scope || (body.documentId || body.documentIds?.length ? 'document' : 'handbook');
-    if (!['handbook', 'document'].includes(scope)) {
-      throw new IncrementalBuildError('ONLINE_REVIEW_SCOPE_INVALID', '在线评审范围仅支持 handbook 或 document', 422, { field: 'scope' });
-    }
-    if (body.documentIds !== undefined && !Array.isArray(body.documentIds)) {
-      throw new IncrementalBuildError('ONLINE_REVIEW_SCOPE_INVALID', 'documentIds 必须是文档标识数组', 422, { field: 'documentIds' });
-    }
-    const documentIds = [...new Set([...(body.documentIds || []), ...(body.documentId ? [body.documentId] : [])].filter(Boolean))];
-    if (scope === 'document' && !documentIds.length) {
-      throw new IncrementalBuildError('ONLINE_REVIEW_SCOPE_INVALID', '文档范围评审必须指定至少一个文档', 422, { field: 'documentIds' });
-    }
-
     return this.withIdempotency(session, key, 'online-review', body, state => {
       const baseline = this.baselines.require(state, body.baselineVersionId, body.handbookId, body.businessVersion);
       if (baseline.content === undefined || baseline.content === null || baseline.content === '') {
@@ -311,62 +370,9 @@ class IncrementalBuildService {
           baselineVersionId: baseline.id,
         });
       }
-      const timestamp = now();
-      const target = {
-        scope,
-        documentIds,
-        sectionIds: [],
-        language: body.language || 'zh-CN',
-      };
-      const content = structuredClone(baseline.content);
-      const candidate = {
-        id: identifier('candidate'),
-        content,
-        operations: [],
-        digest: digest({ baselineVersionId: baseline.id, baselineContentDigest: baseline.contentDigest || digest(content), target, content }),
-        createdBy: actor(session),
-        createdAt: timestamp,
-        snapshotOfPublishedVersionId: baseline.id,
-      };
-      const review = {
-        id: identifier('review'),
-        candidateDigest: candidate.digest,
-        status: 'pending',
-        comments: [],
-        submittedBy: actor(session),
-        submittedAt: timestamp,
-        decision: null,
-      };
-      const task = {
-        id: identifier('inc'),
-        name: String(body.name || `${body.handbookId} 在线评审`).trim(),
-        handbookId: body.handbookId,
-        businessVersion: body.businessVersion,
-        baselineVersionId: baseline.id,
-        baselineDigest: baseline.contentDigest || digest(content),
-        reviewMode: 'online_review',
-        state: 'under_review',
-        sourceSnapshots: [],
-        target,
-        draft: null,
-        checks: null,
-        candidate,
-        reviews: [review],
-        publication: null,
-        externalEvidence: [],
-        createdBy: actor(session),
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      };
-      state.tasks.push(task);
-      this.audit(state, 'ONLINE_REVIEW_SNAPSHOT_CREATED', task.id, session, {
-        reviewId: review.id,
-        baselineVersionId: baseline.id,
-        candidateDigest: candidate.digest,
-        scope,
-        documentIds,
-      });
-      return this.project(task, session);
+      // This legacy command only copies the baseline and therefore cannot
+      // produce the GitLab change required by the online review workflow.
+      throw new IncrementalBuildError('GITLAB_NO_CHANGES', '候选正文与 GitLab 内容完全一致，请先在文档生产修改并保存后发起评审', 422);
     });
   }
 
@@ -442,6 +448,7 @@ class IncrementalBuildService {
     requireAction(session, 'knowledge:read');
     const state = this.repository.read();
     let tasks = state.tasks.filter(task => this.canRead(session, task));
+    const readableTasks = tasks;
     if (query.handbookId) tasks = tasks.filter(item => item.handbookId === query.handbookId);
     tasks = tasks.sort((a, b) => String(b.updatedAt || b.createdAt).localeCompare(String(a.updatedAt || a.createdAt)));
     const allItems = tasks.map(task => this.project(task, session, true));
@@ -450,8 +457,20 @@ class IncrementalBuildService {
     if (query.taskId) {
       const task = this.task(state, query.taskId);
       this.requireReadable(session, task);
+      if (query.handbookId && task.handbookId !== query.handbookId) throw new IncrementalBuildError('REVIEW_CONTEXT_MISMATCH', '审核任务不属于当前手册', 409);
+      if (query.documentId && task.handbookSource && !task.handbookSource.documents.some(item => item.documentId === query.documentId && (!query.path || item.filePath === query.path))) throw new IncrementalBuildError('REVIEW_DOCUMENT_MISMATCH', '文档不属于当前审核候选', 409);
+      if (query.path && task.handbookSource && !task.handbookSource.documents.some(item => item.filePath === query.path)) throw new IncrementalBuildError('REVIEW_DOCUMENT_MISMATCH', '文档路径不属于当前审核候选', 409);
+      if (!task.handbookSource) {
+        const operations = task.candidate?.operations || [];
+        const documentIds = new Set([...(task.target?.documentIds || []), ...operations.map(item => item.documentId)].filter(Boolean));
+        const paths = new Set([...(task.target?.documentPaths || []), ...(task.target?.paths || []), ...operations.map(item => item.path)].filter(Boolean));
+        if (query.documentId && !documentIds.has(query.documentId)) throw new IncrementalBuildError('REVIEW_DOCUMENT_MISMATCH', '文档不属于当前审核候选', 409);
+        if (query.path && paths.size && !paths.has(query.path)) throw new IncrementalBuildError('REVIEW_DOCUMENT_MISMATCH', '文档路径不属于当前审核候选', 409);
+        const documentPaths = operations.filter(item => item.documentId === query.documentId && item.path).map(item => item.path);
+        if (query.documentId && query.path && documentPaths.length && !documentPaths.includes(query.path)) throw new IncrementalBuildError('REVIEW_DOCUMENT_MISMATCH', '文档标识与仓库路径不匹配', 409);
+      }
       detail = this.project(task, session);
-    } else if (activeItems[0]?.id) {
+    } else if (!query.view && activeItems[0]?.id) {
       const task = this.task(state, activeItems[0].id);
       this.requireReadable(session, task);
       detail = this.project(task, session);
@@ -463,10 +482,24 @@ class IncrementalBuildService {
     const visible = session?.visibleHandbookIds || session?.user?.visibleHandbookIds || null;
     const baselines = !detail && readerHandbookId
       ? this.baselines.list(state, { handbookId: readerHandbookId })
-        .filter(item => !visible || visible.includes(item.handbookId))
+        .filter(item => !item.comparisonOnly && (!visible || visible.includes(item.handbookId)))
         .map(item => ({ id: item.id, handbookId: item.handbookId, businessVersion: item.businessVersion, current: item.current === true, contentDigest: item.contentDigest || null, publishedAt: item.publishedAt || null }))
       : [];
-    return { items, allItems, detail, readerHandbookId, baselines };
+    const documents = reviewDocuments(readableTasks.map(task => ({ ...task, capabilities: this.project(task, session, true).capabilities })), reviewerIdentityIds(session), hasAction(session, 'review:manage'));
+    return { items, allItems, detail, readerHandbookId, baselines, documents };
+  }
+
+  reviewOverview(session, documents) {
+    const state = this.repository.read();
+    return [...new Map(documents.slice().reverse().map(item => [item.path || item.id, item])).values()]
+      .flatMap(item => {
+        const task = state.tasks.find(candidate => candidate.id === item.taskId && candidate.candidate?.digest === item.candidateDigest);
+        if (!task || !this.canRead(session, task)) return [];
+        const source = task.handbookSource?.documents?.find(document => document.documentId === item.documentId && document.filePath === item.path);
+        return typeof source?.markdown === 'string'
+          ? [{ taskId: item.taskId, candidateDigest: item.candidateDigest, documentId: item.documentId, path: item.path, markdown: source.markdown }]
+          : [];
+      });
   }
 
   listHandbookReviewSummary(session, handbookId, query = {}) {
@@ -544,7 +577,7 @@ class IncrementalBuildService {
     requireAction(session, 'knowledge:read');
     const visible = session?.visibleHandbookIds || session?.user?.visibleHandbookIds || null;
     return this.baselines.list(this.repository.read(), query)
-      .filter(item => !visible || visible.includes(item.handbookId))
+      .filter(item => !item.comparisonOnly && (!visible || visible.includes(item.handbookId)))
       .map(item => ({ id: item.id, handbookId: item.handbookId, businessVersion: item.businessVersion, current: item.current === true, contentDigest: item.contentDigest || null, publishedAt: item.publishedAt || null }));
   }
 
@@ -892,6 +925,49 @@ class IncrementalBuildService {
     return structuredClone(review);
   }
 
+  updateReviewers(session, taskId, reviewId, key, body, eligibleIds) {
+    requireAction(session, 'knowledge:write');
+    const reviewerIds = Array.isArray(body.reviewerIds) ? [...new Set(body.reviewerIds.map(String))] : [];
+    if (!reviewerIds.length || reviewerIds.some(id => !eligibleIds.has(id))) {
+      throw new IncrementalBuildError('REVIEWER_INVALID', '请选择该手册有审核权限的审核人', 422);
+    }
+    return this.withIdempotency(session, key, `reviewers:${taskId}:${reviewId}`, body, state => {
+      const task = this.task(state, taskId);
+      this.requireOwner(session, task);
+      const review = task.reviews.find(item => item.id === reviewId);
+      if (!review || !task.handbookSource) throw new IncrementalBuildError('REVIEW_NOT_FOUND', '手册审核记录不存在', 404);
+      if (task.state !== 'under_review' || review.status !== 'pending') throw new IncrementalBuildError('REVIEW_ALREADY_DECIDED', '审核已完成，不能修改审核人', 409);
+      if (body.candidateDigest !== task.candidate?.digest || review.candidateDigest !== task.candidate.digest) throw new IncrementalBuildError('REVIEW_CANDIDATE_CONFLICT', '审核候选版本已变化', 409);
+      const document = task.handbookSource.documents.find(item => String(item.documentId) === String(body.documentId));
+      if (!document) throw new IncrementalBuildError('REVIEW_DOCUMENT_MISMATCH', '文档不属于当前审核候选', 409);
+      const previous = (document.reviewerIds || []).map(String);
+      document.reviewerIds = reviewerIds;
+      review.reviewerIds = [...new Set(task.handbookSource.documents.flatMap(item => item.reviewerIds || []).map(String))];
+      review.assignment = { updatedBy: actor(session), updatedAt: now() };
+      task.updatedAt = review.assignment.updatedAt;
+      this.audit(state, 'REVIEWERS_REASSIGNED', taskId, session, { reviewId, documentId: document.documentId, previous, reviewerIds });
+      return { documentId: document.documentId, reviewerIds, updatedAt: task.updatedAt };
+    });
+  }
+
+  cancelReview(session, taskId, reviewId, key, body = {}) {
+    requireAction(session, 'review:manage');
+    if (!String(body.reason || '').trim()) throw new IncrementalBuildError('REVIEW_CANCEL_REASON_REQUIRED', '请填写终止原因', 422);
+    return this.withIdempotency(session, key, `review-cancel:${taskId}:${reviewId}`, body, state => {
+      const task = this.task(state, taskId);
+      this.requireReadable(session, task);
+      const review = task.reviews.find(item => item.id === reviewId);
+      if (!review) throw new IncrementalBuildError('REVIEW_NOT_FOUND', '审核记录不存在', 404);
+      if (task.state !== 'under_review' || review.status !== 'pending') throw new IncrementalBuildError('REVIEW_ALREADY_DECIDED', '任务已处理，不能终止', 409);
+      if (body.candidateDigest !== task.candidate?.digest || review.candidateDigest !== task.candidate.digest) throw new IncrementalBuildError('REVIEW_CANDIDATE_CONFLICT', '审核候选版本已变化', 409);
+      review.status = 'cancelled';
+      review.cancellation = { reason: String(body.reason).trim(), cancelledBy: actor(session), cancelledAt: now() };
+      task.state = 'cancelled'; task.updatedAt = review.cancellation.cancelledAt;
+      this.audit(state, 'REVIEW_CANCELLED', taskId, session, { reviewId, reason: review.cancellation.reason });
+      return this.project(task, session);
+    });
+  }
+
   decideReview(session, taskId, reviewId, key, body) {
     requireAction(session, 'review:manage');
     this.requireReadable(session, this.task(this.repository.read(), taskId));
@@ -902,6 +978,7 @@ class IncrementalBuildService {
       this.requireReadable(session, task);
       const review = task.reviews.find(item => item.id === reviewId);
       if (!review) throw new IncrementalBuildError('REVIEW_NOT_FOUND', '审核记录不存在', 404);
+      if (task.handbookSource && !isAssignedReviewer(session, review.reviewerIds)) throw new IncrementalBuildError('REVIEWER_NOT_ASSIGNED', '请由所选审核人完成审核', 403);
       if (review.status !== 'pending' || task.state !== 'under_review') throw new IncrementalBuildError('REVIEW_ALREADY_DECIDED', '审核已完成', 409);
       if (review.candidateDigest !== task.candidate?.digest) throw new IncrementalBuildError('REVIEW_CANDIDATE_CONFLICT', '审核对象与当前候选版本不一致', 409);
       const blockingComments = (review.comments || []).filter(comment => comment.resolved !== true && comment.severity === 'blocker');
@@ -920,6 +997,9 @@ class IncrementalBuildService {
   publish(session, taskId, key, body) {
     requireAction(session, 'publish:manage');
     this.requireReadable(session, this.task(this.repository.read(), taskId));
+    const sourceTask = this.task(this.repository.read(), taskId);
+    if (sourceTask.handbookSource) throw new IncrementalBuildError('GITLAB_MR_REQUIRED', '手册任务须通过 GitLab MR 交付，不能发布平台版本', 409);
+    if (sourceTask.reviewMode === 'online_review') throw new IncrementalBuildError('GITLAB_NO_CHANGES', '候选正文与 GitLab 内容完全一致，没有可提交的变更；请在文档生产修改并重新送审', 422);
     required(body.expectedCandidateDigest, 'expectedCandidateDigest', '必须确认候选版本指纹');
     return this.withIdempotency(session, key, `publish:${taskId}`, body, state => {
       const task = this.task(state, taskId);
@@ -963,6 +1043,7 @@ class IncrementalBuildService {
     return this.withIdempotency(session, key, `revision:${taskId}`, body, state => {
       const previous = this.task(state, taskId);
       this.requireOwner(session, previous);
+      if (previous.handbookSource) throw new IncrementalBuildError('HANDBOOK_REVISION_REQUIRED', '请返回手册编辑、保存并重新发起评审', 409);
       if (previous.state !== 'rejected') throw new IncrementalBuildError('REJECTED_TASK_REQUIRED', '只能从已退回任务创建新草稿', 409);
       const timestamp = now();
       const revision = {
@@ -983,11 +1064,13 @@ class IncrementalBuildService {
     const owner = this.isOwner(session, task);
     const hasPendingReview = task.reviews.some(review => review.status === 'pending');
     const capabilities = {
+      canReassign: owner && hasAction(session, 'knowledge:write') && Boolean(task.handbookSource) && task.state === 'under_review' && hasPendingReview,
+      canCancelReview: hasAction(session, 'review:manage') && task.state === 'under_review' && hasPendingReview,
       canEdit: owner && hasAction(session, 'knowledge:write') && EDITABLE_STATES.has(task.state),
-      canReview: hasAction(session, 'review:manage') && task.state === 'under_review' && hasPendingReview,
+      canReview: hasAction(session, 'review:manage') && task.state === 'under_review' && hasPendingReview && (!task.handbookSource || task.reviews.some(review => review.status === 'pending' && isAssignedReviewer(session, review.reviewerIds))),
       canPublish: hasAction(session, 'publish:manage') && task.state === 'approved',
       canComment: this.canComment(session, task),
-      canRevise: owner && hasAction(session, 'knowledge:write') && task.state === 'rejected',
+      canRevise: owner && !task.handbookSource && hasAction(session, 'knowledge:write') && task.state === 'rejected',
       canRecordEvidence: hasAction(session, 'publish:manage') && task.state === 'published',
     };
     // 审核列表只需要稳定的选择器/历史字段；不要为每个历史任务复制审核证据，
@@ -996,7 +1079,7 @@ class IncrementalBuildService {
       ? structuredClone(Object.fromEntries([
         'id', 'name', 'title', 'handbookId', 'handbookName', 'productName',
         'businessVersion', 'baselineVersionId', 'baselineVersionLabel',
-        'baselineVersionName', 'state', 'status', 'createdAt', 'updatedAt',
+        'baselineVersionName', 'state', 'status', 'createdAt', 'updatedAt', 'mergeRequest',
       ].filter(key => Object.prototype.hasOwnProperty.call(task, key)).map(key => [key, task[key]])))
       : structuredClone(task);
     projection.capabilities = capabilities;
@@ -1058,6 +1141,7 @@ function createIncrementalBuildHandler(options = {}) {
       else if (parts[1] === 'reviews' && parts[3] === 'comments' && parts[5] === 'reopen' && parts.length === 6 && req.method === 'POST') data = service.setCommentResolution(session, parts[0], parts[2], parts[4], key, 'reopen', await readJsonBody(req));
       else if (parts[1] === 'reviews' && parts[3] === 'comments' && parts[5] === 'link-operation' && parts.length === 6 && req.method === 'POST') data = service.linkCommentOperation(session, parts[0], parts[2], parts[4], key, await readJsonBody(req));
       else if (parts[1] === 'reviews' && parts[3] === 'decision' && parts.length === 4 && req.method === 'POST') data = service.decideReview(session, parts[0], parts[2], key, await readJsonBody(req));
+      else if (parts[1] === 'reviews' && parts[3] === 'cancel' && parts.length === 4 && req.method === 'POST') data = service.cancelReview(session, parts[0], parts[2], key, await readJsonBody(req));
       else if (parts[1] === 'ai-analysis' && parts.length === 2 && req.method === 'POST') data = service.runAiAnalysis(session, parts[0], key, await readJsonBody(req));
       else if (parts[1] === 'ai-analysis' && parts.length === 2 && req.method === 'GET') data = service.getAiAnalysis(session, parts[0]);
       else if (parts[1] === 'ai-fix-proposals' && parts.length === 2 && req.method === 'POST') data = service.createAiFixProposal(session, parts[0], key, await readJsonBody(req));

@@ -71,7 +71,7 @@ test('大纲动态实体使用组合框而状态筛选保持原生选择', async
   await expect.poll(async () => (await roleFilter.boundingBox())?.width || 0).toBeGreaterThan(0);
   await expect.poll(async () => (await roleFilter.boundingBox())?.width || Infinity).toBeLessThanOrEqual(220);
 
-  await page.goto(`${baseUrl}/knowledge-center/review`);
+  await page.goto(`${baseUrl}/knowledge-center/review?view=reader&handbookId=DB-001&showAll=1`);
   const branchFilter = page.getByRole('combobox', { name: '选择分支，可输入筛选' });
   await expect(branchFilter).toBeVisible();
   await expect.poll(async () => (await branchFilter.boundingBox())?.width || 0).toBeGreaterThan(0);
@@ -96,32 +96,40 @@ test('移动端组合框不造成页面级横向溢出', async ({ page }) => {
 });
 
 test('真实团队关系驱动大纲分工候选并在平台页展示关联领域', async ({ page }) => {
+  const rosterResponse = await page.request.get(`${baseUrl}/knowledge-center/api/platform/team-groups?groupType=TECH_DOMAIN`);
+  expect(rosterResponse.ok()).toBe(true);
+  const roster = await rosterResponse.json();
+  expect(roster.success).toBe(true);
+  const team = roster.data.items.find(item => item.techDomainName === '兼容性');
+  expect(team, '真实领域必须配置团队').toBeTruthy();
+  expect(team.leader?.principalId, '真实团队必须配置负责人').toBeTruthy();
+  expect(team.members.length, '团队成员候选必须得到验证').toBeGreaterThan(0);
+  const people = [...new Map([team.leader, ...team.members].map(person => [String(person.principalId), person])).values()];
+
   await page.goto(`${baseUrl}/knowledge-center/outlines/DB-017?tab=assignments&domain=2`);
   await expect(page.getByText('兼容性团队尚未配置')).toHaveCount(0);
-  await expect(page.locator('.outline-assignment-leader')).toContainText('汪少华');
+  await expect(page.locator('.outline-assignment-leader')).toContainText(team.leader.displayName);
 
   const assignee = page.locator('select[data-domain-task-assignee]').first();
   await expect(assignee).toBeAttached();
-  await expect(assignee.locator('option')).toHaveText([
-    '未指定责任人',
-    '汪少华',
-    '党文琪',
-    '郝鑫刚',
-    '胡晓畔',
-    '李攀',
-  ]);
+  await expect(assignee.locator('option')).toHaveCount(people.length + 1);
+  const options = await assignee.locator('option').evaluateAll(items => items.map(item => ({ id: item.value, name: item.textContent })));
+  expect(options[0]).toEqual({ id: '', name: '未指定责任人' });
+  expect(options.slice(1).sort((a, b) => a.id.localeCompare(b.id))).toEqual(
+    people.map(person => ({ id: String(person.principalId), name: person.displayName })).sort((a, b) => a.id.localeCompare(b.id)),
+  );
   await expect(assignee.locator('xpath=ancestor::*[@data-searchable-combobox]//input[@role="combobox"]')).toBeVisible();
 
   await page.goto(`${baseUrl}/knowledge-center/platform?tab=principals&view=groups`);
-  await page.getByRole('button', { name: /兼容性/ }).click();
+  await page.locator(`[data-team-group-id="${team.teamGroupId}"]`).click();
   const form = page.locator('[data-team-group-form]');
   await expect(form).toBeVisible();
   await expect(form).toContainText('关联领域：兼容性');
-  await expect(form.locator('select[name="leaderPrincipalId"]')).toHaveValue('186');
-  await expect(form.locator('[data-team-member-chips]')).toContainText('党文琪');
-  await expect(form.locator('[data-team-member-chips]')).toContainText('郝鑫刚');
-  await expect(form.locator('[data-team-member-chips]')).toContainText('胡晓畔');
-  await expect(form.locator('[data-team-member-chips]')).toContainText('李攀');
+  await expect(form.locator('select[name="leaderPrincipalId"]')).toHaveValue(String(team.leader.principalId));
+  await expect(form.locator('[data-team-member-chip]')).toHaveCount(team.members.length);
+  for (const member of team.members) {
+    await expect(form.locator(`[data-team-member-chip="${member.principalId}"]`)).toContainText(member.displayName);
+  }
 
   for (const viewport of [
     { width: 1440, height: 900 },

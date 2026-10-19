@@ -88,7 +88,7 @@ test('新增连接使用当前多仓库表单和幂等请求', async ({ page }) 
   const form = page.locator('[data-gitlab-add-form]');
   await form.getByLabel('连接名称').fill('docs');
   await form.getByLabel('GitLab 地址').fill('https://git-tools.yasdb.com');
-  await form.getByLabel('项目路径').fill('cod-doc/docs');
+  await form.getByRole('textbox', { name: /^项目路径(?:\s|$)/ }).fill('cod-doc/docs');
   await form.getByLabel('默认分支').fill('main');
   await form.getByRole('button', { name: '保存并验证' }).click();
   await expect.poll(() => savedRequest?.headers()['idempotency-key']).toBeTruthy();
@@ -112,7 +112,7 @@ test('新增用户 OAuth 连接自动进入授权，不要求再打开个人管�
   const form = page.locator('[data-gitlab-add-form]');
   await form.getByLabel('连接名称').fill('docs');
   await form.getByLabel('GitLab 地址').fill('https://git-tools.yasdb.com');
-  await form.getByLabel('项目路径').fill('cod-doc/docs');
+  await form.getByRole('textbox', { name: /^项目路径(?:\s|$)/ }).fill('cod-doc/docs');
   await form.getByLabel('默认分支').fill('main');
   await form.getByRole('button', { name: '保存并验证' }).click();
   await expect.poll(() => authorizationStarted).toBe(true);

@@ -107,6 +107,12 @@ describe('增量构建前端契约', () => {
     expect(app()).toContain("params.get('view') === 'todo'");
     expect(app()).toContain("canonicalUrl.searchParams.set('view', 'generations')");
     expect(view()).toContain('data-table-view-id="production-handbooks"');
+    expect(view()).toContain('data-production-handbook-search');
+    expect(view()).toContain("String(item.state || item.status || '').toLowerCase() === 'published'");
+    expect(view()).toContain('publishedHandbookIds.has(item.id)');
+    expect(view()).toContain('projection?.outlineCatalog?.status !== \'ok\'');
+    expect(app()).toContain('requestedHandbookId ? Promise.resolve(null) : loadOutlineData()');
+    expect(app()).toContain('data-production-handbook-search');
     expect(view()).toContain('data-table-column="${key}"');
     expect(view()).toContain('data-production-handbook-row');
     expect(view()).toContain('href="/document-generation-workbench.html"');
@@ -181,7 +187,8 @@ describe('增量构建前端契约', () => {
     expect(review).toContain("? scopedDocuments[0]");
     expect(review).toContain("const onlineReviewSnapshot = task?.reviewMode === 'online_review' && snapshot;");
     expect(review).toContain('当前显示正式版本评审快照');
-    expect(app()).toContain('name: onlineReviewForm.dataset.handbookName ? `${onlineReviewForm.dataset.handbookName} 在线评审` : \'在线评审\'');
+    expect(app()).toContain("reviewMode: 'online_review'");
+    expect(app()).toContain('draftRevisionId: input.dataset.revisionId');
   });
 
   test('审核阅读页的提意见变量必须在 reader 作用域声明', () => {

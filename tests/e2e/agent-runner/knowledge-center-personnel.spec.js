@@ -149,8 +149,13 @@ test('已有 CAS 登录记录的人员仍禁止直接换绑', async ({ page }) =
     : route.continue());
   await loginAsAdmin(page);
   await page.goto(`${baseUrl}/knowledge-center/platform?tab=principals`);
+  await expect(page.getByRole('button', { name: '编辑' })).toBeVisible();
+  // This case checks the CAS binding rule after the initial platform load;
+  // the overview can otherwise replace the edit button during a mouse click.
+  await expect(page.locator('#main')).not.toHaveAttribute('aria-busy', 'true');
   await page.getByRole('button', { name: '编辑' }).click();
   const editor = page.locator('[data-principal-editor-dialog]');
+  await expect(editor).toBeVisible();
   await expect(editor.getByLabel('CAS 登录名')).toBeDisabled();
   await expect(editor.getByText('该人员已有 CAS 登录记录，不能直接更正')).toBeVisible();
 });

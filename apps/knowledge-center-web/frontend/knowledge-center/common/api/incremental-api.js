@@ -58,11 +58,14 @@ export function loadIncrementalBaselines(handbookId, businessVersion = '') {
 export const loadIncrementalTask = taskId => request(`${endpoint}/${encodeURIComponent(taskId)}`);
 export const loadCandidateDiff = taskId => request(`${endpoint}/${encodeURIComponent(taskId)}/diff`);
 export const loadHandbookReviewSummary = handbookId => request(`${endpoint}/handbooks/${encodeURIComponent(handbookId)}/review-summary`);
-export function loadReviewBootstrap({ handbookId = '', taskId = '', step = 'read' } = {}) {
+export function loadReviewBootstrap({ handbookId = '', taskId = '', step = 'read', view = '', documentId = '', path = '' } = {}) {
   const query = new URLSearchParams();
   if (handbookId) query.set('handbookId', handbookId);
   if (taskId) query.set('taskId', taskId);
   if (step) query.set('step', step);
+  if (view) query.set('view', view);
+  if (documentId) query.set('documentId', documentId);
+  if (path) query.set('path', path);
   return request(`/knowledge-center/api/review/bootstrap?${query}`);
 }
 export const createIncrementalTask = body => request(endpoint, { method: 'POST', body: JSON.stringify(body) });
@@ -80,6 +83,8 @@ export const resolveIncrementalReviewComment = (taskId, reviewId, commentId, bod
 export const reopenIncrementalReviewComment = (taskId, reviewId, commentId, body = {}) => command(taskId, `reviews/${encodeURIComponent(reviewId)}/comments/${encodeURIComponent(commentId)}/reopen`, body);
 export const linkIncrementalReviewCommentOperation = (taskId, reviewId, commentId, body) => command(taskId, `reviews/${encodeURIComponent(reviewId)}/comments/${encodeURIComponent(commentId)}/link-operation`, body);
 export const decideIncrementalReview = (taskId, reviewId, body) => command(taskId, `reviews/${encodeURIComponent(reviewId)}/decision`, body);
+export const cancelIncrementalReview = (taskId, reviewId, body) => command(taskId, `reviews/${encodeURIComponent(reviewId)}/cancel`, body);
+export const reassignIncrementalReview = (taskId, reviewId, body) => request(`/knowledge-center/api/review/tasks/${encodeURIComponent(taskId)}/reviews/${encodeURIComponent(reviewId)}/reviewers`, { method: 'PUT', body: JSON.stringify(body) });
 export const publishIncrementalTask = (taskId, body = {}) => command(taskId, 'publish', body);
 export const recordIncrementalEvidence = (taskId, body) => command(taskId, 'external-evidence', body);
 export const createIncrementalRevision = (taskId, body = {}) => command(taskId, 'revisions', body);

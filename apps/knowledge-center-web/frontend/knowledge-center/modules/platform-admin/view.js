@@ -348,7 +348,7 @@ export function renderPermissionResults(permissionProjection = {}, selectedUserI
                 <span>来源：${selectedUser.identitySource === 'cas' ? 'CAS' : '本地'}</span>
               </div>
             </div>
-            <form class="permission-role-form" data-permission-role-form>
+            <form class="permission-role-form" data-permission-role-form data-permission-user-id="${escapeHtml(selectedUser.id)}">
               <p class="muted" style="margin:0 0 var(--space-4);font-size:13px">${editable ? '为该用户分配角色，保存后立即生效。' : '本地账号角色不在此页面维护。'}</p>
               <div class="permission-role-grid">
                 ${roles.map(role => `<label class="permission-role-label">

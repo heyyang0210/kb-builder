@@ -2,6 +2,16 @@ const { test, expect } = require('@playwright/test');
 
 const baseUrl = process.env.KPG_BASE_URL;
 
+// 手册生产列表按已发布大纲目录过滤；列表/抽屉测试同时提供匹配的大纲前提，
+// 避免只替换资产而意外依赖运行环境的真实大纲数据。
+async function mockPublishedProductionOutline(page, handbookId) {
+  await page.route('**/knowledge-center/api/outline/catalog', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ success: true, data: { items: [{ id: `outline-${handbookId}`, handbookId, state: 'published' }], total: 1, snapshotVersion: 'production-regression-fixture' } }),
+  }));
+}
+
 test.beforeEach(async ({ page }) => {
   await page.goto(`${baseUrl}/knowledge-center/`);
   await expect(page.locator('#app-shell:not([hidden]), #auth-shell:not([hidden])')).toBeVisible();
@@ -62,6 +72,7 @@ test('文档生产默认展示手册视图，任务视图继续提供增量工�
 });
 
 test('文档生产复用公共字段抽屉并迁移旧偏好', async ({ page }) => {
+  await mockPublishedProductionOutline(page, 'field-config-e2e');
   await page.route('**/knowledge-center/api/assets/handbooks?*', route => route.fulfill({
     status: 200,
     contentType: 'application/json',
@@ -106,6 +117,7 @@ test('我的生成只展示服务端个人运行投影，旧待办链接自动�
 });
 
 test('手册与任务视图往返时可恢复，空负责人数据不会中断渲染', async ({ page }) => {
+  await mockPublishedProductionOutline(page, 'e2e-null-owner');
   const pageErrors = [];
   page.on('pageerror', error => pageErrors.push(error.message));
   await page.route('**/knowledge-center/api/assets/handbooks?*', route => route.fulfill({

@@ -9,8 +9,8 @@ describe('手册生产草稿空状态与不可用状态', () => {
   const app = () => read('apps/knowledge-center-web/frontend/knowledge-center/app.js');
   const api = () => read('apps/knowledge-center-web/frontend/knowledge-center/common/api/handbook-production-api.js');
 
-  test('无草稿使用未修改状态且不渲染禁用的历史按钮', () => {
-    expect(view()).toContain(": server?.exists ? `已保存 v${server.draft.editVersion} · ${savedTime}` : '未修改'");
+  test('无草稿明确提示尚未保存且不渲染禁用的历史按钮', () => {
+    expect(view()).toContain(": server?.exists ? `已保存 v${server.draft.editVersion} · ${savedTime}` : '尚未保存为共享草稿'");
     expect(view()).toContain('const historyAction = server?.exists');
     expect(view()).not.toContain("saveState?.status === 'loadFailed' ? '草稿读取失败'");
   });
@@ -19,7 +19,8 @@ describe('手册生产草稿空状态与不可用状态', () => {
     expect(api()).toContain("code: 'DRAFT_API_UNAVAILABLE'");
     expect(api()).toContain("contentType.toLowerCase().includes('application/json')");
     expect(view()).toContain('共享草稿服务暂不可用，当前正文仍可编辑，恢复后可保存。');
-    expect(view()).toContain("dirty && draftServiceAvailable");
+    expect(view()).toContain("ui.draftLoadState?.[documentId] === 'ready'");
+    expect(view()).toContain("canSaveHandbookDraft(document.id, ui) ? '' : 'disabled'");
     expect(app()).toContain("draftLoadState?.[documentId] !== 'ready'");
   });
 

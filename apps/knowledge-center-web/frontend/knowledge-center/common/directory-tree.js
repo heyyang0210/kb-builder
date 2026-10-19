@@ -28,7 +28,7 @@ function directChildren(list) {
 function directLabel(node) {
   const summary = [...(node?.children || [])].find(child => child.matches?.('details'))?.querySelector(':scope > summary');
   if (summary) return summary.textContent || '';
-  return [...(node?.children || [])].find(child => child.matches?.('button, label'))?.textContent || '';
+  return [...(node?.children || [])].find(child => child.matches?.('button, a, label'))?.textContent || '';
 }
 
 function filterList(list, query, originalOpen, forceVisible = false) {

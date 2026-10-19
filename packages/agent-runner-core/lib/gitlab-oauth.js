@@ -28,7 +28,7 @@ function config() {
     clientId: String(process.env.KNOWLEDGE_CENTER_GITLAB_OAUTH_CLIENT_ID || '').trim(),
     clientSecret: String(process.env.KNOWLEDGE_CENTER_GITLAB_OAUTH_CLIENT_SECRET || '').trim(),
     redirectUri: String(process.env.KNOWLEDGE_CENTER_GITLAB_OAUTH_REDIRECT_URI || '').trim(),
-    scopes: String(process.env.KNOWLEDGE_CENTER_GITLAB_OAUTH_SCOPES || 'read_api read_repository').trim(),
+    scopes: String(process.env.KNOWLEDGE_CENTER_GITLAB_OAUTH_SCOPES || 'api').trim(),
     devHttp: (process.env.KNOWLEDGE_CENTER_GITLAB_OAUTH_ALLOW_HTTP ?? process.env.KNOWLEDGE_CENTER_GITLAB_OAUTH_DEV_HTTP) === 'true',
     refreshWindowMs: Math.max(30_000, Number(process.env.KNOWLEDGE_CENTER_GITLAB_OAUTH_REFRESH_WINDOW_MS || 300_000)),
   };

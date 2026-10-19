@@ -51,11 +51,11 @@ describe('手册生产共享草稿服务', () => {
       .toThrow(expect.objectContaining({ code: 'ATTACHMENT_CONTEXT_MISMATCH' }));
   });
 
-  test('评审校验独立审核人并冻结 revision 后克隆工作稿', () => {
+  test('评审校验审核资格、允许本人并冻结旧批次 revision', () => {
     const saved = service.saveDraft({ ...context, editVersion: 0, markdown: '待评审', htmlSnapshot: '<p>待评审</p>', attachmentIds: [] }, editor, 'save-review');
-    expect(() => service.createReviewBatch({ handbookId: context.handbookId, documents: [{ ...context, draftRevisionId: saved.draft.currentRevisionId, reviewerIds: ['author-1'] }] }, editor, 'review-invalid', [{ id: 'author-1' }]))
-      .toThrow(expect.objectContaining({ code: 'INDEPENDENT_REVIEWER_REQUIRED' }));
-    const batch = service.createReviewBatch({ handbookId: context.handbookId, documents: [{ ...context, draftRevisionId: saved.draft.currentRevisionId, reviewerIds: ['reviewer-1'] }] }, editor, 'review-ok', [{ id: 'reviewer-1' }]);
+    expect(() => service.createReviewBatch({ handbookId: context.handbookId, documents: [{ ...context, draftRevisionId: saved.draft.currentRevisionId, reviewerIds: ['unqualified'] }] }, editor, 'review-invalid', [{ id: 'author-1' }]))
+      .toThrow(expect.objectContaining({ code: 'REVIEWER_REQUIRED' }));
+    const batch = service.createReviewBatch({ handbookId: context.handbookId, documents: [{ ...context, draftRevisionId: saved.draft.currentRevisionId, reviewerIds: ['author-1'] }] }, editor, 'review-ok', [{ id: 'author-1' }]);
     const current = service.getDraft(context, editor).draft;
     expect(batch.documents[0].draftRevisionId).toBe(saved.draft.currentRevisionId);
     expect(current.reviewRevisionIds).toContain(saved.draft.currentRevisionId);

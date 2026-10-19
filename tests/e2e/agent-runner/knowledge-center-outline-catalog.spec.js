@@ -78,13 +78,13 @@ test('详情迟到响应不能覆盖已返回的全量目录', async ({ page }) 
   let detailStarted;
   const detailGate = new Promise(resolve => { releaseDetail = resolve; });
   const started = new Promise(resolve => { detailStarted = resolve; });
-  await page.route('**/knowledge-center/api/outline/governance/c-drive-outline', async route => {
+  await page.route(url => url.pathname === '/knowledge-center/api/outline/governance/c-drive', async route => {
     detailStarted();
     await detailGate;
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ success: true, data: { id: 'c-drive-outline', handbookId: 'c-drive', name: 'C驱动参考手册大纲', state: 'draft', nodes: [], governance: {} } }),
+      body: JSON.stringify({ success: true, data: { id: 'c-drive', handbookId: 'c-drive', name: 'C驱动参考手册大纲', state: 'draft', nodes: [], governance: {} } }),
     });
   });
   try {
@@ -94,7 +94,7 @@ test('详情迟到响应不能覆盖已返回的全量目录', async ({ page }) 
     await started;
     await page.locator('[data-view="outlines"]').click();
     await expect(page.locator('[data-outline-row]:visible')).toHaveCount(3);
-    const lateResponse = page.waitForResponse(response => response.url().endsWith('/outline/governance/c-drive-outline'));
+    const lateResponse = page.waitForResponse(response => new URL(response.url()).pathname === '/knowledge-center/api/outline/governance/c-drive');
     releaseDetail();
     await lateResponse;
     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
@@ -103,5 +103,38 @@ test('详情迟到响应不能覆盖已返回的全量目录', async ({ page }) 
     await expect(page.locator('.outline-detail-shell')).toHaveCount(0);
   } finally {
     releaseDetail();
+  }
+});
+
+test('领域任务迟到刷新保留已展开的更多操作菜单', async ({ page }) => {
+  let releaseTasks;
+  let tasksStarted;
+  const tasksGate = new Promise(resolve => { releaseTasks = resolve; });
+  const started = new Promise(resolve => { tasksStarted = resolve; });
+  await page.route('**/knowledge-center/api/outline/build-tasks', async route => {
+    tasksStarted();
+    await tasksGate;
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ success: true, data: { tasks: [] } }),
+    });
+  });
+  try {
+    await page.goto(`${baseUrl}/knowledge-center/outlines/c-drive`);
+    await started;
+    await page.getByText('更多操作', { exact: true }).click();
+    const menu = page.locator('.outline-more-actions');
+    await expect(menu).toHaveAttribute('open', '');
+    await expect(page.getByRole('button', { name: '手册信息', exact: true })).toBeVisible();
+    const tasksResponse = page.waitForResponse(response => new URL(response.url()).pathname === '/knowledge-center/api/outline/build-tasks');
+    releaseTasks();
+    await tasksResponse;
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    await expect(menu).toHaveAttribute('open', '');
+    await page.getByRole('button', { name: '手册信息', exact: true }).click();
+    await expect(page.locator('#outline-handbook-info')).toBeVisible();
+  } finally {
+    releaseTasks();
   }
 });

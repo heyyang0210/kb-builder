@@ -54,10 +54,13 @@ test('资料清洗工作区为有写权限用户提供真实上传入口', async
   await expect(page.locator('[data-cleaning-upload-form] input[type="file"]')).toHaveCount(1);
 });
 
-test('审核与发布工作区读取真实任务并展示发布门禁', async ({ page }) => {
+test('审核与发布默认入口读取真实手册工作台并支持我的审核', async ({ page }) => {
   await page.goto(`${baseUrl}/knowledge-center/review`);
   const root = page.locator('#view-root');
-  await expect(root.locator('.review-workspace, .review-zero-state')).toHaveCount(1);
+  await expect(root.locator('.review-hub')).toHaveCount(1);
+  await expect(root.getByRole('heading', { name: '按手册掌握审核全局' })).toBeVisible();
+  await expect(root.getByRole('link', { name: '手册视图', exact: true })).toHaveAttribute('aria-current', 'page');
+  await expect(root.getByRole('link', { name: /我的审核/ })).toBeVisible();
   await expect(root).toContainText(/审核|发布|暂无|服务暂时不可用/);
   await expect(root).not.toContainText('示例数据');
 });
@@ -164,6 +167,15 @@ test('桌面端侧栏固定且右侧主内容独立滚动', async ({ page }) => 
   await page.goto(`${baseUrl}/knowledge-center/`);
   const sidebar = page.locator('#sidebar');
   const mainShell = page.locator('#main-shell');
+  await expect(page.locator('#app-shell')).toBeVisible();
+  // 工作台数据量不固定；明确制造溢出后再验证独立滚动容器。
+  await mainShell.evaluate(element => {
+    const spacer = document.createElement('div');
+    spacer.style.height = '1200px';
+    spacer.setAttribute('data-scroll-test-spacer', '');
+    element.append(spacer);
+  });
+  await expect.poll(async () => mainShell.evaluate(element => element.scrollHeight > element.clientHeight)).toBeTruthy();
   const before = await sidebar.boundingBox();
   await mainShell.evaluate(element => { element.scrollTop = 500; });
   await expect.poll(async () => mainShell.evaluate(element => element.scrollTop)).toBeGreaterThan(0);

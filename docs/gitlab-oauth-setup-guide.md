@@ -87,7 +87,7 @@ tokenForUser(userId, connection):
    |------|-----|------|
    | **Name** | `知识中心管理平台` | 应用名称，可自定义 |
    | **Redirect URI** | `http://192.168.130.180:13510/knowledge-center/api/gitlab/oauth/callback` | 必须完全一致 |
-   | **Scopes** | 勾选 `read_api` 和 `read_repository` | 只读权限，最小化原则 |
+   | **Scopes** | 勾选 `api` | 审核发布的 REST API 创建分支、提交和 MR 必需 |
 
    **重要**：
    - Redirect URI 必须与知识中心配置的完全一致（包括协议、域名、端口、路径）
@@ -113,7 +113,7 @@ tokenForUser(userId, connection):
 
 ```bash
 cd /data/docs/AI高效应用示例/06-YashanDB知识库Skill仓库
-./scripts/setup-gitlab-oauth.sh
+./tools/repository/setup-gitlab-oauth.sh
 ```
 
 脚本会引导你输入：
@@ -134,7 +134,7 @@ cd /data/docs/AI高效应用示例/06-YashanDB知识库Skill仓库
    KNOWLEDGE_CENTER_GITLAB_OAUTH_CLIENT_ID=你的_Application_ID
    KNOWLEDGE_CENTER_GITLAB_OAUTH_CLIENT_SECRET=你的_Secret
    KNOWLEDGE_CENTER_GITLAB_OAUTH_REDIRECT_URI=http://192.168.130.180:13510/knowledge-center/api/gitlab/oauth/callback
-   KNOWLEDGE_CENTER_GITLAB_OAUTH_SCOPES=read_api read_repository
+   KNOWLEDGE_CENTER_GITLAB_OAUTH_SCOPES=api
    KNOWLEDGE_CENTER_GITLAB_OAUTH_DEV_HTTP=true
    ```
 
@@ -158,7 +158,7 @@ cd /data/docs/AI高效应用示例/06-YashanDB知识库Skill仓库
 #### 4.1 检查配置状态
 
 ```bash
-./scripts/check-oauth-config.sh
+./tools/repository/check-oauth-config.sh
 ```
 
 期望输出：
@@ -203,9 +203,9 @@ cd /data/docs/AI高效应用示例/06-YashanDB知识库Skill仓库
 7. 自动跳回知识中心
    ↓
 8. 系统获得该用户的 Access Token
-   - Token 保存在服务器内存中
+   - Token 加密保存在 YashanDB 凭据聚合中，进程内只持有快照
    - 用户看不到 Token
-   - 进程重启后需要重新授权
+   - 令牌正常过期会自动刷新；授权范围变化时需要重新连接
 ```
 
 ---
@@ -236,7 +236,7 @@ cd /data/docs/AI高效应用示例/06-YashanDB知识库Skill仓库
 **不能**。CAS 和 GitLab OAuth 是独立的认证系统。用户需要通过 GitLab 自己的授权流程才能获得仓库访问权限。
 
 ### Q7: Token 会过期吗？
-**会**。Access Token 有有效期（通常 2 小时）。当前实现中，Token 过期后需要用户重新授权。未来可以支持 Refresh Token 自动续期。
+**会**。Access Token 有有效期；当前实现会在过期前自动刷新。只有刷新被 GitLab 明确拒绝或授权范围变化时才需要重新连接。
 
 ---
 
@@ -248,17 +248,16 @@ cd /data/docs/AI高效应用示例/06-YashanDB知识库Skill仓库
    - 定期轮换 Client Secret
 
 2. **权限最小化**：
-   - 只申请必要的 scopes（`read_api`、`read_repository`）
-   - 不要申请 `write_repository` 等写权限
+   - 发布连接申请 `api`；GitLab REST API 写接口不接受 `write_repository` 代替
+   - GitLab 项目成员仍需具备创建分支、提交与创建 MR 的权限
 
 3. **监控**：
    - 定期检查 OAuth Token 使用情况
    - 发现异常及时撤销授权
 
 4. **Token 存储**：
-   - 当前 Token 保存在进程内存中
-   - 进程重启后需要重新授权
-   - 生产环境应接入加密持久化存储
+   - Token 加密保存在 YashanDB 凭据聚合中，进程内使用快照
+   - 修改 scope 后，旧令牌不会自动升级，用户必须重新连接
 
 ---
 
@@ -269,7 +268,8 @@ cd /data/docs/AI高效应用示例/06-YashanDB知识库Skill仓库
 - [ ] 已配置 `KNOWLEDGE_CENTER_GITLAB_OAUTH_CLIENT_ID`
 - [ ] 已配置 `KNOWLEDGE_CENTER_GITLAB_OAUTH_CLIENT_SECRET`
 - [ ] 已配置 `KNOWLEDGE_CENTER_GITLAB_OAUTH_REDIRECT_URI`
+- [ ] GitLab OAuth 应用和本地授权请求均包含 `api` scope
 - [ ] 已设置 `KNOWLEDGE_CENTER_GITLAB_OAUTH_DEV_HTTP=true`（开发环境）
 - [ ] 已重启服务
-- [ ] 已测试 OAuth 授权流程
-- [ ] 已验证仓库内容可访问
+- [ ] 已由发布用户重新连接账号，确认新令牌包含 `api`
+- [ ] 已验证目标项目允许该用户创建任务分支、提交和 MR
