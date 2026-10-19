@@ -270,7 +270,7 @@ process_matches() {
 }
 
 service_process_matches() {
-  local service="$1" pid="$2" cmdline
+  local service="$1" pid="$2" cmdline classpath jar classes build_base
   if [[ "$service" != storage ]]; then
     process_matches "$pid" "$(service_cwd "$service")" "$(service_pattern "$service")"
     return
@@ -278,10 +278,21 @@ service_process_matches() {
 
   [[ "$pid" =~ ^[0-9]+$ && -d "/proc/$pid" ]] || return 1
   [[ "$(awk '/^State:/ {print $2}' "/proc/$pid/status" 2>/dev/null || true)" != "Z" ]] || return 1
+  [[ "$(readlink -f "/proc/$pid/cwd" 2>/dev/null || true)" == "$STORAGE_DIR" ]] || return 1
   cmdline="$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null || true)"
   [[ "$cmdline" == *java* ]] || return 1
-  [[ "$cmdline" == *"$BUILD_DIR/java/lib/yashandb-jdbc.jar"*Main* \
-    || "$cmdline" == *"$STORAGE_DIR/lib/yashandb-jdbc.jar"*"$RUNTIME_DIR/.runtime/yashandb-storage/classes/"*Main* ]]
+  classpath="${cmdline#* -cp }"
+  [[ "$classpath" != "$cmdline" && "$classpath" == *" Main "* ]] || return 1
+  classpath="${classpath%% Main *}"
+  jar="${classpath%%:*}"
+  classes="${classpath#*:}"
+  [[ "$classes" != "$classpath" ]] || return 1
+  if [[ "$jar" == "$STORAGE_DIR/lib/yashandb-jdbc.jar" && "$classes" == "$RUNTIME_DIR/.runtime/yashandb-storage/classes/" ]]; then
+    return 0
+  fi
+  [[ "$jar" == "$REPO_ROOT"/runtime/build/*/current/java/lib/yashandb-jdbc.jar ]] || return 1
+  build_base="${jar%/java/lib/yashandb-jdbc.jar}"
+  [[ "$classes" == "$build_base/java/classes" ]]
 }
 
 listener_pid() {

@@ -1990,7 +1990,7 @@ public final class Main {
 
     private int outlinePurgeReferences(Connection connection, long id, String externalId) throws SQLException {
         int references = 0;
-        for (String sql : List.of("SELECT COUNT(*) FROM KC_MANUAL_OUTLINE_VERSION WHERE BASE_OUTLINE_VERSION_ID=?", "SELECT COUNT(*) FROM KC_MANUAL_OUTLINE_RESP_VERSION WHERE OUTLINE_VERSION_ID=? AND STATE IN ('PUBLISHED','SUPERSEDED')")) {
+        for (String sql : List.of("SELECT COUNT(*) FROM KC_MANUAL_OUTLINE_VERSION WHERE BASE_OUTLINE_VERSION_ID=?")) {
             try (PreparedStatement query = connection.prepareStatement(sql)) { query.setLong(1, id); try (ResultSet row = query.executeQuery()) { row.next(); references += row.getInt(1); } }
         }
         // Fail closed for persisted downstream aggregates, including soft-deleted history.
