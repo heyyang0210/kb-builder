@@ -269,7 +269,7 @@ class RetrievalStrategy {
         results.push({
           source: path.relative(this.basePath, file),
           content,
-          matchedKeywords: this._findMatchingKeywords(content, keywords || []),
+          matchedKeywords: this._findMatchingKeywords(content, context.keywords || []),
           matchType: 'design_doc_legacy'
         });
       } catch (err) {
