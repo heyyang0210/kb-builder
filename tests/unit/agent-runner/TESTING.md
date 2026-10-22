@@ -2,6 +2,12 @@
 
 知识中心管理平台的长期防回归用例集中在 [`知识中心管理平台门禁/`](./知识中心管理平台门禁/README.md)。Markdown 渲染、仓库资源解析、文档锚点和 HTML 安全白名单属于合入门禁，修改共享阅读器时必须执行该目录中的测试命令。
 
+覆盖率补强用例还包括 `document-route-coverage.test.js`（文档路由真实 HTTP 与临时目录）、`retrieval-strategy-coverage.test.js`（多来源检索与回退）、`template-persistence-http.test.js`（模板 HTTP 与文件持久化）、`workflow-route-http.test.js`（工作流 HTTP 生命周期）和 `model-provider-http.test.js`（模型网关 HTTP 契约）。本地 HTTP 使用临时存储或确定性上游替身，不依赖生产数据；Jest 覆盖率与 Node 原生、浏览器、Python、Java 的覆盖率分别报告。
+
+`native-contract-coverage.test.js` 在 Jest 中复用部分既有 `node:test` 合同用例，保留原生测试入口；这样同一批真实 HTTP 断言可以计入 Jest JavaScript 覆盖率。独立运行的 Node 原生覆盖率仍不与 Jest 数值相加。
+
+`document-comments-api.integration.test.js` 是独立执行的后端 API 检查脚本，不通过 Jest 收集；运行前需要启动文档 API 并准备至少两篇已注册文档。
+
 > 版本：v1.0  
 > 日期：2026-07-23  
 > 维护者：YashanDB 知识库团队

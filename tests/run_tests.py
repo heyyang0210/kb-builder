@@ -11,6 +11,7 @@ import argparse
 import ast
 from concurrent.futures import ThreadPoolExecutor
 import fcntl
+import html
 import json
 import os
 import re
@@ -190,6 +191,9 @@ def classify_name(path: Path, framework: str) -> str:
 def classify_node_runner(path: Path) -> str:
     """Jest 文件包含用例声明，否则按独立 Node 脚本执行。"""
     source = path.read_text(encoding="utf-8")
+    # Bridges may mock node:test while still depending on the Jest runtime.
+    if re.search(r"\bjest\s*\.", source):
+        return "jest"
     if "node:test" in source or "mock.method" in source:
         return "node-test"
     jest_call = re.compile(r"(?:^|[^\w$.])(?:describe|it|test)(?:\.(?:each|only|skip))?\s*\(", re.MULTILINE)
@@ -910,6 +914,73 @@ def report_payload(
     return payload
 
 
+HTML_REPORT_COMMANDS = frozenset({"unit", "e2e", "smoke"})
+
+
+def render_html_report(payload: dict[str, Any]) -> str:
+    """Render one self-contained run summary from the saved JSON report."""
+    escape = lambda value: html.escape(str(value), quote=True)
+    tasks = payload.get("tasks") or []
+    passed = bool(payload.get("passed"))
+    known_counts = [task for task in tasks if task.get("test_total") is not None]
+    count = lambda field: sum(task.get(field) or 0 for task in tasks)
+    total = sum(task.get("test_total") or 0 for task in known_counts) if known_counts else "未统计"
+    success_tasks = sum(task.get("status") in {"PASS", "DRY-RUN"} for task in tasks)
+
+    def log_link(task: dict[str, Any]) -> str:
+        raw = task.get("log_file") or ""
+        path = Path(raw)
+        if not raw or path.is_absolute() or ".." in path.parts or path.parts[:2] != ("details", "tasks"):
+            return "—"
+        from urllib.parse import quote
+        href = quote(path.as_posix(), safe="/")
+        return f'<a href="{escape(href)}">任务日志</a>'
+
+    rows = []
+    failures = []
+    for task in tasks:
+        name = escape(task.get("label") or "未命名任务")
+        task_total = task.get("test_total")
+        duration = task.get("duration_seconds")
+        duration_text = f"{duration:.2f} 秒" if isinstance(duration, (int, float)) else "未统计"
+        rows.append("<tr>" + "".join(f"<td>{item}</td>" for item in (
+            escape(task.get("status") or "未知"), name, escape(task.get("suite") or "—"),
+            escape(task.get("framework") or "—"), escape(task.get("file_count", "—")),
+            escape(task_total if task_total is not None else "未统计"), escape(duration_text), log_link(task),
+        )) + "</tr>")
+        for failure in task.get("failed_tests") or []:
+            failures.append(f"<li><strong>{name}</strong>：{escape(failure)} {log_link(task)}</li>")
+    elapsed = payload.get("durationSeconds")
+    elapsed_text = f"{elapsed:.2f} 秒" if isinstance(elapsed, (int, float)) else "未统计"
+    status = "通过" if passed else "失败"
+    cards = (
+        ("运行结论", status), ("任务成功", f"{success_tasks}/{len(tasks)}"),
+        ("测试文件", str(count("file_count"))), ("已识别用例", str(total)),
+        ("通过 / 失败 / 跳过", f"{count('test_passed')} / {count('test_failed')} / {count('test_skipped')}" if known_counts else "未统计"),
+        ("总耗时", elapsed_text),
+    )
+    card_html = "".join(f"<div class='card'><span>{escape(label)}</span><strong>{escape(value)}</strong></div>" for label, value in cards)
+    failure_html = "<ul>" + "".join(failures) + "</ul>" if failures else "<p>无失败项。</p>"
+    return f"""<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{escape(payload.get('command') or '测试')} 测试报告</title>
+<style>body{{font-family:system-ui,-apple-system,"Microsoft YaHei",sans-serif;background:#f5f7fa;color:#172337;margin:0}}main{{max-width:1120px;margin:40px auto;padding:0 24px}}h1{{font-size:2rem}}.meta{{color:#58677b}}.cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:12px;margin:24px 0}}.card,section{{background:white;border:1px solid #dbe2ea;border-radius:10px;padding:18px}}.card span{{display:block;color:#58677b;font-size:.85rem}}.card strong{{display:block;margin-top:8px;font-size:1.25rem}}section{{margin:18px 0;overflow-x:auto}}table{{border-collapse:collapse;width:100%;min-width:720px}}th,td{{text-align:left;padding:10px;border-bottom:1px solid #e7ecf1;vertical-align:top}}th{{color:#58677b}}li{{margin:10px 0;overflow-wrap:anywhere}}a{{color:#185f9f}}.status{{font-weight:700;color:{'#17683d' if passed else '#a12b28'}}}</style></head>
+<body><main><h1>{escape(payload.get('command') or '测试')} 测试报告</h1>
+<p class="meta">运行时间：{escape(payload.get('generatedAt') or '未记录')} · <span class="status">{status}</span></p>
+<div class="cards">{card_html}</div>
+<section><h2>任务结果</h2><table><thead><tr><th>状态</th><th>任务</th><th>分类</th><th>框架</th><th>文件</th><th>用例</th><th>耗时</th><th>明细</th></tr></thead><tbody>{''.join(rows)}</tbody></table></section>
+<section><h2>失败与阻塞</h2>{failure_html}</section>
+<section><h2>原始数据</h2><a href="details/report.json">查看 JSON 报告</a></section></main></body></html>
+"""
+
+
+def write_html_report(run_dir: Path) -> Path:
+    payload = json.loads((run_dir / "details" / "report.json").read_text(encoding="utf-8"))
+    target = run_dir / "report.html"
+    target.write_text(render_html_report(payload), encoding="utf-8")
+    return target
+
+
 def write_report(path: Path, command: str, results: list[TaskResult], elapsed: float) -> None:
     report = report_payload(command, results, elapsed)
     target = path if path.is_absolute() else REPOSITORY_ROOT / path
@@ -1372,6 +1443,9 @@ def main(argv: list[str] | None = None) -> int:
             f"# {context.command} 测试报告\n\n最终结论：**{report_status(results, coverage)}**\n\n详细任务日志位于 `details/tasks/`。\n",
             encoding="utf-8",
         )
+        if context.command in HTML_REPORT_COMMANDS:
+            html_path = write_html_report(context.run_dir)
+            print(f"HTML 测试报告：{html_path}")
     if args.report:
         write_report(args.report, args.command, results, elapsed)
     if args.log:

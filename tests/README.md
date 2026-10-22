@@ -1,5 +1,7 @@
 # 仓库测试入口
 
+Jest 桥接文件即使模拟 `node:test` 也由 Jest 执行，统一入口优先识别显式 `jest.*` API。`frontend-coverage-summary.test.js` 看护 V8 嵌套区间去重和未执行分支扣除；采集器保留原始偏移量，范围覆盖率不能当作行覆盖率。具体计算约束见 [测试报告设计](TEST_REPORT_DESIGN.md)。
+
 审核工作台回归覆盖真实 HTTP 改派审核人、个人待办转移、误提任务终止及审计保留；浏览器用例覆盖文档清单弹窗操作。写入型 E2E 使用 `python3 tests/run_tests.py e2e` 的隔离实例，不对共享审核任务执行改派或终止。
 
 审核工作台真实 HTTP 回归还覆盖人员 ID 到审核人姓名的解析、实际决定者展示，及旧原文在线审核送审与旧任务发布均返回 `GITLAB_NO_CHANGES` 且保留历史。新在线评审的已保存修改稿由隔离 HTTP 和浏览器验证送审、审核与 MR 提交；无差异新稿在送审时返回 `GITLAB_NO_CHANGES` 且不创建任务，历史已审核任务保持原状态。
@@ -55,6 +57,8 @@ python3 tests/run_tests.py all
 每个框架都以详细模式输出具体成功、失败和跳过的用例；入口末尾汇总各任务状态、测试文件数、耗时、失败用例列表和最终退出码。任一任务失败、超时或无法启动时，入口返回非零退出码。
 
 `gate` 和 `full/all` 会自动保存按日期分层的正式报告：`runtime/test-reports/index.md`只展示历史索引，每次运行的 `report.md` 展示核心结论，任务输出和浏览器证据保存在 `details/`。其他分类保存到 `runtime/test-results/`。
+
+`unit`、`e2e`、`smoke` 的每次非 dry-run 运行还在同一批次目录生成中文 `report.html`，可离线打开；展示运行汇总、任务统计、失败项和任务日志链接，不展示逐条成功用例。历史批次保持原样。报告契约见 [TEST_REPORT_DESIGN.md](./TEST_REPORT_DESIGN.md)。
 
 首次运行前安装仓库测试依赖：
 

@@ -42,16 +42,16 @@ describe('知识中心导航面板 P0 契约', () => {
     expect(styles).toContain('.sidebar-restore span { position: absolute; width: 1px; height: 1px;');
   });
 
-  test('P0 页面声明不同的目录尺寸，不用一个全局宽度覆盖', () => {
+  test('P0 页面分别声明目录尺寸或手册抽屉入口', () => {
     expect(outline).toContain('data-navigation-layout-id="outline-overview"');
     expect(outline).toContain('data-navigation-min="240"');
     expect(outline).toContain('data-navigation-max="380"');
     expect(review).toContain('data-navigation-layout-id="review"');
     expect(review).toContain('data-navigation-min="220"');
     expect(review).toContain('data-navigation-max="420"');
-    expect(production).toContain('data-navigation-layout-id="production-handbook"');
-    expect(production).toContain('data-navigation-min="220"');
-    expect(production).toContain('data-navigation-max="360"');
+    expect(production).toContain('data-handbook-directory-open');
+    expect(production).toContain('data-handbook-directory-close');
+    expect(production).toContain('id="handbook-directory-drawer"');
   });
 
   test('大纲目录不再把待分领域作为导航筛选入口', () => {

@@ -159,7 +159,7 @@ describe('知识中心大纲管理前端契约', () => {
     const tasks = new Promise(resolve => { resolveTasks = resolve; });
     const render = jest.fn();
     const load = new Function('appState', 'outlineRouteState', 'loadOutlineData', 'fetchDomainBuildTasks', 'render',
-      `${state}\n${loader}\nreturn loadOutlines;`)(appState, () => route, async () => ({ status: 'ok', selectedId: 'published' }), () => tasks, render);
+      `${state}\n${loader}\nreturn loadOutlines;`)(appState, () => route, async () => ({ status: 'ok', selectedId: 'published', detail: {} }), () => tasks, render);
     const pending = load();
     await new Promise(resolve => setImmediate(resolve));
     expect(appState.outlineProjection).toMatchObject({ status: 'ok', selectedId: 'published' });

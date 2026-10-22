@@ -19,6 +19,15 @@ SPEC.loader.exec_module(RUNNER)
 
 
 class RepositoryTestRunnerTests(unittest.TestCase):
+    def test_jest_bridge_has_unique_jest_assignment(self):
+        bridge = RUNNER.NODE_TEST_ROOT / "native-contract-coverage.test.js"
+        self.assertEqual("jest", RUNNER.classify_node_runner(bridge))
+        for command in ("contract", "full"):
+            with self.subTest(command=command):
+                owners = [task for task in RUNNER.build_tasks(command) if bridge in task.files]
+                self.assertEqual(1, len(owners))
+                self.assertEqual("jest", owners[0].framework)
+
     def test_discovers_every_supported_test_file_once(self):
         discovered = RUNNER.discover_test_files()
         paths = [
@@ -271,6 +280,38 @@ class RepositoryTestRunnerTests(unittest.TestCase):
             (6, 1, 1, 4),
             RUNNER.extract_test_counts("playwright", "1 failed\n4 did not run\n1 passed\n"),
         )
+
+    def test_html_report_uses_saved_json_for_each_requested_suite(self):
+        for suite in ("unit", "e2e", "smoke"):
+            with self.subTest(suite=suite), tempfile.TemporaryDirectory() as directory:
+                run_dir = Path(directory)
+                details = run_dir / "details"
+                details.mkdir()
+                payload = RUNNER.report_payload(suite, [RUNNER.TaskResult(
+                    suite, "正常任务", "jest", "PASS", 1.5, 0, 2,
+                    test_total=3, test_passed=2, test_failed=0, test_skipped=1,
+                    log_file="details/tasks/task.log",
+                )], 2.0)
+                (details / "report.json").write_text(json.dumps(payload), encoding="utf-8")
+                report = RUNNER.write_html_report(run_dir)
+                content = report.read_text(encoding="utf-8")
+                self.assertIn(f"<title>{suite} 测试报告</title>", content)
+                self.assertIn("2 / 0 / 1", content)
+                self.assertIn('href="details/tasks/task.log"', content)
+
+    def test_html_report_escapes_failures_and_handles_missing_counts_and_logs(self):
+        payload = RUNNER.report_payload("unit", [RUNNER.TaskResult(
+            "unit", "<任务>", "pytest", "FAIL", 0.2, 1, 1,
+            failed_tests=("<script>alert(&quot;bad&quot;)</script>",),
+            log_file="../outside.log",
+        )], 0.3)
+        content = RUNNER.render_html_report(payload)
+        self.assertIn("未统计", content)
+        self.assertIn("&lt;任务&gt;", content)
+        self.assertIn("&lt;script&gt;", content)
+        self.assertNotIn("<script>", content)
+        self.assertNotIn("outside.log", content)
+        self.assertIn("失败与阻塞", content)
 
     def test_test_environment_targets_the_instance_prepared_by_runner(self):
         self.assertEqual(RUNNER.KNOWLEDGE_CENTER_BASE_URL, RUNNER.test_environment()["KPG_BASE_URL"])

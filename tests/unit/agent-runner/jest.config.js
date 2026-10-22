@@ -10,12 +10,16 @@ module.exports = {
     '^entities/decode$': '<rootDir>/../../../runtime/agent-runner/node_modules/htmlparser2/node_modules/entities/dist/commonjs/decode.js',
     '^entities/escape$': '<rootDir>/../../../runtime/agent-runner/node_modules/htmlparser2/node_modules/entities/dist/commonjs/escape.js',
   },
-  // These suites intentionally use Node's native test runner and its mock API.
-  // The unified Python entry invokes them with `node --test`.
+  // Node-native suites and the standalone comments API script use separate runners.
   testMatch: [
     '**/?(*.)+(spec|test).[jt]s?(x)',
     '!**/template-p1.test.js',
     '!**/template-p2.test.js',
     '!**/template-generation.test.js',
+    '!**/database-config.test.js',
+    '!**/template-workspace.test.js',
+    '!**/handbook-incremental-review.test.js',
+    '!**/handbook-production-api.test.js',
+    '!**/document-comments-api.integration.test.js',
   ],
 };
