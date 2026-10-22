@@ -77,7 +77,7 @@ class DomainStore {
         throw new DomainStoreError(
           parsed?.error?.code || 'DOMAIN_REQUEST_FAILED',
           parsed?.error?.message || '领域存储请求失败',
-          parsed?.error?.status || response.status || this.statusForCode(parsed?.error?.code),
+          parsed?.error?.status || (response.ok ? this.statusForCode(parsed?.error?.code) : response.status),
           parsed?.error?.details,
         );
       }

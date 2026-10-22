@@ -5,7 +5,11 @@ const { rules, parseNaturalPathRows } = require('../../packages/agent-runner-cor
 const root = path.resolve(__dirname, '../..');
 
 function generate() {
-  const source = XLSX.readFile(path.join(root, rules.sampleSource));
+  const sourcePath = path.join(root, rules.sampleSource);
+  if (!fs.existsSync(sourcePath)) {
+    throw new Error(`SQL 示例源文件不存在：${sourcePath}；请先准备原始 Excel 后再生成下载样例`);
+  }
+  const source = XLSX.readFile(sourcePath);
   const rows = XLSX.utils.sheet_to_json(source.Sheets[source.SheetNames[0]], { header: 1, defval: '' });
   if (JSON.stringify(rows[0]) !== JSON.stringify(rules.headers)) throw new Error('SQL示例源表头与新模板不一致');
   const sourceRows = rows.slice(1);
@@ -16,7 +20,7 @@ function generate() {
   const output = path.join(root, rules.sampleDownloadPath);
   // 通过校验才发布下载副本，文件字节与用户提供的源文件完全一致。
   fs.mkdirSync(path.dirname(output), { recursive: true });
-  fs.copyFileSync(path.join(root, rules.sampleSource), output);
+  fs.copyFileSync(sourcePath, output);
   return { output, documents: parsed.nodes.filter(n => n.kind === 'document').length };
 }
 

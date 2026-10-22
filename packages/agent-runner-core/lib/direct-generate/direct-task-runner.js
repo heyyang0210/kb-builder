@@ -83,17 +83,18 @@ async function executeDirectGenerate(req, task) {
   
   // 初始化中间过程存储
   const store = new ProcessStore(taskId, debugMode ? 'debug' : 'production');
-  await store.saveMeta({
-    knowledge_point: knowledge_point?.name,
-    mode: req.body.mode,
-    debug: debugMode,
-    output_path,
-    filename: docFilename,
-    profile: getTrace(),
-    ...templateMetadata(task.inputData)
-  });
 
   try {
+    await store.saveMeta({
+      knowledge_point: knowledge_point?.name,
+      mode: req.body.mode,
+      debug: debugMode,
+      output_path,
+      filename: docFilename,
+      profile: getTrace(),
+      ...templateMetadata(task.inputData)
+    });
+
     const modelConfig = await configManager.getModelConfig() || {};
     const mcpConfig = await configManager.getMCPConfig() || {};
     const basePath = path.resolve(__dirname, '../../../..'); // 仓库根目录

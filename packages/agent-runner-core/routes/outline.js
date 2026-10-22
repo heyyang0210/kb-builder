@@ -371,7 +371,7 @@ router.post('/import', upload.fields([{ name: 'file', maxCount: 1 }, { name: 'fi
       const check = validateCandidate({ content: input.content, productId: req.body?.productId, businessVersionTags: tags, requireGovernance: false });
       if (!check.passed) { removeUploadedFile(input.file); results.push({ fileName, status: 'failed', error: { code: 'OUTLINE_PREFLIGHT_FAILED', message: '大纲预检未通过', details: check.errors } }); continue; }
       const fingerprint = fileFingerprint(input.file?.path, input.content);
-      const duplicate = metadata.outlines.find(item => item.sourceFingerprint === fingerprint);
+      const duplicate = metadata.outlines.find(item => item.handbookId === handbookId && !item.deletedAt && item.sourceFingerprint === fingerprint);
       if (duplicate && !isConfirmed(req.body?.confirmDuplicate)) { removeUploadedFile(input.file); results.push({ fileName, status: 'duplicate_confirmation_required', duplicateOf: { id: duplicate.id, handbookId: duplicate.handbookId, name: duplicate.name }, fingerprint }); continue; }
       const candidate = createCandidate({ name, content: input.content, productId: req.body?.productId, businessVersionTags: tags, handbookId, sourceType: 'import', file: input.file?.filename });
       candidate.sourceFileName = fileName;
@@ -399,7 +399,12 @@ router.patch('/candidates/:id/nodes', (req, res) => {
   if (req.body?.editVersion !== undefined && Number(req.body.editVersion) !== Number(outline.editVersion || 1)) {
     return res.status(409).json({ success: false, error: { code: 'OUTLINE_EDIT_CONFLICT', message: '候选版本已被其他操作更新', details: { expected: outline.editVersion || 1, received: req.body.editVersion } } });
   }
-  if (req.body && req.body.content) outline.content = typeof req.body.content === 'string' ? JSON.parse(req.body.content) : req.body.content;
+  if (req.body && req.body.content) {
+    if (typeof req.body.content === 'string') {
+      try { outline.content = JSON.parse(req.body.content); }
+      catch (_) { return res.status(422).json({ success: false, error: { code: 'OUTLINE_CONTENT_INVALID', message: '候选大纲正文不是有效的 JSON' } }); }
+    } else outline.content = req.body.content;
+  }
   outline.updated_at = new Date().toISOString(); outline.editVersion = Number(outline.editVersion || 1) + 1; outline.kp_count = countKnowledgePoints(outline);
   writeMetadata(metadata); res.json({ success: true, data: normalizeOutline(outline) });
 });
