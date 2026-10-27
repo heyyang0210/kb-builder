@@ -40,6 +40,8 @@ export YASDB_STORAGE_URL=http://127.0.0.1:14210
 
 切换后若存储服务不可用，业务接口返回明确的 503，不会回写旧 JSON 文件。
 
+文档 SQL 质量检查需要单独设置 `YASDB_QUALITY_JDBC_URL`、`YASDB_QUALITY_USERNAME`、`YASDB_QUALITY_PASSWORD`，连接到与 `YASDB_JDBC_URL` 不同的测试库。质量账号只授予测试数据的 `SELECT` 权限，不得拥有业务库读取或写入权限。未配置或地址等于业务库时 `/v1/quality/execute` 返回 503，平台报告中的用例为“未执行”。该接口每次使用独立的只读 JDBC 连接，不借用业务存储连接池；结果仅在上限之外还有数据时标记 `truncated`。
+
 健康检查：
 
 ```bash

@@ -1,5 +1,7 @@
 # 仓库测试入口
 
+质量检查隔离修复的覆盖率回归：`yashandb-quality-adapter.test.js` 使用本地真实 HTTP 服务验证适配器请求、凭据边界和版本来源；`outline-storage-java.test.js` 的 `QualityExecuteHttpCheck` 使用真实 Java HTTP 端点与 JDBC 替身验证独立连接、只读标记、SQL 拒绝、异常和结果上限。设置 `QUALITY_JACOCO_DIR="$PWD/runtime/test-results/quality-fix-coverage"` 后运行对应 Jest 用例，会用该目录下的 JaCoCo 0.8.12 agent/CLI 生成 `java.xml`、HTML 和 `java-summary.json`，并对 `Main.qualityExecute`、`Main.qualityResult` 的指令、行、分支覆盖率分别执行 90% 门禁。Java 覆盖率限定为这两个变更方法，JDBC 替身不代表真实 YashanDB 集成验收。
+
 Jest 桥接文件即使模拟 `node:test` 也由 Jest 执行，统一入口优先识别显式 `jest.*` API。`frontend-coverage-summary.test.js` 看护 V8 嵌套区间去重和未执行分支扣除；采集器保留原始偏移量，范围覆盖率不能当作行覆盖率。具体计算约束见 [测试报告设计](TEST_REPORT_DESIGN.md)。
 
 审核工作台回归覆盖真实 HTTP 改派审核人、个人待办转移、误提任务终止及审计保留；浏览器用例覆盖文档清单弹窗操作。写入型 E2E 使用 `python3 tests/run_tests.py e2e` 的隔离实例，不对共享审核任务执行改派或终止。

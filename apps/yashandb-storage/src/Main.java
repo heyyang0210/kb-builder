@@ -24,6 +24,7 @@ import java.sql.DatabaseMetaData;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Timestamp;
@@ -112,6 +113,7 @@ public final class Main {
         int port = integer("YASDB_STORAGE_PORT", 14210);
         HttpServer server = HttpServer.create(new InetSocketAddress(host, port), 0);
         server.createContext("/health", this::health);
+        server.createContext("/v1/quality/execute", this::qualityExecute);
         server.createContext("/v1/records", this::records);
         server.createContext("/v1/domain/handbooks", this::domainHandbooks);
         server.createContext("/v1/domain/principals", this::domainPrincipals);
@@ -149,6 +151,50 @@ public final class Main {
                 }
             }
         }
+    }
+
+    /** Executes a read-only validation statement for the AI quality agent. */
+    private void qualityExecute(HttpExchange exchange) throws IOException {
+        if (!"POST".equals(exchange.getRequestMethod())) { methodNotAllowed(exchange); return; }
+        String qualityJdbcUrl = env("YASDB_QUALITY_JDBC_URL", "").trim();
+        String qualityUsername = env("YASDB_QUALITY_USERNAME", "").trim();
+        String qualityPassword = env("YASDB_QUALITY_PASSWORD", "");
+        if (qualityJdbcUrl.isBlank() || qualityUsername.isBlank() || qualityPassword.isBlank() || qualityJdbcUrl.equals(jdbcUrl.trim())) {
+            failure(exchange, 503, "QUALITY_DATABASE_NOT_CONFIGURED", "未配置独立的只读质量测试库"); return;
+        }
+        try {
+            Map<String, Object> input = readJsonObject(exchange);
+            String sql = coalesce(input.get("sql"));
+            if (sql == null || sql.isBlank() || !sql.trim().matches("(?is)^(select|with|explain)\\b[\\s\\S]*")) {
+                failure(exchange, 400, "QUALITY_SQL_READ_ONLY", "质量检查只允许执行 SELECT、WITH 或 EXPLAIN 语句"); return;
+            }
+            try (Connection connection = DriverManager.getConnection(qualityJdbcUrl, qualityUsername, qualityPassword)) {
+                connection.setReadOnly(true);
+                String qualityDatabaseVersion = connection.getMetaData().getDatabaseProductVersion();
+                try (PreparedStatement statement = connection.prepareStatement(sql)) {
+                    statement.setQueryTimeout(Math.max(1, integer("YASDB_QUALITY_QUERY_TIMEOUT_SECONDS", 10)));
+                    try (ResultSet rows = statement.executeQuery()) {
+                        sendJson(exchange, 200, qualityResult(rows,
+                            Math.max(1, integer("YASDB_QUALITY_MAX_ROWS", 200)), qualityDatabaseVersion));
+                    }
+                }
+            }
+        } catch (Exception error) { failure(exchange, 400, "YASHANDB_QUALITY_EXECUTION_FAILED", error.getMessage() == null ? "YashanDB 用例执行失败" : error.getMessage()); }
+    }
+
+    static Map<String, Object> qualityResult(ResultSet rows, int maxRows, String databaseVersion) throws SQLException {
+        ResultSetMetaData meta = rows.getMetaData();
+        List<String> columns = new ArrayList<>();
+        for (int i = 1; i <= meta.getColumnCount(); i++) columns.add(meta.getColumnLabel(i));
+        List<Object> data = new ArrayList<>();
+        while (data.size() < maxRows && rows.next()) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            for (int i = 1; i <= meta.getColumnCount(); i++) row.put(columns.get(i - 1), rows.getObject(i));
+            data.add(row);
+        }
+        boolean truncated = data.size() == maxRows && rows.next();
+        return mapOf("success", true, "columns", columns, "rows", data,
+            "truncated", truncated, "databaseVersion", databaseVersion);
     }
 
     private void migrate() throws SQLException {
