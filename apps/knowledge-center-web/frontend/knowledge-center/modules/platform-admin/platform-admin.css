@@ -1,9 +1,70 @@
 /* ==========================================================================
    平台管理模块样式
-   四分区架构：系统治理 | 人员管理（含团队小组） | 用户权限 | GitLab 仓库
+   五分区架构：系统治理 | 人员管理（含团队小组） | 用户权限 | GitLab 仓库 | MCP 服务
    ========================================================================== */
 
 /* 页面头部 */
+.platform-admin-page {
+  --platform-control-height: 40px;
+  --platform-form-width: 960px;
+  min-width: 0;
+}
+.platform-admin-page [role="tabpanel"] { min-width: 0; }
+.platform-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
+.platform-section-heading h3 { margin: 0; font-size: 18px; }
+.platform-admin-page .button,
+.platform-admin-page .mcp-admin .button {
+  min-height: var(--platform-control-height);
+  font-size: 14px;
+  padding: 8px 14px;
+  box-sizing: border-box;
+}
+.platform-admin-page input[type="checkbox"] { accent-color: var(--color-brand); }
+.platform-admin-page .platform-danger { color: var(--color-danger); }
+.platform-admin-page .platform-status,
+.platform-admin-page .conn-status {
+  display: inline-flex; align-items: center;
+  padding: 3px 10px; border-radius: 999px;
+  font-size: 13px; font-weight: 500;
+}
+.platform-admin-page .platform-status.is-success { color: var(--color-success); background: var(--color-success-subtle); }
+.platform-admin-page .platform-status.is-neutral { color: var(--color-text-secondary); background: var(--color-surface-subtle); }
+.platform-nav-chevron { margin-left: 8px; }
+.platform-admin-page .database-connection-panel { margin-bottom: var(--space-6); }
+.platform-admin-page .team-group-workspace { border-radius: var(--radius-md); }
+.platform-admin-page .gitlab-access,
+.platform-admin-page .gitlab-verification {
+  border: 0; border-top: 1px solid var(--color-border);
+  border-radius: 0; background: transparent; padding: var(--space-4) 0;
+}
+.platform-admin-page .gitlab-verification.success strong { color: var(--color-success); }
+.platform-admin-page .gitlab-verification.failure strong { color: var(--color-danger); }
+.platform-admin-page .gitlab-oauth-prompt {
+  border-color: var(--color-border); background: var(--color-surface-subtle); flex-wrap: wrap;
+}
+.platform-admin-page .gitlab-oauth-prompt span { min-width: 180px; }
+.platform-admin-page .platform-edit-form { max-width: var(--platform-form-width); }
+.platform-admin-page .platform-edit-form .gitlab-form-step {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4);
+  border: 0; border-top: 1px solid var(--color-border); border-radius: 0;
+  background: transparent; padding: var(--space-4) 0;
+}
+.platform-admin-page .platform-edit-form .gitlab-form-step h4 { grid-column: 1 / -1; margin: 0; }
+.platform-admin-page .gitlab-form-step label { margin-bottom: 0; font-weight: 500; min-width: 0; }
+.platform-admin-page .gitlab-form-step input,
+.platform-admin-page .gitlab-form-step select { font-weight: 400; }
+.platform-admin-page .mcp-admin label { font-weight: 500; }
+.platform-admin-page .mcp-admin input:not([type="checkbox"]),
+.platform-admin-page .mcp-admin select { min-height: var(--platform-control-height); }
+.platform-admin-page [data-mcp-admin] .mcp-service-content { border: 0; border-top: 1px solid var(--color-border); border-radius: 0; }
+.platform-admin-page [data-mcp-admin] .mcp-connection-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.platform-admin-page [data-model-admin] .model-settings-bar { justify-content: space-between; padding-top: var(--space-4); border-top: 1px solid var(--color-border); }
+@media (max-width: 760px) {
+  .platform-admin-page .platform-edit-form .gitlab-form-step,
+  .platform-admin-page [data-mcp-admin] .mcp-connection-grid { grid-template-columns: minmax(0, 1fr); }
+  .platform-admin-page .mcp-admin { padding: var(--space-4); }
+  .platform-admin-page .permissions-filters { grid-template-columns: minmax(0, 1fr); }
+}
 .platform-header {
   display: flex;
   align-items: center;
@@ -224,7 +285,8 @@
   box-shadow: var(--focus-ring);
 }
 .permissions-filters {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
   margin-top: 8px;
 }
@@ -240,6 +302,7 @@
   font: inherit;
   font-size: 13px;
 }
+.permissions-filters > *, .permissions-filters .searchable-combobox { width: 100%; min-width: 0; }
 .permissions-count {
   margin: 8px 2px;
   color: var(--color-text-secondary);
@@ -800,4 +863,177 @@
 
 @media (prefers-reduced-motion: reduce) {
   .team-group-loading span { animation: none; }
+}
+
+/* Shared MCP configuration management */
+.mcp-admin { max-width: none; width: 100%; box-sizing: border-box; padding: var(--space-6); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); }
+.mcp-admin .mcp-heading, .mcp-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px 12px; flex-wrap: wrap; }
+.mcp-admin h3, .mcp-admin h4 { margin: 0; }
+.mcp-admin p, .mcp-admin small { color: var(--color-text-secondary, #526174); line-height: 1.4; }
+.mcp-admin > [data-mcp-status], .mcp-admin form > p { margin: 6px 0; }
+.mcp-admin fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+.mcp-admin legend { font-weight: 600; margin-bottom: 8px; }
+.mcp-admin label { display: flex; flex-direction: column; gap: 4px; margin: 6px 0; font-size: 14px; }
+.mcp-admin input:not([type=checkbox]) { width: 100%; box-sizing: border-box; min-height: 38px; padding: 7px 10px; border: 1px solid var(--color-border, #bbc6d2); border-radius: 6px; background: var(--color-surface, #fff); color: inherit; }
+.mcp-admin input:focus-visible { outline: 2px solid var(--color-primary, #176bba); outline-offset: 2px; }
+.mcp-admin .mcp-check { flex-direction: row; align-items: center; min-height: 34px; }
+.mcp-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.mcp-header-row { display: grid; grid-template-columns: minmax(160px, 1fr) minmax(120px, .7fr) minmax(160px, 1fr) auto; gap: 8px; align-items: end; }
+.mcp-header-row .mcp-header-value input { max-width: 260px; }
+.mcp-header-remove { align-self: end; }
+.mcp-admin details { margin: 10px 0; }
+.mcp-admin summary { cursor: pointer; padding: 6px 0; }
+.mcp-actions { justify-content: flex-start; margin-top: 12px; }
+.mcp-admin button { min-height: 38px; }
+.mcp-admin .is-error { color: var(--color-danger, #b42318); }
+.mcp-admin .mcp-warning { color: var(--color-danger, #b42318); }
+.mcp-admin [data-mcp-result] li { padding: 6px 0; overflow-wrap: anywhere; }
+@media (max-width: 760px) { .mcp-admin { padding: 12px; } .mcp-grid { grid-template-columns: 1fr; gap: 4px; } .mcp-header-row { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "name name" "value remove" "description description"; gap: 4px 8px; align-items: end; border-bottom: 1px solid var(--color-border, #dce2e8); padding-bottom: 8px; } .mcp-header-name { grid-area: name; } .mcp-header-value { grid-area: value; } .mcp-header-description { grid-area: description; } .mcp-header-remove { grid-area: remove; } .mcp-header-row .mcp-header-value input { max-width: none; } }
+
+/* 模型管理延续现有平台表单布局。 */
+.model-service { border-bottom: 1px solid var(--border-color, #ddd); padding-block: 12px; min-width: 0; }
+.model-service textarea { width: 100%; box-sizing: border-box; }
+.model-service input, .model-service select { min-width: 0; max-width: 100%; }
+[data-model-admin] fieldset { min-width: 0; }
+[data-model-admin] [data-model-default] { width: 100%; }
+[data-model-admin] select, [data-model-admin] textarea {
+  font: inherit; color: inherit; background: var(--color-surface, #fff);
+  border: 1px solid var(--color-border, #bbc6d2); border-radius: 6px;
+  padding: 7px 10px; min-height: 38px; box-sizing: border-box;
+}
+[data-model-admin] select:focus-visible, [data-model-admin] textarea:focus-visible { outline: 2px solid var(--color-primary, #176bba); outline-offset: 2px; }
+[data-model-admin] .mcp-grid { gap: 4px 12px; align-items: end; }
+[data-model-admin] .mcp-actions { justify-content: flex-start; }
+[data-model-admin] > p { margin-block: 6px; }
+
+[data-model-admin] button { min-height: 44px; }
+
+/* 常用配置优先，高级参数按需展开。 */
+[data-model-admin] .model-form-legend { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+[data-model-admin] .model-service { border: 1px solid var(--color-border, #dce2e8); border-radius: 8px; padding: 0; margin-bottom: 8px; }
+[data-model-admin] .model-service h4 { margin: 0; font-size: 16px; overflow-wrap: anywhere; }
+[data-model-admin] .model-basic-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 16px; }
+[data-model-admin] label { display: flex; flex-direction: column; gap: 5px; font-weight: 500; min-width: 0; }
+[data-model-admin] small, [data-model-admin] .model-advanced p { font-size: 13px; font-weight: 400; line-height: 1.5; color: var(--color-text-secondary, #526174); }
+[data-model-admin] .model-wide { grid-column: 1 / -1; }
+[data-model-admin] input:not([type=checkbox]) { width: 100%; box-sizing: border-box; }
+[data-model-admin] .mcp-check { flex-direction: row; align-items: center; }
+[data-model-admin] .model-advanced { border-top: 1px solid var(--color-border, #dce2e8); margin-top: 16px; padding-top: 4px; }
+[data-model-admin] .model-advanced summary { cursor: pointer; padding: 12px 0; min-height: 44px; box-sizing: border-box; }
+[data-model-admin] .model-service-footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; align-items: center; margin-top: 12px; }
+[data-model-admin] .model-default-block { flex: 1; max-width: 520px; margin: 0; }
+[data-model-admin] [data-row-result]:empty, [data-model-admin] [data-model-status]:empty { display: none; }
+[data-model-admin] [data-row-result] { overflow-wrap: anywhere; margin-bottom: 0; }
+@media (max-width: 760px) {
+  [data-model-admin] .model-basic-grid { grid-template-columns: 1fr; }
+  [data-model-admin] .model-service-body { padding: 12px; }
+  [data-model-admin] .model-service-footer, [data-model-admin] .mcp-actions { align-items: stretch; flex-direction: column; }
+}
+[data-model-admin] .model-test-saved { margin-left: auto; flex: none; }
+[data-model-admin] .model-test-saved[aria-busy="true"], [data-model-admin] [data-test-model][aria-busy="true"] { cursor: progress; }
+
+/* 服务维护以折叠列表为入口。 */
+[data-model-admin] .model-list-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+[data-model-admin] .model-list-heading h3 { margin: 0; }
+[data-model-admin] .model-service-count { font-size: 13px; font-weight: 400; margin-left: 6px; }
+[data-model-admin] .model-add { width: auto; padding: 8px 16px; font-size: 14px; line-height: 1.5; }
+[data-model-admin] .model-service-line { display: flex; align-items: flex-start; min-width: 0; }
+[data-model-admin] .model-service-editor { flex: 1; min-width: 0; margin: 0; }
+[data-model-admin] .model-service-summary { display: flex; align-items: center; gap: 12px; cursor: pointer; min-height: 52px; padding: 8px 12px; box-sizing: border-box; list-style: none; }
+[data-model-admin] .model-service-summary::-webkit-details-marker { display: none; }
+[data-model-admin] .model-service-summary::before { content: '›'; font-size: 20px; }
+[data-model-admin] .model-service-editor[open] > summary::before { transform: rotate(90deg); }
+[data-model-admin] .model-service-summary strong { max-width: 30%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+[data-model-admin] [data-service-description] { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-text-secondary, #526174); font-size: 13px; }
+[data-model-admin] [data-service-state] { white-space: nowrap; font-size: 13px; }
+[data-model-admin] .model-remove { margin: 4px 8px 4px 0; }
+[data-model-admin] .model-service-body { border-top: 1px solid var(--color-border, #dce2e8); padding: 12px; }
+[data-model-admin] .model-settings-bar { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; margin-top: 12px; }
+[data-model-admin] .model-settings-bar .mcp-actions { margin: 0; }
+[data-model-admin] .model-save-hint, [data-model-admin] .model-empty { font-size: 13px; margin: 8px 0 0; }
+[data-model-admin] .model-service-summary:focus-visible { outline: 2px solid var(--color-primary, #176bba); outline-offset: -2px; border-radius: 6px; }
+@media (max-width: 760px) {
+  [data-model-admin] .model-service-summary { flex-wrap: wrap; gap: 4px 8px; padding: 8px; }
+  [data-model-admin] .model-service-summary strong { max-width: 65%; }
+  [data-model-admin] [data-service-description] { flex-basis: 100%; order: 1; }
+  [data-model-admin] .model-settings-bar { align-items: stretch; flex-direction: column; }
+  [data-model-admin] .model-remove { margin-right: 4px; }
+}
+
+[data-model-admin] [data-row-result]:not(:empty) { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; border-top: 1px solid var(--color-border, #dce2e8); padding: 8px 12px; }
+[data-model-admin] [data-row-result] strong { font-size: 14px; }
+[data-model-admin] [data-row-result] span { color: var(--color-text-secondary, #526174); font-size: 13px; }
+[data-model-admin] [data-row-result][data-state="success"] strong { color: var(--color-success, #15803d); }
+[data-model-admin] [data-row-result][data-state="error"] strong { color: var(--color-danger, #b42318); }
+
+/* MCP service list: summary first, connection fields on demand. */
+[data-mcp-admin] { max-width: none; }
+[data-mcp-admin] [hidden] { display: none !important; }
+[data-mcp-admin] .mcp-list-toolbar, [data-mcp-admin] .mcp-list-tools { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+[data-mcp-admin] .mcp-list-toolbar { justify-content:space-between; margin-bottom:12px; }
+[data-mcp-admin] .mcp-list-toolbar h3 { margin:0; font-size:17px; }
+[data-mcp-admin] .mcp-list-toolbar small { font-size:13px; font-weight:400; color:var(--color-text-secondary,#607087); margin-left:8px; }
+[data-mcp-admin] .mcp-list-tools input { width:230px; min-height:36px; }
+[data-mcp-admin] [data-mcp-status]:empty { display:none; }
+[data-mcp-admin] .mcp-list-table { border:1px solid var(--color-border,#dce3eb); border-radius:6px; overflow:hidden; }
+[data-mcp-admin] .mcp-service-columns, [data-mcp-admin] .mcp-service-summary { display:grid; grid-template-columns:minmax(180px,1.6fr) minmax(140px,1.7fr) 60px 100px 185px; gap:12px; align-items:center; padding:10px 14px; }
+[data-mcp-admin] .mcp-service-columns { background:var(--color-bg-secondary,#f6f8fb); color:var(--color-text-secondary,#607087); font-size:12px; border-bottom:1px solid var(--color-border,#dce3eb); }
+[data-mcp-admin] .mcp-service + .mcp-service { border-top:1px solid var(--color-border,#dce3eb); }
+[data-mcp-admin] details.mcp-service-editor { margin:0; border:0; padding:0; }
+[data-mcp-admin] .mcp-service-summary { min-height:64px; list-style:none; cursor:pointer; }
+[data-mcp-admin] .mcp-service-summary::-webkit-details-marker { display:none; }
+[data-mcp-admin] .mcp-service-name { display:flex; gap:10px; min-width:0; align-items:center; }
+[data-mcp-admin] .mcp-service-name > span:last-child { min-width:0; }
+[data-mcp-admin] .mcp-service-name strong, [data-mcp-admin] .mcp-service-name small { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+[data-mcp-admin] .mcp-service-name small { font-size:12px; color:var(--color-text-secondary,#607087); }
+[data-mcp-admin] .mcp-chevron { font-size:20px; color:var(--color-text-secondary,#607087); }
+[data-mcp-admin] details[open] > summary .mcp-chevron { transform:rotate(90deg); }
+[data-mcp-admin] .mcp-service-url { font-size:13px; color:var(--color-text-secondary,#607087); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+[data-mcp-admin] .mcp-summary-actions { display:flex; justify-content:flex-end; gap:5px; }
+[data-mcp-admin] .button { min-height:36px; padding:6px 10px; white-space:nowrap; }
+[data-mcp-admin] .mcp-link { background:transparent; border:0; color:var(--color-primary,#086bba); padding:6px; min-height:36px; cursor:pointer; font:inherit; white-space:nowrap; }
+[data-mcp-admin] .mcp-table-actions { text-align:right; white-space:nowrap; }
+[data-mcp-admin] .mcp-success { color:var(--color-success,#167347); font-weight:600; }
+[data-mcp-admin] .mcp-error { color:var(--color-danger,#b42318); }
+[data-mcp-admin] .mcp-muted { color:var(--color-text-secondary,#607087); font-size:13px; }
+[data-mcp-admin] .mcp-service-content { margin:0 14px 14px 38px; border:1px solid var(--color-border,#dce3eb); border-radius:5px; overflow:hidden; }
+[data-mcp-admin] .mcp-kb-heading { display:flex; justify-content:space-between; align-items:center; gap:8px; padding:8px 12px; background:var(--color-bg-secondary,#f8fafc); }
+[data-mcp-admin] .mcp-kb-table { width:100%; border-collapse:collapse; table-layout:fixed; }
+[data-mcp-admin] .mcp-kb-table th { text-align:left; font-size:12px; font-weight:400; color:var(--color-text-secondary,#607087); background:var(--color-bg-secondary,#fbfcfd); }
+[data-mcp-admin] .mcp-kb-table th:last-child { text-align:right; width:230px; }
+[data-mcp-admin] .mcp-kb-table th, [data-mcp-admin] .mcp-kb-table td { padding:8px 12px; border-top:1px solid var(--color-border,#e6ebf1); overflow-wrap:anywhere; }
+[data-mcp-admin] .mcp-kb-table label { margin:0; }
+[data-mcp-admin] .mcp-inline-check { display:flex; flex-direction:row; align-items:center; gap:6px; font-size:13px; white-space:nowrap; }
+[data-mcp-admin] input[type=checkbox] { width:16px; height:16px; min-height:0; margin:0; }
+[data-mcp-admin] .mcp-service-note, [data-mcp-admin] .mcp-kb-empty { font-size:12px; margin:0; padding:8px 12px; color:var(--color-text-secondary,#607087); border-top:1px solid var(--color-border,#dce3eb); }
+[data-mcp-admin] .mcp-connection-settings { padding:12px; border-bottom:1px solid var(--color-border,#dce3eb); }
+[data-mcp-admin] .mcp-connection-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px 14px; }
+[data-mcp-admin] .mcp-connection-grid label { margin:0; font-size:13px; }
+[data-mcp-admin] .mcp-advanced { margin:12px 0; }
+[data-mcp-admin] .mcp-custom-header { display:grid; grid-template-columns:1fr 1fr 1fr auto; align-items:end; gap:8px; margin-bottom:8px; }
+[data-mcp-admin] .mcp-custom-header label { margin:0; }
+[data-mcp-admin] .mcp-service-savebar { display:flex; justify-content:space-between; align-items:center; gap:10px; padding:10px 12px; border-top:1px solid var(--color-border,#dce3eb); font-size:13px; }
+[data-mcp-admin] [data-row-result]:not(:empty) { display:flex; flex-wrap:wrap; align-items:baseline; gap:6px 12px; padding:8px 14px; border-top:1px solid var(--color-border,#dce3eb); font-size:13px; }
+[data-mcp-admin] [data-row-result] > details { width:100%; margin:0; }
+[data-mcp-admin] .mcp-list-note { margin:10px 0 0; font-size:12px; color:var(--color-text-secondary,#607087); }
+[data-mcp-admin] [data-mcp-empty] { padding:12px; }
+[data-mcp-admin] button:focus-visible, [data-mcp-admin] summary:focus-visible { outline:2px solid var(--color-primary,#086bba); outline-offset:-2px; }
+@media(max-width:1100px) {
+ [data-mcp-admin] .mcp-service-columns, [data-mcp-admin] .mcp-service-summary { grid-template-columns:minmax(140px,1.5fr) minmax(100px,1fr) 50px 85px 175px; gap:8px; }
+}
+@media(max-width:760px) {
+ [data-mcp-admin] .mcp-service-columns { display:none; }
+ [data-mcp-admin] .mcp-service-summary { grid-template-columns:minmax(0,1fr) 90px; gap:6px; }
+ [data-mcp-admin] .mcp-service-url { grid-column:1/-1; grid-row:2; }
+ [data-mcp-admin] [data-service-kb-count], [data-mcp-admin] [data-service-enabled] { display:none; }
+ [data-mcp-admin] .mcp-summary-actions { grid-column:1/-1; justify-content:flex-start; }
+ [data-mcp-admin] .mcp-service-content { margin:0 8px 8px; }
+ [data-mcp-admin] .mcp-connection-grid, [data-mcp-admin] .mcp-custom-header { grid-template-columns:minmax(0,1fr); }
+ [data-mcp-admin] .mcp-kb-heading, [data-mcp-admin] .mcp-service-savebar { flex-wrap:wrap; }
+ [data-mcp-admin] .mcp-kb-table thead { display:none; }
+ [data-mcp-admin] .mcp-kb-table, [data-mcp-admin] .mcp-kb-table tbody, [data-mcp-admin] .mcp-kb-table tr { display:block; }
+ [data-mcp-admin] .mcp-kb-table tr { border-top:1px solid var(--color-border,#dce3eb); padding:8px; }
+ [data-mcp-admin] .mcp-kb-table td { display:block; border:0; padding:4px; }
+ [data-mcp-admin] .mcp-kb-table td:last-child { text-align:left; }
+ [data-mcp-admin] .mcp-list-tools input { width:100%; }
 }

@@ -20,7 +20,11 @@ describe('Node 企业能力包加载器', () => {
     const pythonContext = JSON.parse(python);
     expect(pythonContext).toEqual(nodeResult.context);
     expect(nodeResult.context.configFingerprint).toMatch(/^sha256:[0-9a-f]{64}$/);
-    expect(nodeResult.resources).toHaveLength(30);
+    expect(nodeResult.resources).toHaveLength(35);
+    expect(nodeResult.resources).toEqual(expect.arrayContaining([
+      ...['continue-technical-document', 'extract-document-cases', 'execute-yashandb-cases', 'compare-case-results', 'render-test-report'].map(id =>
+        expect.objectContaining({ reference: `knowledge/skills/${id}/SKILL.md`, digest: expect.stringMatching(/^[0-9a-f]{64}$/) })),
+    ]));
     expect(nodeResult.context.brand.icon).toEqual({
       alt: 'YashanDB 知识中心',
       resourceRef: 'config/knowledge-center/branding/default-icon.png'

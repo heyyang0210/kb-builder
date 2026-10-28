@@ -13,7 +13,7 @@ const ROLE_DISPLAY_NAMES = {
 const CONNECTION_STATUS_LABELS = {
   unconfigured: '未配置',
   pending: '待验证',
-  verified: '读取已验证',
+  verified: '最近读取验证通过',
   failed: '验证失败',
   disabled: '已停用',
 };
@@ -23,6 +23,8 @@ const TAB_LABELS = {
   principals: '人员管理',
   permissions: '用户权限',
   gitlab: 'GitLab 仓库',
+  mcp: 'MCP 服务',
+  models: '模型服务',
 };
 
 /* ---- 标签页导航 ---- */
@@ -37,7 +39,7 @@ function renderTabs(activeTab, teamGroupView = 'people') {
     ${tabButton('governance')}
     <div class="platform-tab-menu" ${activeTab === 'principals' ? 'data-active' : ''}>
       <details>
-        <summary class="platform-tab platform-tab-summary" id="platform-tab-principals" aria-haspopup="menu" aria-current="${activeTab === 'principals' ? 'page' : 'false'}">人员管理</summary>
+        <summary class="platform-tab platform-tab-summary" id="platform-tab-principals" aria-haspopup="menu" aria-current="${activeTab === 'principals' ? 'page' : 'false'}">${activeTab === 'principals' && teamGroupView === 'groups' ? '人员管理 · 团队小组' : '人员管理'}<span aria-hidden="true" class="platform-nav-chevron">⌄</span></summary>
         <div class="platform-submenu" role="menu" aria-label="人员管理子页面">
           <button type="button" role="menuitem" data-team-group-view="people" aria-current="${teamGroupView === 'people' ? 'page' : 'false'}">人员管理</button>
           <button type="button" role="menuitem" data-team-group-view="groups" aria-current="${teamGroupView === 'groups' ? 'page' : 'false'}">团队小组</button>
@@ -46,6 +48,8 @@ function renderTabs(activeTab, teamGroupView = 'people') {
     </div>
     ${tabButton('permissions')}
     ${tabButton('gitlab')}
+    ${tabButton('mcp')}
+    ${tabButton('models')}
   </nav>`;
 }
 
@@ -122,7 +126,7 @@ function renderGovernanceTab(governanceProjection = {}, projection = {}, databas
       <div>
         <div class="governance-summary-label">${item.label}</div>
             <div class="governance-summary-value">${item.loading ? '<span class="database-summary-skeleton database-summary-skeleton-card" aria-hidden="true"></span>' : escapeHtml(item.value)}</div>
-        ${item.meta ? `<div class="governance-summary-meta">${escapeHtml(item.meta)}</div>` : ''}
+        ${item.meta ? `<div class="governance-summary-meta">${item.label === '数据库状态' ? '连接配置见下方' : escapeHtml(item.meta)}</div>` : ''}
       </div>
     </div>`).join('')}
   </div>`;
@@ -200,7 +204,7 @@ function renderTeamGroupsTab(projection = {}, principals = [], selectedGroupId =
   const memberChips = (selected?.members || []).map(member => `<span class="team-member-chip" data-team-member-chip="${escapeHtml(member.principalId)}">${escapeHtml(member.displayName)}<button type="button" data-team-member-remove="${escapeHtml(member.principalId)}" aria-label="移除成员 ${escapeHtml(member.displayName)}"><i data-lucide="x" aria-hidden="true"></i></button><input type="hidden" name="memberPrincipalIds" value="${escapeHtml(member.principalId)}"></span>`).join('');
   const leaderPicker = renderPersonPicker({ id: 'team-group-leader', name: 'leaderPrincipalId', label: '负责人', people, selectedId: leaderId, searchRole: 'leader', hint: '支持输入姓名关键字，使用 ↑/↓ 选择，回车确认。' });
   const memberPicker = renderPersonPicker({ id: 'team-group-member-candidate', name: 'memberCandidate', label: '添加成员', people, excluded: new Set([leaderId, ...memberIds]), searchRole: 'member' });
-  return `<div role="tabpanel" id="platform-panel-principals" aria-labelledby="platform-tab-principals" class="team-group-page"><header class="principal-page-header"><div><h2>团队小组</h2></div><button class="button primary" type="button" data-team-group-create>新建团队小组</button></header><div class="team-group-workspace"><aside class="team-group-list"><div class="team-group-list-heading"><strong>团队小组</strong><span>${groups.length} 个</span></div><div class="team-group-list-scroll" data-scroll-region="panel">${groups.map(group => `<button type="button" class="team-group-list-item ${String(group.teamGroupId) === String(selected?.teamGroupId) ? 'is-selected' : ''}" data-team-group-view="groups" data-team-group-id="${escapeHtml(group.teamGroupId)}"><span><strong>${escapeHtml(group.groupName || '-')}</strong></span><small>${group.leader ? `${escapeHtml(group.leader.displayName)} · ${Number(group.members?.length || 0)} 名成员` : '未设置负责人'}</small></button>`).join('') || '<div class="team-group-list-empty">暂无团队小组</div>'}</div></aside><section class="team-group-detail">${selected ? `<form data-team-group-form data-team-group-id="${escapeHtml(selected.teamGroupId)}" data-team-group-version="${Number(selected.rowVersion || 1)}" data-current-leader-id="${escapeHtml(leaderId)}"><header class="team-group-detail-header"><h3>${escapeHtml(selected.groupName)}</h3>${selected.techDomainName ? `<p>关联领域：${escapeHtml(selected.techDomainName)}</p>` : ''}</header><div class="team-group-field"><label for="team-group-leader">负责人</label><select id="team-group-leader" name="leaderPrincipalId" required><option value="">请选择人员</option>${people.map(person => `<option value="${escapeHtml(person.principalId)}" ${String(person.principalId) === leaderId ? 'selected' : ''}>${escapeHtml(person.displayName)}</option>`).join('')}</select></div><fieldset class="team-group-member-field"><legend>团队成员</legend><div class="team-member-add"><select data-team-member-candidate aria-label="选择要添加的团队成员"><option value="">请选择人员</option>${people.filter(person => String(person.principalId) !== leaderId && !memberIds.has(String(person.principalId))).map(person => `<option value="${escapeHtml(person.principalId)}" data-display-name="${escapeHtml(person.displayName)}">${escapeHtml(person.displayName)}</option>`).join('')}</select><button class="button secondary" type="button" data-team-member-add>添加成员</button></div><div class="team-member-chips" data-team-member-chips>${memberChips || '<span class="team-member-empty" data-team-member-empty>暂无其他团队成员</span>'}</div></fieldset><p class="team-group-status ${savedStatus?.kind || ''}" data-team-group-status role="status" aria-live="polite">${escapeHtml(savedStatus?.message || '')}</p><footer class="team-group-actions" data-scroll-obstacle><button class="button primary" type="button" data-team-group-save>保存</button><button class="button tertiary" type="button" data-team-group-cancel>取消</button></footer></form>` : '<div class="empty-state"><strong>暂无团队小组</strong></div>'}</section></div><dialog class="principal-dialog" data-team-group-create-dialog aria-labelledby="team-group-create-title" data-scroll-region="dialog"><form data-team-group-create-form><header><h2 id="team-group-create-title">新建团队小组</h2><button class="icon-button" type="button" data-team-group-create-close aria-label="关闭"><i data-lucide="x" aria-hidden="true"></i></button></header><label><span>小组名称 *</span><input name="groupName" required maxlength="255" autocomplete="off"></label><p class="team-group-status" data-team-group-create-status role="status" aria-live="polite"></p><footer><button class="button primary" type="submit">新建</button><button class="button tertiary" type="button" data-team-group-create-close>取消</button></footer></form></dialog></div>`;
+  return `<div role="tabpanel" id="platform-panel-principals" aria-labelledby="platform-tab-principals" class="team-group-page"><header class="principal-page-header"><div><h2>团队小组</h2></div><button class="button primary" type="button" data-team-group-create>添加团队小组</button></header><div class="team-group-workspace"><aside class="team-group-list"><div class="team-group-list-heading"><strong>团队小组</strong><span>${groups.length} 个</span></div><div class="team-group-list-scroll" data-scroll-region="panel">${groups.map(group => `<button type="button" class="team-group-list-item ${String(group.teamGroupId) === String(selected?.teamGroupId) ? 'is-selected' : ''}" data-team-group-view="groups" data-team-group-id="${escapeHtml(group.teamGroupId)}"><span><strong>${escapeHtml(group.groupName || '-')}</strong></span><small>${group.leader ? `${escapeHtml(group.leader.displayName)} · ${Number(group.members?.length || 0)} 名成员` : '未设置负责人'}</small></button>`).join('') || '<div class="team-group-list-empty">暂无团队小组</div>'}</div></aside><section class="team-group-detail">${selected ? `<form data-team-group-form data-team-group-id="${escapeHtml(selected.teamGroupId)}" data-team-group-version="${Number(selected.rowVersion || 1)}" data-current-leader-id="${escapeHtml(leaderId)}"><header class="team-group-detail-header"><h3>${escapeHtml(selected.groupName)}</h3>${selected.techDomainName ? `<p>关联领域：${escapeHtml(selected.techDomainName)}</p>` : ''}</header><div class="team-group-field"><label for="team-group-leader">负责人</label><select id="team-group-leader" name="leaderPrincipalId" required><option value="">请选择人员</option>${people.map(person => `<option value="${escapeHtml(person.principalId)}" ${String(person.principalId) === leaderId ? 'selected' : ''}>${escapeHtml(person.displayName)}</option>`).join('')}</select></div><fieldset class="team-group-member-field"><legend>团队成员</legend><div class="team-member-add"><select data-team-member-candidate aria-label="选择要添加的团队成员"><option value="">请选择人员</option>${people.filter(person => String(person.principalId) !== leaderId && !memberIds.has(String(person.principalId))).map(person => `<option value="${escapeHtml(person.principalId)}" data-display-name="${escapeHtml(person.displayName)}">${escapeHtml(person.displayName)}</option>`).join('')}</select><button class="button secondary" type="button" data-team-member-add>添加成员</button></div><div class="team-member-chips" data-team-member-chips>${memberChips || '<span class="team-member-empty" data-team-member-empty>暂无其他团队成员</span>'}</div></fieldset><p class="team-group-status ${savedStatus?.kind || ''}" data-team-group-status role="status" aria-live="polite">${escapeHtml(savedStatus?.message || '')}</p><footer class="team-group-actions" data-scroll-obstacle><button class="button primary" type="button" data-team-group-save>保存</button><button class="button tertiary" type="button" data-team-group-cancel>取消</button></footer></form>` : '<div class="empty-state"><strong>暂无团队小组</strong></div>'}</section></div><dialog class="principal-dialog" data-team-group-create-dialog aria-labelledby="team-group-create-title" data-scroll-region="dialog"><form data-team-group-create-form><header><h2 id="team-group-create-title">新建团队小组</h2><button class="icon-button" type="button" data-team-group-create-close aria-label="关闭"><i data-lucide="x" aria-hidden="true"></i></button></header><label><span>小组名称 *</span><input name="groupName" required maxlength="255" autocomplete="off"></label><p class="team-group-status" data-team-group-create-status role="status" aria-live="polite"></p><footer><button class="button primary" type="submit">新建</button><button class="button tertiary" type="button" data-team-group-create-close>取消</button></footer></form></dialog></div>`;
 }
 
 export function renderPrincipalsTab(projection = {}, listState = {}, teamGroupProjection = {}, teamGroupView = 'people', teamGroupUi = {}) {
@@ -358,7 +362,7 @@ export function renderPermissionResults(permissionProjection = {}, selectedUserI
               </div>
               <div class="permission-role-footer">
                 <span class="permission-save-status ${statusClass}" role="${saveError ? 'alert' : 'status'}" aria-live="polite">${escapeHtml(statusText)}</span>
-                <button class="button secondary" type="submit" ${!editable || saveStatus === 'saving' ? 'disabled' : ''}>保存权限</button>
+                <button class="button primary" type="submit" ${!editable || saveStatus === 'saving' ? 'disabled' : ''}>保存权限</button>
               </div>
             </form>
           </div>` : '<div class="empty-state"><span>请调整搜索条件</span></div>';
@@ -457,14 +461,12 @@ function renderGitLabTab(gitlabProjection = {}, platformAdmin = false, listState
       <span>第 ${page} / ${totalPages} 页</span>
       <button data-gitlab-page="next" ${page >= totalPages ? 'disabled' : ''}>下一页</button>
     </div>` : ''}
-    ${platformAdmin ? `<button class="button secondary" type="button" data-gitlab-add-connection style="width:100%">
-      <i data-lucide="plus" style="width:16px;height:16px" aria-hidden="true"></i> 添加仓库连接
-    </button>` : ''}
   </div>`;
 
   const detailHtml = selected ? renderGitLabDetail(selected, platformAdmin, transientVerification, gitlabProjection.oauthStatus, gitlabProjection.oauthConfig) : renderGitLabEmpty(platformAdmin);
 
   return `<div role="tabpanel" id="platform-panel-gitlab" aria-labelledby="platform-tab-gitlab">
+    <header class="platform-section-heading"><h3>GitLab 仓库</h3>${platformAdmin ? '<button class="button primary" type="button" data-gitlab-add-connection>＋ 添加仓库连接</button>' : ''}</header>
     <div class="gitlab-layout">
       ${listHtml}
       <div class="gitlab-detail-panel" id="gitlab-detail-container">
@@ -485,7 +487,7 @@ function renderVerificationStatus(connection, transientVerification) {
   if (verification.status === 'pending_auth') return `<div class="gitlab-verification pending" role="status"><strong>连接已保存，待完成 GitLab 授权</strong><span>${escapeHtml(verification.message || '请先完成平台 OAuth 配置。')}</span></div>`;
   const verifiedAt = verification.verifiedAt ? new Date(verification.verifiedAt).toLocaleString('zh-CN', { hour12: false }) : '-';
   if (verification.status === 'verified') {
-    return `<div class="gitlab-verification success" role="status" aria-live="polite"><strong>读取验证成功</strong><span>${escapeHtml(String(verification.branchCount ?? 0))} 个分支 · ${escapeHtml(verifiedAt)}</span></div>`;
+    return `<div class="gitlab-verification success" role="status" aria-live="polite"><strong>平台最近验证：读取验证成功</strong><span>${escapeHtml(String(verification.branchCount ?? 0))} 个分支 · ${escapeHtml(verifiedAt)}；此为最近一次结果，不代表当前用户已授权。</span></div>`;
   }
   return `<div class="gitlab-verification failure" role="alert"><strong>验证失败</strong><span>${escapeHtml(verification.error?.message || '连接暂时不可用，请重试。')} · ${escapeHtml(verifiedAt)}</span><span>修复建议：${escapeHtml(verification.error?.recovery || '检查连接配置和平台服务日志，修复后重新验证。')}</span></div>`;
 }
@@ -529,7 +531,7 @@ function renderGitLabDetail(connection, platformAdmin, transientVerification, oa
         <div><span>读取验证</span><strong>${escapeHtml(readLabel)}</strong></div>
         <div><span>写入验证</span><strong>${escapeHtml(writeLabel)}</strong></div>
       </section>
-      ${needsOAuth ? `<div class="gitlab-oauth-prompt" role="status"><strong>需要使用管理员账号验证平台连接</strong><span>这里只验证平台配置和项目可读性，不会代替业务用户授权。</span>${oauthConfig?.configured ? `<a class="button secondary" href="${escapeHtml(oauthHref)}">用我的 GitLab 验证连接</a>` : '<span>GitLab OAuth 尚未配置，请先完成平台配置。</span>'}</div>` : ''}
+      ${needsOAuth ? `<div class="gitlab-oauth-prompt" role="status"><strong>我的 GitLab 账号尚未连接</strong><span>重新验证前需连接当前管理员账号；平台最近验证结果保留，业务用户仍需各自授权。</span>${oauthConfig?.configured ? `<a class="button secondary" href="${escapeHtml(oauthHref)}">连接我的 GitLab 账号</a>` : '<span>GitLab OAuth 尚未配置，请先完成平台配置。</span>'}</div>` : ''}
       ${renderVerificationStatus(connection, transientVerification)}
       ${platformAdmin ? `<div class="gitlab-detail-actions">
         <button class="button secondary" type="button" data-gitlab-verify="${escapeHtml(connection.id)}" ${isDisabled || needsOAuth || verification?.status === 'verifying' ? 'disabled' : ''} ${needsOAuth ? 'title="请先用当前管理员的 GitLab 账号验证连接"' : ''}>${verification ? '重新验证' : '验证连接'}</button>
@@ -546,7 +548,7 @@ function renderGitLabEmpty(platformAdmin) {
   return `<div class="gitlab-detail-body">
     <div class="empty-state">
       <strong>暂无 GitLab 连接</strong>
-      <span>${platformAdmin ? '点击左侧"添加仓库连接"开始配置' : '请联系平台管理员配置 GitLab 连接'}</span>
+      <span>${platformAdmin ? '点击上方"添加仓库连接"开始配置' : '请联系平台管理员配置 GitLab 连接'}</span>
     </div>
   </div>`;
 }
@@ -556,11 +558,11 @@ function renderGitLabEmpty(platformAdmin) {
 function renderGitLabEditForm(connection) {
   return `<div class="gitlab-add-form">
     <h3>编辑 GitLab 仓库连接</h3>
-    <form data-gitlab-edit-form>
+    <form class="platform-edit-form" data-gitlab-edit-form>
       <input type="hidden" name="id" value="${escapeHtml(connection.id)}">
       <div class="gitlab-form-steps">
         <div class="gitlab-form-step">
-          <h4><span class="step-number">1</span> 基本信息</h4>
+          <h4>基本信息</h4>
           <label>连接名称
             <input name="name" required value="${escapeHtml(connection.name || '')}">
           </label>
@@ -704,6 +706,12 @@ export function renderPlatformAdmin({
       tabContent = renderPermissionsTab(permissionProjection, selectedPermissionUserId, permissionSaveStatus, permissionUserSearch || '', permissionListState || {});
       break;
 
+    case 'models':
+      tabContent = '<section role="tabpanel" id="platform-panel-models" aria-labelledby="platform-tab-models"><div class="mcp-admin" data-model-admin></div></section>';
+      break;
+    case 'mcp':
+      tabContent = '<section role="tabpanel" id="platform-panel-mcp" aria-labelledby="platform-tab-mcp"><div class="mcp-admin" data-mcp-admin></div></section>';
+      break;
     case 'gitlab':
       if (gitlabEditingConnection) {
         tabContent = `<div role="tabpanel" id="platform-panel-gitlab" aria-labelledby="platform-tab-gitlab">
@@ -723,10 +731,10 @@ export function renderPlatformAdmin({
       break;
   }
 
-  return `<div class="page-intro">
+  return `<div class="platform-admin-page"><div class="page-intro">
     <h2>平台管理</h2>
     <span class="platform-header-meta">${projection?.asOf ? `更新于 ${new Date(projection.asOf).toLocaleString('zh-CN', { hour12: false })}` : ''}</span>
   </div>
   ${renderTabs(activeTab, teamGroupView || 'people')}
-  ${tabContent}`;
+  ${tabContent}</div>`;
 }

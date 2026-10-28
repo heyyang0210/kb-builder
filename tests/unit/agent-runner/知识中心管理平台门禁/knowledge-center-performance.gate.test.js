@@ -26,7 +26,9 @@ describe('知识中心刷新性能契约', () => {
   });
 
   test('审核启动与仓库上下文使用聚合接口并局部更新阅读区', () => {
-    expect(app).toContain("loadReviewBootstrap({ handbookId, taskId: requestedTaskId, step, view, documentId: params.get('documentId') || '', path: requestedPath })");
+    expect(app).toContain("const bootstrapOptions = { handbookId, taskId: requestedTaskId, step, view, documentId: params.get('documentId') || '', path: requestedPath }");
+    expect(app).toContain('takeReviewBootstrapPrefetch(bootstrapOptions)');
+    expect(app).toContain('prefetched ? prefetched.data : await loadReviewBootstrap(bootstrapOptions)');
     expect(app).toContain("if (readerHandbookId && view === 'reader')");
     expect(app).toContain('loadReviewRepositoryContext(handbookId, { branch, language, path: requestedPath })');
     expect(app).toContain("appState.gitlabProjection = { status: 'loading'");

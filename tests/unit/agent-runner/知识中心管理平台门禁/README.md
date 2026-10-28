@@ -14,6 +14,8 @@
 | 产品筛选业务语义 | `knowledge-assets-product-filter.gate.test.js` | 内部数字产品 ID 只用于查询，筛选项直接显示 `PRODUCT_NAME` 的 `DB / YMP / YCM / YDC`，且 URL 字符串 ID 可正确筛选 |
 | 模板摘要与详情边界 | `knowledge-center-performance.gate.test.js` + `tests/e2e/agent-runner/template-workspace.cjs` | 列表不带正文，只为选中模板读取一次详情；真实 Markdown 上传后即时和刷新均显示正文，禁止 N+1 |
 
+审核首屏门禁同时检查提前只读预取与正常聚合接口的回退关系；行为由 `../review-bootstrap-prefetch.test.js` 覆盖完整路由匹配、单次复用和401/403不污染登录状态，真实浏览器性能由 `tests/e2e/agent-runner/knowledge-center-performance.gate.spec.js` 验证，不以源码断言代替运行验收。
+
 ## 执行方式
 
 ```bash

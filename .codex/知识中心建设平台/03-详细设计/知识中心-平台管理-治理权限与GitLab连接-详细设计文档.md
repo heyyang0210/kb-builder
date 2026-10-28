@@ -21,7 +21,7 @@ verify:
 
 ### 审核发布的 OAuth 授权范围（2026-10-26 修正）
 
-- 当前 `gitlab.example.com` OAuth 应用实测接受 `read_api read_repository`，知识资产读取和重新连接默认请求这两个范围；此前主配置请求 `api` 会在授权页直接返回 `The requested scope is invalid, unknown, or malformed.`。安装部署必须以目标 GitLab OAuth 应用实际允许的范围为准。
+- 当前 `git-tools.yasdb.com` OAuth 应用实测接受 `read_api read_repository`，知识资产读取和重新连接默认请求这两个范围；此前主配置请求 `api` 会在授权页直接返回 `The requested scope is invalid, unknown, or malformed.`。安装部署必须以目标 GitLab OAuth 应用实际允许的范围为准。
 - `read_write` 连接的发布链路通过 GitLab REST API 创建任务分支、提交文件并创建 MR；只有 OAuth 应用明确允许 `api` 且环境配置为 `api` 时才具备该写入前提。`write_repository` 不能代替 REST 写权限，读取范围授权成功也不等于发布写权限已验证。
 - 更改授权请求范围不会升级已签发令牌。原有只读令牌必须由用户在个人设置中重新连接 GitLab 账号，回调后才能继续发布。平台不得代替用户使用其他身份发布，也不得把当前 `read_write` 配置当成实际令牌写权限证明。
 - 验收顺序：确认 GitLab OAuth 应用已允许 `api`，用户重新授权，读取令牌实际 scope 与仓库项目写权限，再按冻结审核候选调用发布；回读任务分支、正文、MR 和平台状态。任一步失败时保留审核候选与已生成的任务分支供幂等重试，不自动合并 MR。

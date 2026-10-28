@@ -1,8 +1,20 @@
+const { resolveMcpService } = require('../mcp-services');
 const logger = require('../logger');
+const { readJson } = require('../json-config');
+const { CONFIG_PATHS } = require('../config-registry');
+
+function configuredSearchHeader(config) {
+  if (config.search_knowledge_base_header) return config.search_knowledge_base_header;
+  try {
+    return readJson(CONFIG_PATHS.contentRules).platformMcp.multiSearchHeaderName || '';
+  } catch (_) {
+    return '';
+  }
+}
 
 class MCPCache {
   constructor(config = {}) {
-    this.ttl = (config.ttl || 3600) * 1000;
+    this.ttl = (config.ttl ?? 3600) * 1000;
     this.maxSize = config.max_size || 1000;
     this.cache = new Map();
   }
@@ -10,7 +22,7 @@ class MCPCache {
   get(key) {
     const item = this.cache.get(key);
     if (!item) return null;
-    if (Date.now() - item.timestamp > this.ttl) {
+    if (Date.now() - item.timestamp >= this.ttl) {
       this.cache.delete(key);
       return null;
     }
@@ -36,10 +48,17 @@ class MCPCache {
 
 class MCPClient {
   constructor(config = {}) {
+    if (Array.isArray(config.services)) config = resolveMcpService(config);
+    if (config.enabled === false) throw new Error('MCP 服务已停用');
     this.baseUrl = config.server_url || 'http://localhost:8080';
     this.apiKey = config.api_key || '';
     this.timeout = config.timeout || 30000;
+    this.searchKnowledgeBaseHeader = configuredSearchHeader(config);
     this.cache = config.cache?.enabled !== false ? new MCPCache(config.cache || {}) : null;
+    const configuredTargets = Array.isArray(config.search_knowledge_bases)
+      ? config.search_knowledge_bases
+      : (config.headers || []).filter(header => String(header.name || '').toLowerCase() === this.searchKnowledgeBaseHeader.toLowerCase()).map(header => header.value);
+    this.searchKnowledgeBases = [...new Set(configuredTargets.map(String).filter(Boolean))];
     
     // 构建自定义 headers
     this.customHeaders = {};
@@ -49,6 +68,9 @@ class MCPClient {
           this.customHeaders[header.name] = header.value;
         }
       });
+    }
+    if (this.searchKnowledgeBases.length && this.searchKnowledgeBaseHeader && !Object.keys(this.customHeaders).some(name => name.toLowerCase() === this.searchKnowledgeBaseHeader.toLowerCase())) {
+      this.customHeaders[this.searchKnowledgeBaseHeader] = this.searchKnowledgeBases[0];
     }
     
     // MCP 协议状态
@@ -124,7 +146,11 @@ class MCPClient {
 
       // 解析 SSE 响应
       const text = await response.text();
-      return this._parseSSEResponse(text);
+      const parsed = this._parseSSEResponse(text);
+      if (!parsed || parsed.error || parsed.jsonrpc !== '2.0' || parsed.id !== message.id) {
+        throw new Error('Invalid MCP JSON-RPC response');
+      }
+      return parsed;
     } catch (error) {
       if (error.name === 'AbortError') {
         throw new Error(`MCP request timeout after ${this.timeout}ms`);
@@ -177,6 +203,9 @@ class MCPClient {
       }
     });
 
+    if (!response.result?.serverInfo?.name || !response.result?.capabilities) {
+      throw new Error('Invalid MCP initialize response');
+    }
     if (response.result) {
       this.serverInfo = response.result.serverInfo;
       this.capabilities = response.result.capabilities;
@@ -194,7 +223,10 @@ class MCPClient {
   async listTools() {
     await this.initialize();
     const response = await this._request('tools/list', {});
-    return response.result?.tools || [];
+    if (!Array.isArray(response.result?.tools) || response.result.tools.some(tool => typeof tool?.name !== 'string' || !tool.name)) {
+      throw new Error('Invalid MCP tools/list response');
+    }
+    return response.result.tools;
   }
 
   async callTool(toolName, args = {}) {
@@ -207,6 +239,30 @@ class MCPClient {
   }
 
   async query(queryText, options = {}) {
+    if (this.searchKnowledgeBases.length > 1) {
+      const cacheKey = JSON.stringify({ queryText, options, searchKnowledgeBases: this.searchKnowledgeBases });
+      if (this.cache) {
+        const cached = this.cache.get(cacheKey);
+        if (cached) return cached;
+      }
+      const settled = await Promise.allSettled(this.searchKnowledgeBases.map(async knowledgeBaseId => {
+        const client = new MCPClient({
+          server_url: this.baseUrl,
+          api_key: this.apiKey,
+          timeout: this.timeout,
+          cache: { enabled: false },
+          headers: [...Object.entries(this.customHeaders).filter(([name]) => name.toLowerCase() !== this.multiSearchHeaderName.toLowerCase()).map(([name, value]) => ({ name, value })), { name: this.multiSearchHeaderName, value: knowledgeBaseId }]
+        });
+        return { knowledgeBaseId, data: await client.query(queryText, options) };
+      }));
+      const successes = settled.filter(result => result.status === 'fulfilled').map(result => result.value);
+      if (!successes.length) throw new Error('MCP search failed for all configured knowledge bases');
+      const merged = this._mergeSearchResults(successes);
+      const failures = settled.filter(result => result.status === 'rejected');
+      if (failures.length && merged.structuredContent) merged.structuredContent.search_warnings = failures.length;
+      if (this.cache) this.cache.set(cacheKey, merged);
+      return merged;
+    }
     if (this.cache) {
       const cached = this.cache.get(queryText);
       if (cached) {
@@ -226,6 +282,41 @@ class MCPClient {
     }
 
     return result;
+  }
+
+  get multiSearchHeaderName() {
+    return this.searchKnowledgeBaseHeader;
+  }
+
+  _mergeSearchResults(successes) {
+    const first = successes[0].data || {};
+    const allResults = [];
+    let structuredBase = null;
+    for (const { knowledgeBaseId, data } of successes) {
+      const structured = data?.structuredContent;
+      if (structured && typeof structured === 'object' && !Array.isArray(structured)) {
+        structuredBase ||= structured;
+        for (const result of Array.isArray(structured.results) ? structured.results : []) allResults.push({ ...result, kb_id: result.kb_id ?? knowledgeBaseId });
+        continue;
+      }
+      for (const item of data?.content || []) {
+        if (item.type !== 'text') continue;
+        try {
+          const parsed = JSON.parse(item.text);
+          structuredBase ||= parsed;
+          for (const result of Array.isArray(parsed.results) ? parsed.results : []) allResults.push({ ...result, kb_id: result.kb_id ?? knowledgeBaseId });
+        } catch (_) {}
+      }
+    }
+    const best = new Map();
+    for (const result of allResults) {
+      const key = result.ku_name || `${result.kb_id}:${result.title || ''}:${result.excerpt || ''}`;
+      const previous = best.get(key);
+      if (!previous || Number(result.score || 0) > Number(previous.score || 0)) best.set(key, result);
+    }
+    const results = [...best.values()].sort((a, b) => Number(b.score || 0) - Number(a.score || 0));
+    const structuredContent = structuredBase ? { ...structuredBase, results, total: results.length, kb_ids: successes.map(item => item.knowledgeBaseId) } : undefined;
+    return { ...first, ...(structuredContent ? { structuredContent } : {}), searchKnowledgeBases: successes.map(item => item.knowledgeBaseId) };
   }
 
   async batchQuery(queries, options = {}) {

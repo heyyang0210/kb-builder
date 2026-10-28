@@ -54,6 +54,7 @@ class ConfigManager {
 
   _encryptSensitiveFields(config) {
     const result = { ...config };
+    if (Array.isArray(result.services)) result.services = result.services.map(service => this._encryptSensitiveFields(service));
     
     // 加密 api_key
     for (const field of this._sensitiveFields) {
@@ -83,6 +84,7 @@ class ConfigManager {
   _decryptSensitiveFields(config) {
     if (!config) return config;
     const result = { ...config };
+    if (Array.isArray(result.services)) result.services = result.services.map(service => this._decryptSensitiveFields(service));
     
     // 解密 api_key
     if (result.api_key_encrypted) {
@@ -164,6 +166,11 @@ class ConfigManager {
 
   async getModelConfig() {
     return this.load('model-config');
+  }
+
+  getModelConfigSync() {
+    if (!fs.existsSync(CONFIG_PATHS.service)) return null;
+    return this._decryptSensitiveFields(readJson(CONFIG_PATHS.service).model || null);
   }
 
   async getMCPConfig() {
