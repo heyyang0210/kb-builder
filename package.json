@@ -9,9 +9,11 @@
     "build": "bash tools/repository/build-knowledge-center.sh",
     "check:node": "node tools/repository/check-node-syntax.js",
     "test:knowledge-center": "jest --config tests/unit/agent-runner/jest.config.js",
+    "test:ui:menus": "node --test tests/e2e/agent-runner/dismissible-menu.node.cjs",
     "verify:change": "bash tools/repository/verify-change.sh",
     "verify:database-api": "bash tools/repository/verify-database-health-api.sh",
-    "verify:full": "npm run verify:change && npm run build && python3 tests/run_tests.py smoke"
+    "verify:full": "npm run verify:change && npm run test:ui:menus && npm run build && python3 tests/run_tests.py smoke",
+    "test:performance": "node tests/performance/knowledge-center/run.cjs"
   },
   "dependencies": {
     "mermaid": "^11.16.0",

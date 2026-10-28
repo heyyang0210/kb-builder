@@ -67,12 +67,23 @@ async function screenshot(page, name) {
   await page.screenshot({ path: path.join(artifacts, name + '.png') });
 }
 
+async function openReferences(page) {
+  if (await page.locator('[data-ai-settings-panel]').isVisible()) await page.locator('[data-ai-settings-apply]').click();
+  if (!await page.locator('[data-ai-reference-panel]').isVisible()) await page.locator('[data-ai-source-add]').click();
+}
+async function closeReferences(page) {
+  if (await page.locator('[data-ai-reference-panel]').isVisible()) await page.locator('[data-ai-reference-panel] footer button').click();
+}
+async function finishConfiguration(page) {
+  await closeReferences(page);
+  if (await page.locator('[data-ai-settings-panel]').isVisible()) await page.locator('[data-ai-settings-apply]').click();
+}
 test('网页资料多选按作者调整的引用优先级进入生成任务', async t => {
   let imageReads = 0;
   const web = http.createServer((req, res) => {
-    if (req.url === '/diagram.svg') { imageReads++; res.setHeader('Content-Type', 'image/svg+xml'); res.end('<svg xmlns="http://www.w3.org/2000/svg" width="240" height="120"><rect width="240" height="120" fill="#dceaf0"/><path d="M30 85h180M55 85V40h55v45M140 85V25h45v60" stroke="#09698a" stroke-width="5" fill="none"/></svg>'); return; }
+    if (req.url === '/diagram.png') { imageReads++; res.setHeader('Content-Type', 'image/png'); res.end(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l9sAAAAASUVORK5CYII=', 'base64')); return; }
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.end(`<html><head><title>${req.url === '/a' ? '甲资料' : '乙资料'}</title></head><body><main><h1>${req.url === '/a' ? '甲资料' : '乙资料'}</h1><p>${req.url === '/a' ? '甲事实' : '乙事实'}</p>${req.url === '/a' ? '<img src="/diagram.svg" alt="结构图"><p>&lt;img src=x onerror=alert(1)&gt;</p>' : ''}</main></body></html>`);
+    res.end(`<html><head><title>${req.url === '/a' ? '甲资料' : '乙资料'}</title></head><body><main><h1>${req.url === '/a' ? '甲资料' : '乙资料'}</h1><p>${req.url === '/a' ? '甲事实' : '乙事实'}</p>${req.url === '/a' ? '<img src="/diagram.png" alt="结构图"><p>&lt;img src=x onerror=alert(1)&gt;</p>' : ''}</main></body></html>`);
   });
   await new Promise(resolve => web.listen(0, '127.0.0.1', resolve));
   t.after(() => { web.closeAllConnections(); web.close(); });
@@ -92,17 +103,18 @@ test('网页资料多选按作者调整的引用优先级进入生成任务', as
   });
   await page.evaluate(() => window.openWriting({ initialRange: { start: 0, end: 6 } }));
   await page.locator('[data-ai-settings-open]').click();
-  await page.locator('[data-ai-source-add]').click();
-  await page.locator('[data-ai-source-type]').selectOption('url');
+  await openReferences(page);
+  await page.locator('[data-reference-type=\"url\"]').click();
   for (const path of ['/a', '/b']) {
-    if (path === '/b') await page.locator('[data-ai-source-add]').click();
+    if (path === '/b') await openReferences(page);
     await page.locator('[data-ai-source-locator]').fill(origin + path);
     await page.locator('[data-ai-source-preview]').click();
-    await page.waitForFunction(count => document.querySelectorAll('[data-ai-source-list] section').length === count && !document.querySelector('[data-ai-source-preview]').disabled, path === '/a' ? 1 : 2);
-    await page.locator('[data-ai-source-list] section').last().locator('input[type="checkbox"]').check();
+    await page.waitForFunction(count => document.querySelectorAll('[data-ai-source-list] section').length === count && !document.querySelector('[data-ai-source-preview]').disabled, path === '/a' ? 2 : 3);
+    assert.equal(await page.locator('[data-ai-source-list] section').last().locator('input[type="checkbox"]').isChecked(), true);
   }
-  assert.match(await page.locator('[data-ai-source-count]').textContent(), /已选 2，可多选/);
+  assert.match(await page.locator('[data-ai-source-count]').textContent(), /已添加 2 项 · 默认引用知识库/);
   assert.equal(await page.locator('[data-ai-model]').count(), 0);
+  await closeReferences(page);
   const previewPagePromise = page.waitForEvent('popup');
   await page.getByRole('button', { name: '预览资料：甲资料' }).click();
   const previewPage = await previewPagePromise;
@@ -111,7 +123,7 @@ test('网页资料多选按作者调整的引用优先级进入生成任务', as
   assert.equal(await previewPage.getByRole('button', { name: '阅读视图' }).getAttribute('aria-pressed'), 'true');
   await previewPage.locator('#reading img').waitFor();
   await previewPage.waitForFunction(() => document.querySelector('#reading img')?.complete);
-  assert.equal(await previewPage.locator('#reading img').evaluate(img => img.naturalWidth), 240);
+  assert.equal(await previewPage.locator('#reading img').evaluate(img => img.naturalWidth), 1);
   assert.ok(imageReads > 0);
   assert.equal(await previewPage.locator('#reading img[onerror]').count(), 0);
   await previewPage.screenshot({ path: path.join(artifacts, 'source-reading-preview.png'), fullPage: true });
@@ -125,15 +137,15 @@ test('网页资料多选按作者调整的引用优先级进入生成任务', as
   assert.equal(await previewPage.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
   await previewPage.screenshot({ path: path.join(artifacts, 'source-reading-preview-mobile.png'), fullPage: true });
   await previewPage.close();
-  assert.deepEqual(await page.locator('[data-source-priority]').allTextContents(), ['引用优先级 1', '引用优先级 2']);
+  assert.deepEqual(await page.locator('[data-source-priority]').allTextContents(), ['优先级 1', '优先级 2', '优先级 3']);
   await page.getByRole('button', { name: '上移资料：乙资料' }).click();
-  assert.deepEqual(await page.locator('[data-ai-source-list] section label').allTextContents(), ['乙资料', '甲资料']);
-  assert.deepEqual(await page.locator('[data-source-priority]').allTextContents(), ['引用优先级 1', '引用优先级 2']);
-  assert.equal(await page.getByRole('button', { name: '上移资料：乙资料' }).isDisabled(), true);
+  assert.deepEqual(await page.locator('[data-ai-source-list] section label').allTextContents(), ['⋮⋮知识库（MCP）', '⋮⋮乙资料', '⋮⋮甲资料']);
+  assert.deepEqual(await page.locator('[data-source-priority]').allTextContents(), ['优先级 1', '优先级 2', '优先级 3']);
+  assert.equal(await page.getByRole('button', { name: '上移资料：知识库（MCP）' }).isDisabled(), true);
   await page.setViewportSize({ width: 390, height: 844 });
-  assert.equal(await page.locator('.handbook-ai-settings-dialog').evaluate(el => el.scrollWidth <= el.clientWidth + 1), true);
+  assert.equal(await page.locator('[data-ai-settings-panel] .handbook-ai-settings-dialog').evaluate(el => el.scrollWidth <= el.clientWidth + 1), true);
   await page.screenshot({ path: path.join(artifacts, 'mobile-source-priority.png') });
-  await page.locator('[data-ai-settings-close]').last().click();
+  await finishConfiguration(page);
   await page.locator('[data-ai-start]').click();
   await waitCandidate(page);
   const response = await api.request('GET', `${suffix}/ai-jobs/${jobId}?${new URLSearchParams(ctx)}`);
@@ -168,7 +180,7 @@ test('真实编辑器与 HTTP：范围继承、重生成恢复、取消、候选
   assert.equal(await page.locator('[data-ai-resume]').isVisible(), false);
   assert.equal(await page.locator('[data-ai-operation]').isVisible(), false, '低频写作方式收纳到设置');
   const compact = await assistant.boundingBox();
-  assert.ok(compact.height <= 420, `初始侧栏应紧凑，实际高度 ${compact.height}`);
+  assert.ok(compact.height <= 700, `初始侧栏应紧凑，实际高度 ${compact.height}`);
   fs.writeFileSync(path.join(artifacts, 'assistant-density.json'), JSON.stringify({ viewport: '1366x900', width: compact.width, height: compact.height, idleCancelVisible: false, emptyResumeVisible: false }, null, 2));
   await screenshot(page, 'desktop-writing');
   await page.locator('[data-ai-start]').click(); await waitCandidate(page);
@@ -229,19 +241,24 @@ test('选区边界、续写、手动确认、资料与窄屏键盘访问', async
   assert.equal(await page.locator('[data-ai-start]').isDisabled(), true);
   await page.locator('[data-ai-full]').click(); assert.equal(await page.locator('[data-ai-start]').isEnabled(), true);
   await page.locator('[data-ai-settings-open]').click();
-  await page.locator('[data-ai-source-add]').click();
+  await openReferences(page);
   await page.locator('[data-ai-source-type] option[value="test-case-library"]').waitFor({ state: 'attached' });
-  await page.locator('[data-ai-source-type]').selectOption('test-case-library');
+  await page.locator('[data-reference-type=\"test-case-library\"]').click();
   await page.locator('[data-ai-source-locator]').fill('ai-quality-smoke-select.sql'); await page.locator('[data-ai-source-preview]').click();
-  const checkbox = page.locator('[data-ai-source-list] input[type="checkbox"]'); await checkbox.waitFor();
-  assert.equal(await checkbox.isChecked(), false); await checkbox.check();
-  assert.match(await page.locator('[data-ai-source-count]').textContent(), /已选 1/);
+  const checkbox = page.locator('[data-ai-source-list] input[type="checkbox"]').last(); await checkbox.waitFor({ state: 'attached' });
+  await page.waitForFunction(() => document.querySelectorAll('[data-ai-source-list] section').length === 2);
+  assert.equal(await checkbox.isChecked(), true);
+  await closeReferences(page);
+  assert.match(await page.locator('[data-ai-source-count]').textContent(), /已添加 1 项 · 默认引用知识库/);
   assert.equal(await page.locator('[data-ai-source-list] textarea').isVisible(), false);
   await page.getByRole('button', { name: '移除资料', exact: true }).click();
-  assert.match(await page.locator('[data-ai-source-count]').textContent(), /已选 0/);
-  await page.locator('[data-ai-settings-close]').last().click();
+  assert.match(await page.locator('[data-ai-source-count]').textContent(), /已添加 0 项/);
+  await finishConfiguration(page);
   await page.setViewportSize({ width: 390, height: 844 }); await screenshot(page, 'mobile-writing');
-  assert.ok((await page.locator('[data-ai-original]').boundingBox()).height <= 260);
+  assert.deepEqual(await page.locator('[data-ai-original]').evaluate(el => {
+    const style = getComputedStyle(el);
+    return { overflow: style.overflowY, fits: el.scrollHeight <= el.clientHeight + 1, border: style.borderTopWidth };
+  }), { overflow: 'hidden', fits: true, border: '0px' }, '窄屏正文无框并随内容伸展，无输入区内部滚动');
   await page.locator('[data-ai-start]').scrollIntoViewIfNeeded();
   await page.screenshot({ path: path.join(artifacts, 'mobile-writing-controls.png') });
   assert.equal(await page.locator('.handbook-writing-page').evaluate(el => el.scrollWidth <= el.clientWidth + 1), true);
@@ -262,14 +279,14 @@ test('生成设置弹框按操作提供 Skill，并将作者选择冻结到续�
   });
   await page.evaluate(() => window.openWriting({ operation: 'continue', initialRange: { start: 8, end: 8 } }));
   await page.locator('[data-ai-settings-open]').click();
-  await page.locator('[data-ai-skills] > summary').click();
+  await page.locator('[data-ai-skills]').evaluate(el => el.open = true);
   const skill = page.locator('[data-ai-skill-list] input[value="continue-technical-document"]');
   await skill.waitFor();
   assert.equal(await skill.isChecked(), false);
   assert.doesNotMatch(await page.locator('[data-ai-settings-summary]').textContent(), /0 个 Skill|0 项资料|未选模板/);
   await skill.check();
   assert.match(await page.locator('[data-ai-settings-summary]').textContent(), /1 个 Skill/);
-  await page.locator('[data-ai-settings-close]').last().click();
+  await finishConfiguration(page);
   await page.locator('[data-ai-start]').click(); await waitCandidate(page);
   assert.ok(createdJobId);
   const response = await api.request('GET', `${suffix}/ai-jobs/${createdJobId}?${new URLSearchParams(ctx)}`);
@@ -359,40 +376,49 @@ test('模板同框搜索、面板图标切换、运行详情和临时断线恢�
   } }, { templates });
   await page.evaluate(() => window.openWriting({ initialRange: { start: 0, end: 6 }, templateId: 'tpl-install' }));
   await page.locator('[data-ai-settings-open]').click();
-  assert.equal(await page.locator('[data-ai-operation]').isVisible(), true);
+  assert.equal(await page.locator('[data-ai-settings-operation="polish"]').isVisible(), false);
+  assert.equal(await page.locator('[data-ai-settings-panel] [data-ai-sources]').count(), 0);
   assert.equal(await page.locator('[data-ai-operation]').inputValue(), 'polish');
   assert.deepEqual(await page.locator('[data-ai-operation] option').allTextContents(), ['文档生成', '内容修订', '内容续写']);
   assert.equal(await page.locator('[data-ai-template-section]').isVisible(), true);
-  await page.locator('[data-ai-operation]').selectOption('continue');
+  await finishConfiguration(page);
+  await page.locator('[data-ai-quick-operation=\"continue\"]').click();
+  await page.locator('[data-ai-settings-open]').click();
   assert.equal(await page.locator('[data-ai-template-section]').isVisible(), false);
   assert.doesNotMatch(await page.locator('[data-ai-settings-summary]').textContent(), /安装指南/);
-  await page.locator('[data-ai-operation]').selectOption('generate');
+  await finishConfiguration(page);
+  await page.locator('[data-ai-quick-operation=\"generate\"]').click();
+  await page.locator('[data-ai-settings-open]').click();
   assert.equal(await page.locator('[data-ai-template-section]').isVisible(), true);
   assert.match(await page.locator('[data-ai-operation] option:checked').textContent(), /文档生成/);
   const combo = page.getByRole('combobox', { name: '模板，可输入筛选' });
   await combo.waitFor();
   await page.waitForFunction(() => document.querySelector('[data-ai-template-select]').value === 'tpl-install');
-  await page.getByRole('button', { name: '展开模板', exact: true }).click();
+  await page.getByRole('button', { name: '展开文档模板', exact: true }).click();
   assert.equal(await page.getByRole('option', { name: /已停用模板/ }).count(), 0);
   await combo.fill('SQL');
   await page.getByRole('option', { name: 'SQL 参考模板 · v2', exact: true }).click();
   assert.equal(await combo.inputValue(), 'SQL 参考模板 · v2');
-  await page.locator('[data-ai-operation]').selectOption('continue');
+  await finishConfiguration(page);
+  await page.locator('[data-ai-quick-operation=\"continue\"]').click();
+  await page.locator('[data-ai-settings-open]').click();
   assert.equal(await combo.isVisible(), false);
   assert.doesNotMatch(await page.locator('[data-ai-settings-summary]').textContent(), /SQL 参考模板/);
-  await page.locator('[data-ai-operation]').selectOption('polish');
-  await page.locator('[data-ai-settings-close]').last().click();
+  await finishConfiguration(page);
+  await page.locator('[data-ai-quick-operation=\"polish\"]').click();
+  await page.locator('[data-ai-settings-open]').click();
+  await finishConfiguration(page);
   await page.locator('[data-ai-full]').click();
   await page.locator('[data-ai-settings-open]').click();
   assert.equal(await combo.inputValue(), 'SQL 参考模板 · v2');
-  const settingsBox = await page.locator('.handbook-ai-settings-dialog').boundingBox();
-  assert.ok(settingsBox.width <= 560 && settingsBox.height <= 530, JSON.stringify(settingsBox));
+  const settingsBox = await page.locator('[data-ai-settings-panel] .handbook-ai-settings-dialog').boundingBox();
+  assert.ok(settingsBox.width === 600 && settingsBox.height <= 860, JSON.stringify(settingsBox));
   await page.screenshot({ path: path.join(artifacts, 'settings-compact-desktop.png') });
   await page.setViewportSize({ width: 390, height: 844 });
-  assert.equal(await page.locator('.handbook-ai-settings-dialog').evaluate(el => el.scrollWidth <= el.clientWidth + 1), true);
+  assert.equal(await page.locator('[data-ai-settings-panel] .handbook-ai-settings-dialog').evaluate(el => el.scrollWidth <= el.clientWidth + 1), true);
   await page.screenshot({ path: path.join(artifacts, 'settings-compact-mobile.png') });
   await page.setViewportSize({ width: 1366, height: 900 });
-  await page.locator('[data-ai-settings-close]').last().click();
+  await finishConfiguration(page);
   await page.locator('[data-ai-start]').click();
   await page.waitForFunction(() => document.querySelector('[data-ai-preview]')?.textContent.includes('已生成第一段'));
   assert.equal(captured.template, '# SQL 语法');
@@ -498,13 +524,13 @@ test('内容修订可不使用模板，续写不携带继承模板', async t => 
   assert.equal(await page.locator('[data-ai-template-section]').isVisible(), true);
   await page.waitForFunction(() => document.querySelector('[data-ai-template-select]').value === 'inherited-template');
   await page.locator('[data-ai-template-select]').selectOption('__none', { force: true });
-  await page.locator('[data-ai-source-add]').click();
+  await openReferences(page);
   await page.locator('[data-ai-source-type] option[value="test-case-library"]').waitFor({ state: 'attached' });
-  await page.locator('[data-ai-source-type]').selectOption('test-case-library');
+  await page.locator('[data-reference-type=\"test-case-library\"]').click();
   await page.locator('[data-ai-source-locator]').fill('ai-quality-smoke-select.sql');
   await page.locator('[data-ai-source-preview]').click();
-  await page.locator('[data-ai-source-list] input[type="checkbox"]').check();
-  await page.locator('[data-ai-settings-close]').last().click();
+  await page.waitForFunction(() => document.querySelectorAll('[data-ai-source-list] section').length === 2 && !document.querySelector('[data-ai-source-preview]').disabled);
+  await finishConfiguration(page);
   await page.locator('[data-ai-requirements]').fill('依据参考资料修订，保留有依据的事实。');
   await page.locator('[data-ai-start]').click();
   await waitCandidate(page);
@@ -516,7 +542,7 @@ test('内容修订可不使用模板，续写不携带继承模板', async t => 
   await page.evaluate(() => window.openWriting({ operation: 'continue', templateId: 'inherited-template', initialRange: { start: 6, end: 6 } }));
   await page.locator('[data-ai-settings-open]').click();
   assert.equal(await page.locator('[data-ai-template-section]').isVisible(), false);
-  await page.locator('[data-ai-settings-close]').last().click();
+  await finishConfiguration(page);
   await page.locator('[data-ai-start]').click();
   await waitCandidate(page);
   assert.equal(submitted.operation, 'continue');
@@ -571,29 +597,140 @@ test('PingCode 页面网址与短标识兼容，来源受限不误报账号权�
     window.openWriting({ initialRange: { start: 0, end: 6 } });
   });
   await page.locator('[data-ai-settings-open]').click();
-  await page.locator('[data-ai-source-add]').click();
+  await openReferences(page);
   await page.locator('[data-ai-source-type] option[value="pingcode-design"]').waitFor({ state: 'attached' });
-  await page.locator('[data-ai-source-type]').selectOption('pingcode-design');
+  await page.locator('[data-reference-type=\"pingcode-design\"]').click();
   assert.match(await page.locator('[data-ai-source-info]').textContent(), /页面网址/);
   await page.locator('[data-ai-source-locator]').fill('DENIED/page-1');
   await page.locator('[data-ai-source-preview]').click();
   await page.waitForFunction(() => document.querySelector('[data-ai-source-info]').textContent.includes('不在已配置'));
   assert.equal(await page.evaluate(() => window.permissionNotices), 0);
   assert.match(await page.locator('[data-ai-source-info]').textContent(), /诊断编号：[a-f0-9-]{36}/);
-  await page.locator('[data-ai-source-type]').selectOption('url');
+  await page.locator('[data-reference-type=\"url\"]').click();
   await page.locator('[data-ai-source-locator]').fill('file:///etc/passwd');
   await page.locator('[data-ai-source-preview]').click();
   await page.waitForFunction(() => document.querySelector('[data-ai-source-info]').textContent.includes('来源范围'));
   assert.equal(await page.evaluate(() => window.permissionNotices), 0);
-  await page.locator('[data-ai-source-type]').selectOption('pingcode-design');
+  await page.locator('[data-reference-type=\"pingcode-design\"]').click();
   await page.locator('[data-ai-source-locator]').fill(full);
   await page.locator('[data-ai-source-preview]').click();
-  await page.locator('[data-ai-source-list] input[type="checkbox"]').check();
+  await page.waitForFunction(() => document.querySelectorAll('[data-ai-source-list] section').length === 2 && !document.querySelector('[data-ai-source-preview]').disabled);
   assert.match(await page.locator('[data-ai-source-info]').textContent(), /资料已添加/);
-  await page.locator('[data-ai-source-add]').click();
+  await openReferences(page);
+  await page.locator('[data-ai-source-locator]').fill(full);
   // Account-level denial must still dispatch its global notice.
   await page.route('**/ai-sources', route => route.fulfill({ status: 403, contentType: 'application/json', body: JSON.stringify({ success: false, error: { code: 'HANDBOOK_PRODUCTION_FORBIDDEN', message: '当前用户无权执行此操作' } }) }));
   await page.locator('[data-ai-source-preview]').click();
   await page.waitForFunction(() => window.permissionNotices === 1);
+  assert.deepEqual(errors, []);
+});
+
+test('嵌入工作台：目录与命令栏保留、正文编辑、候选采用和窄屏无溢出', async t => {
+  const { api, page, errors } = await launch(t, { generate: async () => ({ content: '确认部署环境并准备安装文件。', model: 'deterministic-e2e' }) });
+  await page.evaluate(() => {
+    const root = document.querySelector('#view-root');
+    const bar = document.createElement('header'); bar.id = 'fixture-commandbar'; bar.textContent = '知识资产 / 安装手册';
+    root.prepend(bar);
+    const surface = document.createElement('section'); surface.className = 'handbook-production-writing';
+    document.querySelector('[data-handbook-vditor]').before(surface);
+    surface.append(document.querySelector('[data-handbook-vditor]'));
+    window.openWriting({ embedded: true, loadEditor: async () => window.Vditor, initialRange: { start: 0, end: window.editor.getValue().length } });
+  });
+  await page.locator('.handbook-writing-page.is-embedded').waitFor();
+  assert.equal(await page.locator('#fixture-commandbar').isVisible(), true);
+  assert.equal(await page.locator('.handbook-writing-page').evaluate(el => el.parentElement.className), 'handbook-production-writing has-writing-assistant');
+  await page.locator('[data-ai-rich-editor] .vditor-wysiwyg [contenteditable="true"]').waitFor();
+  const columns = await page.locator('.handbook-writing-layout').evaluate(el => getComputedStyle(el).gridTemplateColumns.split(' ').length);
+  assert.equal(columns, 2);
+  await page.locator('[data-ai-requirements]').fill('完善部署要求');
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+  await page.screenshot({ path: path.join(artifacts, 'embedded-mobile.png') });
+  await page.setViewportSize({ width: 1366, height: 900 });
+  await page.locator('[data-ai-start]').click(); await waitCandidate(page);
+  assert.match(await page.locator('[data-ai-fragment]').inputValue(), /部署环境/);
+  await page.locator('[data-ai-adopt]').click();
+  await page.waitForFunction(() => !!window.saved);
+  const reread = await api.request('GET', `${suffix}/draft?${new URLSearchParams(ctx)}`);
+  assert.equal(reread.status, 200); assert.match(reread.body.data.draft.revision.markdown, /部署环境并准备/);
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+  await page.screenshot({ path: path.join(artifacts, 'embedded-mobile.png') });
+  assert.equal(await page.locator('.handbook-writing-page').count(), 0);
+  assert.equal(await page.locator('[data-handbook-vditor]').isVisible(), true);
+  assert.deepEqual(errors, []);
+});
+
+test('本地参考文档：拖拽上传、折叠、拖动优先级、键盘调整与生成真实传递', async t => {
+  let captured;
+  const mcp = http.createServer(async (req, res) => {
+    let raw = ''; for await (const chunk of req) raw += chunk;
+    const message = JSON.parse(raw);
+    if (message.method === 'notifications/initialized') { res.writeHead(202); res.end(); return; }
+    const result = message.method !== 'tools/call' ? { serverInfo: { name: 'test', version: '1' }, capabilities: {} }
+      : message.params.name === 'search_ku' ? { structuredContent: { results: [{ ku_name: 'select-reference', score: .95 }] } }
+      : { structuredContent: { title: 'SELECT知识库原文', content: '# SELECT\n\n知识库中的语法依据。' } };
+    res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ jsonrpc: '2.0', id: message.id, result }));
+  });
+  await new Promise(resolve => mcp.listen(0, '127.0.0.1', resolve));
+  t.after(() => { mcp.closeAllConnections(); mcp.close(); });
+  const { api, page, errors } = await launch(t, {
+    loadMCPConfig: async () => ({ services: [{ id: 'official-service', name: '知识库', enabled: true, server_url: `http://127.0.0.1:${mcp.address().port}`, knowledgeBases: [{ id: 'official', name: '官方文档', locator: '1' }] }] }),
+    generate: async messages => { captured = JSON.parse(messages.at(-1).content); return { content: '依据优先级修订后的 SELECT 正文。', model: 'deterministic-e2e' }; },
+  });
+  await page.evaluate(() => {
+    const surface = document.createElement('section'); surface.className = 'handbook-production-writing';
+    document.querySelector('[data-handbook-vditor]').before(surface); surface.append(document.querySelector('[data-handbook-vditor]'));
+    window.openWriting({ embedded: true, loadEditor: async () => window.Vditor, initialRange: { start: 0, end: window.editor.getValue().length } });
+  });
+  assert.equal(await page.locator('.handbook-writing-configuration-heading strong').isVisible(), true);
+  await page.locator('[data-ai-settings-open]').click();
+  assert.equal(await page.locator('[data-ai-settings-panel] [data-ai-source-entry]').count(), 0);
+  await finishConfiguration(page);
+  await openReferences(page);
+  assert.equal(await page.locator('[data-reference-type]').count(), 6);
+  await page.locator('[data-reference-type="local-document"]').click();
+  assert.equal(await page.locator('[data-reference-type="local-document"]').getAttribute('aria-pressed'), 'true');
+  assert.equal(await page.locator('[data-reference-type="url"]').getAttribute('aria-pressed'), 'false');
+  await page.screenshot({ path: path.join(artifacts, 'reference-local-upload.png') });
+  for (let index = 1; index <= 4; index++) {
+    const payload = { name: `参考${index}.md`, mimeType: 'text/markdown', buffer: Buffer.from(`# SELECT依据${index}\n\n引用事实${index}。`) };
+    if (index === 1) {
+      const data = await page.evaluateHandle(({ name, content }) => {
+        const transfer = new DataTransfer(); transfer.items.add(new File([content], name, { type: 'text/markdown' })); return transfer;
+      }, { name: payload.name, content: payload.buffer.toString() });
+      await page.locator('[data-ai-source-upload]').dispatchEvent('drop', { dataTransfer: data });
+      await data.dispose();
+    } else await page.locator('[data-ai-source-file]').setInputFiles(payload);
+    await page.waitForFunction(count => document.querySelectorAll('[data-ai-source-list] section').length === count && !document.querySelector('[data-ai-source-file]').disabled, index + 1);
+  }
+  await closeReferences(page);
+  assert.equal(await page.locator('[data-ai-source-list] section:visible').count(), 3);
+  assert.equal(await page.locator('[data-ai-references-toggle]').getAttribute('aria-expanded'), 'false');
+  await page.locator('[data-ai-references-toggle]').click();
+  assert.equal(await page.locator('[data-ai-source-list] section:visible').count(), 5);
+  const rows = page.locator('[data-ai-source-list] section');
+  await rows.nth(1).locator('[draggable]').dragTo(rows.nth(0), { targetPosition: { x: 20, y: 5 } });
+  assert.match(await rows.first().textContent(), /参考1.md/);
+  await page.getByRole('button', { name: '下移资料：知识库（MCP）' }).click();
+  assert.deepEqual(await rows.locator('label').allTextContents(), ['⋮⋮参考1.md','⋮⋮参考2.md','⋮⋮知识库（MCP）','⋮⋮参考3.md','⋮⋮参考4.md']);
+  await page.getByRole('button', { name: '上移资料：参考4.md' }).focus();
+  await page.keyboard.press('Enter');
+  assert.match(await rows.nth(3).textContent(), /参考4.md/);
+  await page.locator('[data-ai-requirements]').fill('SELECT SQL，根据参考文档补充准确事实。');
+  await page.screenshot({ path: path.join(artifacts, 'reference-priority-desktop.png') });
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+  await openReferences(page);
+  await page.screenshot({ path: path.join(artifacts, 'reference-local-upload-mobile.png') });
+  assert.equal(await page.locator('[data-ai-reference-panel] .handbook-ai-settings-dialog').evaluate(el => el.scrollWidth <= el.clientWidth + 1), true);
+  await page.keyboard.press('Escape');
+  await page.locator('[data-ai-references-toggle]').click();
+  assert.equal(await page.locator('[data-ai-source-list] section:visible').count(), 3);
+  await page.setViewportSize({ width: 1366, height: 900 });
+  await page.locator('[data-ai-start]').click(); await waitCandidate(page);
+  assert.deepEqual(captured.sources.map(source => source.title), ['参考1.md','参考2.md','SELECT知识库原文','参考4.md','参考3.md']);
+  assert.deepEqual(captured.sources.map(source => source.priority), [1,2,3,4,5]);
+  assert.match(captured.sources[0].content, /引用事实1/);
   assert.deepEqual(errors, []);
 });

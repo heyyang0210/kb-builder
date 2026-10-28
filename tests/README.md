@@ -234,3 +234,36 @@ PingCode 资料输入回归包含于 `production-writing.test.cjs`：真实 HTTP
 写作页回归还验证生成设置隐藏模型控件、使用默认模型、逐项添加多份资料、优先级排序，以及新标签页快照预览。
 
 网页资料回归验证 HTML 图片相对路径转绝对地址、阅读视图实际加载图片、原始内容切换及原始 HTML 不执行；`production-web-reference.test.cjs` 覆盖真实 HTTP 提取。
+
+## 手册按需读取性能回归
+
+手册同屏工作台回归：`tests/e2e/agent-runner/knowledge-center-handbook-workspace.spec.js` 覆盖真实隔离服务中的目录、编辑格式快速切换、草稿 HTTP 保存回读、五类来源和 390px 布局；使用统一 `tests/run_tests.py` E2E 入口同步 `pf_knowledge` 到 `test_hy` 后运行。`production-writing.test.cjs` 另覆盖同屏候选生成与明确采用，模型为确定性夹具，不代表外部模型质量验收。
+
+确定性回归：`node --test tests/unit/agent-runner/handbook-demand-read.node.test.cjs`；真实 HTTP 保存/审核/AI 采用与映射授权回归：`node --test --test-name-pattern='生产映射真实 HTTP|shared draft HTTP|attachment and review batch|AI HTTP creates isolated' tests/unit/agent-runner/handbook-production-api.test.js`。
+
+运行实例性能门禁：先通过环境注入 `KPG_BASE_URL`、`KC_PERF_HANDBOOK_ID`、`KNOWLEDGE_CENTER_ADMIN_USERNAME`、`KNOWLEDGE_CENTER_ADMIN_PASSWORD`，执行 `node tools/repository/check-handbook-performance.cjs`。目标手册需要已有共享草稿；工具从生成文档首页实际点击入口，记录目录可见与正文就绪，再各采样100次目录/草稿 API，按 `config/knowledge-center/handbook-performance.json` 判断退出码；结果默认写入 `runtime/performance/handbook-gate.json`，不记录凭据和正文。发布该链路变更须执行此门禁，并确保 Storage 已支持投影；在隔离端口验证，避免与编译、其他压测争用资源。接口测试不替代已连接 GitLab、并发及跨实例恢复验收。
+
+只读加载体验验收：使用同一组性能账号环境变量运行 `node --test tests/e2e/agent-runner/handbook-loading-readonly.node.cjs`，无需隔离写入环境，不保存业务数据。覆盖桌面/390px慢正文期间目录可用、稳定占位、无错误草稿结论、恢复真实正文，以及模拟读取失败后目录仍可用；截图写入 runtime/test-results/handbook-loading。
+性能门禁的目录指标在下一绘制帧核对展开目录位于视口内且可接收指针操作，不以加载文字消失代替可用；失败结果保留，不覆盖为通过。
+
+## 功能链路性能专项（独立运行）
+
+新增 `tests/performance/knowledge-center/`，以用户真实点击后的业务反馈与可操作状态分别计时，覆盖主导航模块与平台分区。当前环境专用数据、真实AI：
+
+```bash
+npm run test:performance -- --current
+```
+
+此命令会创建带运行标识的专用测试数据并调用真实模型；结束时自动归档测试手册、回收测试大纲、逻辑删除模板并清理无引用的本地上传资料，清理失败非零退出。不纳入普通 `full/e2e` 默认发现。配置、证据结构、隔离模式及覆盖失败规则见 `tests/performance/knowledge-center/README.md`；设计见 `.codex/知识中心建设平台/05-测试设计&报告/01-测试设计/知识中心-平台-界面性能专项-测试设计文档.md`。未完成链路、依赖失败或预算超标均以非零退出，不以页面外壳/错误反馈作为业务成功。
+
+## 临时菜单关闭回归
+
+`npm run test:ui:menus`：检查手册更多、资产更多、大纲更多操作、大纲导入和平台分区五类接入声明；用真实 Chromium 验证内外点击、停止冒泡、原生开关、Escape 焦点与层级、菜单切换、动态重挂载、幂等初始化、触摸和监听清理，持久目录保持展开。新增临时菜单须同步加入模板接入检查，禁止恢复业务 CSS 关闭白名单。
+
+设置 KPG_BASE_URL、KC_PERF_HANDBOOK_ID、KNOWLEDGE_CENTER_ADMIN_USERNAME、KNOWLEDGE_CENTER_ADMIN_PASSWORD 时，追加当前实例桌面/390px验收（只登录和读取，拦截业务写入）；截图和结果写入 runtime/test-results/dismissible-menu。缺少变量时明确跳过真实实例用例，不能宣称真实实例通过。
+
+菜单基础回归已接入 `npm run verify:full`，无真实实例变量时仍执行模板契约与隔离浏览器验证；发布验证另启用真实实例用例。真实页面验证必须避免与共享实例压测/其他 Playwright 验收并发运行。
+
+手册工作台参考效果验收：`knowledge-center-handbook-workspace.spec.js` 覆盖目录、格式下拉、AI五类来源、人工内容保留、窄屏与保存回读；格式切换先打开summary。临时格式菜单纳入 `dismissible-menu.node.cjs`。本轮隔离实测2项通过，保存回读仍因历史大纲引用冲突失败；不得将其记为完整流程通过。
+
+Jest 的 CommonJS runner 在 `tests/unit/agent-runner/jest.config.js` 中将 `marked` 映射到已安装同版本的 UMD 入口，用于来源图片 Markdown 解析测试；不替换产品运行时依赖或版本。

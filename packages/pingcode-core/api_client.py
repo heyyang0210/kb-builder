@@ -6,7 +6,7 @@ PingCode API 客户端
 
 import time
 from typing import Callable
-from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 
 from playwright.sync_api import Page
 
@@ -125,7 +125,7 @@ class PingCodeAPIClient:
         self._public_image_token_at = time.monotonic()
         return token
 
-    def download_public_image(self, image: dict) -> tuple[bytes, str]:
+    def download_public_image(self, image: dict, max_bytes: int | None = None, timeout_ms: int = 15000) -> tuple[bytes, str]:
         """下载 Slate 图片节点引用的原图。"""
         source_url = image.get('originUrl') or image.get('thumbUrl') or image.get('url')
         if not source_url:
@@ -142,9 +142,31 @@ class PingCodeAPIClient:
             query = dict(parse_qsl(parsed.query, keep_blank_values=True))
             query['token'] = self.get_public_image_token(refresh=attempt > 0)
             download_url = urlunparse(parsed._replace(query=urlencode(query)))
-            response = self.page.request.get(download_url)
+            visited = set()
+            for _hop in range(4):
+                if download_url in visited:
+                    raise ValueError('图片跳转形成循环')
+                visited.add(download_url)
+                response = self.page.request.get(download_url, timeout=timeout_ms, max_redirects=0)
+                if response.status not in {301, 302, 303, 307, 308}:
+                    break
+                location = response.headers.get('location')
+                if not location:
+                    raise ValueError('图片跳转缺少目标')
+                download_url = urljoin(download_url, location)
+                redirected = urlparse(download_url)
+                if (redirected.scheme != base.scheme or redirected.netloc != base.netloc
+                        or redirected.username or redirected.password
+                        or not redirected.path.startswith(('/atlas/files/public/', '/pc-public/'))):
+                    raise ValueError('图片跳转超出 PingCode 图片范围')
+            else:
+                raise ValueError('图片跳转次数超过限制')
             content_type = response.headers.get('content-type', '').split(';', 1)[0].lower()
+            if max_bytes is not None and int(response.headers.get('content-length', '0') or 0) > max_bytes:
+                raise ValueError('图片超过允许的大小')
             data = response.body()
+            if max_bytes is not None and len(data) > max_bytes:
+                raise ValueError('图片超过允许的大小')
             detected_type = self._detect_image_content_type(data)
             if response.ok and data and (content_type.startswith('image/') or detected_type):
                 return data, detected_type or content_type

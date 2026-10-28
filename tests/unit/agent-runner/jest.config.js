@@ -10,6 +10,8 @@ module.exports = {
   ],
   // Jest 的绝对 moduleDirectories 会把 htmlparser2 的嵌套 entities 错配到旧顶层版本。
   moduleNameMapper: {
+    // Jest 的 CommonJS runner 使用同版本 UMD 入口，避免解析 marked 的 ESM 导出。
+    '^marked$': '<rootDir>/../../../runtime/agent-runner/node_modules/marked/lib/marked.umd.js',
     '^entities/decode$': '<rootDir>/../../../runtime/agent-runner/node_modules/htmlparser2/node_modules/entities/dist/commonjs/decode.js',
     '^entities/escape$': '<rootDir>/../../../runtime/agent-runner/node_modules/htmlparser2/node_modules/entities/dist/commonjs/escape.js',
   },

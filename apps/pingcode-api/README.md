@@ -13,7 +13,7 @@ PYTHONPATH=apps/pingcode-api:packages/pingcode-core \
 `RUN_PINGCODE_LIVE_TESTS=1` 显式启用。
 
 
-参考正文读取：`GET /api/pingcode/spaces/{space_key}/pages/{page_id}/reference` 复用现有账号浏览器会话、页面详情客户端和 Slate→Markdown 解析器，先核对页面属于该空间，再返回正文、标题、原始地址及上游实际提供的版本信息。不创建下载批次，不下载附件图片；缺失页面返回404、正文无效422、上游失败502，错误响应不包含凭证或上游原始异常。该接口沿用资料服务现有网络与认证边界，知识中心入口另行校验作者权限和空间引用范围。
+参考正文读取：`GET /api/pingcode/spaces/{space_key}/pages/{page_id}/reference` 复用现有账号浏览器会话、页面详情客户端和 Slate→Markdown 解析器，先核对页面属于该空间，再返回正文、标题、原始地址及上游实际提供的版本信息。`include_images=true` 时按知识中心来源图片策略下载有界公共图片，以 `source-image:` 内部标识和 base64 结果交给平台托管；响应不包含签名图片 URL。图片下载仅允许当前主机的 `/atlas/files/public/` 起点及同源 `/pc-public/` 受限跳转。不创建下载批次或下载附件；缺失页面返回404、正文无效422、上游失败502，错误响应不包含凭证或上游原始异常。该接口沿用资料服务现有网络与认证边界，知识中心入口另行校验作者权限和空间引用范围。
 
 复验知识中心生产配置登记的首个 PingCode 目标：
 

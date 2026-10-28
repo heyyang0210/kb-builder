@@ -225,6 +225,8 @@
   .handbook-ai-settings-dialog { max-height: calc(100vh - 20px); }
   .handbook-ai-settings-summary { align-items: stretch; flex-direction: column; }
 }
+
+
 .handbook-production-editor { --handbook-commandbar-height: 68px; container-type: inline-size; border: 0; border-radius: 6px; background: var(--color-surface-subtle); box-shadow: none; }
 .handbook-production-editor h2 { font-size: 17px; letter-spacing: 0; }
 .handbook-production-toolbar { position: sticky; z-index: 8; top: 0; min-height: var(--handbook-commandbar-height); display: grid; grid-template-columns: minmax(150px, 1fr) auto; gap: 16px; align-items: center; padding: 8px 18px; border: 1px solid var(--color-border); border-width: 1px 1px 0; border-radius: 6px 6px 0 0; background: rgb(255 255 255 / 97%); box-shadow: 0 4px 14px rgb(15 23 42 / 8%); backdrop-filter: blur(10px); }
@@ -243,6 +245,9 @@
 .handbook-ai-primary { min-height: 40px; padding: 0 14px; border-color: var(--color-brand); background: var(--color-brand); color: #fff; font-weight: 750; box-shadow: 0 2px 5px rgb(15 23 42 / 12%); }
 .handbook-ai-primary:hover, .handbook-ai-primary:focus-visible { border-color: var(--color-brand); background: color-mix(in srgb, var(--color-brand) 88%, #000); color: #fff; }
 .handbook-ai-primary i { width: 16px; height: 16px; margin-right: 5px; }
+.handbook-save-primary { min-height: 40px; padding-inline: 14px; border-color: var(--color-brand); background: var(--color-brand); color: #fff; font-weight: 750; box-shadow: 0 2px 5px rgb(15 23 42 / 12%); }
+.handbook-save-primary:hover, .handbook-save-primary:focus-visible { border-color: var(--color-brand); background: color-mix(in srgb, var(--color-brand) 88%, #000); color: #fff; }
+.handbook-save-primary:disabled { border-color: var(--color-border); background: var(--color-surface-subtle); color: var(--color-text-tertiary); box-shadow: none; }
 .handbook-editor-format { display: inline-flex; align-items: center; gap: 4px; margin-right: auto; }
 .handbook-toolbar-actions .handbook-editor-format { margin-right: 0; }
 .handbook-editor-format > span { margin-right: 4px; color: var(--color-text-secondary); font-size: 12px; font-weight: 650; }
@@ -675,20 +680,31 @@
 .handbook-production-empty-actions { display: flex; justify-content: flex-start; padding: 16px 20px; border-bottom: 1px solid var(--color-border); }
 .handbook-production-empty-actions .button { display: inline-flex; align-items: center; gap: 8px; }
 .handbook-production-page .handbook-production-header { min-height: 56px; padding-inline: 8px; }
+.handbook-production-page .handbook-production-header { min-height: 40px; align-items: center; padding: 0 2px; }
+.handbook-production-page .handbook-production-header > div { display: flex; min-width: 0; align-items: center; gap: 10px; }
+.handbook-production-page .handbook-production-header h1 { min-width: 0; margin: 0; overflow: hidden; font-size: 18px; letter-spacing: 0; text-overflow: ellipsis; white-space: nowrap; }
+.handbook-production-page .handbook-production-header a { min-height: 36px; flex: none; }
+@media (max-width: 480px) {
+  html:has(.handbook-production-page), body:has(.handbook-production-page) { overflow-x: clip; }
+}
 .handbook-production-layout { display: block; position: relative; width: 100%; min-width: 0; }
-.handbook-production-layout .handbook-production-editor { width: 100%; max-width: none; margin: 0; }
+.handbook-production-layout .handbook-production-editor { width: 100%; max-width: none; margin: 0; padding: 0; }
 .handbook-production-editor > .handbook-production-toolbar { grid-template-columns: minmax(0, 1fr) auto; min-height: 68px; gap: 12px; padding: 10px 20px; top: 0; }
 .handbook-directory-entry, .handbook-assistant-mobile-open { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 44px; flex: none; }
 .handbook-directory-entry i, .handbook-assistant-mobile-open i { width: 16px; height: 16px; }
 .handbook-command-document { gap: 12px; }
 .handbook-command-document > div { max-width: 300px; }
 .handbook-toolbar-actions { overflow: visible; max-width: none; }
+.handbook-toolbar-actions { gap: 14px; }
+.handbook-primary-actions, .handbook-save-cluster { display: inline-flex; min-width: 0; align-items: center; gap: 8px; }
+.handbook-save-cluster { padding-left: 12px; border-left: 1px solid var(--color-border); }
 .handbook-save-status { white-space: normal; max-width: 165px; line-height: 1.35; }
-.handbook-production-writing { padding: 32px clamp(12px, 4vw, 64px) 48px; }
+.handbook-production-writing { padding: 12px clamp(12px, 4vw, 64px) 40px; }
 .handbook-production-content.is-reading { width: min(100%, 900px); font-size: 16px; line-height: 1.75; }
 .handbook-production-content[data-handbook-vditor] .vditor-wysiwyg { flex: 0 1 860px; max-width: 860px; font-size: 16px; line-height: 1.8; }
 .handbook-production-content:has(.handbook-markdown-editor) { padding: 0; background: #f4f6f8; }
 .handbook-production-content[data-handbook-vditor] .vditor-toolbar { top: var(--handbook-commandbar-height); }
+.handbook-production-content[data-handbook-vditor] .vditor-content { padding-top: 8px; }
 .handbook-production-directory, .handbook-assistant-panel { position: fixed; z-index: 31; top: 0; bottom: 0; width: min(360px, 92vw); max-height: var(--kc-viewport-height); overflow-y: auto; overscroll-behavior: contain; border-radius: 0; background: var(--color-surface); box-shadow: 0 18px 48px rgb(15 23 42 / 20%); visibility: hidden; pointer-events: none; transition: transform var(--motion-standard), visibility var(--motion-standard); }
 .handbook-production-directory { left: 0; border-width: 0 1px 0 0; transform: translateX(-105%); }
 .handbook-assistant-panel { right: 0; border-width: 0 0 0 1px; transform: translateX(105%); }
@@ -707,14 +723,30 @@
 @media (max-width: 1000px) {
   .handbook-production-editor > .handbook-production-toolbar { grid-template-columns: 1fr; }
   .handbook-toolbar-actions { justify-content: flex-start; }
+  .handbook-toolbar-actions { flex-wrap: wrap; row-gap: 8px; }
 }
 @media (max-width: 560px) {
-  .handbook-production-editor > .handbook-production-toolbar { min-height: 0; grid-template-columns: 1fr; grid-template-rows: auto auto; gap: 10px; padding: 10px 12px; }
+  .handbook-production-page { gap: 8px; }
+  .handbook-production-page .handbook-production-header { min-height: 40px; }
+  .handbook-production-page .handbook-production-header > div { gap: 8px; }
+  .handbook-production-page .handbook-production-header a { gap: 4px; font-size: 12px; }
+  .handbook-production-page .handbook-production-header h1 { font-size: 16px; }
+  .handbook-production-editor > .handbook-production-toolbar { min-height: 0; grid-template-columns: 1fr; grid-template-rows: auto auto; gap: 8px; padding: 8px 10px; }
   .handbook-command-document > div { flex: 1; }
   .handbook-command-document .handbook-production-document-state { display: none; }
-  .handbook-toolbar-actions { gap: 6px; flex-wrap: wrap; }
+  .handbook-toolbar-actions { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; grid-template-areas: "primary primary primary" "status save tools"; gap: 6px 8px; }
+  .handbook-primary-actions { grid-area: primary; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+  .handbook-primary-actions .handbook-ai-primary { min-width: 0; min-height: 40px; justify-content: center; padding-inline: 10px; }
+  .handbook-primary-actions .handbook-editor-format { grid-column: 1 / -1; grid-row: 2; }
+  .handbook-primary-actions .handbook-editor-format button { flex: 1; }
+  .handbook-save-cluster { display: contents; }
+  .handbook-save-status { grid-area: status; align-self: center; max-width: none; min-width: 0; overflow: hidden; font-size: 12px; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+  .handbook-save-primary { grid-area: save; min-height: 40px; }
+  .handbook-toolbar-tools { grid-area: tools; gap: 2px; margin: 0; padding: 0; border-left: 0; }
+  .handbook-toolbar-tools .icon-button { width: 40px; height: 40px; }
+  .handbook-more-menu > summary { min-height: 40px; }
+  .handbook-editor-format button { min-height: 40px; }
   .handbook-toolbar-actions .button { min-height: 40px; }
-  .handbook-save-status { max-width: none; min-width: 100%; text-align: left; order: -1; }
   .handbook-production-writing { padding: 14px 0 28px; }
   .handbook-review-tray { margin-bottom: 16px; }
 }
@@ -875,6 +907,7 @@ body.immersive-writing #main { max-width: none; padding: 0; }
 .handbook-writing-page .handbook-ai-settings-body > details { padding-top: 10px; border-top: 1px solid var(--color-border); }
 .handbook-writing-page .handbook-ai-settings-body summary { min-height: 44px; line-height: 44px; padding-block: 0; cursor: pointer; font-size: 13px; }
 .handbook-writing-page .handbook-ai-settings-body summary span { color: var(--color-text-secondary); font-weight: 400; }
+.handbook-writing-page .handbook-ai-settings-dialog > header p { margin: 4px 0 0; color: var(--color-text-secondary); font-size: 12px; }
 .handbook-writing-page .handbook-ai-settings-body .handbook-ai-settings-section { display: grid; gap: 8px; margin-top: 8px; }
 .handbook-writing-page .handbook-ai-settings-dialog .button { min-height: 44px; }
 .handbook-writing-page .handbook-ai-settings-dialog select { min-height: 40px; }
@@ -882,10 +915,471 @@ body.immersive-writing #main { max-width: none; padding: 0; }
 .handbook-writing-page .handbook-source-priority { font-size: 12px; font-weight: 600; color: var(--color-brand); }
 .handbook-writing-page .handbook-source-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .handbook-writing-page .handbook-ai-source-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.handbook-writing-page .handbook-ai-source-heading strong { font-size: 13px; }
+.handbook-writing-page .handbook-ai-source-heading strong { font-size: 14px; }
+.handbook-writing-page .handbook-ai-source-rule { margin: 3px 0 0 !important; color: var(--color-text-secondary); }
 .handbook-writing-page .handbook-ai-sources { padding-top: 10px !important; border-top: 1px solid var(--color-border) !important; }
 .handbook-writing-page .handbook-ai-sources [data-ai-source-list] { display: grid; gap: 8px; margin-top: 8px; }
 .handbook-writing-page .handbook-ai-sources [data-ai-source-list]:empty { display: none; }
-.handbook-writing-page .handbook-ai-sources [data-ai-source-list] section { padding: 10px; border: 1px solid var(--color-border); border-radius: 6px; }
-.handbook-writing-page .handbook-ai-sources [data-ai-source-list] label { overflow-wrap: anywhere; }
+.handbook-writing-page .handbook-ai-sources [data-ai-source-list] section { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 5px 10px; align-items: center; padding: 10px; border: 1px solid var(--color-border); border-radius: 6px; }
+.handbook-writing-page .handbook-ai-sources [data-ai-source-list] label { min-width: 0; overflow-wrap: anywhere; }
+.handbook-writing-page .handbook-source-state { color: var(--color-text-secondary); font-size: 12px; white-space: nowrap; }
+.handbook-writing-page .handbook-ai-sources [data-ai-source-list] section[data-selected="false"] .handbook-source-state { color: var(--color-text-tertiary); }
+.handbook-writing-page .handbook-ai-sources [data-ai-source-list] .handbook-source-actions { grid-column: 1 / -1; }
 .handbook-writing-page [data-ai-source-list] input[type="checkbox"] { width: auto; flex: none; }
+
+/* 正文尚未返回时保持阅读布局，目录仍可独立使用。 */
+.handbook-document-skeleton { display: grid; gap: 20px; min-height: 300px; padding: 24px 0; align-content: start; }
+.handbook-document-skeleton span { display: block; height: 16px; width: 100%; border-radius: var(--radius-sm); background: var(--color-surface-subtle); }
+.handbook-document-skeleton span:first-child { width: 38%; height: 28px; margin-bottom: 16px; }
+.handbook-document-skeleton span:last-child { width: 68%; }
+
+/* 文档工作台：已确认的阅读、编辑、AI 三状态。 */
+.handbook-production-page { gap: 0; background: #fff; }
+.handbook-production-page .handbook-production-layout { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: 64px 1fr; gap: 0; min-height: calc(100vh - 96px); background: #fff; }
+.handbook-production-layout > .handbook-production-editor { display: contents; }
+.handbook-production-editor > .handbook-production-toolbar { grid-column: 1 / -1; grid-row: 1; display: flex; align-items: center; justify-content: space-between; gap: 12px; height: 64px; min-height: 64px; padding: 0 24px; margin: 0; border: 0; border-bottom: 1px solid var(--color-border); border-radius: 0; box-shadow: none; background: #fff; }
+.handbook-command-document { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.handbook-command-document > .icon-button { flex: none; }
+.handbook-command-breadcrumb { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-text-secondary); font-size: 13px; }
+.handbook-command-breadcrumb > span { margin: 0 10px; color: var(--color-text-tertiary); }
+.handbook-command-breadcrumb strong { color: var(--color-text-primary); font-weight: 600; }
+.handbook-production-toolbar .handbook-toolbar-actions { display: flex; flex-wrap: nowrap; align-items: center; gap: 8px; flex: none; }
+.handbook-production-toolbar .handbook-toolbar-actions .button { min-height: 36px; }
+.handbook-production-toolbar .handbook-save-status { font-size: 12px; margin-right: 8px; max-width: 180px; white-space: nowrap; }
+.handbook-production-writing { grid-column: 1; grid-row: 2; min-width: 0; min-height: 70vh; padding: 36px clamp(24px, 6vw, 96px) 64px; border: 0; border-radius: 0; background: #fff; background-image: none; box-shadow: none; }
+.handbook-document-heading { max-width: 860px; margin: 0 auto 24px; }
+.handbook-document-heading > p { margin: 0 0 12px; color: var(--color-text-secondary); font-size: 12px; }
+.handbook-document-heading h1 { margin: 0; font-size: 30px; line-height: 1.4; letter-spacing: -.6px; }
+.handbook-production-writing > .handbook-editor-format { width: min(100%, 860px); margin: 0 auto 12px; min-height: 48px; padding: 6px 0; border-bottom: 1px solid var(--color-border); border-radius: 0; }
+.handbook-production-content.is-reading, .handbook-production-content.is-editing { width: min(100%, 860px); max-width: 860px; margin: 0 auto; padding: 0; border: 0; border-radius: 0; box-shadow: none; background: #fff; background-image: none; }
+.handbook-production-content[data-handbook-vditor] .vditor { border: 0; box-shadow: none; }
+.handbook-production-content[data-handbook-vditor] .vditor-toolbar { background: #fff; border-bottom: 1px solid var(--color-border); }
+.handbook-more-menu-panel { width: 240px; }
+.handbook-more-menu-panel .handbook-review-hint { margin: 6px 0 0; padding: 8px; font-size: 12px; line-height: 1.5; background: var(--color-surface-subtle); }
+.handbook-production-directory { background: #f6f7f9; }
+.handbook-production-directory > header { background: #f6f7f9; }
+.handbook-production-directory-scroll button strong { font-size: 13px; font-weight: 450; }
+.handbook-production-directory-scroll button small { font-size: 11px; }
+.handbook-production-writing.has-writing-assistant { padding: 0; }
+.handbook-writing-page.is-embedded { position: relative; inset: auto; width: 100%; max-width: none; height: auto; min-height: 72vh; margin: 0; padding: 0; border: 0; border-radius: 0; box-shadow: none; background: #fff; }
+.handbook-writing-page.is-embedded > form { display: block; padding: 0; max-width: none; }
+.handbook-writing-page.is-embedded .handbook-writing-layout { display: grid; grid-template-columns: minmax(0, 1fr) 368px; gap: 0; min-height: 72vh; padding: 0; }
+.handbook-writing-page.is-embedded .handbook-writing-document { min-width: 0; padding: 32px clamp(20px, 3vw, 48px); border: 0; border-radius: 0; background: #fff; }
+.handbook-writing-page.is-embedded .handbook-writing-document > h3 { font-size: 28px; margin: 0 0 16px; }
+.handbook-writing-page.is-embedded .handbook-writing-document > p { color: var(--color-text-secondary); font-size: 12px; }
+.handbook-writing-page.is-embedded .handbook-writing-assistant { display: flex; flex-direction: column; gap: 20px; align-self: stretch; width: auto; min-width: 0; padding: 24px; border: 0; border-left: 1px solid var(--color-border); border-radius: 0; box-shadow: none; background: #fafbfc; }
+.handbook-writing-page.is-embedded .asset-dialog-heading { display: flex; gap: 8px; align-items: start; padding: 0; margin: 0; border: 0; background: transparent; }
+.handbook-writing-page.is-embedded .asset-dialog-heading h2 { font-size: 19px; margin: 4px 0 0; }
+.handbook-writing-page.is-embedded .asset-dialog-heading p { font-size: 12px; margin: 0; }
+.handbook-writing-page.is-embedded .handbook-writing-heading-actions { margin-left: auto; }
+.handbook-writing-page.is-embedded [data-ai-close] { font-size: 22px; padding: 0; width: 36px; min-height: 36px; }
+.handbook-writing-page.is-embedded [data-ai-panel-toggle][hidden] { display: none; }
+.handbook-writing-operations { display: flex; gap: 4px; padding: 4px; border-radius: 8px; background: #eef0f3; }
+.handbook-writing-operations .button { flex: 1; padding: 8px 4px; font-size: 12px; min-height: 36px; border: 0; background: transparent; }
+.handbook-writing-operations .button[aria-pressed="true"] { background: #fff; color: var(--color-brand); box-shadow: 0 1px 3px #00000012; }
+.handbook-writing-page.is-embedded .handbook-writing-assistant > label { display: grid; gap: 10px; font-size: 13px; }
+.handbook-writing-page.is-embedded [data-ai-requirements] { min-height: 132px; resize: vertical; padding: 12px; background: #fff; font-size: 14px; line-height: 1.6; }
+.handbook-writing-reference { display: grid; gap: 12px; padding-top: 16px; border-top: 1px solid var(--color-border); }
+.handbook-writing-reference p { margin: 0; color: var(--color-text-secondary); font-size: 12px; line-height: 1.6; }
+.handbook-writing-page.is-embedded .handbook-writing-submit { margin-top: auto; padding: 16px 0 0; }
+.handbook-writing-page.is-embedded [data-ai-start] { width: 100%; min-height: 44px; }
+.handbook-writing-page.is-embedded [data-ai-candidate] { padding: 20px 0; border-top: 1px solid var(--color-border); }
+.handbook-writing-page.is-embedded .handbook-writing-comparison { grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 1001px) {
+  .handbook-production-page .handbook-production-layout:has(> .handbook-production-directory.is-open) { grid-template-columns: 244px minmax(0, 1fr); }
+  .handbook-production-layout > .handbook-production-directory { display: none; position: sticky; grid-column: 1; grid-row: 2; left: auto; top: 64px; bottom: auto; z-index: 2; width: 244px; height: calc(100vh - 64px); max-height: none; overflow-y: auto; border: 0; border-right: 1px solid var(--color-border); border-radius: 0; box-shadow: none; transform: none; transition: none; }
+  .handbook-production-layout > .handbook-production-directory.is-open { display: block; }
+  .handbook-production-layout:has(> .handbook-production-directory.is-open) .handbook-production-writing { grid-column: 2; }
+  .handbook-production-layout > .handbook-directory-backdrop { display: none; }
+  .handbook-production-directory > header { padding: 20px 12px 12px; }
+  .handbook-production-directory > header h2 { font-size: 14px; }
+  .handbook-production-directory > header > div > span { font-size: 11px; }
+  .handbook-directory-collapse { width: 32px; height: 32px; }
+  .handbook-production-directory-mode button { font-size: 11px; padding-inline: 6px; }
+}
+@media (max-width: 1200px) {
+  .handbook-command-breadcrumb { max-width: 210px; }
+  .handbook-production-toolbar .handbook-save-status { max-width: 112px; overflow: hidden; text-overflow: ellipsis; }
+  .handbook-writing-page.is-embedded .handbook-writing-layout { grid-template-columns: minmax(0, 1fr) 330px; }
+}
+@media (max-width: 760px) {
+  .handbook-production-editor > .handbook-production-toolbar { gap: 4px; padding-inline: 8px; }
+  .handbook-command-breadcrumb { display: none; }
+  .handbook-production-toolbar .handbook-toolbar-actions { gap: 4px; }
+  .handbook-production-toolbar .handbook-save-status { display: none; }
+  .handbook-production-toolbar .button { padding: 6px 8px; font-size: 12px; }
+  .handbook-production-toolbar .handbook-ai-primary span, .handbook-directory-entry span { display: none; }
+  .handbook-production-writing { padding: 24px 20px 48px; }
+  .handbook-writing-page.is-embedded .handbook-writing-layout { display: flex; flex-direction: column-reverse; }
+  .handbook-writing-page.is-embedded .handbook-writing-assistant { border-left: 0; border-bottom: 1px solid var(--color-border); padding: 20px; }
+  .handbook-writing-page.is-embedded .handbook-writing-document { padding: 24px 20px; }
+  .handbook-document-heading h1 { font-size: 26px; }
+}
+.handbook-document-heading { width: min(100%, 860px); text-align: left; }
+.handbook-production-directory-scroll svg { width: 16px; height: 16px; flex: none; }
+.handbook-writing-page.is-embedded [data-ai-requirements] { min-height: 132px; }
+.handbook-writing-page.is-embedded [data-ai-original] { min-height: 400px; }
+.handbook-writing-page.is-embedded .handbook-writing-document { display: block; }
+.handbook-writing-page.is-embedded .handbook-writing-document > * + * { margin-top: 16px; }
+.handbook-writing-page.is-embedded .handbook-writing-assistant { position: sticky; top: 64px; height: calc(100vh - 84px); min-height: 0; overflow-y: auto; box-sizing: border-box; }
+.handbook-production-toolbar .handbook-ai-primary:focus, .handbook-production-toolbar .handbook-ai-primary:hover { color: var(--color-text); background: var(--color-surface-subtle); }
+@media (max-width: 760px) {
+  .handbook-writing-page.is-embedded .handbook-writing-assistant { position: static; height: auto; min-height: calc(100vh - 64px); overflow: visible; }
+  .handbook-production-page .handbook-production-layout { min-height: calc(100vh - 64px); }
+}
+
+/* 参考图对齐：工作台是独立内容空间，退出入口保留在命令栏。 */
+.app-shell:has(.handbook-production-page) > .sidebar,
+.app-shell:has(.handbook-production-page) > .sidebar-restore,
+.app-shell:has(.handbook-production-page) > .mobile-menu { display: none; }
+.main-shell:has(.handbook-production-page) { width: 100%; scroll-padding-top: 80px; }
+#main:has(.handbook-production-page),
+#view-root:has(.handbook-production-page) { width: 100%; margin: 0; padding: 0; }
+.handbook-production-page { --workbench-ink: #24272e; --workbench-muted: #718096; --workbench-blue: #2b68b0; --workbench-line: #e5e8ed; color: var(--workbench-ink); }
+.handbook-production-page .handbook-production-layout { min-height: 100vh; align-items: start; }
+.handbook-production-editor > .handbook-production-toolbar { position: sticky; top: 0; z-index: 8; padding: 0 24px; border-color: var(--workbench-line); }
+.handbook-production-toolbar .button, .handbook-production-toolbar .icon-button { box-shadow: none; border-radius: 7px; font-weight: 400; }
+.handbook-production-toolbar .handbook-save-primary:not(.secondary),
+.handbook-production-toolbar [data-handbook-mode="edit"] { background: var(--workbench-ink); color: #fff; border-color: var(--workbench-ink); }
+.handbook-production-toolbar .handbook-ai-primary { color: var(--workbench-blue); border-color: transparent; background: #edf4ff; }
+.handbook-command-breadcrumb strong { font-weight: 400; }
+.handbook-production-toolbar .handbook-save-status { font-weight: 400; color: var(--workbench-muted); }
+.handbook-directory-entry { width: 36px; padding: 0; color: var(--workbench-ink); }
+.handbook-production-directory { color: #506176; background: #f7f8fa; }
+.handbook-production-directory > header { position: relative; border: 0; padding: 24px 20px 12px; background: transparent; gap: 12px; }
+.handbook-production-directory > header > div:first-child > span { display: none; }
+.handbook-production-directory .handbook-directory-collapse { position: absolute; grid-area: auto; right: 16px; top: 16px; color: #718096; border: 0; background: transparent; }
+.handbook-production-directory-mode { order: 3; padding: 0; background: transparent; gap: 10px; }
+.handbook-production-directory-mode button { min-height: 28px; padding: 0; font-size: 11px; font-weight: 400; }
+.handbook-production-directory-mode button[aria-pressed="true"] { background: transparent; box-shadow: none; }
+.handbook-directory-search input { width: 100%; min-height: 36px; padding: 0 12px; border: 1px solid var(--workbench-line); border-radius: 7px; background: #fff; font-size: 12px; }
+.handbook-production-directory-scroll { padding: 8px 14px; max-height: calc(100vh - 226px); }
+.handbook-production-directory-scroll .handbook-production-document button { min-height: 39px; padding: 8px 10px; border-radius: 8px; gap: 8px; }
+.handbook-production-directory-scroll .handbook-production-document.selected button { background: #e8eef7; box-shadow: none; color: var(--workbench-blue); }
+.handbook-production-directory-scroll .handbook-production-document small { color: var(--workbench-muted); font-size: 10px; }
+.handbook-production-group summary { font-weight: 400; padding: 8px 4px; }
+.handbook-production-group summary > svg { width: 12px; }
+.handbook-production-group ul { border: 0; margin-left: 10px; padding-left: 12px; }
+.handbook-production-writing { position: relative; padding: 64px clamp(24px, 5vw, 80px) 64px; min-height: calc(100vh - 64px); }
+.handbook-document-heading, .handbook-production-content.is-reading { width: min(100%, 784px); max-width: 784px; }
+.handbook-document-heading { margin-bottom: 38px; }
+.handbook-document-heading > p { margin-bottom: 22px; font-size: 13px; color: #64748b; }
+.handbook-document-heading h1 { font-size: 34px; font-weight: 650; letter-spacing: -.8px; color: var(--workbench-ink); }
+.handbook-production-content.is-reading { font-size: 16px; line-height: 1.95; color: #253e59; }
+.handbook-production-content.is-reading h2 { margin: 40px 0 20px; padding: 0; border: 0; font-size: 23px; font-weight: 500; color: #162e48; scroll-margin-top: 88px; }
+.handbook-production-content.is-reading h3 { scroll-margin-top: 88px; }
+.handbook-production-content.is-reading p { margin: 0 0 20px; }
+.handbook-production-content.is-reading li { margin: 10px 0; }
+.handbook-production-content.is-reading pre { padding: 24px; background: #f7f8fa; color: #27405c; border: 0; border-radius: 8px; line-height: 1.8; }
+.handbook-production-content.is-reading blockquote { margin: 26px 0; padding: 4px 16px; background: transparent; color: #64748b; border-left: 3px solid #d5e0f0; }
+.handbook-article-outline { position: absolute; top: 146px; right: 22px; width: 140px; border-left: 1px solid var(--workbench-line); padding-left: 14px; font-size: 12px; }
+.handbook-article-outline > span { display: block; margin-bottom: 10px; color: #64748b; }
+.handbook-article-outline button { display: block; width: 100%; padding: 7px 0; border: 0; text-align: left; background: transparent; color: #64748b; font: inherit; line-height: 1.6; cursor: pointer; overflow-wrap: anywhere; }
+.handbook-article-outline button:hover, .handbook-article-outline button[aria-current] { color: var(--workbench-blue); }
+.handbook-article-outline button[data-heading-level="H3"] { padding-left: 8px; }
+@media (min-width: 1450px) { .handbook-production-writing:not(.has-writing-assistant):has(.handbook-article-outline:not([hidden])) { padding-left: 120px; padding-right: 210px; } }
+@media (max-width: 1449px) { .handbook-article-outline { display: none; } }
+/* 格式切换与编辑器命令共享正文上方一行。 */
+/* 编辑态使用工作区宽度，正文随视口伸展。 */
+.handbook-production-editor.is-editing > .handbook-production-writing:not(.has-writing-assistant) {
+  --handbook-editor-min-height: max(240px, calc(100dvh - 336px));
+  display: flex; flex-direction: column; gap: 0; box-sizing: border-box;
+  min-height: calc(100dvh - 64px); padding: 64px 32px 12px;
+}
+.handbook-production-editor.is-editing .handbook-document-heading {
+  width: 100%; max-width: none; margin: 0 0 16px;
+}
+.handbook-production-editor.is-editing .handbook-document-heading > p { margin-bottom: 4px; }
+.handbook-production-editor.is-editing .handbook-document-heading h1 { font-size: 28px; line-height: 1.4; }
+.handbook-production-editor.is-editing .handbook-production-content.is-editing {
+  display: flex; flex-direction: column; flex: 1; width: 100%; max-width: none; min-height: 0; margin: 0;
+}
+.handbook-production-editor.is-editing .handbook-markdown-toolbar { padding: 6px 16px; }
+.handbook-production-editor.is-editing .handbook-markdown-workspace { flex: 1; min-height: var(--handbook-editor-min-height); }
+.handbook-production-editor.is-editing .handbook-markdown-editor,
+.handbook-production-editor.is-editing .handbook-markdown-preview {
+  min-height: var(--handbook-editor-min-height); padding: 16px; resize: vertical;
+}
+.handbook-production-editor.is-editing [data-handbook-vditor] :is(.vditor, .vditor-content, .vditor-wysiwyg) {
+  flex: 1; min-height: var(--handbook-editor-min-height);
+}
+@media (max-width: 767px) {
+  .handbook-production-editor.is-editing > .handbook-production-writing:not(.has-writing-assistant) { padding-inline: 16px; }
+  .handbook-production-editor.is-editing .handbook-markdown-workspace.is-previewing { grid-template-columns: minmax(0, 1fr); }
+}
+.handbook-production-writing > .handbook-editor-format { position: absolute; top: 0; right: 24px; z-index: 8; width: auto; margin: 0; min-height: 48px; padding: 0; border: 0; background: #fff; font-size: 12px; }
+.handbook-editor-format > summary { display: flex; align-items: center; gap: 8px; height: 48px; padding: 0 12px; cursor: pointer; list-style: none; }
+.handbook-editor-format > summary svg { width: 14px; }
+.handbook-editor-format > div { display: grid; position: absolute; right: 0; min-width: 140px; padding: 6px; border: 1px solid var(--workbench-line); border-radius: 8px; background: #fff; box-shadow: 0 6px 20px #24324714; }
+.handbook-editor-format > div button { min-height: 36px; border: 0; padding: 6px 10px; background: transparent; text-align: left; font-size: 12px; cursor: pointer; }
+.handbook-editor-format > div button:hover { background: #f3f6fa; }
+.handbook-production-content[data-handbook-vditor] .vditor-toolbar { position: absolute; top: 0; left: 0; right: 0; height: 48px; padding: 6px 170px 6px 24px; display: flex; align-items: center; justify-content: center; border-color: var(--workbench-line); border-radius: 0; }
+.handbook-production-content[data-handbook-vditor] .vditor { position: static; }
+.handbook-editing-note { position: static; margin: 12px 0 0; padding: 8px; background: #fff; border-top: 1px solid var(--workbench-line); color: var(--workbench-muted); text-align: center; font-size: 11px; }
+/* AI：上下文、操作、输入卡片和参考资料按阅读顺序组织。 */
+.handbook-writing-page.is-embedded .handbook-writing-document { position: relative; padding: 94px clamp(24px, 5vw, 140px) 48px; }
+.handbook-writing-page.is-embedded .handbook-writing-document > h3 { margin: 20px 0 36px; font-size: 34px; letter-spacing: -.8px; font-weight: 650; }
+.handbook-writing-page.is-embedded .handbook-writing-document > h3 + p { display: none; }
+.handbook-writing-page.is-embedded .handbook-writing-breadcrumb { color: #64748b; font-size: 13px; }
+.handbook-writing-page.is-embedded .vditor { position: static; border: 0; }
+.handbook-writing-page.is-embedded .vditor-toolbar { position: absolute; top: 0; left: 0; right: 0; height: 48px; padding: 6px 180px 6px 16px; display: flex; align-items: center; justify-content: center; border-bottom: 1px solid var(--workbench-line); border-radius: 0; background: #fff; }
+.handbook-writing-page.is-embedded .handbook-writing-assistant { position: sticky; top: 64px; height: calc(100vh - 64px); padding: 0 24px 32px; gap: 16px; background: #fafbfc; border-color: var(--workbench-line); }
+.handbook-writing-page.is-embedded .asset-dialog-heading { flex: none; margin: 0 -24px; padding: 12px 20px; min-height: 64px; align-items: center; border-bottom: 1px solid var(--workbench-line); }
+.handbook-writing-page.is-embedded .asset-dialog-heading h2 { margin: 0; font-size: 14px; font-weight: 500; color: #204771; }
+.handbook-writing-page.is-embedded .asset-dialog-heading p { display: none; }
+.handbook-writing-page.is-embedded [data-ai-close] { width: 28px; min-height: 28px; font-size: 20px; border: 0; background: transparent; box-shadow: none; color: #718096; }
+.handbook-writing-intro { padding: 2px 0 6px; }
+.handbook-writing-intro p { margin: 0; font-size: 13px; line-height: 1.9; color: #64748b; }
+.handbook-writing-intro h3 { margin: 24px 0 8px; font-size: 22px; font-weight: 500; color: #142e48; }
+.handbook-writing-operations { padding: 3px; gap: 2px; border-radius: 8px; background: #eceef2; }
+.handbook-writing-operations .button { min-height: 32px; font-weight: 400; color: #718096; }
+.handbook-writing-page.is-embedded .handbook-writing-composer { display: grid; gap: 0; }
+.handbook-writing-composer > label { display: grid; gap: 8px; font-size: 12px; font-weight: 400; }
+.handbook-writing-page.is-embedded .handbook-writing-composer [data-ai-requirements] { min-height: 146px; margin: 0; padding: 14px; border: 1px solid #dce1e9; border-bottom: 0; border-radius: 10px 10px 0 0; font-size: 13px; box-shadow: none; }
+.handbook-writing-composer-footer { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 10px 14px; border: 1px solid #dce1e9; border-top: 0; border-radius: 0 0 10px 10px; background: #fff; }
+.handbook-writing-page.is-embedded .handbook-writing-composer-footer [data-ai-range] { margin: 0; font-size: 11px; color: #718096; line-height: 1.6; }
+.handbook-writing-composer-footer [data-ai-settings-open] { min-height: 28px; flex: none; padding: 0; border: 0; background: transparent; box-shadow: none; font-size: 11px; font-weight: 400; color: #64748b; }
+.handbook-writing-page.is-embedded .handbook-writing-configuration { margin-top: 0; }
+.handbook-writing-page.is-embedded .handbook-writing-configuration-heading { display: flex; }
+.handbook-writing-page.is-embedded .handbook-writing-configuration [data-ai-settings-summary] { font-size: 11px; }
+.handbook-writing-page.is-embedded .handbook-writing-reference { gap: 16px; padding: 0; border: 0; }
+.handbook-writing-reference .button { justify-self: start; min-height: 28px; padding: 0; border: 0; background: transparent; box-shadow: none; font-size: 12px; font-weight: 400; color: #718096; }
+.handbook-writing-page.is-embedded .handbook-writing-submit { margin: 0; padding: 0; }
+.handbook-writing-page.is-embedded [data-ai-start] { min-height: 40px; border-radius: 8px; background: #2b68b0; border-color: #2b68b0; font-weight: 400; box-shadow: none; }
+.handbook-writing-adoption-note { margin: 10px 0 0; text-align: center; font-size: 11px; color: #718096; }
+@media (max-width: 1200px) { .handbook-writing-page.is-embedded .handbook-writing-document { padding-inline: 28px; } }
+@media (max-width: 760px) {
+  .handbook-production-editor > .handbook-production-toolbar { padding-inline: 8px; }
+  .handbook-production-writing { padding: 36px 20px 48px; }
+  .handbook-document-heading h1, .handbook-writing-page.is-embedded .handbook-writing-document > h3 { font-size: 28px; }
+  .handbook-writing-page.is-embedded .handbook-writing-assistant { position: static; height: auto; min-height: 0; padding-bottom: 24px; }
+  .handbook-writing-page.is-embedded .handbook-writing-document { padding: 94px 20px 32px; }
+  .handbook-writing-page.is-embedded .vditor-toolbar, .handbook-production-content[data-handbook-vditor] .vditor-toolbar { justify-content: start; overflow-x: auto; padding-right: 160px; }
+  .handbook-production-writing > .handbook-editor-format { right: 4px; }
+}
+
+/* 工作台内的收起是导航操作，不继承全局关闭按钮的危险色。 */
+.handbook-production-directory button.handbook-directory-collapse svg { color: var(--workbench-muted); }
+.handbook-production-toolbar .handbook-ai-primary:focus { color: var(--workbench-blue); background: #edf4ff; border-color: transparent; }
+.handbook-production-toolbar .handbook-ai-primary:focus-visible { outline: 2px solid var(--workbench-blue); outline-offset: 2px; }
+.handbook-writing-page.is-embedded .handbook-writing-composer:focus-within [data-ai-requirements],
+.handbook-writing-composer:focus-within .handbook-writing-composer-footer { border-color: var(--workbench-blue); }
+.handbook-writing-page.is-embedded .handbook-writing-composer [data-ai-requirements]:focus { outline: none; box-shadow: none; }
+.handbook-writing-page.is-embedded .handbook-writing-composer [data-ai-requirements]:focus { box-shadow: 0 -2px 0 0 #2b68b030; }
+
+.handbook-production-content[data-handbook-vditor] .vditor-content { padding: 0; background: #fff; }
+.handbook-production-content[data-handbook-vditor] .vditor-wysiwyg { width: 100%; max-width: none; flex-basis: 100%; margin: 0; padding: 0; box-shadow: none; }
+.handbook-production-content[data-handbook-vditor] .vditor-toolbar { box-shadow: none; border-width: 0 0 1px; }
+
+/* Vditor 写入内联内容留白；正文列已负责页面留白，避免重复缩进。 */
+.handbook-production-content[data-handbook-vditor] .vditor-reset { padding: 10px 0 !important; }
+@media (max-width: 760px) {
+  .handbook-production-editor > .handbook-production-toolbar { flex-wrap: nowrap; }
+  .handbook-production-toolbar .handbook-toolbar-actions { width: auto; flex: none; }
+  .handbook-production-toolbar .handbook-ai-primary { order: 0; flex: none; width: 40px; padding: 0; justify-content: center; }
+}
+
+/* 已确认提案：空正文与生成设置沿用文档工作台的视觉层级。 */
+.handbook-empty-intro { max-width: 580px; padding: 8px 0; color: var(--workbench-ink, var(--color-text)); }
+.handbook-empty-symbol { display: grid; place-items: center; width: 44px; height: 44px; margin-bottom: 22px; border-radius: 12px; background: var(--color-surface-subtle); color: var(--workbench-muted, var(--color-text-secondary)); }
+.handbook-empty-symbol svg { width: 22px; height: 22px; }
+.handbook-production-content .handbook-empty-intro h2 { margin: 0 0 8px; padding: 0; border: 0; font-size: 18px; font-weight: 500; line-height: 1.6; }
+.handbook-production-content .handbook-empty-intro p { max-width: 430px; margin: 0; color: var(--workbench-muted, var(--color-text-secondary)); font-size: 14px; line-height: 1.9; }
+.handbook-empty-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 26px; }
+.handbook-empty-actions .button { min-height: 40px; padding: 8px 16px; font-size: 13px; font-weight: 400; }
+.handbook-empty-actions svg { width: 16px; height: 16px; }
+.handbook-production-content .handbook-empty-intro .handbook-empty-hint { margin-top: 20px; font-size: 12px; }
+.handbook-production-writing:has(.handbook-empty-intro) .handbook-document-heading { margin-bottom: 40px; }
+.handbook-writing-page .handbook-ai-settings { --settings-accent: var(--workbench-blue, var(--color-brand)); --settings-soft: color-mix(in srgb, var(--settings-accent) 5%, var(--color-surface)); color: var(--color-text); }
+.handbook-writing-page .handbook-ai-settings-backdrop { background: rgb(34 46 65 / 26%); }
+.handbook-writing-page .handbook-ai-settings-dialog { width: min(600px, 100%); max-height: min(850px, calc(100dvh - 40px)); border-radius: 14px; box-shadow: 0 20px 80px rgb(21 42 71 / 14%); overflow: hidden; }
+.handbook-writing-page .handbook-ai-settings-dialog > header { padding: 23px 28px 20px; align-items: flex-start; }
+.handbook-writing-page .handbook-ai-settings-dialog > header h3 { font-size: 20px; font-weight: 550; line-height: 1.5; }
+.handbook-writing-page .handbook-ai-settings-dialog > header p { margin-top: 5px; }
+.handbook-writing-page .handbook-ai-settings-dialog > header .icon-button { display: grid; place-items: center; flex: none; width: 36px; min-height: 36px; height: 36px; padding: 0; margin-right: -8px; background: transparent; border-color: transparent; color: var(--color-text-secondary); }
+.handbook-writing-page .handbook-ai-settings-body { min-height: 0; gap: 24px; padding: 24px 28px; overscroll-behavior: contain; }
+.handbook-writing-page .handbook-ai-settings-body > section { gap: 10px; min-width: 0; }
+.handbook-writing-page .handbook-ai-settings-body label,
+.handbook-writing-page .handbook-settings-label { color: var(--color-text); font-size: 13px; font-weight: 500; }
+.handbook-writing-page .handbook-settings-operations { display: flex; gap: 3px; padding: 3px; border-radius: 8px; background: var(--color-surface-subtle); }
+.handbook-writing-page .handbook-settings-operations .button { flex: 1; min-width: 0; min-height: 34px; padding: 6px 4px; border: 0; border-radius: 6px; background: transparent; box-shadow: none; color: var(--color-text-secondary); font-size: 13px; font-weight: 400; white-space: nowrap; }
+.handbook-writing-page .handbook-settings-operations .button[aria-pressed="true"] { background: var(--color-surface); color: var(--workbench-blue, var(--color-brand)); box-shadow: 0 1px 3px rgb(15 23 42 / 6%); }
+.handbook-writing-page .handbook-ai-settings-body .searchable-combobox-input { min-height: 44px; border-radius: 8px; font-size: 13px; font-weight: 400; }
+.handbook-writing-page .handbook-ai-sources { padding-top: 24px !important; }
+.handbook-writing-page .handbook-ai-source-heading strong { font-size: 13px; font-weight: 500; }
+.handbook-writing-page [data-ai-source-count] { color: var(--color-text-secondary); font-size: 12px; }
+.handbook-writing-page .handbook-settings-knowledge { display: flex; align-items: center; gap: 12px; padding: 14px; border: 1px solid var(--color-border); border-radius: 9px; background: var(--settings-soft); }
+.handbook-settings-knowledge > div { flex: 1; min-width: 0; }
+.handbook-settings-knowledge strong { font-size: 13px; font-weight: 500; }
+.handbook-writing-page .handbook-settings-knowledge p { margin-top: 2px; color: var(--color-text-secondary); font-size: 12px; line-height: 1.7; }
+.handbook-settings-knowledge-icon { display: grid; place-items: center; flex: none; width: 34px; height: 34px; border-radius: 8px; color: var(--color-brand); background: var(--color-surface); }
+.handbook-settings-default { flex: none; font-size: 11px; color: var(--color-brand); white-space: nowrap; }
+.handbook-writing-page .handbook-ai-settings-dialog [data-ai-source-add] { justify-self: start; min-height: 30px; padding: 4px 0; background: transparent; border-color: transparent; color: var(--color-brand); font-size: 13px; font-weight: 400; }
+.handbook-writing-page .handbook-ai-settings-body .handbook-settings-source-note { color: var(--color-text-secondary); font-size: 12px; }
+.handbook-writing-page .handbook-ai-settings-body [data-ai-source-entry] { padding: 14px; border-radius: 8px; background: var(--color-surface-subtle); }
+.handbook-writing-page .handbook-ai-settings-body > details { padding-top: 16px; }
+.handbook-writing-page .handbook-ai-settings-body > details > summary { display: list-item; font-size: 13px; font-weight: 400; }
+.handbook-writing-page .handbook-ai-settings-body > details > summary span { float: right; }
+.handbook-writing-page .handbook-ai-settings-dialog > footer { gap: 10px; padding: 16px 28px; background: var(--color-surface-subtle); }
+.handbook-writing-page .handbook-ai-settings-dialog > footer small { margin-right: auto; color: var(--color-text-secondary); font-size: 11px; }
+.handbook-writing-page .handbook-ai-settings-dialog > footer .button { min-height: 36px; padding: 7px 16px; font-size: 13px; font-weight: 400; }
+.handbook-writing-page .handbook-ai-settings-dialog > footer [data-ai-settings-cancel] { border-color: transparent; background: transparent; color: var(--color-text-secondary); }
+.handbook-writing-page .handbook-ai-settings-dialog [data-ai-settings-apply],
+.handbook-empty-actions .button:not(.secondary) { background: var(--workbench-blue, var(--color-brand)); border-color: var(--workbench-blue, var(--color-brand)); color: var(--color-on-brand, #fff); }
+.handbook-writing-page .handbook-ai-settings-dialog button:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 2px; }
+@media (max-width: 600px) {
+  .handbook-writing-page .handbook-ai-settings-dialog { max-height: calc(100dvh - 20px); }
+  .handbook-writing-page .handbook-ai-settings-dialog > header,
+  .handbook-writing-page .handbook-ai-settings-dialog > footer { padding: 16px 20px; }
+  .handbook-writing-page .handbook-ai-settings-body { padding: 20px; gap: 20px; }
+  .handbook-writing-page .handbook-ai-settings-dialog > footer small { display: none; }
+  .handbook-writing-page .handbook-settings-knowledge { flex-wrap: wrap; gap: 8px; }
+  .handbook-settings-default { margin-left: 42px; }
+}
+
+/* 工作台更多操作：链接、按钮与附件入口共享排版。 */
+.handbook-production-toolbar .handbook-more-menu-panel .handbook-menu-item {
+  display: flex; align-items: center; justify-content: flex-start; gap: 10px;
+  box-sizing: border-box; width: 100%; min-height: 38px; margin: 0; padding: 8px 10px;
+  border: 0; border-radius: 6px; background: transparent; box-shadow: none;
+  color: var(--workbench-ink, #24272e); font: inherit; font-size: 13px;
+  line-height: 22px; text-align: left; text-decoration: none; cursor: pointer;
+}
+.handbook-more-menu-panel .handbook-menu-item :is(i, svg) { width: 16px; height: 16px; flex: 0 0 16px; color: var(--workbench-muted, #718096); }
+.handbook-production-toolbar .handbook-menu-item:hover { background: #f1f4f8; }
+.handbook-production-toolbar .handbook-menu-item:focus-visible,
+.handbook-production-toolbar .handbook-menu-item:focus-within { outline: 2px solid var(--workbench-blue, #2b68b0); outline-offset: -2px; }
+.handbook-production-toolbar .handbook-menu-item:disabled,
+.handbook-production-toolbar .handbook-menu-item[aria-disabled="true"] { opacity: .45; cursor: not-allowed; background: transparent; }
+[data-handbook-review-selection-dialog] .handbook-review-documents { display: grid; margin: 20px 0; max-height: 45vh; overflow: auto; }
+
+/* 正文直接在页面上编辑；边界仅用于工具和弹窗。 */
+.handbook-production-editor.is-editing .handbook-markdown-editor,
+.handbook-production-editor.is-editing .handbook-markdown-editor:is(:focus, :focus-visible) {
+  border: 0; border-radius: 0; outline: none; box-shadow: none; background: transparent;
+  padding: 0; resize: none; overflow: hidden; field-sizing: content;
+}
+.handbook-production-editor.is-editing .handbook-markdown-workspace { background: transparent; }
+.handbook-production-editor.is-editing .handbook-production-content:has(.handbook-markdown-editor) { background: transparent; }
+.handbook-production-editor.is-editing .handbook-markdown-preview { padding-top: 0; }
+.handbook-production-editor.is-editing .handbook-markdown-workspace.is-previewing .handbook-markdown-editor { padding-right: 20px; border: 0; }
+.handbook-markdown-preview-action {
+  position: absolute; top: 8px; right: 154px; min-height: 32px; padding: 0 10px;
+  border: 0; border-radius: 6px; background: transparent; color: var(--workbench-muted);
+  font: inherit; font-size: 12px; cursor: pointer;
+}
+.handbook-markdown-preview-action:hover { background: var(--color-surface-subtle); color: var(--workbench-ink); }
+.handbook-markdown-preview-action:focus-visible { outline: 2px solid var(--workbench-blue); outline-offset: 2px; }
+@media (max-width: 767px) { .handbook-markdown-preview-action { right: 134px; } }
+
+/* AI 与普通正文共用格式菜单、页面边距和无框编辑规范。 */
+.handbook-writing-page .handbook-writing-document { position: relative; }
+.handbook-writing-page .handbook-writing-document > .handbook-editor-format {
+  position: absolute; top: 0; right: 24px; z-index: 8; width: auto; margin: 0;
+  min-height: 48px; padding: 0; border: 0; background: var(--color-surface); font-size: 12px;
+}
+.handbook-writing-page .handbook-editor-format > summary { padding-block: 0; }
+.handbook-writing-page .handbook-editor-format > div { margin: 0; }
+.handbook-writing-page .handbook-editor-format > div button {
+  min-height: 36px; padding: 6px 10px; border: 0; border-radius: 0; background: transparent;
+  color: var(--color-text); box-shadow: none; text-align: left; font-size: 12px; font-weight: 400;
+}
+.handbook-writing-page .handbook-writing-document > .handbook-markdown-preview-action {
+  top: 0; min-height: 48px; margin: 0; border: 0; padding: 0 12px;
+  background: transparent; box-shadow: none; color: var(--workbench-muted); font-size: 12px; font-weight: 400;
+}
+.handbook-writing-page.is-embedded .handbook-writing-document {
+  --handbook-editor-min-height: max(240px, calc(100dvh - 336px));
+  padding: 64px 32px 12px; border-radius: 0;
+}
+.handbook-writing-page.is-embedded .handbook-writing-document > .handbook-writing-breadcrumb {
+  margin: 0 0 4px; line-height: 1.8;
+}
+.handbook-writing-page.is-embedded .handbook-writing-document > [data-ai-document-title] {
+  margin: 0 0 16px; color: var(--workbench-ink); font-size: 28px; line-height: 1.4;
+}
+.handbook-writing-page.is-embedded .handbook-writing-document > :is([data-ai-rich-editor], [data-ai-markdown]) { margin: 0; }
+.handbook-writing-page [data-ai-markdown] { background: transparent; }
+.handbook-writing-page textarea[data-ai-original],
+.handbook-writing-page textarea[data-ai-original]:is(:focus, :focus-visible) {
+  height: auto; min-height: var(--handbook-editor-min-height, 240px); margin: 0; padding: 0;
+  border: 0; border-radius: 0; outline: none; box-shadow: none; background: transparent;
+  resize: none; overflow: hidden; field-sizing: content;
+  font: 15px/1.8 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+.handbook-writing-page [data-ai-markdown].is-previewing [data-ai-original] { padding-right: 20px; }
+.handbook-writing-page [data-ai-markdown-preview] { padding-top: 0; min-width: 0; overflow-wrap: anywhere; }
+.handbook-writing-page.is-embedded [data-ai-rich-editor] :is(.vditor-content, .vditor-wysiwyg) {
+  width: 100%; max-width: none; flex-basis: 100%; margin: 0; padding: 0; box-shadow: none;
+  min-height: var(--handbook-editor-min-height); background: var(--color-surface);
+}
+.handbook-writing-page.is-embedded [data-ai-rich-editor] .vditor-reset { padding: 10px 0 !important; }
+@media (max-width: 767px) {
+  .handbook-writing-page.is-embedded .handbook-writing-document { padding-inline: 16px; }
+  .handbook-writing-page .handbook-writing-document > .handbook-editor-format { right: 4px; }
+  .handbook-writing-page [data-ai-markdown].is-previewing { grid-template-columns: minmax(0, 1fr); }
+  .handbook-writing-page [data-ai-markdown].is-previewing [data-ai-original] { padding-right: 0; }
+}
+
+/* Writing references share the editor's quiet surfaces; configuration has its own dialog. */
+.handbook-writing-page .handbook-writing-reference { min-width: 0; padding-top: 18px !important; }
+.handbook-writing-reference .handbook-ai-source-heading { flex-wrap: wrap; gap: 6px 10px; }
+.handbook-writing-reference .handbook-ai-source-heading > button { margin-left: auto; }
+.handbook-writing-reference .handbook-settings-source-note { margin: 4px 0 10px; font-size: 12px; line-height: 1.7; color: var(--color-text-secondary); }
+.handbook-writing-page .handbook-writing-reference [data-ai-source-list] { gap: 0; margin: 0; }
+.handbook-writing-page .handbook-writing-reference [data-ai-source-list].is-expanded { max-height: 330px; overflow-y: auto; overscroll-behavior: contain; }
+.handbook-writing-page .handbook-writing-reference [data-ai-source-list] section { grid-template-columns: minmax(0, 1fr) auto; gap: 3px 8px; padding: 10px 0; border: 0; border-bottom: 1px solid var(--color-border); border-radius: 0; background: transparent; }
+.handbook-writing-page .handbook-writing-reference [data-ai-source-list] section[hidden],
+.handbook-writing-page [data-ai-source-entry] [hidden],
+.handbook-writing-page .handbook-source-actions [hidden] { display: none !important; }
+.handbook-writing-page .handbook-writing-reference [data-ai-source-list] label { display: flex; flex-direction: row; align-items: center; gap: 8px; margin: 0; font-size: 13px; font-weight: 500; }
+.handbook-source-drag-handle { flex: none; cursor: grab; color: var(--color-text-secondary); padding: 4px; letter-spacing: -2px; user-select: none; }
+.handbook-source-drag-handle:active { cursor: grabbing; }
+.handbook-writing-page .handbook-writing-reference .handbook-source-state { grid-column: 1; white-space: normal; padding-left: 25px; }
+.handbook-writing-page .handbook-writing-reference .handbook-source-actions { grid-column: 1 / -1; justify-content: flex-end; gap: 4px; }
+.handbook-writing-page .handbook-writing-reference .handbook-source-actions .button,
+.handbook-writing-page .handbook-reference-toggle { min-height: 32px; padding: 4px 7px; border-color: transparent; background: transparent; color: var(--color-text-secondary); font-size: 12px; }
+.handbook-writing-page .handbook-writing-reference .handbook-source-actions .button:hover:not(:disabled),
+.handbook-writing-page .handbook-reference-toggle:hover { color: var(--color-brand); background: var(--color-surface-subtle); }
+.handbook-writing-page .handbook-writing-reference [data-ai-source-list] section.is-dragging { opacity: .45; }
+.handbook-writing-page .handbook-writing-reference [data-ai-source-list] section.is-drag-target { box-shadow: inset 0 2px var(--color-brand); background: var(--color-surface-subtle); }
+.handbook-writing-page .handbook-reference-modal .handbook-ai-settings-dialog { width: min(800px, 100%); }
+.handbook-reference-layout { display: grid; grid-template-columns: 190px minmax(0, 1fr); min-height: 320px; overflow-y: auto; }
+.handbook-reference-nav { display: flex; flex-direction: column; gap: 5px; padding: 20px 12px; border-right: 1px solid var(--color-border); background: var(--color-surface-subtle); }
+.handbook-writing-page .handbook-reference-nav .button { justify-content: flex-start; text-align: left; font-size: 13px; font-weight: 400; padding: 10px 12px; border: 0; background: transparent; color: var(--color-text-secondary); }
+.handbook-writing-page .handbook-reference-nav .button[aria-pressed=true] { background: var(--color-surface); color: var(--color-brand); }
+.handbook-reference-detail { min-width: 0; padding: 24px; }
+.handbook-reference-detail h4 { font-size: 15px; font-weight: 550; margin: 0 0 20px; }
+.handbook-reference-detail [data-ai-source-entry] { display: grid; gap: 14px; }
+.handbook-reference-detail label { display: grid; gap: 8px; font-size: 13px; }
+.handbook-reference-detail input { width: 100%; min-width: 0; min-height: 42px; }
+.handbook-reference-detail p { font-size: 12px; line-height: 1.8; color: var(--color-text-secondary); overflow-wrap: anywhere; }
+.handbook-reference-detail [data-ai-source-preview] { justify-self: start; border-radius: 7px; padding: 8px 18px; background: var(--color-brand); color: var(--color-on-brand, #fff); border: 0; cursor: pointer; }
+.handbook-source-upload { display: flex; min-height: 180px; flex-direction: column; justify-content: center; align-items: center; gap: 12px; padding: 24px; border: 1px dashed var(--color-border); border-radius: 10px; background: var(--color-surface-subtle); text-align: center; cursor: pointer; }
+.handbook-source-upload span { font-size: 12px; line-height: 1.7; color: var(--color-text-secondary); }
+.handbook-source-upload.is-dragover { border-color: var(--color-brand); background: var(--color-brand-subtle); }
+.handbook-source-upload[aria-disabled=true] { opacity: .55; cursor: progress; }
+.handbook-source-upload:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 3px; }
+@media (max-width: 600px) {
+  .handbook-reference-layout { grid-template-columns: minmax(0, 1fr); min-height: 0; }
+  .handbook-reference-nav { flex-direction: row; flex-wrap: wrap; gap: 3px; padding: 12px; border-right: 0; border-bottom: 1px solid var(--color-border); }
+  .handbook-writing-page .handbook-reference-nav .button { min-height: 44px; padding: 8px; }
+  .handbook-reference-detail { padding: 20px; }
+  .handbook-writing-page .handbook-writing-reference .handbook-source-actions .button { min-height: 44px; }
+}
+
+/* 顶栏浮层始终高于正文格式工具；编辑正文由页面承载纵向滚动。 */
+.handbook-production-editor > .handbook-production-toolbar { z-index: 20; }
+.handbook-production-content[data-handbook-vditor] .vditor-wysiwyg > .vditor-reset,
+.handbook-writing-page [data-ai-rich-editor] .vditor-wysiwyg > .vditor-reset {
+  overflow: visible; height: auto; max-height: none;
+}
+/* 收起段落上下移动与删除浮钮，保留语言、链接、表格等上下文编辑。 */
+:is([data-handbook-vditor], [data-ai-rich-editor]) .vditor-panel--none > :is([data-type="up"], [data-type="down"], [data-type="remove"]) { display: none; }
+:is([data-handbook-vditor], [data-ai-rich-editor]) .vditor-panel--none:not(:has(> :not([data-type="up"], [data-type="down"], [data-type="remove"]))) { display: none !important; }
+@media (min-width: 1450px) {
+  .handbook-article-outline {
+    position: fixed; top: 210px; right: 22px; box-sizing: border-box;
+    max-height: calc(100dvh - 234px); overflow-y: auto; overscroll-behavior: contain;
+  }
+}

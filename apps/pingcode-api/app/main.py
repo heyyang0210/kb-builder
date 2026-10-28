@@ -678,9 +678,9 @@ def get_space_tree(space_key: str, refresh: bool = False):
 
 
 @app.get("/api/pingcode/spaces/{space_key}/pages/{page_id}/reference")
-def get_page_reference(space_key: str, page_id: str):
+def get_page_reference(space_key: str, page_id: str, include_images: bool = False):
     try:
-        return pingcode.read_reference(space_key, page_id)
+        return pingcode.read_reference(space_key, page_id, True) if include_images else pingcode.read_reference(space_key, page_id)
     except KeyError:
         error("PINGCODE_REFERENCE_NOT_FOUND", "该空间中没有可引用的页面", 404)
     except ValueError:

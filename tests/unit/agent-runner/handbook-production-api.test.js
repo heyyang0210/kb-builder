@@ -41,7 +41,7 @@ async function setup(t, options = {}) {
   const store = memoryStore();
   const service = createHandbookProductionService({ store, attachmentRoot, yashanDB: options.yashanDB, contentQuality: options.contentQuality, recoveryIntervalMs: options.recoveryIntervalMs, aiStageAdapterEnv: options.aiStageAdapterEnv, ai: { loadMCPConfig: async () => ({}), ...options.ai } });
   const authModule = {
-    authorize: async () => options.session === undefined ? editor : options.session,
+    authorize: options.authorize || (async () => options.session === undefined ? editor : options.session),
     repository: {
       listUsers: () => [
         { id: 'author-1', displayName: '文档作者', roles: ['KNOWLEDGE_EDITOR'] },
@@ -129,6 +129,106 @@ async function setup(t, options = {}) {
 function draftPath(suffix = '') {
   return `/handbooks/HB-1/documents/doc-1/draft${suffix}`;
 }
+
+test('认证后端短暂失败返回503且后续真实HTTP请求仍可恢复', async t => {
+  let unavailable = true;
+  const api = await setup(t, { authorize: async () => {
+    if (unavailable) throw Object.assign(new Error('认证服务暂时不可用'), { code: 'AUTH_SERVICE_UNAVAILABLE', status: 503 });
+    return editor;
+  } });
+  const failed = await api.request('GET', `${draftPath()}?outlineVersionId=v1&branch=main`);
+  assert.equal(failed.status, 503);
+  assert.equal(failed.body.error.code, 'AUTH_SERVICE_UNAVAILABLE');
+  unavailable = false;
+  const recovered = await api.request('GET', `${draftPath()}?outlineVersionId=v1&branch=main`);
+  assert.equal(recovered.status, 200);
+});
+
+test('来源图片经真实 HTTP 托管，失效图片降级，跨文档访问受限', async t => {
+  const { imageReferences } = require('../../../packages/agent-runner-core/lib/source-image-resources');
+  assert.deepEqual(imageReferences('`![代码](https://example.com/no.png)` ![真实][ref]\n\n[ref]: https://example.com/yes.png')
+    .map(image => image.href), ['https://example.com/yes.png']);
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZ0AAAAASUVORK5CYII=', 'base64');
+  let imageRequests = 0;
+  const upstream = http.createServer((req, res) => {
+    if (req.url === '/page') {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end('<main><h1>资料</h1><p>正文</p><img data-src="/image" alt="架构图"><img src="/missing" alt="缺失图"><img src="/fake" alt="伪造图"></main>');
+    } else if (req.url === '/image') {
+      imageRequests++;
+      res.writeHead(200, { 'Content-Type': 'image/png' }); res.end(png);
+    } else if (req.url === '/fake') {
+      res.writeHead(200, { 'Content-Type': 'image/png' }); res.end('<html>not an image</html>');
+    } else if (req.url === '/api/pingcode/spaces/YASDOC/pages/page1/reference?include_images=true') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ spaceKey: 'YASDOC', pageId: 'page1', title: '设计文档', content: '正文 ![设计图](source-image:internal)',
+        imageResources: [{ reference: 'source-image:internal', status: 'ready', dataBase64: png.toString('base64') }] }));
+    } else { res.writeHead(404); res.end(); }
+  });
+  await new Promise(resolve => upstream.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => { upstream.close(resolve); upstream.closeAllConnections(); }));
+  const origin = `http://127.0.0.1:${upstream.address().port}`;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'source-image-test-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const rules = structuredClone(require('../../../config/knowledge-center/content-rules.json').productionAI);
+  rules.sources.urlOrigins = [origin];
+  rules.sources.allowPublicWeb = false;
+  rules.sources.pingcodeSpaces = ['YASDOC'];
+  const api = await setup(t, { browser: true, ai: { rules, sourceImageRoot: root, pingcodeBaseURL: origin } });
+  const endpoint = '/handbooks/HB-1/documents/doc-1/ai-sources';
+  const preview = await api.request('POST', endpoint, JSON.stringify({ outlineVersionId: 'outline-v1', branch: 'main', sourceType: 'url', locator: `${origin}/page` }), { 'content-type': 'application/json' });
+  assert.equal(preview.status, 201, JSON.stringify(preview.body));
+  const source = preview.body.data;
+  assert.match(source.content, /正文/);
+  assert.match(source.content, /图片未能读取：缺失图/);
+  assert.match(source.content, /图片未能读取：伪造图/);
+  const ready = source.imageResources.find(image => image.status === 'ready');
+  assert.ok(ready, JSON.stringify(source.imageResources));
+  assert.ok(!JSON.stringify(source).includes(`${origin}/image`));
+  assert.equal(imageRequests, 1);
+  const pingcode = await api.request('POST', endpoint, JSON.stringify({ outlineVersionId: 'outline-v1', branch: 'main', sourceType: 'pingcode-design', locator: 'YASDOC/page1' }), { 'content-type': 'application/json' });
+  assert.equal(pingcode.status, 201, JSON.stringify(pingcode.body));
+  assert.match(pingcode.body.data.content, /ai-sources\/images\/[a-f0-9]{64}/);
+  assert.equal(pingcode.body.data.imageResources[0].status, 'ready');
+  assert.ok(!JSON.stringify(pingcode.body).includes('dataBase64'));
+  const imageURL = new URL(ready.url, api.origin);
+  const image = await fetch(imageURL, { headers: { accept: 'image/png' } });
+  assert.equal(image.status, 200);
+  assert.equal(image.headers.get('content-type'), 'image/png');
+  assert.deepEqual(Buffer.from(await image.arrayBuffer()), png);
+  assert.equal((await fetch(new URL(ready.url.replace('/doc-1/', '/other/'), api.origin))).status, 404);
+  assert.equal((await fetch(new URL(ready.url.replace('branch=main', 'branch=other'), api.origin))).status, 404);
+  api.setSession(null);
+  assert.equal((await fetch(imageURL)).status, 401);
+  api.setSession(editor);
+  api.setSession({ ...editor, user: { ...editor.user, id: 'another-author' } });
+  assert.equal((await fetch(imageURL)).status, 404);
+  api.setSession(editor);
+  assert.equal(imageRequests, 1);
+  const browser = await require('playwright').chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await page.goto(`${api.origin}/browser-fixture`);
+  await page.evaluate(async () => {
+    const { openProductionAIDialog } = await import('/knowledge-center/modules/production/production-ai-dialog.js');
+    openProductionAIDialog({ context: { handbookId: 'HB-1', documentId: 'doc-1', outlineVersionId: 'outline-v1', branch: 'main' },
+      operation: 'update', editVersion: 0, getMarkdown: () => '旧说明', baselineDigest: async () => '', onAdopt() {} });
+  });
+  await page.locator('[data-ai-source-add]').click();
+  await page.locator('[data-ai-source-locator]').fill(`${origin}/page`);
+  await page.locator('[data-ai-source-preview]').click();
+  await page.locator('[data-ai-source-list] [data-source-id]:not([data-source-id="knowledge-mcp"]) input[type="checkbox"]').waitFor({ state: 'attached' });
+  const popupPromise = page.waitForEvent('popup');
+  await page.getByRole('button', { name: '预览资料：资料' }).click();
+  const popup = await popupPromise;
+  await popup.locator('#reading img').waitFor();
+  assert.equal(await popup.locator('#reading img').evaluate(image => image.complete && image.naturalWidth > 0), true);
+  assert.match(await popup.locator('#reading').innerText(), /图片未能读取：缺失图/);
+  assert.equal(await popup.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  const reportRoot = path.join(repositoryRoot, 'runtime/test-results/source-images');
+  fs.mkdirSync(reportRoot, { recursive: true });
+  await popup.screenshot({ path: path.join(reportRoot, 'source-preview-mobile.png'), fullPage: true });
+});
 
 function contentReviewResponse() {
   return { parsed: {
@@ -889,7 +989,7 @@ test('AI source HTTP freezes confirmed URL and MCP snapshots and rejects cross-d
       let result = { serverInfo: { name: 'isolated-mcp', version: '1' }, capabilities: {} };
       if (message.method === 'tools/call') {
         receivedTools.push(message.params);
-        result = message.params.arguments.ku_name === 'unavailable'
+        result = message.params.name === 'search_ku' ? { structuredContent: { results: [] } } : message.params.arguments.ku_name === 'unavailable'
           ? { isError: true, content: [{ type: 'text', text: 'secret-provider-detail' }] }
           : { content: [{ type: 'text', text: '知识库原文，参数值 42。' }] };
       }
@@ -917,7 +1017,7 @@ test('AI source HTTP freezes confirmed URL and MCP snapshots and rejects cross-d
   async function post(suffix, value, key) { const input = json({ ...ctx, ...value }, key); return api.request('POST', suffix, input.body, input.headers); }
   const available = await api.request('GET', `${sourcesPath}${query}`);
   assert.equal(available.status, 200, JSON.stringify(available.body));
-  assert.deepEqual(available.body.data.items.map(item => item.available), [true, true, false, false, true]);
+  assert.deepEqual(available.body.data.items.map(item => item.available), [true, false, false, true, true, true]);
   assert.equal(available.body.data.items.find(item => item.sourceType === 'test-case-library').available, true);
   const preview = await post(sourcesPath, { sourceType: 'url', locator: `${sourceOrigin}/document` });
   assert.equal(preview.status, 201, JSON.stringify(preview.body));
@@ -933,7 +1033,15 @@ test('AI source HTTP freezes confirmed URL and MCP snapshots and rejects cross-d
   const generation = { operation: 'update', markdown: '旧说明', editVersion: 0, range: { start: 0, end: 3 }, confirmedSourceIds };
   const created = await post(aiPath, generation, 'confirmed');
   assert.equal(created.status, 202, JSON.stringify(created.body));
-  const candidate = await api.request('GET', `${aiPath}/${created.body.data.jobId}${query}`);
+  const waitForJob = async id => {
+    for (let i = 0; i < 100; i++) {
+      const result = await api.request('GET', `${aiPath}/${id}${query}`);
+      if (!['queued', 'running'].includes(result.body.data.status)) return result;
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    assert.fail('AI job did not finish');
+  };
+  const candidate = await waitForJob(created.body.data.jobId);
   assert.equal(candidate.body.data.status, 'completed');
   assert.equal(modelPayload.sources.length, 3);
   assert.equal(modelPayload.sources[0].contentDigest, preview.body.data.contentDigest);
@@ -949,6 +1057,7 @@ test('AI source HTTP freezes confirmed URL and MCP snapshots and rejects cross-d
   assert.equal(modelCalls, callsBeforeConflict);
   const newest = await post(aiPath, { ...generation, confirmedSourceIds: [refreshed.body.data.sourceId] }, 'source-version-selected');
   assert.equal(newest.status, 202, JSON.stringify(newest.body));
+  assert.equal((await waitForJob(newest.body.data.jobId)).body.data.status, 'completed');
   assert.equal(modelPayload.sources[0].content, sourceText);
   const originalJob = await api.request('GET', `${aiPath}/${created.body.data.jobId}${query}`);
   assert.equal(originalJob.body.data.sourceSnapshots[0].content, '# 引用资料\n参数值为 42。');
@@ -984,15 +1093,13 @@ test('AI source HTTP freezes confirmed URL and MCP snapshots and rejects cross-d
     openProductionAIDialog({ context: { handbookId: 'HB-1', documentId: 'doc-1', outlineVersionId: 'outline-v1', branch: 'main' },
       operation: 'update', editVersion: 0, getMarkdown: () => '旧说明', baselineDigest: async () => '', onAdopt() {} });
   });
-  await page.locator('[data-ai-settings-open]').click();
-  await page.locator('[data-ai-sources] > summary').click();
+  await page.locator('[data-ai-source-add]').click();
   await page.locator('[data-ai-source-locator]').fill(`${sourceOrigin}/document`);
   await page.locator('[data-ai-source-preview]').click();
-  await page.locator('[data-ai-source-list] details > summary').first().click();
-  await page.locator('[data-ai-source-list] textarea').waitFor();
-  assert.equal(await page.locator('[data-ai-source-list] input').isChecked(), false);
-  await page.locator('[data-ai-source-list] input').check();
-  await page.getByRole('button', { name: '完成设置' }).click();
+  await page.locator('[data-ai-source-list] [data-source-id]:not([data-source-id="knowledge-mcp"]) input[type="checkbox"]').waitFor({ state: 'attached' });
+  assert.equal(await page.locator('[data-ai-source-list] [data-source-id]:not([data-source-id="knowledge-mcp"]) input[type="checkbox"]').isChecked(), true);
+  assert.equal(await page.locator('[data-ai-source-list] [data-source-id]:not([data-source-id="knowledge-mcp"]) input[type="checkbox"]').isChecked(), true);
+  await page.getByRole('button', { name: '关闭添加参考文档' }).click();
   await page.locator('[data-ai-full]').click();
   await page.locator('[data-ai-start]').click();
   await page.locator('[data-ai-candidate]').waitFor({ state: 'visible' });
@@ -1039,13 +1146,13 @@ test('AI Skill browser selection reaches backend execution and persists frozen c
       onAdopt: result => { window.adoptedResult = result; window.editorMarkdown = result.draft.revision.markdown; } });
   });
   await page.locator('[data-ai-settings-open]').click();
-  await page.locator('[data-ai-skills] > summary').click();
   const checkbox = page.locator('[data-ai-skill-list] input');
-  await checkbox.waitFor(); assert.equal(await checkbox.isChecked(), false);
+  await checkbox.waitFor({ state: 'attached' });
+  if (!await page.locator('[data-ai-skills]').evaluate(node => node.open)) await page.locator('[data-ai-skills] > summary').click(); assert.equal(await checkbox.isChecked(), false);
   await page.locator('[data-ai-skill-list] summary').click();
   assert.match(await page.locator('[aria-label="续写能力指令预览"]').inputValue(), /技术文档续写/);
   await checkbox.check();
-  await page.getByRole('button', { name: '完成设置' }).click();
+  await page.locator('[data-ai-settings-apply]').click();
   await page.locator('[data-ai-original]').evaluate(field => { field.focus(); field.setSelectionRange(2, 2); });
   await page.locator('[data-ai-selection]').click();
   await page.locator('[data-ai-start]').click();
@@ -1056,7 +1163,7 @@ test('AI Skill browser selection reaches backend execution and persists frozen c
   const evidenceDir = path.join(repositoryRoot, 'runtime/test-results/production-ai-skills'); fs.mkdirSync(evidenceDir, { recursive: true });
   await page.locator('[data-ai-settings-open]').click();
   await page.screenshot({ path: path.join(evidenceDir, 'skill-selection.png'), fullPage: true });
-  await page.getByRole('button', { name: '完成设置' }).click();
+  await page.locator('[data-ai-settings-apply]').click();
   await page.locator('[data-ai-candidate]').scrollIntoViewIfNeeded();
   await page.screenshot({ path: path.join(evidenceDir, 'skill-continuation.png'), fullPage: true });
   await page.locator('[data-ai-adopt]').click(); await page.waitForFunction(() => !!window.adoptedResult);
@@ -1123,7 +1230,7 @@ test('PingCode design and test sources use fixed service, allowed spaces and con
   assert.equal(created.status, 202, JSON.stringify(created.body));
   assert.deepEqual(modelPayload.sources.map(item => item.sourceType), ['pingcode-design', 'pingcode-test']);
   assert.equal(modelPayload.sources[0].content, design.body.data.content);
-  assert.ok(paths.every(value => /^\/api\/pingcode\/spaces\/space1\/pages\/[A-Za-z0-9_-]+\/reference$/.test(value)));
+  assert.ok(paths.every(value => /^\/api\/pingcode\/spaces\/space1\/pages\/[A-Za-z0-9_-]+\/reference\?include_images=true$/.test(value)));
   const browser = await require('playwright').chromium.launch({ headless: true });
   t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
@@ -1134,14 +1241,13 @@ test('PingCode design and test sources use fixed service, allowed spaces and con
     openProductionAIDialog({ context: { handbookId: 'HB-1', documentId: 'doc-1', outlineVersionId: 'outline-v1', branch: 'main' }, operation: 'update', editVersion: 0, getMarkdown: () => '旧说明', baselineDigest: async () => '', onAdopt() {} });
   });
   await page.locator('[data-ai-source-type] option[value="pingcode-design"]').waitFor({ state: 'attached' });
-  await page.locator('[data-ai-settings-open]').click();
-  await page.locator('[data-ai-sources] > summary').click();
-  await page.locator('[data-ai-source-type]').selectOption('pingcode-design');
+  await page.locator('[data-ai-source-add]').click();
+  await page.locator('[data-reference-type="pingcode-design"]').click();
   await page.evaluate(() => {
     window.permissionDeniedCount = 0;
     window.addEventListener('knowledge-center:permission-denied', () => window.permissionDeniedCount++);
   });
-  assert.equal(await page.locator('[data-ai-source-locator]').getAttribute('placeholder'), '空间标识/页面ID');
+  assert.equal(await page.locator('[data-ai-source-locator]').getAttribute('placeholder'), 'PingCode 页面网址或空间标识/页面ID');
   assert.match(await page.locator('[data-ai-source-info]').textContent(), /space1/);
   await page.locator('[data-ai-source-locator]').fill('design1');
   await page.locator('[data-ai-source-preview]').click();
@@ -1155,20 +1261,23 @@ test('PingCode design and test sources use fixed service, allowed spaces and con
   assert.equal(await page.locator('[data-ai-execution]').isVisible(), false);
   await page.locator('[data-ai-source-locator]').fill('space1/design1');
   await page.locator('[data-ai-source-preview]').click();
-  await page.locator('[data-ai-source-list] details > summary').first().click();
-  await page.locator('[data-ai-source-list] textarea').waitFor();
-  assert.match(await page.locator('[data-ai-source-list] textarea').inputValue(), /已授权的文档正文/);
-  assert.match(await page.locator('[data-ai-source-info]').textContent(), /资料已拉取/);
-  assert.equal(await page.locator('[data-ai-source-list] input').isChecked(), false);
-  await page.locator('[data-ai-source-list] input').check();
-  await page.getByRole('button', { name: '完成设置' }).click();
+  await page.locator('[data-ai-source-list] [data-source-id]:not([data-source-id="knowledge-mcp"]) input[type="checkbox"]').waitFor({ state: 'attached' });
+  const popupPromise = page.waitForEvent('popup');
+  await page.getByRole('button', { name: /预览资料：/ }).click();
+  const previewPage = await popupPromise;
+  await previewPage.waitForLoadState();
+  assert.match(await previewPage.locator('body').textContent(), /已授权的文档正文/);
+  await previewPage.close();
+  assert.match(await page.locator('[data-ai-source-info]').textContent(), /资料已添加/);
+  assert.equal(await page.locator('[data-ai-source-list] [data-source-id]:not([data-source-id="knowledge-mcp"]) input[type="checkbox"]').isChecked(), true);
+  assert.equal(await page.locator('[data-ai-source-list] [data-source-id]:not([data-source-id="knowledge-mcp"]) input[type="checkbox"]').isChecked(), true);
+  await page.getByRole('button', { name: '关闭添加参考文档' }).click();
   await page.locator('[data-ai-full]').click();
   await page.locator('[data-ai-start]').click();
   await page.locator('[data-ai-candidate]').waitFor({ state: 'visible' });
   assert.equal(modelPayload.sources[0].sourceType, 'pingcode-design');
   const reportRoot = path.join(repositoryRoot, 'runtime/test-results/production-ai-pingcode');
   fs.mkdirSync(reportRoot, { recursive: true });
-  await page.locator('[data-ai-settings-open]').click();
   await page.locator('[data-ai-source-list]').scrollIntoViewIfNeeded();
   await page.screenshot({ path: path.join(reportRoot, 'source-preview.png'), fullPage: true });
   fs.writeFileSync(path.join(reportRoot, 'result.json'), JSON.stringify({ realHTTP: true, realBrowser: true, realExternalPingCode: false,
@@ -1207,12 +1316,11 @@ test('混合元信息经真实 HTTP 与浏览器预览、人工采用、再次�
     openProductionAIDialog({ context: { handbookId: 'HB-1', documentId: 'doc-1', outlineVersionId: 'outline-v1', branch: 'main' }, operation: 'update', editVersion: 0,
       getMarkdown: () => '旧说明', baselineDigest: async () => '', onAdopt: result => { window.adoptedResult = result; } });
   });
-  await page.locator('[data-ai-settings-open]').click();
-  await page.locator('[data-ai-sources] > summary').click();
+  await page.locator('[data-ai-source-add]').click();
   await page.locator('[data-ai-source-locator]').fill(`${sourceOrigin}/reference.md`);
   await page.locator('[data-ai-source-preview]').click();
-  await page.locator('[data-ai-source-list] input').check();
-  await page.getByRole('button', { name: '完成设置' }).click();
+  assert.equal(await page.locator('[data-ai-source-list] [data-source-id]:not([data-source-id="knowledge-mcp"]) input[type="checkbox"]').isChecked(), true);
+  await page.getByRole('button', { name: '关闭添加参考文档' }).click();
   await page.locator('[data-ai-full]').click();
   await page.locator('[data-ai-start]').click();
   await page.locator('[data-ai-provenance]').waitFor();
@@ -1272,4 +1380,155 @@ test('质量检查 HTTP 通过独立 Agent 生成绑定文档版本的报告', a
   assert.equal(report.status, 200); assert.equal(report.body.data.document.revisionId, 'r1');
   const unavailable = await (await setup(t)).request('POST', '/handbooks/HB-1/documents/doc-1/quality', json({ outlineVersionId: 'outline-v1', branch: 'main', markdown: '```sql\nselect 1;\n```' }).body, { 'Idempotency-Key': 'quality-http-2' });
   assert.equal(unavailable.body.data.gate, 'not_passed'); assert.equal(unavailable.body.data.coverage.notExecuted, 1);
+});
+
+test('默认 MCP 真实 HTTP 与浏览器：五类来源、免填地址、自动引用、失败重试和证据复用', async t => {
+  let mode = 'success'; let searches = 0; let writerFails = false; let payload;
+  let detailStarted; let releaseDetail;
+  const mcp = http.createServer(async (req, res) => {
+    let raw = ''; for await (const chunk of req) raw += chunk;
+    const message = JSON.parse(raw);
+    if (message.method === 'notifications/initialized') { res.writeHead(202); res.end(); return; }
+    let result = { serverInfo: { name: 'isolated-auto-mcp', version: '1' }, capabilities: {} };
+    if (message.method === 'tools/call') {
+      if (message.params.name === 'search_ku') {
+        searches++;
+        assert.equal(req.headers['x-kb'], '1');
+        result = mode === 'failure' ? { isError: true } : { structuredContent: { results: [{ ku_name: 'sql-select', score: .95 }] } };
+      } else {
+        if (mode === 'delay') { detailStarted(); await new Promise(resolve => { releaseDetail = resolve; }); }
+        result = { content: [{ type: 'text', text: JSON.stringify({ title: 'SQL SELECT', content: 'SELECT用于查询。', version: '1' }) }] };
+      }
+    }
+    res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ jsonrpc: '2.0', id: message.id, result }));
+  });
+  await new Promise(resolve => mcp.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => { mcp.close(resolve); mcp.closeAllConnections(); }));
+  const rules = structuredClone(require('../../../config/knowledge-center/content-rules.json').productionAI);
+  const api = await setup(t, { browser: true, ai: { rules,
+    loadMCPConfig: async () => ({ services: [{ id: 'official', name: '隔离知识库', server_url: `http://127.0.0.1:${mcp.address().port}`, search_knowledge_base_header: 'X-Kb', knowledgeBases: [{ id: 'docs', name: '官方文档', locator: '1' }] }] }),
+    generate: async messages => {
+      if (writerFails) throw new Error('isolated writer failure');
+      payload = JSON.parse(messages.at(-1).content);
+      const source = payload.sources[0];
+      return { content: JSON.stringify({ markdown: source.content, provenance: [{ start: 0, end: source.content.length, kind: 'direct_quote', evidence: [{ sourceId: source.sourceId, start: 0, end: source.content.length }] }] }) };
+    },
+  } });
+  const aiPath = '/handbooks/HB-1/documents/doc-1/ai-jobs';
+  const ctx = { outlineVersionId: 'outline-v1', branch: 'main' };
+  const post = (suffix, body, key) => { const input = json({ ...ctx, ...body }, key); return api.request('POST', suffix, input.body, input.headers); };
+  const terminal = async id => {
+    for (let i = 0; i < 100; i++) {
+      const result = await api.request('GET', `${aiPath}/${id}${query}`);
+      if (!['running', 'queued'].includes(result.body.data.status)) return result.body.data;
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    assert.fail('AI job did not finish');
+  };
+  const catalog = await api.request('GET', `/handbooks/HB-1/documents/doc-1/ai-sources${query}`);
+  assert.deepEqual(catalog.body.data.items.map(item => item.name), ['网页来源', 'Pingcode设计文档', 'Pingcode测试文档', '知识库（MCP）', '测试用例集', '本地文档']);
+  assert.equal(catalog.body.data.items[3].automatic, true);
+  const generation = { operation: 'update', markdown: '旧说明', editVersion: 0, range: { start: 0, end: 3 }, requirements: '关键词：SELECT SQL' };
+  const created = await post(aiPath, generation, 'default-mcp');
+  assert.equal(created.status, 202);
+  const completed = await terminal(created.body.data.jobId);
+  assert.equal(completed.status, 'completed', JSON.stringify(completed.error));
+  assert.equal(completed.mcpRetrieval.status, 'succeeded');
+  assert.equal(payload.sources[0].automatic, true);
+  assert.equal(completed.metadata.provenance[0].kind, 'direct_quote');
+  assert.equal(completed.metadata.sourceSnapshots[0].content, 'SELECT用于查询。');
+  assert.equal(completed.artifacts.evidence.sources[0].sourceId, payload.sources[0].sourceId);
+  writerFails = true;
+  const retryCreated = await post(aiPath, generation, 'writer-failure-mcp');
+  const failedWriter = await terminal(retryCreated.body.data.jobId);
+  assert.equal(failedWriter.status, 'failed');
+  const beforeRetry = searches; writerFails = false;
+  const retried = await post(`${aiPath}/${failedWriter.jobId}/retry`, {}, 'retry-frozen-evidence');
+  assert.equal(retried.status, 202, JSON.stringify(retried.body));
+  assert.equal((await terminal(failedWriter.jobId)).status, 'completed');
+  assert.equal(searches, beforeRetry, 'Writer retry must reuse frozen MCP snapshots');
+  mode = 'failure';
+  const failedCreated = await post(aiPath, generation, 'retrieval-failure');
+  const failed = await terminal(failedCreated.body.data.jobId);
+  assert.equal(failed.error.code, 'AI_MCP_RETRIEVAL_FAILED');
+  assert.equal(failed.mcpRetrieval.status, 'failed');
+  mode = 'success';
+  assert.equal((await post(`${aiPath}/${failed.jobId}/retry`, {}, 'retry-retrieval')).status, 202);
+  assert.equal((await terminal(failed.jobId)).status, 'completed');
+  mode = 'delay';
+  const started = new Promise(resolve => { detailStarted = resolve; });
+  const late = await post(aiPath, generation, 'cancel-during-mcp');
+  await started;
+  const lateId = late.body.data.jobId;
+  const cancelled = await post(`${aiPath}/${lateId}/cancel`, {}, 'cancel-mcp');
+  assert.equal(cancelled.body.data.status, 'cancelled');
+  const priorPayload = payload;
+  releaseDetail();
+  await new Promise(resolve => setTimeout(resolve, 80));
+  const afterCancel = await terminal(lateId);
+  assert.equal(afterCancel.status, 'cancelled');
+  assert.equal(afterCancel.sourceSnapshots.length, 0);
+  assert.equal(afterCancel.mcpRetrieval, undefined);
+  assert.equal(payload, priorPayload, 'Cancelled MCP retrieval must not reach writer');
+  mode = 'success';
+  const browser = await require('playwright').chromium.launch({ headless: true }); t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  await page.goto(`${api.origin}/browser-fixture`);
+  await page.evaluate(async () => {
+    const stylesheet = document.createElement('link'); stylesheet.rel = 'stylesheet';
+    stylesheet.href = '/knowledge-center/modules/production/production.css'; document.head.append(stylesheet);
+    const { openProductionAIDialog } = await import('/knowledge-center/modules/production/production-ai-dialog.js');
+    openProductionAIDialog({ context: { handbookId: 'HB-1', documentId: 'doc-1', outlineVersionId: 'outline-v1', branch: 'main' }, operation: 'update', editVersion: 0, getMarkdown: () => '旧说明', baselineDigest: async () => '', onAdopt() {} });
+  });
+  await page.locator('[data-ai-source-add]').click();
+  await page.locator('[data-reference-type="knowledge-mcp"]').click();
+  assert.equal(await page.locator('[data-ai-source-locator]').isVisible(), false);
+  assert.equal(await page.locator('[data-ai-source-preview]').isVisible(), false);
+  assert.equal(await page.locator('[data-ai-mcp-service]').count(), 0);
+  assert.match(await page.locator('[data-ai-source-info]').textContent(), /默认参与生成/);
+  const reportRoot = path.join(repositoryRoot, 'runtime/test-results/production-ai-default-mcp'); fs.mkdirSync(reportRoot, { recursive: true });
+  await page.screenshot({ path: path.join(reportRoot, 'automatic-mcp-settings.png'), fullPage: true });
+  await page.getByRole('button', { name: '关闭添加参考文档' }).click();
+  await page.locator('[data-ai-requirements]').fill('关键词：SELECT SQL');
+  await page.locator('[data-ai-full]').click(); await page.locator('[data-ai-start]').click();
+  await page.locator('[data-ai-candidate]').waitFor({ state: 'visible' });
+  assert.match(await page.locator('[data-ai-mcp-status]').textContent(), /已取得引用/);
+  assert.equal(await page.locator('[data-ai-fragment]').inputValue(), 'SELECT用于查询。');
+  await page.screenshot({ path: path.join(reportRoot, 'automatic-mcp.png'), fullPage: true });
+  await page.goto(`${api.origin}/browser-fixture`);
+  await page.evaluate(async () => {
+    const { openProductionAIDialog } = await import('/knowledge-center/modules/production/production-ai-dialog.js');
+    openProductionAIDialog({ context: { handbookId: 'HB-1', documentId: 'doc-1', outlineVersionId: 'outline-v1', branch: 'main' }, operation: 'update', editVersion: 0, getMarkdown: () => '旧说明', baselineDigest: async () => '', onAdopt() {} });
+  });
+  await page.locator('[data-ai-resume]').click();
+  await page.locator('[data-ai-candidate]').waitFor({ state: 'visible' });
+  assert.equal(await page.locator('[data-ai-source-list] [data-source-id]:not([data-source-id="knowledge-mcp"]) input[type="checkbox"]').count(), 0, 'Automatic sources must not become manual confirmed IDs on recovery');
+  const nextResponse = page.waitForResponse(response => response.url().endsWith('/ai-jobs') && response.request().method() === 'POST');
+  await page.locator('[data-ai-start]').click();
+  const next = await nextResponse;
+  assert.equal(next.status(), 202);
+  const nextJob = await next.json();
+  assert.equal((await terminal(nextJob.data.jobId)).status, 'completed');
+});
+
+test('生产映射真实 HTTP 按手册授权裁剪，普通作者不能读取管理配置', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'production-mapping-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const gitlabConfigPath = path.join(root, 'gitlab.json');
+  fs.writeFileSync(gitlabConfigPath, JSON.stringify({
+    connections: [{ id: 'connection-1', credentialRef: 'secret-reference' }],
+    mappings: [{ handbookId: 'HB-1', connectionId: 'connection-1', defaultBranch: 'main', enabledBranches: ['main'], zhPaths: ['docs'], enPaths: [], updatedBy: 'private-admin' }],
+  }));
+  const { origin, setSession } = await setup(t, { gitlabConfigPath });
+  const endpoint = `${origin}/knowledge-center/api/gitlab/mappings/HB-1`;
+  assert.equal((await fetch(endpoint)).status, 403);
+  const response = await fetch(`${endpoint}?view=production`);
+  assert.equal(response.status, 200);
+  const data = (await response.json()).data;
+  assert.equal(data.defaultBranch, 'main');
+  assert.deepEqual(Object.keys(data).sort(), ['handbookId', 'connectionId', 'defaultBranch', 'enabledBranches', 'zhPaths', 'enPaths'].sort());
+  setSession({ ...editor, visibleHandbookIds: ['another-handbook'] });
+  assert.equal((await fetch(`${endpoint}?view=production`)).status, 403);
+  setSession(editor);
+  assert.equal((await fetch(`${origin}/knowledge-center/api/gitlab/mappings/missing?view=production`)).status, 404);
 });

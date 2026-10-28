@@ -15,7 +15,7 @@ describe('AI 候选事务和范围保护', () => {
   function setup(ai = {}, extras = {}) {
     return createHandbookProductionService({
       store: new FileAggregateStore(path.join(root, 'state.json'), { drafts: {}, idempotency: {}, audits: [] }),
-      ai: { generate: async () => ({ content: '新句', model: 'isolated-test-model' }), ...ai },
+      ai: { loadMCPConfig: async () => ({}), generate: async () => ({ content: '新句', model: 'isolated-test-model' }), ...ai },
       ...extras,
     });
   }
@@ -486,7 +486,7 @@ describe('Writer 完成后的审核重试', () => {
     try {
       const service = createHandbookProductionService({
         store: new FileAggregateStore(path.join(root, 'state.json'), { drafts: {}, idempotency: {}, audits: [] }),
-        ai: { generate, stageAdapters: { reviewer: { run: reviewer } } },
+        ai: { loadMCPConfig: async () => ({}), generate, stageAdapters: { reviewer: { run: reviewer } } },
       });
       const started = service.ai.start(base, editor, 'review-start'); await tick();
       const running = service.ai.get({ ...ctx, jobId: started.jobId }, editor);

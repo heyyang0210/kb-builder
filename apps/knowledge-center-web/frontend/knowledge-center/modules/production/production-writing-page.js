@@ -1,7 +1,7 @@
 import { loadTemplates } from '../../common/api/platform-api.js';
 import { enhanceSearchableSelects, syncSearchableSelect, cleanupSearchableSelects } from '../../common/searchable-combobox.js';
 import { retainWritingSelection } from './writing-selection.js';
-import { loadProductionModels, startHandbookAI, loadHandbookAI, actHandbookAI, loadHandbookAISources, previewHandbookAISource, loadHandbookAISkills, runHandbookQuality } from '../../common/api/handbook-production-api.js';
+import { loadProductionModels, startHandbookAI, loadHandbookAI, actHandbookAI, loadHandbookAISources, previewHandbookAISource, uploadHandbookAISource, loadHandbookAISkills, runHandbookQuality } from '../../common/api/handbook-production-api.js';
 import { renderProductionProvenance } from './production-provenance.js';
 import { Marked } from '../../common/vendor/marked.esm.js';
 
@@ -12,7 +12,12 @@ const previewMarkdown = new Marked({ gfm: true, breaks: true, renderer: {
     return /^https?:\/\//i.test(href) ? `<a href="${escapeAttribute(href)}" target="_blank" rel="noopener noreferrer">${label}</a>` : label;
   },
   image({ href, text }) {
-    return /^https?:\/\//i.test(href) ? `<img src="${escapeAttribute(href)}" alt="${escapeAttribute(text)}" loading="lazy" referrerpolicy="no-referrer">` : `<span>[图片：${escapeAttribute(text)}]</span>`;
+    try {
+      const imageURL = new URL(String(href || ''), window.location.origin);
+      const hosted = imageURL.origin === window.location.origin && /^\/knowledge-center\/api\/production\/handbooks\/[^/]+\/documents\/[^/]+\/ai-sources\/images\/[a-f0-9]{64}$/.test(imageURL.pathname);
+      if (hosted) return `<img src="${escapeAttribute(imageURL.pathname + imageURL.search)}" alt="${escapeAttribute(text)}" loading="lazy">`;
+    } catch (_) {}
+    return `<span>[图片：${escapeAttribute(text)}]</span>`;
   },
 } });
 const escapeAttribute = value => String(value ?? '').replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
@@ -24,6 +29,7 @@ const stateNames = { queued: '等待执行', running: '正在生成', completed:
 // The page owns polling; the detached workbench retains its editor and unsaved draft.
 export function openProductionWritingPage(options) {
   const { context } = options;
+  const embedded = options.embedded === true;
   const initialOperation = normalizeOperation(options.operation);
   let original = options.getMarkdown();
   let originSnapshot = options.originSnapshot || null;
@@ -34,6 +40,8 @@ export function openProductionWritingPage(options) {
   let rangeConfirmed = validRange && (initialOperation === 'continue' || inherited.start !== inherited.end);
   if (rangeConfirmed) range = initialOperation === 'continue' ? { start: inherited.end, end: inherited.end } : { ...inherited };
   if (!['polish', 'continue'].includes(initialOperation)) rangeConfirmed = true;
+  let writingMode = options.initialEditorFormat === 'markdown' ? 'markdown' : 'rich';
+  let markdownPreview = false;
   let writingEditor = null;
   let writingEditorReady = false;
   const richSelection = retainWritingSelection(() => ({ editor: writingEditor, element: find('rich-editor') }));
@@ -41,13 +49,14 @@ export function openProductionWritingPage(options) {
   let feedbackTimer; let feedbackJob = null;
   let job = null; let timer; let closed = false; let busy = false; let pendingStart = null; let pendingRetry = null; let qualityReportId = null;
   let sourceSnapshots = [];
+  let referenceOrder = ['knowledge-mcp'];
   let templateId = options.templateId || ''; let templatesLoading = true; let templateCatalog = [];
   let skillCatalog = [];
   let modelsLoading = true; let defaultModel = null;
   const selectedModel = () => defaultModel;
   const storageKey = `knowledge-ai:${JSON.stringify(context)}`;
   const dialog = document.createElement('section');
-  dialog.className = 'handbook-writing-page';
+  dialog.className = `handbook-writing-page${embedded ? ' is-embedded' : ''}`;
   dialog.setAttribute('aria-labelledby', 'handbook-ai-title');
   dialog.innerHTML = `<form><header class="asset-dialog-heading"><div><h2 id="handbook-ai-title">AI 辅助写作</h2><p>明确范围 · 对照候选 · 确认后保存</p></div><div class="handbook-writing-heading-actions"><button type="button" data-ai-panel-toggle class="icon-button" aria-label="隐藏写作助手" title="隐藏写作助手" aria-expanded="true" aria-controls="handbook-writing-assistant"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16M18 9v6"/></svg></button><button type="button" data-ai-close aria-label="返回文档工作台">← 返回文档工作台</button></div></header>
     <div class="handbook-writing-layout">
@@ -60,8 +69,9 @@ export function openProductionWritingPage(options) {
           <div data-ai-stages></div>
           <details data-ai-preview-panel hidden open><summary>生成内容预览 · 完成后可比较采用</summary><pre data-ai-preview aria-label="生成内容预览"></pre><p data-ai-preview-notice></p></details>
         </section>
-        <div class="handbook-writing-editor-mode" role="group" aria-label="编辑模式"><button type="button" data-ai-mode-rich aria-pressed="true">可视化编辑</button><button type="button" data-ai-mode-markdown aria-pressed="false">Markdown</button></div>
-        <div data-ai-rich-editor></div><div data-ai-markdown hidden><label>Markdown 正文<textarea data-ai-original rows="18"></textarea></label></div>
+        <details class="handbook-editor-format" data-dismissible-menu data-ai-format><summary aria-label="正文编写格式"><span data-ai-mode-label>可视化编辑</span><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m6 9 6 6 6-6"/></svg></summary><div><button type="button" data-ai-mode-rich aria-pressed="true">可视化编辑</button><button type="button" data-ai-mode-markdown aria-pressed="false">Markdown</button></div></details>
+        <button class="handbook-markdown-preview-action" type="button" data-ai-markdown-preview-toggle aria-pressed="false" hidden>显示预览</button>
+        <div data-ai-rich-editor></div><div data-ai-markdown class="handbook-markdown-workspace" hidden><textarea data-ai-original class="handbook-markdown-editor" aria-label="Markdown 正文" rows="1"></textarea><article data-ai-markdown-preview class="handbook-markdown-preview" aria-label="Markdown 预览" hidden></article></div>
         <div class="handbook-ai-dialog-actions"><button type="button" data-ai-selection>确认选文 / 光标位置</button><button type="button" data-ai-full>处理全文</button></div>
 
       </section>
@@ -71,14 +81,14 @@ export function openProductionWritingPage(options) {
         <div class="handbook-writing-configuration"><div class="handbook-writing-configuration-heading"><span data-ai-operation-summary></span><button type="button" class="button secondary" data-ai-settings-open>生成设置</button></div><p data-ai-settings-summary>正在读取模型…</p></div>
         <div class="handbook-ai-settings" data-ai-settings-panel hidden role="dialog" aria-modal="true" aria-labelledby="handbook-ai-settings-title">
           <div class="handbook-ai-settings-backdrop" data-ai-settings-close></div>
-          <section class="handbook-ai-settings-dialog"><header><div><h3 id="handbook-ai-settings-title">生成设置</h3></div><button type="button" class="icon-button" data-ai-settings-close aria-label="关闭生成设置">×</button></header>
+          <section class="handbook-ai-settings-dialog"><header><div><h3 id="handbook-ai-settings-title" tabindex="-1">生成设置</h3><p data-ai-settings-context></p></div><button type="button" class="icon-button" data-ai-settings-cancel aria-label="关闭并放弃本次设置" title="关闭并放弃本次设置"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="m6 6 12 12M18 6 6 18"/></svg></button></header>
             <div class="handbook-ai-settings-body">
-              <section><label>写作方式<select data-ai-operation>${Object.entries(names).map(([key, name]) => `<option value="${key}">${name}</option>`).join('')}</select></label></section>
-              <section data-ai-template-section><label>模板<select data-ai-template-select data-searchable-select="true" data-searchable-placeholder="输入模板名称搜索或展开选择" data-combobox-size="full" disabled><option value="">正在读取模板…</option></select></label><p data-ai-template role="status"></p></section>
-              <section class="handbook-ai-sources" data-ai-sources><div class="handbook-ai-source-heading"><strong>参考资料 <span data-ai-source-count>（未选）</span></strong><button type="button" class="button secondary" data-ai-source-add aria-expanded="false" aria-controls="handbook-ai-source-entry">添加资料</button></div><div id="handbook-ai-source-entry" class="handbook-ai-settings-section" data-ai-source-entry hidden><label>资料来源<select data-ai-source-type><option value="url">网页文献</option><option value="knowledge-mcp">知识库文档（MCP）</option></select></label><div data-ai-mcp-selectors hidden><label>MCP 服务<select data-ai-mcp-service></select></label><label>知识库<select data-ai-mcp-base></select></label></div><label>文献地址或文档标识<input data-ai-source-locator type="text" placeholder="输入 HTTP(S) 网页地址或文档标识"></label><button type="button" data-ai-source-preview>添加并读取</button><p data-ai-source-info role="status"></p></div><div data-ai-source-list></div></section>
-              <details data-ai-skills><summary>扩展能力（Skill） <span data-ai-skill-count>（未选）</span></summary><div class="handbook-ai-settings-section"><p data-ai-skill-info>正在读取可选能力…</p><div data-ai-skill-list></div><p data-ai-used-skills></p></div></details>
+              <section><span class="handbook-settings-label">写作方式</span><div class="handbook-settings-operations" role="group" aria-label="本次生成的写作方式">${Object.entries(names).map(([key, name]) => `<button type="button" data-ai-settings-operation="${key}" aria-pressed="false">${name}</button>`).join('')}</div><label hidden>写作方式<select data-ai-operation>${Object.entries(names).map(([key, name]) => `<option value="${key}">${name}</option>`).join('')}</select></label></section>
+              <section data-ai-template-section><label>文档模板<select data-ai-template-select data-searchable-select="true" data-searchable-placeholder="输入模板名称搜索或展开选择" data-combobox-size="full" disabled><option value="">正在读取模板…</option></select></label><p data-ai-template role="status"></p></section>
+              <section class="handbook-ai-sources" data-ai-sources><div class="handbook-ai-source-heading"><strong>参考资料</strong><span data-ai-source-count>已添加 0 项</span></div><p class="handbook-settings-source-note">引用优先级从高到低，拖动左侧手柄调整。</p><button type="button" class="button tertiary" data-ai-source-add aria-expanded="false" aria-controls="handbook-ai-source-entry">＋ 添加参考资料</button><div id="handbook-ai-source-entry" class="handbook-ai-settings-section" data-ai-source-entry hidden><label>资料来源<select data-ai-source-type><option value="url">网页来源</option><option value="pingcode-design">Pingcode设计文档</option><option value="pingcode-test">Pingcode测试文档</option><option value="knowledge-mcp">知识库（MCP）</option><option value="test-case-library">测试用例集</option><option value="local-document">本地文档</option></select></label><label data-ai-source-locator-label>资料地址或文档标识<input data-ai-source-locator type="text" placeholder="输入 HTTP(S) 网页地址或文档标识"></label><div class="handbook-source-upload" data-ai-source-upload hidden tabindex="0"><input type="file" data-ai-source-file accept=".md,.markdown,.txt,.sql,.pdf,.docx,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden><strong>拖拽本地文档到这里</strong><span>或点击选择，支持 Markdown、TXT、SQL、PDF、DOCX</span></div><button type="button" data-ai-source-preview>添加并读取</button><p data-ai-source-info hidden></p></div><div data-ai-source-list></div></section>
+              <details data-ai-skills><summary>扩展能力 <span data-ai-skill-count>（未选）</span></summary><div class="handbook-ai-settings-section"><p data-ai-skill-info>正在读取可选能力…</p><div data-ai-skill-list></div><p data-ai-used-skills></p></div></details>
 
-            </div><footer><button type="button" class="button secondary" data-ai-settings-close>完成设置</button></footer>
+            </div><footer><small>设置仅作用于本次生成</small><button type="button" class="button tertiary" data-ai-settings-cancel>取消</button><button type="button" class="button" data-ai-settings-apply>应用设置</button></footer>
           </section>
         </div>
         <div class="handbook-writing-submit"><div class="handbook-ai-dialog-actions"><button type="button" data-ai-start>生成候选</button><button type="button" data-ai-cancel hidden disabled>取消任务</button><button type="button" data-ai-retry hidden disabled>重试任务</button></div><button type="button" data-ai-resume hidden>恢复上次任务</button></div>
@@ -89,20 +99,160 @@ export function openProductionWritingPage(options) {
   dialog.querySelectorAll('button').forEach(button => button.classList.add('button', 'secondary'));
   const find = selector => dialog.querySelector(`[data-ai-${selector}]`);
   find('start').classList.remove('secondary'); find('adopt').classList.remove('secondary');
+  find('settings-apply').classList.remove('secondary');
+  find('settings-context').textContent = `当前文档 · ${options.outline || '当前文档'}`;
+  dialog.querySelectorAll('[data-ai-settings-operation]').forEach(button => {
+    button.onclick = () => { find('operation').value = button.dataset.aiSettingsOperation; find('operation').dispatchEvent(new Event('change')); };
+  });
   const provenancePanel = document.createElement('div'); find('candidate').append(provenancePanel);
+  if (embedded) {
+    const assistant = dialog.querySelector('.handbook-writing-assistant');
+    const heading = dialog.querySelector('.asset-dialog-heading');
+    heading.querySelector('h2').textContent = 'AI 辅助写作';
+    heading.querySelector('p').textContent = options.outline || '当前文档';
+    find('close').textContent = '×';
+    find('close').setAttribute('aria-label', '关闭 AI 写作');
+    find('panel-toggle').hidden = true;
+    assistant.prepend(heading);
+    const operations = document.createElement('div');
+    operations.className = 'handbook-writing-operations';
+    operations.setAttribute('role', 'group'); operations.setAttribute('aria-label', '写作方式');
+    for (const [value, label] of Object.entries(names)) {
+      const button = document.createElement('button'); button.type = 'button';
+      button.className = 'button secondary'; button.textContent = label;
+      button.dataset.aiQuickOperation = value;
+      button.onclick = () => { if (busy || job && ['queued', 'running'].includes(job.status)) return; find('operation').value = value; find('operation').dispatchEvent(new Event('change')); };
+      operations.append(button);
+    }
+    heading.after(operations);
+    const composer = document.createElement('div'); composer.className = 'handbook-writing-composer';
+    const requirements = find('requirements').closest('label'); requirements.before(composer); composer.append(requirements);
+    const composerFooter = document.createElement('div'); composerFooter.className = 'handbook-writing-composer-footer';
+    composerFooter.append(find('range')); composer.append(composerFooter);
+    const templateSummary = dialog.querySelector('.handbook-writing-configuration'); composer.after(templateSummary);
+    const documentSurface = dialog.querySelector('.handbook-writing-document');
+    const breadcrumb = document.createElement('p'); breadcrumb.className = 'handbook-writing-breadcrumb';
+    breadcrumb.textContent = document.querySelector('.handbook-document-heading > p')?.textContent || '当前文档';
+    documentSurface.prepend(breadcrumb);
+    const note = document.createElement('p'); note.className = 'handbook-writing-adoption-note';
+    note.textContent = '生成内容先预览，确认采用后再保存'; dialog.querySelector('.handbook-writing-submit').append(note);
+    dialog.querySelector('.handbook-writing-document').append(find('candidate'));
+  }
+  const operationSection = find('operation').closest('section');
+  operationSection.hidden = true;
+  if (!embedded) {
+    const operations = document.createElement('div'); operations.className = 'handbook-writing-operations';
+    operations.setAttribute('role', 'group'); operations.setAttribute('aria-label', '写作方式');
+    for (const [value, label] of Object.entries(names)) {
+      const button = document.createElement('button'); button.type = 'button'; button.className = 'button secondary';
+      button.textContent = label; button.dataset.aiQuickOperation = value;
+      button.onclick = () => { if (isLocked()) return; find('operation').value = value; find('operation').dispatchEvent(new Event('change')); };
+      operations.append(button);
+    }
+    find('requirements').closest('label').before(operations);
+  }
+  const references = find('sources'); references.classList.add('handbook-writing-reference');
+  const referenceHeading = references.querySelector('strong'); referenceHeading.textContent = '参考文档';
+  referenceHeading.after(find('source-count')); references.querySelector('.handbook-ai-source-heading').append(find('source-add'));
+  find('source-add').textContent = '＋ 添加';
+  const referenceToggle = document.createElement('button'); referenceToggle.type = 'button';
+  referenceToggle.className = 'button tertiary handbook-reference-toggle'; referenceToggle.dataset.aiReferencesToggle = '';
+  referenceToggle.setAttribute('aria-expanded', 'false'); referenceToggle.setAttribute('aria-controls', 'writing-reference-list');
+  find('source-list').id = 'writing-reference-list';
+  references.append(referenceToggle);
+  const configSummary = dialog.querySelector('.handbook-writing-configuration');
+  configSummary.before(references);
+  configSummary.querySelector('[data-ai-operation-summary]').hidden = true;
+  const configHeading = document.createElement('strong'); configHeading.textContent = '生成设置';
+  configSummary.querySelector('.handbook-writing-configuration-heading').prepend(configHeading);
+  configSummary.querySelector('.handbook-writing-configuration-heading').append(find('settings-open'));
+  find('settings-open').textContent = '调整';
+  find('skills').open = true;
+  find('skills').querySelector('summary').firstChild.textContent = '扩展能力（Skill） ';
+  const sourcePanel = document.createElement('div'); sourcePanel.className = 'handbook-ai-settings handbook-reference-modal';
+  sourcePanel.dataset.aiReferencePanel = ''; sourcePanel.hidden = true;
+  sourcePanel.setAttribute('role', 'dialog'); sourcePanel.setAttribute('aria-modal', 'true'); sourcePanel.setAttribute('aria-labelledby', 'writing-reference-title');
+  sourcePanel.innerHTML = `<div class="handbook-ai-settings-backdrop" data-ai-reference-close></div><section class="handbook-ai-settings-dialog"><header><div><h3 id="writing-reference-title">添加参考文档</h3><p></p></div><button type="button" class="icon-button button secondary" data-ai-reference-close aria-label="关闭添加参考文档">×</button></header><div class="handbook-reference-layout"><nav class="handbook-reference-nav" aria-label="参考文档来源"></nav><div class="handbook-reference-detail"><h4 data-ai-reference-type-title></h4></div></div><footer><small>添加后用于本次写作</small><button type="button" class="button secondary" data-ai-reference-close>完成</button></footer></section>`;
+  sourcePanel.querySelector('header p').textContent = options.outline || '当前文档';
+  dialog.querySelector('form').append(sourcePanel);
+  sourcePanel.querySelector('.handbook-reference-detail').append(find('source-entry'));
+  find('source-entry').hidden = false; find('source-type').closest('label').hidden = true;
+  const mcpInfo = document.createElement('p'); mcpInfo.dataset.aiMcpStatus = ''; mcpInfo.hidden = true;
+  sourcePanel.querySelector('.handbook-reference-detail').append(mcpInfo);
+  const types = [['pingcode-design','Pingcode设计文档'],['pingcode-test','Pingcode测试文档'],['test-case-library','测试用例集'],['url','网页来源'],['knowledge-mcp','知识库（MCP）'],['local-document','本地文档']];
+  for (const [value, label] of types) {
+    const button = document.createElement('button'); button.type = 'button'; button.className = 'button tertiary';
+    button.textContent = label; button.dataset.referenceType = value; button.setAttribute('aria-pressed','false');
+    button.onclick = () => { if (isLocked()) return; find('source-type').value = value; sourceHint(); };
+    sourcePanel.querySelector('nav').append(button);
+  }
+  dialog.querySelector('form').append(sourcePanel);
+  const isLocked = () => busy || ['queued', 'running'].includes(job?.status);
+  let referenceReturnFocus = null; let referencesExpanded = false; let referenceDragId = null;
+  let collapsedReferenceCount = 3;
+  function closeReferences() {
+    if (busy) return;
+    sourcePanel.hidden = true; find('source-add').setAttribute('aria-expanded','false'); referenceReturnFocus?.focus({ preventScroll: true });
+  }
+  function openReferences() {
+    if (isLocked()) return;
+    referenceReturnFocus = document.activeElement; sourcePanel.hidden = false; find('source-entry').hidden = false;
+    find('source-add').setAttribute('aria-expanded','true'); sourceHint(); sourcePanel.querySelector('[data-reference-type][aria-pressed="true"]')?.focus();
+  }
+  sourcePanel.querySelectorAll('[data-ai-reference-close]').forEach(button => button.onclick = closeReferences);
+  sourcePanel.addEventListener('keydown', event => {
+    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeReferences(); }
+    if (event.key !== 'Tab') return;
+    const focusable = [...sourcePanel.querySelectorAll('button,input,select,[tabindex="0"]')].filter(node => !node.disabled && node.getClientRects().length);
+    if (event.shiftKey && document.activeElement === focusable[0]) { event.preventDefault(); focusable.at(-1)?.focus(); }
+    else if (!event.shiftKey && document.activeElement === focusable.at(-1)) { event.preventDefault(); focusable[0]?.focus(); }
+  });
+  referenceToggle.onclick = () => { referencesExpanded = !referencesExpanded; syncReferenceCollapse(); };
+  function syncReferenceCollapse() {
+    const rows = [...find('source-list').children];
+    rows.forEach((row, index) => { row.hidden = !referencesExpanded && !referenceDragId && index >= collapsedReferenceCount; });
+    referenceToggle.hidden = rows.length <= collapsedReferenceCount;
+    referenceToggle.textContent = referencesExpanded ? '收起参考文档' : `展开全部 ${rows.length} 项`;
+    referenceToggle.setAttribute('aria-expanded', String(referencesExpanded));
+    find('source-list').classList.toggle('is-expanded', referencesExpanded || !!referenceDragId);
+  }
+  renderSources();
   find('operation').value = initialOperation;
   find('original').value = original;
-  function setWritingMode(mode) {
-    const markdownMode = mode === 'markdown';
+  function resizeOriginal() {
+    if (closed || find('markdown').hidden) return;
+    const input = find('original');
+    if (!CSS.supports('field-sizing', 'content')) {
+      input.style.height = 'auto';
+      input.style.height = `${input.scrollHeight}px`;
+    }
+    if (markdownPreview) find('markdown-preview').innerHTML = previewMarkdown.parse(original);
+  }
+  function setWritingMode(mode, focus = true) {
+    writingMode = mode === 'markdown' ? 'markdown' : 'rich';
+    const markdownMode = writingMode === 'markdown';
     find('rich-editor').hidden = markdownMode;
     find('markdown').hidden = !markdownMode;
+    find('markdown-preview-toggle').hidden = !markdownMode;
     find('mode-rich').setAttribute('aria-pressed', String(!markdownMode));
     find('mode-markdown').setAttribute('aria-pressed', String(markdownMode));
-    if (markdownMode) find('original').focus({ preventScroll: true });
-    else if (writingEditorReady) writingEditor.focus();
+    find('mode-label').textContent = markdownMode ? 'Markdown' : '可视化编辑';
+    find('format').open = false;
+    options.onEditorFormatChange?.(writingMode);
+    resizeOriginal();
+    if (focus && markdownMode) find('original').focus({ preventScroll: true });
+    else if (focus && writingEditorReady) writingEditor.focus();
   }
   find('mode-rich').onclick = () => setWritingMode('rich');
   find('mode-markdown').onclick = () => setWritingMode('markdown');
+  find('markdown-preview-toggle').onclick = () => {
+    markdownPreview = !markdownPreview;
+    find('markdown').classList.toggle('is-previewing', markdownPreview);
+    find('markdown-preview').hidden = !markdownPreview;
+    find('markdown-preview-toggle').textContent = markdownPreview ? '返回编辑' : '显示预览';
+    find('markdown-preview-toggle').setAttribute('aria-pressed', String(markdownPreview));
+    resizeOriginal();
+  };
   if (rangeConfirmed) find('original').setSelectionRange(range.start, range.end);
   find('document-title').textContent = options.outline || '当前文档';
   function setAssistantVisible(visible) {
@@ -115,16 +265,30 @@ export function openProductionWritingPage(options) {
   find('panel-toggle').onclick = () => setAssistantVisible(find('panel-toggle').getAttribute('aria-expanded') !== 'true');
   const status = message => { find('execution').hidden = false; find('status').textContent = message; };
   let settingsReturnFocus = null;
+  let settingsSnapshot = null;
   const usesTemplate = () => ['generate', 'polish'].includes(find('operation').value);
   function updateSettingsSummary() {
-    const sourceCountValue = find('source-list').querySelectorAll('input:checked').length;
+    dialog.querySelectorAll('[data-ai-quick-operation], [data-ai-settings-operation]').forEach(button => button.setAttribute('aria-pressed', String((button.dataset.aiQuickOperation || button.dataset.aiSettingsOperation) === find('operation').value)));
     const skillCount = find('skill-list').querySelectorAll('input:checked').length;
-    find('skill-count').textContent = skillCount ? `（已选 ${skillCount}）` : '（未选）';
+    find('skill-count').textContent = skillCount ? `已选 ${skillCount}` : '未选择';
     find('operation-summary').textContent = names[find('operation').value];
     const template = templateCatalog.find(item => item.id === templateId);
-    find('settings-summary').textContent = [usesTemplate() ? template?.name : '', sourceCountValue ? `${sourceCountValue} 项资料` : '', skillCount ? `${skillCount} 个 Skill` : ''].filter(Boolean).join(' · ') || '未添加参考资料';
+    find('settings-summary').textContent = [usesTemplate() ? template?.name : '', skillCount ? `${skillCount} 个 Skill` : ''].filter(Boolean).join(' · ') || '未选择模板或扩展能力';
   }
-  function closeSettings() {
+  function snapshotSettings() {
+    return { operation: find('operation').value, range: { ...range }, rangeConfirmed, templateId, selectedSkillIds: [...find('skill-list').querySelectorAll('input:checked')].map(box => box.value) };
+  }
+  function restoreSettings() {
+    if (!settingsSnapshot) return;
+    find('operation').value = settingsSnapshot.operation;
+    range = { ...settingsSnapshot.range }; rangeConfirmed = settingsSnapshot.rangeConfirmed; rangeLabel();
+    templateId = settingsSnapshot.templateId;
+    renderSkills();
+    for (const box of find('skill-list').querySelectorAll('input')) box.checked = settingsSnapshot.selectedSkillIds.includes(box.value);
+    syncTemplateSelection(); controls();
+  }
+  function closeSettings(apply = true) {
+    if (!apply) restoreSettings();
     find('settings-panel').querySelector('.searchable-combobox-input')?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: false }));
     find('settings-panel').hidden = true;
     settingsReturnFocus?.focus({ preventScroll: true });
@@ -133,14 +297,16 @@ export function openProductionWritingPage(options) {
   function openSettings() {
     if (busy || (job && ['queued', 'running'].includes(job.status))) return;
     settingsReturnFocus = document.activeElement;
+    settingsSnapshot = snapshotSettings();
     find('settings-panel').hidden = false;
-    find('operation').focus({ preventScroll: true });
+    find('settings-panel').querySelector('#handbook-ai-settings-title').focus({ preventScroll: true });
   }
   find('settings-open').onclick = openSettings;
-  find('settings-panel').querySelectorAll('[data-ai-settings-close]').forEach(button => button.onclick = closeSettings);
-  find('settings-panel').addEventListener('click', event => { if (event.target.classList.contains('handbook-ai-settings-backdrop')) closeSettings(); });
+  find('settings-panel').querySelectorAll('[data-ai-settings-cancel]').forEach(button => button.onclick = () => closeSettings(false));
+  find('settings-apply').onclick = () => closeSettings(true);
+  find('settings-panel').addEventListener('click', event => { if (event.target.classList.contains('handbook-ai-settings-backdrop')) closeSettings(false); });
   find('settings-panel').addEventListener('keydown', event => {
-    if (event.key === 'Escape') { event.preventDefault(); closeSettings(); }
+    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeSettings(false); }
     if (event.key !== 'Tab') return;
     const focusable = [...find('settings-panel').querySelectorAll('button, input, select, textarea, summary, [tabindex="0"]')].filter(node => !node.disabled && node.tabIndex >= 0 && node.getClientRects().length);
     const first = focusable[0]; const last = focusable.at(-1);
@@ -149,6 +315,7 @@ export function openProductionWritingPage(options) {
   });
   const remember = id => { try { if (id) sessionStorage.setItem(storageKey, id); else sessionStorage.removeItem(storageKey); } catch (_) {} };
   function rangeLabel() {
+    dialog.querySelectorAll('[data-ai-quick-operation], [data-ai-settings-operation]').forEach(button => button.setAttribute('aria-pressed', String((button.dataset.aiQuickOperation || button.dataset.aiSettingsOperation) === find('operation').value)));
     if (!rangeConfirmed) { find('range').textContent = '处理范围：尚未选择，请在左侧确认选文或插入位置。'; return; }
     find('range').textContent = range.start === range.end
       ? `已确认插入位置：前方 ${range.start} 个字符`
@@ -156,17 +323,22 @@ export function openProductionWritingPage(options) {
   }
   function controls() {
     const running = job && ['queued', 'running'].includes(job.status);
+    dialog.querySelectorAll('[data-ai-quick-operation], [data-ai-settings-operation]').forEach(button => { button.disabled = busy || running; });
     if (writingEditorReady) { if (busy || running) writingEditor.disabled(); else writingEditor.enable(); }
-    for (const key of ['original', 'operation', 'requirements', 'selection', 'full', 'start', 'resume', 'source-type', 'source-locator', 'source-preview', 'source-add', 'mcp-service', 'mcp-base', 'template-select']) find(key).disabled = busy || running;
+    for (const key of ['original', 'operation', 'requirements', 'selection', 'full', 'start', 'resume', 'source-type', 'source-locator', 'source-preview', 'source-add', 'source-file', 'template-select']) find(key).disabled = busy || running;
+    find('source-upload').ariaDisabled = String(busy || running);
     find('settings-open').disabled = busy || running;
-    for (const box of find('source-list').querySelectorAll('input')) box.disabled = busy || running;
+    for (const box of find('source-list').querySelectorAll('input')) box.disabled = true;
+    for (const handle of find('source-list').querySelectorAll('[draggable]')) handle.draggable = !busy && !running;
+    for (const button of sourcePanel.querySelectorAll('button')) button.disabled = !!(busy || running);
+    referenceToggle.disabled = !!(busy || running);
     for (const box of find('skill-list').querySelectorAll('input')) box.disabled = busy || running;
     find('start').disabled ||= !rangeConfirmed || modelsLoading || !selectedModel();
     find('template-select').disabled ||= templatesLoading;
     find('template-section').hidden = !usesTemplate();
     find('start').disabled ||= find('operation').value === 'generate' && (templatesLoading || !templateId);
     syncTemplatePlaceholder();
-    find('source-preview').disabled ||= find('source-type').value === 'knowledge-mcp' && (!find('mcp-service').value || !find('mcp-base').value);
+    find('source-preview').disabled ||= find('source-type').value === 'knowledge-mcp';
     find('refine').disabled = busy || running;
     find('discard').disabled = busy || running;
     find('fragment').disabled = busy || running;
@@ -207,7 +379,9 @@ export function openProductionWritingPage(options) {
     const running = ['queued', 'running'].includes(value.status);
     if (running && !closed) feedbackTimer = setInterval(updateElapsed, 1000);
     const current = (value.stageRuns || []).find(run => run.status === 'running');
-    find('phase').textContent = `${current ? `当前：${stageNames[current.stageId] || current.stageId}` : stateNames[value.status] || value.status} · 已确认资料 ${(value.sourceSnapshots || []).length} 项`;
+    const retrieval = value.mcpRetrieval;
+    find('phase').textContent = `${current ? `当前：${stageNames[current.stageId] || current.stageId}` : stateNames[value.status] || value.status} · 引用资料 ${(value.sourceSnapshots || []).length} 项${retrieval ? ` · 知识库${{ succeeded: '已检索', partial: '部分命中', empty: '无命中', not_configured: '未配置', failed: '检索失败' }[retrieval.status] || '检索中'}` : ' · 知识库待检索'}`;
+    if (retrieval) mcpStatus(`知识库（MCP）自动检索：${{ succeeded: '已取得引用', partial: '部分检索失败', empty: '未找到可引用原文', not_configured: '尚未配置服务或匹配路由', failed: '检索失败，请重试' }[retrieval.status] || retrieval.status}；查询 ${retrieval.attempts?.length || 0} 次，引用 ${retrieval.sourceIds?.length || 0} 篇。`);
     find('preview-wait').hidden = !running || !!value.executionPreview?.text;
     find('preview-wait').textContent = current?.stageId === 'writer'
       ? '正在等待模型返回正文，收到内容后会在此持续展示。可展开下方阶段查看调用详情。'
@@ -301,14 +475,19 @@ export function openProductionWritingPage(options) {
     updateSettingsSummary();
     controls();
   }
+  function mcpStatus(message) {
+    find('mcp-status').textContent = message;
+    if (find('mcp-summary')) find('mcp-summary').textContent = message;
+  }
   function sourceCount() {
-    const selected = [...find('source-list').querySelectorAll('input:checked')].map(box => box.value);
-    find('source-count').textContent = `（已选 ${selected.length}，可多选）`;
+    const selected = referenceOrder.filter(id => id === 'knowledge-mcp' || sourceSnapshots.some(source => source.sourceId === id));
+    find('source-count').textContent = `已添加 ${sourceSnapshots.length} 项 · 默认引用知识库`;
     for (const row of find('source-list').children) {
       const priority = selected.indexOf(row.dataset.sourceId);
-      row.querySelector('[data-source-priority]').textContent = priority < 0 ? '未引用' : `引用优先级 ${priority + 1}`;
+      row.dataset.selected = 'true';
+      row.querySelector('[data-source-priority]').textContent = `优先级 ${priority + 1}`;
       for (const button of row.querySelectorAll('[data-source-direction]')) {
-        button.hidden = priority < 0;
+        button.hidden = false;
         button.disabled = busy || ['queued', 'running'].includes(job?.status)
           || (button.dataset.sourceDirection === 'up' ? priority <= 0 : priority === selected.length - 1);
       }
@@ -316,61 +495,53 @@ export function openProductionWritingPage(options) {
   }
   find('source-list').addEventListener('change', () => { sourceCount(); updateSettingsSummary(); });
   function renderSources() {
-    const selected = new Set([...find('source-list').querySelectorAll('input:checked')].map(box => box.value));
     find('source-list').replaceChildren();
-    for (const source of sourceSnapshots) {
+    const known = new Map(sourceSnapshots.map(source => [source.sourceId, source]));
+    for (const source of referenceOrder.filter(id => id === 'knowledge-mcp' || known.has(id)).map(id => id === 'knowledge-mcp' ? { sourceId: id, sourceType: id, title: '知识库（MCP）', locator: '按写作要求自动检索', automatic: true } : known.get(id))) {
       const row = document.createElement('section');
       const label = document.createElement('label');
-      const box = document.createElement('input'); box.type = 'checkbox'; box.value = source.sourceId;
-      box.checked = selected.has(source.sourceId);
+      const box = document.createElement('input'); box.type = 'checkbox'; box.value = source.sourceId; box.checked = source.sourceId !== 'knowledge-mcp'; box.hidden = true; box.tabIndex = -1;
       row.dataset.sourceId = source.sourceId;
-      label.append(box, document.createTextNode(source.title || source.locator));
+      const handle = document.createElement('span'); handle.className = 'handbook-source-drag-handle'; handle.textContent = '⋮⋮'; handle.title = '拖动调整优先级'; handle.setAttribute('aria-hidden', 'true'); handle.draggable = !isLocked();
+      label.append(handle, box, document.createTextNode(source.title || source.locator));
       const priority = document.createElement('span'); priority.dataset.sourcePriority = '';
       priority.className = 'handbook-source-priority';
       const preview = document.createElement('button'); preview.type = 'button'; preview.className = 'button secondary';
       preview.textContent = '预览'; preview.setAttribute('aria-label', `预览资料：${source.title || source.locator}`);
-      preview.onclick = () => openSourcePreview(source);
+      preview.hidden = source.automatic === true; preview.onclick = () => openSourcePreview(source);
       const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'button secondary'; remove.textContent = '移除资料';
-      remove.onclick = () => { sourceSnapshots = sourceSnapshots.filter(item => item.sourceId !== source.sourceId); renderSources(); sourceCount(); controls(); };
+      remove.hidden = source.sourceId === 'knowledge-mcp';
+      remove.onclick = () => { if (isLocked()) return; pendingStart = null; sourceSnapshots = sourceSnapshots.filter(item => item.sourceId !== source.sourceId); referenceOrder = referenceOrder.filter(id => id !== source.sourceId); renderSources(); sourceCount(); controls(); };
       const actions = document.createElement('div'); actions.className = 'handbook-source-actions';
       for (const [direction, text] of [['up', '上移'], ['down', '下移']]) {
         const move = document.createElement('button'); move.type = 'button'; move.className = 'button secondary';
         move.textContent = text; move.dataset.sourceDirection = direction;
         move.setAttribute('aria-label', `${text}资料：${source.title || source.locator}`);
         move.onclick = () => {
-          const selectedIds = [...find('source-list').querySelectorAll('input:checked')].map(box => box.value);
+          if (isLocked()) return;
+          const selectedIds = referenceOrder;
           const index = selectedIds.indexOf(source.sourceId);
           const targetId = selectedIds[index + (direction === 'up' ? -1 : 1)];
           if (!targetId) return;
-          const from = sourceSnapshots.findIndex(item => item.sourceId === source.sourceId);
-          const to = sourceSnapshots.findIndex(item => item.sourceId === targetId);
-          [sourceSnapshots[from], sourceSnapshots[to]] = [sourceSnapshots[to], sourceSnapshots[from]];
+              const fromOrder = referenceOrder.indexOf(source.sourceId); const toOrder = referenceOrder.indexOf(targetId);
+          referenceOrder.splice(fromOrder, 1); referenceOrder.splice(toOrder, 0, source.sourceId);
           pendingStart = null; renderSources(); sourceCount(); updateSettingsSummary();
-          [...find('source-list').querySelectorAll('input')].find(input => input.value === source.sourceId)?.focus();
+          find('source-list').querySelector(`[data-source-id="${CSS.escape(source.sourceId)}"] [data-source-direction="${direction}"]`)?.focus();
         };
         actions.append(move);
       }
+      handle.ondragstart = event => { if (isLocked()) { event.preventDefault(); return; } referenceDragId = source.sourceId; event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', source.sourceId); row.classList.add('is-dragging'); syncReferenceCollapse(); };
+      handle.ondragend = () => { referenceDragId = null; row.classList.remove('is-dragging'); syncReferenceCollapse(); };
+      row.ondragover = event => { if (isLocked() || !referenceDragId) return; event.preventDefault(); event.dataTransfer.dropEffect = 'move'; row.classList.add('is-drag-target'); };
+      row.ondragleave = () => row.classList.remove('is-drag-target');
+      row.ondrop = event => { event.preventDefault(); row.classList.remove('is-drag-target'); if (isLocked() || !referenceDragId) return; const id = referenceDragId; referenceDragId = null; const from = referenceOrder.indexOf(id); const to = referenceOrder.indexOf(source.sourceId); if (from < 0 || to < 0 || from === to) { syncReferenceCollapse(); return; } referenceOrder.splice(from, 1); referenceOrder.splice(to, 0, id); pendingStart = null; renderSources(); sourceCount(); syncReferenceCollapse(); };
       actions.append(preview, remove);
-      row.append(priority, label, actions); find('source-list').append(row);
+      const state = document.createElement('span'); state.className = 'handbook-source-state'; state.textContent = source.automatic ? '默认引用 · 自动检索' : types.find(([value]) => value === source.sourceType)?.[1] || '已引用';
+      row.append(label, priority, state, actions); find('source-list').append(row);
     }
-    sourceCount();
+    sourceCount(); syncReferenceCollapse();
   }
   find('source-list').addEventListener('click', () => { sourceCount(); updateSettingsSummary(); });
-  let mcpServices = [];
-  function renderMcpSelectors() {
-    const services = mcpServices.filter(service => service.adapter === 'yashandb' && service.knowledgeBases.length);
-    find('mcp-selectors').hidden = find('source-type').value !== 'knowledge-mcp';
-    const serviceSelect = find('mcp-service'); const baseSelect = find('mcp-base');
-    const previousService = serviceSelect.value; const previousBase = baseSelect.value;
-    serviceSelect.replaceChildren();
-    services.forEach(service => { const option = document.createElement('option'); option.value = service.id; option.textContent = service.name; serviceSelect.append(option); });
-    if (services.some(service => service.id === previousService)) serviceSelect.value = previousService;
-    const selected = services.find(service => service.id === serviceSelect.value) || services[0];
-    baseSelect.replaceChildren();
-    (selected?.knowledgeBases || []).forEach(base => { const option = document.createElement('option'); option.value = base.id; option.textContent = base.name; baseSelect.append(option); });
-    if ([...baseSelect.options].some(option => option.value === previousBase)) baseSelect.value = previousBase;
-    find('source-preview').disabled = find('source-type').value === 'knowledge-mcp' && (!selected || !baseSelect.value);
-  }
   let sourceCatalog = null;
   function openSourcePreview(source) {
     const page = window.open('', '_blank');
@@ -379,60 +550,91 @@ export function openProductionWritingPage(options) {
     const doc = page.document;
     doc.title = source.title || '参考资料预览';
     const viewport = doc.createElement('meta'); viewport.name = 'viewport'; viewport.content = 'width=device-width,initial-scale=1';
-    const csp = doc.createElement('meta'); csp.httpEquiv = 'Content-Security-Policy'; csp.content = "default-src 'none'; img-src https: http:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'";
+    const csp = doc.createElement('meta'); csp.httpEquiv = 'Content-Security-Policy'; csp.content = "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'";
     const style = doc.createElement('style'); style.textContent = 'body{margin:0;color:#242a30;background:#fff;font:16px/1.65 system-ui,sans-serif}header{border-bottom:1px solid #dce1e5;padding:20px max(24px,calc((100% - 900px)/2))}h1{font-size:24px;line-height:1.3;margin:0 0 8px}small{color:#66717a;overflow-wrap:anywhere}.modes{display:flex;gap:4px;margin-top:18px}.modes button{font:inherit;border:1px solid #c9d0d5;background:#fff;padding:7px 14px;cursor:pointer}.modes button[aria-pressed=true]{background:#242a30;color:#fff}main{max-width:900px;margin:auto;padding:24px;overflow-wrap:anywhere}main h1{font-size:22px}main h2{font-size:19px;margin-top:28px}main img{display:block;max-width:100%;height:auto;margin:16px 0}main pre{background:#f5f7f8;padding:14px;overflow:auto}main pre,main code{font:14px/1.7 ui-monospace,monospace}main table{border-collapse:collapse;display:block;overflow-x:auto}main th,main td{border:1px solid #dce1e5;padding:6px 10px}main blockquote{border-left:3px solid #a4b2bb;margin:18px 0;padding-left:16px}main a{color:#09698a}#raw{white-space:pre-wrap;overflow-wrap:anywhere;background:none;padding:0}';
     doc.head.append(viewport, csp, style);
     const header = doc.createElement('header'); const title = doc.createElement('h1'); title.textContent = source.title || '参考资料';
     const origin = doc.createElement('small'); origin.textContent = [source.sourceType, source.originalUrl || source.locator].filter(Boolean).join(' · ');
+    const imageResources = Array.isArray(source.imageResources) ? source.imageResources : [];
+    const imageStatus = doc.createElement('small'); imageStatus.style.display = 'block';
+    if (imageResources.length) imageStatus.textContent = `图片：${imageResources.filter(image => image.status === 'ready').length} 张可查看，${imageResources.filter(image => image.status !== 'ready').length} 张未能读取`;
     const modes = doc.createElement('div'); modes.className = 'modes'; modes.setAttribute('role', 'group'); modes.setAttribute('aria-label', '预览模式');
     const readingButton = doc.createElement('button'); readingButton.type = 'button'; readingButton.textContent = '阅读视图'; readingButton.setAttribute('aria-pressed', 'true');
     const rawButton = doc.createElement('button'); rawButton.type = 'button'; rawButton.textContent = '原始内容'; rawButton.setAttribute('aria-pressed', 'false');
-    modes.append(readingButton, rawButton); header.append(title, origin, modes);
+    modes.append(readingButton, rawButton); header.append(title, origin, imageStatus, modes);
     const main = doc.createElement('main'); const reading = doc.createElement('article'); reading.id = 'reading'; reading.innerHTML = previewMarkdown.parse(String(source.content || ''));
+    for (const image of reading.querySelectorAll('img')) image.addEventListener('error', () => {
+      const fallback = doc.createElement('span'); fallback.textContent = `[图片未能读取：${image.alt || '图片'}]`; image.replaceWith(fallback);
+    });
     const raw = doc.createElement('pre'); raw.id = 'raw'; raw.textContent = source.content; raw.hidden = true;
     const selectMode = showRaw => { reading.hidden = showRaw; raw.hidden = !showRaw; readingButton.setAttribute('aria-pressed', String(!showRaw)); rawButton.setAttribute('aria-pressed', String(showRaw)); };
     readingButton.onclick = () => selectMode(false); rawButton.onclick = () => selectMode(true);
     main.append(reading, raw);
     doc.body.replaceChildren(header, main);
   }
-  find('source-add').onclick = () => {
-    const open = find('source-entry').hidden;
-    find('source-entry').hidden = !open;
-    find('source-add').setAttribute('aria-expanded', String(open));
-    if (open) find('source-type').focus();
-  };
+  find('source-add').onclick = openReferences;
   const sourceStatus = (message, failed = false) => {
     find('source-info').textContent = message;
+    find('source-info').hidden = !message;
     find('source-info').setAttribute('role', failed ? 'alert' : 'status');
   };
   function sourceHint() {
     const type = find('source-type').value;
     const pingcode = ['pingcode-design', 'pingcode-test'].includes(type);
+    sourcePanel.querySelectorAll('[data-reference-type]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.referenceType === type)));
+    find('reference-type-title').textContent = types.find(([value]) => value === type)?.[1] || '参考文档';
+    find('mcp-status').hidden = type !== 'knowledge-mcp';
+    find('source-locator-label').hidden = type === 'knowledge-mcp' || type === 'local-document';
+    find('source-upload').hidden = type !== 'local-document';
+    find('source-preview').hidden = type === 'knowledge-mcp' || type === 'local-document';
+    find('source-preview').disabled = busy || type === 'knowledge-mcp';
     find('source-locator').placeholder = pingcode ? 'PingCode 页面网址或空间标识/页面ID' : type === 'url' ? '输入 HTTP(S) 网页地址' : '输入文档标识或文件名';
     find('source-locator').setAttribute('aria-describedby', 'writing-source-info');
     find('source-info').id = 'writing-source-info';
     sourceStatus(pingcode ? `请填写 PingCode 页面网址或“空间标识/页面ID”。可引用空间：${sourceCatalog?.pingcodeSpaces?.join('、') || '尚未配置'}`
       : type === 'url' ? (sourceCatalog?.allowPublicWeb ? '支持公开网页、Markdown 和纯文本地址；读取后预览并确认引用。' : '支持管理员配置的网页文献来源。')
-        : type === 'test-case-library' ? '请填写测试用例库内的 Markdown、SQL 或文本文件名。' : '请选择 MCP 服务和知识库，并填写文档标识。');
+        : type === 'local-document' ? '上传后解析正文并加入引用列表；扫描PDF需先转换为可提取文字的文档。' : type === 'test-case-library' ? '请填写测试用例库内的 Markdown、SQL 或文本文件名。' : '知识库默认参与生成。Agent 根据写作要求和文档主题按预设策略检索，不需填写地址或文档标识。');
   }
-  find('source-type').addEventListener('change', () => { renderMcpSelectors(); sourceHint(); });
-  find('mcp-service').addEventListener('change', renderMcpSelectors);
+  find('source-type').addEventListener('change', sourceHint);
+  const uploadLocalSource = async file => {
+    if (!file || isLocked()) return;
+    if (sourceCatalog && sourceSnapshots.length >= sourceCatalog.maxConfirmed) { sourceStatus(`最多引用 ${sourceCatalog.maxConfirmed} 份文档，请先移除不需要的文档。`, true); return; }
+    busy = true; controls(); sourceStatus(`正在解析 ${file.name}…`);
+    try {
+      const source = await uploadHandbookAISource(context, file, percent => sourceStatus(`正在上传并解析 ${file.name}… ${percent}%`));
+      sourceSnapshots.push(source); referenceOrder = referenceOrder.filter(id => id !== source.sourceId); referenceOrder.push(source.sourceId); renderSources();
+      sourceStatus('本地文档已添加，并已排在引用优先级末尾。拖动资料卡可调整顺序。');
+      find('source-file').value = '';
+    } catch (error) { sourceStatus(`本地文档读取失败：${error.message}`, true); }
+    finally { busy = false; controls(); }
+  };
+  find('source-file').onchange = () => uploadLocalSource(find('source-file').files?.[0]);
+  find('source-upload').onclick = event => { if (event.target !== find('source-file') && !isLocked()) find('source-file').click(); };
+  find('source-upload').setAttribute('role', 'button'); find('source-upload').setAttribute('aria-label', '上传本地参考文档');
+  find('source-upload').onkeydown = event => { if (['Enter',' '].includes(event.key)) { event.preventDefault(); if (!isLocked()) find('source-file').click(); } };
+  find('source-upload').ondragover = event => { event.preventDefault(); if (!isLocked()) find('source-upload').classList.add('is-dragover'); };
+  find('source-upload').ondragleave = () => find('source-upload').classList.remove('is-dragover');
+  find('source-upload').ondrop = event => { event.preventDefault(); find('source-upload').classList.remove('is-dragover'); if (event.dataTransfer.files?.length > 1) { sourceStatus('请每次上传一份文档，添加后可继续上传。', true); return; } uploadLocalSource(event.dataTransfer.files?.[0]); };
   find('source-preview').onclick = async () => {
-    if (busy) return;
+    if (isLocked()) return;
+    if (sourceCatalog && sourceSnapshots.length >= sourceCatalog.maxConfirmed) { sourceStatus(`最多引用 ${sourceCatalog.maxConfirmed} 份文档，请先移除不需要的文档。`, true); return; }
     busy = true; controls(); sourceStatus('正在拉取参考资料…');
     try {
-      const source = await previewHandbookAISource(context, { sourceType: find('source-type').value, locator: find('source-locator').value, ...(find('source-type').value === 'knowledge-mcp' ? { mcpServiceId: find('mcp-service').value, mcpKnowledgeBaseId: find('mcp-base').value } : {}) });
-      const selected = new Set([...find('source-list').querySelectorAll('input:checked')].map(box => box.value));
-      if (!sourceSnapshots.some(item => item.sourceId === source.sourceId)) sourceSnapshots.push(source); renderSources();
-      for (const box of find('source-list').querySelectorAll('input')) box.checked = selected.has(box.value);
+      const locator = find('source-locator').value.trim();
+      if (!locator && find('source-type').value !== 'knowledge-mcp') throw new Error('请填写资料地址或文档标识');
+      const source = await previewHandbookAISource(context, { sourceType: find('source-type').value, locator });
+      if (sourceSnapshots.some(item => item.sourceId === source.sourceId)) {
+        sourceStatus('该资料已添加，请直接在列表中选择或调整优先级。', true);
+        return;
+      }
+      sourceSnapshots.push(source); referenceOrder = referenceOrder.filter(id => id !== source.sourceId); referenceOrder.push(source.sourceId); renderSources();
       sourceCount();
-      sourceStatus('资料已添加，请勾选确认引用；可在新标签页预览正文。');
-      find('source-entry').hidden = true;
-      find('source-add').setAttribute('aria-expanded', 'false');
+      sourceStatus('资料已添加，并已排在引用优先级末尾。拖动资料卡可调整顺序。');
+      find('source-locator').value = '';
     } catch (error) { sourceStatus(`资料读取失败：${error.message}${error.requestId ? `（诊断编号：${error.requestId}）` : ''}`, true); }
     finally { busy = false; controls(); }
   };
-  const host = options.host || document.getElementById('view-root');
+  const host = options.host || (embedded ? document.querySelector('.handbook-production-writing') : document.getElementById('view-root'));
   if (!host) throw new Error('写作页面缺少主内容容器');
   const previous = document.createDocumentFragment();
   const scrollOwner = document.getElementById('main-shell') || document.scrollingElement;
@@ -451,8 +653,12 @@ export function openProductionWritingPage(options) {
     writingEditor?.destroy(); writingEditor = null; writingEditorReady = false;
     document.removeEventListener('selectionchange', trackSelection); richSelection.dispose();
     window.removeEventListener('popstate', onHistory, true);
-    host.replaceChildren(previous); cleanupSearchableSelects();
-    document.body.classList.remove('immersive-writing');
+    window.removeEventListener('resize', resizeOriginal);
+    host.replaceChildren(previous);
+    host.classList.remove('has-writing-assistant');
+    document.removeEventListener('click', onWorkbenchAction, true);
+    cleanupSearchableSelects();
+    if (!embedded) document.body.classList.remove('immersive-writing');
     document.title = previousTitle;
     if (!fromHistory) {
       const url = new URL(location.href); url.searchParams.delete('writing');
@@ -469,18 +675,25 @@ export function openProductionWritingPage(options) {
     closePage(true);
   }
   window.addEventListener('popstate', onHistory, true);
+  // 工作台操作先释放会话，再交由原事件处理器执行，避免轮询泄漏或覆盖编辑状态。
+  function onWorkbenchAction(event) {
+    if (!embedded || dialog.contains(event.target)) return;
+    if (event.target.closest('[data-handbook-document], [data-handbook-mode], [data-handbook-draft-save], [data-handbook-editor-format], [data-handbook-focus-toggle], [data-handbook-directory-mode], [data-handbook-ai-action], .handbook-command-document a, [data-handbook-discard], [data-handbook-history], [data-handbook-review-current]')) closePage();
+  }
+  if (embedded) document.addEventListener('click', onWorkbenchAction, true);
   dialog.close = () => closePage();
   find('close').onclick = () => closePage();
   function editOriginal(value) {
     selectedRichRange = null;
     original = value;
     find('original').value = value;
+    resizeOriginal();
     options.onEdit?.(original);
     range = { start: 0, end: original.length }; rangeConfirmed = false;
-    resetCandidate(); rangeLabel(); status('正文已修改，请重新确认处理范围。');
+    resetCandidate(); rangeLabel(); find('execution').hidden = true;
   }
   find('original').addEventListener('input', () => {
-    editOriginal(find('original').value); writingEditor?.setValue(original);
+    editOriginal(find('original').value); if (writingEditorReady) writingEditor.setValue(original);
   });
   let selectedRichRange = null;
   function trackSelection() {
@@ -527,7 +740,7 @@ export function openProductionWritingPage(options) {
       const skill = skillCatalog.find(item => item.skillId === box.value);
       return { skillId: skill.skillId, contentDigest: skill.contentDigest };
     });
-    const payload = { modelSelection: selectedModel(), operation: find('operation').value, markdown: original, range, editVersion, templateId: usesTemplate() ? templateId || null : null, outline: options.outline, requirements: find('requirements').value, confirmedSourceIds, selectedSkills, originSnapshot: originSnapshot || { originType: 'blank', contentDigest: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855', handbookId: context.handbookId, documentId: context.documentId, branch: context.branch }, document: { handbookId: context.handbookId, documentId: context.documentId, outlineVersionId: context.outlineVersionId, branch: context.branch } };
+    const payload = { modelSelection: selectedModel(), operation: find('operation').value, markdown: original, range, editVersion, templateId: usesTemplate() ? templateId || null : null, outline: options.outline, requirements: find('requirements').value, confirmedSourceIds, referenceOrder: referenceOrder.filter(id => id === 'knowledge-mcp' || confirmedSourceIds.includes(id)), selectedSkills, originSnapshot: originSnapshot || { originType: 'blank', contentDigest: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855', handbookId: context.handbookId, documentId: context.documentId, branch: context.branch }, document: { handbookId: context.handbookId, documentId: context.documentId, outlineVersionId: context.outlineVersionId, branch: context.branch } };
     const digest = JSON.stringify(payload);
     if (!pendingStart || pendingStart.digest !== digest) pendingStart = { digest, key: globalThis.crypto?.randomUUID?.() || `ai-web-${Date.now()}-${Math.random().toString(36).slice(2)}` };
     try {
@@ -599,8 +812,10 @@ export function openProductionWritingPage(options) {
         const current = skillCatalog.find(skill => skill.skillId === box.value);
         box.checked = (previous.skillSnapshots || []).some(skill => skill.skillId === box.value && skill.contentDigest === current?.contentDigest);
       }
-      sourceSnapshots = previous.sourceSnapshots || []; renderSources();
-      for (const box of find('source-list').querySelectorAll('input')) box.checked = true;
+      sourceSnapshots = (previous.sourceSnapshots || []).filter(source => !source.automatic);
+      referenceOrder = [...(previous.referenceOrder || []), ...sourceSnapshots.map(source => source.sourceId)].filter((id, index, list) => (id === 'knowledge-mcp' || sourceSnapshots.some(source => source.sourceId === id)) && list.indexOf(id) === index);
+      if (!referenceOrder.includes('knowledge-mcp')) referenceOrder.unshift('knowledge-mcp');
+      renderSources();
       sourceCount();
       controls();
     } catch (error) { status(`恢复失败：${error.message}`); }
@@ -706,11 +921,15 @@ export function openProductionWritingPage(options) {
   loadModelCatalog();
   rangeLabel(); controls();
   while (host.firstChild) previous.append(host.firstChild);
+  if (embedded) host.classList.add('has-writing-assistant');
   host.append(dialog); enhanceSearchableSelects(dialog);
+  setWritingMode(writingMode, false);
+  window.addEventListener('resize', resizeOriginal);
   find('settings-panel').querySelector('.searchable-combobox-input').addEventListener('input', () => { if (!find('template-select').value) { templateId = ''; pendingStart = null; if (find('operation').value === 'generate') find('start').disabled = true; updateSettingsSummary(); } });
-  document.body.classList.add('immersive-writing');
+  if (!embedded) document.body.classList.add('immersive-writing');
   document.title = `${options.outline || '当前文档'} · AI 辅助写作`;
-  scrollOwner.scrollTop = 0; find('requirements').focus({ preventScroll: true });
+  if (!embedded) scrollOwner.scrollTop = 0;
+  find('requirements').focus({ preventScroll: true });
   if (options.loadEditor) options.loadEditor().then(Vditor => {
     if (closed) return;
     writingEditor = new Vditor(find('rich-editor'), {
@@ -718,7 +937,7 @@ export function openProductionWritingPage(options) {
       mode: 'wysiwyg', lang: 'zh_CN', value: original, minHeight: 450,
       cache: { enable: false }, toolbar: ['headings', 'bold', 'italic', '|', 'list', 'ordered-list', 'check', '|', 'link', 'table', '|', 'undo', 'redo'],
       input: value => editOriginal(value),
-      after: () => { if (!closed) { writingEditorReady = true; controls(); } },
+      after: () => { if (!closed) { writingEditorReady = true; if (writingEditor.getValue() !== original) writingEditor.setValue(original); controls(); } },
     });
     }).catch(() => { if (!closed) { setWritingMode('markdown'); status('富文本编辑器暂不可用，可继续使用 Markdown 正文。'); } });
   else setWritingMode('markdown');
@@ -729,13 +948,16 @@ export function openProductionWritingPage(options) {
   loadHandbookAISources(context).then(result => {
     if (closed) return;
     sourceCatalog = result;
-    mcpServices = result.mcpServices || []; renderMcpSelectors();
+    collapsedReferenceCount = result.referenceListCollapsedCount || collapsedReferenceCount; syncReferenceCollapse();
+    if (result.upload?.extensions) find('source-file').accept = result.upload.extensions.map(extension => '.' + extension).join(',');
+    const automatic = result.items.find(item => item.sourceType === 'knowledge-mcp');
+    mcpStatus(automatic?.available ? '知识库（MCP）默认引用；生成时按预设策略自动检索并记录命中。' : '知识库（MCP）默认参与检索；当前尚未配置可用服务，生成时会明确记录未配置。');
     for (const item of result.items) {
       let option = [...find('source-type').options].find(entry => entry.value === item.sourceType);
       if (!option) { option = document.createElement('option'); option.value = item.sourceType; find('source-type').append(option); }
       option.textContent = `${item.name}${item.available ? '' : '（未配置）'}`;
     }
     sourceHint();
-  }).catch(error => { if (!closed) find('source-info').textContent = `来源配置读取失败：${error.message}`; });
+  }).catch(error => { if (!closed) sourceStatus(`来源配置读取失败：${error.message}`, true); });
   return dialog;
 }

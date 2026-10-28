@@ -1,15 +1,18 @@
 import asyncio
+import base64
+import hashlib
 import sys
 import json
 import logging
 import re
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .config import PINGCODE_DIR, settings
+from .config import PINGCODE_DIR, REPOSITORY_ROOT, settings
 from .models import SourceSelection, SourceSnapshot, TreeResponse
 
 
@@ -356,13 +359,15 @@ class PingCodeService:
     def api_call(self, callback, space_key: str | None = None):
         return self._submit(self._api_call_sync, callback, space_key)
 
-    def read_reference(self, space_key: str, page_id: str) -> dict[str, Any]:
+    def read_reference(self, space_key: str, page_id: str, include_images: bool = False) -> dict[str, Any]:
         """读取已有账号可访问的单篇参考正文，不创建下载批次。"""
         if not all(re.fullmatch(r"[A-Za-z0-9_-]+", value) for value in (space_key, page_id)):
             raise ValueError("页面定位符无效")
+        if include_images:
+            return self._submit(self._read_reference_sync, space_key, page_id, True)
         return self._submit(self._read_reference_sync, space_key, page_id)
 
-    def _read_reference_sync(self, space_key: str, page_id: str) -> dict[str, Any]:
+    def _read_reference_sync(self, space_key: str, page_id: str, include_images: bool = False) -> dict[str, Any]:
         with self._lock:
             pages = self._pages_for_batch_sync(space_key, [page_id])
             if not pages:
@@ -378,7 +383,36 @@ class PingCodeService:
                 raise ValueError("页面没有可引用的正文")
             if value.get("_id") and str(value["_id"]) != canonical_id:
                 raise ValueError("页面详情与请求不一致")
-            content = ContentParser().parse_document(value["document"])
+            parser = ContentParser()
+            image_resources = []
+            image_urls = {}
+            if include_images:
+                policy_path = REPOSITORY_ROOT / "config" / "knowledge-center" / "content-rules.json"
+                policy = json.loads(policy_path.read_text(encoding="utf-8"))["productionAI"]["sources"]["images"]
+                total_bytes = 0
+                deadline = time.monotonic() + policy["timeoutMs"] / 1000
+                for index, image in enumerate(parser.extract_images(value["document"])):
+                    source_url = image.get("originUrl") or image.get("thumbUrl") or image.get("url")
+                    reference = "source-image:" + hashlib.sha256(f"{index}:{source_url}".encode()).hexdigest()
+                    image_urls[id(image)] = reference
+                    resource = {"reference": reference, "status": "failed"}
+                    image_resources.append(resource)
+                    remaining_ms = int((deadline - time.monotonic()) * 1000)
+                    if index >= policy["maxCount"] or total_bytes >= policy["maxTotalBytes"] or remaining_ms <= 0:
+                        resource["errorCode"] = "AI_SOURCE_IMAGE_LIMIT"
+                        continue
+                    try:
+                        data, content_type = self._ensure_api(space_key).download_public_image(
+                            image, max_bytes=min(policy["maxBytes"], policy["maxTotalBytes"] - total_bytes),
+                            timeout_ms=remaining_ms)
+                        if content_type not in policy["contentTypes"]:
+                            resource["errorCode"] = "AI_SOURCE_IMAGE_FORMAT"
+                            continue
+                        total_bytes += len(data)
+                        resource.update({"status": "ready", "dataBase64": base64.b64encode(data).decode("ascii")})
+                    except Exception:
+                        resource["errorCode"] = "AI_SOURCE_IMAGE_UNAVAILABLE"
+            content = parser.parse_document(value["document"], image_resolver=lambda image: image_urls.get(id(image), "") if include_images else None) if include_images else parser.parse_document(value["document"])
             if not content.strip():
                 raise ValueError("页面没有可引用的正文")
             result = {
@@ -389,6 +423,8 @@ class PingCodeService:
                 "canonicalPageId": canonical_id,
                 "originalUrl": f"{self.config.base_url.rstrip('/')}/wiki/spaces/{space_key}/pages/{page_id}",
             }
+            if include_images:
+                result["imageResources"] = image_resources
             if isinstance(value.get("version"), (str, int)):
                 result["sourceVersion"] = value["version"]
             if isinstance(value.get("updated_at"), str):

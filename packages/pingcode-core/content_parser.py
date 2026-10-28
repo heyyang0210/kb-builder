@@ -55,7 +55,7 @@ class ContentParser:
         
         # Slate.js 风格：内容在 children 数组中
         children = block.get('children', [])
-        text = self._extract_children_text(children)
+        text = self._extract_children_text(children, image_resolver)
         
         if block_type == 'paragraph':
             return text if text else ""
@@ -65,10 +65,10 @@ class ContentParser:
             return f"{'#' * level} {text}" if text else ""
         
         elif block_type == 'bulleted-list':
-            return self._parse_list_items(children, ordered=False)
+            return self._parse_list_items(children, ordered=False, image_resolver=image_resolver)
         
         elif block_type == 'numbered-list':
-            return self._parse_list_items(children, ordered=True)
+            return self._parse_list_items(children, ordered=True, image_resolver=image_resolver)
         
         elif block_type == 'list-item':
             return f"- {text}" if text else ""
@@ -91,7 +91,7 @@ class ContentParser:
             return f"![{alt}]({url})" if url else f"> [图片下载失败：{alt}]"
         
         elif block_type == 'table':
-            return self._parse_slate_table(block)
+            return self._parse_slate_table(block, image_resolver)
         
         elif block_type == 'thematic-break':
             return "---"
@@ -121,7 +121,7 @@ class ContentParser:
         visit(document)
         return images
     
-    def _extract_children_text(self, children) -> str:
+    def _extract_children_text(self, children, image_resolver=None) -> str:
         """从 Slate.js children 数组提取文本"""
         if not children:
             return ""
@@ -129,9 +129,12 @@ class ContentParser:
         texts = []
         for child in children:
             if isinstance(child, dict):
+                if child.get('type') == 'image':
+                    texts.append(self.parse_block(child, image_resolver))
+                    continue
                 # 递归处理嵌套 children（如 list-item > paragraph > text）
                 if 'children' in child:
-                    nested = self._extract_children_text(child['children'])
+                    nested = self._extract_children_text(child['children'], image_resolver)
                     if nested:
                         texts.append(nested)
                 else:
@@ -150,27 +153,27 @@ class ContentParser:
         
         return ''.join(texts)
     
-    def _parse_list_items(self, children, ordered=False) -> str:
+    def _parse_list_items(self, children, ordered=False, image_resolver=None) -> str:
         """解析列表项"""
         lines = []
         for i, child in enumerate(children, 1):
             if isinstance(child, dict):
                 if child.get('type') == 'list-item':
                     item_children = child.get('children', [])
-                    text = self._extract_children_text(item_children)
+                    text = self._extract_children_text(item_children, image_resolver)
                     if ordered:
                         lines.append(f"{i}. {text}")
                     else:
                         lines.append(f"- {text}")
                 else:
-                    text = self._extract_children_text(child.get('children', [child]))
+                    text = self._extract_children_text(child.get('children', [child]), image_resolver)
                     if ordered:
                         lines.append(f"{i}. {text}")
                     else:
                         lines.append(f"- {text}")
         return '\n'.join(lines)
     
-    def _parse_slate_table(self, block: dict) -> str:
+    def _parse_slate_table(self, block: dict, image_resolver=None) -> str:
         """解析 Slate.js 表格"""
         children = block.get('children', [])
         if not children:
@@ -183,7 +186,7 @@ class ContentParser:
                 cell_texts = []
                 for cell in cells:
                     if isinstance(cell, dict):
-                        text = self._extract_children_text(cell.get('children', [cell]))
+                        text = self._extract_children_text(cell.get('children', [cell]), image_resolver)
                         cell_texts.append(text)
                     else:
                         cell_texts.append(str(cell))

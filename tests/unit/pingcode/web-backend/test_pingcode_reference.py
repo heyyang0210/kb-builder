@@ -1,4 +1,5 @@
 import threading
+import base64
 import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -73,12 +74,36 @@ class PingCodeReferenceTest(unittest.TestCase):
         self.assertNotIn("sourceVersion", result)
         self.assertNotIn("sourceUpdatedAt", result)
 
+    def test_images_are_returned_as_internal_references_without_signed_urls(self):
+        service = self.service()
+        image = {"type": "image", "name": "架构图", "originUrl": "https://pingcode.example/atlas/files/public/asset?token=secret"}
+        service.api.get_page.return_value["data"]["value"]["document"].append(image)
+        service.api.download_public_image.return_value = (bytes([137, 80, 78, 71, 13, 10, 26, 10]), "image/png")
+        result = service.read_reference("space1", "page1", True)
+        self.assertIn("![架构图](source-image:", result["content"])
+        self.assertNotIn("secret", str(result))
+        self.assertEqual(base64.b64encode(bytes([137, 80, 78, 71, 13, 10, 26, 10])).decode(), result["imageResources"][0]["dataBase64"])
+        service.api.download_public_image.assert_called_once()
+
+    def test_image_failure_keeps_reference_and_body(self):
+        service = self.service()
+        service.api.get_page.return_value["data"]["value"]["document"].append({"type": "image", "name": "缺失图", "originUrl": "https://pingcode.example/atlas/files/public/missing"})
+        service.api.download_public_image.side_effect = RuntimeError("upstream-secret")
+        result = service.read_reference("space1", "page1", True)
+        self.assertIn("真实解析正文", result["content"])
+        self.assertIn("![缺失图](source-image:", result["content"])
+        self.assertEqual("failed", result["imageResources"][0]["status"])
+        self.assertNotIn("upstream-secret", str(result))
+
     def test_api_contract_and_redacted_errors(self):
         client = TestClient(app)
         with patch.object(pingcode, "read_reference", return_value={"content": "正文", "spaceKey": "space1", "pageId": "page1"}):
             response = client.get("/api/pingcode/spaces/space1/pages/page1/reference")
         self.assertEqual(200, response.status_code)
         self.assertEqual("正文", response.json()["content"])
+        with patch.object(pingcode, "read_reference", return_value={"content": "正文"}) as reader:
+            self.assertEqual(200, client.get("/api/pingcode/spaces/space1/pages/page1/reference?include_images=true").status_code)
+            reader.assert_called_once_with("space1", "page1", True)
         for exception, status in [(KeyError("secret-detail"), 404), (ValueError("secret-detail"), 422), (RuntimeError("secret-detail"), 502)]:
             with patch.object(pingcode, "read_reference", side_effect=exception):
                 response = client.get("/api/pingcode/spaces/space1/pages/page1/reference")

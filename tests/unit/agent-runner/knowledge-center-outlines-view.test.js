@@ -11,7 +11,7 @@ describe('知识中心大纲管理前端契约', () => {
   const view = () => read('apps/knowledge-center-web/frontend/knowledge-center/modules/outlines/view.js');
   test('大纲详细设计归档到知识中心建设平台', () => {
     expect(fs.existsSync(path.join(root, '.codex/知识中心建设平台/03-详细设计/知识中心-大纲管理-详细设计文档.md'))).toBe(true);
-    expect(fs.existsSync(path.join(root, 'docs/agent-runner/modules/outline-management/development/44-知识中心大纲统一解析展示与管理员增删权限设计.md'))).toBe(false);
+    expect(fs.existsSync(path.join(root, 'docs'))).toBe(false);
   });
   test('列表产品与知识资产一致且只保留四个必要字段', () => {
     const source = view();

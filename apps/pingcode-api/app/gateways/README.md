@@ -20,4 +20,4 @@
 
 - token 仅保存在适配器实例中，仅在非空时发送 `X-Internal-Token`；
 - 不在日志、返回值或主动构造的异常中输出 token、API Key、Cookie 或完整请求正文；
-- 新增端点或认证方式前，必须先更新 `docs/21-TrainingService分层重构详细设计.md`。
+- 新增端点或认证方式前，必须先更新 `.codex/知识中心建设平台/03-详细设计/知识中心-资料加工-TrainingService分层-详细设计文档.md`。

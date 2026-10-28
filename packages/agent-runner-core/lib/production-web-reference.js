@@ -39,20 +39,20 @@ async function resolveTarget(url, config, lookup = dns.lookup) {
   return addresses[0];
 }
 
-function receive(url, address, signal) {
+function receive(url, address, signal, accept) {
   return new Promise((resolve, reject) => {
     const request = (url.protocol === 'https:' ? https : http).get(url, {
       signal, agent: false,
       // Pin the checked DNS result, while retaining the URL host for TLS and Host.
       lookup: (_host, options, callback) => options.all
         ? callback(null, [address]) : callback(null, address.address, address.family),
-      headers: { Accept: 'text/html, text/markdown, text/plain', 'Accept-Encoding': 'gzip, deflate, br' },
+      headers: { Accept: accept, 'Accept-Encoding': 'gzip, deflate, br' },
     }, resolve);
     request.on('error', reject);
   });
 }
 
-async function readWebReference(locator, config) {
+async function readRemoteResource(locator, config, acceptedTypes) {
   const signal = AbortSignal.timeout(config.timeoutMs);
   let url;
   try { url = new URL(locator); } catch (_) { throw error('AI_SOURCE_URL_INVALID', '请输入有效的网页地址'); }
@@ -68,7 +68,7 @@ async function readWebReference(locator, config) {
       if (signal.aborted) { abort(); return; }
       resolveTarget(url, config).then(resolve, reject).finally(() => signal.removeEventListener('abort', abort));
     });
-    const response = await receive(url, address, signal);
+    const response = await receive(url, address, signal, acceptedTypes.join(', '));
     const status = response.statusCode;
     if ([301, 302, 303, 307, 308].includes(status)) {
       response.destroy();
@@ -82,7 +82,7 @@ async function readWebReference(locator, config) {
     }
     const contentType = response.headers['content-type'] || '';
     const type = contentType.split(';')[0].trim().toLowerCase();
-    if (!['text/html', 'application/xhtml+xml', 'text/markdown', 'text/x-markdown', 'text/plain'].includes(type)) {
+    if (!acceptedTypes.includes(type)) {
       response.destroy();
       throw error('AI_SOURCE_FORMAT_UNSUPPORTED', '支持 HTML 网页、Markdown 和纯文本资料', 415);
     }
@@ -104,24 +104,39 @@ async function readWebReference(locator, config) {
         chunks.push(chunk);
       }
     } finally { response.destroy(); decoder?.destroy(); }
+    return { data: Buffer.concat(chunks), contentType, type, url: url.href };
+  }
+}
+
+async function readWebReference(locator, config) {
+    const { data, contentType, type, url: finalURL } = await readRemoteResource(locator, config,
+      ['text/html', 'application/xhtml+xml', 'text/markdown', 'text/x-markdown', 'text/plain']);
+    const url = new URL(finalURL);
     const charset = contentType.match(/charset\s*=\s*["']?([^;"'\s]+)/i)?.[1] || 'utf-8';
     let raw;
-    try { raw = new TextDecoder(charset).decode(Buffer.concat(chunks)); }
+    try { raw = new TextDecoder(charset).decode(data); }
     catch (_) { throw error('AI_SOURCE_FORMAT_UNSUPPORTED', '网页字符编码无法识别', 415); }
     if (!['text/html', 'application/xhtml+xml'].includes(type)) return { content: raw, locator: url.href, originalUrl: locator };
     const $ = cheerio.load(raw);
+    let imageBase = url;
+    try { imageBase = new URL($('base[href]').first().attr('href') || '', url); } catch (_) {}
+    $('img').each((_, el) => {
+      const image = $(el);
+      const lazy = image.attr('data-src') || image.attr('data-original') || image.attr('data-lazy-src');
+      const set = (image.attr('data-srcset') || image.attr('srcset') || '').split(',')[0].trim().split(/\s+/)[0];
+      image.attr('src', lazy || image.attr('src') || set || '');
+    });
     const title = $('title').first().text().trim() || $('h1').first().text().trim();
     $('script, style, noscript, template, nav, footer, header, aside, form, iframe, svg, [hidden], [aria-hidden="true"]').remove();
     const main = $('main, article, [role="main"]').first();
     if (main.length) $('body').empty().append(main);
     const content = new HtmlAdapter().htmlToMarkdown($, { imageResolver: source => {
       try {
-        const image = new URL(source, url);
+        const image = new URL(source, imageBase);
         return ['http:', 'https:'].includes(image.protocol) && !image.username && !image.password ? image.href : null;
       } catch (_) { return null; }
     } });
     if (!content.trim()) throw error('AI_SOURCE_EMPTY', '网页没有可提取正文，可能需要登录或动态加载', 422);
     return { title, content, locator: url.href, originalUrl: locator };
-  }
 }
-module.exports = { readWebReference, resolveTarget, isPublicAddress };
+module.exports = { readWebReference, readRemoteResource, resolveTarget, isPublicAddress };

@@ -16,13 +16,13 @@ class FakePage:
         self.urls = []
         self.request = self
 
-    def get(self, url):
+    def get(self, url, **_kwargs):
         self.urls.append(url)
         result = self.results.pop(0)
         return SimpleNamespace(
             ok=result["ok"],
             status=result["status"],
-            headers={"content-type": result.get("contentType", "")},
+            headers={"content-type": result.get("contentType", ""), "location": result.get("location", "")},
             body=lambda: bytes(result.get("data", [])),
         )
 
@@ -56,6 +56,12 @@ class ContentParserImageTests(unittest.TestCase):
         markdown = parser.parse_document(self.document, image_resolver=lambda _image: None)
         self.assertIn("图片下载失败：架构图.png", markdown)
         self.assertEqual(parser.extract_images(self.document), [self.document[1]])
+
+    def test_nested_image_uses_same_resolver(self):
+        image = self.document[1]
+        document = [{"type": "paragraph", "children": [{"text": "说明 "}, image]}]
+        markdown = ContentParser().parse_document(document, image_resolver=lambda _image: "source-image:internal")
+        self.assertIn("![架构图.png](source-image:internal)", markdown)
 
 
 class PublicImageDownloadTests(unittest.TestCase):
@@ -105,6 +111,26 @@ class PublicImageDownloadTests(unittest.TestCase):
         self.assertEqual(data, bytes([137]))
         self.assertEqual(token.call_count, 2)
         self.assertIn("token=new", page.urls[1])
+
+    def test_same_origin_public_asset_redirect_is_followed(self):
+        page = FakePage([
+            {"ok": False, "status": 302, "location": "https://pingcode.example/pc-public/asset?signature=short"},
+            {"ok": True, "status": 200, "contentType": "image/png", "data": [137, 80, 78, 71, 13, 10, 26, 10]},
+        ])
+        client = PingCodeAPIClient(page, "https://pingcode.example")
+        with patch.object(client, "get_public_image_token", return_value="short-token"):
+            data, content_type = client.download_public_image({"originUrl": "https://pingcode.example/atlas/files/public/asset"})
+        self.assertEqual(content_type, "image/png")
+        self.assertEqual(len(data), 8)
+        self.assertEqual(len(page.urls), 2)
+
+    def test_cross_origin_image_redirect_is_rejected(self):
+        page = FakePage([{"ok": False, "status": 302, "location": "https://other.example/pc-public/asset"}])
+        client = PingCodeAPIClient(page, "https://pingcode.example")
+        with patch.object(client, "get_public_image_token", return_value="short-token"):
+            with self.assertRaisesRegex(ValueError, "超出 PingCode 图片范围"):
+                client.download_public_image({"originUrl": "https://pingcode.example/atlas/files/public/asset"})
+        self.assertEqual(len(page.urls), 1)
 
 
 class AttachmentDownloadTests(unittest.TestCase):

@@ -103,6 +103,15 @@ describe('GitLab same-origin HTTP API', () => {
       body: JSON.stringify({ connectionId: connection.id, defaultBranch: 'master', enabledBranches: ['master'], zhPaths: ['doc/产品文档'], enPaths: [] })
     });
     expect(mapped.status).toBe(200);
+    const management = await fetch(`${baseUrl}/knowledge-center/api/gitlab/mappings/DB-001`, { headers: { cookie: readerCookie } });
+    expect(management.status).toBe(403);
+    const production = await fetch(`${baseUrl}/knowledge-center/api/gitlab/mappings/DB-001?view=production`, { headers: { cookie: readerCookie } });
+    expect(production.status).toBe(200);
+    const projection = (await production.json()).data;
+    expect(projection).toMatchObject({ connectionId: connection.id, defaultBranch: 'master', enabledBranches: ['master'] });
+    expect(Object.keys(projection).sort()).toEqual(['handbookId', 'connectionId', 'defaultBranch', 'enabledBranches', 'zhPaths', 'enPaths'].sort());
+    const unknown = await fetch(`${baseUrl}/knowledge-center/api/gitlab/mappings/missing?view=production`, { headers: { cookie: readerCookie } });
+    expect(unknown.status).toBe(404);
     const access = await fetch(`${baseUrl}/knowledge-center/api/gitlab/handbooks/DB-001/access-status`, { headers: { cookie: readerCookie } });
     expect(access.status).toBe(200);
     await expect(access.json()).resolves.toMatchObject({ data: { authMode: 'user_oauth', connected: false, canRead: false, nextAction: 'connect_gitlab' } });

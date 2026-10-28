@@ -44,6 +44,27 @@ test.describe('手册级文档生成页面 P0/P1', () => {
     await login(page.context().request);
   });
 
+  test('P0：运行服务来源目录与生成设置一致，MCP 默认引用且无需地址', async ({ page }, testInfo) => {
+    const outline = await handbookFixture(page.context().request, testInfo);
+    if (!outline) return;
+    const names = ['网页来源', 'Pingcode设计文档', 'Pingcode测试文档', '知识库（MCP）', '测试用例集'];
+    await page.goto(`${baseUrl}/knowledge-center/production/handbook/${encodeURIComponent(outline.handbookId)}`, { waitUntil: 'domcontentloaded' });
+    const sourceResponse = page.waitForResponse(response => response.url().includes('/ai-sources?') && response.request().method() === 'GET');
+    await page.getByRole('button', { name: 'AI 辅助写作', exact: true }).click();
+    const response = await sourceResponse;
+    expect(response.ok()).toBeTruthy();
+    const catalog = (await response.json()).data;
+    expect(catalog.items.map(item => item.name)).toEqual(names);
+    expect(catalog.items.find(item => item.sourceType === 'knowledge-mcp').automatic).toBe(true);
+    await page.locator('[data-ai-settings-open]').click();
+    await page.locator('[data-ai-source-add]').click();
+    await expect(page.locator('[data-ai-source-type] option')).toHaveText(names.map((name, index) => `${name}${catalog.items[index].available ? '' : '（未配置）'}`));
+    await page.locator('[data-ai-source-type]').selectOption('knowledge-mcp');
+    await expect(page.locator('[data-ai-source-locator]')).toBeHidden();
+    await expect(page.locator('[data-ai-source-preview]')).toBeDisabled();
+    await expect(page.locator('[data-ai-mcp-status]')).toContainText('默认');
+  });
+
   test('P0：局域网 HTTP 缺少 Web Crypto 时仍可生成正确基线摘要', async ({ page }) => {
     await page.goto(`${baseUrl}/knowledge-center/`);
     const digests = await page.evaluate(async () => {
@@ -116,16 +137,8 @@ test.describe('手册级文档生成页面 P0/P1', () => {
     await page.keyboard.press('Escape');
     await expect(page.getByText('预览', { exact: true })).toBeVisible();
     await expect(page.getByText('编辑', { exact: true })).toBeVisible();
-    await expect(page.getByText(/尚未形成共享草稿|共享草稿 ·/)).toBeVisible();
-
-    // 底部评审区应在页面流中，不得固定遮挡正文工作区。
-    const tray = page.locator('.handbook-review-tray');
-    const editor = page.locator('.handbook-production-editor');
-    const trayBox = await tray.boundingBox();
-    const editorBox = await editor.boundingBox();
-    expect(trayBox).toBeTruthy();
-    expect(editorBox).toBeTruthy();
-    expect(trayBox.y).toBeGreaterThanOrEqual(editorBox.y);
+    await expect(page.locator('.handbook-review-tray, [data-handbook-add-chapter]')).toHaveCount(0);
+    await expect(page.locator('[data-handbook-review-selection-dialog]')).not.toBeVisible();
   });
 
   test('P0：没有历史草稿时按正常空状态展示且不出现历史入口', async ({ page }, testInfo) => {
@@ -290,17 +303,11 @@ test.describe('手册级文档生成页面 P0/P1', () => {
     expect(Math.abs(formatBox.y - commandBox.height)).toBeLessThanOrEqual(2);
     expect(boldBox.y).toBeGreaterThanOrEqual(formatBox.y);
     expect(boldBox.y + boldBox.height).toBeLessThanOrEqual(formatBox.y + formatBox.height + 1);
-    expect(canvasBox.width).toBeLessThanOrEqual(861);
+    const writingBox = await page.locator('.handbook-production-writing').boundingBox();
+    expect(canvasBox.width).toBeGreaterThan(writingBox.width * .9);
+    expect(canvasBox.width).toBeLessThanOrEqual(writingBox.width);
 
-    const reviewTray = page.locator('.handbook-review-tray');
-    // 真实保存用例会留下共享草稿，有草稿时评审区按业务规则默认展开。
-    // 先显式收起以建立交互前提，再验证展开/收起，不依赖共享fixture初始状态。
-    if (await reviewTray.getAttribute('open') !== null) await reviewTray.locator('summary').click();
-    await expect(reviewTray).not.toHaveAttribute('open', '');
-    await reviewTray.locator('summary').click();
-    await expect(reviewTray).toHaveAttribute('open', '');
-    await reviewTray.locator('summary').click();
-    await expect(reviewTray).not.toHaveAttribute('open', '');
+    await expect(page.locator('.handbook-review-tray')).toHaveCount(0);
 
     for (const width of [1024, 768, 390]) {
       await page.setViewportSize({ width, height: 844 });
@@ -318,7 +325,7 @@ test.describe('手册级文档生成页面 P0/P1', () => {
     const assistant = page.locator('.handbook-assistant-panel');
     await expect(directory).toBeHidden();
     await expect(assistant).toBeHidden();
-    await expect(page.locator('.handbook-review-tray')).not.toHaveAttribute('open');
+    await expect(page.locator('.handbook-review-tray')).toHaveCount(0);
     await page.getByRole('button', { name: '目录', exact: true }).click();
     await expect(directory).toBeVisible();
     await page.getByRole('button', { name: '只看我负责', exact: true }).click();

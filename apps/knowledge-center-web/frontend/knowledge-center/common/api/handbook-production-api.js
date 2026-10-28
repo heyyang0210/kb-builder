@@ -53,6 +53,21 @@ export const previewHandbookAISource = (context, body) => request(sourcePath(con
   method: 'POST', headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({ ...body, outlineVersionId: context.outlineVersionId, branch: context.branch }),
 });
+export const uploadHandbookAISource = (context, file, onProgress) => new Promise((resolve, reject) => {
+  const xhr = new XMLHttpRequest();
+  xhr.open('POST', `${sourcePath(context)}/uploads?${query(context)}`);
+  xhr.responseType = 'json'; xhr.setRequestHeader('Accept', 'application/json');
+  xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+  xhr.setRequestHeader('X-File-Name', encodeURIComponent(file.name));
+  xhr.upload.onprogress = event => { if (event.lengthComputable) onProgress?.(Math.round(event.loaded * 100 / event.total)); };
+  xhr.onload = () => {
+    const payload = xhr.response;
+    if (xhr.status >= 200 && xhr.status < 300 && payload?.success !== false) resolve(payload?.data ?? payload);
+    else reject(Object.assign(new Error(payload?.error?.message || `上传失败（HTTP ${xhr.status}）`), { status: xhr.status, code: payload?.error?.code, requestId: xhr.getResponseHeader('x-request-id') }));
+  };
+  xhr.onerror = () => reject(Object.assign(new Error('本地文档上传失败，请检查网络后重试'), { code: 'AI_SOURCE_UPLOAD_FAILED' }));
+  xhr.send(file);
+});
 export const actHandbookAI = (context, jobId, action, body = {}) => request(aiPath(context, `/${encodeURIComponent(jobId)}/${action}`), {
   method: 'POST', headers: { 'Content-Type': 'application/json', ...(action === 'retry' ? { 'Idempotency-Key': body.idempotencyKey || idempotencyKey() } : {}) },
   body: JSON.stringify({ ...body, outlineVersionId: context.outlineVersionId, branch: context.branch }),

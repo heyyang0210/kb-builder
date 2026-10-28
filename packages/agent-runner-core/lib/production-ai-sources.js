@@ -5,10 +5,13 @@ const { MCPClient } = require('./tools/mcp-client');
 const { mcpServices, resolveMcpService } = require('./mcp-services');
 
 // Only server-controlled configuration chooses endpoints and credentials.
-function createProductionAISources({ store, context, contextKey, actor, requireCapability, ErrorType, rules, now, loadMCPConfig, pingcodeBaseURL, repositoryRoot }) {
+function createProductionAISources({ store, context, contextKey, actor, requireCapability, ErrorType, rules, now, loadMCPConfig, pingcodeBaseURL, repositoryRoot, sourceImageRoot }) {
   const fail = (code, message, status = 400) => { throw new ErrorType(code, message, status); };
   const settings = () => rules().sources;
+  const defaultSources = () => JSON.parse(fs.readFileSync(require('./config-registry').CONFIG_PATHS.contentRules, 'utf8')).productionAI.sources;
+  const uploadPolicy = () => settings().upload || defaultSources().upload;
   const mcpConfig = loadMCPConfig || (() => require('./config-manager').getMCPConfig());
+  const images = require('./source-image-resources').createSourceImageResources({ root: sourceImageRoot });
 
   async function list(input, session) {
     requireCapability(session, 'canEdit'); context(input);
@@ -18,13 +21,17 @@ function createProductionAISources({ store, context, contextKey, actor, requireC
       knowledgeBases: (service.knowledgeBases || []).filter(kb => kb.enabled !== false).map(kb => ({ id: kb.id, name: kb.name })),
     }));
     return {
-      items: [{ sourceType: 'url', name: '网页文献', available: !!settings().allowPublicWeb || settings().urlOrigins.length > 0 },
-        { sourceType: 'knowledge-mcp', name: '知识库文档（MCP）', available: services.some(service => service.adapter === 'yashandb' && service.knowledgeBases.length) || !!config?.server_url },
-        { sourceType: 'pingcode-design', name: '设计文档（PingCode）', available: !!pingcodeBaseURL && !!settings().pingcodeSpaces?.length },
-        { sourceType: 'pingcode-test', name: '测试文档（PingCode）', available: !!pingcodeBaseURL && !!settings().pingcodeSpaces?.length },
-        { sourceType: 'test-case-library', name: '测试用例文档', available: testCaseRoot() !== null }],
+      items: [{ sourceType: 'url', name: '网页来源', available: !!settings().allowPublicWeb || settings().urlOrigins.length > 0 },
+        { sourceType: 'pingcode-design', name: 'Pingcode设计文档', available: !!pingcodeBaseURL && !!settings().pingcodeSpaces?.length },
+        { sourceType: 'pingcode-test', name: 'Pingcode测试文档', available: !!pingcodeBaseURL && !!settings().pingcodeSpaces?.length },
+        { sourceType: 'knowledge-mcp', name: '知识库（MCP）', automatic: true, available: services.some(service => service.adapter === 'yashandb' && (service.knowledgeBases.length || !Array.isArray(config.services))) },
+        { sourceType: 'test-case-library', name: '测试用例集', available: testCaseRoot() !== null },
+        { sourceType: 'local-document', name: '本地文档', available: true }],
+      upload: { extensions: uploadPolicy().extensions, maxBytes: uploadPolicy().maxBytes },
+      maxConfirmed: settings().maxConfirmed, referenceListCollapsedCount: settings().referenceListCollapsedCount || defaultSources().referenceListCollapsedCount,
       urlOrigins: settings().urlOrigins, allowPublicWeb: !!settings().allowPublicWeb,
       pingcodeSpaces: settings().pingcodeSpaces || [], mcpServices: services,
+      mcpRetrieval: { automatic: true, version: settings().mcpRetrieval?.version || null },
     };
   }
 
@@ -91,12 +98,14 @@ function createProductionAISources({ store, context, contextKey, actor, requireC
     if (!settings().pingcodeSpaces?.includes(spaceKey)) fail('AI_SOURCE_SCOPE_DENIED', '该 PingCode 空间不在已配置的引用范围内', 403);
     if (!pingcodeBaseURL) fail('AI_SOURCE_NOT_CONFIGURED', '请先配置 PingCode 资料服务', 503);
     const url = new URL(`/api/pingcode/spaces/${encodeURIComponent(spaceKey)}/pages/${encodeURIComponent(pageId)}/reference`, pingcodeBaseURL);
+    url.searchParams.set('include_images', 'true');
     diagnostic.stage = 'pingcode_fetch';
     const response = await fetch(url, { redirect: 'error', signal: AbortSignal.timeout(settings().timeoutMs), headers: { Accept: 'application/json' } });
     diagnostic.upstreamStatus = response.status;
     diagnostic.stage = 'pingcode_response';
     // JSON escaping can expand Markdown; bound the transport and the extracted content separately.
-    const raw = await readBody(response, settings().maxBytes * 6 + 8192);
+    const imagePolicy = require('./source-image-resources').policyFor(settings());
+    const raw = await readBody(response, settings().maxBytes * 6 + Math.ceil(imagePolicy.maxTotalBytes / 3) * 4 + imagePolicy.maxCount * 1024);
     if (!response.ok) fail('AI_SOURCE_UNAVAILABLE', 'PingCode 文档读取失败，请检查页面、配置及访问权限', 502);
     const document = JSON.parse(raw);
     if (document.spaceKey !== spaceKey || document.pageId !== pageId || typeof document.content !== 'string') {
@@ -105,6 +114,8 @@ function createProductionAISources({ store, context, contextKey, actor, requireC
     return {
       content: document.content, title: typeof document.title === 'string' ? document.title : pageId,
       locator: `${spaceKey}/${pageId}`, spaceKey, pageId,
+      authenticatedImages: true,
+      imageResources: Array.isArray(document.imageResources) ? document.imageResources : [],
       ...(originalUrl ? { originalUrl } : typeof document.originalUrl === 'string' ? { originalUrl: document.originalUrl } : {}),
       ...(['string', 'number'].includes(typeof document.sourceVersion) ? { sourceVersion: document.sourceVersion } : {}),
       ...(typeof document.sourceUpdatedAt === 'string' ? { sourceUpdatedAt: document.sourceUpdatedAt } : {}),
@@ -186,12 +197,65 @@ function createProductionAISources({ store, context, contextKey, actor, requireC
       ...document, contentDigest: crypto.createHash('sha256').update(document.content).digest('hex'),
       fetchedAt: new Date(now()).toISOString(), createdBy: actor(session), context: ctx, contextKey: contextKey(ctx),
     };
+    diagnostic.stage = 'image_materialization';
+    const hosted = await images.materialize(document, snapshot, settings());
+    delete snapshot.authenticatedImages;
+    Object.assign(snapshot, hosted, { contentDigest: crypto.createHash('sha256').update(hosted.content).digest('hex') });
+    if (Buffer.byteLength(snapshot.content) > settings().maxBytes) fail('AI_SOURCE_TOO_LARGE', '引用资料超过允许的大小', 413);
+    diagnostic.imageReady = hosted.imageResources.filter(image => image.status === 'ready').length;
+    diagnostic.imageFailed = hosted.imageResources.length - diagnostic.imageReady;
     diagnostic.stage = 'snapshot_persistence';
     return store.transaction(state => {
       state.aiSources ||= {};
       state.aiSources[snapshot.sourceId] = snapshot;
       return structuredClone(snapshot);
     });
+  }
+
+  async function previewUpload(input, buffer, fileName, mimeType, session, diagnostic = {}) {
+    requireCapability(session, 'canEdit');
+    const ctx = context(input);
+    const config = settings();
+    const policy = uploadPolicy();
+    if (!Buffer.isBuffer(buffer) || !buffer.length) fail('AI_SOURCE_EMPTY', '本地文档没有可读取的内容', 422);
+    if (buffer.length > policy.maxBytes) fail('AI_SOURCE_TOO_LARGE', '本地文档超过允许的大小', 413);
+    const name = path.basename(String(fileName || '').replace(/\\/g, '/')).replace(/[\x00-\x1f]/g, '').slice(0, config.maxLocatorChars);
+    const extension = path.extname(name).toLowerCase().slice(1);
+    if (!policy.extensions.includes(extension)) fail('AI_SOURCE_TYPE_INVALID', '不支持此文件格式，请选择上传区域提示的文档格式');
+    let document;
+    try { document = await require('./production-ai-upload-parser').parseUpload(buffer, extension, policy, require('./source-image-resources').policyFor(config)); }
+    catch (_) { fail('AI_SOURCE_PARSE_FAILED', '本地文档解析失败，请检查文件格式、编码、大小或是否损坏', 422); }
+    let content = document.content;
+    content = String(content || '').trim();
+    if (!content) fail('AI_SOURCE_EMPTY', '本地文档没有可引用的正文', 422);
+    if (Buffer.byteLength(content) > config.maxBytes) fail('AI_SOURCE_TOO_LARGE', '解析后的文档超过允许的大小', 413);
+    const snapshot = {
+      sourceId: `source-${crypto.randomUUID()}`, sourceType: 'local-document', title: name,
+      locator: name, ...document, content, contentDigest: crypto.createHash('sha256').update(content).digest('hex'),
+      fetchedAt: new Date(now()).toISOString(), createdBy: actor(session), context: ctx, contextKey: contextKey(ctx),
+      mimeType: String(mimeType || 'application/octet-stream'), fileName: name,
+    };
+    const hosted = await images.materialize({ ...document, content, locator: name, authenticatedImages: true }, snapshot, config);
+    Object.assign(snapshot, hosted, { contentDigest: crypto.createHash('sha256').update(hosted.content).digest('hex') });
+    delete snapshot.authenticatedImages;
+    if (Buffer.byteLength(snapshot.content) > config.maxBytes) fail('AI_SOURCE_TOO_LARGE', '解析后的文档超过允许的大小', 413);
+    return store.transaction(state => { state.aiSources ||= {}; state.aiSources[snapshot.sourceId] = snapshot; return structuredClone(snapshot); });
+  }
+
+  function readImage(input, session) {
+    requireCapability(session, 'canRead');
+    const ctx = context(input); const key = contextKey(ctx);
+    const state = store.read();
+    const owned = Object.values(state.aiSources || {}).filter(source => source.contextKey === key && source.createdBy.id === actor(session).id);
+    const automatic = Object.values(state.aiJobs || {}).filter(job => job.contextKey === key && job.createdBy?.id === actor(session).id)
+      .flatMap(job => job.sourceSnapshots || []);
+    const revisions = state.drafts?.[key]?.revisions || [];
+    const shared = revisions.flatMap(revision => revision.generationMetadata?.sourceSnapshots || []);
+    const resource = [...owned, ...automatic, ...shared].filter(source => source.contextKey === key)
+      .flatMap(source => source.imageResources || []).find(item => item.status === 'ready' && item.assetId === input.assetId);
+    if (!resource) fail('AI_SOURCE_IMAGE_NOT_FOUND', '当前文档下不存在可访问的图片', 404);
+    try { return images.read(resource); }
+    catch (_) { fail('AI_SOURCE_IMAGE_NOT_FOUND', '图片快照不可用，请重新读取资料', 404); }
   }
 
   function confirmed(state, input, session) {
@@ -213,7 +277,17 @@ function createProductionAISources({ store, context, contextKey, actor, requireC
       return { ...structuredClone(source), priority: index + 1 };
     });
   }
-  return { list, preview, confirmed };
+  async function retrieveAutomatic(job) {
+    const policy = job.mcpRetrievalPolicy;
+    if (!policy) return { snapshots: [], retrieval: { status: 'not_configured', attempts: [] } };
+    const outcome = await require('./production-ai-mcp-retrieval').retrieve(job, policy, await mcpConfig(), settings().maxBytes, now);
+    for (const snapshot of outcome.snapshots) {
+      const hosted = await images.materialize(snapshot, snapshot, settings());
+      Object.assign(snapshot, hosted, { contentDigest: crypto.createHash('sha256').update(hosted.content).digest('hex') });
+    }
+    return outcome;
+  }
+  return { list, preview, previewUpload, uploadPolicy, confirmed, retrieveAutomatic, readImage };
 }
 
 module.exports = { createProductionAISources };

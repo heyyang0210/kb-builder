@@ -36,6 +36,8 @@
 
 `productionAI.sources` 配置引用读取上限（超时、正文大小、单次确认数量、重定向次数）。`allowPublicWeb=true` 允许读取公开 HTTP(S) 网页、Markdown 和纯文本，HTML 提取正文；每次重定向重新检查地址，拒绝内网、回环和保留地址。`urlOrigins` 是运维显式授权的来源列表，可供内部文档站点使用，不再限制公开网址。登录态、需要 JavaScript 渲染的页面可能无法读取。浏览器不传入 MCP 地址或凭证，知识库引用复用 `service.json#/mcp`。
 
+`productionAI.sources.images` 统一控制来源图片数量、单图/总字节、总下载时限和格式。网页图片经受控 HTTP 读取，PingCode 图片由其登录会话下载，再以内容摘要托管在 runtime；平台预览只访问同源、按手册和文档授权的图片路由。图片失败保留正文及替代文字，旧来源需重新读取才能获得托管图片。
+
 ### 工作台续写 Skill
 
 `product.json#/skills` 登记 `continue-technical-document` 资源；`content-rules.json#/productionAI.skills` 配置中文说明和适用操作，`maxSelectedSkills` 限制选用数量，`skillPrompt` 配置基础约束。新增 Skill 按既有能力包流程加载后可选；生成请求使用 ID 和预览摘要，内容变化要求重新确认。指令来自 knowledge，不执行任意脚本；既有生成策略不变。
@@ -76,3 +78,22 @@
 GPT 服务模型目录按2026-10-26用户提供的网关截图追加文本模型：`gpt-5.5`、`gpt-5.6-luna`、`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-6-astra`、`gpt-6-luna`、`gpt-6-sol`；保留原有模型及默认选择。此列表是网关标识，非官方定价或可调用性验证。`gpt-image-2`、`BAAI/bge-m3`不加入当前文本写作服务目录。测试模型下拉框直接读取对应服务的 `models[]`，无需在前端另写清单。
 
 AI 写作页面统一显示文档生成（generate）、内容修订（polish）、内容续写（continue）。production-ai-v4 将 polish 指引扩展为依据要求进行表达、结构及资料修订，模板可选；rewrite/update 保留供历史接口兼容。任务创建时冻结规则版本和操作指令，历史候选不随配置变化。
+
+
+## AI 写作默认知识库检索
+
+生成设置的来源固定为：网页来源、Pingcode设计文档、Pingcode测试文档、知识库（MCP）、测试用例集。前述 MCP 来源默认参加生成，不要求作者输入网址或条目标识。其余四种来源仍需读取并勾选确认。
+
+`content-rules.json#/productionAI.sources.mcpRetrieval` 为查询策略表，`mcp-default-v1` 使用写作要求、正文标题、提纲和所选正文提取关键词；支持作者以“关键词：SELECT SQL”明确查询主题。默认输入上限 1200 字符、4 个关键词、3 条查询、2 条库路由、3 篇引用原文，最低搜索评分 0.3。`dimensions` 按 SQL 语法、运维操作、测试验证、通用概念选择查询后缀；`routes` 将运维主题匹配至名称含“运维”的已启用库，其余使用名称含“官方”的库。服务和库的 ID、地址及凭据仍由 `service.json#/mcp` 管理，不在策略内重复配置。
+
+仅支持已启用的 YashanDB MCP 适配服务。无匹配库时不任意选库；只兼容旧版无显式库的单服务默认路由，其余记录 `not_configured`。`search_ku` 结果经过分数过滤、排序及去重，随后用 `get_ku_detail` 读取原文；搜索摘要不直接成为引用。状态为 `succeeded / partial / empty / not_configured / failed`；所有搜索失败或命中后所有正文均读取失败时任务失败，可重试，不能宣称已引用。查询规则随任务冻结，已成功保存的检索结果及证据在重试中复用，失败检索允许重试；取消后的迟到结果不得进入任务和写作阶段。路由与查询为确定性执行，不依赖模型自由选择工具；检索质量仍需通过主题样本持续评估。
+
+验证入口：`node --test tests/unit/agent-runner/production-ai-mcp-retrieval.node.test.cjs`；HTTP 与浏览器验证使用 `node --test --test-name-pattern='默认 MCP 真实 HTTP' tests/unit/agent-runner/handbook-production-api.test.js`。运行证据放在 `runtime/test-results/production-ai-default-mcp/`。
+
+## 手册性能预算
+
+`handbook-performance.json` 定义真实 API 与浏览器只读门禁的采样轮数、P95、响应体积及等待预算。默认 API 100 次、浏览器 30 次；目录 API / 草稿 API P95 ≤100 ms、点击目录可见 ≤200 ms、既有正文就绪 ≤500 ms。标准 SQL 目录当前为约207 KB，目录字节预算230 KB；草稿预算64 KB，超大正文需另建场景并评审预算，不能静默放宽。外部 GitLab 单独验收。门禁超预算返回非零退出码。
+
+运行配置完整性：独立资料处理工作区已移除，`product.json` 不再保留指向该工作区的旧模块引用；否则文档服务在严格 Profile 校验阶段无法启动。配置变更必须通过 `loadProfile()` 语义校验。
+
+AI写作参考文档上传使用 `productionAI.sources.upload` 限制扩展名、原始与解压大小、解析时限、工作线程内存和PDF页数；正文仍受maxBytes限制。`referenceListCollapsedCount` 控制主面板默认展示条数。上传生成独立来源快照，不保存原文件，不作为草稿附件；DOCX内嵌图片复用来源托管。referenceOrder冻结人工来源与默认MCP分组的顺序，1为最高；缺省保持旧版追加顺序。

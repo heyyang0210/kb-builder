@@ -38,7 +38,7 @@ function renderTabs(activeTab, teamGroupView = 'people') {
   return `<nav class="platform-tabs" aria-label="平台管理分区">
     ${tabButton('governance')}
     <div class="platform-tab-menu" ${activeTab === 'principals' ? 'data-active' : ''}>
-      <details>
+      <details data-dismissible-menu>
         <summary class="platform-tab platform-tab-summary" id="platform-tab-principals" aria-haspopup="menu" aria-current="${activeTab === 'principals' ? 'page' : 'false'}">${activeTab === 'principals' && teamGroupView === 'groups' ? '人员管理 · 团队小组' : '人员管理'}<span aria-hidden="true" class="platform-nav-chevron">⌄</span></summary>
         <div class="platform-submenu" role="menu" aria-label="人员管理子页面">
           <button type="button" role="menuitem" data-team-group-view="people" aria-current="${teamGroupView === 'people' ? 'page' : 'false'}">人员管理</button>

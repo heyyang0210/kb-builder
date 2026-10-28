@@ -206,7 +206,9 @@ function createKnowledgeCenterHandler(options) {
   }
 
   async function requireSession(req, res, action) {
-    const session = await authorizeRequest(req);
+    let session;
+    try { session = await authorizeRequest(req); }
+    catch (error) { sendRequestError(res, error, 'AUTH_SERVICE_UNAVAILABLE'); return; }
     if (session) {
       try { await action(session); } catch (error) { sendRequestError(res, error); }
       return;
@@ -733,7 +735,21 @@ function createKnowledgeCenterHandler(options) {
       } else { res.writeHead(405, { Allow: 'GET' }); res.end(); }
       return true;
     }
+    const sourceImageMatch = pathname.match(/^\/knowledge-center\/api\/production\/handbooks\/([^/]+)\/documents\/([^/]+)\/ai-sources\/images\/([a-f0-9]{64})$/);
+    if (sourceImageMatch) {
+      if (req.method !== 'GET') { res.writeHead(405, { Allow: 'GET' }); res.end(); return true; }
+      const handbookId = decodeURIComponent(sourceImageMatch[1]);
+      const documentId = decodeURIComponent(sourceImageMatch[2]);
+      await requireHandbookReadAsync(session, handbookId);
+      const params = new URL(req.url, 'http://localhost').searchParams;
+      const image = handbookProductionService.ai.sources.readImage({ ...productionContext(handbookId, documentId, params), assetId: sourceImageMatch[3] }, session);
+      res.writeHead(200, { 'Content-Type': image.contentType, 'Content-Length': image.data.length,
+        'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'private, no-store', 'Content-Security-Policy': "default-src 'none'; sandbox" });
+      res.end(image.data);
+      return true;
+    }
     const sourceMatch = pathname.match(/^\/knowledge-center\/api\/production\/handbooks\/([^/]+)\/documents\/([^/]+)\/ai-sources$/);
+    const sourceUploadMatch = pathname.match(/^\/knowledge-center\/api\/production\/handbooks\/([^/]+)\/documents\/([^/]+)\/ai-sources\/uploads$/);
     if (sourceMatch) {
       const traceId = require('crypto').randomUUID();
       const startedAt = Date.now();
@@ -770,6 +786,21 @@ function createKnowledgeCenterHandler(options) {
         error.details = { ...error.details, requestId: traceId };
         throw error;
       }
+      return true;
+    }
+    if (sourceUploadMatch) {
+      if (req.method !== 'POST') { res.writeHead(405, { Allow: 'POST' }); res.end(); return true; }
+      const handbookId = decodeURIComponent(sourceUploadMatch[1]);
+      const documentId = decodeURIComponent(sourceUploadMatch[2]);
+      const params = new URL(req.url, 'http://localhost').searchParams;
+      const context = productionContext(handbookId, documentId, params);
+      await requireHandbookReadAsync(session, handbookId);
+      await assertActiveProductionOutline(context);
+      const rawName = String(req.headers['x-file-name'] || '本地文档');
+      let fileName; try { fileName = decodeURIComponent(rawName); } catch (_) { fileName = rawName; }
+      const buffer = await readBinaryBody(req, handbookProductionService.ai.sources.uploadPolicy().maxBytes);
+      const source = await handbookProductionService.ai.sources.previewUpload(context, buffer, fileName, req.headers['content-type'], session);
+      sendProductionData(res, source, 201);
       return true;
     }
     const aiMatch = pathname.match(/^\/knowledge-center\/api\/production\/handbooks\/([^/]+)\/documents\/([^/]+)\/ai-jobs(?:\/([^/]+)(?:\/(cancel|adopt|retry|recover))?)?$/);
@@ -928,7 +959,11 @@ function createKnowledgeCenterHandler(options) {
       const suffix = documentMatch[3] || '';
       if (req.method === 'GET' && !suffix) {
         const params = new URL(req.url, 'http://localhost').searchParams;
-        sendProductionData(res, handbookProductionService.getDraft(productionContext(handbookId, documentId, params), session));
+        const started = performance.now();
+        const readDraft = handbookProductionService.getDraftAsync || handbookProductionService.getDraft;
+        const data = await readDraft(productionContext(handbookId, documentId, params), session);
+        res.setHeader('Server-Timing', `draft_read;dur=${(performance.now() - started).toFixed(2)}`);
+        sendProductionData(res, data);
         return true;
       }
       if (req.method === 'PUT' && !suffix) {
@@ -1317,8 +1352,8 @@ function createKnowledgeCenterHandler(options) {
       const handbookAccess = pathname.match(/^\/knowledge-center\/api\/gitlab\/handbooks\/([^/]+)\/access-status$/);
       if (handbookAccess && req.method === 'GET') {
         const handbookId = decodeURIComponent(handbookAccess[1]);
-        requireHandbookRead(session, handbookId);
-        const { connection } = findMapping(handbookId, GITLAB_CONFIG_PATH);
+        await requireHandbookReadAsync(session, handbookId);
+        const { connection } = await findMappingAsync(handbookId);
         const projected = sanitizeConnection(connection);
         if (projected.managementStatus === 'disabled' || connection.mode === 'disabled') {
           res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
@@ -1427,10 +1462,16 @@ function createKnowledgeCenterHandler(options) {
       }
       const mappingUpdate = pathname.match(/^\/knowledge-center\/api\/gitlab\/mappings\/([^/]+)$/);
       if (mappingUpdate && req.method === 'GET') {
-        if (forbidUnlessPlatformAdmin(res, session)) return;
-        const { mapping } = findMapping(decodeURIComponent(mappingUpdate[1]), GITLAB_CONFIG_PATH);
+        const handbookId = decodeURIComponent(mappingUpdate[1]);
+        const productionView = new URL(req.url, 'http://localhost').searchParams.get('view') === 'production';
+        if (productionView) await requireHandbookReadAsync(session, handbookId);
+        else if (forbidUnlessPlatformAdmin(res, session)) return;
+        const { mapping } = await findMappingAsync(handbookId);
+        const data = productionView ? Object.fromEntries(
+          ['handbookId', 'connectionId', 'defaultBranch', 'enabledBranches', 'zhPaths', 'enPaths']
+            .filter(key => Object.hasOwn(mapping, key)).map(key => [key, mapping[key]])) : mapping;
         res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
-        res.end(JSON.stringify({ success: true, data: mapping })); return;
+        res.end(JSON.stringify({ success: true, data })); return;
       }
       if (mappingUpdate && req.method === 'PUT') {
         if (forbidUnlessPlatformAdmin(res, session)) return;
@@ -1459,7 +1500,7 @@ function createKnowledgeCenterHandler(options) {
       const mapped = pathname.match(/^\/knowledge-center\/api\/gitlab\/handbooks\/([^/]+)\/(branches|tree|file|statistics|commits)$/);
       if (mapped) {
         const handbookId = decodeURIComponent(mapped[1]);
-        requireHandbookRead(session, handbookId);
+        const readableAsset = await requireHandbookReadAsync(session, handbookId);
         if (mapped[2] === 'statistics') {
           if (req.method !== 'GET') { res.writeHead(405); res.end(); return; }
           const params = new URL(req.url, 'http://localhost').searchParams;
@@ -1467,13 +1508,13 @@ function createKnowledgeCenterHandler(options) {
           res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
           res.end(JSON.stringify({ success: true, data })); return;
         }
-        const { mapping, connection } = findMapping(handbookId, GITLAB_CONFIG_PATH);
+        const { mapping, connection } = await findMappingAsync(handbookId);
         const params = new URL(req.url, 'http://localhost').searchParams;
         const ref = params.get('ref') || mapping.defaultBranch;
         const language = params.get('language') === 'en' ? 'en' : 'zh';
         let data;
         if (mapped[2] === 'branches') {
-          const asset = readKnowledgeAssets().handbooks.find(item => item.handbookId === mapping.handbookId);
+          const asset = readableAsset;
           data = {
             items: (await gitLabRequestForUser(session, connection, options => listBranches(connection, options))).filter(item => mapping.enabledBranches.includes(item.name)),
             defaultBranch: mapping.defaultBranch, handbookName: asset?.name || mapping.handbookId,

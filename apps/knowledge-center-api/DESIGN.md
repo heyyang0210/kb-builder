@@ -92,7 +92,7 @@
 
 ## 三、目录结构
 
-> 本节中的早期 `agent-runner/` 目录图保留作设计演进记录。当前实际目录以 `docs/directory-structure-refactor.md` 为准：服务入口在 `apps/knowledge-center-api/server.js`，共享库在 `packages/agent-runner-core/`，配置在 `config/agent-runner/`，测试在 `tests/unit/agent-runner/`，运行数据在 `runtime/agent-runner/`。
+> 本节中的早期 `agent-runner/` 目录图保留作设计演进记录。当前实际目录以 `.codex/知识中心建设平台/README.md` 为准：服务入口在 `apps/knowledge-center-api/server.js`，共享库在 `packages/agent-runner-core/`，配置在 `config/agent-runner/`，测试在 `tests/unit/agent-runner/`，运行数据在 `runtime/agent-runner/`。
 
 ```
 06-YashanDB知识库Skill仓库/

@@ -55,7 +55,7 @@ export function loadReviewRepositoryContext(handbookId, { branch = '', language 
   if (preferredPath) query.set('preferredPath', preferredPath);
   return request(`/knowledge-center/api/review/repository-context?${query}`);
 }
-export const loadHandbookRepositoryMapping = handbookId => request(`/knowledge-center/api/gitlab/mappings/${encodeURIComponent(handbookId)}`);
+export const loadHandbookRepositoryMapping = (handbookId, view = '') => request(`/knowledge-center/api/gitlab/mappings/${encodeURIComponent(handbookId)}${view === 'production' ? '?view=production' : ''}`);
 export const saveHandbookRepositoryMapping = (handbookId, value) => request(`/knowledge-center/api/gitlab/mappings/${encodeURIComponent(handbookId)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'Idempotency-Key': idempotencyKey('gitlab-mapping') }, body: JSON.stringify(value) });
 
 /* ---- 平台管理扩展接口（设计文档 §6） ---- */
