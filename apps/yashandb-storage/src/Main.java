@@ -109,6 +109,8 @@ public final class Main {
     }
 
     private void start() throws IOException {
+        // Keep small JSON responses from waiting for delayed TCP acknowledgements.
+        System.setProperty("sun.net.httpserver.nodelay", System.getProperty("sun.net.httpserver.nodelay", "true"));
         String host = env("YASDB_STORAGE_HOST", "127.0.0.1");
         int port = integer("YASDB_STORAGE_PORT", 14210);
         HttpServer server = HttpServer.create(new InetSocketAddress(host, port), 0);
@@ -299,6 +301,25 @@ public final class Main {
         long requestStarted = System.nanoTime();
         String sql = "SELECT PAYLOAD, PAYLOAD_SHA256, REVISION, DELETED, CREATED_AT, UPDATED_AT FROM KC_RECORD WHERE NAMESPACE=? AND RECORD_KEY=?";
         try (Connection connection = connection(); PreparedStatement statement = connection.prepareStatement(sql)) {
+            String condition = exchange.getRequestHeaders().getFirst("If-None-Match");
+            if (condition != null) {
+                // Check the small revision row before materializing a potentially large CLOB.
+                try (PreparedStatement version = connection.prepareStatement(
+                    "SELECT REVISION FROM KC_RECORD WHERE NAMESPACE=? AND RECORD_KEY=?")) {
+                    version.setString(1, namespace);
+                    version.setString(2, key);
+                    try (ResultSet current = version.executeQuery()) {
+                        if (current.next() && condition.equals("\"" + current.getLong(1) + "\"")) {
+                            connection.commit();
+                            exchange.getResponseHeaders().set("ETag", condition);
+                            exchange.getResponseHeaders().set("Cache-Control", "no-store");
+                            exchange.sendResponseHeaders(304, -1);
+                            exchange.close();
+                            return;
+                        }
+                    }
+                }
+            }
             statement.setString(1, namespace);
             statement.setString(2, key);
             long sqlStarted = System.nanoTime();
@@ -309,6 +330,7 @@ public final class Main {
                     return;
                 }
                 String payload = readClob(result.getClob(1));
+                exchange.getResponseHeaders().set("ETag", "\"" + result.getLong(3) + "\"");
                 sendJson(exchange, 200, mapOf(
                     "success", true,
                     "namespace", namespace,

@@ -38,7 +38,7 @@ test('点击人员管理展开子菜单并进入团队小组', async ({ page }) 
 test('团队小组工作区只保留名册编辑和新建入口', async ({ page }) => {
   await loginAsAdmin(page);
   await page.goto(`${baseUrl}/knowledge-center/platform?tab=principals&view=groups`);
-  await expect(page.getByRole('button', { name: '新建团队小组' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '添加团队小组' })).toBeVisible();
   const form = page.locator('[data-team-group-form]');
   await expect(form).toBeVisible();
   await expect(form.getByRole('combobox', { name: '负责人，可输入筛选' })).toBeVisible();

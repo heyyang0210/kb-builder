@@ -14,6 +14,7 @@ import java.util.UUID;
 /** 认证权限业务事实 Repository；不管理会话、Ticket 或审计文件。 */
 final class PlatformAuthRepository {
     Map<String, Object> listUsers(Connection connection) throws SQLException {
+        Map<Long, UserGrants> grantsByUser = listUserGrants(connection);
         List<Map<String, Object>> users = new ArrayList<>();
         try (PreparedStatement query = connection.prepareStatement(
             "SELECT U.AUTH_USER_ID,U.USER_KEY,U.PRINCIPAL_ID,U.CAS_LOGIN_NAME,U.STATE,U.ROW_VERSION," +
@@ -21,7 +22,7 @@ final class PlatformAuthRepository {
                 "FROM KC_AUTH_USER U JOIN KC_PLATFORM_PRINCIPAL P ON P.PRINCIPAL_ID=U.PRINCIPAL_ID " +
                 "ORDER BY P.DISPLAY_NAME,U.AUTH_USER_ID");
              ResultSet result = query.executeQuery()) {
-            while (result.next()) users.add(projectUser(connection, result));
+            while (result.next()) users.add(projectUser(result, grantsByUser.getOrDefault(result.getLong(1), new UserGrants())));
         }
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("items", users);
@@ -130,9 +131,7 @@ final class PlatformAuthRepository {
 
     private Map<String, Object> projectUser(Connection connection, ResultSet result) throws SQLException {
         long authUserId = result.getLong(1);
-        List<String> roles = new ArrayList<>();
-        Set<String> modules = new LinkedHashSet<>();
-        Set<String> actions = new LinkedHashSet<>();
+        UserGrants profile = new UserGrants();
         try (PreparedStatement query = connection.prepareStatement(
             "SELECT R.ROLE_CODE,G.GRANT_TYPE,G.GRANT_CODE FROM KC_AUTH_USER_ROLE UR " +
                 "JOIN KC_AUTH_ROLE R ON R.AUTH_ROLE_ID=UR.AUTH_ROLE_ID " +
@@ -143,13 +142,17 @@ final class PlatformAuthRepository {
                 String lastRole = null;
                 while (grants.next()) {
                     String role = grants.getString(1);
-                    if (!role.equals(lastRole)) { roles.add(role); lastRole = role; }
+                    if (!role.equals(lastRole)) { profile.roles.add(role); lastRole = role; }
                     String type = grants.getString(2); String code = grants.getString(3);
-                    if ("MODULE".equals(type) && code != null) modules.add(code);
-                    if ("ACTION".equals(type) && code != null) actions.add(code);
+                    if ("MODULE".equals(type) && code != null) profile.modules.add(code);
+                    if ("ACTION".equals(type) && code != null) profile.actions.add(code);
                 }
             }
         }
+        return projectUser(result, profile);
+    }
+
+    private Map<String, Object> projectUser(ResultSet result, UserGrants profile) throws SQLException {
         Map<String, Object> user = new LinkedHashMap<>();
         user.put("id", result.getString(2));
         user.put("userKey", result.getString(2));
@@ -162,14 +165,39 @@ final class PlatformAuthRepository {
         user.put("enabled", "ACTIVE".equals(result.getString(5)));
         user.put("state", result.getString(5));
         user.put("rowVersion", result.getLong(6));
-        user.put("roles", roles);
-        user.put("visibleModules", new ArrayList<>(modules));
-        user.put("allowedActions", new ArrayList<>(actions));
+        user.put("roles", new ArrayList<>(profile.roles));
+        user.put("visibleModules", new ArrayList<>(profile.modules));
+        user.put("allowedActions", new ArrayList<>(profile.actions));
         user.put("managementSource", "database");
         user.put("rolesEditable", true);
         user.put("createdAt", result.getTimestamp(7).toInstant().toString());
         user.put("updatedAt", result.getTimestamp(8).toInstant().toString());
         return user;
+    }
+
+    private static final class UserGrants {
+        final Set<String> roles = new LinkedHashSet<>();
+        final Set<String> modules = new LinkedHashSet<>();
+        final Set<String> actions = new LinkedHashSet<>();
+    }
+
+    private Map<Long, UserGrants> listUserGrants(Connection connection) throws SQLException {
+        Map<Long, UserGrants> profiles = new LinkedHashMap<>();
+        try (PreparedStatement query = connection.prepareStatement(
+            "SELECT UR.AUTH_USER_ID,R.ROLE_CODE,G.GRANT_TYPE,G.GRANT_CODE FROM KC_AUTH_USER_ROLE UR " +
+                "JOIN KC_AUTH_ROLE R ON R.AUTH_ROLE_ID=UR.AUTH_ROLE_ID " +
+                "LEFT JOIN KC_AUTH_ROLE_GRANT G ON G.AUTH_ROLE_ID=R.AUTH_ROLE_ID " +
+                "WHERE R.STATE='ACTIVE' ORDER BY UR.AUTH_USER_ID,R.ROLE_CODE,G.GRANT_TYPE,G.GRANT_CODE");
+             ResultSet grants = query.executeQuery()) {
+            while (grants.next()) {
+                UserGrants profile = profiles.computeIfAbsent(grants.getLong(1), id -> new UserGrants());
+                profile.roles.add(grants.getString(2));
+                String type = grants.getString(3); String code = grants.getString(4);
+                if ("MODULE".equals(type) && code != null) profile.modules.add(code);
+                if ("ACTION".equals(type) && code != null) profile.actions.add(code);
+            }
+        }
+        return profiles;
     }
 
     private List<String> roleCodes(Connection connection) throws SQLException {

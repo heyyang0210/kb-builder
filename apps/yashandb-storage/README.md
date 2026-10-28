@@ -153,3 +153,9 @@ apps/yashandb-storage/start.sh
 ### 错误定位补充（2026-10-13）
 
 聚合引用校验拒绝返回 HTTP 409，错误消息与 details 包含 namespace、key、outlineVersionId，涵盖历史引用，便于定位。
+
+记录 GET 响应携带基于 revision 的 `ETag`，支持 `If-None-Match`：版本一致时只查询元数据并返回 304，避免重复读取大正文 CLOB。记录变化或删除会使用新 revision；不存在仍返回原 404 错误。该机制不改变 PUT/DELETE 的 `If-Match` 乐观锁及权限契约。Node 异步读取每次仍向 Storage 校验，不依赖固定时间缓存。
+
+认证用户名册批量读取使用三次固定SQL（全部用户授权、用户主体、可分配角色），避免按用户逐条读取角色造成N+1；不缓存权限。隔离Storage回归逐项比较批量与单用户角色、模块、动作、状态及行版本。
+
+HTTP 服务默认设置 `sun.net.httpserver.nodelay=true`，减少持久连接上小响应的传输等待；可通过 JVM `-Dsun.net.httpserver.nodelay=false` 显式覆盖。
