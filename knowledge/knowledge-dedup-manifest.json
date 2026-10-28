@@ -1,0 +1,1117 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-10-28",
+  "scope": [
+    "knowledge/refs",
+    "knowledge/references"
+  ],
+  "rule": "仅按 SHA-256 完全相同判定重复；跨契约目录重复项保留 knowledge/references 路径；同目录重复项仅登记不删除。",
+  "records": [
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/LOB内幕文档.docx",
+      "size": 159263,
+      "sha256": "71a01e9f473b019c2bd0685cf201a9136e698f3232971ab51365297e04f92739",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/LOB内幕文档.docx",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/refs/pingcode/YASSTORAGE_内幕文档/LOB%E5%86%85%E5%B9%95%E6%96%87%E6%A1%A3.docx",
+      "size": 159263,
+      "sha256": "71a01e9f473b019c2bd0685cf201a9136e698f3232971ab51365297e04f92739",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/LOB内幕文档.docx",
+      "action": "removed-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/REDO内幕.docx",
+      "size": 552892,
+      "sha256": "958e4911736aa9b81c6ee2288d96fbe1a4497130bc874179736501bc37c4a15a",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/REDO内幕.docx",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/refs/pingcode/YASSTORAGE_内幕文档/REDO%E5%86%85%E5%B9%95.docx",
+      "size": 552892,
+      "sha256": "958e4911736aa9b81c6ee2288d96fbe1a4497130bc874179736501bc37c4a15a",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/REDO内幕.docx",
+      "action": "removed-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/Replication内幕.docx",
+      "size": 480401,
+      "sha256": "1ad6bf27241a9fa17f2a46eb6b9f712ccb48ff04cdf4bac4d5d6d40247ac0352",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/Replication内幕.docx",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/refs/pingcode/YASSTORAGE_内幕文档/Replication%E5%86%85%E5%B9%95.docx",
+      "size": 480401,
+      "sha256": "1ad6bf27241a9fa17f2a46eb6b9f712ccb48ff04cdf4bac4d5d6d40247ac0352",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/Replication内幕.docx",
+      "action": "removed-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB DSI(数据字典 && SEQUENCE.docx",
+      "size": 365627,
+      "sha256": "0ebcbdb7e1b23392e099d01d377ea3e3cb4f49cd70e3e479e8ef376e3ae77937",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB DSI(数据字典 && SEQUENCE.docx",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/refs/pingcode/YASSTORAGE_内幕文档/YashanDB%20DSI(%E6%95%B0%E6%8D%AE%E5%AD%97%E5%85%B8%20%26%26%20SEQUENCE.docx",
+      "size": 365627,
+      "sha256": "0ebcbdb7e1b23392e099d01d377ea3e3cb4f49cd70e3e479e8ef376e3ae77937",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB DSI(数据字典 && SEQUENCE.docx",
+      "action": "removed-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB DSI_SEQUENCE.docx",
+      "size": 124693,
+      "sha256": "b3052b5219374d381fccfef4354220f650b3a9dedb6f1af77c35b665511f8068",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB DSI_SEQUENCE.docx",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/refs/pingcode/YASSTORAGE_内幕文档/YashanDB%20DSI_SEQUENCE.docx",
+      "size": 124693,
+      "sha256": "b3052b5219374d381fccfef4354220f650b3a9dedb6f1af77c35b665511f8068",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB DSI_SEQUENCE.docx",
+      "action": "removed-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB DSI_数据字典.docx",
+      "size": 246825,
+      "sha256": "802c3ad5e66d55a9a919a7903961935c1fb46c35c6ab17a80595fb2b2e9573e3",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB DSI_数据字典.docx",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/refs/pingcode/YASSTORAGE_内幕文档/YashanDB%20DSI_%E6%95%B0%E6%8D%AE%E5%AD%97%E5%85%B8.docx",
+      "size": 246825,
+      "sha256": "802c3ad5e66d55a9a919a7903961935c1fb46c35c6ab17a80595fb2b2e9573e3",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB DSI_数据字典.docx",
+      "action": "removed-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/YashanDB v23.1 文档.md",
+      "size": 54,
+      "sha256": "b8a5cf69f5ffe4a40d2d45ceffd0c58ace624f5eb1eae100bc2e2e12da88555d",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/YashanDB v23.1 文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 架构设计文档/v23.1 架构设计文档.md",
+      "size": 54,
+      "sha256": "b8a5cf69f5ffe4a40d2d45ceffd0c58ace624f5eb1eae100bc2e2e12da88555d",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/YashanDB v23.1 文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 需求分析文档/v23.1 需求分析文档.md",
+      "size": 54,
+      "sha256": "b8a5cf69f5ffe4a40d2d45ceffd0c58ace624f5eb1eae100bc2e2e12da88555d",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/YashanDB v23.1 文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 开发概要设计文档/v23.1 开发概要设计文档.md",
+      "size": 54,
+      "sha256": "4a0bcfae0a3822bd6320c2bffe2ba082f2309951acc55e17ed3641a9ac4d10c5",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 开发概要设计文档/v23.1 开发概要设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 测试概要设计文档/v23.1 测试概要设计文档.md",
+      "size": 54,
+      "sha256": "4a0bcfae0a3822bd6320c2bffe2ba082f2309951acc55e17ed3641a9ac4d10c5",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 开发概要设计文档/v23.1 开发概要设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.1 文档/v23.2.1 开发概要设计文档/v23.2.1 开发概要设计文档.md",
+      "size": 54,
+      "sha256": "4a0bcfae0a3822bd6320c2bffe2ba082f2309951acc55e17ed3641a9ac4d10c5",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 开发概要设计文档/v23.1 开发概要设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.2 文档/v23.2.2 开发概要设计文档/v23.2.2 开发概要设计文档.md",
+      "size": 54,
+      "sha256": "4a0bcfae0a3822bd6320c2bffe2ba082f2309951acc55e17ed3641a9ac4d10c5",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 开发概要设计文档/v23.1 开发概要设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.3 文档/v23.2.3 开发概要设计文档/v23.2.3 开发概要设计文档.md",
+      "size": 54,
+      "sha256": "4a0bcfae0a3822bd6320c2bffe2ba082f2309951acc55e17ed3641a9ac4d10c5",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 开发概要设计文档/v23.1 开发概要设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.4 文档/v23.2.4 开发概要设计文档/v23.2.4 开发概要设计文档.md",
+      "size": 54,
+      "sha256": "4a0bcfae0a3822bd6320c2bffe2ba082f2309951acc55e17ed3641a9ac4d10c5",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 开发概要设计文档/v23.1 开发概要设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.5 文档/v23.2.5 开发概要设计文档/v23.2.5 开发概要设计文档.md",
+      "size": 54,
+      "sha256": "4a0bcfae0a3822bd6320c2bffe2ba082f2309951acc55e17ed3641a9ac4d10c5",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 开发概要设计文档/v23.1 开发概要设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.6 文档/v23.2.6 开发概要设计文档/v23.2.6 开发概要设计文档.md",
+      "size": 54,
+      "sha256": "4a0bcfae0a3822bd6320c2bffe2ba082f2309951acc55e17ed3641a9ac4d10c5",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 开发概要设计文档/v23.1 开发概要设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.7 文档/v23.2.7 开发概要设计文档/v23.2.7 开发概要设计文档.md",
+      "size": 54,
+      "sha256": "4a0bcfae0a3822bd6320c2bffe2ba082f2309951acc55e17ed3641a9ac4d10c5",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 开发概要设计文档/v23.1 开发概要设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.3/YashanDB v23.3.1 文档/v23.3.1 开发概要设计文档/v23.3.1 开发概要设计文档.md",
+      "size": 54,
+      "sha256": "4a0bcfae0a3822bd6320c2bffe2ba082f2309951acc55e17ed3641a9ac4d10c5",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 开发概要设计文档/v23.1 开发概要设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.4/YashanDB v23.4.1 文档/v23.4.1 开发概要设计文档/v23.4.1 开发概要设计文档.md",
+      "size": 54,
+      "sha256": "4a0bcfae0a3822bd6320c2bffe2ba082f2309951acc55e17ed3641a9ac4d10c5",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 开发概要设计文档/v23.1 开发概要设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 开发概要设计文档/分布式 v23.1概要设计/分布式 v23.1概要设计.md",
+      "size": 36,
+      "sha256": "5f930eeaaf3db2b221a64db6c0ac37187519433aa685caaf1ac44075324e5a8f",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 开发概要设计文档/分布式 v23.1概要设计/分布式 v23.1概要设计.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 开发概要设计文档/分布式 v23.1概要设计/多实例管理概要设计/多实例管理概要设计.md",
+      "size": 36,
+      "sha256": "5f930eeaaf3db2b221a64db6c0ac37187519433aa685caaf1ac44075324e5a8f",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 开发概要设计文档/分布式 v23.1概要设计/分布式 v23.1概要设计.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 特性设计文档/分布式 v23.1详细设计文档/分布式 v23.1详细设计文档.md",
+      "size": 36,
+      "sha256": "5f930eeaaf3db2b221a64db6c0ac37187519433aa685caaf1ac44075324e5a8f",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 开发概要设计文档/分布式 v23.1概要设计/分布式 v23.1概要设计.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 特性设计文档/分布式 v23.1详细设计文档/分布式DDL/分布式DDL.md",
+      "size": 36,
+      "sha256": "5f930eeaaf3db2b221a64db6c0ac37187519433aa685caaf1ac44075324e5a8f",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 开发概要设计文档/分布式 v23.1概要设计/分布式 v23.1概要设计.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 特性设计文档/分布式 v23.1详细设计文档/分布式参数管理详细设计/分布式参数管理详细设计.md",
+      "size": 36,
+      "sha256": "5f930eeaaf3db2b221a64db6c0ac37187519433aa685caaf1ac44075324e5a8f",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 开发概要设计文档/分布式 v23.1概要设计/分布式 v23.1概要设计.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.1 文档/v23.2.1 特性设计文档/PLSQL v23.2.1详细设计文档/PLSQL 23.2.1 详细设计/PLSQL 23.2.1 详细设计.md",
+      "size": 36,
+      "sha256": "5f930eeaaf3db2b221a64db6c0ac37187519433aa685caaf1ac44075324e5a8f",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 开发概要设计文档/分布式 v23.1概要设计/分布式 v23.1概要设计.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.1 文档/v23.2.1 特性设计文档/PLSQL v23.2.1详细设计文档/PLSQL v23.2.1详细设计文档.md",
+      "size": 36,
+      "sha256": "5f930eeaaf3db2b221a64db6c0ac37187519433aa685caaf1ac44075324e5a8f",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 开发概要设计文档/分布式 v23.1概要设计/分布式 v23.1概要设计.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.3 文档/v23.2.3 特性设计文档/PLSQL v23.2.3 详细设计文档/PLSQL v23.2.3 详细设计文档.md",
+      "size": 36,
+      "sha256": "5f930eeaaf3db2b221a64db6c0ac37187519433aa685caaf1ac44075324e5a8f",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 开发概要设计文档/分布式 v23.1概要设计/分布式 v23.1概要设计.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 开发概要设计文档/分布式 v23.1概要设计/分布式参数管理概要设计/分布式参数管理概要设计.md",
+      "size": 51,
+      "sha256": "637a8e780a7e45c2f9012cff9a1162eccfffc83a2774915509dc1b0e6f42c924",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 开发概要设计文档/分布式 v23.1概要设计/分布式参数管理概要设计/分布式参数管理概要设计.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 特性设计文档/分布式 v23.1详细设计文档/多实例管理详细设计/多实例管理详细设计.md",
+      "size": 51,
+      "sha256": "637a8e780a7e45c2f9012cff9a1162eccfffc83a2774915509dc1b0e6f42c924",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 开发概要设计文档/分布式 v23.1概要设计/分布式参数管理概要设计/分布式参数管理概要设计.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.1 文档/v23.2.1 特性设计文档/PLSQL v23.2.1详细设计文档/内置高级包 23.2.1 详细设计/内置高级包 23.2.1 详细设计.md",
+      "size": 51,
+      "sha256": "637a8e780a7e45c2f9012cff9a1162eccfffc83a2774915509dc1b0e6f42c924",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 开发概要设计文档/分布式 v23.1概要设计/分布式参数管理概要设计/分布式参数管理概要设计.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 测试概要设计文档/共享集群(v23.1)/共享集群(v23.1).md",
+      "size": 54,
+      "sha256": "08fe5cb88931aa0a66db9d4b44cb69b1261528ad280cdbdcbd66f7212b0808a3",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 测试概要设计文档/共享集群(v23.1)/共享集群(v23.1).md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 测试设计文档/共享集群（v23.1）/共享集群（v23.1）.md",
+      "size": 54,
+      "sha256": "08fe5cb88931aa0a66db9d4b44cb69b1261528ad280cdbdcbd66f7212b0808a3",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 测试概要设计文档/共享集群(v23.1)/共享集群(v23.1).md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 测试设计文档/GIS/GIS.md",
+      "size": 36,
+      "sha256": "3acdc382ae09d60a270f5c3c1e0445fe195fdd9f7c353293711e58b721406139",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 测试设计文档/GIS/GIS.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 测试设计文档/pl_sql/pl_sql.md",
+      "size": 36,
+      "sha256": "3acdc382ae09d60a270f5c3c1e0445fe195fdd9f7c353293711e58b721406139",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 测试设计文档/GIS/GIS.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 测试设计文档/v23.1 测试设计文档.md",
+      "size": 39,
+      "sha256": "7c79992c767ab8ffcc10642fc03dc97b5c84d1db48d91fda6f31b4065a2d81c5",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 测试设计文档/v23.1 测试设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 特性设计文档/v23.1 特性设计文档.md",
+      "size": 39,
+      "sha256": "7c79992c767ab8ffcc10642fc03dc97b5c84d1db48d91fda6f31b4065a2d81c5",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 测试设计文档/v23.1 测试设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1.md",
+      "size": 39,
+      "sha256": "7c79992c767ab8ffcc10642fc03dc97b5c84d1db48d91fda6f31b4065a2d81c5",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 测试设计文档/v23.1 测试设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.1 文档/YashanDB v23.2.1 文档.md",
+      "size": 39,
+      "sha256": "7c79992c767ab8ffcc10642fc03dc97b5c84d1db48d91fda6f31b4065a2d81c5",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 测试设计文档/v23.1 测试设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.1 文档/v23.2.1 架构设计文档/v23.2.1 架构设计文档.md",
+      "size": 39,
+      "sha256": "7c79992c767ab8ffcc10642fc03dc97b5c84d1db48d91fda6f31b4065a2d81c5",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 测试设计文档/v23.1 测试设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.1 文档/v23.2.1 测试设计文档/v23.2.1 测试设计文档.md",
+      "size": 39,
+      "sha256": "7c79992c767ab8ffcc10642fc03dc97b5c84d1db48d91fda6f31b4065a2d81c5",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 测试设计文档/v23.1 测试设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.1 文档/v23.2.1 特性设计文档/v23.2.1 特性设计文档.md",
+      "size": 39,
+      "sha256": "7c79992c767ab8ffcc10642fc03dc97b5c84d1db48d91fda6f31b4065a2d81c5",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 测试设计文档/v23.1 测试设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.1 文档/v23.2.1 需求分析文档/v23.2.1 需求分析文档.md",
+      "size": 39,
+      "sha256": "7c79992c767ab8ffcc10642fc03dc97b5c84d1db48d91fda6f31b4065a2d81c5",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 测试设计文档/v23.1 测试设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.2 文档/YashanDB v23.2.2 文档.md",
+      "size": 39,
+      "sha256": "7c79992c767ab8ffcc10642fc03dc97b5c84d1db48d91fda6f31b4065a2d81c5",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 测试设计文档/v23.1 测试设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.2 文档/v23.2.2 架构设计文档/v23.2.2 架构设计文档.md",
+      "size": 39,
+      "sha256": "7c79992c767ab8ffcc10642fc03dc97b5c84d1db48d91fda6f31b4065a2d81c5",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 测试设计文档/v23.1 测试设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.2 文档/v23.2.2 测试设计文档/v23.2.2 测试设计文档.md",
+      "size": 39,
+      "sha256": "7c79992c767ab8ffcc10642fc03dc97b5c84d1db48d91fda6f31b4065a2d81c5",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 测试设计文档/v23.1 测试设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.2 文档/v23.2.2 特性设计文档/v23.2.2 特性设计文档.md",
+      "size": 39,
+      "sha256": "7c79992c767ab8ffcc10642fc03dc97b5c84d1db48d91fda6f31b4065a2d81c5",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 测试设计文档/v23.1 测试设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.2 文档/v23.2.2 需求分析文档/v23.2.2 需求分析文档.md",
+      "size": 39,
+      "sha256": "7c79992c767ab8ffcc10642fc03dc97b5c84d1db48d91fda6f31b4065a2d81c5",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 测试设计文档/v23.1 测试设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.3 文档/YashanDB v23.2.3 文档.md",
+      "size": 39,
+      "sha256": "7c79992c767ab8ffcc10642fc03dc97b5c84d1db48d91fda6f31b4065a2d81c5",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 测试设计文档/v23.1 测试设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.3 文档/v23.2.3 架构设计文档/v23.2.3 架构设计文档.md",
+      "size": 39,
+      "sha256": "7c79992c767ab8ffcc10642fc03dc97b5c84d1db48d91fda6f31b4065a2d81c5",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 测试设计文档/v23.1 测试设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.3 文档/v23.2.3 测试设计文档/v23.2.3 测试设计文档.md",
+      "size": 39,
+      "sha256": "7c79992c767ab8ffcc10642fc03dc97b5c84d1db48d91fda6f31b4065a2d81c5",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 测试设计文档/v23.1 测试设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.3 文档/v23.2.3 特性设计文档/v23.2.3 特性设计文档.md",
+      "size": 39,
+      "sha256": "7c79992c767ab8ffcc10642fc03dc97b5c84d1db48d91fda6f31b4065a2d81c5",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 测试设计文档/v23.1 测试设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.3 文档/v23.2.3 需求分析文档/v23.2.3 需求分析文档.md",
+      "size": 39,
+      "sha256": "7c79992c767ab8ffcc10642fc03dc97b5c84d1db48d91fda6f31b4065a2d81c5",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 测试设计文档/v23.1 测试设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.4 文档/YashanDB v23.2.4 文档.md",
+      "size": 39,
+      "sha256": "7c79992c767ab8ffcc10642fc03dc97b5c84d1db48d91fda6f31b4065a2d81c5",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 测试设计文档/v23.1 测试设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.4 文档/v23.2.4 架构设计文档/v23.2.4 架构设计文档.md",
+      "size": 39,
+      "sha256": "7c79992c767ab8ffcc10642fc03dc97b5c84d1db48d91fda6f31b4065a2d81c5",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 测试设计文档/v23.1 测试设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.4 文档/v23.2.4 测试设计文档/v23.2.4 测试设计文档.md",
+      "size": 39,
+      "sha256": "7c79992c767ab8ffcc10642fc03dc97b5c84d1db48d91fda6f31b4065a2d81c5",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 测试设计文档/v23.1 测试设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.4 文档/v23.2.4 特性设计文档/v23.2.4 特性设计文档.md",
+      "size": 39,
+      "sha256": "7c79992c767ab8ffcc10642fc03dc97b5c84d1db48d91fda6f31b4065a2d81c5",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 测试设计文档/v23.1 测试设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.4 文档/v23.2.4 需求分析文档/v23.2.4 需求分析文档.md",
+      "size": 39,
+      "sha256": "7c79992c767ab8ffcc10642fc03dc97b5c84d1db48d91fda6f31b4065a2d81c5",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 测试设计文档/v23.1 测试设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.5 文档/YashanDB v23.2.5 文档.md",
+      "size": 39,
+      "sha256": "7c79992c767ab8ffcc10642fc03dc97b5c84d1db48d91fda6f31b4065a2d81c5",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 测试设计文档/v23.1 测试设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.5 文档/v23.2.5 架构设计文档/v23.2.5 架构设计文档.md",
+      "size": 39,
+      "sha256": "7c79992c767ab8ffcc10642fc03dc97b5c84d1db48d91fda6f31b4065a2d81c5",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 测试设计文档/v23.1 测试设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.5 文档/v23.2.5 测试设计文档/v23.2.5 测试设计文档.md",
+      "size": 39,
+      "sha256": "7c79992c767ab8ffcc10642fc03dc97b5c84d1db48d91fda6f31b4065a2d81c5",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 测试设计文档/v23.1 测试设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.5 文档/v23.2.5 特性设计文档/v23.2.5 特性设计文档.md",
+      "size": 39,
+      "sha256": "7c79992c767ab8ffcc10642fc03dc97b5c84d1db48d91fda6f31b4065a2d81c5",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 测试设计文档/v23.1 测试设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.5 文档/v23.2.5 需求分析文档/v23.2.5 需求分析文档.md",
+      "size": 39,
+      "sha256": "7c79992c767ab8ffcc10642fc03dc97b5c84d1db48d91fda6f31b4065a2d81c5",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 测试设计文档/v23.1 测试设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.6 文档/YashanDB v23.2.6 文档.md",
+      "size": 39,
+      "sha256": "7c79992c767ab8ffcc10642fc03dc97b5c84d1db48d91fda6f31b4065a2d81c5",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 测试设计文档/v23.1 测试设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.6 文档/v23.2.6 架构设计文档/v23.2.6 架构设计文档.md",
+      "size": 39,
+      "sha256": "7c79992c767ab8ffcc10642fc03dc97b5c84d1db48d91fda6f31b4065a2d81c5",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 测试设计文档/v23.1 测试设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.6 文档/v23.2.6 测试设计文档/v23.2.6 测试设计文档.md",
+      "size": 39,
+      "sha256": "7c79992c767ab8ffcc10642fc03dc97b5c84d1db48d91fda6f31b4065a2d81c5",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 测试设计文档/v23.1 测试设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.6 文档/v23.2.6 特性设计文档/v23.2.6 特性设计文档.md",
+      "size": 39,
+      "sha256": "7c79992c767ab8ffcc10642fc03dc97b5c84d1db48d91fda6f31b4065a2d81c5",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 测试设计文档/v23.1 测试设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.6 文档/v23.2.6 需求分析文档/v23.2.6 需求分析文档.md",
+      "size": 39,
+      "sha256": "7c79992c767ab8ffcc10642fc03dc97b5c84d1db48d91fda6f31b4065a2d81c5",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 测试设计文档/v23.1 测试设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.md",
+      "size": 39,
+      "sha256": "7c79992c767ab8ffcc10642fc03dc97b5c84d1db48d91fda6f31b4065a2d81c5",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 测试设计文档/v23.1 测试设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.3/YashanDB v23.3.1 文档/YashanDB v23.3.1 文档.md",
+      "size": 39,
+      "sha256": "7c79992c767ab8ffcc10642fc03dc97b5c84d1db48d91fda6f31b4065a2d81c5",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 测试设计文档/v23.1 测试设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.3/YashanDB v23.3.1 文档/v23.3.1 架构设计文档/v23.3.1 架构设计文档.md",
+      "size": 39,
+      "sha256": "7c79992c767ab8ffcc10642fc03dc97b5c84d1db48d91fda6f31b4065a2d81c5",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 测试设计文档/v23.1 测试设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.3/YashanDB v23.3.1 文档/v23.3.1 测试设计文档/v23.3.1 测试设计文档.md",
+      "size": 39,
+      "sha256": "7c79992c767ab8ffcc10642fc03dc97b5c84d1db48d91fda6f31b4065a2d81c5",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 测试设计文档/v23.1 测试设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.3/YashanDB v23.3.1 文档/v23.3.1 特性设计文档/v23.3.1 特性设计文档.md",
+      "size": 39,
+      "sha256": "7c79992c767ab8ffcc10642fc03dc97b5c84d1db48d91fda6f31b4065a2d81c5",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 测试设计文档/v23.1 测试设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.3/YashanDB v23.3.1 文档/v23.3.1 需求分析文档/v23.3.1 需求分析文档.md",
+      "size": 39,
+      "sha256": "7c79992c767ab8ffcc10642fc03dc97b5c84d1db48d91fda6f31b4065a2d81c5",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 测试设计文档/v23.1 测试设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.3/YashanDB v23.3.md",
+      "size": 39,
+      "sha256": "7c79992c767ab8ffcc10642fc03dc97b5c84d1db48d91fda6f31b4065a2d81c5",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 测试设计文档/v23.1 测试设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 特性设计文档/2D空间度量函数/ST_Area/ST_Area.md",
+      "size": 39,
+      "sha256": "1d501099e36771393c02f84d453ca5b270bd27427f3b3106f277c4bf7cc603fd",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 特性设计文档/2D空间度量函数/ST_Area/ST_Area.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 特性设计文档/2D空间度量函数/ST_ClosestPoint/ST_ClosestPoint.md",
+      "size": 39,
+      "sha256": "1d501099e36771393c02f84d453ca5b270bd27427f3b3106f277c4bf7cc603fd",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 特性设计文档/2D空间度量函数/ST_Area/ST_Area.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 特性设计文档/2D空间度量函数/ST_LongestLine/ST_LongestLine.md",
+      "size": 39,
+      "sha256": "1d501099e36771393c02f84d453ca5b270bd27427f3b3106f277c4bf7cc603fd",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 特性设计文档/2D空间度量函数/ST_Area/ST_Area.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 特性设计文档/2D空间度量函数/ST_MaxDistance/ST_MaxDistance.md",
+      "size": 39,
+      "sha256": "1d501099e36771393c02f84d453ca5b270bd27427f3b3106f277c4bf7cc603fd",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 特性设计文档/2D空间度量函数/ST_Area/ST_Area.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 特性设计文档/2D空间度量函数/ST_Perimeter/ST_Perimeter.md",
+      "size": 39,
+      "sha256": "1d501099e36771393c02f84d453ca5b270bd27427f3b3106f277c4bf7cc603fd",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 特性设计文档/2D空间度量函数/ST_Area/ST_Area.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 特性设计文档/2D空间度量函数/ST_ShortestLine/ST_ShortestLine.md",
+      "size": 39,
+      "sha256": "1d501099e36771393c02f84d453ca5b270bd27427f3b3106f277c4bf7cc603fd",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 特性设计文档/2D空间度量函数/ST_Area/ST_Area.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 特性设计文档/全局block缓存管理(GCS)/GCS资源异步淘汰概要设计/GCS资源异步淘汰概要设计.md",
+      "size": 39,
+      "sha256": "cfc873d8307b0364e41ef8ad96c91cc0884d0e7a9b68076f16d17117d8a137ea",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 特性设计文档/全局block缓存管理(GCS)/GCS资源异步淘汰概要设计/GCS资源异步淘汰概要设计.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 特性设计文档/全局block缓存管理(GCS)/多实例并发刷盘优化概要设计/多实例并发刷盘优化概要设计.md",
+      "size": 39,
+      "sha256": "cfc873d8307b0364e41ef8ad96c91cc0884d0e7a9b68076f16d17117d8a137ea",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 特性设计文档/全局block缓存管理(GCS)/GCS资源异步淘汰概要设计/GCS资源异步淘汰概要设计.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 特性设计文档/空间关系函数(2D)/Predicate/Predicate.md",
+      "size": 39,
+      "sha256": "c3881af0245f9067ebf60d97c76e11ed97a220fd204ebf4fbef82f0490ca4a90",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 特性设计文档/空间关系函数(2D)/Predicate/Predicate.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 特性设计文档/空间关系函数(2D)/ST_Relate/ST_Relate.md",
+      "size": 39,
+      "sha256": "c3881af0245f9067ebf60d97c76e11ed97a220fd204ebf4fbef82f0490ca4a90",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 特性设计文档/空间关系函数(2D)/Predicate/Predicate.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 特性设计文档/空间关系函数(2D)/空间关系函数(2D).md",
+      "size": 39,
+      "sha256": "c3881af0245f9067ebf60d97c76e11ed97a220fd204ebf4fbef82f0490ca4a90",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 特性设计文档/空间关系函数(2D)/Predicate/Predicate.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 特性设计文档/集群支持表空间基本功能/集群支持RESIZE DATAFILE/集群支持RESIZE DATAFILE.md",
+      "size": 42,
+      "sha256": "9d319cc5e6c3b0c691a23c17cb31de8b00ca2edba1a74409e86f55dd123b54ff",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 特性设计文档/集群支持表空间基本功能/集群支持RESIZE DATAFILE/集群支持RESIZE DATAFILE.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 特性设计文档/集群支持表空间基本功能/集群支持SHRINK SPACE/集群支持SHRINK SPACE.md",
+      "size": 42,
+      "sha256": "9d319cc5e6c3b0c691a23c17cb31de8b00ca2edba1a74409e86f55dd123b54ff",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.1/YashanDB v23.1 文档/v23.1 特性设计文档/集群支持表空间基本功能/集群支持RESIZE DATAFILE/集群支持RESIZE DATAFILE.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.1 文档/v23.2.1 测试概要设计文档/v23.2.1 测试概要设计文档.md",
+      "size": 39,
+      "sha256": "531548c5e5125db1b3002b6af2cbb3084f8ab9b3413476d86a3143818e8d5db4",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.1 文档/v23.2.1 测试概要设计文档/v23.2.1 测试概要设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.2 文档/v23.2.2 测试概要设计文档/v23.2.2 测试概要设计文档.md",
+      "size": 39,
+      "sha256": "531548c5e5125db1b3002b6af2cbb3084f8ab9b3413476d86a3143818e8d5db4",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.1 文档/v23.2.1 测试概要设计文档/v23.2.1 测试概要设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.3 文档/v23.2.3 测试概要设计文档/v23.2.3 测试概要设计文档.md",
+      "size": 39,
+      "sha256": "531548c5e5125db1b3002b6af2cbb3084f8ab9b3413476d86a3143818e8d5db4",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.1 文档/v23.2.1 测试概要设计文档/v23.2.1 测试概要设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.4 文档/v23.2.4 测试概要设计文档/v23.2.4 测试概要设计文档.md",
+      "size": 39,
+      "sha256": "531548c5e5125db1b3002b6af2cbb3084f8ab9b3413476d86a3143818e8d5db4",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.1 文档/v23.2.1 测试概要设计文档/v23.2.1 测试概要设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.5 文档/v23.2.5 测试概要设计文档/v23.2.5 测试概要设计文档.md",
+      "size": 39,
+      "sha256": "531548c5e5125db1b3002b6af2cbb3084f8ab9b3413476d86a3143818e8d5db4",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.1 文档/v23.2.1 测试概要设计文档/v23.2.1 测试概要设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.6 文档/v23.2.6 测试概要设计文档/v23.2.6 测试概要设计文档.md",
+      "size": 39,
+      "sha256": "531548c5e5125db1b3002b6af2cbb3084f8ab9b3413476d86a3143818e8d5db4",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.1 文档/v23.2.1 测试概要设计文档/v23.2.1 测试概要设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.7 文档/YashanDB v23.2.7 文档.md",
+      "size": 39,
+      "sha256": "531548c5e5125db1b3002b6af2cbb3084f8ab9b3413476d86a3143818e8d5db4",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.1 文档/v23.2.1 测试概要设计文档/v23.2.1 测试概要设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.7 文档/v23.2.7 架构设计文档/v23.2.7 架构设计文档.md",
+      "size": 39,
+      "sha256": "531548c5e5125db1b3002b6af2cbb3084f8ab9b3413476d86a3143818e8d5db4",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.1 文档/v23.2.1 测试概要设计文档/v23.2.1 测试概要设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.7 文档/v23.2.7 测试概要设计文档/v23.2.7 测试概要设计文档.md",
+      "size": 39,
+      "sha256": "531548c5e5125db1b3002b6af2cbb3084f8ab9b3413476d86a3143818e8d5db4",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.1 文档/v23.2.1 测试概要设计文档/v23.2.1 测试概要设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.7 文档/v23.2.7 测试设计文档/v23.2.7 测试设计文档.md",
+      "size": 39,
+      "sha256": "531548c5e5125db1b3002b6af2cbb3084f8ab9b3413476d86a3143818e8d5db4",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.1 文档/v23.2.1 测试概要设计文档/v23.2.1 测试概要设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.7 文档/v23.2.7 特性设计文档/v23.2.7 特性设计文档.md",
+      "size": 39,
+      "sha256": "531548c5e5125db1b3002b6af2cbb3084f8ab9b3413476d86a3143818e8d5db4",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.1 文档/v23.2.1 测试概要设计文档/v23.2.1 测试概要设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.7 文档/v23.2.7 需求分析文档/v23.2.7 需求分析文档.md",
+      "size": 39,
+      "sha256": "531548c5e5125db1b3002b6af2cbb3084f8ab9b3413476d86a3143818e8d5db4",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.1 文档/v23.2.1 测试概要设计文档/v23.2.1 测试概要设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.9 文档/v23.2.9 测试概要设计文档/v23.2.9 测试概要设计文档.md",
+      "size": 39,
+      "sha256": "531548c5e5125db1b3002b6af2cbb3084f8ab9b3413476d86a3143818e8d5db4",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.1 文档/v23.2.1 测试概要设计文档/v23.2.1 测试概要设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.9 文档/v23.2.9 测试设计文档/v23.2.9 测试设计文档.md",
+      "size": 39,
+      "sha256": "531548c5e5125db1b3002b6af2cbb3084f8ab9b3413476d86a3143818e8d5db4",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.1 文档/v23.2.1 测试概要设计文档/v23.2.1 测试概要设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.9 文档/v23.2.9 特性设计文档/v23.2.9 特性设计文档.md",
+      "size": 39,
+      "sha256": "531548c5e5125db1b3002b6af2cbb3084f8ab9b3413476d86a3143818e8d5db4",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.1 文档/v23.2.1 测试概要设计文档/v23.2.1 测试概要设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.3/YashanDB v23.3.1 文档/v23.3.1 测试概要设计文档/v23.3.1 测试概要设计文档.md",
+      "size": 39,
+      "sha256": "531548c5e5125db1b3002b6af2cbb3084f8ab9b3413476d86a3143818e8d5db4",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.1 文档/v23.2.1 测试概要设计文档/v23.2.1 测试概要设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.4/YashanDB v23.4.1 文档/YashanDB v23.4.1 文档.md",
+      "size": 39,
+      "sha256": "531548c5e5125db1b3002b6af2cbb3084f8ab9b3413476d86a3143818e8d5db4",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.1 文档/v23.2.1 测试概要设计文档/v23.2.1 测试概要设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.4/YashanDB v23.4.1 文档/v23.4.1 架构设计文档/v23.4.1 架构设计文档.md",
+      "size": 39,
+      "sha256": "531548c5e5125db1b3002b6af2cbb3084f8ab9b3413476d86a3143818e8d5db4",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.1 文档/v23.2.1 测试概要设计文档/v23.2.1 测试概要设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.4/YashanDB v23.4.1 文档/v23.4.1 测试设计文档/v23.4.1 测试设计文档.md",
+      "size": 39,
+      "sha256": "531548c5e5125db1b3002b6af2cbb3084f8ab9b3413476d86a3143818e8d5db4",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.1 文档/v23.2.1 测试概要设计文档/v23.2.1 测试概要设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.4/YashanDB v23.4.md",
+      "size": 39,
+      "sha256": "531548c5e5125db1b3002b6af2cbb3084f8ab9b3413476d86a3143818e8d5db4",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.1 文档/v23.2.1 测试概要设计文档/v23.2.1 测试概要设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.1 文档/v23.2.1 测试概要设计文档/共享集群（v23.2.1.0）/共享集群（v23.2.1.0）.md",
+      "size": 39,
+      "sha256": "4ff10adec8d843ed30a8473a801c22db1146e3ed4e94279690ba3600e808c9c0",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.1 文档/v23.2.1 测试概要设计文档/共享集群（v23.2.1.0）/共享集群（v23.2.1.0）.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.2 文档/v23.2.2 测试概要设计文档/共享集群（v23.2.2.0）/共享集群（v23.2.2.0）.md",
+      "size": 39,
+      "sha256": "4ff10adec8d843ed30a8473a801c22db1146e3ed4e94279690ba3600e808c9c0",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.1 文档/v23.2.1 测试概要设计文档/共享集群（v23.2.1.0）/共享集群（v23.2.1.0）.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.2 文档/v23.2.2 测试设计文档/共享集群（v23.2.2）/共享集群（v23.2.2）.md",
+      "size": 39,
+      "sha256": "4ff10adec8d843ed30a8473a801c22db1146e3ed4e94279690ba3600e808c9c0",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.1 文档/v23.2.1 测试概要设计文档/共享集群（v23.2.1.0）/共享集群（v23.2.1.0）.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.3 文档/v23.2.3 测试概要设计文档/共享集群（v23.2.3.0）/共享集群（v23.2.3.0）.md",
+      "size": 39,
+      "sha256": "4ff10adec8d843ed30a8473a801c22db1146e3ed4e94279690ba3600e808c9c0",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.1 文档/v23.2.1 测试概要设计文档/共享集群（v23.2.1.0）/共享集群（v23.2.1.0）.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.4 文档/v23.2.4 测试设计文档/共享集群（v23.2.4）/共享集群（v23.2.4）.md",
+      "size": 39,
+      "sha256": "4ff10adec8d843ed30a8473a801c22db1146e3ed4e94279690ba3600e808c9c0",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.1 文档/v23.2.1 测试概要设计文档/共享集群（v23.2.1.0）/共享集群（v23.2.1.0）.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.6 文档/v23.2.6 测试设计文档/共享集群（v23.2.6）/共享集群（v23.2.6）.md",
+      "size": 39,
+      "sha256": "4ff10adec8d843ed30a8473a801c22db1146e3ed4e94279690ba3600e808c9c0",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.1 文档/v23.2.1 测试概要设计文档/共享集群（v23.2.1.0）/共享集群（v23.2.1.0）.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.3/YashanDB v23.3.1 文档/v23.3.1 测试概要设计文档/共享集群（v23.3.1.0）/共享集群（v23.3.1.0）.md",
+      "size": 39,
+      "sha256": "4ff10adec8d843ed30a8473a801c22db1146e3ed4e94279690ba3600e808c9c0",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.1 文档/v23.2.1 测试概要设计文档/共享集群（v23.2.1.0）/共享集群（v23.2.1.0）.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.3/YashanDB v23.3.1 文档/v23.3.1 测试设计文档/共享集群（v23.3.1）/共享集群（v23.3.1）.md",
+      "size": 39,
+      "sha256": "4ff10adec8d843ed30a8473a801c22db1146e3ed4e94279690ba3600e808c9c0",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.1 文档/v23.2.1 测试概要设计文档/共享集群（v23.2.1.0）/共享集群（v23.2.1.0）.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.1 文档/v23.2.1 测试设计文档/共享集群（v23.2.1）/共享集群（v23.2.1）.md",
+      "size": 36,
+      "sha256": "630e85b5aaf509d72aaf8b36ba493e22c70ed826c9aae6ab661fc855ea37828d",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.1 文档/v23.2.1 测试设计文档/共享集群（v23.2.1）/共享集群（v23.2.1）.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.1 文档/v23.2.1 测试设计文档/存储（v23.2.1）/存储（v23.2.1）.md",
+      "size": 36,
+      "sha256": "630e85b5aaf509d72aaf8b36ba493e22c70ed826c9aae6ab661fc855ea37828d",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.1 文档/v23.2.1 测试设计文档/共享集群（v23.2.1）/共享集群（v23.2.1）.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.2 文档/v23.2.2 测试设计文档/存储（v23.2.2）/存储（v23.2.2）.md",
+      "size": 36,
+      "sha256": "630e85b5aaf509d72aaf8b36ba493e22c70ed826c9aae6ab661fc855ea37828d",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.1 文档/v23.2.1 测试设计文档/共享集群（v23.2.1）/共享集群（v23.2.1）.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.3 文档/v23.2.3 测试设计文档/共享集群（v23.2.3）/共享集群（v23.2.3）.md",
+      "size": 36,
+      "sha256": "630e85b5aaf509d72aaf8b36ba493e22c70ed826c9aae6ab661fc855ea37828d",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.1 文档/v23.2.1 测试设计文档/共享集群（v23.2.1）/共享集群（v23.2.1）.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.3 文档/v23.2.3 测试设计文档/存储（v23.2.3）/存储（v23.2.3）.md",
+      "size": 36,
+      "sha256": "630e85b5aaf509d72aaf8b36ba493e22c70ed826c9aae6ab661fc855ea37828d",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.1 文档/v23.2.1 测试设计文档/共享集群（v23.2.1）/共享集群（v23.2.1）.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.4 文档/v23.2.4 测试设计文档/存储（v23.2.4）/存储（v23.2.4）.md",
+      "size": 36,
+      "sha256": "630e85b5aaf509d72aaf8b36ba493e22c70ed826c9aae6ab661fc855ea37828d",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.1 文档/v23.2.1 测试设计文档/共享集群（v23.2.1）/共享集群（v23.2.1）.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.5 文档/v23.2.5 测试设计文档/存储（v23.2.5）/存储（v23.2.5）.md",
+      "size": 36,
+      "sha256": "630e85b5aaf509d72aaf8b36ba493e22c70ed826c9aae6ab661fc855ea37828d",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.1 文档/v23.2.1 测试设计文档/共享集群（v23.2.1）/共享集群（v23.2.1）.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.6 文档/v23.2.6 测试设计文档/存储（v23.2.6）/存储（v23.2.6）.md",
+      "size": 36,
+      "sha256": "630e85b5aaf509d72aaf8b36ba493e22c70ed826c9aae6ab661fc855ea37828d",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.1 文档/v23.2.1 测试设计文档/共享集群（v23.2.1）/共享集群（v23.2.1）.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.7 文档/v23.2.7 测试设计文档/存储（v23.2.7）/存储（v23.2.7）.md",
+      "size": 36,
+      "sha256": "630e85b5aaf509d72aaf8b36ba493e22c70ed826c9aae6ab661fc855ea37828d",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.1 文档/v23.2.1 测试设计文档/共享集群（v23.2.1）/共享集群（v23.2.1）.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.9 文档/v23.2.9 测试设计文档/存储（v23.2.8）/存储（v23.2.8）.md",
+      "size": 36,
+      "sha256": "630e85b5aaf509d72aaf8b36ba493e22c70ed826c9aae6ab661fc855ea37828d",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.1 文档/v23.2.1 测试设计文档/共享集群（v23.2.1）/共享集群（v23.2.1）.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.3/YashanDB v23.3.1 文档/v23.3.1 测试设计文档/存储（v23.3.1）/存储（v23.3.1）.md",
+      "size": 36,
+      "sha256": "630e85b5aaf509d72aaf8b36ba493e22c70ed826c9aae6ab661fc855ea37828d",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.1 文档/v23.2.1 测试设计文档/共享集群（v23.2.1）/共享集群（v23.2.1）.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.4/YashanDB v23.4.1 文档/v23.4.1 测试设计文档/存储（v23.4.1）/存储（v23.4.1）.md",
+      "size": 36,
+      "sha256": "630e85b5aaf509d72aaf8b36ba493e22c70ed826c9aae6ab661fc855ea37828d",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.1 文档/v23.2.1 测试设计文档/共享集群（v23.2.1）/共享集群（v23.2.1）.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.10 文档/v23.2.10 特性设计文档/YDBRD-36808 create table as select支持重试 详细设计文档/YDBRD-36808 create table as select支持重试 详细设计文档.md",
+      "size": 4581,
+      "sha256": "2a95418b3d337c350af41a23420dd84e4b9a1eaf9fe1fe928ec75fadb4bb0883",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.10 文档/v23.2.10 特性设计文档/YDBRD-36808 create table as select支持重试 详细设计文档/YDBRD-36808 create table as select支持重试 详细设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.9 文档/v23.2.9 特性设计文档/YDBRD-36808 create table as select支持重试 详细设计文档/YDBRD-36808 create table as select支持重试 详细设计文档.md",
+      "size": 4581,
+      "sha256": "2a95418b3d337c350af41a23420dd84e4b9a1eaf9fe1fe928ec75fadb4bb0883",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.10 文档/v23.2.10 特性设计文档/YDBRD-36808 create table as select支持重试 详细设计文档/YDBRD-36808 create table as select支持重试 详细设计文档.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.10 文档/v23.2.10 特性设计文档/YDBRD-36808 create table as select支持重试 详细设计文档/会议纪要-YDBRD-36808/会议纪要-YDBRD-36808.md",
+      "size": 160,
+      "sha256": "c97c1cb42a252250585fccedfe4be40fa3d3e6f3d866cac6e16c700b7e68968c",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.10 文档/v23.2.10 特性设计文档/YDBRD-36808 create table as select支持重试 详细设计文档/会议纪要-YDBRD-36808/会议纪要-YDBRD-36808.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.9 文档/v23.2.9 特性设计文档/YDBRD-36808 create table as select支持重试 详细设计文档/会议纪要-YDBRD-36808-副本/会议纪要-YDBRD-36808-副本.md",
+      "size": 160,
+      "sha256": "c97c1cb42a252250585fccedfe4be40fa3d3e6f3d866cac6e16c700b7e68968c",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.10 文档/v23.2.10 特性设计文档/YDBRD-36808 create table as select支持重试 详细设计文档/会议纪要-YDBRD-36808/会议纪要-YDBRD-36808.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.3 文档/v23.2.3 特性设计文档/高级包功能支持/DBMS_LOB 高级包/DBMS_LOB 高级包.md",
+      "size": 57,
+      "sha256": "b729ce70a09d9d95210e0db727c20667475dde58afd1550e86e66aeda91f8ce9",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.3 文档/v23.2.3 特性设计文档/高级包功能支持/DBMS_LOB 高级包/DBMS_LOB 高级包.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.3 文档/v23.2.3 特性设计文档/高级包功能支持/DBMS_LOB 高级包/DBMS_LOB.GETLENGTH/DBMS_LOB.GETLENGTH.md",
+      "size": 57,
+      "sha256": "b729ce70a09d9d95210e0db727c20667475dde58afd1550e86e66aeda91f8ce9",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.3 文档/v23.2.3 特性设计文档/高级包功能支持/DBMS_LOB 高级包/DBMS_LOB 高级包.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.3 文档/v23.2.3 特性设计文档/高级包功能支持/DBMS_LOB 高级包/DBMS_LOB.COMPARE/DBMS_LOB.COMPARE.md",
+      "size": 42,
+      "sha256": "4eda572e99808c9aeb36c010faf2fcbe54661d18b430f955ce84204e3e3bb8e1",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.3 文档/v23.2.3 特性设计文档/高级包功能支持/DBMS_LOB 高级包/DBMS_LOB.COMPARE/DBMS_LOB.COMPARE.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.3 文档/v23.2.3 特性设计文档/高级包功能支持/DBMS_LOB 高级包/DBMS_LOB.SUBSTR/DBMS_LOB.SUBSTR.md",
+      "size": 42,
+      "sha256": "4eda572e99808c9aeb36c010faf2fcbe54661d18b430f955ce84204e3e3bb8e1",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB v23.2/YashanDB v23.2.3 文档/v23.2.3 特性设计文档/高级包功能支持/DBMS_LOB 高级包/DBMS_LOB.COMPARE/DBMS_LOB.COMPARE.md",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB-可变列式存储.docx",
+      "size": 244795,
+      "sha256": "426d3d3c651d203677b7ddbfabf165c95a5418d82fb6c41883a3dcdfc482284b",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB-可变列式存储.docx",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/refs/pingcode/YASSTORAGE_内幕文档/YashanDB-%E5%8F%AF%E5%8F%98%E5%88%97%E5%BC%8F%E5%AD%98%E5%82%A8.docx",
+      "size": 244795,
+      "sha256": "426d3d3c651d203677b7ddbfabf165c95a5418d82fb6c41883a3dcdfc482284b",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/YashanDB-可变列式存储.docx",
+      "action": "removed-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/事务内幕文档.docx",
+      "size": 140172,
+      "sha256": "77827bd0fd97f4bf1c9cebc95099fb7d523c2836ecc91884621d98f4d9260e10",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/事务内幕文档.docx",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/refs/pingcode/YASSTORAGE_内幕文档/%E4%BA%8B%E5%8A%A1%E5%86%85%E5%B9%95%E6%96%87%E6%A1%A3.docx",
+      "size": 140172,
+      "sha256": "77827bd0fd97f4bf1c9cebc95099fb7d523c2836ecc91884621d98f4d9260e10",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/事务内幕文档.docx",
+      "action": "removed-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/备份恢复内幕.docx",
+      "size": 268252,
+      "sha256": "8ba9330dbd34113f39c54e1d0217b6905397c80cf7a84107ceac4017b6d437c6",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/备份恢复内幕.docx",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/refs/pingcode/YASSTORAGE_内幕文档/%E5%A4%87%E4%BB%BD%E6%81%A2%E5%A4%8D%E5%86%85%E5%B9%95.docx",
+      "size": 268252,
+      "sha256": "8ba9330dbd34113f39c54e1d0217b6905397c80cf7a84107ceac4017b6d437c6",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/备份恢复内幕.docx",
+      "action": "removed-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/持久化.docx",
+      "size": 249288,
+      "sha256": "f904a5c8bd790c88a57d1c99c5a6c304ac84780b73e0d23d685b0d3815acdea1",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/持久化.docx",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/refs/pingcode/YASSTORAGE_内幕文档/%E6%8C%81%E4%B9%85%E5%8C%96.docx",
+      "size": 249288,
+      "sha256": "f904a5c8bd790c88a57d1c99c5a6c304ac84780b73e0d23d685b0d3815acdea1",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/持久化.docx",
+      "action": "removed-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/数据缓存区.docx",
+      "size": 290921,
+      "sha256": "052208c74c401daefdf7b5159d98003e830804b7c1601f19f673094a43143da0",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/数据缓存区.docx",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/refs/pingcode/YASSTORAGE_内幕文档/%E6%95%B0%E6%8D%AE%E7%BC%93%E5%AD%98%E5%8C%BA.docx",
+      "size": 290921,
+      "sha256": "052208c74c401daefdf7b5159d98003e830804b7c1601f19f673094a43143da0",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/数据缓存区.docx",
+      "action": "removed-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/索引内幕文档.docx",
+      "size": 304297,
+      "sha256": "fb548006c6f65d53ad91304f7dbfbae5f2b1dc89f98dbd4898f5883a0ff147ac",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/索引内幕文档.docx",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/refs/pingcode/YASSTORAGE_内幕文档/%E7%B4%A2%E5%BC%95%E5%86%85%E5%B9%95%E6%96%87%E6%A1%A3.docx",
+      "size": 304297,
+      "sha256": "fb548006c6f65d53ad91304f7dbfbae5f2b1dc89f98dbd4898f5883a0ff147ac",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/索引内幕文档.docx",
+      "action": "removed-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/references/design-docs/YashanDB 文档 主页/表空间.docx",
+      "size": 181210,
+      "sha256": "d0ca05edd272fc547c8a139c8bd2e618a17339b2717573a3c66ebc317a3d5ad0",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/表空间.docx",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/refs/pingcode/YASSTORAGE_内幕文档/%E8%A1%A8%E7%A9%BA%E9%97%B4.docx",
+      "size": 181210,
+      "sha256": "d0ca05edd272fc547c8a139c8bd2e618a17339b2717573a3c66ebc317a3d5ad0",
+      "retainedPath": "knowledge/references/design-docs/YashanDB 文档 主页/表空间.docx",
+      "action": "removed-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/refs/pingcode/YASSTORAGE_内幕文档/%E7%B4%A2%E5%BC%95%E5%86%85%E5%B9%95%E6%96%87%E6%A1%A3.pptx",
+      "size": 413032,
+      "sha256": "b0552714dd9b6ba0b9b526e15625ab371f6a44336b03e8b61b4f6a51212f5251",
+      "retainedPath": "knowledge/refs/pingcode/YASSTORAGE_内幕文档/%E7%B4%A2%E5%BC%95%E5%86%85%E5%B9%95%E6%96%87%E6%A1%A3.pptx",
+      "action": "retained-duplicate"
+    },
+    {
+      "sourcePath": "knowledge/refs/pingcode/YASSTORAGE_内幕文档/image2022-8-18_18-4-57.png",
+      "size": 413032,
+      "sha256": "b0552714dd9b6ba0b9b526e15625ab371f6a44336b03e8b61b4f6a51212f5251",
+      "retainedPath": "knowledge/refs/pingcode/YASSTORAGE_内幕文档/%E7%B4%A2%E5%BC%95%E5%86%85%E5%B9%95%E6%96%87%E6%A1%A3.pptx",
+      "action": "retained-duplicate"
+    }
+  ]
+}
