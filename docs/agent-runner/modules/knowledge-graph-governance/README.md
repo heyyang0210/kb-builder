@@ -40,7 +40,7 @@
 ## 代码边界
 
 - 后端：`apps/pingcode-api/app/` 的图谱投影、可观测读模型、版本仓储和 API 接线。
-- 前端：`apps/pingcode-web/src/` 的 `QualityPage.vue`、`KnowledgeGraphPage.vue` 和共享局部图组件。
+- 前端：知识中心管理页中的质量与知识图谱组件。
 - 事实源：已提交图谱节点、关系和证据引用；诊断查询不修改事实产物。
 
 产品需求见 `.codex/requirements/modules/knowledge-graph-governance/`，动态进展见 `.codex/workflow/modules/知识图谱可观测性与治理模块优化进展.md`。

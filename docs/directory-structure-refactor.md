@@ -11,7 +11,7 @@
 ## 最终目标与实际目录
 
 ```text
-apps/{knowledge-center-api,knowledge-center-auth,knowledge-center-web,pingcode-api,pingcode-web,yashandb-storage}
+apps/{knowledge-center-api,knowledge-center-auth,knowledge-center-web,pingcode-api,yashandb-storage}
 packages/{agent-runner-core,pingcode-core,platform-contracts,platform-config}
 tools/{knowledge-processing,pingcode-cli,repository}
 tests/{unit,contract,integration,e2e}
@@ -75,5 +75,5 @@ scripts/pingcode/__init__.py 指向已不存在的 core 子包，属于旧包装
 - 运行 JSON 扫描未发现本仓库旧 var 绝对路径。数据库持久化内部是否含历史绝对路径未实连确认；不得据此声称数据库全量迁移通过。
 - 初次四套 Node 38 项通过、一次浏览器未启用跳过；后续浏览器启用的真实 HTTP 评论回归六项通过。另六套大纲/配置/代理/企业契约测试 39 项通过。
 - Python：数据库配置 2 项、SSE 8 项、文件响应 4 项、下载取消与 Skill/提示词注册 25 项、企业 profile 5 项通过。使用系统 Python；项目 .venv 缺少 FastAPI，不作为验证解释器。
-- 健康及页面 HTTP：14110/api/health、18010/api/health、14200/knowledge-center/api/auth/config、13510/knowledge-center/、13510/prompt-generator.html、13510/pingcode-materials/、14110/api/outline/list 均 200。MCP 默认远程地址断言通过。
+- 健康及页面 HTTP：14110/api/health、18010/api/health、14200/knowledge-center/api/auth/config、13510/knowledge-center/、13510/prompt-generator.html、14110/api/outline/list 均 200；退役资料入口返回 410。MCP 默认远程地址断言通过。
 - README 原全文另存 docs/archive/root-layout/README.before-runtime.md。历史文档不冒充当前使用说明；根级 Compose 已失效，仅归档，不新造部署配置。

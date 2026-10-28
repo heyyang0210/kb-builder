@@ -793,7 +793,7 @@ python3 -m unittest discover -s tests -v
 ```
 
 ```bash
-cd apps/pingcode-web
+cd apps/knowledge-center-web
 npm run build
 ```
 

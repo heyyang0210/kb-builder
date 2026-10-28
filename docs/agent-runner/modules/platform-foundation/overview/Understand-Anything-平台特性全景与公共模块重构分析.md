@@ -149,7 +149,7 @@ YashanDB 知识库构建平台
 | `knowledge-center-web` | 统一入口、网关、字符串模板 UI、模块编排 | `frontend-server.js`、`app.js`、`modules/*` | 做体验编排，不承载领域持久化规则 |
 | `knowledge-center-api` | 文档/Agent 入口、WebSocket、健康和上下文 | `server.js` | 保持薄入口，执行能力下沉 core |
 | `knowledge-center-auth` | 认证兼容启动入口 | `auth-server.js` | 认证内核同进程化后，兼容入口可渐进退役 |
-| `pingcode-web` | Vue 资料加工、图谱治理和可观测工作台 | `App.vue`、`components/*`、`api.js` | 共享无 DOM 契约，不与字符串模板 UI 强行合并 |
+| 知识中心管理前端 | 资料加工、图谱治理和可观测工作台 | 知识中心管理页组件 | 共享无 DOM 契约，不与字符串模板 UI 强行合并 |
 | `pingcode-api` | 上传、准备、训练、关键词、索引、图谱、发布 | `main.py`、service/repository | 拆分大路由入口，领域服务保持 Python 边界 |
 | `yashandb-storage` | JDBC、迁移、revision、领域投影 | `Main.java`、Repository、migration | HTTP 为过渡适配；Handler 与 repository 继续拆分 |
 | `agent-runner-core` | 工作流、文档生产、增量构建、预处理、网关、仓储 | `lib/*`、`routes/*` | 平台共享内核，避免继续堆入单一路由文件 |
@@ -164,7 +164,7 @@ YashanDB 知识库构建平台
 
 | 能力 | 重复位置 | 实质差异 | 决策 | 目标边界 |
 | --- | --- | --- | --- | --- |
-| JSON HTTP 请求 | 6 个知识中心 API 文件及 `pingcode-web/src/api.js` | base URL、envelope、401/403、幂等、上传/SSE 不同 | P0 提炼 | transport 只负责请求、解析、错误、取消和追踪；adapter 决定 endpoint/envelope |
+| JSON HTTP 请求 | 知识中心 API 文件及 PingCode 后端适配 | base URL、envelope、401/403、幂等、上传/SSE 不同 | P0 提炼 | transport 只负责请求、解析、错误、取消和追踪；adapter 决定 endpoint/envelope |
 | 幂等键 | 增量、手册、GitLab、团队、上传 | pending command 复用、随机 UUID、时间戳并存 | P0 提炼 | 按 actor+operation+resource+payloadDigest 定义生命周期 |
 | Storage 传输 | `domain-store`、`aggregate-store` | 同步 curl、异步 curl、fetch，错误和 timeout 不同 | P0 提炼 | 原生 fetch、deadline、统一 envelope、metrics |
 | 列表/分页/过滤 | assets、templates、principals、GitLab、Vue PaginationControls | UI 技术栈不同，query 状态相同 | P1 部分提炼 | 共享 query-state/schema；保留 renderer adapter |

@@ -21,7 +21,7 @@
 - ✅ 筛选策略（关键词、文件类型、深度）
 - ✅ 已有数据整合
 - ✅ 资料加工任务后端接口（技术接口继续使用 material-batches，支持范围预估、持久化、任务状态、SSE）
-- ✅ 独立 Vue 资料加工页面（空间选择、任务、下载、远程文件访问）
+- ✅ PingCode 资料加工后端 API（独立资料加工前端已退役）
 - ✅ 真实 PingCode 空间发现与本地素材空间映射
 - ✅ 与文档管理一致的页面内 Markdown 预览
 - ✅ 通用本地资料分片上传和临时加工任务生成
@@ -123,17 +123,9 @@ python3 -m pip install --user --break-system-packages -r apps/pingcode-api/requi
 python3 -m uvicorn app.main:app --host 0.0.0.0 --port 3500
 ```
 
-命令需要在 `apps/pingcode-api` 目录执行。后端默认监听 `0.0.0.0:3500`，同时提供 `/api/*` 接口和 `/pingcode-materials/` 前端静态文件；可通过仓库根目录的 `start_services.sh` 启动。后端默认使用已配置的持久化浏览器会话和 `config/pingcode/credentials.json`，数据写入 `var/pingcode/web`；可通过 `PINGCODE_WEB_DATA_ROOT`、`PINGCODE_CONFIG`、`PINGCODE_PROCESSING_SKILL_ROOT` 和 `PINGCODE_PROCESSING_PROMPT_DRAFT_ROOT` 覆盖。空间树使用 PingCode 原生 `page-tree-v2` 分页接口，不再受旧的 1000 条页面接口限制。
+命令需要在 `apps/pingcode-api` 目录执行。后端默认监听 `0.0.0.0:8001`，提供 PingCode API 适配和资料接口；可通过仓库根目录的 `knowledge-center.sh` 启动。后端默认使用已配置的持久化浏览器会话和 `config/pingcode/credentials.json`，数据写入运行时目录；可通过对应环境变量覆盖。空间树使用 PingCode 原生 `page-tree-v2` 分页接口。
 
-### 启动前端
-
-```bash
-cd apps/pingcode-web
-npm install
-PINGCODE_WEB_BACKEND=http://127.0.0.1:8000 npm run dev
-```
-
-浏览器访问 `http://127.0.0.1:5173/pingcode-materials/`。本地开发默认允许 `localhost` 和 `127.0.0.1` 的任意前端端口，避免 Vite 自动切换端口后写请求被 CORS 预检拦截；生产环境可通过 `PINGCODE_WEB_CORS_ORIGINS` 和 `PINGCODE_WEB_CORS_ORIGIN_REGEX` 收紧来源。局域网统一入口为 `http://192.168.130.180:3500/pingcode-materials/`，由素材平台 FastAPI 后端直接提供前端静态文件和 `/api/*` 接口，无需单独开放前端开发端口。
+独立资料加工前端已退役。知识中心保留 `/pingcode-api/` 兼容路由供来源引用和后端适配使用；访问 `/pingcode-materials/` 返回 HTTP 410。
 
 当前已验证：真实发现当前账号可访问的 206 个 PingCode 空间、YASDOC 8073 条完整页面索引、2 个真实根节点和 0 个悬空父节点、空间映射持久化、逻辑空间目录、本地上传、单页面批次创建、来源与归属识别、批次筛选分页、页面 Markdown 下载、资源元数据、在线预览、文件下载、SSE 任务事件、源文件扫描、清洗分块预览、Monaco 原文/清洗/Diff/渲染预览、预处理任务、知识图谱训练、质量门禁和数据集发布。当前知识加工前端展示三步流水线：资料预处理、知识提取、索引生成；元数据整理归入资料预处理，证据校验和关系识别归入知识提取 Workflow Agent。知识加工必须在资料下载完成后启动；下载中断时需先在“下载文件”页继续下载。Office/PDF 文本转换器、来源文本偏移和固定查询集检索验证仍按设计阶段继续实现。
 

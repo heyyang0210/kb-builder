@@ -6,11 +6,11 @@
 
 2026-10-13 的 172.16.91.10 故障来自代码仅识别 DEV_HTTP、地址规则遗漏 172.16/12，而用户已配置 ALLOW_HTTP。修复配置读取与私网判断，保持生产已有 config 内容不变。回调来自生命周期入口的公开访问地址；GitLab 应用登记的 Redirect URI 必须与运行进程实际回调完全一致。使用管理员真实 HTTP 请求验证 OAuth start 返回 302、授权端点可达；用户本人仍需在 GitLab 登录同意授权，平台不能代替其授权。
 
-## PingCode Web 离线构建修复（2026-10-13）
+## 知识中心离线构建说明（2026-10-13）
 
-Web 使用 `apps/pingcode-web/package-lock.json` 独立锁定依赖。联网机器按该清单下载所有 resolved 包（包括 ARM64 可选原生依赖）至 npm 内容寻址缓存，校验传输包 SHA-256 后上传生产 `runtime/deployment/npm-cache`。生产不复用其他架构的 node_modules，而是在暂存目录执行 `npm ci --offline --include=dev --ignore-scripts`，由 npm 校验锁定依赖的 integrity 并选择本机架构。可通过 `KNOWLEDGE_CENTER_NPM_CACHE` 指定缓存位置；默认缓存存在时启用离线安装，否则维持联网安装。
+知识中心使用根 `package-lock.json` 锁定依赖。联网机器按该清单下载 resolved 包至 npm 内容寻址缓存，校验传输包 SHA-256 后上传生产 `runtime/deployment/npm-cache`。生产不复用其他架构的 node_modules，而是在暂存目录执行 `npm ci --offline --include=dev --ignore-scripts`。可通过 `KNOWLEDGE_CENTER_NPM_CACHE` 指定缓存位置；默认缓存存在时启用离线安装，否则维持联网安装。
 
-安装失败必须显式退出，不得继续调用 Vite；缓存缺失或锁定依赖变化时报告需要补充离线包。安装成功后检查 Vite 入口，再执行真实构建。完整构建成功前不停止服务、不替换现有构建产物。配置目录不参与传输或修改。验收以生产原始 restart、四个组件健康及真实 API 请求为准。
+安装失败必须显式退出，不得继续构建。缓存缺失或锁定依赖变化时报告需要补充离线包。完整构建成功前不停止服务、不替换现有构建产物。配置目录不参与传输或修改。
 
 ## 原地离线部署契约（2026-10-13）
 

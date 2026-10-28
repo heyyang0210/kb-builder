@@ -14,7 +14,6 @@ apps/
   knowledge-center-auth/
   knowledge-center-web/
   pingcode-api/
-  pingcode-web/
   yashandb-storage/
 packages/
   agent-runner-core/
@@ -39,7 +38,7 @@ runtime/
 
 - [x] 建立应用、包、工具和运行时数据目录
 - [x] 迁移 Agent Runner 应用入口、核心库、前端和 JDBC 服务
-- [x] 迁移 PingCode API、前端和核心库
+- [x] 迁移 PingCode API 和核心库；独立前端已退役
 - [x] 迁移共享契约到 `packages/platform-contracts`
 - [x] 迁移脚本和测试，修复所有入口引用
 - [x] 迁移运行数据到 `runtime/`，禁止源码目录承载运行时写入
@@ -65,6 +64,6 @@ runtime/
 ## 收尾验证记录（2026-09-10）
 
 - 权威入口：根目录 `knowledge-center.sh start/stop/restart/status`，五个业务服务统一管理。
-- HTTP：`14110/api/health`、`18010/api/health`、`14200/knowledge-center/api/auth/config`、`13510/knowledge-center/`、`13510/pingcode-materials/` 均返回 200。
+- HTTP：`14110/api/health`、`18010/api/health`、`14200/knowledge-center/api/auth/config`、`13510/knowledge-center/` 均返回 200；退役资料入口返回 410。
 - 旧路径扫描：应用、包、工具、测试、配置范围未发现 `agent-runner/{data,outlines,tmp,lib,scripts}`、`tests/agent-runner` 或 `scripts/pre-check-references.sh` 运行时引用；历史设计文档中的旧路径保留为历史事实。
 - 符号链接：仅发现 `apps/pingcode-api/.venv` 内 4 个 Python 虚拟环境链接，不属于兼容包装或旧路径入口。

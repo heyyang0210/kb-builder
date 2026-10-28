@@ -6,14 +6,14 @@ HTTP 私网开发环境连接 GitLab 时，已有配置可使用 `KNOWLEDGE_CENT
 
 ## 离线环境局部重启
 
-生产已安装 JDK 时可直接编译。PingCode Web 使用独立 lockfile；离线环境需准备 npm 缓存，不能复用仓库根目录或另一架构的 node_modules。构建脚本发现 `runtime/deployment/npm-cache` 后自动使用 `npm ci --offline --include=dev`，安装失败立即停止，不覆盖已有产物或停止服务。自定义缓存可设置 `KNOWLEDGE_CENTER_NPM_CACHE`。
+生产已安装 JDK 时可直接编译。知识中心使用根 lockfile；离线环境需准备 npm 缓存，不能复用另一架构的 node_modules。构建脚本发现 `runtime/deployment/npm-cache` 后自动使用 `npm ci --offline --include=dev`，安装失败立即停止，不覆盖已有产物或停止服务。自定义缓存可设置 `KNOWLEDGE_CENTER_NPM_CACHE`。
 
-在联网机器核对 Web lockfile 与生产一致后，下载锁定包（包含 ARM64 可选依赖）：
+在联网机器核对根 lockfile 与生产一致后，下载锁定包：
 
 ```bash
-sha256sum apps/pingcode-web/package-lock.json
+sha256sum package-lock.json
 mkdir -p runtime/deployment/npm-cache
-node -e 'const p=require("./apps/pingcode-web/package-lock.json").packages; console.log([...new Set(Object.values(p).map(x=>x.resolved).filter(Boolean))].join("\n"))' \
+node -e 'const p=require("./package-lock.json").packages; console.log([...new Set(Object.values(p).map(x=>x.resolved).filter(Boolean))].join("\n"))' \
   | while IFS= read -r url; do
       npm cache add "$url" --cache "$PWD/runtime/deployment/npm-cache" --ignore-scripts || exit 1
     done
@@ -26,9 +26,11 @@ sha256sum runtime/deployment/npm-cache.tar.gz
 
 现有生产目录可原地执行 `./knowledge-center.sh restart`。仅 JRE 的生产机需要从可信构建机接收与生产源码及构建入口完全匹配、摘要有效的统一产物，同时具备 `apps/yashandb-storage/lib/yashandb-jdbc.jar`。构建入口缓存命中后无需 Java 编译器；源码或摘要不匹配时仍要求 JDK，不会静默跳过构建验证。局部修复应先备份、暂存上传、验证后替换，不发布工作区其他业务改动。详见[离线重启设计](../../docs/operations/production-deployment.md)。
 
+重启会识别工作目录属于本仓库 `apps/yashandb-storage`、且 Java 类路径来自本仓库 `runtime/build/*/current` 的遗留 Storage 实例；构建目录切换后也会受控停止并启动新实例。其他工作目录或类路径不匹配的 14210 进程仍保留现场并阻止接管。检查运行状态时应使用启动所用的 `KNOWLEDGE_CENTER_BUILD_ROOT`；默认完整重启会生成默认构建目录。
+
 ## 生产同步与一键升级
 
-生产环境默认为 `hey@172.16.91.10:22`，部署根目录为 `/data/code/kb-builder`。本地测试知识中心为 `192.168.130.180`（前端 `13510`、文档 API `14110`、PingCode API `18010`）；测试数据库为 `192.168.23.136:1688/yasdb`，用户 `pf_knowledge`。密码、Token 和 OAuth Secret 不得写入本文档或发布脚本。
+生产环境默认为 `hey@172.16.91.10:22`，部署根目录为 `/data/code/kb-builder`。生产数据库为 `192.168.23.136:1688/yasdb`，用户 `pf_knowledge`（环境属性经用户确认，连接目标经生产配置与只读查询核对）。本地测试知识中心为 `192.168.130.180`（前端 `13510`、文档 API `14110`、PingCode API `18010`）；测试服务的位置不能作为数据库环境属性的判断依据，测试应使用独立数据库或 Schema。密码、Token 和 OAuth Secret 不得写入本文档或发布脚本。
 
 ```bash
 ./tools/deployment/sync-production.sh --check

@@ -76,6 +76,9 @@ tmp/
 temp/
 *.tmp
 *.rdb
+*.bkp
+*.bak
+*.ua
 
 # 测试输出
 _test_output/

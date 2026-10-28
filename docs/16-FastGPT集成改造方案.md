@@ -35,7 +35,7 @@ FastGPT 不直接替换 PingCode 知识加工处理中心。本期采用混合�
 | 层级 | 当前组件 | 主要职责 | 当前数据/接口 |
 |---|---|---|---|
 | 来源层 | PingCode、上传文件、参考资料 | 提供页面、附件、设计文档和本地资料 | PingCode API、上传 API、文件系统 |
-| 素材平台前端 | `apps/pingcode-web` | 批次、下载、加工流水线、质量分析和任务状态 | Vue、SSE、REST |
+| PingCode 后端适配 | `apps/pingcode-api`、`packages/pingcode-core` | 来源读取、批次和资料处理 API | FastAPI、REST |
 | 素材平台后端 | `apps/pingcode-api` | 来源下载、资料准备、六步加工、任务状态、日志和产物管理 | FastAPI、`JsonStore`、后台线程 |
 | 模型执行层 | `agent-runner` | 模型配置、模型网关、文档生成 Agent 和 MCP 检索 | `/api/model-provider/*`、文档生成接口 |
 | Skill/Prompt 层 | `tools/knowledge-processing/pingcode-processing` | 发布知识提取、语义补充等 Skill、Prompt、Profile 和 Schema | 文件 Registry、版本 API |
