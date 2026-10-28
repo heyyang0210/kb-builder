@@ -18,7 +18,11 @@ class PlatformProfileLoaderTest(unittest.TestCase):
         context = dict(result["context"])
         self.assertEqual("yashandb", context["profileId"])
         self.assertRegex(context["configFingerprint"], r"^sha256:[0-9a-f]{64}$")
-        self.assertEqual(30, len(result["resources"]))
+        self.assertEqual(35, len(result["resources"]))
+        for skill_id in ["continue-technical-document", "extract-document-cases", "execute-yashandb-cases", "compare-case-results", "render-test-report"]:
+            with self.subTest(skill_id=skill_id):
+                skill = next(item for item in result["resources"] if item["reference"] == f"knowledge/skills/{skill_id}/SKILL.md")
+                self.assertRegex(skill["digest"], r"^[0-9a-f]{64}$")
         self.assertEqual("config/knowledge-center/branding/default-icon.png", context["brand"]["icon"]["resourceRef"])
         self.assertEqual([
             {"configured": True, "enabled": True, "id": "local-upload", "type": "local-upload"},

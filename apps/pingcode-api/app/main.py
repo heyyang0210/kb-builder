@@ -677,6 +677,18 @@ def get_space_tree(space_key: str, refresh: bool = False):
         error("PINGCODE_REQUEST_FAILED", str(exc), 502, retryable=True)
 
 
+@app.get("/api/pingcode/spaces/{space_key}/pages/{page_id}/reference")
+def get_page_reference(space_key: str, page_id: str):
+    try:
+        return pingcode.read_reference(space_key, page_id)
+    except KeyError:
+        error("PINGCODE_REFERENCE_NOT_FOUND", "该空间中没有可引用的页面", 404)
+    except ValueError:
+        error("PINGCODE_REFERENCE_INVALID", "页面定位或正文不满足引用要求", 422)
+    except Exception:
+        error("PINGCODE_REQUEST_FAILED", "PingCode 正文读取失败，请检查来源配置和访问权限", 502, retryable=True)
+
+
 @app.post("/api/material-batches/estimate", response_model=SourceSnapshot)
 def estimate_batch(selection: SourceSelection):
     try:

@@ -2,6 +2,7 @@ import asyncio
 import sys
 import json
 import logging
+import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -20,6 +21,7 @@ from pingcode_core.api_client import PingCodeAPIClient
 from pingcode_core.client import PingCodeClient
 from pingcode_core.config import PingCodeConfig
 from pingcode_core.tree_builder import TreeBuilder
+from pingcode_core.content_parser import ContentParser
 
 
 logger = logging.getLogger(__name__)
@@ -353,6 +355,45 @@ class PingCodeService:
 
     def api_call(self, callback, space_key: str | None = None):
         return self._submit(self._api_call_sync, callback, space_key)
+
+    def read_reference(self, space_key: str, page_id: str) -> dict[str, Any]:
+        """读取已有账号可访问的单篇参考正文，不创建下载批次。"""
+        if not all(re.fullmatch(r"[A-Za-z0-9_-]+", value) for value in (space_key, page_id)):
+            raise ValueError("页面定位符无效")
+        return self._submit(self._read_reference_sync, space_key, page_id)
+
+    def _read_reference_sync(self, space_key: str, page_id: str) -> dict[str, Any]:
+        with self._lock:
+            pages = self._pages_for_batch_sync(space_key, [page_id])
+            if not pages:
+                # The web URL uses identifier; resolve only inside the verified space.
+                pages = [page for page in self._space_cache[space_key][1]
+                         if page_id in (str(page.get("short_id") or ""), str(page.get("identifier") or ""))]
+            if len(pages) != 1:
+                raise KeyError("空间中不存在唯一匹配的页面")
+            canonical_id = str(pages[0]["_id"])
+            response = self._ensure_api(space_key).get_page(canonical_id)
+            value = response.get("data", {}).get("value", {})
+            if not isinstance(value, dict) or not value.get("document"):
+                raise ValueError("页面没有可引用的正文")
+            if value.get("_id") and str(value["_id"]) != canonical_id:
+                raise ValueError("页面详情与请求不一致")
+            content = ContentParser().parse_document(value["document"])
+            if not content.strip():
+                raise ValueError("页面没有可引用的正文")
+            result = {
+                "content": content,
+                "title": value.get("name") or pages[0].get("name") or page_id,
+                "spaceKey": space_key,
+                "pageId": page_id,
+                "canonicalPageId": canonical_id,
+                "originalUrl": f"{self.config.base_url.rstrip('/')}/wiki/spaces/{space_key}/pages/{page_id}",
+            }
+            if isinstance(value.get("version"), (str, int)):
+                result["sourceVersion"] = value["version"]
+            if isinstance(value.get("updated_at"), str):
+                result["sourceUpdatedAt"] = value["updated_at"]
+            return result
 
     def _api_call_sync(self, callback, space_key: str | None = None):
         with self._lock:

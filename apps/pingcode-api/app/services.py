@@ -1083,9 +1083,9 @@ class TaskService:
         assets_dir: Path,
         files_dir: Path,
     ) -> list[dict[str, Any]]:
-        from content_parser import ContentParser
-        from filename_utils import FilenameUtils
-        from attachment_policy import AttachmentPolicy
+        from pingcode_core.content_parser import ContentParser
+        from pingcode_core.filename_utils import FilenameUtils
+        from pingcode_core.attachment_policy import AttachmentPolicy
 
         page_id = page["_id"]
         page_name = page.get("name", "未知页面")
