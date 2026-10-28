@@ -29,8 +29,8 @@ test('未连接 OAuth 时展示授权入口并阻止无效验证', async ({ page
   await page.route('**/knowledge-center/api/gitlab/oauth/config', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: { configured: true, devHttp: true } }) }));
   await page.route('**/knowledge-center/api/gitlab/connections', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: { items: [{ id: 'gitlab-yasdoc', name: 'yasdoc', baseUrl: 'https://git-tools.yasdb.com', projectPath: 'cod-doc/yasdoc', mode: 'production', authMode: 'user_oauth', purpose: 'read', status: 'pending' }] } }) }));
   await page.goto(`${baseUrl}/knowledge-center/platform?tab=gitlab`);
-  await expect(page.getByText('需要使用管理员账号验证平台连接')).toBeVisible();
-  await expect(page.getByRole('link', { name: '用我的 GitLab 验证连接' })).toHaveAttribute('href', /connectionId=gitlab-yasdoc/);
+  await expect(page.getByText('我的 GitLab 账号尚未连接')).toBeVisible();
+  await expect(page.getByRole('link', { name: '连接我的 GitLab 账号' })).toHaveAttribute('href', /connectionId=gitlab-yasdoc/);
   await expect(page.getByRole('button', { name: '验证连接' })).toBeDisabled();
 });
 

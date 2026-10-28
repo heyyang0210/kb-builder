@@ -54,6 +54,14 @@ describe('数据库配置模式 GitLab 验证运行时事实 HTTP 回归', () =>
     expect(responseBody).toMatchObject({ data: { items: [{ status: 'verified', lastVerification: { status: 'verified', branchCount: 1 } }] } });
     expect(JSON.stringify(responseBody)).not.toContain('verify_test');
   });
+  test('连接列表保留数据库的关联手册统计，不被空文件映射覆盖', async () => {
+    connection.linkedHandbookCount = 3;
+    const response = await fetch(baseUrl);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ data: { items: [{ id: 'db-repo', linkedHandbookCount: 3 }] } });
+    delete connection.linkedHandbookCount;
+    expect(await (await fetch(baseUrl)).json()).toMatchObject({ data: { items: [{ linkedHandbookCount: null }] } });
+  });
   test('失败返回原因与修复建议，刷新后保留失败', async () => {
     upstreamStatus = 403;
     const response = await fetch(`${baseUrl}/db-repo/verify`, { method: 'POST' });

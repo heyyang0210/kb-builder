@@ -27,7 +27,7 @@ describe('GitLab OAuth flow', () => {
     const url = oauth.start({ userId: 'u1', connectionId: 'c1', host: 'https://git-tools.yasdb.com', returnTo: '/knowledge-center/platform' });
     const parsed = new URL(url);
     expect(parsed.pathname).toBe('/oauth/authorize');
-    expect(parsed.searchParams.get('scope')).toBe('api');
+    expect(parsed.searchParams.get('scope')).toBe('read_api read_repository');
     expect(parsed.searchParams.get('code_challenge_method')).toBe('S256');
     const state = parsed.searchParams.get('state');
     global.fetch = jest.fn(async (_url, options) => {
