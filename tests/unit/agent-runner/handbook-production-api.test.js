@@ -642,7 +642,7 @@ test('AI retry is available over HTTP, is idempotent, and preserves attempts aft
     if (completed.body.data.status === 'completed') break;
     await new Promise(resolve => setTimeout(resolve, 1));
   }
-  assert.equal(completed.body.data.status, 'completed');
+  assert.equal(completed.body.data.status, 'completed', JSON.stringify(completed.body.data));
   assert.equal(completed.body.data.candidateMarkdown, '前文重试成功后文');
   assert.equal(completed.body.data.stageRuns.filter(run => run.stageId === 'writer').length, 2);
   assert.deepEqual(completed.body.data.stageRuns.filter(run => run.stageId === 'writer').map(run => run.attempt), [1, 2]);
@@ -656,7 +656,9 @@ test('AI retry is available over HTTP, is idempotent, and preserves attempts aft
 test('AI recovery resumes an expired job over HTTP and reuses verified planner/evidence artifacts', async t => {
   const config = JSON.parse(fs.readFileSync(path.resolve(repositoryRoot, 'config/knowledge-center/content-rules.json'), 'utf8')).productionAI;
   let calls = 0;
+  let clock = Date.now();
   const api = await setup(t, { ai: {
+    now: () => clock,
     rules: { ...config, leaseMs: 50 },
     generate: async () => { calls++; if (calls === 1) return new Promise(() => {}); return { content: '恢复内容' }; },
   } });
@@ -665,7 +667,9 @@ test('AI recovery resumes an expired job over HTTP and reuses verified planner/e
   const created = await api.request('POST', aiPath, JSON.stringify(payload), { 'content-type': 'application/json', 'idempotency-key': 'http-recovery-create' });
   assert.equal(created.status, 202);
   const jobId = created.body.data.jobId;
-  await new Promise(resolve => setTimeout(resolve, 80));
+  for (let attempt = 0; attempt < 100 && calls === 0; attempt++) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(calls, 1, '写作调用开始后才能模拟租约过期');
+  clock += 51;
   const expired = await api.request('GET', `${aiPath}/${jobId}${query}`);
   assert.equal(expired.body.data.status, 'interrupted');
   api.setSession(null);
@@ -688,7 +692,7 @@ test('AI recovery resumes an expired job over HTTP and reuses verified planner/e
     if (completed.body.data.status === 'completed') break;
     await new Promise(resolve => setTimeout(resolve, 1));
   }
-  assert.equal(completed.body.data.status, 'completed');
+  assert.equal(completed.body.data.status, 'completed', JSON.stringify(completed.body.data));
   assert.equal(completed.body.data.candidateMarkdown, '前文恢复内容后文');
   assert.deepEqual(completed.body.data.stageRuns.filter(run => run.stageId === 'planner').map(run => run.status), ['succeeded']);
   assert.deepEqual(completed.body.data.stageRuns.filter(run => run.stageId === 'evidence').map(run => run.status), ['succeeded']);
@@ -698,7 +702,9 @@ test('AI recovery resumes an expired job over HTTP and reuses verified planner/e
 test('AI periodic recovery resumes an expired job without an explicit recover request over HTTP', async t => {
   const config = JSON.parse(fs.readFileSync(path.resolve(repositoryRoot, 'config/knowledge-center/content-rules.json'), 'utf8')).productionAI;
   let calls = 0;
+  let clock = Date.now();
   const api = await setup(t, { recoveryIntervalMs: 5, ai: {
+    now: () => clock,
     rules: { ...config, leaseMs: 30 },
     generate: async () => { calls++; if (calls === 1) return new Promise(() => {}); return { content: '后台恢复内容' }; },
   } });
@@ -707,13 +713,16 @@ test('AI periodic recovery resumes an expired job without an explicit recover re
   const created = await api.request('POST', aiPath, JSON.stringify(payload), { 'content-type': 'application/json', 'idempotency-key': 'http-periodic-recovery-create' });
   assert.equal(created.status, 202);
   const jobId = created.body.data.jobId;
+  for (let attempt = 0; attempt < 100 && calls === 0; attempt++) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(calls, 1, '写作调用开始后才能模拟租约过期');
+  clock += 31;
   let result;
   for (let attempt = 0; attempt < 100; attempt++) {
     await new Promise(resolve => setTimeout(resolve, 10));
     result = await api.request('GET', `${aiPath}/${jobId}${query}`);
     if (result.body.data.status === 'completed') break;
   }
-  assert.equal(result.body.data.status, 'completed');
+  assert.equal(result.body.data.status, 'completed', JSON.stringify(result.body.data));
   assert.equal(result.body.data.candidateMarkdown, '前文后台恢复内容后文');
   assert.deepEqual(result.body.data.stageRuns.filter(run => run.stageId === 'writer').map(run => run.attempt), [1, 2]);
 });
@@ -1262,16 +1271,15 @@ test('PingCode design and test sources use fixed service, allowed spaces and con
   await page.locator('[data-ai-source-locator]').fill('space1/design1');
   await page.locator('[data-ai-source-preview]').click();
   await page.locator('[data-ai-source-list] [data-source-id]:not([data-source-id="knowledge-mcp"]) input[type="checkbox"]').waitFor({ state: 'attached' });
+  assert.match(await page.locator('[data-ai-source-info]').textContent(), /资料已添加/);
+  await page.getByRole('button', { name: '关闭添加参考文档' }).click();
   const popupPromise = page.waitForEvent('popup');
   await page.getByRole('button', { name: /预览资料：/ }).click();
   const previewPage = await popupPromise;
   await previewPage.waitForLoadState();
   assert.match(await previewPage.locator('body').textContent(), /已授权的文档正文/);
   await previewPage.close();
-  assert.match(await page.locator('[data-ai-source-info]').textContent(), /资料已添加/);
   assert.equal(await page.locator('[data-ai-source-list] [data-source-id]:not([data-source-id="knowledge-mcp"]) input[type="checkbox"]').isChecked(), true);
-  assert.equal(await page.locator('[data-ai-source-list] [data-source-id]:not([data-source-id="knowledge-mcp"]) input[type="checkbox"]').isChecked(), true);
-  await page.getByRole('button', { name: '关闭添加参考文档' }).click();
   await page.locator('[data-ai-full]').click();
   await page.locator('[data-ai-start]').click();
   await page.locator('[data-ai-candidate]').waitFor({ state: 'visible' });

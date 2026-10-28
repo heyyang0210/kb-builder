@@ -267,3 +267,9 @@ npm run test:performance -- --current
 手册工作台参考效果验收：`knowledge-center-handbook-workspace.spec.js` 覆盖目录、格式下拉、AI五类来源、人工内容保留、窄屏与保存回读；格式切换先打开summary。临时格式菜单纳入 `dismissible-menu.node.cjs`。本轮隔离实测2项通过，保存回读仍因历史大纲引用冲突失败；不得将其记为完整流程通过。
 
 Jest 的 CommonJS runner 在 `tests/unit/agent-runner/jest.config.js` 中将 `marked` 映射到已安装同版本的 UMD 入口，用于来源图片 Markdown 解析测试；不替换产品运行时依赖或版本。
+
+## 2026-10-28 续作回归修正
+
+手册恢复 HTTP 测试注入可控时钟，等写作阶段开始后再推进租约，避免文件证据落盘时间提前耗尽短租约。PingCode 来源预览先关闭添加弹窗再打开预览。大纲菜单测试改用公共菜单模块；大纲 HTTP 夹具注入不参与该接口的生产服务，避免扫描共享任务存储，保持默认测试超时。
+
+本轮六套 Jest（构建契约、大纲、迁移预检、GitLab HTTP、AI 服务、增量 API）106 项通过；`node --test tests/unit/agent-runner/handbook-production-api.test.js tests/unit/agent-runner/handbook-incremental-review.test.js tests/e2e/agent-runner/dismissible-menu.node.cjs` 为 29 通过、4 跳过。跳过项为共享实例菜单两项、真实 YashanDB 质量接口一项、真实配置模型质量接口一项。隔离 HTTP 与浏览器通过不代表真实企业 GitLab、模型质量或共享部署验收通过。原始证据保存在本地 `runtime/test-results/continuation-20261029/`，不提交运行日志。

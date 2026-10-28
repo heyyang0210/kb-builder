@@ -67,41 +67,43 @@ describe('知识中心大纲管理前端契约', () => {
     expect(html).toContain('data-outline-template-help-panel');
     expect(html).toContain('大纲模板填写说明');
   });
-  test('导入面板沿用外部点击关闭逻辑，不阻止内部交互或清空表单', () => {
-    const app = read('apps/knowledge-center-web/frontend/knowledge-center/app.js');
-    const start = app.indexOf("  document.querySelectorAll('[data-asset-more-menu][open], .outline-import[open]')");
-    expect(start).toBeGreaterThan(0);
-    const source = app.slice(start, app.indexOf("  document.querySelectorAll('.platform-tab-menu", start));
-    const menu = { contains: jest.fn(), removeAttribute: jest.fn(), querySelector: jest.fn() };
-    const document = { querySelectorAll: jest.fn(() => [menu]) };
-    const handler = new Function('document', 'event', source);
-    const event = { target: {}, preventDefault: jest.fn(), stopPropagation: jest.fn() };
-    menu.contains.mockReturnValue(true);
-    handler(document, event);
-    expect(menu.removeAttribute).not.toHaveBeenCalled();
-    menu.contains.mockReturnValue(false);
-    handler(document, event);
-    expect(menu.removeAttribute).toHaveBeenCalledWith('open');
-    expect(menu.querySelector).not.toHaveBeenCalled();
-    expect(event.preventDefault).not.toHaveBeenCalled();
-    expect(event.stopPropagation).not.toHaveBeenCalled();
-  });
-  test('Esc 收起导入面板并恢复入口焦点，其他按键不误关', () => {
-    const app = read('apps/knowledge-center-web/frontend/knowledge-center/app.js');
-    const start = app.indexOf('  const dismissibleMenu =');
-    expect(start).toBeGreaterThan(0);
-    const source = app.slice(start, app.indexOf("  const infoDrawer =", start));
+  function menuFixture() {
+    const handlers = {};
     const trigger = { focus: jest.fn() };
-    const menu = { removeAttribute: jest.fn(), querySelector: jest.fn(() => trigger) };
-    const document = { querySelector: jest.fn(() => menu) };
-    const handler = new Function('document', 'event', source);
-    handler(document, { key: 'Enter' });
-    expect(menu.removeAttribute).not.toHaveBeenCalled();
-    handler(document, { key: 'Escape' });
-    expect(menu.removeAttribute).toHaveBeenCalledWith('open');
+    const menu = { open: true, contains: target => target === trigger, querySelector: () => trigger };
+    const root = {
+      addEventListener: (type, handler) => { handlers[type] = handler; },
+      removeEventListener: jest.fn(),
+      querySelectorAll: () => menu.open ? [menu] : [],
+      querySelector: () => null,
+    };
+    const source = read('apps/knowledge-center-web/frontend/knowledge-center/common/dismissible-menu.js').replace('export function', 'function');
+    const initialize = new Function(`${source}; return initDismissibleMenus;`)();
+    return { handlers, trigger, menu, runtime: initialize(root) };
+  }
+  test('公共菜单保留内部交互，外部点击关闭导入面板', () => {
+    const { handlers, menu, runtime } = menuFixture();
+    const event = { type: 'click', target: {}, composedPath: () => [menu], preventDefault: jest.fn() };
+    handlers.click(event);
+    expect(menu.open).toBe(true);
+    event.composedPath = () => [];
+    handlers.click(event);
+    expect(menu.open).toBe(false);
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    runtime.destroy();
+  });
+  test('公共菜单仅在Escape时关闭并恢复焦点', () => {
+    const { handlers, trigger, menu, runtime } = menuFixture();
+    const event = { key: 'Enter', target: {}, preventDefault: jest.fn(), stopImmediatePropagation: jest.fn() };
+    handlers.keydown(event);
+    expect(menu.open).toBe(true);
+    event.key = 'Escape';
+    handlers.keydown(event);
+    expect(menu.open).toBe(false);
     expect(trigger.focus).toHaveBeenCalledTimes(1);
-    document.querySelector.mockReturnValue(null);
-    expect(() => handler(document, { key: 'Escape' })).not.toThrow();
+    expect(event.preventDefault).toHaveBeenCalledTimes(1);
+    expect(() => handlers.keydown(event)).not.toThrow();
+    runtime.destroy();
   });
   test('从独立大纲治理接口加载列表和详情', () => {
     const api = read('apps/knowledge-center-web/frontend/knowledge-center/common/api/platform-api.js');
@@ -452,6 +454,8 @@ describe('知识中心大纲管理前端契约', () => {
     fs.writeFileSync(templatePath, 'template');
     fs.writeFileSync(samplePath, 'sample');
     const handler = createKnowledgeCenterHandler({
+      // Outline HTTP fixtures must not recover jobs from the shared production store.
+      handbookProductionService: {},
       config: {
         KNOWLEDGE_CENTER_PREFIX: '/knowledge-center', KNOWLEDGE_CENTER_ROOT: fixtureRoot, KNOWLEDGE_CENTER_ENTRY: 'index.html',
         OUTLINE_TEMPLATE_PATH: templatePath, OUTLINE_SAMPLE_PATH: samplePath,
@@ -491,7 +495,7 @@ describe('知识中心大纲管理前端契约', () => {
       const remainingSample = await fetch(`http://127.0.0.1:${server.address().port}/knowledge-center/api/outline/sample`);
       expect(remainingSample.status).toBe(200);
     } finally {
-      await new Promise(resolve => server.close(resolve));
+      await new Promise(resolve => { server.close(resolve); server.closeAllConnections(); });
       fs.rmSync(fixtureRoot, { recursive: true, force: true });
     }
   });
@@ -531,6 +535,8 @@ describe('知识中心大纲管理前端契约', () => {
       res.end(JSON.stringify({ actor: currentSession.user.id }));
     });
     const handler = createKnowledgeCenterHandler({
+      // Outline HTTP fixtures must not recover jobs from the shared production store.
+      handbookProductionService: {},
       config: {
         KNOWLEDGE_CENTER_PREFIX: '/knowledge-center', KNOWLEDGE_CENTER_ROOT: root, KNOWLEDGE_CENTER_ENTRY: 'index.html',
         OUTLINE_TEMPLATE_PATH: path.join(root, 'knowledge/outlines/大纲模板.xlsx'), OUTLINE_SAMPLE_PATH: path.join(root, 'knowledge/outlines/SQL参考手册大纲示例.xlsx'),
@@ -561,6 +567,6 @@ describe('知识中心大纲管理前端契约', () => {
         expect(proxyOutline.mock.calls.at(-1)[2]).toBe(session);
       }
       expect(proxyOutline).toHaveBeenCalledTimes(3);
-    } finally { await new Promise(resolve => server.close(resolve)); }
+    } finally { await new Promise(resolve => { server.close(resolve); server.closeAllConnections(); }); }
   });
 });
