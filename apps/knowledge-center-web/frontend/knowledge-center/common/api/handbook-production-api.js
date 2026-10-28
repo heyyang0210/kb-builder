@@ -10,7 +10,9 @@ async function request(url, options = {}) {
   const isJson = contentType.toLowerCase().includes('application/json');
   const payload = isJson ? await response.json().catch(() => null) : null;
   if (response.status === 401) window.dispatchEvent(new CustomEvent('knowledge-center:session-expired'));
-  if (response.status === 403) window.dispatchEvent(new CustomEvent('knowledge-center:permission-denied'));
+  // Source allowlists restrict the requested resource, not the author's account role.
+  const sourceScopeDenied = ['AI_SOURCE_SCOPE_DENIED', 'AI_SOURCE_URL_DENIED'].includes(payload?.error?.code);
+  if (response.status === 403 && !sourceScopeDenied) window.dispatchEvent(new CustomEvent('knowledge-center:permission-denied'));
   if (!isJson || payload === null) {
     throw Object.assign(new Error('共享草稿服务暂不可用，请稍后重试'), {
       status: response.status,
@@ -20,7 +22,7 @@ async function request(url, options = {}) {
   }
   if (!response.ok || payload?.success === false) {
     const detail = payload?.error || {};
-    throw Object.assign(new Error(detail.message || `操作失败（HTTP ${response.status}）`), { status: response.status, code: detail.code, details: detail.details });
+    throw Object.assign(new Error(detail.message || `操作失败（HTTP ${response.status}）`), { status: response.status, code: detail.code, details: detail.details, requestId: response.headers.get('x-request-id') || detail.details?.requestId });
   }
   return payload?.data ?? payload;
 }
@@ -34,6 +36,29 @@ function query(context) {
 }
 
 export const loadHandbookDraft = context => request(`${documentPath(context)}?${query(context)}`);
+
+function aiPath(context, suffix = '') {
+  return `${base}/${encodeURIComponent(context.handbookId)}/documents/${encodeURIComponent(context.documentId)}/ai-jobs${suffix}`;
+}
+
+export const startHandbookAI = (context, body, key = idempotencyKey()) => request(aiPath(context), {
+  method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key },
+  body: JSON.stringify({ ...body, outlineVersionId: context.outlineVersionId, branch: context.branch }),
+});
+export const loadHandbookAI = (context, jobId) => request(`${aiPath(context, `/${encodeURIComponent(jobId)}`)}?${query(context)}`);
+export const loadHandbookAISkills = context => request(`${aiPath(context).replace(/ai-jobs$/, 'ai-skills')}?${query(context)}`);
+const sourcePath = context => aiPath(context).replace(/ai-jobs$/, 'ai-sources');
+export const loadHandbookAISources = context => request(`${sourcePath(context)}?${query(context)}`);
+export const previewHandbookAISource = (context, body) => request(sourcePath(context), {
+  method: 'POST', headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ ...body, outlineVersionId: context.outlineVersionId, branch: context.branch }),
+});
+export const actHandbookAI = (context, jobId, action, body = {}) => request(aiPath(context, `/${encodeURIComponent(jobId)}/${action}`), {
+  method: 'POST', headers: { 'Content-Type': 'application/json', ...(action === 'retry' ? { 'Idempotency-Key': body.idempotencyKey || idempotencyKey() } : {}) },
+  body: JSON.stringify({ ...body, outlineVersionId: context.outlineVersionId, branch: context.branch }),
+});
+export const runHandbookQuality = (context, body) => request(`${aiPath(context).replace(/ai-jobs$/, 'quality')}`, { method: 'POST', headers: { 'Idempotency-Key': body.idempotencyKey || idempotencyKey(), 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, outlineVersionId: context.outlineVersionId, branch: context.branch }) });
+export const loadHandbookQuality = (context, reportId) => request(`${aiPath(context).replace(/ai-jobs$/, `quality/${encodeURIComponent(reportId)}`)}?${query(context)}`);
 
 export const saveHandbookDraft = (context, body) => request(documentPath(context), {
   method: 'PUT',
@@ -74,3 +99,5 @@ export const createHandbookIncrementalReview = (handbookId, body) => request(`${
   headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey() },
   body: JSON.stringify(body),
 });
+
+export const loadProductionModels = () => request('/knowledge-center/api/production/models');

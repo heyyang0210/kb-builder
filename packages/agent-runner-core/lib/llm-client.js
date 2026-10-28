@@ -1,6 +1,16 @@
 const OpenAI = require('openai');
 const logger = require('./logger');
 
+function classifyProviderError(error) {
+  const status = Number(error?.status || error?.statusCode || 0);
+  const text = `${error?.code || ''} ${error?.message || ''}`.toLowerCase();
+  if (status === 401 || status === 403 && /(api.?key|auth|unauthori[sz]ed|forbidden)/.test(text)) return 'AI_PROVIDER_AUTH_FAILED';
+  if (status === 403 && /(country|region|territory|unsupported)/.test(text)) return 'AI_PROVIDER_REGION_UNSUPPORTED';
+  if (status === 429 || /(rate.?limit|too many requests)/.test(text)) return 'AI_PROVIDER_RATE_LIMITED';
+  if (status === 408 || error?.name === 'APITimeoutError' || /timeout|timed out/.test(text)) return 'AI_PROVIDER_TIMEOUT';
+  return 'AI_PROVIDER_UNAVAILABLE';
+}
+
 const PROVIDER_CONFIGS = {
   openai: {
     name: 'OpenAI',
@@ -46,6 +56,7 @@ class LLMClient {
       apiKey,
       baseURL,
       timeout: this.config.timeout || 180000,
+      fetchOptions: { redirect: 'error' },
       maxRetries: 2
     });
 
@@ -69,6 +80,18 @@ class LLMClient {
       const requestOptions = {};
       if (Number.isFinite(options.timeout_ms)) requestOptions.timeout = options.timeout_ms;
       if (Number.isInteger(options.max_retries)) requestOptions.maxRetries = options.max_retries;
+      if (this.config.protocol === 'responses') {
+        const response = await this.client.responses.create({
+          model, input: messages, temperature, max_output_tokens: maxTokens,
+        }, requestOptions);
+        if (response.status && response.status !== 'completed') throw new Error('模型响应未完成');
+        return {
+          content: response.output_text || (response.output || []).flatMap(item => item.content || []).filter(item => item.type === 'output_text').map(item => item.text).join(''),
+          model: response.model,
+          usage: { prompt_tokens: response.usage?.input_tokens || 0, completion_tokens: response.usage?.output_tokens || 0, total_tokens: response.usage?.total_tokens || 0 },
+          finish_reason: 'stop',
+        };
+      }
       const response = await this.client.chat.completions.create({
         model,
         messages,
@@ -76,7 +99,7 @@ class LLMClient {
         max_tokens: maxTokens,
         ...(typeof options.enable_thinking === 'boolean' ? { enable_thinking: options.enable_thinking } : {}),
         ...(options.chat_template_kwargs ? { chat_template_kwargs: options.chat_template_kwargs } : {}),
-        ...(options.response_format || {})
+        ...(options.response_format ? { response_format: options.response_format } : {})
       }, requestOptions);
 
       const content = response.choices[0]?.message?.content || '';
@@ -95,8 +118,50 @@ class LLMClient {
         finish_reason: response.choices[0]?.finish_reason
       };
     } catch (error) {
-      logger.error(`LLM call failed: ${error.message}`, { model, provider: this.config.provider });
-      throw new Error(`LLM 调用失败: ${error.message}`);
+      const failure = new Error('LLM 调用失败');
+      failure.code = 'LLM_PROVIDER_ERROR';
+      failure.providerCode = classifyProviderError(error);
+      failure.status = Number(error?.status || error?.statusCode || 0) || undefined;
+      logger.error('LLM call failed', { model, provider: this.config.provider, status: failure.status, providerCode: failure.providerCode });
+      throw failure;
+    }
+  }
+
+  // Connection tests only need the first useful token. Stop the stream once it
+  // arrives so a slow or verbose model does not hold the admin screen open.
+  async probe(messages, options = {}) {
+    const model = options.model || this.model;
+    const started = Date.now();
+    const controller = new AbortController();
+    let timedOut = false; let stream;
+    const deadline = setTimeout(() => { timedOut = true; controller.abort(); }, options.timeout_ms ?? this.config.timeout);
+    try {
+      const requestOptions = { timeout: options.timeout_ms, maxRetries: 0, signal: controller.signal };
+      const responses = this.config.protocol === 'responses';
+      stream = responses
+        ? await this.client.responses.create({ model, input: messages, max_output_tokens: options.max_tokens, stream: true }, requestOptions)
+        : await this.client.chat.completions.create({ model, messages, max_tokens: options.max_tokens, stream: true }, requestOptions);
+      let actualModel = null;
+      for await (const chunk of stream) {
+        actualModel ||= responses ? chunk.response?.model : chunk.model;
+        if (chunk.type === 'error' || chunk.type === 'response.failed') throw new Error('Provider stream failed');
+        const content = responses
+          ? (chunk.type === 'response.output_text.delta' ? chunk.delta : '')
+          : chunk.choices?.[0]?.delta?.content;
+        if (typeof content === 'string' && content.trim()) {
+          const firstByteMs = Date.now() - started;
+          return { content, model: actualModel, firstByteMs, totalMs: Date.now() - started };
+        }
+      }
+      throw new Error('Empty provider stream');
+    } catch (error) {
+      const failure = new Error('模型测试失败');
+      failure.providerCode = timedOut ? 'AI_PROVIDER_TIMEOUT' : classifyProviderError(error);
+      throw failure;
+    } finally {
+      clearTimeout(deadline);
+      controller.abort();
+      stream?.controller?.abort();
     }
   }
 
@@ -138,36 +203,38 @@ class LLMClient {
     const model = options.model || this.model;
     const temperature = options.temperature ?? this.config.temperature ?? 0.7;
     const maxTokens = options.max_tokens || this.config.max_tokens || 4000;
-
-    logger.info(`LLM stream: model=${model}, messages=${messages.length}, temperature=${temperature}`);
-
-    const requestOptions = {};
+    const requestOptions = { maxRetries: 0, signal: options.signal };
     if (Number.isFinite(options.timeout_ms)) requestOptions.timeout = options.timeout_ms;
-    requestOptions.maxRetries = 0;
-
-    const stream = await this.client.chat.completions.create({
-      model,
-      messages,
-      temperature,
-      max_tokens: maxTokens,
-      stream: true,
-      ...(typeof options.enable_thinking === 'boolean' ? { enable_thinking: options.enable_thinking } : {})
-    }, requestOptions);
-
-    let chunkCount = 0;
-    for await (const chunk of stream) {
-      chunkCount++;
-      const choice = chunk.choices[0];
-      const content = choice?.delta?.content || '';
-      const finish = choice?.finish_reason;
-      if (chunkCount <= 2 || chunkCount % 50 === 0) {
-        logger.debug(`Stream chunk#${chunkCount}: keys=${Object.keys(choice?.delta || {}).join(',')}, content=${content.length}b, finish=${finish}`);
+    const responses = this.config.protocol === 'responses';
+    let stream; let completed = false;
+    try {
+      stream = responses
+        ? await this.client.responses.create({ model, input: messages, temperature, max_output_tokens: maxTokens, stream: true }, requestOptions)
+        : await this.client.chat.completions.create({ model, messages, temperature, max_tokens: maxTokens, stream: true,
+          ...(typeof options.enable_thinking === 'boolean' ? { enable_thinking: options.enable_thinking } : {}) }, requestOptions);
+      for await (const chunk of stream) {
+        if (['error', 'response.failed', 'response.incomplete'].includes(chunk.type)) throw new Error('模型响应未完成');
+        const response = chunk.response;
+        if (responses && chunk.type === 'response.completed') {
+          if (response?.status && response.status !== 'completed') throw new Error('模型响应未完成');
+          completed = true;
+        }
+        if (!responses && chunk.choices?.[0]?.finish_reason) {
+          if (chunk.choices[0].finish_reason !== 'stop') throw new Error('模型响应未完成');
+          completed = true;
+        }
+        const usage = responses && response?.usage
+          ? { prompt_tokens: response.usage.input_tokens, completion_tokens: response.usage.output_tokens, total_tokens: response.usage.total_tokens }
+          : chunk.usage;
+        const content = responses ? (chunk.type === 'response.output_text.delta' ? chunk.delta : '') : chunk.choices?.[0]?.delta?.content || '';
+        yield { content, model: responses ? response?.model : chunk.model, usage, finish: responses ? (chunk.type === 'response.completed' ? 'stop' : null) : chunk.choices?.[0]?.finish_reason };
       }
-      if (content) {
-        yield { content, finish };
-      }
-    }
-    logger.info(`LLM stream complete: ${chunkCount} chunks`);
+      if (!completed) throw new Error('模型响应流意外结束');
+    } catch (error) {
+      const failure = new Error('LLM 流式调用失败');
+      failure.providerCode = classifyProviderError(error);
+      throw failure;
+    } finally { stream?.controller?.abort(); }
   }
 
   _parseJSONContent(content) {
@@ -190,3 +257,4 @@ class LLMClient {
 }
 
 module.exports = LLMClient;
+module.exports.classifyProviderError = classifyProviderError;

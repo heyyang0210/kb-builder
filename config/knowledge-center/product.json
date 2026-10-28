@@ -110,6 +110,11 @@
   ],
   "skills": [
     {
+      "id": "continue-technical-document",
+      "version": "1.0.0",
+      "manifestRef": "knowledge/skills/continue-technical-document/SKILL.md"
+    },
+    {
       "id": "document-general",
       "version": "1.0.0",
       "manifestRef": "knowledge/skills/00-通用生成-skill.md"
@@ -153,6 +158,26 @@
       "id": "knowledge-point-extraction",
       "version": "2.0.0",
       "manifestRef": "tools/knowledge-processing/pingcode-processing/skills/knowledge-point-extraction/skill.yaml"
+    },
+    {
+      "id": "extract-document-cases",
+      "version": "1.0.0",
+      "manifestRef": "knowledge/skills/extract-document-cases/SKILL.md"
+    },
+    {
+      "id": "execute-yashandb-cases",
+      "version": "1.0.0",
+      "manifestRef": "knowledge/skills/execute-yashandb-cases/SKILL.md"
+    },
+    {
+      "id": "compare-case-results",
+      "version": "1.0.0",
+      "manifestRef": "knowledge/skills/compare-case-results/SKILL.md"
+    },
+    {
+      "id": "render-test-report",
+      "version": "1.0.0",
+      "manifestRef": "knowledge/skills/render-test-report/SKILL.md"
     }
   ],
   "prompts": [

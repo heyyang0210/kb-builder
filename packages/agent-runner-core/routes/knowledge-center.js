@@ -99,6 +99,14 @@ function createKnowledgeCenterHandler(options) {
     const connection = findConnection(mapping.connectionId);
     return { mapping, connection };
   };
+  const findMappingAsync = async handbookId => {
+    if (!databasePlatformMode) return findFileMapping(handbookId, GITLAB_CONFIG_PATH);
+    const mapping = await domainStore.readPlatformGitLabMappingAsync(handbookId);
+    if (!mapping) throw new GitLabConnectorError('GITLAB_MAPPING_NOT_FOUND', '该手册尚未配置 GitLab 内容映射', 404);
+    const connection = await domainStore.readPlatformGitLabConnectionAsync(mapping.connectionId);
+    if (!connection) throw new GitLabConnectorError('GITLAB_CONNECTION_NOT_FOUND', 'GitLab 仓库连接不存在', 404);
+    return { mapping, connection };
+  };
   const upsertConnection = (input, filePath, audit = {}) => {
     if (!databasePlatformMode) return upsertFileConnection(input, filePath, audit);
     const normalized = normalizeGitLabAddress(input);
@@ -131,8 +139,21 @@ function createKnowledgeCenterHandler(options) {
     autoStartHealthMonitor: false,
   });
   const authModule = moduleRegistry?.get?.('auth') || modules.auth;
+  const modelGovernance = options.modelGovernance || require('../lib/platform-management/model-governance').createModelGovernance();
+  const mcpGovernance = options.mcpGovernance || require('../lib/platform-management/mcp-governance').createMcpGovernance();
   const databaseMode = String(process.env.KNOWLEDGE_STORAGE_MODE || 'file').toLowerCase() === 'database';
-  const handbookProductionService = options.handbookProductionService || createHandbookProductionService();
+  const qualityAdapter = require('../lib/yashandb-quality-adapter');
+  const defaultQualityDatabase = databaseMode && qualityAdapter.isolatedQualityDatabaseConfigured() ? qualityAdapter.createYashanDBQualityAdapter({
+    baseUrl: process.env.YASDB_STORAGE_URL || undefined,
+    timeoutMs: Number(process.env.YASDB_STORAGE_TIMEOUT_MS || 15000),
+    environment: process.env.YASDB_QUALITY_ENVIRONMENT || '独立 YashanDB 测试库',
+  }) : undefined;
+  const handbookProductionService = options.handbookProductionService || createHandbookProductionService({
+    autoRecoverOnStart: true,
+    recoveryIntervalMs: process.env.KNOWLEDGE_PRODUCTION_RECOVERY_INTERVAL_MS,
+    ai: { modelGovernance, loadMCPConfig: () => mcpGovernance.currentForSources(), pingcodeBaseURL: PINGCODE_API_HOST && PINGCODE_API_PORT ? `http://${PINGCODE_API_HOST}:${PINGCODE_API_PORT}` : undefined },
+    yashanDB: defaultQualityDatabase,
+  });
 
   // --- Auth helpers ---
 
@@ -442,11 +463,16 @@ function createKnowledgeCenterHandler(options) {
   }
 
   async function readKnowledgeAssetsAsync() {
-    const payload = knowledgeAssetsStore.readAsync ? await knowledgeAssetsStore.readAsync() : knowledgeAssetsStore.read();
+    const [payload, overrides] = await Promise.all([
+      knowledgeAssetsStore.readAsync ? knowledgeAssetsStore.readAsync() : knowledgeAssetsStore.read(),
+      databaseMode && manualStatusStore
+        ? (manualStatusStore.readAsync ? manualStatusStore.readAsync() : manualStatusStore.read())
+        : null,
+    ]);
     if (!payload.generatedAt && fs.existsSync(options.KNOWLEDGE_ASSETS_CONFIG_PATH)) {
       payload.generatedAt = fs.statSync(options.KNOWLEDGE_ASSETS_CONFIG_PATH).mtime.toISOString();
     }
-    return applyManualStatusOverrides(payload);
+    return applyManualStatusOverrides(payload, overrides?.statuses || {});
   }
 
   let reviewAssetsCache = null;
@@ -493,9 +519,9 @@ function createKnowledgeCenterHandler(options) {
     manualStatusStore.write({ version: Number(payload.version || 1), statuses: payload.statuses || {}, audits: payload.audits || [], updatedAt: new Date().toISOString() });
   }
 
-  function applyManualStatusOverrides(payload) {
+  function applyManualStatusOverrides(payload, statuses = null) {
     if (!databaseMode || !manualStatusStore || !Array.isArray(payload?.handbooks)) return payload;
-    const overrides = readManualStatusOverrides().statuses;
+    const overrides = statuses || readManualStatusOverrides().statuses;
     return {
       ...payload,
       handbooks: payload.handbooks.map(item => {
@@ -521,8 +547,25 @@ function createKnowledgeCenterHandler(options) {
     writeManualStatusOverrides(overrides);
   }
 
-  function queryKnowledgeAssets(payload, searchParams, admin) {
-    return queryKnowledgeAssetsBase(payload, searchParams, admin, GITLAB_CONFIG_PATH);
+  async function queryKnowledgeAssets(payload, searchParams, admin) {
+    if (!databasePlatformMode) return queryKnowledgeAssetsBase(payload, searchParams, admin, GITLAB_CONFIG_PATH);
+    // 数据库配置模式下，连接与映射由平台配置服务提供；不能继续传入文件配置路径，
+    // 否则资产目录会把已保存映射投影成 repositoryMapped=false，前端也不会请求统计。
+    const result = queryKnowledgeAssetsBase(payload, searchParams, admin, { mappings: [] });
+    const originals = new Map(payload.handbooks.map(item => [item.handbookId, item]));
+    // 只读取当前页，分批异步加载，避免全量手册的同步网络调用阻塞请求。
+    for (let start = 0; start < result.items.length; start += 8) {
+      const projected = await Promise.all(result.items.slice(start, start + 8).map(async item => {
+        let mapping = null;
+        try { mapping = await domainStore.readPlatformGitLabMappingAsync(item.handbookId); }
+        catch (error) {
+          if (error.status !== 404 || error.code !== 'GITLAB_MAPPING_NOT_FOUND') throw error;
+        }
+        return projectAsset(originals.get(item.handbookId), admin, mapping);
+      }));
+      result.items.splice(start, projected.length, ...projected);
+    }
+    return result;
   }
 
   function readJsonBody(req) {
@@ -595,7 +638,167 @@ function createKnowledgeCenterHandler(options) {
     }
   }
 
+  async function verifyProductionOriginSnapshot(input, session) {
+    const snapshot = input.originSnapshot;
+    const reject = (code, message, status = 409) => { throw Object.assign(new Error(message), { code, status }); };
+    if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) {
+      // Keep compatibility for isolated/legacy callers only when the handbook
+      // has no GitLab mapping; a mapped handbook must provide an explicit
+      // server-verifiable snapshot.
+      try { findMapping(input.handbookId, GITLAB_CONFIG_PATH); }
+      catch (error) {
+        if (error.code === 'GITLAB_MAPPING_NOT_FOUND') {
+          const digest = crypto.createHash('sha256').update('').digest('hex');
+          return { originType: 'blank', snapshotId: null, contentDigest: digest, handbookId: input.handbookId, documentId: input.documentId, branch: input.branch || null, fetchedAt: new Date().toISOString() };
+        }
+        throw error;
+      }
+      reject('AI_ORIGIN_SNAPSHOT_REQUIRED', '原文来源快照缺失，请重新打开文档后重试');
+    }
+    if (snapshot.handbookId && String(snapshot.handbookId) !== String(input.handbookId)) reject('AI_ORIGIN_SNAPSHOT_INVALID', '原文快照与当前手册不匹配');
+    if (snapshot.documentId && String(snapshot.documentId) !== String(input.documentId)) reject('AI_ORIGIN_SNAPSHOT_INVALID', '原文快照与当前文档不匹配');
+    if (snapshot.originType === 'blank') {
+      let mapped = true;
+      try { findMapping(input.handbookId, GITLAB_CONFIG_PATH); }
+      catch (error) {
+        if (error.code === 'GITLAB_MAPPING_NOT_FOUND') mapped = false;
+        else throw error;
+      }
+      if (mapped) reject('AI_ORIGIN_MAPPING_REQUIRED', '手册已配置 GitLab 映射，请重新读取文档来源后再生成');
+      const digest = crypto.createHash('sha256').update('').digest('hex');
+      if (String(snapshot.contentDigest || '').toLowerCase() !== digest) reject('AI_ORIGIN_SNAPSHOT_INVALID', '空白原文摘要不匹配，请重新打开文档后重试');
+      return { originType: 'blank', snapshotId: null, contentDigest: digest, handbookId: input.handbookId, documentId: input.documentId, branch: input.branch || null, fetchedAt: new Date().toISOString() };
+    }
+    if (snapshot.originType !== 'gitlab' || !snapshot.path || !snapshot.branch || (!snapshot.commitId && !snapshot.blobId)) {
+      reject('AI_ORIGIN_SNAPSHOT_INVALID', 'GitLab 原文快照缺少路径、分支或版本标识');
+    }
+    const { mapping, connection } = findMapping(input.handbookId, GITLAB_CONFIG_PATH);
+    const branch = String(snapshot.branch);
+    const filePath = authorizeMappedRequest(mapping, branch, 'zh', snapshot.path);
+    if (input.branch && String(input.branch) !== branch) reject('AI_ORIGIN_SNAPSHOT_INVALID', '原文快照分支与当前写作分支不一致');
+    const ref = snapshot.pinToCommit ? snapshot.commitId : branch;
+    if (snapshot.pinToCommit && !snapshot.commitId) reject('AI_ORIGIN_SNAPSHOT_INVALID', '固定旧基线需要 GitLab commit 标识');
+    const file = await gitLabRequestForUser(session, connection, options => readGitLabFile(connection, ref, filePath, options));
+    if (file.encoding !== 'utf-8' || typeof file.content !== 'string') reject('AI_ORIGIN_FILE_INVALID', 'GitLab 原文不是有效的 Markdown 文本', 415);
+    const digest = crypto.createHash('sha256').update(file.content).digest('hex');
+    if (digest !== String(snapshot.contentDigest || '').toLowerCase()) reject('AI_ORIGIN_BASELINE_CHANGED', 'GitLab 原文与当前编辑基线不一致，请重新载入文档或恢复原快照');
+    if (snapshot.commitId && file.commitId && snapshot.commitId !== file.commitId) reject('AI_ORIGIN_BASELINE_CHANGED', 'GitLab commit 已变化，请重新载入文档或恢复原快照');
+    if (snapshot.blobId && file.blobId && snapshot.blobId !== file.blobId) reject('AI_ORIGIN_BASELINE_CHANGED', 'GitLab blob 已变化，请重新载入文档或恢复原快照');
+    const snapshotId = file.commitId || file.blobId || digest;
+    if (snapshot.snapshotId && snapshot.snapshotId !== snapshotId) reject('AI_ORIGIN_BASELINE_CHANGED', 'GitLab 快照标识已变化，请重新载入文档或恢复原快照');
+    return {
+      originType: 'gitlab', snapshotId, contentDigest: digest, handbookId: input.handbookId, documentId: input.documentId,
+      outlineVersionId: input.outlineVersionId || snapshot.outlineVersionId || null,
+      repository: connection.projectPath || connection.project, project: connection.projectPath || connection.project,
+      branch, path: file.path || filePath, commitId: file.commitId || snapshot.commitId || null,
+      blobId: file.blobId || snapshot.blobId || null, fetchedAt: new Date().toISOString(),
+    };
+  }
+
   async function handleHandbookProduction(req, res, session, pathname) {
+    const qualityMatch = pathname.match(/^\/knowledge-center\/api\/production\/handbooks\/([^/]+)\/documents\/([^/]+)\/quality(?:\/([^/]+))?$/);
+    if (qualityMatch) {
+      const handbookId = decodeURIComponent(qualityMatch[1]);
+      const documentId = decodeURIComponent(qualityMatch[2]);
+      await requireHandbookReadAsync(session, handbookId);
+      const reportId = qualityMatch[3] ? decodeURIComponent(qualityMatch[3]) : null;
+      if (req.method === 'GET' && reportId) {
+        sendProductionData(res, handbookProductionService.quality.get({ handbookId, documentId, reportId }, session));
+      } else if (req.method === 'POST' && !reportId) {
+        const body = await readJsonBody(req);
+        await assertActiveProductionOutline(body);
+        const report = await handbookProductionService.quality.run({ ...body, handbookId, documentId }, session);
+        let linked = report;
+        if (body.revisionId) {
+          try {
+            linked = handbookProductionService.quality.linkToRevision({ handbookId, documentId, revisionId: body.revisionId, reportId: report.reportId, outlineVersionId: body.outlineVersionId, branch: body.branch }, session);
+          } catch (error) {
+            // Candidate reports may be created before the candidate is adopted into a saved revision.
+            // Keep the report revision-bound by digest and link it on the subsequent save.
+            if (error.code !== 'QUALITY_REVISION_NOT_FOUND') throw error;
+          }
+        }
+        sendProductionData(res, linked, 201);
+      } else { res.writeHead(405, { Allow: 'GET, POST' }); res.end(); }
+      return true;
+    }
+    const skillMatch = pathname.match(/^\/knowledge-center\/api\/production\/handbooks\/([^/]+)\/documents\/([^/]+)\/ai-skills$/);
+    if (skillMatch) {
+      const handbookId = decodeURIComponent(skillMatch[1]);
+      const documentId = decodeURIComponent(skillMatch[2]);
+      await requireHandbookReadAsync(session, handbookId);
+      if (req.method === 'GET') {
+        const params = new URL(req.url, 'http://localhost').searchParams;
+        sendProductionData(res, handbookProductionService.ai.skills.list(productionContext(handbookId, documentId, params), session));
+      } else { res.writeHead(405, { Allow: 'GET' }); res.end(); }
+      return true;
+    }
+    const sourceMatch = pathname.match(/^\/knowledge-center\/api\/production\/handbooks\/([^/]+)\/documents\/([^/]+)\/ai-sources$/);
+    if (sourceMatch) {
+      const traceId = require('crypto').randomUUID();
+      const startedAt = Date.now();
+      const diagnostic = { stage: 'context', requestId: traceId };
+      const meta = { requestId: traceId, method: req.method };
+      res.setHeader('X-Request-ID', traceId);
+      logger.info('production.source.started', meta);
+      try {
+        const handbookId = decodeURIComponent(sourceMatch[1]);
+        const documentId = decodeURIComponent(sourceMatch[2]);
+        Object.assign(meta, { handbookId, documentId });
+        diagnostic.stage = 'authorization';
+        await requireHandbookReadAsync(session, handbookId);
+        if (req.method === 'GET') {
+          const params = new URL(req.url, 'http://localhost').searchParams;
+          sendProductionData(res, await handbookProductionService.ai.sources.list(productionContext(handbookId, documentId, params), session));
+        } else if (req.method === 'POST') {
+          diagnostic.stage = 'request_validation';
+          const body = await readJsonBody(req);
+          Object.assign(meta, {
+            sourceType: typeof body.sourceType === 'string' ? body.sourceType.slice(0, 40) : null,
+            locatorDigest: require('crypto').createHash('sha256').update(String(body.locator || '')).digest('hex'),
+            locatorChars: typeof body.locator === 'string' ? body.locator.length : 0,
+          });
+          await assertActiveProductionOutline(body);
+          const source = await handbookProductionService.ai.sources.preview({ ...body, handbookId, documentId }, session, diagnostic);
+          meta.sourceId = source.sourceId;
+          meta.contentBytes = Buffer.byteLength(source.content);
+          sendProductionData(res, source, 201);
+        } else { res.writeHead(405, { Allow: 'GET, POST' }); res.end(); }
+        logger.info('production.source.completed', { ...meta, ...diagnostic, status: res.statusCode, durationMs: Date.now() - startedAt });
+      } catch (error) {
+        logger.info('production.source.failed', { ...meta, ...diagnostic, status: error.status || 500, errorCode: error.code || 'SOURCE_REQUEST_FAILED', durationMs: Date.now() - startedAt });
+        error.details = { ...error.details, requestId: traceId };
+        throw error;
+      }
+      return true;
+    }
+    const aiMatch = pathname.match(/^\/knowledge-center\/api\/production\/handbooks\/([^/]+)\/documents\/([^/]+)\/ai-jobs(?:\/([^/]+)(?:\/(cancel|adopt|retry|recover))?)?$/);
+    if (aiMatch) {
+      const handbookId = decodeURIComponent(aiMatch[1]);
+      const documentId = decodeURIComponent(aiMatch[2]);
+      const jobId = aiMatch[3] ? decodeURIComponent(aiMatch[3]) : null;
+      const action = aiMatch[4];
+      await requireHandbookReadAsync(session, handbookId);
+      if (req.method === 'GET' && jobId && !action) {
+        const params = new URL(req.url, 'http://localhost').searchParams;
+        sendProductionData(res, handbookProductionService.ai.get({ ...productionContext(handbookId, documentId, params), jobId }, session));
+      } else if (req.method === 'POST' && (!jobId || action)) {
+        const body = await readJsonBody(req);
+        await assertActiveProductionOutline(body);
+        let input = { ...body, handbookId, documentId, jobId };
+        if (!jobId) {
+          input.originSnapshot = await verifyProductionOriginSnapshot(input, session);
+          sendProductionData(res, handbookProductionService.ai.start(input, session, req.headers['idempotency-key']), 202);
+        }
+        else if (action === 'cancel') sendProductionData(res, handbookProductionService.ai.cancel(input, session));
+        else if (action === 'retry') sendProductionData(res, handbookProductionService.ai.retry(input, session, req.headers['idempotency-key']), 202);
+        else if (action === 'recover') sendProductionData(res, handbookProductionService.ai.recover(input, session), 202);
+        else sendProductionData(res, handbookProductionService.ai.adopt(input, session));
+      } else {
+        res.writeHead(405, { Allow: 'GET, POST' }); res.end();
+      }
+      return true;
+    }
     const storedAttachmentMatch = pathname.match(/^\/knowledge-center\/api\/production\/attachments\/([^/]+)$/);
     const documentMatch = pathname.match(/^\/knowledge-center\/api\/production\/handbooks\/([^/]+)\/documents\/([^/]+)\/draft(?:\/(revisions|restore))?$/);
     const attachmentMatch = pathname.match(/^\/knowledge-center\/api\/production\/handbooks\/([^/]+)\/documents\/([^/]+)\/draft-attachments$/);
@@ -1080,13 +1283,16 @@ function createKnowledgeCenterHandler(options) {
       if (req.method === 'GET' && pathname === '/knowledge-center/api/gitlab/oauth/accounts') {
         const cfg = readGitLabConfig(GITLAB_CONFIG_PATH);
         const mappingCounts = new Map();
-        for (const mapping of cfg.mappings || []) mappingCounts.set(mapping.connectionId, (mappingCounts.get(mapping.connectionId) || 0) + 1);
+        for (const mapping of cfg.mappings || []) {
+          if (!mappingCounts.has(mapping.connectionId)) mappingCounts.set(mapping.connectionId, new Set());
+          mappingCounts.get(mapping.connectionId).add(mapping.handbookId);
+        }
         const candidates = (cfg.connections || []).filter(item => sanitizeConnection(item).authMode === 'user_oauth');
         const items = await Promise.all(candidates.map(async connection => {
           const projected = sanitizeConnection(connection);
           const disabled = projected.managementStatus === 'disabled' || connection.mode === 'disabled';
           const account = disabled ? { connected: false, status: 'platform_disabled', updatedAt: null, lastUsedAt: null } : await gitLabOAuthStatus(session?.user?.id, connection);
-          return { connectionId: connection.id, name: projected.name, host: new URL(connection.host).host, linkedHandbookCount: mappingCounts.get(connection.id) || 0, status: account.status, connected: account.connected, updatedAt: account.updatedAt, lastUsedAt: account.lastUsedAt };
+          return { connectionId: connection.id, name: projected.name, host: new URL(connection.host).host, linkedHandbookCount: databasePlatformMode ? (connection.linkedHandbookCount ?? null) : (mappingCounts.get(connection.id)?.size || 0), status: account.status, connected: account.connected, updatedAt: account.updatedAt, lastUsedAt: account.lastUsedAt };
         }));
         res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
         res.end(JSON.stringify({ success: true, data: { items } })); return;
@@ -1149,10 +1355,13 @@ function createKnowledgeCenterHandler(options) {
         const page = Math.max(1, Number.parseInt(params.get('page') || '1', 10) || 1);
         const pageSize = Math.min(100, Math.max(1, Number.parseInt(params.get('pageSize') || '20', 10) || 20));
         const mappingCounts = new Map();
-        for (const mapping of cfg.mappings || []) mappingCounts.set(mapping.connectionId, (mappingCounts.get(mapping.connectionId) || 0) + 1);
+        for (const mapping of cfg.mappings || []) {
+          if (!mappingCounts.has(mapping.connectionId)) mappingCounts.set(mapping.connectionId, new Set());
+          mappingCounts.get(mapping.connectionId).add(mapping.handbookId);
+        }
         const projected = (cfg.connections || []).map(item => ({
           ...sanitizeConnection(item),
-          linkedHandbookCount: mappingCounts.get(item.id) || 0,
+          linkedHandbookCount: databasePlatformMode ? (item.linkedHandbookCount ?? null) : (mappingCounts.get(item.id)?.size || 0),
         }));
         const filtered = projected.filter(item => (!q || `${item.name} ${item.host} ${item.project}`.toLowerCase().includes(q)) && (!status || item.managementStatus === status || item.verificationStatus === status || item.status === status));
         const items = filtered.slice((page - 1) * pageSize, page * pageSize);
@@ -1308,9 +1517,22 @@ function createKnowledgeCenterHandler(options) {
       const step = params.get('step') || 'read';
       const view = params.get('view') || (requestedTaskId ? 'reader' : handbookId ? 'reader' : 'handbooks');
       if (!['handbooks', 'mine', 'documents', 'reader'].includes(view)) throw Object.assign(new Error('未知审核视图'), { status: 400 });
-      const review = service.reviewBootstrap(session, { handbookId: view === 'mine' ? '' : handbookId, taskId: requestedTaskId, view, documentId: params.get('documentId'), path: params.get('path') });
+      const timings = {};
+      const measure = async (name, operation) => {
+        const start = process.hrtime.bigint();
+        const result = await operation();
+        timings[name] = Number(process.hrtime.bigint() - start) / 1e6;
+        return result;
+      };
+      const [snapshot, assets] = await Promise.all([
+        measure('review-state', () => service.readState(session)),
+        measure('review-assets', () => readReviewAssetsAsync()),
+      ]);
+      const review = service.reviewBootstrap(session, { handbookId: view === 'mine' ? '' : handbookId, taskId: requestedTaskId, view, documentId: params.get('documentId'), path: params.get('path') }, snapshot);
+      // Empty/unassigned document lists have no reviewer identities to resolve.
+      const needsReviewerNames = review.documents.some(item => item.reviewerIds?.length || item.decidedBy?.id);
+      const users = needsReviewerNames ? await measure('review-users', () => authModule?.repository?.listUsers?.() || []) : [];
       const selectedId = requestedTaskId;
-      const assets = await readReviewAssetsAsync();
       const visible = session?.visibleHandbookIds || session?.user?.visibleHandbookIds;
       const permittedAssets = { ...assets, handbooks: assets.handbooks.filter(item => !Array.isArray(visible) || visible.map(String).includes(String(item.handbookId))) };
       // A pending review is an authoritative workflow fact. The asset stage
@@ -1320,11 +1542,10 @@ function createKnowledgeCenterHandler(options) {
       let page = 1;
       let projection;
       do {
-        projection = queryKnowledgeAssets(permittedAssets, new URLSearchParams({ pageSize: '100', page: String(page++) }), isPlatformAdmin(session), GITLAB_CONFIG_PATH);
+        projection = await queryKnowledgeAssets(permittedAssets, new URLSearchParams({ pageSize: '100', page: String(page++) }), isPlatformAdmin(session));
         reviewHandbooks.push(...projection.items.filter(item => REVIEW_ASSET_STATUSES.has(item.status) || pendingReviewHandbookIds.has(String(item.handbookId))));
       } while (page <= Math.ceil(projection.total / projection.pageSize));
       const eligibleIds = new Set(reviewHandbooks.map(item => String(item.handbookId)));
-      const users = await Promise.resolve(authModule?.repository?.listUsers?.() || []);
       const reviewerNames = new Map();
       for (const user of users) {
         const name = String(user.displayName || user.name || user.loginName || '').trim();
@@ -1345,15 +1566,15 @@ function createKnowledgeCenterHandler(options) {
           updatedAt: rows.map(document => document.updatedAt || document.submittedAt).filter(Boolean).sort().at(-1) || null };
       });
       const resolvedHandbookId = review.readerHandbookId || '';
-      const diff = selectedId && step === 'diff' ? service.getCandidateDiff(session, selectedId) : null;
+      const diff = selectedId && step === 'diff' ? service.getCandidateDiff(session, selectedId, snapshot) : null;
+      const overview = view === 'reader' && !requestedTaskId && eligibleIds.has(handbookId)
+        ? service.reviewOverview(session, documents.filter(item => item.handbookId === handbookId), snapshot)
+        : null;
       const totalMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
       res.writeHead(200, {
         'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store',
-        'Server-Timing': `review-bootstrap;dur=${totalMs.toFixed(3)}`,
+        'Server-Timing': [`review-bootstrap;dur=${totalMs.toFixed(3)}`, ...Object.entries(timings).map(([name, ms]) => `${name};dur=${ms.toFixed(3)}`)].join(', '),
       });
-      const overview = view === 'reader' && !requestedTaskId && eligibleIds.has(handbookId)
-        ? service.reviewOverview(session, documents.filter(item => item.handbookId === handbookId))
-        : null;
       res.end(JSON.stringify({ success: true, data: { view, workbench: { handbooks, documents, mine: documents.filter(item => item.assignedToMe), ...(overview ? { overview } : {}) }, items: review.items, allItems: review.allItems, detail: review.detail ? { task: review.detail } : null, handbookId: resolvedHandbookId, reviewHandbooks, onlineReviewBaselines: review.baselines, onlineReviewBaselineError: null, diff } }));
     } catch (error) {
       res.writeHead(error.status || 500, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
@@ -1377,12 +1598,12 @@ function createKnowledgeCenterHandler(options) {
     }
   }
 
-  function serveMyGenerations(req, res, session) {
+  async function serveMyGenerations(req, res, session) {
     try {
       const service = handleIncrementalBuild?.service;
       if (!service) throw Object.assign(new Error('生成记录服务暂不可用'), { code: 'GENERATION_SERVICE_UNAVAILABLE', status: 503 });
       const params = Object.fromEntries(new URL(req.url, 'http://localhost').searchParams);
-      const data = service.listMyGenerations(session, params);
+      const data = service.listMyGenerations(session, params, await service.readState(session));
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
       res.end(JSON.stringify({ success: true, data }));
     } catch (error) {
@@ -1400,7 +1621,7 @@ function createKnowledgeCenterHandler(options) {
       // Resolve access before reading the mapping so a missing handbook cannot
       // leave a rejected promise unobserved when mapping lookup also fails.
       const asset = await requireHandbookReadAsync(session, handbookId);
-      const { mapping, connection } = findMapping(handbookId, GITLAB_CONFIG_PATH);
+      const { mapping, connection } = await findMappingAsync(handbookId);
       const metadataStartedAt = process.hrtime.bigint();
       const projected = sanitizeConnection(connection);
       const language = params.get('language') === 'en' ? 'en' : 'zh';
@@ -1458,6 +1679,63 @@ function createKnowledgeCenterHandler(options) {
     }
     if (req.method === 'GET' && pathname === '/knowledge-center/api/platform/context') {
       requireSession(req, res, () => servePlatformContext(res)); return;
+    }
+    if (pathname === '/knowledge-center/api/platform/models' || pathname === '/knowledge-center/api/platform/models/test') {
+      requireSession(req, res, async session => {
+        if (forbidUnlessPlatformAdmin(res, session)) return;
+        const reply = (status, payload) => {
+          res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+          res.end(JSON.stringify(payload));
+        };
+        try {
+          const testing = pathname.endsWith('/test');
+          if ((!testing && !['GET', 'PUT'].includes(req.method)) || (testing && req.method !== 'POST')) {
+            res.writeHead(405, { Allow: testing ? 'POST' : 'GET, PUT' }); res.end(); return;
+          }
+          if (req.method === 'GET') { reply(200, { success: true, data: await modelGovernance.get() }); return; }
+          const input = await readJsonBody(req);
+          const expected = req.headers['if-match'] || input.rowVersion;
+          const data = testing ? await modelGovernance.test(input, expected) : await modelGovernance.save(input, expected, session.user?.id);
+          reply(200, { success: true, data });
+        } catch (error) {
+          const known = error.code?.startsWith('MODEL_');
+          reply(known ? error.status : 503, { success: false, error: { code: known ? error.code : 'MODEL_CONFIG_UNAVAILABLE', message: known ? error.message : '模型配置服务暂不可用，请稍后重试' } });
+        }
+      }); return;
+    }
+    if (pathname === '/knowledge-center/api/production/models') {
+      requireSession(req, res, session => {
+        if (!hasAction(session, 'knowledge:read') && !isPlatformAdmin(session)) {
+          res.writeHead(403, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify({ success: false, error: { message: '无文档读取权限' } })); return;
+        }
+        if (req.method !== 'GET') { res.writeHead(405, { Allow: 'GET' }); res.end(); return; }
+        sendProductionData(res, modelGovernance.available());
+      }); return;
+    }
+    if (pathname === '/knowledge-center/api/platform/mcp' || pathname === '/knowledge-center/api/platform/mcp/test' || /^\/knowledge-center\/api\/platform\/mcp\/services\/(save|delete|test|verify)$/.test(pathname)) {
+      requireSession(req, res, async session => {
+        if (forbidUnlessPlatformAdmin(res, session)) return;
+        const reply = (status, payload) => {
+          res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+          res.end(JSON.stringify(payload));
+        };
+        try {
+          const serviceAction = pathname.match(/\/services\/(save|delete|test|verify)$/)?.[1];
+          const testing = pathname.endsWith('/test') || Boolean(serviceAction);
+          if ((!testing && !['GET', 'PUT'].includes(req.method)) || (testing && req.method !== 'POST')) {
+            res.writeHead(405, { Allow: testing ? 'POST' : 'GET, PUT' }); res.end(); return;
+          }
+          if (req.method === 'GET') { reply(200, { success: true, data: await mcpGovernance.get() }); return; }
+          const input = await readJsonBody(req);
+          const expected = req.headers['if-match'] || input.rowVersion;
+          const actions = { save: 'saveService', delete: 'deleteService', test: 'testService', verify: 'verifyKnowledgeBase' };
+          const data = serviceAction ? await mcpGovernance[actions[serviceAction]](input, expected, session.user?.id) : testing ? await mcpGovernance.test(input, expected) : await mcpGovernance.save(input, expected, session.user?.id);
+          reply(200, { success: true, data });
+        } catch (error) {
+          const known = error.code?.startsWith('MCP_');
+          reply(known ? error.status : 503, { success: false, error: { code: known ? error.code : 'MCP_CONFIG_UNAVAILABLE', message: known ? error.message : 'MCP 配置服务暂不可用，请稍后重试' } });
+        }
+      }); return;
     }
     if (pathname === '/knowledge-center/api/platform/database-connection' || pathname === '/knowledge-center/api/platform/database-connection/test' || pathname === '/knowledge-center/api/platform/database-connection/status') {
       requireSession(req, res, async session => {
@@ -1681,7 +1959,7 @@ function createKnowledgeCenterHandler(options) {
       requireSession(req, res, async session => {
         if (req.method === 'GET') {
           try {
-            const data = queryKnowledgeAssets(await readKnowledgeAssetsAsync(), new URL(req.url, 'http://localhost').searchParams, isPlatformAdmin(session));
+            const data = await queryKnowledgeAssets(await readKnowledgeAssetsAsync(), new URL(req.url, 'http://localhost').searchParams, isPlatformAdmin(session));
             res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
             res.end(JSON.stringify({ success: true, data }));
           } catch (_error) {

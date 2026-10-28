@@ -197,6 +197,34 @@
   .production-handbook-search { grid-template-columns: 1fr; gap: 5px; }
   .production-handbook-table { min-width: 560px; }
 }
+
+.handbook-ai-settings-summary { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 4px 0; padding: 10px 12px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface-subtle); }
+.handbook-writing-editor-mode { display: flex; gap: 4px; margin: 0 0 8px; }
+.handbook-writing-editor-mode button { min-height: 34px; padding: 0 12px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text-secondary); font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
+.handbook-writing-editor-mode button[aria-pressed="true"] { border-color: var(--color-brand); background: var(--color-brand-subtle); color: var(--color-brand); }
+.handbook-writing-editor-mode button:focus-visible { outline: 0; box-shadow: var(--focus-ring); }
+.handbook-ai-settings-summary p { margin: 0; min-width: 0; overflow: hidden; color: var(--color-text-secondary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.handbook-ai-settings-summary button { flex: none; min-height: 34px; }
+.handbook-ai-settings { position: fixed; z-index: 100; inset: 0; display: grid; place-items: center; padding: 20px; }
+.handbook-ai-settings[hidden] { display: none; }
+.handbook-ai-settings-backdrop { position: absolute; inset: 0; background: rgb(15 23 42 / 42%); }
+.handbook-ai-settings-dialog { position: relative; z-index: 1; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; width: min(560px, 100%); max-height: min(760px, calc(100vh - 40px)); border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-surface); box-shadow: 0 18px 50px rgb(15 23 42 / 24%); }
+.handbook-ai-settings-dialog > header, .handbook-ai-settings-dialog > footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 18px; border-bottom: 1px solid var(--color-border); }
+.handbook-ai-settings-dialog > header h3 { margin: 0; font-size: 17px; }
+.handbook-ai-settings-dialog > header p { margin: 4px 0 0; color: var(--color-text-secondary); font-size: 12px; }
+.handbook-ai-settings-dialog > header .icon-button { width: 34px; height: 34px; font-size: 20px; }
+.handbook-ai-settings-body { display: grid; gap: 18px; overflow: auto; padding: 18px; }
+.handbook-ai-settings-body > section { display: grid; gap: 8px; padding-bottom: 18px; border-bottom: 1px solid var(--color-border); }
+.handbook-ai-settings-body > section:last-child { padding-bottom: 0; border-bottom: 0; }
+.handbook-ai-settings-body h4 { margin: 0; font-size: 14px; }
+.handbook-ai-settings-body label { display: grid; gap: 6px; color: var(--color-text-secondary); font-size: 12px; font-weight: 650; }
+.handbook-ai-settings-body select, .handbook-ai-settings-body input { width: 100%; box-sizing: border-box; }
+.handbook-ai-settings-dialog > footer { justify-content: flex-end; border-top: 1px solid var(--color-border); border-bottom: 0; }
+@media (max-width: 560px) {
+  .handbook-ai-settings { padding: 10px; }
+  .handbook-ai-settings-dialog { max-height: calc(100vh - 20px); }
+  .handbook-ai-settings-summary { align-items: stretch; flex-direction: column; }
+}
 .handbook-production-editor { --handbook-commandbar-height: 68px; container-type: inline-size; border: 0; border-radius: 6px; background: var(--color-surface-subtle); box-shadow: none; }
 .handbook-production-editor h2 { font-size: 17px; letter-spacing: 0; }
 .handbook-production-toolbar { position: sticky; z-index: 8; top: 0; min-height: var(--handbook-commandbar-height); display: grid; grid-template-columns: minmax(150px, 1fr) auto; gap: 16px; align-items: center; padding: 8px 18px; border: 1px solid var(--color-border); border-width: 1px 1px 0; border-radius: 6px 6px 0 0; background: rgb(255 255 255 / 97%); box-shadow: 0 4px 14px rgb(15 23 42 / 8%); backdrop-filter: blur(10px); }
@@ -209,14 +237,37 @@
 .handbook-command-document .handbook-production-document-state { margin-left: 4px; }
 .handbook-toolbar-actions { justify-content: flex-end; flex-wrap: wrap; }
 .handbook-toolbar-actions .button, .handbook-production-mode button { white-space: nowrap; }
-.handbook-document-options { min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 12px; min-height: 52px; padding: 8px 22px; border: 1px solid var(--color-border); border-width: 0 1px 1px; background: var(--color-surface); }
-.handbook-document-options label { display: inline-flex; align-items: center; gap: 8px; color: var(--color-text-secondary); font-size: 12px; font-weight: 650; }
-.handbook-document-options select { min-height: 36px; padding: 6px 28px 6px 9px; border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); font: inherit; }
-.handbook-document-options-actions { flex: none; display: flex; align-items: center; gap: 6px; margin-left: auto; }
-.handbook-document-template { min-width: min(330px, 100%); }
-.handbook-document-template select { min-width: 0; width: 210px; max-width: 100%; }
-.handbook-template-status { flex: 1 1 160px; color: var(--color-text-secondary); font-size: 12px; }
+.handbook-toolbar-tools { display: inline-flex; align-items: center; gap: 4px; margin-left: 4px; padding-left: 8px; border-left: 1px solid var(--color-border); }
+.handbook-toolbar-tools .icon-button { width: 36px; height: 36px; color: var(--color-text-secondary); }
+.handbook-toolbar-tools .icon-button:hover, .handbook-toolbar-tools .icon-button:focus-visible { color: var(--color-brand); background: var(--color-brand-subtle); }
+.handbook-ai-primary { min-height: 40px; padding: 0 14px; border-color: var(--color-brand); background: var(--color-brand); color: #fff; font-weight: 750; box-shadow: 0 2px 5px rgb(15 23 42 / 12%); }
+.handbook-ai-primary:hover, .handbook-ai-primary:focus-visible { border-color: var(--color-brand); background: color-mix(in srgb, var(--color-brand) 88%, #000); color: #fff; }
+.handbook-ai-primary i { width: 16px; height: 16px; margin-right: 5px; }
+.handbook-editor-format { display: inline-flex; align-items: center; gap: 4px; margin-right: auto; }
+.handbook-toolbar-actions .handbook-editor-format { margin-right: 0; }
+.handbook-editor-format > span { margin-right: 4px; color: var(--color-text-secondary); font-size: 12px; font-weight: 650; }
+.handbook-editor-format button { min-height: 32px; padding: 0 10px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text-secondary); font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
+.handbook-editor-format button[aria-pressed="true"] { border-color: var(--color-brand); background: var(--color-brand-subtle); color: var(--color-brand); }
+.handbook-editor-format button:focus-visible { outline: 0; box-shadow: var(--focus-ring); }
+.handbook-markdown-editor { display: block; width: 100%; min-height: 540px; box-sizing: border-box; resize: vertical; padding: 28px clamp(24px, 5vw, 64px); border: 0; border-radius: 0; background: #fff; color: var(--color-text); font: 15px/1.8 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; tab-size: 2; overflow-wrap: anywhere; }
+.handbook-markdown-editor:focus { outline: 2px solid var(--color-brand-subtle); outline-offset: -2px; }
+.handbook-markdown-toolbar { display: flex; align-items: center; justify-content: space-between; padding: 10px clamp(18px, 4vw, 44px); border-bottom: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text-secondary); font-size: 12px; font-weight: 700; }
+.handbook-markdown-workspace { display: grid; grid-template-columns: minmax(0, 1fr); min-height: 540px; }
+.handbook-markdown-workspace.is-previewing { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.handbook-markdown-workspace.is-previewing .handbook-markdown-editor { border-right: 1px solid var(--color-border); }
+.handbook-markdown-preview { min-width: 0; min-height: 540px; padding: 28px clamp(20px, 4vw, 44px); overflow: auto; background: var(--color-surface); line-height: 1.75; }
+.handbook-secondary-link, .handbook-secondary-action { color: var(--color-text-secondary); font-size: 12px; }
+.handbook-secondary-link { text-decoration: none; }
+.handbook-secondary-link:hover, .handbook-secondary-link:focus-visible { color: var(--color-brand); text-decoration: underline; }
+.handbook-secondary-action { min-height: 32px; }
+.handbook-more-menu { position: relative; }
+.handbook-more-menu > summary { display: inline-flex; align-items: center; gap: 5px; list-style: none; cursor: pointer; }
+.handbook-more-menu > summary::-webkit-details-marker { display: none; }
+.handbook-more-menu-panel { position: absolute; z-index: 10; right: 0; top: calc(100% + 6px); display: grid; min-width: 150px; gap: 4px; padding: 6px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); box-shadow: 0 8px 24px rgb(15 23 42 / 14%); }
+.handbook-more-menu-panel > * { width: 100%; justify-content: flex-start; }
 .handbook-draft-availability { flex: 1 1 240px; color: var(--color-text-secondary); font-size: 12px; line-height: 1.5; }
+.handbook-production-editor > .handbook-draft-availability, .handbook-review-submission-status { margin: 0; padding: 8px 18px; border-inline: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text-secondary); font-size: 12px; line-height: 1.5; }
+.handbook-review-submission-status { border-bottom: 1px solid var(--color-border); }
 .handbook-production-mode { margin-left: 0; }
 .handbook-save-status { min-width: 64px; color: var(--color-text-secondary); font-size: 12px; text-align: right; white-space: nowrap; }
 .handbook-global-preview, .handbook-assistant-mobile-open { width: 40px; height: 40px; flex: none; }
@@ -254,6 +305,9 @@
 .handbook-history-list article { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 12px; padding: 12px; border: 1px solid var(--color-border); border-radius: 6px; }
 .handbook-history-list article div { min-width: 0; display: grid; gap: 3px; }
 .handbook-history-list article span, .handbook-history-list article code { color: var(--color-text-secondary); font-size: 12px; }
+.handbook-history-comparison { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 16px; }
+.handbook-history-comparison h3 { margin: 0 0 6px; font-size: 13px; }
+.handbook-history-comparison pre { max-height: 360px; margin: 0; padding: 12px; overflow: auto; border: 1px solid var(--color-border); background: var(--color-surface-subtle); color: var(--color-text); font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 .handbook-conflict-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .handbook-conflict-columns label { display: grid; gap: 6px; font-size: 13px; font-weight: 700; }
 .handbook-conflict-columns textarea { min-height: 320px; resize: vertical; font: 12px/1.6 ui-monospace, SFMono-Regular, Consolas, monospace; }
@@ -324,15 +378,14 @@
   .handbook-production-writing textarea { min-height: 390px; }
   .handbook-production-editor > .handbook-production-toolbar { min-height: var(--handbook-commandbar-height); grid-template-columns: 1fr; grid-template-rows: 40px 48px; gap: 4px; padding: 8px 10px; }
   .handbook-toolbar-actions { width: 100%; max-width: none; overflow: visible; justify-content: space-between; }
-  .handbook-toolbar-actions [data-handbook-history],
+  .handbook-ai-primary { order: -2; flex: 1 1 100%; justify-content: center; }
+  .handbook-editor-format { width: 100%; margin-right: 0; }
+  .handbook-editor-format button { flex: 1; }
   .handbook-toolbar-actions .handbook-attachment-button,
   .handbook-toolbar-actions [data-handbook-discard],
-  .handbook-toolbar-actions .handbook-global-preview { display: none; }
+  .handbook-toolbar-actions .handbook-global-preview { display: inline-grid; }
   .handbook-production-mode { flex: none; }
   .handbook-save-status { min-width: 0; max-width: 96px; flex: 1 1 auto; overflow: hidden; text-align: center; text-overflow: ellipsis; }
-  .handbook-document-options { align-items: stretch; flex-direction: column; }
-  .handbook-document-options-actions { width: 100%; justify-content: flex-end; margin-left: 0; }
-  .handbook-document-template, .handbook-document-template select { width: 100%; max-width: none; }
   .handbook-reference-dialog footer, .handbook-review-dialog footer { align-items: stretch; flex-direction: column; }
   .handbook-reference-dialog footer .button, .handbook-review-dialog footer .button { width: 100%; }
   .handbook-production-writing { padding: 14px 0 28px; }
@@ -340,6 +393,10 @@
   .handbook-production-content[data-handbook-vditor] .vditor-toolbar { overflow-x: auto; padding-inline: 8px; white-space: nowrap; }
   .handbook-production-content[data-handbook-vditor] .vditor-content { padding-top: 14px; }
   .handbook-production-content[data-handbook-vditor] .vditor-wysiwyg { padding: 28px 18px; box-shadow: none; }
+  .handbook-markdown-editor { min-height: 390px; padding: 24px 18px; font-size: 14px; }
+  .handbook-markdown-workspace.is-previewing { grid-template-columns: 1fr; }
+  .handbook-markdown-workspace.is-previewing .handbook-markdown-editor { border-right: 0; border-bottom: 1px solid var(--color-border); }
+  .handbook-history-comparison { grid-template-columns: 1fr; }
   .handbook-conflict-columns { grid-template-columns: 1fr; }
   .handbook-history-list article { grid-template-columns: 1fr; }
 }
@@ -630,6 +687,7 @@
 .handbook-production-writing { padding: 32px clamp(12px, 4vw, 64px) 48px; }
 .handbook-production-content.is-reading { width: min(100%, 900px); font-size: 16px; line-height: 1.75; }
 .handbook-production-content[data-handbook-vditor] .vditor-wysiwyg { flex: 0 1 860px; max-width: 860px; font-size: 16px; line-height: 1.8; }
+.handbook-production-content:has(.handbook-markdown-editor) { padding: 0; background: #f4f6f8; }
 .handbook-production-content[data-handbook-vditor] .vditor-toolbar { top: var(--handbook-commandbar-height); }
 .handbook-production-directory, .handbook-assistant-panel { position: fixed; z-index: 31; top: 0; bottom: 0; width: min(360px, 92vw); max-height: var(--kc-viewport-height); overflow-y: auto; overscroll-behavior: contain; border-radius: 0; background: var(--color-surface); box-shadow: 0 18px 48px rgb(15 23 42 / 20%); visibility: hidden; pointer-events: none; transition: transform var(--motion-standard), visibility var(--motion-standard); }
 .handbook-production-directory { left: 0; border-width: 0 1px 0 0; transform: translateX(-105%); }
@@ -663,3 +721,171 @@
 @media (prefers-reduced-motion: reduce) {
   .handbook-production-directory, .handbook-assistant-panel { transition: none; }
 }
+
+.handbook-paste-dialog { width: min(1100px, calc(100vw - 32px)); max-height: calc(var(--kc-viewport-height) - 32px); overflow: auto; }
+.handbook-paste-columns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; }
+.handbook-paste-columns > * { min-width: 0; }
+.handbook-paste-columns label { display: flex; flex-direction: column; gap: 8px; }
+.handbook-paste-columns textarea { width: 100%; min-height: 300px; resize: vertical; font-family: monospace; }
+.handbook-paste-columns [data-paste-preview] { max-height: 420px; overflow: auto; overflow-wrap: anywhere; }
+.handbook-paste-dialog footer { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 20px; }
+.handbook-paste-confirm { display: flex; align-items: center; gap: 8px; min-height: 44px; }
+.handbook-paste-dialog [data-paste-error] { color: var(--danger, #b42318); }
+@media (max-width: 720px) { .handbook-paste-columns { grid-template-columns: minmax(0, 1fr); } }
+.handbook-ai-dialog { box-sizing: border-box; width: min(900px, calc(100% - 32px)); max-height: calc(var(--kc-viewport-height) - 32px); overflow: auto; padding: 20px; }
+.handbook-ai-dialog form, .handbook-ai-dialog label, .handbook-ai-dialog [data-ai-candidate] { display: grid; gap: 12px; }
+.handbook-ai-dialog textarea { box-sizing: border-box; width: 100%; resize: vertical; font: inherit; line-height: 1.6; }
+.handbook-ai-dialog [hidden] { display: none; }
+.handbook-ai-dialog-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.handbook-ai-dialog button { min-height: 44px; }
+.handbook-ai-dialog [data-ai-status] { white-space: pre-wrap; }
+.handbook-ai-dialog [data-quality-report] { overflow-wrap: anywhere; }
+.handbook-ai-dialog [data-quality-report] pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.handbook-ai-dialog :is([data-ai-source-list], [data-ai-skill-list]) label { display: flex; align-items: flex-start; overflow-wrap: anywhere; }
+.handbook-ai-dialog :is([data-ai-source-list], [data-ai-skill-list]) input[type="checkbox"] { flex: 0 0 auto; width: 20px; height: 20px; min-height: 0; padding: 0; margin: 0; }
+
+.handbook-provenance pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-width: 100%;
+}
+.handbook-provenance li { margin-block: 12px; }
+
+/* AI writing workspace: the original and its writing controls stay together. */
+.handbook-writing-page { width: min(1400px, calc(100% - 32px)); border: 1px solid var(--color-border); border-radius: 16px; background: var(--color-surface); color: var(--color-text); }
+.handbook-writing-page .asset-dialog-heading { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
+.handbook-writing-page :is(h2, h3, p) { margin: 0; }
+.handbook-writing-page .asset-dialog-heading p, .handbook-writing-document > p { color: var(--color-text-secondary); margin-top: 8px; }
+.handbook-writing-layout { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 24px; align-items: start; }
+.handbook-writing-document, .handbook-writing-assistant { display: grid; gap: 18px; min-width: 0; padding: 24px; border: 1px solid var(--color-border); border-radius: 12px; }
+.handbook-writing-document > label { margin-top: 8px; }
+.handbook-writing-page :is(textarea, select, input[type="text"]) { min-width: 0; max-width: 100%; border: 1px solid var(--color-border); border-radius: 8px; padding: 12px; background: var(--color-surface); color: var(--color-text); }
+.handbook-writing-page [data-ai-original] { min-height: 400px; }
+.handbook-writing-page [data-ai-range] { color: var(--color-text-secondary); line-height: 1.6; }
+.handbook-writing-page summary { cursor: pointer; padding-block: 10px; min-height: 44px; box-sizing: border-box; }
+.handbook-writing-page details > :not(summary) { margin-top: 12px; }
+.handbook-writing-page fieldset { min-width: 0; border: 1px solid var(--color-border); border-radius: 8px; padding: 12px; }
+.handbook-writing-page :is([data-ai-source-list], [data-ai-skill-list]) section { display: grid; gap: 8px; padding-block: 12px; border-bottom: 1px solid var(--color-border); overflow-wrap: anywhere; }
+.handbook-writing-submit { display: grid; gap: 12px; padding-top: 16px; border-top: 1px solid var(--color-border); }
+.handbook-writing-page :is([data-ai-start], [data-ai-adopt]) { background: var(--color-brand); color: var(--color-on-brand, white); border-color: var(--color-brand); }
+.handbook-writing-page button:disabled { opacity: .55; cursor: not-allowed; }
+.handbook-writing-comparison { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; }
+.handbook-writing-page [data-ai-candidate] { padding: 24px; border: 1px solid var(--color-border); border-radius: 12px; min-width: 0; }
+.handbook-writing-page :is(button, textarea, input, select, summary):focus-visible { outline: 2px solid var(--color-brand); outline-offset: 3px; }
+@media (max-width: 800px) {
+  .handbook-writing-page { width: calc(100% - 16px); padding: 12px; }
+  .handbook-writing-layout, .handbook-writing-comparison { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  .handbook-writing-document, .handbook-writing-assistant, .handbook-writing-page [data-ai-candidate] { padding: 16px; }
+  .handbook-writing-page [data-ai-original] { height: 220px; min-height: 180px; }
+}
+
+/* A normal page in the main region, without dialog/backdrop positioning. */
+body.immersive-writing .sidebar, body.immersive-writing #sidebar-restore,
+body.immersive-writing #mobile-menu { display: none !important; }
+body.immersive-writing .main-shell { margin-left: 0; width: 100%; }
+body.immersive-writing .app { grid-template-columns: minmax(0, 1fr); }
+body.immersive-writing #main { max-width: none; padding: 0; }
+.handbook-writing-page { box-sizing: border-box; width: 100%; min-height: calc(var(--kc-viewport-height) - 24px); margin: 0; padding: 24px 32px; border: 0; border-radius: 0; }
+.handbook-writing-page form, .handbook-writing-page label, .handbook-writing-page [data-ai-candidate] { display: grid; gap: 16px; }
+.handbook-writing-page textarea { box-sizing: border-box; width: 100%; resize: vertical; font: inherit; line-height: 1.8; }
+.handbook-writing-page [hidden] { display: none; }
+.handbook-writing-page button { min-height: 44px; }
+.handbook-writing-page [data-ai-status] { white-space: pre-wrap; }
+.handbook-writing-page .handbook-writing-layout { grid-template-columns: minmax(0, 1fr) minmax(300px, 380px); gap: 32px; }
+.handbook-writing-page .handbook-writing-document { border: 0; padding: 32px; }
+.handbook-writing-page [data-ai-original] { min-height: 56vh; border: 0; padding: 12px 0; border-radius: 0; font-family: var(--font-mono, monospace); }
+.handbook-writing-page .handbook-writing-assistant { background: var(--color-surface); }
+.handbook-writing-page :is([data-ai-source-list], [data-ai-skill-list]) label { display: flex; align-items: flex-start; overflow-wrap: anywhere; }
+.handbook-writing-page input[type="checkbox"] { flex: 0 0 auto; width: 20px; height: 20px; min-height: 0; padding: 0; margin: 0; }
+@media (max-width: 800px) {
+ .handbook-writing-page { padding: 16px; }
+ .handbook-writing-page .handbook-writing-layout { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+ .handbook-writing-page .handbook-writing-document { padding: 8px; }
+ .handbook-writing-page [data-ai-original] { height: 220px; min-height: 180px; }
+}
+
+.handbook-production-layout[data-navigation-layout] { grid-template-columns: var(--handbook-directory-width, 260px) minmax(0, 1fr); }
+.handbook-production-layout[data-navigation-layout].navigation-pane-collapsed { grid-template-columns: 48px minmax(0, 1fr); }
+.handbook-document-properties { padding: 12px 20px; border-bottom: 1px solid var(--color-border); }
+.handbook-document-properties summary { cursor: pointer; }
+.handbook-writing-page [data-ai-rich-editor] { min-width: 0; }
+.handbook-writing-page .vditor { border: 0; }
+.handbook-writing-page .vditor-reset { padding: 16px 8px !important; }
+.handbook-origin-drift-dialog { width: min(1100px, calc(100% - 32px)); max-width: none; max-height: min(calc(var(--kc-viewport-height) * .88), 900px); border: 1px solid var(--color-border); border-radius: 8px; padding: 24px; color: var(--color-text); background: var(--color-surface); }
+.handbook-origin-drift-dialog::backdrop { background: rgb(0 0 0 / 45%); }
+.handbook-origin-drift-dialog > h2 { margin-top: 0; }
+.handbook-origin-drift-comparison { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.handbook-origin-drift-comparison section { min-width: 0; }
+.handbook-origin-drift-comparison pre { max-height: calc(var(--kc-viewport-height) * .52); overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; border: 1px solid var(--color-border); padding: 12px; background: var(--color-canvas, #f7f8f8); }
+.handbook-origin-drift-dialog footer { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+@media (max-width: 700px) { .handbook-origin-drift-comparison { grid-template-columns: minmax(0, 1fr); } .handbook-origin-drift-dialog { padding: 16px; } }
+@media (max-width: 760px) {
+ .handbook-production-layout[data-navigation-layout], .handbook-production-layout[data-navigation-layout].navigation-pane-collapsed { grid-template-columns: minmax(0, 1fr); }
+}
+
+.handbook-production-layout { grid-template-columns: minmax(220px, 260px) minmax(0, 1fr); }
+@media (max-width: 760px) { .handbook-production-layout { grid-template-columns: minmax(0, 1fr); } }
+
+/* Writing feedback remains in the document area when the assistant is hidden. */
+.handbook-writing-page.assistant-collapsed .handbook-writing-layout { grid-template-columns: minmax(0, 1fr); }
+.handbook-writing-page [data-ai-panel-toggle] { display: inline-flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; }
+.handbook-writing-execution { margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--color-border); min-width: 0; }
+.handbook-writing-execution > header { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.handbook-writing-execution details { padding: 12px 0; border-top: 1px solid var(--color-border); }
+.handbook-writing-execution summary { cursor: pointer; line-height: 1.6; }
+.handbook-writing-execution pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px; overflow-y: auto; font-size: 13px; padding: 12px; background: var(--color-surface-muted, #f5f6f8); border-radius: 6px; }
+.handbook-writing-execution [data-state="running"] > summary { color: var(--color-primary); font-weight: 600; }
+.handbook-writing-page .handbook-ai-settings .searchable-combobox { width: 100%; }
+.handbook-writing-page .handbook-ai-settings [data-ai-template-select] { display: none; }
+.handbook-writing-page .asset-dialog-heading { flex-wrap: wrap; }
+.handbook-writing-heading-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-left: auto; }
+.handbook-writing-page form { min-width: 0; }
+.handbook-writing-assistant { grid-template-columns: minmax(0, 1fr); }
+.handbook-writing-execution { margin-top: 8px; }
+.handbook-writing-execution summary, .handbook-writing-execution p { overflow-wrap: anywhere; }
+@media (max-width: 800px) {
+  .handbook-writing-heading-actions { justify-content: flex-start; margin-left: 0; }
+}
+
+
+/* Keep the assistant focused on requirements and the next available action. */
+.handbook-writing-page .handbook-writing-assistant { gap: 12px; padding: 16px; align-content: start; }
+.handbook-writing-assistant > label { gap: 8px; font-weight: 600; }
+.handbook-writing-assistant [data-ai-requirements] { min-height: 96px; padding: 10px 12px; line-height: 1.6; font-weight: 400; }
+.handbook-writing-assistant [data-ai-range] { font-size: 13px; }
+.handbook-writing-configuration { display: grid; gap: 4px; min-width: 0; }
+.handbook-writing-configuration-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.handbook-writing-configuration-heading > span { min-width: 0; overflow-wrap: anywhere; font-weight: 600; }
+.handbook-writing-configuration-heading > button { flex-shrink: 0; }
+.handbook-writing-configuration [data-ai-settings-summary] { white-space: normal; overflow-wrap: anywhere; font-size: 13px; line-height: 1.6; color: var(--color-text-secondary); }
+.handbook-writing-assistant .handbook-writing-submit { padding-top: 12px; gap: 4px; }
+.handbook-writing-submit .handbook-ai-dialog-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.handbook-writing-submit [data-ai-start] { flex: 1; }
+.handbook-writing-submit [data-ai-resume] { justify-self: end; padding-inline: 4px; border-color: transparent; background: transparent; color: var(--color-brand); }
+
+/* Compact generation settings: common fields first, optional capabilities on demand. */
+.handbook-writing-page .handbook-ai-settings-dialog > header,
+.handbook-writing-page .handbook-ai-settings-dialog > footer { padding: 12px 16px; }
+.handbook-writing-page .handbook-ai-settings-body { gap: 12px; padding: 14px 16px; }
+.handbook-writing-page .handbook-ai-settings-body > section { gap: 4px; padding: 0; border: 0; }
+.handbook-writing-page .handbook-ai-settings-body > section[hidden] { display: none; }
+.handbook-writing-page .handbook-ai-settings-body label { gap: 6px; margin: 0; }
+.handbook-writing-page .handbook-ai-settings-body p { margin: 0; font-size: 12px; overflow-wrap: anywhere; }
+.handbook-writing-page .handbook-ai-settings-body p:empty { display: none; }
+.handbook-writing-page .handbook-ai-settings-body > details { padding-top: 10px; border-top: 1px solid var(--color-border); }
+.handbook-writing-page .handbook-ai-settings-body summary { min-height: 44px; line-height: 44px; padding-block: 0; cursor: pointer; font-size: 13px; }
+.handbook-writing-page .handbook-ai-settings-body summary span { color: var(--color-text-secondary); font-weight: 400; }
+.handbook-writing-page .handbook-ai-settings-body .handbook-ai-settings-section { display: grid; gap: 8px; margin-top: 8px; }
+.handbook-writing-page .handbook-ai-settings-dialog .button { min-height: 44px; }
+.handbook-writing-page .handbook-ai-settings-dialog select { min-height: 40px; }
+
+.handbook-writing-page .handbook-source-priority { font-size: 12px; font-weight: 600; color: var(--color-brand); }
+.handbook-writing-page .handbook-source-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.handbook-writing-page .handbook-ai-source-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.handbook-writing-page .handbook-ai-source-heading strong { font-size: 13px; }
+.handbook-writing-page .handbook-ai-sources { padding-top: 10px !important; border-top: 1px solid var(--color-border) !important; }
+.handbook-writing-page .handbook-ai-sources [data-ai-source-list] { display: grid; gap: 8px; margin-top: 8px; }
+.handbook-writing-page .handbook-ai-sources [data-ai-source-list]:empty { display: none; }
+.handbook-writing-page .handbook-ai-sources [data-ai-source-list] section { padding: 10px; border: 1px solid var(--color-border); border-radius: 6px; }
+.handbook-writing-page .handbook-ai-sources [data-ai-source-list] label { overflow-wrap: anywhere; }
+.handbook-writing-page [data-ai-source-list] input[type="checkbox"] { width: auto; flex: none; }

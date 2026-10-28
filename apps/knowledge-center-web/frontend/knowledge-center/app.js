@@ -1,4 +1,8 @@
-import { canSaveHandbookDraft, handbookReviewAction } from './modules/production/handbook-view.js';
+import { mountModelAdmin, hasModelDraft, confirmLeavingModels } from './modules/platform-admin/model-admin.js';
+import { mountMcpAdmin, hasMcpDraft, confirmLeavingMcp } from './modules/platform-admin/mcp-admin.js';
+import { retainWritingSelection } from './modules/production/writing-selection.js';
+import { canSaveHandbookDraft, handbookReviewAction } from './modules/production/handbook-actions.js';
+import { takeReviewBootstrapPrefetch } from './common/api/review-bootstrap-prefetch.js';
 import { archiveAsset, createAsset, createPrincipal, createTeamGroup, deleteOutline, importOutline, validateOutline, importPrincipals, loadAssets, loadOutlineData, loadPlatformData, loadPrincipals, loadTeamGroups, loadTeamGroup, saveTeamRoster, publishOutlineGovernance, resolveAssetStatus, restoreAsset, saveOutlineGovernance, updateAsset, updateAssetStatus, updateDomainBuildTaskItem, loadDomainBuildTasks as fetchDomainBuildTasks, loadPlatformPermissions, updatePlatformUserPermissions, updatePrincipal, loadDatabaseConnectionStatus, testDatabaseConnection, saveDatabaseConnection, loadTemplates, loadTemplate } from './common/api/platform-api.js';
 import { disconnectGitLabOAuth, gitLabOAuthHref, loadGitLabBranches, loadGitLabConnections, loadGitLabOAuthAccounts, loadGitLabOAuthStatus, loadGitLabOAuthConfig, loadGitLabTree, loadHandbookGitLabAccess, loadHandbookRepository, loadHandbookRepositoryCommits, loadHandbookRepositoryFile, loadHandbookRepositoryMapping, loadHandbookRepositoryStatistics, loadHandbookRepositoryTree, loadReviewRepositoryContext, saveGitLabConnection, saveHandbookRepositoryMapping, createGitLabConnection, updateGitLabConnection, verifyGitLabConnection, disableGitLabConnection, enableGitLabConnection, searchGitLabConnections } from './common/api/gitlab-api.js';
 import { addIncrementalSource, bootstrapBaseline, cancelIncrementalReview, commentIncrementalReview, createIncrementalReview, createIncrementalRevision, createIncrementalTask, createOnlineReview, decideIncrementalReview, loadCandidateDiff, loadHandbookReviewSummary, loadIncrementalBaselines, loadIncrementalTask, loadIncrementalTasks, loadMyGenerations, loadReviewBootstrap, publishIncrementalTask, reassignIncrementalReview, recordIncrementalEvidence, reopenIncrementalReviewComment, replyIncrementalReviewComment, resolveIncrementalReviewComment, runIncrementalChecks, saveIncrementalDraft, submitIncrementalCandidate, updateIncrementalTarget } from './common/api/incremental-api.js';
@@ -11,10 +15,11 @@ import { loadOutlineRecycle, outlineLifecycle } from './common/api/platform-api.
 import { pathForView, viewFromPath, platformTabFromSearch } from './common/state/navigation.js';
 import { onKnowledgeDataChanged } from './common/state/data-change.js';
 import { byId, escapeHtml } from './common/utils/dom.js';
-import { cleanupSearchableSelects, markDynamicSelects } from './common/searchable-combobox.js';
+import { cleanupSearchableSelects, markDynamicSelects, syncSearchableSelect } from './common/searchable-combobox.js';
 import { enhanceTableViews } from './common/table-view-configurator.js';
 import { enhanceResizableNavigation } from './common/resizable-navigation-pane.js';
 import { enhanceDirectoryTrees } from './common/directory-tree.js';
+import { updateReviewWaitingEntry } from './modules/review-publishing/view.js';
 import { initViewportRuntime } from './common/viewport-runtime.js';
 import { initScrollRuntime } from './common/scroll-runtime.js';
 const viewportRuntime = initViewportRuntime();
@@ -193,6 +198,90 @@ function productionRouteState() {
   };
 }
 
+async function openHandbookWriting(operation, aiAction) {
+    const context = handbookDraftContext();
+    const documentId = context.documentId;
+    const getMarkdown = () => handbookVditorDocumentId === documentId && handbookVditor ? handbookVditor.getValue() : currentHandbookMarkdown(documentId);
+    if (operation === 'check') {
+      const saved = handbookUi().serverDrafts?.[documentId]?.draft;
+      const markdown = getMarkdown();
+      if (handbookUi().draftLoadState?.[documentId] !== 'ready' || !saved?.revision?.revisionId || markdown !== saved.revision.markdown) {
+        showAppNotice('请先保存当前正文，再检查已保存版本的用例。', { title: '需要先保存草稿' });
+        return;
+      }
+      const { openProductionQualityDialog } = await import('./modules/production/production-quality-dialog.js');
+      openProductionQualityDialog({ context, markdown, revisionId: saved.revision.revisionId, editVersion: saved.editVersion, trigger: aiAction });
+      return;
+    }
+    if (handbookUi().draftLoadState?.[documentId] !== 'ready') {
+      showAppNotice('请等待共享草稿读取完成，或恢复草稿服务后重试。', { title: '暂时无法生成' });
+      return;
+    }
+    if (writingPageOpening || document.querySelector('.handbook-writing-page')) return;
+    writingPageOpening = true;
+    try {
+    const { openProductionWritingPage } = await import('./modules/production/production-writing-page.js');
+    openProductionWritingPage({
+      context, operation, getMarkdown, loadEditor: loadVditorAssets, initialRange: getWritingSelection(), trigger: aiAction,
+      onClose: () => render(),
+      onEdit: markdown => {
+        handbookUi().drafts[documentId] = markdown;
+        handbookUi().draftHtml[documentId] = '';
+        updateHandbookUiList('dirtyDocuments', documentId, true);
+        if (handbookVditorDocumentId === documentId && handbookVditor) handbookVditor.setValue(markdown);
+      },
+      editVersion: handbookUi().serverDrafts?.[documentId]?.draft?.editVersion || 0,
+      templateId: document.querySelector('[data-handbook-template]')?.value || handbookUi().templateByDocument?.[documentId],
+      outline: document.querySelector('[data-handbook-document-title]')?.textContent || documentId,
+      originSnapshot: await (async () => {
+        const repository = handbookUi().repository || {};
+        const file = repository.filesByDocument?.[documentId];
+        const content = file?.matched ? String(repository.contentByDocument?.[documentId] || '') : '';
+        const contentDigest = await sha256Text(content);
+        return file?.matched ? {
+          originType: 'gitlab', snapshotId: file.commitId || file.blobId || contentDigest, contentDigest,
+          handbookId: context.handbookId, documentId, outlineVersionId: context.outlineVersionId,
+          repository: repository.mapping?.repository || repository.mapping?.project || repository.mapping?.projectId || null,
+          branch: repository.branch, path: file.path, commitId: file.commitId || null, blobId: file.blobId || null,
+        } : { originType: 'blank', snapshotId: null, contentDigest, handbookId: context.handbookId, documentId, branch: repository.branch };
+      })(),
+      originBaselineContent: handbookUi().repository?.contentByDocument?.[documentId] || '',
+      loadLatestOrigin: async () => {
+        const repository = handbookUi().repository || {};
+        const file = repository.filesByDocument?.[documentId];
+        if (!file?.matched || !file.path) throw new Error('当前文档没有可读取的 GitLab 映射');
+        const latest = await loadHandbookRepositoryFile(context.handbookId, repository.branch, 'zh', file.path);
+        if (latest.encoding !== 'utf-8' || typeof latest.content !== 'string') throw new Error('GitLab 最新基线不是有效的 Markdown 文本');
+        const contentDigest = await sha256Text(latest.content);
+        return {
+          content: latest.content,
+          snapshot: { originType: 'gitlab', snapshotId: latest.commitId || latest.blobId || contentDigest, contentDigest,
+            handbookId: context.handbookId, documentId, outlineVersionId: context.outlineVersionId,
+            repository: repository.mapping?.repository || repository.mapping?.project || repository.mapping?.projectId || null,
+            branch: repository.branch, path: latest.path || file.path, commitId: latest.commitId || null, blobId: latest.blobId || null },
+        };
+      },
+      attachmentIds: (handbookUi().attachments?.[documentId] || []).map(item => item.attachmentId),
+      baselineDigest: () => sha256Text(handbookUi().repository?.contentByDocument?.[documentId] || ''),
+      onAdopt: async (result, original) => {
+        const latest = getMarkdown();
+        const changed = latest !== original;
+        handbookUi().serverDrafts[documentId] = result;
+        handbookUi().drafts[documentId] = changed ? latest : result.draft.revision.markdown;
+        handbookUi().draftHtml[documentId] = changed ? handbookVditor?.getHTML() || '' : '';
+        handbookUi().draftBranchByDocument[documentId] = result.draft.branch;
+        handbookUi().draftSaveState[documentId] = { status: 'saved' };
+        updateHandbookUiList('dirtyDocuments', documentId, changed);
+        updateHandbookUiList('savedDocuments', documentId, true);
+        if (!changed && handbookVditorDocumentId === documentId && handbookVditor) handbookVditor.setValue(result.draft.revision.markdown);
+        render();
+        showAppNotice(changed ? '候选已保存；保存期间的后续人工修改仍保留在编辑器，请再次保存。' : '候选已采用并保存。请继续质量检查及送审。', { title: 'AI 候选已保存' });
+      },
+    });
+    } finally { writingPageOpening = false; }
+}
+
+let writingPageOpening = false;
 let assetRenderDeferred = false;
 let openDomainTaskId = null;
 let outlineLoadSequence = 0;
@@ -203,6 +292,7 @@ function outlineProjectionKey(route = outlineRouteState()) {
 }
 
     function render() {
+  if (document.querySelector('.handbook-writing-page')) return;
   if (appState.activeView === 'production' && productionRouteState().handbookId) collapseSidebarForProduction();
   else restoreSidebarAfterProduction();
   if (appState.activeView === 'assets' && document.querySelector('.asset-dialog[open]')) {
@@ -220,6 +310,8 @@ function outlineProjectionKey(route = outlineRouteState()) {
     platformRenderDeferred = true;
     return;
   }
+  if (appState.activeView === 'platform' && appState.platformTab === 'mcp' && document.querySelector('[data-mcp-admin]')) return;
+  if (appState.activeView === 'platform' && appState.platformTab === 'models' && document.querySelector('[data-model-admin]')) return;
   platformRenderDeferred = false;
   const renderer = renderers[appState.activeView];
   if (!renderer) {
@@ -250,6 +342,10 @@ function outlineProjectionKey(route = outlineRouteState()) {
     ? document.querySelector('.outline-more-actions[open]')?.dataset.outlineMoreId : undefined;
   const databasePasswordDraft = document.querySelector('[data-database-dialog] [data-database-field="password"]')?.value || '';
       byId('view-root').innerHTML = renderer({ projection: appState.activeView === 'repository' ? appState.gitlabProjection : appState.projection, templateProjection: appState.templateProjection, cleaningProjection: appState.cleaningProjection, cleaningCanWrite: isPlatformAdmin(), reviewProjection: appState.reviewProjection, reviewUi: appState.reviewUi, outlineProjection, assetCatalog: appState.assetCatalog, principalProjection: appState.principalProjection, principalListState: appState.principalListState, teamGroupProjection: appState.teamGroupProjection, teamGroupView: new URLSearchParams(window.location.search).get('view') || 'people', teamGroupUi: appState.teamGroupUi, incrementalProjection: appState.incrementalProjection, handbookProductionUi: appState.handbookProductionUi, currentUser: { ...(authState.session?.user || {}), displayName: displayName() }, domainBuildTaskProjection: appState.domainBuildTaskProjection, gitlabProjection: appState.gitlabProjection, permissionProjection: appState.permissionProjection, governanceProjection: appState.platformGovernance, databaseConnectionProjection: appState.databaseConnectionProjection, databaseConnectionDrawerOpen: appState.databaseConnectionDrawerOpen, databaseConnectionAdvancedOpen: appState.databaseConnectionAdvancedOpen, databaseConnectionForm: appState.databaseConnectionForm, databaseConnectionStatus: appState.databaseConnectionStatus, selectedPermissionUserId: appState.selectedPermissionUserId, permissionSaveStatus: appState.permissionSaveStatus, permissionUserSearch: appState.permissionUserSearch, permissionListState: appState.permissionListState, gitlabVerification: appState.gitlabVerification, platformAdmin: isPlatformAdmin(), platformTab: appState.platformTab, gitlabListState: appState.gitlabListState, gitlabAddingConnection: appState.gitlabAddingConnection, gitlabEditingConnection: appState.gitlabEditingConnection, outlinePermissions: { create: canPerform('outline:create'), delete: canPerform('outline:delete'), purge: canPerform('outline:purge'), platformAdmin: isPlatformAdmin() }, outlineView });
+      const mcpRoot = byId('view-root').querySelector('[data-mcp-admin]');
+      if (mcpRoot) mountMcpAdmin(mcpRoot);
+      const modelRoot = byId('view-root').querySelector('[data-model-admin]');
+      if (modelRoot) mountModelAdmin(modelRoot);
       const outlineMenu = byId('view-root').querySelector('.outline-more-actions');
       if (openOutlineMenuId && outlineMenu?.dataset.outlineMoreId === openOutlineMenuId) outlineMenu.open = true;
       const permissionDraft = appState.permissionRoleDraft;
@@ -277,6 +373,19 @@ function outlineProjectionKey(route = outlineRouteState()) {
           form.querySelector('[data-team-group-status]')?.before(impact);
         }
       }
+  if (appState.activeView === 'production' && !writingPageOpening) {
+    const operation = new URLSearchParams(location.search).get('writing');
+    const documentId = productionRouteState().documentId;
+    if (['generate', 'polish', 'continue', 'rewrite', 'update'].includes(operation)
+      && handbookUi().draftLoadState?.[documentId] === 'ready') {
+      queueMicrotask(() => {
+        if (!writingPageOpening && !document.querySelector('.handbook-writing-page')
+          && new URLSearchParams(location.search).get('writing') === operation) {
+          openHandbookWriting(operation, document.querySelector('[data-handbook-ai-action="generate"]')).catch(showApplicationError);
+        }
+      });
+    }
+  }
   window.lucide?.createIcons();
   const databaseDialog = document.querySelector('[data-database-dialog]');
   if (databaseDialog && appState.databaseConnectionDrawerOpen && !databaseDialog.open) {
@@ -381,6 +490,7 @@ function cancelAssetArchiveDialog(dialog) {
 
 async function navigate(view, updateHistory = true) {
   if (!views[view]) return;
+  if (view !== 'platform' && (!confirmLeavingMcp() || !confirmLeavingModels())) return;
   if (appState.activeView === 'templates' && view !== 'templates' && templateController && !templateController.canLeave()) return;
   if (appState.activeView === 'production' && productionRouteState().handbookId && view !== 'production' && !confirmLeavingHandbookDraft()) return;
   if (!canAccessView(view)) {
@@ -779,7 +889,7 @@ async function loadIncrementalWorkspace(preferredTaskId = null) {
       loadAssets(new URLSearchParams({ pageSize: '100' })).catch(() => null),
       requestedHandbookId ? loadOutlineData(requestedHandbookId) : Promise.resolve(null),
       requestedHandbookId ? loadTemplates({ summary: '1' }).catch(() => ({ data: [] })) : Promise.resolve({ data: [] }),
-      requestedHandbookId ? Promise.resolve(null) : loadMyGenerations()
+      requestedHandbookId || !['generations', 'todo'].includes(params.get('view')) ? Promise.resolve(null) : loadMyGenerations()
         .then(data => ({ status: 'ready', items: data?.items || [], generatedAt: data?.generatedAt || null }))
         .catch(error => ({ status: error.status === 403 ? 'forbidden' : 'unavailable', items: [], error: { code: error.code, message: error.message } })),
       requestedHandbookId ? Promise.resolve(null) : loadOutlineData(),
@@ -876,6 +986,7 @@ function setHandbookDrawerState(drawer, open) {
 
 let handbookVditor = null;
 let handbookVditorDocumentId = '';
+const getWritingSelection = retainWritingSelection(() => ({ editor: handbookVditor, element: document.querySelector('[data-handbook-vditor]') }));
 let vditorAssetsPromise = null;
 
 function handbookDraftContext(documentId = document.querySelector('[data-handbook-current-document]')?.dataset.handbookCurrentDocument || '') {
@@ -896,11 +1007,7 @@ function currentHandbookMarkdown(documentId) {
   const repository = handbookUi().repository || {};
   const mapped = repository.filesByDocument?.[documentId];
   if (mapped?.matched) return String(repository.contentByDocument?.[documentId] || '');
-  const templateId = handbookUi().templateByDocument?.[documentId]
-    || appState.templateProjection?.items?.find(item => item.status === 'active')?.id
-    || appState.templateProjection?.items?.[0]?.id;
-  const template = handbookUi().templateDetails?.[templateId];
-  return String(template?.current?.content || template?.content || '');
+  return '';
 }
 
 function loadVditorAssets() {
@@ -961,6 +1068,17 @@ async function mountHandbookVditor() {
   } catch (error) {
     target.innerHTML = `<div class="handbook-production-content-empty" role="alert"><strong>编辑器加载失败</strong><span>${escapeHtml(error.message)}</span></div>`;
   }
+}
+
+function syncHandbookMarkdownInput(input) {
+  const documentId = input?.dataset.documentId;
+  if (!documentId) return;
+  handbookUi().draftBranchByDocument[documentId] = handbookDraftContext(documentId).branch;
+  handbookUi().drafts[documentId] = input.value;
+  handbookUi().draftHtml[documentId] = '';
+  updateHandbookUiList('dirtyDocuments', documentId, true);
+  updateHandbookUiList('selectedForReview', documentId, false);
+  updateHandbookDraftControls(documentId);
 }
 
 function updateHandbookDraftControls(documentId) {
@@ -1172,13 +1290,18 @@ async function loadHandbookProductionRepository(handbookId, documents, preferred
     const filesByDocument = {};
     documents.forEach(document => {
       const path = handbookDocumentPath(document, files);
-      filesByDocument[document.id] = { matched: Boolean(path), path: path || '', status: path ? 'matched' : 'missing' };
+      const treeFile = files.find(file => String(file.path || file.name || '') === path);
+      filesByDocument[document.id] = { matched: Boolean(path), path: path || '', status: path ? 'matched' : 'missing', commitId: treeFile?.commitId || treeFile?.commitSha || null, blobId: treeFile?.blobId || treeFile?.blobSha || null };
     });
     const contentByDocument = {};
     const current = filesByDocument[selectedDocumentId];
     if (current?.matched) {
       const file = await loadHandbookRepositoryFile(handbookId, branch, 'zh', current.path);
-      if (file?.path === current.path || !file?.path) contentByDocument[selectedDocumentId] = String(file?.content ?? '');
+      if (file?.path === current.path || !file?.path) {
+        contentByDocument[selectedDocumentId] = String(file?.content ?? '');
+        current.commitId = file?.commitId || file?.commitSha || current.commitId || null;
+        current.blobId = file?.blobId || file?.blobSha || current.blobId || null;
+      }
     }
     return { ...base, status: branch ? 'ok' : 'not-found', filesByDocument, contentByDocument };
   } catch (error) {
@@ -1218,7 +1341,9 @@ async function loadReviewWorkspace(taskId = null) {
     const repositoryPromise = handbookId && view === 'reader' && !requestedTaskId
       ? loadReviewRepositoryContext(handbookId, { branch, language, path: requestedPath }).catch(error => ({ __error: error }))
       : null;
-    const bootstrap = await loadReviewBootstrap({ handbookId, taskId: requestedTaskId, step, view, documentId: params.get('documentId') || '', path: requestedPath });
+    const bootstrapOptions = { handbookId, taskId: requestedTaskId, step, view, documentId: params.get('documentId') || '', path: requestedPath };
+    const prefetched = await takeReviewBootstrapPrefetch(bootstrapOptions);
+    const bootstrap = prefetched ? prefetched.data : await loadReviewBootstrap(bootstrapOptions);
     if (sequence !== reviewLoadSequence) return;
     const selectedTask = bootstrap?.detail?.task || bootstrap?.detail || null;
     const readerHandbookId = selectedTask?.handbookId || bootstrap?.handbookId || handbookId || '';
@@ -1269,8 +1394,10 @@ function updateReviewRepositoryRegion() {
   current.replaceWith(replacement);
   if (byId('main-shell')) byId('main-shell').scrollTop = scrollTop;
   window.lucide?.createIcons({ nodes: [replacement] });
+  markDynamicSelects(replacement);
   enhanceResizableNavigation(replacement);
   enhanceDirectoryTrees(replacement);
+  updateReviewWaitingEntry(byId('view-root'), appState.gitlabProjection);
 }
 
 function incrementalStatus(formOrSection, message, error = false) {
@@ -1509,7 +1636,8 @@ async function load(scopes = ['context', 'overview']) {
     applyBrandIcon(currentContext?.context?.brand?.icon);
     updatePlatformState(currentContext, currentOverview);
     try {
-      render();
+      // Context updates have already refreshed the shell; preserve the editor and reader DOM.
+      if (!['production', 'review'].includes(appState.activeView) || requested.overview) render();
     } catch (error) {
       showApplicationError(error);
     }
@@ -1717,6 +1845,7 @@ document.addEventListener('click', async event => {
   if (platformTab) {
     const tab = platformTab.dataset.platformTab;
     if (tab && tab !== appState.platformTab) {
+      if ((!confirmLeavingMcp() || !confirmLeavingModels())) return;
       appState.platformTab = tab;
       appState.gitlabAddingConnection = false;
       window.history.pushState({ view: "platform", tab }, "", pathForView("platform", { tab }));
@@ -1731,6 +1860,7 @@ document.addEventListener('click', async event => {
     const view = teamView.dataset.teamGroupView;
     const groupId = teamView.dataset.teamGroupId || '';
     teamView.closest('details')?.removeAttribute('open');
+    if ((!confirmLeavingMcp() || !confirmLeavingModels())) return;
     appState.platformTab = 'principals';
     appState.teamGroupUi.saveStatus = null;
     const query = new URLSearchParams({ tab: 'principals', view });
@@ -2367,6 +2497,7 @@ document.addEventListener('click', async event => {
       try {
         const mapping = await loadHandbookRepositoryMapping(mappingOpen.dataset.repositoryMappingOpen);
         form.elements.connectionId.value = mapping.connectionId || '';
+        syncSearchableSelect(form.elements.connectionId);
         form.elements.defaultBranch.value = mapping.defaultBranch || 'master';
         appState.mappingState.zhPaths = mapping.zhPaths || [];
         appState.mappingState.enPaths = mapping.enPaths || [];
@@ -2527,6 +2658,10 @@ document.addEventListener('click', async event => {
       url.searchParams.delete('stage');
     }
     window.history.replaceState({ ...window.history.state, view: 'production', productionView: view }, document.title, `${url.pathname}${url.search}`);
+    if (view === 'generations' && !appState.incrementalProjection?.generations) {
+      loadIncrementalWorkspace();
+      return;
+    }
     render();
     return;
   }
@@ -3108,7 +3243,9 @@ async function loadMappingBranches(form, connectionId, selectedBranch = '') {
   const defaultSelect = form.querySelector('[data-mapping-default-branch]');
   const enabledContainer = form.querySelector('[data-mapping-enabled-branches]');
   const hint = form.querySelector('[data-mapping-connection-hint]');
-  if (defaultSelect) defaultSelect.innerHTML = '<option value="">正在读取分支…</option>';
+  const savedBranchOption = selectedBranch ? `<option value="${escapeHtml(selectedBranch)}" selected>${escapeHtml(selectedBranch)}</option>` : '';
+  if (defaultSelect) defaultSelect.innerHTML = savedBranchOption || '<option value="">正在读取分支…</option>';
+  syncSearchableSelect(defaultSelect);
   try {
     const result = await loadGitLabBranches(connectionId);
     const branches = Array.isArray(result?.data) ? result.data : (Array.isArray(result) ? result : []);
@@ -3121,8 +3258,11 @@ async function loadMappingBranches(form, connectionId, selectedBranch = '') {
     if (hint) hint.textContent = `已读取 ${branches.length} 个分支；目录浏览使用选择分支「${selectedDefault || '未选择'}」。`;
     renderMappingPreview(form);
   } catch (error) {
-    if (defaultSelect) defaultSelect.innerHTML = '<option value="">分支读取失败</option>';
-    if (enabledContainer) enabledContainer.innerHTML = '<span class="muted">分支读取失败</span>';
+    if (defaultSelect) defaultSelect.innerHTML = savedBranchOption || '<option value="">分支读取失败</option>';
+    if (enabledContainer) enabledContainer.innerHTML = selectedBranch
+      ? (appState.mappingState.enabledBranches || [selectedBranch]).map(branch => `<label><input type="checkbox" name="enabledBranches" value="${escapeHtml(branch)}" checked disabled><span>${escapeHtml(branch)}</span></label>`).join('')
+      : '<span class="muted">分支读取失败</span>';
+    syncSearchableSelect(defaultSelect);
     if (hint) hint.innerHTML = `分支加载失败：${escapeHtml(error.message || '未知错误')} <a class="mapping-auth-link" href="/knowledge-center/api/gitlab/oauth/start?connectionId=${encodeURIComponent(connectionId)}&returnTo=${encodeURIComponent(`/knowledge-center/assets?handbookId=${form.dataset.handbookId || ''}`)}">连接 GitLab 账号</a>`;
   }
 }
@@ -3948,7 +4088,6 @@ document.addEventListener('change', event => {
   const url = new URL(window.location.href); url.searchParams.set('branch', reviewBranch.value); url.searchParams.delete('path'); window.history.pushState({ view: 'review', branch: reviewBranch.value }, '', url); loadReviewWorkspace(url.searchParams.get('taskId'));
 });
 
-let handbookReferenceTrigger = null;
 
 document.addEventListener('click', async event => {
   if (event.target.closest('[data-handbook-directory-open]')) {
@@ -3985,10 +4124,7 @@ document.addEventListener('click', async event => {
 
   const aiAction = event.target.closest('[data-handbook-ai-action]');
   if (aiAction) {
-    const names = { generate: '生成本节', polish: '润色', check: '检查' };
-    handbookUi().assistantStatus = `${names[aiAction.dataset.handbookAiAction] || 'AI 操作'}能力待后端生成接口接入；当前正文未发生变化。`;
-    const status = aiAction.closest('.handbook-assistant-section')?.querySelector('.handbook-assistant-status');
-    if (status) status.textContent = handbookUi().assistantStatus;
+    await openHandbookWriting(aiAction.dataset.handbookAiAction, aiAction);
     return;
   }
 
@@ -4019,6 +4155,36 @@ document.addEventListener('click', async event => {
   if (modeButton) {
     const documentId = modeButton.dataset.documentId;
     handbookUi().modeByDocument[documentId] = modeButton.dataset.handbookMode;
+    render();
+    return;
+  }
+
+  const formatButton = event.target.closest('[data-handbook-editor-format]');
+  if (formatButton) {
+    const documentId = formatButton.dataset.documentId || document.querySelector('[data-handbook-current-document]')?.dataset.handbookCurrentDocument;
+    if (!documentId) return;
+    if (handbookVditorDocumentId === documentId && handbookVditor) {
+      handbookUi().drafts[documentId] = handbookVditor.getValue();
+      try {
+        handbookUi().draftHtml[documentId] = handbookVditor.getHTML?.() || '';
+      } catch {
+        handbookUi().draftHtml[documentId] = handbookUi().draftHtml?.[documentId] || '';
+      }
+    } else {
+      const markdownInput = document.querySelector(`[data-handbook-markdown-editor][data-document-id="${CSS.escape(documentId)}"]`);
+      if (markdownInput) syncHandbookMarkdownInput(markdownInput);
+    }
+    handbookUi().editorFormatByDocument[documentId] = formatButton.dataset.handbookEditorFormat;
+    render();
+    return;
+  }
+
+  const markdownPreviewToggle = event.target.closest('[data-handbook-markdown-preview-toggle]');
+  if (markdownPreviewToggle) {
+    const documentId = markdownPreviewToggle.dataset.handbookMarkdownPreviewToggle;
+    const input = document.querySelector(`[data-handbook-markdown-editor][data-document-id="${CSS.escape(documentId)}"]`);
+    if (input) syncHandbookMarkdownInput(input);
+    handbookUi().markdownPreviewByDocument[documentId] = !handbookUi().markdownPreviewByDocument?.[documentId];
     render();
     return;
   }
@@ -4061,6 +4227,14 @@ document.addEventListener('click', async event => {
 
   const historyButton = event.target.closest('[data-handbook-history]');
   if (historyButton) { openHandbookHistory(historyButton.dataset.handbookHistory); return; }
+  const historyCompare = event.target.closest('[data-handbook-history-compare]');
+  if (historyCompare) {
+    const history = handbookUi().history;
+    if (history) handbookUi().history = { ...history, compareRevisionId: historyCompare.dataset.handbookHistoryCompare };
+    render();
+    requestAnimationFrame(() => document.querySelector('[data-handbook-history-dialog]')?.showModal());
+    return;
+  }
   if (event.target.closest('[data-handbook-history-close]')) { event.target.closest('dialog')?.close(); return; }
   const historyRestore = event.target.closest('[data-handbook-history-restore]');
   if (historyRestore) {
@@ -4091,42 +4265,6 @@ document.addEventListener('click', async event => {
     handbookUi().drafts[documentId] = conflict?.localMarkdown || '';
     handbookUi().draftHtml[documentId] = conflict?.localHtml || '';
     handbookUi().conflict = null; handbookUi().modeByDocument[documentId] = 'edit'; updateHandbookUiList('dirtyDocuments', documentId, true); render(); return;
-  }
-
-  const referenceOpen = event.target.closest('[data-handbook-reference-open]');
-  if (referenceOpen) {
-    handbookReferenceTrigger = referenceOpen;
-    const dialog = document.querySelector('[data-handbook-reference-dialog]');
-    const form = dialog?.querySelector('[data-handbook-reference-form]');
-    form?.reset();
-    if (form) {
-      form.elements.documentId.value = referenceOpen.dataset.handbookReferenceOpen;
-      form.querySelector('[data-handbook-reference-pingcode]').hidden = false;
-      form.querySelector('[data-handbook-reference-markdown]').hidden = true;
-      form.elements.url.required = true;
-      form.elements.file.required = false;
-      form.elements.preview.value = '';
-      form.querySelector('[data-handbook-reference-status]').textContent = '';
-    }
-    dialog?.showModal();
-    requestAnimationFrame(() => form?.elements.url.focus());
-    return;
-  }
-
-  const referenceClose = event.target.closest('[data-handbook-reference-close]');
-  if (referenceClose) {
-    referenceClose.closest('dialog')?.close();
-    requestAnimationFrame(() => handbookReferenceTrigger?.focus());
-    return;
-  }
-
-  const referenceRemove = event.target.closest('[data-handbook-reference-remove]');
-  if (referenceRemove) {
-    const documentId = referenceRemove.dataset.documentId;
-    const index = Number(referenceRemove.dataset.handbookReferenceRemove);
-    handbookUi().references[documentId] = (handbookUi().references[documentId] || []).filter((_, itemIndex) => itemIndex !== index);
-    render();
-    return;
   }
 
   const reviewCurrent = event.target.closest('[data-handbook-review-current]');
@@ -4214,46 +4352,7 @@ document.addEventListener('change', async event => {
     loadIncrementalWorkspace();
     return;
   }
-  const referenceType = event.target.closest('[data-handbook-reference-form] [name="type"]');
-  if (referenceType) {
-    const form = referenceType.form;
-    const markdown = referenceType.value === 'markdown';
-    form.querySelector('[data-handbook-reference-pingcode]').hidden = markdown;
-    form.querySelector('[data-handbook-reference-markdown]').hidden = !markdown;
-    form.elements.url.required = !markdown;
-    form.elements.file.required = markdown;
-    form.elements.preview.value = markdown ? '' : '当前只检查链接格式；正文读取和来源快照待接入。';
-    return;
-  }
 
-  const markdownFile = event.target.closest('[data-handbook-reference-form] input[type="file"]');
-  if (markdownFile) {
-    const form = markdownFile.form;
-    const file = markdownFile.files?.[0];
-    const status = form.querySelector('[data-handbook-reference-status]');
-    if (!file) return;
-    if (!/\.md$/i.test(file.name)) {
-      markdownFile.value = '';
-      status.textContent = '仅支持 .md 格式文件。';
-      return;
-    }
-    try {
-      const content = await file.text();
-      form.elements.preview.value = content.slice(0, 6000);
-      if (!form.elements.name.value) form.elements.name.value = file.name.replace(/\.md$/i, '');
-      status.textContent = '已读取本地预览，文件尚未上传。';
-    } catch (error) {
-      status.textContent = error?.message || '无法读取文件。';
-    }
-    return;
-  }
-
-  const reviewDocument = event.target.closest('[data-handbook-review-document]');
-  if (reviewDocument) {
-    updateHandbookUiList('selectedForReview', reviewDocument.value, reviewDocument.checked);
-    const submit = document.querySelector('[data-handbook-review-submit]');
-    if (submit) submit.disabled = !(handbookUi().selectedForReview?.length);
-  }
 });
 
 document.addEventListener('submit', async event => {
@@ -4287,21 +4386,7 @@ document.addEventListener('submit', async event => {
     }
     return;
   }
-  const form = event.target.closest('[data-handbook-reference-form]');
-  if (!form) return;
-  event.preventDefault();
-  const type = form.elements.type.value;
-  const documentId = form.elements.documentId.value;
-  const status = form.querySelector('[data-handbook-reference-status]');
-  if (!documentId || !form.reportValidity()) return;
-  const reference = type === 'pingcode'
-    ? { type, name: form.elements.name.value.trim(), url: form.elements.url.value.trim(), preview: '链接已在前端暂存，正文未读取。' }
-    : { type, name: form.elements.name.value.trim(), fileName: form.elements.file.files?.[0]?.name || '', preview: form.elements.preview.value };
-  handbookUi().references[documentId] = [...(handbookUi().references[documentId] || []), reference];
-  status.textContent = '已在当前页面暂存，正式来源快照接口待接入。';
-  form.closest('dialog')?.close();
-  render();
-  showAppNotice('参考资料已在前端暂存，尚未形成正式来源快照。', { title: '参考资料已添加' });
+
 });
 
 const reviewUiStorage = {
@@ -4329,9 +4414,9 @@ function restoreReviewUi() {
 }
 
 document.addEventListener('keydown', event => {
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's' && appState.activeView === 'production' && handbookVditor) {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's' && appState.activeView === 'production') {
     event.preventDefault();
-    const documentId = handbookVditorDocumentId;
+    const documentId = handbookVditorDocumentId || document.querySelector('[data-handbook-markdown-editor]')?.dataset.documentId;
     if (documentId && handbookUi().dirtyDocuments?.includes(documentId)) saveCurrentHandbookDraft(documentId);
     return;
   }
@@ -4367,6 +4452,11 @@ document.addEventListener('keydown', event => {
 });
 
 document.addEventListener('input', event => {
+  const handbookMarkdownInput = event.target.closest('[data-handbook-markdown-editor]');
+  if (handbookMarkdownInput) {
+    syncHandbookMarkdownInput(handbookMarkdownInput);
+    return;
+  }
   const databaseField = event.target.closest('[data-database-field]');
   if (databaseField) {
     syncDatabaseConnectionDraft(databaseField.closest('[data-database-dialog]'));
@@ -4847,12 +4937,22 @@ mobileNavigation.addEventListener('change', () => {
   else syncMobileNavigationState();
 });
 window.addEventListener('beforeunload', event => {
-  if (!hasUnsavedHandbookChanges()) return;
+  if (!hasUnsavedHandbookChanges() && !hasMcpDraft() && !hasModelDraft()) return;
   event.preventDefault();
   event.returnValue = '';
 });
-window.addEventListener('popstate', () => {
-  if (appState.activeView === 'production' && hasUnsavedHandbookChanges() && !confirmLeavingHandbookDraft()) {
+window.addEventListener('popstate', event => {
+  if (event.handbookWritingReturn) return;
+  if (appState.activeView === 'production' && new URLSearchParams(location.search).has('writing')
+    && document.querySelector('[data-handbook-current-document]')?.dataset.handbookCurrentDocument === productionRouteState().documentId) {
+    render(); return;
+  }
+  if ((!confirmLeavingMcp() || !confirmLeavingModels())) { window.history.forward(); return; }
+  const modelDraftRoot = document.querySelector('[data-model-admin]');
+  if (modelDraftRoot) modelDraftRoot.dataset.dirty = 'false';
+  const mcpDraftRoot = document.querySelector('[data-mcp-admin]');
+  if (mcpDraftRoot) mcpDraftRoot.dataset.dirty = 'false';
+  if (!event.handbookWritingReturn && appState.activeView === 'production' && hasUnsavedHandbookChanges() && !confirmLeavingHandbookDraft()) {
     window.history.forward();
     return;
   }
@@ -5020,7 +5120,8 @@ async function bootstrap() {
   applySidebar();
   syncMobileNavigationState();
   window.lucide?.createIcons();
-  render();
+  // The review loader paints its own loading state; avoid painting it twice.
+  if (appState.activeView !== 'review') render();
   if (appState.activeView !== 'review') load(appState.activeView === 'dashboard' || appState.activeView === 'platform' ? ['context', 'overview'] : ['context']);
   if (appState.activeView === 'dashboard') loadDomainBuildTasksWorkspace();
   if (appState.activeView === 'outlines') loadOutlines();

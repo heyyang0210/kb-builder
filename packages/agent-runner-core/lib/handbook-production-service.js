@@ -117,6 +117,9 @@ function createHandbookProductionService(options = {}) {
     emptyValue: defaultState(),
   });
   const attachmentRoot = options.attachmentRoot || path.join(AGENT_RUNNER_RUNTIME_ROOT, 'handbook-production', 'attachments');
+  const aiArtifactStore = options.aiArtifactStore || require('./production-ai-artifact-store').createProductionAIArtifactStore({
+    filePath: options.aiArtifactFilePath || (store.filePath ? `${store.filePath}.artifacts` : undefined),
+  });
 
   function projectDraft(draft, session) {
     if (!draft) return { exists: false, draft: null, capabilities: capabilities(session) };
@@ -155,6 +158,10 @@ function createHandbookProductionService(options = {}) {
   }
 
   function saveDraft(input, session, idempotencyKey) {
+    return store.transaction(state => saveDraftInState(state, input, session, idempotencyKey));
+  }
+
+  function saveDraftInState(state, input, session, idempotencyKey) {
     requireCapability(session, 'canEdit');
     const ctx = context(input);
     if (!idempotencyKey) throw new HandbookProductionError('IDEMPOTENCY_KEY_REQUIRED', '保存草稿需要幂等键', 400);
@@ -162,7 +169,6 @@ function createHandbookProductionService(options = {}) {
     const normalizedHtml = sanitizeHtml(input.htmlSnapshot);
     const who = actor(session);
     const now = new Date().toISOString();
-    return store.transaction(state => {
       state.drafts ||= {};
       state.attachments ||= {};
       state.idempotency ||= {};
@@ -205,6 +211,21 @@ function createHandbookProductionService(options = {}) {
         createdAt: now,
         immutable: true,
       };
+      const previous = draft.revisions.find(item => item.revisionId === draft.currentRevisionId);
+      if (previous?.generationMetadata) {
+        revision.generationMetadata = structuredClone(previous.generationMetadata);
+        revision.generationMetadata.inheritedFromRevisionId = previous.revisionId;
+        if (previous.contentDigest !== revision.contentDigest) {
+          const metadata = revision.generationMetadata;
+          metadata.provenanceHistory = [...(metadata.provenanceHistory || []), {
+            revisionId: previous.revisionId, contentDigest: previous.contentDigest, provenance: metadata.provenance,
+          }];
+          metadata.provenance = require('./production-ai-provenance').humanChanges(previous.markdown, normalizedMarkdown, metadata.provenance);
+          metadata.verification = 'needs_revalidation';
+          metadata.humanEdited = true;
+          metadata.lastHumanEdit = { actor: who, at: now, contentDigest: revision.contentDigest };
+        }
+      }
       draft.revisions.push(revision);
       draft.currentRevisionId = revision.revisionId;
       draft.editVersion = revision.version;
@@ -216,7 +237,6 @@ function createHandbookProductionService(options = {}) {
       state.audits ||= [];
       state.audits.push({ action: 'DRAFT_SAVED', draftId: draft.draftId, revisionId: revision.revisionId, actor: who, at: now });
       return result;
-    });
   }
 
   function listRevisions(input, session) {
@@ -335,7 +355,40 @@ function createHandbookProductionService(options = {}) {
     });
   }
 
-  return { getDraft, listReviewDrafts, saveDraft, listRevisions, restoreRevision, stageAttachment, readAttachment, createReviewBatch, linkIncrementalReview, capabilities, attachmentRoot };
+  const configuredStageAdapters = require('./production-ai-http-stage-adapters').createProductionAIHttpStageAdapters({ env: options.aiStageAdapterEnv });
+  const ai = require('./production-ai-service').createProductionAIService({
+    ...options.ai,
+    stageAdapters: { ...configuredStageAdapters, ...(options.ai?.stageAdapters || {}) },
+    store, artifactStore: aiArtifactStore, saveDraftInState, context, contextKey, actor, requireCapability,
+    ErrorType: HandbookProductionError,
+  });
+  if (options.autoRecoverOnStart) {
+    queueMicrotask(() => {
+      try { ai.recoverOnStartup(); } catch (_) { /* startup recovery must not block service creation */ }
+    });
+  }
+  const configuredRecoveryInterval = options.recoveryIntervalMs ?? process.env.KNOWLEDGE_PRODUCTION_RECOVERY_INTERVAL_MS;
+  const recoveryIntervalMs = Number(configuredRecoveryInterval || 0);
+  let recoveryTimer = null;
+  let recoveryRunning = false;
+  const stopRecoveryScheduler = () => {
+    if (recoveryTimer) clearInterval(recoveryTimer);
+    recoveryTimer = null;
+  };
+  const runRecoveryTick = () => {
+    if (recoveryRunning) return;
+    recoveryRunning = true;
+    Promise.resolve().then(() => ai.recover()).catch(() => {}).finally(() => { recoveryRunning = false; });
+  };
+  if (Number.isFinite(recoveryIntervalMs) && recoveryIntervalMs > 0) {
+    recoveryTimer = setInterval(runRecoveryTick, recoveryIntervalMs);
+    recoveryTimer.unref?.();
+  }
+  const quality = require('./production-quality-service').createProductionQualityService({
+    store, yashanDB: options.yashanDB, skills: options.qualitySkills, now: options.now, actor, requireCapability, contextKey,
+    contentQuality: options.contentQuality,
+  });
+  return { getDraft, listReviewDrafts, saveDraft, listRevisions, restoreRevision, stageAttachment, readAttachment, createReviewBatch, linkIncrementalReview, capabilities, attachmentRoot, ai, quality, stopRecoveryScheduler };
 }
 
 module.exports = {

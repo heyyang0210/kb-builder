@@ -5,6 +5,36 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <base href="/knowledge-center/">
   <title>知识中心管理</title>
+  <script type="module" src="./common/api/review-bootstrap-prefetch.js"></script>
+  <!-- Preload the existing startup module graph to avoid serial ESM discovery. -->
+  <link rel="modulepreload" href="./app.js">
+  <link rel="modulepreload" href="./common/api/auth-api.js">
+  <link rel="modulepreload" href="./common/api/gitlab-api.js">
+  <link rel="modulepreload" href="./common/api/handbook-production-api.js">
+  <link rel="modulepreload" href="./common/api/incremental-api.js">
+  <link rel="modulepreload" href="./common/api/platform-api.js">
+  <link rel="modulepreload" href="./common/auth/auth-controller.js">
+  <link rel="modulepreload" href="./common/directory-tree.js">
+  <link rel="modulepreload" href="./common/markdown/database-enhancer.js">
+  <link rel="modulepreload" href="./common/markdown/markdown-renderer.js">
+  <link rel="modulepreload" href="./common/markdown/rules/yashandb-rules.js">
+  <link rel="modulepreload" href="./common/resizable-navigation-pane.js">
+  <link rel="modulepreload" href="./common/scroll-runtime.js">
+  <link rel="modulepreload" href="./common/searchable-combobox.js">
+  <link rel="modulepreload" href="./common/state/app-state.js">
+  <link rel="modulepreload" href="./common/state/auth-state.js">
+  <link rel="modulepreload" href="./common/state/data-change.js">
+  <link rel="modulepreload" href="./common/state/navigation.js">
+  <link rel="modulepreload" href="./common/table-view-configurator.js">
+  <link rel="modulepreload" href="./common/utils/dom.js">
+  <link rel="modulepreload" href="./common/utils/sha256.js">
+  <link rel="modulepreload" href="./common/vendor/marked.esm.js">
+  <link rel="modulepreload" href="./common/viewport-runtime.js">
+  <link rel="modulepreload" href="./modules/production/handbook-actions.js">
+  <link rel="modulepreload" href="./modules/repository/view.js">
+  <link rel="modulepreload" href="./modules/review-publishing/anchors.js">
+  <link rel="modulepreload" href="./modules/review-publishing/view.js">
+  <link rel="modulepreload" href="./modules/review-publishing/workbench.js">
   <link id="knowledge-center-favicon" rel="icon" href="/knowledge-center/api/platform/brand/icon">
   <link rel="stylesheet" href="./common/tokens.css">
   <link rel="stylesheet" href="./common/base.css">

@@ -15,7 +15,7 @@ const localEnv = (() => {
 const username = process.env.KNOWLEDGE_CENTER_ADMIN_USERNAME || localEnv.KNOWLEDGE_CENTER_ADMIN_USERNAME;
 const password = process.env.KNOWLEDGE_CENTER_ADMIN_PASSWORD || localEnv.KNOWLEDGE_CENTER_ADMIN_PASSWORD;
 const budgetMs = Number(process.env.KC_PERF_BUDGET_MS || 1200);
-const storageUrl = process.env.KC_STORAGE_URL || 'http://127.0.0.1:14210';
+const storageUrl = process.env.KC_STORAGE_URL || process.env.YASDB_STORAGE_URL;
 const storageBudgetMs = Number(process.env.KC_STORAGE_PERF_BUDGET_MS || 150);
 const reviewInteractiveBudgetMs = Number(process.env.KC_REVIEW_INTERACTIVE_BUDGET_MS || 150);
 const reviewRepositoryBudgetMs = Number(process.env.KC_REVIEW_REPOSITORY_BUDGET_MS || 800);
@@ -36,6 +36,7 @@ test.describe('知识中心刷新性能门禁', () => {
   test.describe.configure({ mode: 'serial', timeout: 30000 });
 
   test.beforeEach(async ({ page }) => {
+    expect(storageUrl, '性能门禁必须使用统一入口提供的隔离 Storage 地址').toBeTruthy();
     expect(username && password, '请通过环境变量或 config/knowledge-center/.env 配置性能门禁管理员账号').toBeTruthy();
     // 先建立同源页面，about:blank 无法向真实服务发起跨源登录请求。
     await page.goto(`${baseUrl}/knowledge-center/`, { waitUntil: 'domcontentloaded' });
@@ -73,6 +74,35 @@ test.describe('知识中心刷新性能门禁', () => {
     expect(p95Ms).toBeLessThanOrEqual(storageBudgetMs);
   });
 
+  test('真实 Storage 条件读取验证版本，旧版本仍返回完整快照', async ({ request }) => {
+    const url = `${storageUrl}/v1/records/incremental/state`;
+    const initial = await request.get(url);
+    expect(initial.status()).toBe(200);
+    const etag = initial.headers().etag;
+    expect(etag).toMatch(/^"[0-9]+"$/);
+    const snapshot = await initial.json();
+    expect(etag).toBe(`"${snapshot.revision}"`);
+    const unchanged = await request.get(url, { headers: { 'If-None-Match': etag } });
+    expect(unchanged.status()).toBe(304);
+    expect(await unchanged.text()).toBe('');
+    const stale = await request.get(url, { headers: { 'If-None-Match': '"-1"' } });
+    expect(stale.status()).toBe(200);
+    expect((await stale.json()).payload).toEqual(snapshot.payload);
+  });
+
+  test('真实 Storage 批量用户名册与单用户权限投影一致', async ({ request }) => {
+    const response = await request.get(`${storageUrl}/v1/platform/auth/users`);
+    expect(response.status()).toBe(200);
+    const { data } = await response.json();
+    expect(data.items.length).toBeGreaterThan(0);
+    expect(data.total).toBe(data.items.length);
+    for (const user of data.items) {
+      const detail = await request.get(`${storageUrl}/v1/platform/auth/users/${encodeURIComponent(user.id)}`);
+      expect(detail.status()).toBe(200);
+      expect((await detail.json()).data).toEqual(user);
+    }
+  });
+
   test(`审核主体与仓库正文分层性能门禁`, async ({ page }, testInfo) => {
     const response = await page.context().request.get(`${baseUrl}/knowledge-center/api/review/bootstrap?view=handbooks`);
     expect(response.ok()).toBeTruthy();
@@ -100,7 +130,8 @@ test.describe('知识中心刷新性能门禁', () => {
       const sample = await page.evaluate(roundNumber => {
         const marks = Object.fromEntries(performance.getEntriesByType('mark').map(item => [item.name, item.startTime]));
         const repositoryStatus = document.querySelector('[data-review-repository-region]')?.dataset.repositoryStatus;
-        return { round: roundNumber, repositoryStatus, forbiddenLoadingMessage: document.body?.textContent?.includes('仓库正文尚未加载') === true, staticShellAt: marks['review-static-shell-painted'], interactiveAt: marks['review-workspace-ready'], repositoryAt: repositoryStatus === 'ok' ? marks['review-repository-ready'] : undefined };
+        const bootstrapRequests = performance.getEntriesByType('resource').filter(item => item.name.includes('/api/review/bootstrap?'));
+        return { round: roundNumber, repositoryStatus, bootstrapRequestCount: bootstrapRequests.length, bootstrapTimings: bootstrapRequests.map(item => ({ startTime: item.startTime, duration: item.duration })), forbiddenLoadingMessage: document.body?.textContent?.includes('仓库正文尚未加载') === true, staticShellAt: marks['review-static-shell-painted'], interactiveAt: marks['review-workspace-ready'], repositoryAt: repositoryStatus === 'ok' ? marks['review-repository-ready'] : undefined };
       }, round);
       samples.push(sample);
       await page.waitForLoadState('networkidle');
@@ -115,6 +146,7 @@ test.describe('知识中心刷新性能门禁', () => {
       contentType: 'application/json',
     });
     expect(samples.every(item => item.forbiddenLoadingMessage === false)).toBe(true);
+    expect(samples.every(item => item.bootstrapRequestCount === 1)).toBe(true);
     expect(staticShellP95).toBeLessThanOrEqual(80);
     expect(interactiveP95).toBeLessThanOrEqual(reviewInteractiveBudgetMs);
     if (requireReadableReviewRepository) expect(readableSamples).toHaveLength(samples.length);

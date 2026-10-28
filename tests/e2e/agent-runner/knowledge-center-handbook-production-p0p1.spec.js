@@ -35,12 +35,6 @@ async function handbookFixture(api, testInfo) {
 
 async function ensureWorkspace(page, testInfo) {
   await expect(page.locator('.handbook-production-layout')).toBeVisible();
-  const template = page.locator('[data-handbook-template]');
-  if (!await template.count() || await template.isDisabled() || await template.locator('option').count() < 1) {
-    testInfo.skip(true, '测试环境没有可用文档模板');
-    return false;
-  }
-  await template.selectOption({ index: 0 });
   await expect(page.locator('.handbook-production-content')).toBeVisible();
   return true;
 }
@@ -88,7 +82,7 @@ test.describe('手册级文档生成页面 P0/P1', () => {
     }
   });
 
-  test('P0：进入手册即展示目录、文档级模板和编辑器', async ({ page }, testInfo) => {
+  test('P0：进入手册即展示目录、编辑器并隐藏低频模板上下文', async ({ page }, testInfo) => {
     const outline = await handbookFixture(page.context().request, testInfo);
     if (!outline) return;
     await page.goto(`${baseUrl}/knowledge-center/production/handbook/${encodeURIComponent(outline.handbookId)}`, { waitUntil: 'networkidle' });
@@ -110,25 +104,16 @@ test.describe('手册级文档生成页面 P0/P1', () => {
     await expect(currentTitle).toBeVisible();
     await expect(currentTitle).not.toContainText('.md');
     await expect(currentTitle).not.toHaveText(/^\d/);
-    await expect(page.getByRole('combobox', { name: '文档模板，可输入筛选' })).toBeVisible();
+    await expect(page.getByRole('combobox', { name: '文档模板，可输入筛选' })).toHaveCount(0);
+    await expect(page.locator('[data-handbook-template][type="hidden"]')).toHaveCount(1);
     await expect(page.getByText('GitLab 未匹配正文', { exact: true })).toHaveCount(0);
     await expect(page.getByText('GitLab 中未找到对应正文', { exact: true })).toHaveCount(0);
     await expect(page.getByText('Markdown / 富文本', { exact: true })).toHaveCount(0);
     await page.getByRole('button', { name: '关闭文档目录', exact: true }).last().click();
-    await page.getByRole('button', { name: '工具', exact: true }).click();
-    await expect(page.getByRole('tab', { name: 'AI助手' })).toBeVisible();
-    await expect(page.getByRole('tab', { name: '引用资料' })).toBeVisible();
-    await page.getByRole('tab', { name: '引用资料' }).click();
-    await page.getByRole('button', { name: '引用资料', exact: true }).click();
-    const referenceDialog = page.getByRole('dialog', { name: '引用资料' });
-    await expect(referenceDialog).toBeVisible();
-    await referenceDialog.getByLabel('上传 Markdown').check();
-    await referenceDialog.getByLabel('Markdown 文件').setInputFiles({
-      name: 'e2e-reference.md', mimeType: 'text/markdown', buffer: Buffer.from('# E2E 参考资料\n\n只用于页面预览。'),
-    });
-    await expect(referenceDialog.getByLabel('内容预览')).toHaveValue(/E2E 参考资料/);
-    await referenceDialog.getByRole('button', { name: '取消' }).click();
-    await page.getByRole('button', { name: '关闭辅助工具', exact: true }).last().click();
+    await page.locator('.handbook-more-menu summary').click();
+    await expect(page.getByRole('button', { name: '校验', exact: true })).toBeVisible();
+    await expect(page.locator('[data-handbook-attachment]')).toBeVisible();
+    await page.keyboard.press('Escape');
     await expect(page.getByText('预览', { exact: true })).toBeVisible();
     await expect(page.getByText('编辑', { exact: true })).toBeVisible();
     await expect(page.getByText(/尚未形成共享草稿|共享草稿 ·/)).toBeVisible();
@@ -216,6 +201,61 @@ test.describe('手册级文档生成页面 P0/P1', () => {
     await page.getByRole('button', { name: '编辑', exact: true }).click();
     await expect(page.locator('[data-handbook-vditor] .vditor-wysiwyg')).toContainText(marker);
     await expect(page.getByRole('button', { name: '恢复原文', exact: true })).toHaveCount(0);
+  });
+
+  test('P0：工作台检查真实 YashanDB 用例并绑定已保存修订及复测报告', async ({ page, browserName }, testInfo) => {
+    // Includes saving a revision and two real database executions, each with durable report writes.
+    test.setTimeout(90000);
+    const api = page.context().request;
+    const outline = await handbookFixture(api, testInfo);
+    if (!outline) return;
+    const draftResponse = page.waitForResponse(response => response.request().method() === 'GET' && /\/production\/handbooks\/[^/]+\/documents\/[^/]+\/draft\?/.test(response.url()));
+    await page.goto(`${baseUrl}/knowledge-center/production/handbook/${encodeURIComponent(outline.handbookId)}`, { waitUntil: 'networkidle' });
+    const loaded = await draftResponse;
+    expect(loaded.ok()).toBeTruthy();
+    const previous = (await loaded.json()).data;
+    const draftURL = new URL(loaded.url());
+    const endpoint = draftURL.origin + draftURL.pathname;
+    const context = Object.fromEntries(draftURL.searchParams);
+    const sql = expected => '```sql\nSELECT 1 AS C1 FROM DUAL;\n```\n```json quality-expected\n' + JSON.stringify(expected) + '\n```\n';
+    const markdown = '# 工作台真实用例检查\n\n' + sql({ rows: [{ C1: 1 }] }) + sql({ rows: [{ C1: 2 }] }) + sql({ rows: 'invalid' });
+    const savedResponse = await api.put(endpoint, {
+      headers: { 'Idempotency-Key': `quality-workbench-${browserName}-${Date.now()}` },
+      data: { ...context, editVersion: previous.draft?.editVersion || 0, markdown },
+    });
+    expect(savedResponse.ok(), await savedResponse.text()).toBeTruthy();
+    const saved = (await savedResponse.json()).data.draft;
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await expect(page.locator('.handbook-production-content.is-reading .repository-markdown')).toContainText('工作台真实用例检查');
+    await page.locator('.handbook-more-menu summary').click();
+    await page.locator('[data-handbook-ai-action="check"]').click();
+    const dialog = page.getByRole('dialog', { name: '文档用例质量报告' });
+    await expect(dialog).toBeVisible();
+    const qualityResponse = page.waitForResponse(response => response.request().method() === 'POST' && response.url().endsWith('/quality'), { timeout: 30000 });
+    await dialog.getByRole('button', { name: '执行用例检查', exact: true }).click();
+    const checked = await qualityResponse;
+    expect(checked.status(), await checked.text()).toBe(201);
+    const report = (await checked.json()).data;
+    expect(report.coverage).toEqual({ total: 3, executed: 2, passed: 1, failed: 1, notExecuted: 1 });
+    expect(report.document.revisionId).toBe(saved.revision.revisionId);
+    expect(report.database.version).toBeTruthy();
+    expect(report.skillInvocations).toHaveLength(4);
+    await expect(dialog.locator('[data-quality-status]')).toContainText('通过 1，失败 1，未执行 1');
+    const rerunResponse = page.waitForResponse(response => response.request().method() === 'POST' && response.url().endsWith('/quality'), { timeout: 30000 });
+    await dialog.getByRole('button', { name: '重新执行并保留复测记录' }).click();
+    const rerunHTTP = await rerunResponse;
+    expect(rerunHTTP.status(), await rerunHTTP.text()).toBe(201);
+    const rerun = (await rerunHTTP.json()).data;
+    expect(rerun.rerunOf.reportId).toBe(report.reportId);
+    await expect(dialog.locator('[data-quality-report]')).toContainText(rerun.reportId);
+    const reread = await api.get(draftURL.href);
+    expect((await reread.json()).data.draft.revision.qualityReport.reportId).toBe(rerun.reportId);
+    const evidence = path.resolve(__dirname, '../../../runtime/test-results/production-ai-quality/20261022/workbench-e2e');
+    fs.mkdirSync(evidence, { recursive: true });
+    fs.writeFileSync(path.join(evidence, `report-${browserName}.json`), JSON.stringify({ realDatabase: true, realPlatformHTTP: true, isolatedUnifiedE2E: true, realModel: false, revisionId: saved.revision.revisionId, report, rerun }, null, 2));
+    await page.screenshot({ path: path.join(evidence, `report-${browserName}.png`) });
+    await dialog.getByRole('button', { name: '关闭', exact: true }).click();
+    await expect(dialog).toHaveCount(0);
   });
 
   test('P0：长文滚动时编辑控制栏和加粗命令持续可见', async ({ page }, testInfo) => {
@@ -367,6 +407,28 @@ test.describe('手册级文档生成页面 P0/P1', () => {
     expect(await canvas.evaluate(element => element === window.__handbookCanvasBeforeDrawer)).toBeTruthy();
     await page.getByRole('button', { name: '文档生产', exact: true }).click();
     await expect(page.locator('#app-shell')).not.toHaveClass(/sidebar-collapsed/);
+  });
+
+  test('P1：正文支持富文本与 Markdown 两种编写格式且主次层级清晰', async ({ page }, testInfo) => {
+    const outline = await handbookFixture(page.context().request, testInfo);
+    if (!outline) return;
+    await page.goto(`${baseUrl}/knowledge-center/production/handbook/${encodeURIComponent(outline.handbookId)}`, { waitUntil: 'networkidle' });
+    if (!await ensureWorkspace(page, testInfo)) return;
+    await page.getByRole('button', { name: '编辑', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'AI 辅助写作', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Markdown', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: '富文本', exact: true })).toBeVisible();
+    await page.locator('.handbook-editor-format [data-handbook-editor-format="markdown"]').click();
+    const markdown = page.locator('[data-handbook-markdown-editor]');
+    await expect(markdown).toBeVisible();
+    await markdown.fill('# Markdown 编辑验证\n\n正文内容');
+    await page.getByRole('button', { name: '显示预览', exact: true }).click();
+    await expect(page.locator('.handbook-markdown-preview')).toContainText('Markdown 编辑验证');
+    await expect(page.locator('.handbook-markdown-workspace.is-previewing')).toBeVisible();
+    await page.getByRole('button', { name: '返回编辑', exact: true }).click();
+    await page.getByRole('button', { name: '富文本', exact: true }).click();
+    await expect(page.locator('[data-handbook-vditor] .vditor-wysiwyg')).toContainText('Markdown 编辑验证');
+    await expect(page.getByRole('link', { name: '查看审核任务' })).toHaveCount(0);
   });
 
 });

@@ -141,3 +141,96 @@ Node 测试中的文件 watcher 必须 `unref` 或显式关闭；会修改共享
 ### 错误定位验证
 
 `tests/unit/agent-runner/error-diagnostics.test.js` 验证聚合冲突状态与引用 details 传递、Markdown 增强缺失诊断，以及隔离目录中的部署安装失败和恢复失败日志；不连接生产环境或写入数据库。
+
+## 文档生产与审核入口性能专项
+
+`incremental-read-performance.test.js` 通过真实 HTTP 验证 Storage 等待不阻塞网关、逐请求新快照、详情与差异异步读取及权限保留；与 review-workbench-contract、incremental-build-api 和源码性能门禁共同执行。`tools/repository/profile-knowledge-center.cjs` 是独立只读浏览器审计，需显式 KPG_BASE_URL，输出冷/暖刷新、侧栏切换、个人生成、审核正文、资源、长任务和接口状态。KC_PERF_CPU_RATE 控制 CPU 降速，KC_PERF_CHECK_BEHAVIOR=1 检查标签延迟请求及 context 刷新保留正文；接口失败/仓库失败/页面错误均判失败。旧独立生成器只测外壳，不能计为业务就绪。该审计不替代既有性能门禁和统一隔离写入型 E2E。
+
+AI 生产补充验证：`production-ai-service.test.js` 验证人工采用及后续保存保留生成元信息、旧依据失效；`handbook-production-api.test.js` 通过隔离 HTTP/MCP 与 Chromium 验证资料拉取预览、显式勾选、冻结来源传给模型、上下文隔离、来源地址限制、重定向及读取错误。真实 MCP 只读探测证据位于 `runtime/test-results/production-ai-sources/real-source-result.json`；隔离来源测试不等于 PingCode、用例库或真实模型验收。
+
+阶段 HTTP Adapter：`production-ai-http-stage-adapters.test.js` 通过本地真实 HTTP 服务覆盖非 2xx、超时、非法 JSON、1 MiB 响应上限和非法部署配置；`handbook-production-api.test.js` 验证服务端冻结 envelope 经 Planner HTTP Adapter 传递。Fixture 不构成目标环境独立 Agent 部署验收。
+
+AI 续写 Skill 验证：`production-ai-service.test.js` 覆盖新增登记、操作适用性、重复与过期选择拒绝、执行内容冻结、幂等及采用追溯；`handbook-production-api.test.js` 通过真实 HTTP 和 Chromium 选用实际能力包资源，验证指令进入模型消息、候选保留范围外原文及保存回读。证据写入 `runtime/test-results/production-ai-skills/`。模型为隔离替代实现，不能代替真实模型和完整平台验收。
+
+AI 来源确认检查同一定位符的内容版本冲突：旧新快照同时勾选返回409，取消旧版本后可重试；旧任务依据保持冻结。真实HTTP回归包含该场景，完整外部来源验收仍独立要求。
+
+
+PingCode AI 引用验证：`test_pingcode_reference.py` 覆盖空间归属、定位符、真实正文解析器、版本元信息与 API 错误脱敏；`handbook-production-api.test.js` 新增设计/测试来源、固定内部路径、空间范围、错误正文及大小上限、浏览器预览勾选与冻结引用测试。证据位于 `runtime/test-results/production-ai-pingcode/`；`real-reference-probe.json` 和 `real-node-adapter-probe.json` 为真实 PingCode 只读调用证据，浏览器测试仍使用隔离来源和模型，不能视为完整平台验收。
+
+PingCode 引用契约测试命令：`PYTHONPATH=apps/pingcode-api python3 -m unittest discover -s tests/unit/pingcode/web-backend -p 'test_pingcode_reference.py'`。测试会校验共享正文解析器、空间成员边界、页面元数据一致性和错误脱敏。
+
+真实来源连接器复验可执行 `PRODUCTION_AI_PINGCODE_REFERENCE_URL='https://pingcode.yasdb.com/wiki/spaces/YASDOC/pages/67768231ea9f2a28709356bc' KNOWLEDGE_CENTER_PINGCODE_API_PORT=18010 node tools/repository/probe-production-ai-sources.cjs`。脚本复用 `ConfigManager`/`MCPClient` 真实查询并读取知识库 MCP，再经 PingCode 只读 reference API 读取指定页面；仅记录来源定位符、长度与 SHA-256，不输出正文或凭据。可用 `PRODUCTION_AI_SOURCE_PROBE_OUTPUT` 指定证据文件，产物必须放在 `runtime/`。本命令验证连接器直连，不绕过知识中心 API 的 CAS 和 `productionAI.sources` 授权门禁；因此不代替平台来源预览验收。
+
+2026-10-23 实测结果：上述脚本 MCP 与 PingCode 均通过，脱敏报告为 `runtime/test-results/production-ai-integration/20261023/source-connectors-probe.json`；`production-ai-service.test.js` 与 `production-ai-provenance.test.js` Jest 23/23，`node --test --test-name-pattern='测试用例库|来源|PingCode|MCP' tests/unit/agent-runner/handbook-production-api.test.js` 4/4，PingCode Python API 契约 6/6。真实 `/knowledge-center/api/auth/session` 仍返回 401 `AUTH_REQUIRED`，所以平台来源预览及 CAS 作者权限链路未验收。此次曾误用 `node --test` 直接执行 Jest 文件，缺少 Jest 全局而启动失败；改用仓库 Jest 配置后通过，不属于产品测试失败。
+
+`production-ai-provenance.test.js` 验证混合来源区间、逐字匹配、虚假来源降级、协议拒绝、证据数量上限及 Unicode 编辑边界。`handbook-production-api.test.js` 的混合元信息场景通过真实 HTTP/Chromium 验证预览、采用、人工编辑、保存回读、规范化与未保存原文再次生成的来源保留，截图在 `runtime/test-results/production-ai-provenance/`；模型和资料为隔离替身，不代表真实模型与外部来源验收。
+
+`production-quality-service.test.js` 和生产 API 场景验证独立质量 Agent 的四个 Skill、YashanDB 适配器、通过/失败/未执行、报告版本绑定以及无库阻断。当前测试数据库使用隔离适配器，不代表真实 YashanDB 连接已经验收。
+
+`handbook-production-api.test.js` 另覆盖质量报告的真实 HTTP 修订绑定：正文摘要必须匹配，失败响应不得覆盖原报告关联；跨分支复测返回未找到。`production-quality-service.test.js` 验证相同正文也不能把指定修订的报告改绑其他修订或分支。
+
+AI 文档质量预期结果的真实 YashanDB 定向验收：先在独立测试库配置 `YASDB_QUALITY_JDBC_URL`、只读账号和密码，并确认该地址与业务 `YASDB_JDBC_URL` 不同，再启动 Storage；运行 `PRODUCTION_QUALITY_REAL_STORAGE_URL=http://127.0.0.1:14210 node --test --test-name-pattern='真实 YashanDB 经质量 HTTP' tests/unit/agent-runner/handbook-production-api.test.js`。未授权真实测试库时不设置该变量，此项明确跳过。用例通过实际 HTTP 接口与独立只读数据库执行匹配、失配和语法错误，非法预期声明不执行；认证与报告存储使用隔离 fixture，不冒充共享平台端到端验收。证据：`runtime/test-results/production-ai-quality/20261022/expected-results/real-http-report.json`。
+
+质量 Agent Skill 编排回归：`production-quality-service.test.js` 校验四个受信任 Skill 真实调用轨迹、资源摘要和配置错误；真实 YashanDB 定向用例的报告同时保存四阶段调用记录。
+
+`handbook-production-api.test.js` 还通过隔离真实 HTTP 和 Chromium 验证已保存草稿质量弹窗：逐条通过/失败/未执行、预期及实际结果、完整 JSON 下载、修订绑定和复测关联，并检查窄屏无横向溢出；该用例的数据库执行为隔离替代实现，真实 YashanDB 用例仍由显式配置的独立实测覆盖。
+
+
+工作台质量检查 E2E 从实际 AI 助手“检查”入口调用真实隔离后端及 test_hy，只读执行三个 SQL 用例并验证通过、失败、未执行、修订绑定和复测关联。企业包加载器同时核对 35 个资源与五个生产 Skill 的摘要，不以旧资源数量误判新增能力。
+
+
+AI 内容检查由 `handbook-production-api.test.js` 经真实隔离 HTTP 验证四项状态、模型失败/无效格式、修订正文冲突，以及内容失败仍保留 SQL 执行证据；包含真实 OpenAI SDK 到本地 Provider fixture 的 JSON 嵌套请求契约。浏览器验证联合检查选择、问题位置与处理要求、无来源局限和 HTML 文本展示。这些模型/数据库 fixture 不计为外部真实集成通过。`production-quality-service.test.js` 注入阶段故障验证停止后续 Skill、持久化失败轨迹及资源/实现摘要；`agents.test.js` 验证生产模式禁止基础报告降级和 Unicode 位置边界。
+
+用例来源追溯回归：`production-quality-service.test.js` 验证同一 SQL 不同正文位置的直接引用、归纳待核验、人工变更和失效快照区分，以及摘要不一致在数据库执行前拒绝。生产 API 测试从真实测试用例库读取，经模型 fixture 生成、采用、保存和质量 HTTP 关联到具体库条目，并用 Chromium 检查条目展示；人工修改后不将旧证据关联到改变的字符。设置 `PRODUCTION_QUALITY_REAL_STORAGE_URL` 时该用例使用真实测试库，证据位于 `runtime/test-results/production-ai-quality/20261022/case-sources/`，仍不算真实模型验收。
+
+真实模型内容质量探测：在现有模型配置和测试库均获授权时，运行 `PRODUCTION_QUALITY_REAL_STORAGE_URL=http://127.0.0.1:14210 PRODUCTION_CONTENT_REAL_PROVIDER=1 node --test --test-name-pattern='真实配置模型经内容质量 HTTP' tests/unit/agent-runner/handbook-production-api.test.js`。该用例如实记录模型完成或失败，要求 SQL 执行结果独立保留；测试通过只代表协议与失败处理符合约定，不能据此宣称模型内容质量验收通过。证据为 `runtime/test-results/production-ai-quality/20261022/content-review/real-provider-http-report.json`。
+
+PingCode 引用回归覆盖空间内短标识解析及重复短标识拒绝。
+
+## 2026-10-23 AI 文档生产真实集成收口
+
+本轮获准模型与 YASDOC URL 已可调用，最新证据以 `runtime/test-results/production-ai-integration/20261023/README.md` 为准，上述区域限制/无 CAS/空来源列表段落为历史结果。目录提供五操作语义、真实模型+PingCode+test_hy 浏览器闭环、真实正文审核交付（本地 GitLab fixture）及共享草稿保护的复现命令。内容检查超时配置为120秒，必须检查 status=completed/model/四项实际执行，不能仅数报告项。故意失配的验收文档 gate=not_passed 是预期。
+
+本轮统一单元45/45项任务（Jest80套件753用例）、契约7/7、E2E283项直接通过及1项Firefox重试通过；报告分别为 `runtime/test-results/unit/20261023-152032-386854-unit/report.html`、`runtime/test-results/e2e/20261023-151022-034935-e2e/report.html`。先前并发单元有一例5000ms超时，串行复验通过，未改动断言。
+
+## 全量回归与失败证据
+
+审核发布 E2E 的只读 API 回读允许 Playwright 对 `ECONNRESET` 重试一次，处理发布后复用已关闭持久连接的传输故障；写入请求不重试，HTTP 错误与业务断言仍立即失败。浏览器整用例重试次数另按原配置，报告必须分别记录首次通过和重试通过。
+
+使用 `python3 tests/run_tests.py full --coverage --jobs 4 --timeout 1800`。每个浏览器测试批次使用独立的 suite/framework/文件列表摘要目录，防止后续 Playwright 批次清理先前失败的 trace。Jest 覆盖率排除测试源码（包括桥接载入的 node:test 文件）；浏览器回调在独立上下文执行，不能注入依赖 Node 闭包的 Istanbul 计数器。该排除不排除被测产品源码，也不免除原生测试执行。
+
+大纲的筛选返回、节点选择、刷新与信息弹窗、上下文菜单分为独立场景。双轮真实 YashanDB 质量检查单用例预算为 90 秒、每轮 HTTP 响应等待为 30 秒；原全局 30 秒预算无法同时容纳保存修订与两轮执行及报告持久化，其他用例预算不变。
+
+条件快照读取回归还覆盖：真实 HTTP 的 200/304、调用者修改副本、版本更新、删除、不存在和存储故障；不得因命中缓存绕过数据库版本或业务权限检查。
+性能门禁同时真实调用隔离 Storage 的记录 GET，校验 ETag 与 revision 一致、匹配返回无正文的 304、过期版本返回完整快照；只读取测试实例，不写共享数据。
+
+全量回归补充（2026-10-23）：runner 将隔离 Storage URL 显式传给浏览器任务，禁止性能门禁回退共享端口。native→Jest 桥接沿用用例显式 timeout；未配置时按 HTTP／浏览器契约使用 30s，避免 Jest 隐式 5s 截断清理阶段。检索系统测试的关键词阶段实际包含模型请求，观察到 66s 返回，按 90s 有界轮询；中间 JSON 写入未完成时等待下一轮，持续缺失仍判失败。
+
+审核 bootstrap 的真实 HTTP 回归同时确认：空文档清单不加载审核人名册；非空指派姓名及改派行为由审核契约和浏览器流程覆盖。
+
+审核首屏预取回归：`review-bootstrap-prefetch.test.js` 验证完整参数匹配、单次消费、非审核/CAS回调不预取及失败回退；性能E2E同时断言每次刷新只发一次bootstrap，并保留请求时间。Storage性能门禁增加批量名册与单用户权限投影的真实API一致性验证。
+
+
+AI 沉浸式写作的独立浏览器/API 验收：`node --test tests/e2e/agent-runner/production-writing.test.cjs`。使用真实 Vditor、前端模块与 HTTP 后端，`fixtures/production-writing.cjs` 注入测试作者与隔离内存仓储，覆盖选区/光标映射、手动确认、资料确认与移除、候选重生成/失败/取消/恢复、人工采用回读及版本冲突、桌面/390px、主区无弹窗、富文本编辑、浏览器返回与正文保留。默认模型为确定性测试替身；`WRITING_LIVE_MODEL=1 node --test tests/e2e/agent-runner/production-writing.test.cjs` 额外调用当前配置真实模型，输出证据到 `runtime/test-results/production-writing/`。该独立 Node 入口需安装 Playwright 及 Chromium，不依赖在线业务手册，不访问共享草稿。
+
+执行反馈回归：`node --test tests/e2e/agent-runner/production-writing-feedback.test.cjs` 使用本地真实 HTTP SSE 模型替身与真实生产 API，验证 Chat Completions/Responses 增量预览、阶段调用、取消迟到输出隔离。上述浏览器入口还验证模板同框搜索、侧栏切换、断网后继续轮询同一任务、详情展开状态与 390px 无横向溢出。外部企业模型和阶段适配器内部轨迹仍需在目标环境单独验收。
+
+AI 资料、Skill 与来源证据浏览器契约按真实操作展开“参考资料”“更多设置”和资料正文，再校验预览、选择与采用；不强制操作隐藏控件。文件模式 HTTP fixture 显式设置并恢复 `KNOWLEDGE_STORAGE_MODE=file`；模板认证 fixture 同时指定本机 host 与随机 port，避免加载运行配置后连接共享认证服务。
+
+
+## 平台管理 MCP 服务验证
+
+`tests/unit/agent-runner/mcp-governance.test.js` 使用 runtime 隔离配置、真实 ConfigManager 和实际 HTTP MCP fixture/平台 handler，验证加密与跨进程回读、凭据合并/清除、地址切换保护、字段校验、并发冲突、管理员权限、JSON/SSE 协议/错误/超时，以及原生成器客户端和 AI 来源共享配置。
+
+`node tests/e2e/agent-runner/platform-mcp-management.cjs` 使用已安装 Playwright，启动隔离真实后端与 MCP fixture，验证表单、工具目录转义、测试不保存、凭据不回显、冲突恢复、清除与360px布局；结果及截图在 `runtime/test-results/platform-mcp`。该脚本不写真实配置、不访问企业 MCP，不能作为企业集成已通过的证据。
+
+## 文档生产离线盲评工具
+
+运行 `node --test tests/unit/agent-runner/production-ai-blind-eval.test.cjs`，覆盖匿名字段分离、完整评分、缺测计量、Unicode 范围、CLI prepare/summarize、0600 文件权限、拒绝覆盖和符号链接越界。临时产物在 runtime/ 下创建并于测试结束清理；该测试不调用模型，不产生真实质量评测结论。
+
+
+PingCode 资料输入回归包含于 `production-writing.test.cjs`：真实 HTTP 与 Chromium 验证完整页面网址/短标识、来源及空间边界、资料错误不误报账号权限、失败后重读。上游为隔离本地 PingCode 响应，不代表企业服务可用性验收。
+
+写作页回归还验证生成设置隐藏模型控件、使用默认模型、逐项添加多份资料、优先级排序，以及新标签页快照预览。
+
+网页资料回归验证 HTML 图片相对路径转绝对地址、阅读视图实际加载图片、原始内容切换及原始 HTML 不执行；`production-web-reference.test.cjs` 覆盖真实 HTTP 提取。
