@@ -1,0 +1,8 @@
+{
+  "name": "yashandb-rea-tooling",
+  "version": "0.1.0",
+  "private": true,
+  "dependencies": {
+    "rea-agents": "6.7.0"
+  }
+}

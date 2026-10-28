@@ -1,0 +1,4 @@
+interface:
+  display_name: "应用能力逆向与平台迁移"
+  short_description: "用证据分析应用功能，形成行为契约、平台适配设计及可重复的验证结果"
+  default_prompt: "使用 $app-capability-transfer 分析指定应用的目标功能，并将经过验证的能力适配到当前平台。"

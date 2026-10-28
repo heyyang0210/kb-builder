@@ -1,0 +1,22 @@
+{
+  "name": "rea",
+  "version": "0.1.0",
+  "description": "REA 制品逆向分析与知识中心平台能力迁移",
+  "author": {
+    "name": "YashanDB Knowledge Center Team"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "REA 逆向与能力迁移",
+    "shortDescription": "基于证据分析其他应用，并适配知识中心平台",
+    "longDescription": "固定版本 REA 官方技能、隔离 CLI 及中文平台适配工作流。",
+    "developerName": "YashanDB Knowledge Center Team",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive"
+    ],
+    "defaultPrompt": [
+      "分析指定应用的功能，并设计当前平台的适配方案。"
+    ]
+  }
+}
