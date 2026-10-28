@@ -262,6 +262,43 @@ test('大纲列表与详情独立，返回后恢复筛选', async ({ page }) => 
   await expect(page.locator('[data-outline-document]').first()).toHaveAttribute('aria-current', 'page');
   await expect(page.locator('[data-outline-document-panel]:visible')).toContainText('主责技术领域');
   await expect(page.locator('[data-outline-document-menu]')).toHaveCount(0);
+  await page.getByRole('link', { name: '返回大纲列表' }).click();
+  await expect(search).toHaveValue(firstName.slice(0, 4));
+  expect(pageErrors).toEqual([]);
+});
+
+test('大纲总览支持文档与目录选择', async ({ page }) => {
+  await page.goto(`${baseUrl}/knowledge-center/outlines/DB-004`, { waitUntil: 'domcontentloaded' });
+  await expect(page.locator('[data-outline-document]').first()).toBeVisible();
+  const secondDocument = page.locator('[data-outline-document]').nth(1);
+  if (await secondDocument.count()) {
+    await secondDocument.click();
+    await expect(page).toHaveURL(/document=/);
+  }
+  const firstDirectory = page.locator('[data-outline-directory]').first();
+  if (await firstDirectory.count()) {
+    const directoryId = await firstDirectory.getAttribute('data-outline-directory');
+    await firstDirectory.click();
+    await expect(page).toHaveURL(new RegExp(`node=${encodeURIComponent(directoryId)}`));
+    await expect(page.locator('.outline-node-inspector')).toContainText('目录节点');
+    await expect(page.locator('[data-outline-node-row]')).toHaveCount(await page.locator(`[data-directory-key="${directoryId}"] > details > ul > li`).count());
+  }
+});
+
+test('刷新保留分工标签，手册信息可打开并关闭', async ({ page }) => {
+  await page.goto(`${baseUrl}/knowledge-center/outlines/DB-004?tab=assignments`, { waitUntil: 'domcontentloaded' });
+  await expect(page.getByRole('tab', { name: '分工管理' })).toHaveAttribute('aria-selected', 'true');
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await expect(page.getByRole('tab', { name: '分工管理' })).toHaveAttribute('aria-selected', 'true');
+  await page.getByText('更多操作', { exact: true }).click();
+  await page.getByRole('button', { name: '手册信息' }).click();
+  await expect(page.getByRole('heading', { name: '手册信息' })).toBeVisible();
+  await page.getByRole('button', { name: '关闭手册信息' }).click();
+});
+
+test('文档目录支持鼠标、键盘和触摸长按打开上下文菜单', async ({ page }) => {
+  await page.goto(`${baseUrl}/knowledge-center/outlines/DB-004`, { waitUntil: 'domcontentloaded' });
+  await expect(page.locator('[data-outline-document]').first()).toBeVisible();
   const firstDocument = page.locator('[data-outline-document]').first();
   const firstDocumentId = await firstDocument.getAttribute('data-outline-document');
   await firstDocument.click({ button: 'right' });
@@ -280,30 +317,6 @@ test('大纲列表与详情独立，返回后恢复筛选', async ({ page }) => 
   await expect(page.locator('[data-outline-context-menu]')).toHaveAttribute('data-document-id', firstDocumentId);
   await firstDocument.dispatchEvent('pointerup', { pointerType: 'touch', pointerId: 91, clientX: box.x + 25, clientY: box.y + 24 });
   await page.keyboard.press('Escape');
-  const secondDocument = page.locator('[data-outline-document]').nth(1);
-  if (await secondDocument.count()) {
-    await secondDocument.click();
-    await expect(page).toHaveURL(/document=/);
-  }
-  const firstDirectory = page.locator('[data-outline-directory]').first();
-  if (await firstDirectory.count()) {
-    const directoryId = await firstDirectory.getAttribute('data-outline-directory');
-    await firstDirectory.click();
-    await expect(page).toHaveURL(new RegExp(`node=${encodeURIComponent(directoryId)}`));
-    await expect(page.locator('.outline-node-inspector')).toContainText('目录节点');
-    await expect(page.locator('[data-outline-node-row]')).toHaveCount(await page.locator(`[data-directory-key="${directoryId}"] > details > ul > li`).count());
-  }
-  await page.getByRole('tab', { name: '分工管理' }).click();
-  await expect(page).toHaveURL(/tab=assignments/);
-  await page.reload();
-  await expect(page.getByRole('tab', { name: '分工管理' })).toHaveAttribute('aria-selected', 'true');
-  await page.getByText('更多操作', { exact: true }).click();
-  await page.getByRole('button', { name: '手册信息' }).click();
-  await expect(page.getByRole('heading', { name: '手册信息' })).toBeVisible();
-  await page.getByRole('button', { name: '关闭手册信息' }).click();
-  await page.getByRole('link', { name: '返回大纲列表' }).click();
-  await expect(search).toHaveValue(firstName.slice(0, 4));
-  expect(pageErrors).toEqual([]);
 });
 
 test('分工管理在团队未配置时提供阻断说明和团队配置入口', async ({ page }) => {

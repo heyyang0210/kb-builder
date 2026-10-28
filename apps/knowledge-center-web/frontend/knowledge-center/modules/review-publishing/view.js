@@ -21,6 +21,19 @@ function productionEditorUrl(handbookId, path = '', branch = '') {
   return `/knowledge-center/production/handbook/${encodeURIComponent(handbookId)}${query.size ? `?${query}` : ''}`;
 }
 
+export function updateReviewWaitingEntry(root, projection = {}) {
+  const handbookId = projection.handbookId || '';
+  const path = projection.file?.path || projection.path || projection.requestedPath || '';
+  const branch = projection.branch || '';
+  const entry = root.querySelector('[data-review-production-editor]');
+  if (entry) entry.href = productionEditorUrl(handbookId, path, branch);
+  const form = root.querySelector('[data-review-online-form]');
+  if (form) {
+    form.dataset.documentPath = projection.file?.path || '';
+    form.dataset.branch = branch;
+  }
+}
+
 function reviewMetrics(task) {
   const operations = list(task?.candidate?.operations || task?.draft?.operations).map(operation => ({ ...operation, path: operation.path || task?.handbookSource?.documents?.find(item => item.documentId === operation.documentId)?.filePath }));
   const comments = list(task?.reviews).flatMap(review => list(review.comments));
@@ -65,13 +78,14 @@ function handbookWaitingState(handbookId, projection, handbooks = [], ui = {}, o
   const title = projection?.handbookName || handbook?.name || handbook?.handbookName || handbookId;
   const language = projection?.language === 'en' ? 'English' : '中文';
   const branch = projection?.branch || '候选版本';
+  const currentPath = projection?.file?.path || projection?.path || projection?.requestedPath || '';
   const source = projection?.commitSha ? `提交 ${esc(projection.commitSha.slice(0, 8))}` : '正式内容';
   const selector = handbooks.length > 1 ? `<label class="review-task-switcher" for="review-handbook-select"><span>当前手册</span><select id="review-handbook-select" data-review-handbook-select>${handbooks.map(item => `<option value="${esc(item.handbookId || item.id)}" ${String(item.handbookId || item.id) === String(handbookId) ? 'selected' : ''}>${esc(item.name || item.handbookName || item.handbookId)}</option>`).join('')}</select></label>` : '';
   // 阅读区顶部嵌入空态提示条
   const emptyBanner = ui.hasReviewDocuments ? '' : '<div class="review-empty-banner" role="status"><i data-lucide="inbox" aria-hidden="true"></i><div><h3 class="review-empty-banner-title">尚无待审核修改稿</h3><p>请先在文档生产编辑并保存正文，再提交在线评审。与 GitLab 正文相同的内容不能提交 MR。</p></div></div>';
   // 右侧审核信息区：§17.5 结构，首卡为评审准备说明
   const baselineHint = '<p class="review-prep-hint">在线评审只读取已保存修改稿，服务端按目标分支提交冻结对比基线。</p>';
-  const evidenceColumn = `<aside class="review-evidence-column" data-scroll-region="panel"><details class="review-evidence-drawer" open><summary><span>审核信息</span><small>准备 · 操作 · 导航</small></summary><div class="review-evidence-content"><section class="review-evidence-card"><h3>评审准备</h3><p>${ui.hasReviewDocuments ? '从目录选择文档，查看其审核候选。开启显示所有文档可以阅读全文。' : '当前手册没有活动的审核任务，可先阅读正文确认内容。'}</p>${baselineHint}</section><section class="review-evidence-card"><h3>操作入口</h3><button class="button primary full-width" type="button" data-review-online-start>发起在线评审</button><a class="button secondary full-width" href="${esc(productionEditorUrl(handbookId, projection?.file?.path || '', projection?.branch || ''))}">编辑此文档并发起评审</a></section><section class="review-evidence-card"><h3>导航</h3><nav class="review-waiting-nav"><a class="button secondary" href="/knowledge-center/production?handbookId=${encodeURIComponent(handbookId)}">前往文档生产</a><a class="button secondary" href="/knowledge-center/assets?handbookId=${encodeURIComponent(handbookId)}">返回知识资产</a></nav></section></div></details></aside>`;
+  const evidenceColumn = `<aside class="review-evidence-column" data-scroll-region="panel"><details class="review-evidence-drawer" open><summary><span>审核信息</span><small>准备 · 操作 · 导航</small></summary><div class="review-evidence-content"><section class="review-evidence-card"><h3>评审准备</h3><p>${ui.hasReviewDocuments ? '从目录选择文档，查看其审核候选。开启显示所有文档可以阅读全文。' : '当前手册没有活动的审核任务，可先阅读正文确认内容。'}</p>${baselineHint}</section><section class="review-evidence-card"><h3>操作入口</h3><button class="button primary full-width" type="button" data-review-online-start>发起在线评审</button><a class="button secondary full-width" data-review-production-editor href="${esc(productionEditorUrl(handbookId, currentPath, projection?.branch || ''))}">编辑此文档并发起评审</a></section><section class="review-evidence-card"><h3>导航</h3><nav class="review-waiting-nav"><a class="button secondary" href="/knowledge-center/production?handbookId=${encodeURIComponent(handbookId)}">前往文档生产</a><a class="button secondary" href="/knowledge-center/assets?handbookId=${encodeURIComponent(handbookId)}">返回知识资产</a></nav></section></div></details></aside>`;
   return `<article class="review-workspace review-waiting-workspace"><header class="review-detail-head"><div class="review-heading-group"><span class="eyebrow">审核与发布</span><h2>${esc(title)}</h2><p>阅读正文确认内容；修改后在文档生产保存并送审，审核通过即可创建 GitLab MR。</p>${selector}</div><span class="review-status neutral" data-review-status>${ui.hasReviewDocuments ? '手册阅读' : '准备阶段'}</span></header><div class="review-context-strip" aria-label="当前手册上下文"><span>产品 <strong>${esc(handbook?.productType || 'YashanDB')}</strong></span><span>手册 <strong>${esc(title)}</strong></span><span>分支 <strong>${esc(branch)}</strong></span><span>语言 <strong>${language}</strong></span><span>来源 <strong>${source}</strong></span></div><nav class="review-steps" aria-label="当前阶段"><span class="review-step-label">正文阅读</span><span class="review-step-hint">编辑并保存修改稿后发起评审</span></nav><div class="review-main-grid"><div>${emptyBanner}${reader(projection || {}, { handbookId }, ui)}</div>${evidenceColumn}</div>${onlineReviewDialog(handbookId, projection, handbook)}</article>`;
 }
 
@@ -359,7 +373,7 @@ function detail(task, tasks, allTasks, step, projection, diffData, ui) {
   const evidenceCards = evidence(task, current);
   const evidenceDrawer = `<details class="review-evidence-drawer"><summary title="审核依据" aria-label="审核依据"><span>审核依据</span><small>角色 · 检查 · 血缘</small></summary><button type="button" class="icon-button review-panel-close" data-review-panel-close aria-label="关闭审核依据侧栏" title="关闭审核依据侧栏"><i data-lucide="x" aria-hidden="true"></i></button><div class="review-evidence-content">${evidenceCards}</div></details>`;
   const editHref = task.handbookSource
-    ? `/knowledge-center/production/handbook/${encodeURIComponent(task.handbookId)}?documentId=${encodeURIComponent(currentDocument?.documentId || task.handbookSource.documents?.[0]?.documentId || '')}&branch=${encodeURIComponent(task.handbookSource.branch)}`
+    ? productionEditorUrl(task.handbookId, currentDocument?.filePath || task.handbookSource.documents?.[0]?.filePath || '', task.handbookSource.branch)
     : task.reviewMode === 'online_review' ? productionEditorUrl(task.handbookId, params.get('path') || '', '')
       : `/knowledge-center/production?taskId=${encodeURIComponent(idOf(task))}&stage=review`;
   return `<article class="review-workspace review-workbench-detail"><header class="review-detail-head"><div class="review-heading-group"><a class="review-production-return" href="${esc(editHref)}"><i data-lucide="arrow-left" aria-hidden="true"></i>${task.handbookSource || task.reviewMode === 'online_review' ? '编辑文档并发起评审' : '返回增量任务'}</a><span class="eyebrow">审核与发布</span><h2>${esc(task.name || task.title || '审核事项')}</h2><p>${esc(capability)}</p>${tasks.length > 1 ? taskSelector(tasks, idOf(task)) : ''}${history(allTasks, idOf(task))}${task.mergeRequest?.webUrl ? `<a class="button secondary" href="${esc(task.mergeRequest.webUrl)}" target="_blank" rel="noopener noreferrer">查看 GitLab MR !${esc(task.mergeRequest.iid)}</a>` : ''}</div><span class="review-status" data-review-status>${esc(statusLabel(task))}</span></header><div class="review-context-strip" aria-label="当前审核上下文"><span>产品 <strong>${esc(productName)}</strong></span><span>手册 <strong>${esc(handbookName)}</strong></span><span>文档 <strong>${esc(documentPath)}</strong></span><span>业务版本 <strong>${esc(task.businessVersion || '未关联')}</strong></span><span>待审核版本：修改稿</span><span>候选 <code>${esc(candidateDigest(task).slice(0, 8))}</code></span><span>来源 <strong>${esc(sourceName)}</strong></span><span>状态 <strong>${esc(statusLabel(task))}</strong></span><span>未解决意见 <strong>${unresolved}</strong></span></div>${scopeNotice}<nav class="review-steps" aria-label="审核步骤"><button class="${current === 'read' ? 'active' : ''}" data-review-step="read">1 阅读文档</button><button class="${current === 'diff' ? 'active' : ''}" data-review-step="diff">2 查看修改（${metrics.operations.length}）</button><button class="${current === 'opinions' ? 'active' : ''}" data-review-step="opinions">3 处理审核意见（${unresolved}）</button></nav><div class="review-main-grid"><div class="review-stage">${body}</div><aside class="review-evidence-column" data-scroll-region="panel">${reviewActionPanel(task, review)}${commentDrawer}${evidenceDrawer}</aside></div></article>`;

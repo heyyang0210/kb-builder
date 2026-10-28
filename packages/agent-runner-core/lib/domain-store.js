@@ -289,6 +289,11 @@ class DomainStore {
     return result.data || result;
   }
 
+  async readPlatformGitLabConnectionAsync(key) {
+    const result = await this.requestAsync('GET', `/v1/platform/gitlab/connections/${encodeURIComponent(key)}`);
+    return result.data || result;
+  }
+
   upsertPlatformGitLabConnection(payload, rowVersion, idempotencyKey, actor) {
     const headers = { 'Idempotency-Key': idempotencyKey, ...(rowVersion != null ? { 'If-Match': String(rowVersion) } : {}) };
     const result = this.request('PUT', '/v1/platform/gitlab/connections', { ...payload, actor }, headers);
@@ -304,6 +309,11 @@ class DomainStore {
 
   readPlatformGitLabMapping(manualCode) {
     const result = this.request('GET', `/v1/platform/gitlab/mappings/${encodeURIComponent(manualCode)}`);
+    return result.data || result;
+  }
+
+  async readPlatformGitLabMappingAsync(manualCode) {
+    const result = await this.requestAsync('GET', `/v1/platform/gitlab/mappings/${encodeURIComponent(manualCode)}`);
     return result.data || result;
   }
 

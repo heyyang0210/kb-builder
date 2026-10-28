@@ -132,8 +132,27 @@ class DatabaseAggregateStore {
   }
 
   async readAsync() {
-    try { const record = await this.executeAsync(['-sS', '--max-time', String(this.timeoutSeconds), this.recordUrl()]); return record.deleted ? structuredClone(this.emptyValue) : record.payload; }
-    catch (error) { if (error.code === 'RECORD_NOT_FOUND') return structuredClone(this.emptyValue); throw error; }
+    try {
+      const response = await fetch(this.recordUrl(), {
+        headers: this.readSnapshot ? { 'If-None-Match': this.readSnapshot.etag } : {},
+        signal: AbortSignal.timeout(this.timeoutSeconds * 1000),
+      });
+      if (response.status === 304 && this.readSnapshot) return structuredClone(this.readSnapshot.payload);
+      const record = await response.json();
+      if (!response.ok || record?.success === false) {
+        this.readSnapshot = null;
+        if (record?.error?.code === 'RECORD_NOT_FOUND') return structuredClone(this.emptyValue);
+        throw new AggregateStoreError(record?.error?.code || 'STORAGE_REQUEST_FAILED', record?.error?.message || '存储服务请求失败', storageErrorStatus(record?.error?.code), record?.error?.details);
+      }
+      const payload = record.deleted ? structuredClone(this.emptyValue) : record.payload;
+      const etag = response.headers.get('etag');
+      this.readSnapshot = etag ? { etag, payload: structuredClone(payload) } : null;
+      return payload;
+    } catch (error) {
+      this.readSnapshot = null;
+      if (error instanceof AggregateStoreError) throw error;
+      throw new AggregateStoreError('STORAGE_UNAVAILABLE', 'YashanDB 存储服务不可用', 503);
+    }
   }
 
   readRecord() {

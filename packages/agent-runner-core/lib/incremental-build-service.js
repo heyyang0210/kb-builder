@@ -376,15 +376,20 @@ class IncrementalBuildService {
     });
   }
 
-  list(session, query = {}) {
+  async readState(session) {
     requireAction(session, 'knowledge:read');
-    let tasks = this.repository.read().tasks.filter(task => this.canRead(session, task));
+    return this.repository.readAsync ? this.repository.readAsync() : this.repository.read();
+  }
+
+  list(session, query = {}, snapshot = null) {
+    requireAction(session, 'knowledge:read');
+    let tasks = (snapshot || this.repository.read()).tasks.filter(task => this.canRead(session, task));
     if (query.handbookId) tasks = tasks.filter(item => item.handbookId === query.handbookId);
     if (query.state) tasks = tasks.filter(item => item.state === query.state);
     return tasks.map(task => this.project(task, session, true));
   }
 
-  listMyGenerations(session, query = {}) {
+  listMyGenerations(session, query = {}, snapshot = null) {
     requireAction(session, 'knowledge:read');
     if (query.scope && query.scope !== 'mine') {
       throw new IncrementalBuildError('GENERATION_SCOPE_INVALID', '生成记录仅支持查询当前用户', 422, { field: 'scope' });
@@ -393,7 +398,7 @@ class IncrementalBuildService {
       throw new IncrementalBuildError('GENERATION_USER_FILTER_FORBIDDEN', '不允许指定其他用户查询生成记录', 422, { field: 'userId' });
     }
     const currentUserId = actor(session).id;
-    const items = this.repository.read().tasks
+    const items = (snapshot || this.repository.read()).tasks
       .filter(task => this.canRead(session, task))
       .flatMap(task => {
         const runs = Array.isArray(task.generationRuns)
@@ -444,9 +449,9 @@ class IncrementalBuildService {
     return { scope: 'mine', items, generatedAt: now() };
   }
 
-  reviewBootstrap(session, query = {}) {
+  reviewBootstrap(session, query = {}, snapshot = null) {
     requireAction(session, 'knowledge:read');
-    const state = this.repository.read();
+    const state = snapshot || this.repository.read();
     let tasks = state.tasks.filter(task => this.canRead(session, task));
     const readableTasks = tasks;
     if (query.handbookId) tasks = tasks.filter(item => item.handbookId === query.handbookId);
@@ -489,8 +494,8 @@ class IncrementalBuildService {
     return { items, allItems, detail, readerHandbookId, baselines, documents };
   }
 
-  reviewOverview(session, documents) {
-    const state = this.repository.read();
+  reviewOverview(session, documents, snapshot = null) {
+    const state = snapshot || this.repository.read();
     return [...new Map(documents.slice().reverse().map(item => [item.path || item.id, item])).values()]
       .flatMap(item => {
         const task = state.tasks.find(candidate => candidate.id === item.taskId && candidate.candidate?.digest === item.candidateDigest);
@@ -530,9 +535,9 @@ class IncrementalBuildService {
     };
   }
 
-  getCandidateDiff(session, taskId) {
+  getCandidateDiff(session, taskId, snapshot = null) {
     requireAction(session, 'knowledge:read');
-    const state = this.repository.read();
+    const state = snapshot || this.repository.read();
     const task = this.task(state, taskId);
     this.requireReadable(session, task);
     const baseline = state.publishedVersions.find(item => item.id === task.baselineVersionId
@@ -566,9 +571,9 @@ class IncrementalBuildService {
     };
   }
 
-  get(session, taskId) {
+  get(session, taskId, snapshot = null) {
     requireAction(session, 'knowledge:read');
-    const task = this.task(this.repository.read(), taskId);
+    const task = this.task(snapshot || this.repository.read(), taskId);
     this.requireReadable(session, task);
     return this.project(task, session);
   }
@@ -1124,9 +1129,9 @@ function createIncrementalBuildHandler(options = {}) {
       else if (parts.length === 1 && parts[0] === 'online-reviews' && req.method === 'POST') data = service.createOnlineReview(session, key, await readJsonBody(req));
       else if (parts.length === 1 && parts[0] === 'bootstrap-baseline' && req.method === 'POST') data = service.createSyntheticBaseline(session, key, await readJsonBody(req));
       else if (parts.length === 3 && parts[0] === 'handbooks' && parts[2] === 'review-summary' && req.method === 'GET') data = service.listHandbookReviewSummary(session, parts[1], Object.fromEntries(url.searchParams));
-      else if (!parts.length && req.method === 'GET') data = service.list(session, Object.fromEntries(url.searchParams));
+      else if (!parts.length && req.method === 'GET') data = service.list(session, Object.fromEntries(url.searchParams), await service.readState(session));
       else if (!parts.length && req.method === 'POST') data = service.create(session, key, await readJsonBody(req));
-      else if (parts.length === 1 && req.method === 'GET') data = service.get(session, parts[0]);
+      else if (parts.length === 1 && req.method === 'GET') data = service.get(session, parts[0], await service.readState(session));
       else if (parts[1] === 'sources' && parts.length === 2 && req.method === 'POST') data = service.addSource(session, parts[0], key, await readJsonBody(req));
       else if (parts[1] === 'target' && parts.length === 2 && req.method === 'PATCH') data = service.updateTarget(session, parts[0], key, await readJsonBody(req));
       else if (parts[1] === 'draft' && parts.length === 2 && req.method === 'PUT') data = service.saveDraft(session, parts[0], key, await readJsonBody(req));
@@ -1149,7 +1154,7 @@ function createIncrementalBuildHandler(options = {}) {
       else if (parts[1] === 'publish' && parts.length === 2 && req.method === 'POST') data = service.publish(session, parts[0], key, await readJsonBody(req));
       else if (parts[1] === 'external-evidence' && parts.length === 2 && req.method === 'POST') data = service.addExternalEvidence(session, parts[0], key, await readJsonBody(req));
       else if (parts[1] === 'revisions' && parts.length === 2 && req.method === 'POST') data = service.createRevision(session, parts[0], key, await readJsonBody(req));
-      else if (parts[1] === 'diff' && parts.length === 2 && req.method === 'GET') data = service.getCandidateDiff(session, parts[0]);
+      else if (parts[1] === 'diff' && parts.length === 2 && req.method === 'GET') data = service.getCandidateDiff(session, parts[0], await service.readState(session));
       else throw new IncrementalBuildError('ROUTE_NOT_FOUND', '增量构建接口不存在', 404);
       sendJson(res, parts.length || req.method === 'GET' ? 200 : 201, { success: true, data });
     } catch (error) {

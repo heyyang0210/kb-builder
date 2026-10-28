@@ -23,6 +23,8 @@ async function call(api, method, path, data, key) {
   const response = await api.fetch(`${baseUrl}${path}`, {
     method,
     data,
+    // Playwright retries ECONNRESET only; never repeat a mutation or HTTP error.
+    maxRetries: method === 'GET' ? 1 : 0,
     headers: key ? { 'Idempotency-Key': key } : undefined,
   });
   const body = await response.json();

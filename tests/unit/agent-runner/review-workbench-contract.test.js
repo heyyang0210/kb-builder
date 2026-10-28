@@ -96,7 +96,10 @@ describe('审核工作台文档投影契约', () => {
 
 describe('审核工作台真实 HTTP 契约与规模边界', () => {
   let root; let server; let base; let repository;
+  let previousStorageMode;
   beforeAll(async () => {
+    previousStorageMode = process.env.KNOWLEDGE_STORAGE_MODE;
+    process.env.KNOWLEDGE_STORAGE_MODE = 'file';
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'review-workbench-contract-'));
     const configPath = path.join(root, 'gitlab.json');
     fs.writeFileSync(configPath, JSON.stringify({ connections: [], mappings: [] }));
@@ -120,6 +123,8 @@ describe('审核工作台真实 HTTP 契约与规模边界', () => {
     base = `http://127.0.0.1:${server.address().port}/knowledge-center/api/review/bootstrap`;
   });
   afterAll(async () => {
+    if (previousStorageMode === undefined) delete process.env.KNOWLEDGE_STORAGE_MODE;
+    else process.env.KNOWLEDGE_STORAGE_MODE = previousStorageMode;
     if (server) await new Promise(resolve => { server.closeAllConnections(); server.close(resolve); });
     if (root) fs.rmSync(root, { recursive: true, force: true });
   });

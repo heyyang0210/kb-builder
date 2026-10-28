@@ -8,6 +8,7 @@ function newIdempotencyKey() {
 }
 
 async function request(url, options = {}) {
+  const { notifyAuthErrors = true, ...fetchOptions } = options;
   const isWrite = options.method && options.method !== 'GET';
   const commandSignature = isWrite ? `${options.method}:${url}:${options.body || ''}` : null;
   const commandKey = commandSignature ? (pendingKeys.get(commandSignature) || newIdempotencyKey()) : null;
@@ -16,11 +17,11 @@ async function request(url, options = {}) {
     cache: 'no-store',
     credentials: 'same-origin',
     headers: { Accept: 'application/json', ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...(isWrite ? { 'Idempotency-Key': commandKey } : {}), ...options.headers },
-    ...options,
+    ...fetchOptions,
   });
   const payload = await response.json().catch(() => null);
-  if (response.status === 401) window.dispatchEvent(new CustomEvent('knowledge-center:session-expired'));
-  if (response.status === 403) window.dispatchEvent(new CustomEvent('knowledge-center:permission-denied'));
+  if (notifyAuthErrors && response.status === 401) window.dispatchEvent(new CustomEvent('knowledge-center:session-expired'));
+  if (notifyAuthErrors && response.status === 403) window.dispatchEvent(new CustomEvent('knowledge-center:permission-denied'));
   if (!response.ok || payload?.success === false) {
     const error = payload?.error || {};
     throw Object.assign(new Error(error.message || `操作失败（HTTP ${response.status}）`), {
@@ -58,7 +59,7 @@ export function loadIncrementalBaselines(handbookId, businessVersion = '') {
 export const loadIncrementalTask = taskId => request(`${endpoint}/${encodeURIComponent(taskId)}`);
 export const loadCandidateDiff = taskId => request(`${endpoint}/${encodeURIComponent(taskId)}/diff`);
 export const loadHandbookReviewSummary = handbookId => request(`${endpoint}/handbooks/${encodeURIComponent(handbookId)}/review-summary`);
-export function loadReviewBootstrap({ handbookId = '', taskId = '', step = 'read', view = '', documentId = '', path = '' } = {}) {
+export function loadReviewBootstrap({ handbookId = '', taskId = '', step = 'read', view = '', documentId = '', path = '' } = {}, requestOptions = {}) {
   const query = new URLSearchParams();
   if (handbookId) query.set('handbookId', handbookId);
   if (taskId) query.set('taskId', taskId);
@@ -66,7 +67,7 @@ export function loadReviewBootstrap({ handbookId = '', taskId = '', step = 'read
   if (view) query.set('view', view);
   if (documentId) query.set('documentId', documentId);
   if (path) query.set('path', path);
-  return request(`/knowledge-center/api/review/bootstrap?${query}`);
+  return request(`/knowledge-center/api/review/bootstrap?${query}`, requestOptions);
 }
 export const createIncrementalTask = body => request(endpoint, { method: 'POST', body: JSON.stringify(body) });
 export const createOnlineReview = body => request(`${endpoint}/online-reviews`, { method: 'POST', body: JSON.stringify(body) });

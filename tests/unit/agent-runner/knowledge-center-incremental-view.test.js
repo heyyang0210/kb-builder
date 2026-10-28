@@ -73,18 +73,24 @@ describe('增量构建前端契约', () => {
     expect(css).toContain('@media (max-width: 560px)');
   });
 
-  test('手册文档生成页进入指定手册后直接展示三栏编辑器', () => {
+  test('文档工作台统一进入沉浸式 AI 写作，移除重复资料入口', () => {
     const handbook = read('apps/knowledge-center-web/frontend/knowledge-center/modules/production/handbook-view.js');
     const css = read('apps/knowledge-center-web/frontend/knowledge-center/modules/production/production.css');
     const state = read('apps/knowledge-center-web/frontend/knowledge-center/common/state/app-state.js');
-    for (const label of ['文档目录', '文档模板', '全局预览', '预览', '编辑', '取消', '保存', 'AI助手', '属性', '引用资料']) expect(handbook).toContain(label);
-    for (const marker of ['data-handbook-template', 'data-handbook-focus-toggle', 'data-handbook-assistant-open', 'data-handbook-assistant-close', 'data-handbook-ai-action="generate"', 'data-handbook-ai-action="polish"', 'data-handbook-ai-action="check"', 'data-handbook-reference-open']) expect(handbook).toContain(marker);
-    for (const removed of ['data-handbook-generation-setup', '1 产品', '生成文档结构', 'Markdown / 富文本', 'GitLab 未匹配正文', '来源分支']) expect(handbook).not.toContain(removed);
-    expect(handbook).toContain('AI 生成接口待接入');
-    expect(css).toContain('grid-template-columns: minmax(220px, 260px) minmax(420px, 1fr) minmax(250px, 300px)');
+    for (const label of ['文档目录', '全局预览', '预览', '编辑', '取消', '保存', 'AI 辅助写作', 'Markdown', '校验', '更多', '显示预览', '查看差异']) expect(handbook).toContain(label);
+    for (const marker of ['data-handbook-template', 'data-handbook-focus-toggle', 'data-handbook-ai-action="generate"', 'data-handbook-ai-action="check"', 'data-handbook-markdown-preview-toggle', 'data-handbook-history-compare']) expect(handbook).toContain(marker);
+    expect(handbook).not.toContain('<span>文档模板</span>');
+    for (const removed of ['data-handbook-generation-setup', '1 产品', '生成文档结构', 'Markdown / 富文本', 'GitLab 未匹配正文', '来源分支', 'data-handbook-reference-open', 'data-handbook-assistant-tab', 'data-handbook-reference-dialog', '粘贴 Markdown', '文档属性与内容依据']) expect(handbook).not.toContain(removed);
+    const writing = read('apps/knowledge-center-web/frontend/knowledge-center/modules/production/production-writing-page.js');
+    for (const operation of ['continue', 'rewrite', 'update']) expect(writing).toContain(`${operation}:`);
+    expect(app()).toContain('openProductionWritingPage');
+    expect(css).toContain('grid-template-columns: minmax(220px, 260px) minmax(0, 1fr)');
     expect(css).toContain('.handbook-assistant-panel');
     expect(css).toContain('.handbook-production-page.is-focus-mode');
     expect(css).toContain('position: sticky');
+    expect(css).toContain('.handbook-more-menu');
+    expect(css).toContain('.handbook-markdown-workspace.is-previewing');
+    expect(css).toContain('.handbook-history-comparison');
     expect(state).toContain('templateByDocument: {}');
     expect(state).toContain('focusMode: false');
     expect(state).toContain('assistantOpen: false');

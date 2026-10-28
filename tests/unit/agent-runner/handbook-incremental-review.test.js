@@ -23,6 +23,12 @@ async function listen(t, handler) {
 }
 
 test('真实 HTTP：保存 → 增量评审 → 本人审核 → 创建 MR，失败与重试保持冻结版本', async t => {
+  const previousStorageMode = process.env.KNOWLEDGE_STORAGE_MODE;
+  process.env.KNOWLEDGE_STORAGE_MODE = 'file';
+  t.after(() => {
+    if (previousStorageMode === undefined) delete process.env.KNOWLEDGE_STORAGE_MODE;
+    else process.env.KNOWLEDGE_STORAGE_MODE = previousStorageMode;
+  });
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'handbook-mr-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   let branchSha = 'base-sha'; let commits = 0; let failMr = true;
