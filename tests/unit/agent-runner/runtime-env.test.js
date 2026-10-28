@@ -34,4 +34,21 @@ describe('knowledge center runtime environment', () => {
     expect(process.env.RUNTIME_ENV_TEST_PRECEDENCE).toBe('from-caller');
     fs.rmSync(directory, { recursive: true, force: true });
   });
+
+  test('fills missing runtime secrets from the agent-runner env file', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'runtime-env-secret-'));
+    const config = path.join(dir, 'config.env');
+    const runtime = path.join(dir, 'runtime.env');
+    fs.writeFileSync(config, 'RUNTIME_ENV_TEST_PRIMARY=primary\n');
+    fs.writeFileSync(runtime, 'RUNTIME_ENV_TEST_PRIMARY=should-not-override\nRUNTIME_ENV_TEST_SECRET=runtime-secret\n');
+    delete process.env.RUNTIME_ENV_TEST_SECRET;
+    const result = loadRuntimeEnv({ path: config, runtimePath: runtime });
+    expect(result.loaded).toBe(true);
+    expect(result.runtimeLoaded).toBe(true);
+    expect(process.env.RUNTIME_ENV_TEST_PRIMARY).toBe('primary');
+    expect(process.env.RUNTIME_ENV_TEST_SECRET).toBe('runtime-secret');
+    delete process.env.RUNTIME_ENV_TEST_PRIMARY;
+    delete process.env.RUNTIME_ENV_TEST_SECRET;
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
 });

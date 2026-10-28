@@ -99,23 +99,33 @@ function waitForTaskCompletion(taskId, maxWaitMs = 180000, pollIntervalMs = 5000
   });
 }
 
+// A producer can be between opening and finishing a JSON artifact. Poll until
+// the requested artifact is complete instead of failing on a transient prefix.
+function readJsonIfReady(file) {
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')); }
+  catch (error) {
+    if (error.code === 'ENOENT' || error instanceof SyntaxError) return null;
+    throw error;
+  }
+}
+
 function findIntermediateFiles(taskId) {
   const taskDir = path.join(INTERMEDIATE_DIR, taskId);
   const result = {};
 
   const keywordPath = path.join(taskDir, '01-input-preparation', '03-keyword-extraction.json');
   if (fs.existsSync(keywordPath)) {
-    result.keywordExtraction = JSON.parse(fs.readFileSync(keywordPath, 'utf-8'));
+    result.keywordExtraction = readJsonIfReady(keywordPath);
   }
 
   const retrievalPlanPath = path.join(taskDir, '02-retrieval-plan', '01-retrieval-plan.json');
   if (fs.existsSync(retrievalPlanPath)) {
-    result.retrievalPlan = JSON.parse(fs.readFileSync(retrievalPlanPath, 'utf-8'));
+    result.retrievalPlan = readJsonIfReady(retrievalPlanPath);
   }
 
   const assessmentPath = path.join(taskDir, '02-retrieval-plan', '08-retrieval-assessment.json');
   if (fs.existsSync(assessmentPath)) {
-    result.retrievalAssessment = JSON.parse(fs.readFileSync(assessmentPath, 'utf-8'));
+    result.retrievalAssessment = readJsonIfReady(assessmentPath);
   }
 
   const mcpDir = path.join(taskDir, '02-retrieval-plan', '03-mcp-queries');
@@ -123,7 +133,8 @@ function findIntermediateFiles(taskId) {
     result.mcpQueryResults = [];
     const files = fs.readdirSync(mcpDir).sort();
     for (const file of files) {
-      result.mcpQueryResults.push(JSON.parse(fs.readFileSync(path.join(mcpDir, file), 'utf-8')));
+      const ready = readJsonIfReady(path.join(mcpDir, file));
+      if (ready) result.mcpQueryResults.push(ready);
     }
   }
 
@@ -327,6 +338,20 @@ describe('L1: query-planner 模块单元测试', () => {
 // L2: 集成测试 - API 调用 + MCP 检索
 // ============================================================
 
+test('中间产物只读取完整 JSON，写入中的前缀留待下一轮读取', () => {
+  const root = path.resolve(__dirname, '../../../runtime/test-results/tmp');
+  fs.mkdirSync(root, { recursive: true });
+  const dir = fs.mkdtempSync(path.join(root, 'retrieval-artifact-'));
+  const file = path.join(dir, 'result.json');
+  try {
+    expect(readJsonIfReady(file)).toBeNull();
+    fs.writeFileSync(file, '{"results":');
+    expect(readJsonIfReady(file)).toBeNull();
+    fs.writeFileSync(file, '{"results":[1]}');
+    expect(readJsonIfReady(file)).toEqual({ results: [1] });
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 describe('L2: 集成测试 - API + MCP 检索', () => {
   beforeAll(async () => {
     authCookie = await loginForSystemTest();
@@ -359,9 +384,11 @@ describe('L2: 集成测试 - API + MCP 检索', () => {
       const taskId = execRes.data.task_id;
       expect(taskId).toBeTruthy();
 
-      // 等待检索阶段完成（最多 50 秒）
+      // Keyword extraction includes a real model request; wait for completion,
+      // including the observed 66s provider response, within a bounded 90s budget.
       let keywordData = null;
-      for (let i = 0; i < 40; i++) {
+      const keywordDeadline = Date.now() + 90000;
+      for (let i = 0; Date.now() < keywordDeadline; i++) {
         await new Promise(r => setTimeout(r, Math.min(1000, 200 + i * 100)));
         const files = findIntermediateFiles(taskId);
         if (files.keywordExtraction) {
@@ -441,7 +468,7 @@ describe('L2: 集成测试 - API + MCP 检索', () => {
         highScoreRatio: analysis.highScoreRatio,
         avgScore: analysis.avgScore
       });
-    }, 120000
+    }, 180000
   );
 });
 

@@ -131,6 +131,7 @@ describe('knowledge center unified build contract', () => {
   test('build fingerprint only scans existing repository inputs', () => {
     expect(buildScript).toContain('fingerprint_inputs=(');
     expect(buildScript).toContain('构建指纹输入不存在');
+    expect(buildScript).toContain('config/knowledge-center');
     expect(buildScript).not.toContain('packages/platform-config');
 
     const match = buildScript.match(/fingerprint_inputs=\(\n([\s\S]*?)\n\)/);

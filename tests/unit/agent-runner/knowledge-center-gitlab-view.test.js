@@ -36,6 +36,12 @@ describe('知识资产 GitLab 阅读前端契约', () => {
     expect(app).toContain('window.history.replaceState');
     expect(app).toContain('path: resolvedPath');
   });
+  test('映射回填同步公共 Combobox 的可见值', () => {
+    const app = read('apps/knowledge-center-web/frontend/knowledge-center/app.js');
+    const combobox = read('apps/knowledge-center-web/frontend/knowledge-center/common/searchable-combobox.js');
+    expect(app).toContain('syncSearchableSelect(form.elements.connectionId)');
+    expect(combobox).toContain('export function syncSearchableSelect(select)');
+  });
   test('Markdown 先转义再以允许元素渲染', () => {
     expect(view()).toContain('escapeHtml(');
     expect(view()).not.toContain('innerHTML');

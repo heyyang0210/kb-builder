@@ -7,6 +7,43 @@ test.beforeEach(async ({ page }) => {
   expect(response.ok()).toBe(true);
 });
 
+test('已保存的中文仓库映射显示版本、统计并回填连接可见值', async ({ page }) => {
+  const mappingResponse = await page.request.get(`${baseUrl}/knowledge-center/api/gitlab/mappings/DB-004`);
+  expect(mappingResponse.ok()).toBe(true);
+  const mapping = (await mappingResponse.json()).data;
+  expect(mapping.zhPaths.length).toBeGreaterThan(0);
+  const catalogResponse = await page.request.get(`${baseUrl}/knowledge-center/api/assets/handbooks?q=DB-004`);
+  expect(catalogResponse.ok()).toBe(true);
+  expect((await catalogResponse.json()).data.items[0]).toMatchObject({ repositoryMapped: true, repository: { defaultBranch: mapping.defaultBranch } });
+
+  await page.goto(`${baseUrl}/knowledge-center/assets?q=DB-004&handbookId=DB-004`);
+  const branch = page.locator('[data-asset-branch="DB-004"]');
+  await expect(branch).toHaveValue(mapping.defaultBranch);
+  const accessResponse = await page.request.get(`${baseUrl}/knowledge-center/api/gitlab/handbooks/DB-004/access-status`);
+  expect(accessResponse.ok()).toBe(true);
+  const access = (await accessResponse.json()).data;
+  const cell = page.locator('[data-asset-statistics="DB-004"]');
+  if (access.canRead) {
+    const statisticsResponse = await page.request.get(`${baseUrl}/knowledge-center/api/gitlab/handbooks/DB-004/statistics?ref=${encodeURIComponent(mapping.defaultBranch)}&language=zh`);
+    expect(statisticsResponse.ok()).toBe(true);
+    const statistics = (await statisticsResponse.json()).data;
+    await expect(cell).toContainText(`章节 ${statistics.chapterCount}`, { timeout: 30000 });
+    await expect(cell).toContainText(`文档 ${statistics.documentCount}`);
+  } else {
+    // 实际账号授权异常时验证错误透明呈现，不把它视为数字统计成功。
+    await expect(cell).toContainText(access.message, { timeout: 30000 });
+  }
+
+  await page.locator('[data-repository-mapping-open="DB-004"]').click();
+  const form = page.locator('[data-repository-mapping-form]');
+  const connection = form.locator('select[name="connectionId"]');
+  await expect(connection).toHaveValue(mapping.connectionId);
+  const label = await connection.locator('option:checked').textContent();
+  await expect(connection.locator('xpath=ancestor::*[@data-searchable-combobox]//input')).toHaveValue(label);
+  await expect(form.locator('select[name="defaultBranch"]')).toHaveValue(mapping.defaultBranch);
+  for (const path of mapping.zhPaths) await expect(form).toContainText(path);
+});
+
 test('知识资产动态实体可输入筛选且固定枚举保留原生选择', async ({ page }) => {
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));

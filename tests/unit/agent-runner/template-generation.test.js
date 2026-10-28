@@ -21,7 +21,7 @@ test('generation authorizes the server session and ignores client snapshots', as
   await new Promise(resolve => auth.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise(resolve => auth.close(resolve)));
   let reads = 0;
-  const options = { auth: { port: auth.address().port }, store: { resolveForGeneration(reference) { reads++; assert.equal(reference, 'knowledge/templates/test.md'); return snapshot(); } } };
+  const options = { auth: { host: '127.0.0.1', port: auth.address().port }, store: { resolveForGeneration(reference) { reads++; assert.equal(reference, 'knowledge/templates/test.md'); return snapshot(); } } };
   const request = cookie => ({ headers: { cookie }, body: { template: 'knowledge/templates/test.md', ...snapshot('伪造正文', 99), templateId: undefined } });
   await assert.rejects(freezeTemplateForRequest(request(''), options), { status: 401, code: 'AUTH_REQUIRED' });
   await assert.rejects(freezeTemplateForRequest(request('knowledge'), options), { status: 403, code: 'TEMPLATE_PERMISSION_DENIED' });

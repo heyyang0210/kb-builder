@@ -57,7 +57,7 @@ describe('数据库模式知识资产状态覆盖', () => {
       stores: {
         ...stores,
         brandIconStore: {},
-        domainStore: { readTechDomains: () => ({ techDomains: [] }) },
+        domainStore: { readTechDomains: () => ({ techDomains: [] }), readPlatformGitLabMappingAsync: async () => null, ...stores.domainStore },
       },
       moduleRegistry: { get: () => ({ authorize: async () => ({ user: { id: 'admin' }, roles: ['PLATFORM_ADMIN'], allowedActions: ['platform:manage', 'knowledge:read'] }) }) },
       sendFile(_file, res) { res.writeHead(404); res.end(); },
@@ -71,6 +71,33 @@ describe('数据库模式知识资产状态覆盖', () => {
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     baseUrl = `http://127.0.0.1:${server.address().port}`;
   }
+
+  test('数据库列表仅加载当前页映射并保留中文单语言仓库版本', async () => {
+    const readMapping = jest.fn(async id => ({ handbookId: id, defaultBranch: 'master', enabledBranches: ['master'], zhPaths: ['doc/中文'], enPaths: [] }));
+    await startHandler({
+      knowledgeAssetsStore: jsonStore({ handbooks: ['DB-004', 'DB-005'].map(handbookId => ({ handbookId, name: handbookId })) }),
+      domainStore: { readPlatformGitLabMappingAsync: readMapping },
+    });
+    const response = await fetch(`${baseUrl}/knowledge-center/api/assets/handbooks?pageSize=1`);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ data: { total: 2, items: [{ handbookId: 'DB-004', repositoryMapped: true, repository: { defaultBranch: 'master', enabledBranches: ['master'] } }] } });
+    expect(readMapping.mock.calls).toEqual([['DB-004']]);
+  });
+
+  test.each([
+    [404, 'GITLAB_MAPPING_NOT_FOUND', 200],
+    [503, 'DOMAIN_STORE_UNAVAILABLE', 503],
+  ])('映射读取 %s %s 返回 %s，不把服务故障伪装成未映射', async (status, code, expectedStatus) => {
+    await startHandler({
+      knowledgeAssetsStore: jsonStore({ handbooks: [{ handbookId: 'DB-004', name: 'SQL参考手册' }] }),
+      domainStore: { readPlatformGitLabMappingAsync: async () => { throw Object.assign(new Error(code), { status, code }); } },
+    });
+    const response = await fetch(`${baseUrl}/knowledge-center/api/assets/handbooks`);
+    expect(response.status).toBe(expectedStatus);
+    const result = await response.json();
+    if (expectedStatus === 200) expect(result.data.items[0].repositoryMapped).toBe(false);
+    else expect(result.error.code).toBe('ASSET_CONFIG_UNAVAILABLE');
+  });
 
   test('修改手册人工状态不回写关系化手册快照且列表可见', async () => {
     const knowledgeAssetsStore = jsonStore({

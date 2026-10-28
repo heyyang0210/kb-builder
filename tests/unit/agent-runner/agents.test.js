@@ -71,6 +71,8 @@ describe('PlannerAgent', () => {
     expect(agent.getOutputFormat()).toBe('json');
   });
 
+
+
   test('validateInput 验证 knowledgePoint', () => {
     expect(() => agent.validateInput({})).toThrow('knowledgePoint is required');
     expect(() => agent.validateInput({ knowledgePoint: {} })).toThrow('knowledgePoint.name is required');
@@ -184,6 +186,17 @@ describe('ValidatorAgent', () => {
 
   test('输出格式为 JSON', () => {
     expect(agent.getOutputFormat()).toBe('json');
+  });
+
+  test('生产内容检查严格拒绝无效格式、重复检查项及错误位置，不能用基础报告通过', () => {
+    const input = { document: '正文😀', qualityReview: {} };
+    const checks = ['structure', 'template', 'expression', 'sources'].map(check => ({ check, status: 'passed', details: '已核对' }));
+    const report = { checks, issues: [] };
+    expect(agent.parseResponse({ parsed: report }, input)).toEqual(report);
+    expect(() => agent.parseResponse({ content: 'not JSON' }, input)).toThrow(/格式无效/);
+    expect(() => agent.parseResponse({ parsed: { ...report, checks: [checks[0], checks[0], ...checks.slice(2)] } }, input)).toThrow(/格式无效/);
+    expect(() => agent.parseResponse({ parsed: { ...report, issues: [{ check: 'expression', severity: 'warning', start: 3, end: 4, message: '问题', requirement: '核对' }] } }, input)).toThrow(/格式无效/);
+    expect(() => agent.parseResponse({ parsed: { ...report, issues: [{ check: 'expression', severity: 'blocking', start: 0, end: 1, message: '问题', requirement: '修订' }] } }, input)).toThrow(/格式无效/);
   });
 
   test('validateInput 验证 document', () => {

@@ -9,9 +9,13 @@ jest.doMock('node:assert/strict', () => ({
 }));
 
 jest.doMock('node:test', () => {
-  const register = (name, run) => {
+  const register = (name, optionsOrRun, maybeRun) => {
+    const options = typeof optionsOrRun === 'object' && optionsOrRun !== null ? optionsOrRun : {};
+    const run = typeof optionsOrRun === 'function' ? optionsOrRun : maybeRun;
     // The frontend ESM case stays in its native runner; this Jest bridge covers HTTP contracts.
     if (name.startsWith('送审入口区分无草稿')) return registerJestTest.skip(name, () => {});
+    if (options.skip) return registerJestTest.skip(name, () => {});
+    if (typeof run !== 'function') throw new TypeError(`node:test callback missing: ${name}`);
     return registerJestTest(name, async () => {
       const cleanups = [];
       const spies = [];
@@ -29,7 +33,7 @@ jest.doMock('node:test', () => {
         for (const spy of spies.reverse()) spy.mockRestore();
         for (const cleanup of cleanups.reverse()) await cleanup();
       }
-    });
+    }, options.timeout || 30000);
   };
   return register;
 });

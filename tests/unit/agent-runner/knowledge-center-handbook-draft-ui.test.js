@@ -19,7 +19,7 @@ describe('手册生产草稿空状态与不可用状态', () => {
     expect(api()).toContain("code: 'DRAFT_API_UNAVAILABLE'");
     expect(api()).toContain("contentType.toLowerCase().includes('application/json')");
     expect(view()).toContain('共享草稿服务暂不可用，当前正文仍可编辑，恢复后可保存。');
-    expect(view()).toContain("ui.draftLoadState?.[documentId] === 'ready'");
+    expect(read('apps/knowledge-center-web/frontend/knowledge-center/modules/production/handbook-actions.js')).toContain("ui.draftLoadState?.[documentId] === 'ready'");
     expect(view()).toContain("canSaveHandbookDraft(document.id, ui) ? '' : 'disabled'");
     expect(app()).toContain("draftLoadState?.[documentId] !== 'ready'");
   });

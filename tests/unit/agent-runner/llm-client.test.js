@@ -47,6 +47,9 @@ describe('LLMClient step options and JSON repair', () => {
     expect(result.parsed.summary).toBe('已修复');
     expect(result.attempts).toBe(2);
     expect(mockCreate).toHaveBeenCalledTimes(2);
+    expect(mockCreate.mock.calls[0][0].response_format).toEqual({ type: 'json_object' });
+    expect(mockCreate.mock.calls[0][0]).not.toHaveProperty('type');
+    expect(mockCreate.mock.calls[1][0].response_format).toEqual({ type: 'json_object' });
   });
 
   test('does not hide a second model call when JSON repair is disabled', async () => {
@@ -73,5 +76,13 @@ describe('LLMClient step options and JSON repair', () => {
       attempts: 1
     });
     expect(mockCreate).toHaveBeenCalledTimes(1);
+  });
+
+  test('classifies provider failures without exposing the upstream response', async () => {
+    mockCreate.mockRejectedValueOnce(Object.assign(new Error('Country, region, or territory not supported'), { status: 403 }));
+    const client = new LLMClient({ api_key: 'test', model: 'gpt-5.5' });
+    await expect(client.chat([{ role: 'user', content: '测试' }])).rejects.toMatchObject({
+      code: 'LLM_PROVIDER_ERROR', providerCode: 'AI_PROVIDER_REGION_UNSUPPORTED', status: 403, message: 'LLM 调用失败'
+    });
   });
 });
