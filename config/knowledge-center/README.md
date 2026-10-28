@@ -1,5 +1,7 @@
 # 知识中心配置
 
+文档生产任务默认在服务启动时扫描过期租约；设置 `KNOWLEDGE_PRODUCTION_RECOVERY_INTERVAL_MS` 为正整数毫秒可启用周期恢复。周期扫描复用同一恢复事务，服务关闭或测试结束时应调用 `stopRecoveryScheduler()`；该配置不提供多实例调度 claim。
+
 `content-rules.json#/outlineTemplate` 定义自然路径大纲模板的版本、六列表头、最大深度、Markdown 扩展名、介绍文件前缀和 SQL 示例源。每行完整路径、不继承空白；Excel 行序是文档顺序。根介绍和目录介绍均须在各自文档范围内排首位。正式模板和下载样例统一存放在 `knowledge/outlines/`，不得生成到仓库根目录；`templatePath` 与 `sampleDownloadPath` 是仓库内资源路径，`sampleDownloadName` 仅是用户下载文件名。示例下载副本通过 `tools/repository/generate-sql-outline-sample.js` 生成，原始 Excel 不修改。
 
 生成 SQL 大纲下载样例前必须存在 `sampleSource` 指定的原始 Excel；缺失时脚本会返回包含实际路径和补救动作的明确错误，不会创建空样例或覆盖现有下载文件。
@@ -14,14 +16,63 @@
 
 `service.json` 中 `documentPaths[].path` 的相对路径统一以仓库根目录解析，不以 `config/knowledge-center/` 或服务进程的启动目录解析。例如仓库位于 `/data/docs/AI高效应用示例/06-YashanDB知识库Skill仓库`时，`../../ai 体系认知` 指向 `/data/docs/ai 体系认知`。配置中保留相对路径，避免将开发机的绝对路径固化到仓库。
 
-底层逻辑是依次回答“产品是什么、服务怎样运行、内容怎样处理”。根目录不得继续增加无法归入这三类的 JSON；持续变化的知识资产、GitLab 连接和模板库位于 `runtime/knowledge-center/`，不随配置发布包覆盖。
+底层逻辑是依次回答“产品是什么、服务怎样运行、内容怎样处理”。根目录不得继续增加无法归入这三类的 JSON。
 
-`.env.example` 只描述环境注入契约；本地 `.env` 可保存本机凭据但不得提交，生产密钥应由环境变量或密钥系统注入。对外访问地址通过 `KNOWLEDGE_CENTER_PUBLIC_BASE_URL` 统一配置，可使用完整的 IP URL（例如 `http://192.0.2.10:13510`）或域名 URL；平台地址、CAS service 和默认 GitLab OAuth 回调由它派生。
+平台配置采用“一个入口、分层存储”规则：MCP、模型和 Agent 预设统一从 `service.json` 管理；GitLab 连接和手册映射属于可变平台数据，文件模式保存于 `runtime/knowledge-center/gitlab-connections.json`，数据库模式保存于 YashanDB。OAuth 凭据、验证结果、审计、幂等记录和缓存不并入 `service.json`，分别保存在安全存储或 `runtime/knowledge-center/`，避免配置发布覆盖运行状态。
 
-GitLab 审核发布使用 REST API 写入任务分支、提交和 MR，OAuth 应用及 `KNOWLEDGE_CENTER_GITLAB_OAUTH_SCOPES` 需包含 `api`；修改配置后，已有用户须重新连接 GitLab 账号才能取得新范围。`write_repository` 不能替代 REST API 写权限。
+通过 `KNOWLEDGE_PLATFORM_CONFIG_MODE=database` 启用数据库平台配置。切换前必须使用 `tools/knowledge-processing/migrate-platform-config-to-yashandb.js plan` 生成迁移摘要，并完成批准、维护窗口和验收；未完成迁移时保持 `file` 模式。该开关未设置时兼容 `KNOWLEDGE_STORAGE_MODE`。
+
+`.env.example` 只描述环境注入契约；本地 `.env` 可保存本机凭据但不得提交，生产密钥应由环境变量或密钥系统注入。`service.json` 中的 `api_key_encrypted` 和加密请求头只用于兼容现有配置，新增或轮换密钥不得写入版本库；生产应由密钥系统注入并按部署策略更新。对外访问地址通过 `KNOWLEDGE_CENTER_PUBLIC_BASE_URL` 统一配置，可使用完整的 IP URL（例如 `http://192.0.2.10:13510`）或域名 URL；平台地址、CAS service 和默认 GitLab OAuth 回调由它派生。
+
+当前 `git-tools.yasdb.com` OAuth 应用接受 `read_api read_repository`，用于知识资产读取和重新连接；修改配置后，已有用户须重新连接 GitLab 账号才能取得新范围。若要启用审核发布的 REST API 写入任务分支、提交和 MR，GitLab OAuth 应用必须额外启用并允许 `api`，同时将 `KNOWLEDGE_CENTER_GITLAB_OAUTH_SCOPES` 改为 `api`。`write_repository` 不能替代 REST API 写权限。
 
 环境和内部端口使用统一前缀：`KNOWLEDGE_CENTER_ENV`、`KNOWLEDGE_CENTER_FRONTEND_PORT`、`KNOWLEDGE_CENTER_DOCUMENT_API_PORT`、`KNOWLEDGE_CENTER_PINGCODE_API_PORT`、`KNOWLEDGE_CENTER_INTERNAL_HOST` 和 `KNOWLEDGE_CENTER_PINGCODE_HOST`。旧 `KNOWLEDGE_CENTER_PUBLIC_HOST` 仅作一个兼容周期的输入，不应写入新配置。
 
 `KNOWLEDGE_CENTER_ENV` 是环境名称的唯一外部配置项；运维入口会将其规范化为进程内的 `KNOWLEDGE_CENTER_ENVIRONMENT` 并显式传递给前端网关。项目安装器将 Playwright 浏览器制品放在 `runtime/browsers/playwright/`，已有环境也可保持 Playwright 默认缓存或用 `PLAYWRIGHT_BROWSERS_PATH` 显式覆盖。
 
 认证配置由平台内核读取，生产平台不需要独立认证端口；`KNOWLEDGE_CENTER_AUTH_PORT/HOST` 仅为隔离运行 `apps/knowledge-center-auth/auth-server.js` 的兼容测试变量保留。
+
+`content-rules.json#/productionAI` 定义知识中心 AI 生产规则版本、运行租约、通用系统提示及 generate/polish/continue/rewrite/update 操作指引；提示词修改会影响候选语义，需同步更新设计和验收。文档生产仍使用共享配置中的 `model-config` 与 `LLMClient`，不得在该规则对象保存凭据或另建模型连接。
+
+`productionAI.sources` 配置引用读取上限（超时、正文大小、单次确认数量、重定向次数）。`allowPublicWeb=true` 允许读取公开 HTTP(S) 网页、Markdown 和纯文本，HTML 提取正文；每次重定向重新检查地址，拒绝内网、回环和保留地址。`urlOrigins` 是运维显式授权的来源列表，可供内部文档站点使用，不再限制公开网址。登录态、需要 JavaScript 渲染的页面可能无法读取。浏览器不传入 MCP 地址或凭证，知识库引用复用 `service.json#/mcp`。
+
+### 工作台续写 Skill
+
+`product.json#/skills` 登记 `continue-technical-document` 资源；`content-rules.json#/productionAI.skills` 配置中文说明和适用操作，`maxSelectedSkills` 限制选用数量，`skillPrompt` 配置基础约束。新增 Skill 按既有能力包流程加载后可选；生成请求使用 ID 和预览摘要，内容变化要求重新确认。指令来自 knowledge，不执行任意脚本；既有生成策略不变。
+
+
+`content-rules.json#/productionAI.sources.pingcodeSpaces` 为可引用 PingCode 空间标识列表，默认空列表。设计文档与测试文档共用既有资料服务，后端地址由现有 `PINGCODE_API_HOST/PORT` 内部配置注入，不接受浏览器传入服务地址或凭证。作者输入 `空间标识/页面ID`，预览并确认后引用；两种来源表示作者选择的用途，不表示平台已自动识别远端文档类型。`content-rules.json#/productionAI.sources.testCaseRoot` 指定仓库内测试用例目录，默认 `knowledge/references/test-cases`，仅读取 Markdown、SQL 和文本条目，预览确认后才冻结来源。
+
+当前开发环境已将 `pingcodeSpaces` 配置为 `YASSTORAGE`、`YASDOC`，并将已验证可读取的页面定位符维护在 `config/pingcode/credentials.json`；授权范围以配置空间列表为准。用户已授权 YASDOC 全空间引用，`urlOrigins` 和 `pingcodeOrigins` 配置为 `https://pingcode.yasdb.com`，页面 URL 复用资料服务读取正文。
+
+`productionAI.provenancePrompt` 配置结构化正文与来源区间协议，`maxProvenanceSegments` 同时限制声明及每项证据数量。规则 v3 要求引用对应已确认快照；逐字匹配不表示事实或数据库验证通过。协议随任务冻结，旧 Markdown 输出保守记为模型推理。
+
+文档候选区提供独立 YashanDB 用例检查入口。后端 `quality` 报告由用例提取、执行、比对和报告四个 Skill 组成，绑定文档版本和测试环境；无测试库或未满足前提时显示“未执行”，不得显示为通过。隔离 HTTP 已验证，真实数据库连接需使用授权的测试 Schema。
+
+## AI 文档质量执行
+
+数据库模式下，仅配置 `YASDB_QUALITY_JDBC_URL`、`YASDB_QUALITY_USERNAME` 和 `YASDB_QUALITY_PASSWORD` 后才启用文档 SQL 质量检查。质量 JDBC 地址必须不同于业务库 `YASDB_JDBC_URL`，账号只能读取测试数据；存储端的 `/v1/quality/execute` 使用独立只读连接，不复用业务存储连接池。`YASDB_QUALITY_ENVIRONMENT` 显式标记报告中的测试环境。未配置或指向业务库时保持 `not_executed`，不得记为通过。结果恰好达到行数上限时可正常比对，只有确实存在更多行才标记截断。
+
+
+`content-rules.json#/productionQuality` 配置内容检查规则版本、提示词、超时与输出上限。工作台检查弹窗勾选联合检查后，质量服务在 SQL 验证之前复用 ValidatorAgent 和统一模型配置。模型必须返回四项检查及带位置、等级和处理要求的问题；响应无效、模型不可用、模板或来源缺失不能记为通过。报告区分 `contentQuality.gate` 和 `sqlGate`，请求联合检查时整体 gate 同时要求两者通过；不自动批准审核发布。规则摘要与 ValidatorAgent 实现摘要随报告保留。
+
+`productionAI.sources.pingcodeOrigins` 将 PingCode 页面网址转交既有资料服务，仍受 `pingcodeSpaces` 限制；其他公开网址通过通用网页正文读取。参考资料可多选，作者确定的引用优先级随任务快照保留，数值 1 为最高。
+
+真实网关内容检查使用 `productionQuality.timeoutMs=120000`，超过期限仍按未执行返回，不能降级为通过。
+
+
+## 平台管理 MCP 配置
+
+入口 `/knowledge-center/platform?tab=mcp`。`service.json#/mcp` 为平台、原知识文档生成器、AI 资料来源共同读取的唯一配置；平台保存通过既有 ConfigManager 加密 Key 与普通请求头值，浏览器读取脱敏配置投影，知识库路由 ID 可见并可编辑。`content-rules.json#/platformMcp` 定义超时、请求头数量/长度、缓存 TTL/条数边界和默认值，不在前端复制业务限值。
+
+连接测试使用未保存表单并执行 initialize、initialized 通知和 tools/list；不自动保存，也不执行 tools/call。`content-rules.json#/platformMcp/multiSearchHeaderName` 指定支持重复配置的搜索路由标头；重复行会成为逐库搜索目标，单独建立会话后合并结果。知识库路由 ID 在管理界面直接展示并可编辑；API Key 与普通自定义请求头值继续脱敏。其他重复标头仍需清理并为保留项重填值。现有生成器 `/api/config/*` 保持兼容，其部署访问边界及统一权限治理仍需单独维护；配置加密的 `AGENT_RUNNER_KEY` 应由环境安全提供，沿用默认回退不能视为生产密钥治理完成。
+
+`service.json#/model.services[]` 为 AI 辅助写作模型目录；服务包含 provider、protocol、base_url、加密 api_key、models、enabled、timeout、temperature、max_tokens；defaultSelection 指定默认服务和模型。平台管理页面维护；未保存之前兼容既有顶层模型配置，其他 Agent 继续使用顶层字段。`content-rules.json#/platformModels` 集中定义服务商/协议选项、边界、默认参数与连接测试短提示词。新密钥不要写进示例、日志或浏览器持久存储。
+
+`content-rules.json#/platformModels/providers[].baseUrl` 为模型服务新增表单的公开地址预设；手工地址和历史地址不自动覆盖，不预设模型标识。
+
+`content-rules.json#/productionAI/executionFeedback` 集中设置写作执行反馈的预览落盘间隔 `previewIntervalMs` 与最大字符数 `maxPreviewChars`。仅保存已解码正文，阶段调用的输入摘要和结果随任务记录；实时文本不包含来源协议原始 JSON。
+
+GPT 服务模型目录按2026-10-26用户提供的网关截图追加文本模型：`gpt-5.5`、`gpt-5.6-luna`、`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-6-astra`、`gpt-6-luna`、`gpt-6-sol`；保留原有模型及默认选择。此列表是网关标识，非官方定价或可调用性验证。`gpt-image-2`、`BAAI/bge-m3`不加入当前文本写作服务目录。测试模型下拉框直接读取对应服务的 `models[]`，无需在前端另写清单。
+
+AI 写作页面统一显示文档生成（generate）、内容修订（polish）、内容续写（continue）。production-ai-v4 将 polish 指引扩展为依据要求进行表达、结构及资料修订，模板可选；rewrite/update 保留供历史接口兼容。任务创建时冻结规则版本和操作指令，历史候选不随配置变化。
