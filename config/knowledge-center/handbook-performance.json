@@ -1,0 +1,11 @@
+{
+  "apiRounds": 100,
+  "browserRounds": 30,
+  "directoryP95Ms": 100,
+  "draftP95Ms": 100,
+  "directoryVisibleP95Ms": 200,
+  "bodyReadyP95Ms": 500,
+  "directoryMaxBytes": 230000,
+  "draftMaxBytes": 65536,
+  "timeoutMs": 10000
+}

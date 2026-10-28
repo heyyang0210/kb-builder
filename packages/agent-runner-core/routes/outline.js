@@ -589,6 +589,12 @@ router.get('/governance/:id', async (req, res, next) => {
   if (req.params.id === 'recycle') return next();
   try {
     const databaseMode = isDatabaseMode();
+    if (databaseMode && req.query.view === 'directory') {
+      const started = performance.now();
+      const directory = await handbookDomainStore.readOutlineDirectoryAsync(req.params.id);
+      res.setHeader('Server-Timing', `directory_read;dur=${(performance.now() - started).toFixed(2)}`);
+      return res.json({ success: true, data: { ...directory, state: publicOutlineState(directory.state) }, generatedAt: new Date().toISOString() });
+    }
     let outline;
     let governance;
     if (databaseMode) {

@@ -131,6 +131,27 @@ class DatabaseAggregateStore {
     });
   }
 
+  async readDraftAsync(contextKey) {
+    const url = new URL(this.recordUrl());
+    url.searchParams.set('draftKey', contextKey);
+    try {
+      const response = await fetch(url, { signal: AbortSignal.timeout(this.timeoutSeconds * 1000) });
+      const record = await response.json();
+      if (!response.ok || record?.success === false) {
+        throw new AggregateStoreError(record?.error?.code || 'STORAGE_REQUEST_FAILED', record?.error?.message || '读取共享草稿失败', 503);
+      }
+      // Older storage services ignore draftKey and return the aggregate envelope.
+      // Select the requested draft until those services support the projection.
+      if (record.payload && Object.hasOwn(record.payload, 'drafts')) {
+        return record.payload.drafts?.[contextKey] || null;
+      }
+      return record.payload;
+    } catch (error) {
+      if (error instanceof AggregateStoreError) throw error;
+      throw new AggregateStoreError('STORAGE_UNAVAILABLE', 'YashanDB 存储服务不可用', 503);
+    }
+  }
+
   async readAsync() {
     try {
       const response = await fetch(this.recordUrl(), {

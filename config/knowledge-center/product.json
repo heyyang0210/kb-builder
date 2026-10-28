@@ -22,11 +22,6 @@
       "id": "document-generation",
       "enabled": true,
       "workspaceRef": "document-generation"
-    },
-    {
-      "id": "material-processing",
-      "enabled": true,
-      "workspaceRef": "material-processing"
     }
   ],
   "workspaces": [

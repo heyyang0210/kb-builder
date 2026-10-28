@@ -105,7 +105,7 @@ export async function loadPlatformData(scopes = ['context', 'overview']) {
   };
 }
 
-export async function loadOutlineData(handbookId = null, outlineVersionId = null) {
+export async function loadOutlineData(handbookId = null, outlineVersionId = null, view = 'compact') {
   try {
     if (!handbookId) {
       const response = await outlineGetJson('/knowledge-center/api/outline/catalog');
@@ -118,7 +118,7 @@ export async function loadOutlineData(handbookId = null, outlineVersionId = null
       const selected = (catalog.items || []).find(item => String(item.handbookId || item.manualId) === String(handbookId));
       if (selected) {
         const selectedId = selected.id || selected.outlineId;
-        const detail = await outlineGetJson(`${outlineEndpoint}/${encodeURIComponent(selectedId)}?view=compact`);
+        const detail = await outlineGetJson(`${outlineEndpoint}/${encodeURIComponent(selectedId)}?view=${encodeURIComponent(view)}`);
         return { status: 'ok', items: [selected], handbook: { handbookId, name: selected.name }, detail: detail?.data || null, selectedId, asOf: detail?.generatedAt || catalog.generatedAt || new Date().toISOString() };
       }
     }
@@ -142,7 +142,7 @@ export async function loadOutlineData(handbookId = null, outlineVersionId = null
       return new Date(right.updated_at || right.updatedAt || 0).getTime() - new Date(left.updated_at || left.updatedAt || 0).getTime();
     })[0];
     const selectedId = selected?.id || selected?.outlineId;
-    const detail = selectedId ? await outlineGetJson(`${outlineEndpoint}/${encodeURIComponent(selectedId)}?view=compact`) : null;
+    const detail = selectedId ? await outlineGetJson(`${outlineEndpoint}/${encodeURIComponent(selectedId)}?view=${encodeURIComponent(view)}`) : null;
     return { status: 'ok', items, handbook, detail: detail?.data || null, selectedId: selectedId || null, asOf: detail?.generatedAt || list?.generatedAt || new Date().toISOString() };
   } catch (error) {
     return { status: error?.status === 403 ? 'forbidden' : 'unavailable', items: [], error: { message: normalizeOutlineError(error), code: error?.code } };

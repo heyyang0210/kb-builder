@@ -147,6 +147,15 @@ function createHandbookProductionService(options = {}) {
     return projectDraft(state.drafts?.[contextKey(input)] || null, session);
   }
 
+  async function getDraftAsync(input, session) {
+    requireCapability(session, 'canRead');
+    const key = contextKey(input);
+    const draft = typeof store.readDraftAsync === 'function'
+      ? await store.readDraftAsync(key)
+      : (typeof store.readAsync === 'function' ? await store.readAsync() : store.read()).drafts?.[key];
+    return projectDraft(draft || null, session);
+  }
+
   function listReviewDrafts(handbookId, session) {
     requireCapability(session, 'canRead');
     return Object.values(store.read().drafts || {})
@@ -388,7 +397,7 @@ function createHandbookProductionService(options = {}) {
     store, yashanDB: options.yashanDB, skills: options.qualitySkills, now: options.now, actor, requireCapability, contextKey,
     contentQuality: options.contentQuality,
   });
-  return { getDraft, listReviewDrafts, saveDraft, listRevisions, restoreRevision, stageAttachment, readAttachment, createReviewBatch, linkIncrementalReview, capabilities, attachmentRoot, ai, quality, stopRecoveryScheduler };
+  return { getDraft, getDraftAsync, listReviewDrafts, saveDraft, listRevisions, restoreRevision, stageAttachment, readAttachment, createReviewBatch, linkIncrementalReview, capabilities, attachmentRoot, ai, quality, stopRecoveryScheduler };
 }
 
 module.exports = {

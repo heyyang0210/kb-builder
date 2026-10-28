@@ -55,6 +55,8 @@ public final class Main {
     private final SchemaMigrationManager schemaMigrations = new SchemaMigrationManager(sqlDirectory);
     private final Path techDomainSeedFile = Path.of(env("YASDB_TECH_DOMAINS_SEED_FILE", sqlDirectory.resolve("tech-domains.seed.json").toString())).toAbsolutePath().normalize();
     private final JdbcConnectionPool connectionPool;
+    private final DraftReadProjection draftReadProjection = new DraftReadProjection();
+    private final AtomicBoolean draftProjectionRebuilding = new AtomicBoolean();
     private final HandbookProjectionRepository handbookProjectionRepository = new HandbookProjectionRepository();
     private final PrincipalRepository principalRepository = new PrincipalRepository();
     private final PlatformAuthRepository platformAuthRepository = new PlatformAuthRepository();
@@ -104,6 +106,7 @@ public final class Main {
         }
         application.verifyMigrations();
         application.connectionPool.start();
+        application.warmDraftReadProjection();
         application.start();
         Runtime.getRuntime().addShutdownHook(new Thread(application.connectionPool::closeAll));
     }
@@ -297,8 +300,66 @@ public final class Main {
         }
     }
 
+    // Precompute the legacy aggregate once before accepting traffic. No database writes.
+    private void warmDraftReadProjection() throws Exception {
+        try (Connection connection = connection(); PreparedStatement query = connection.prepareStatement(
+            "SELECT PAYLOAD, REVISION, DELETED FROM KC_RECORD WHERE NAMESPACE='handbook-production' AND RECORD_KEY='state'")) {
+            try (ResultSet row = query.executeQuery()) {
+                if (row.next()) draftReadProjection.publish(row.getLong(2), "Y".equals(row.getString(3))
+                    ? Map.of() : castMap((Map<?, ?>) Json.parse(readClob(row.getClob(1)))));
+                else draftReadProjection.publish(0, Map.of());
+            }
+            connection.commit();
+        }
+    }
+
+    private void rebuildDraftReadProjection() {
+        if (!draftProjectionRebuilding.compareAndSet(false, true)) return;
+        Thread worker = new Thread(() -> {
+            try { warmDraftReadProjection(); }
+            catch (Exception error) { System.err.println("当前草稿读取索引重建失败"); }
+            finally { draftProjectionRebuilding.set(false); }
+        }, "draft-read-projection");
+        worker.setDaemon(true);
+        worker.start();
+    }
+
+    private void getDraftRecord(HttpExchange exchange, String contextKey) throws IOException {
+        long started = System.nanoTime();
+        try (Connection connection = connection(); PreparedStatement query = connection.prepareStatement(
+            "SELECT REVISION, DELETED FROM KC_RECORD WHERE NAMESPACE='handbook-production' AND RECORD_KEY='state'")) {
+            long revision = 0;
+            boolean deleted = false;
+            try (ResultSet row = query.executeQuery()) {
+                if (row.next()) { revision = row.getLong(1); deleted = "Y".equals(row.getString(2)); }
+            }
+            connection.commit();
+            Object draft = null;
+            if (!deleted && revision != 0) {
+                DraftReadProjection.Snapshot snapshot = draftReadProjection.snapshot();
+                if (snapshot == null || snapshot.revision() != revision) {
+                    rebuildDraftReadProjection();
+                    exchange.getResponseHeaders().set("Retry-After", "1");
+                    failure(exchange, 503, "DRAFT_PROJECTION_REBUILDING", "共享草稿索引正在更新，请重试");
+                    return;
+                }
+                draft = snapshot.drafts().get(contextKey);
+            }
+            exchange.getResponseHeaders().set("Cache-Control", "no-store");
+            exchange.getResponseHeaders().set("Server-Timing", "draft_projection;dur=" + ((System.nanoTime() - started) / 1e6));
+            sendJson(exchange, 200, mapOf("success", true, "revision", revision, "payload", draft));
+        } catch (Exception error) {
+            failure(exchange, 503, "DATABASE_UNAVAILABLE", "读取共享草稿失败");
+        }
+    }
+
     private void getRecord(HttpExchange exchange, String namespace, String key) throws IOException {
         long requestStarted = System.nanoTime();
+        String rawQuery = exchange.getRequestURI().getRawQuery();
+        if ("handbook-production".equals(namespace) && "state".equals(key) && rawQuery != null && rawQuery.startsWith("draftKey=")) {
+            getDraftRecord(exchange, decode(rawQuery.substring("draftKey=".length())));
+            return;
+        }
         String sql = "SELECT PAYLOAD, PAYLOAD_SHA256, REVISION, DELETED, CREATED_AT, UPDATED_AT FROM KC_RECORD WHERE NAMESPACE=? AND RECORD_KEY=?";
         try (Connection connection = connection(); PreparedStatement statement = connection.prepareStatement(sql)) {
             String condition = exchange.getRequestHeaders().getFirst("If-None-Match");
@@ -375,6 +436,9 @@ public final class Main {
             long revision = upsertRecord(connection, namespace, key, payload, digest, expected);
             long commitStarted = System.nanoTime();
             connection.commit();
+            if ("handbook-production".equals(namespace) && "state".equals(key)) {
+                draftReadProjection.publish(revision, castMap((Map<?, ?>) Json.parse(payload)));
+            }
             if (perfEnabled()) System.err.printf("[perf] put_record commit_ms=%.3f request_total_ms=%.3f%n", (System.nanoTime() - commitStarted) / 1e6, (System.nanoTime() - requestStarted) / 1e6);
             sendJson(exchange, 200, mapOf(
                 "success", true,
@@ -692,6 +756,21 @@ public final class Main {
                 try (Connection connection = connection()) {
                     Map<String, Object> data = saveOutlinesSnapshot(connection, payload);
                     connection.commit();
+                    sendJson(exchange, 200, mapOf("success", true, "data", data));
+                }
+                return;
+            }
+            if ("GET".equals(exchange.getRequestMethod()) && path.startsWith("/v1/domain/outlines/") && path.endsWith("/directory")) {
+                String outlineId = decode(path.substring("/v1/domain/outlines/".length(), path.length() - "/directory".length()));
+                long started = System.nanoTime();
+                try (Connection connection = connection()) {
+                    long acquired = System.nanoTime();
+                    Map<String, Double> timings = new LinkedHashMap<>();
+                    Map<String, Object> data = projectOutlineDirectory(connection, outlineId, timings);
+                    connection.commit();
+                    exchange.getResponseHeaders().set("Server-Timing", String.format(Locale.ROOT,
+                        "acquire;dur=%.2f, header;dur=%.2f, nodes;dur=%.2f, owners;dur=%.2f, directory;dur=%.2f",
+                        (acquired-started)/1e6, timings.get("header"), timings.get("nodes"), timings.get("owners"), (System.nanoTime()-started)/1e6));
                     sendJson(exchange, 200, mapOf("success", true, "data", data));
                 }
                 return;
@@ -1213,10 +1292,14 @@ public final class Main {
     }
 
     private Map<String, Object> outlineHeader(Connection connection, String outlineId) throws SQLException {
+        return outlineHeader(connection, outlineId, true);
+    }
+
+    private Map<String, Object> outlineHeader(Connection connection, String outlineId, boolean lock) throws SQLException {
         String sql = "SELECT V.OUTLINE_VERSION_ID, M.MANUAL_CODE, V.STATE, V.ROW_VERSION, O.OUTLINE_ID, "
             + "COALESCE(V.SOURCE_REF, TO_CHAR(V.OUTLINE_VERSION_ID)), V.DELETED_AT "
             + "FROM KC_MANUAL_OUTLINE_VERSION V JOIN KC_MANUAL_OUTLINE O ON O.OUTLINE_ID=V.OUTLINE_ID "
-            + "JOIN KC_MANUAL M ON M.MANUAL_ID=O.MANUAL_ID WHERE V.OUTLINE_VERSION_ID = ? FOR UPDATE";
+            + "JOIN KC_MANUAL M ON M.MANUAL_ID=O.MANUAL_ID WHERE V.OUTLINE_VERSION_ID = ?" + (lock ? " FOR UPDATE" : "");
         long internalId = resolveOutlineVersionId(connection, outlineId);
         try (PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setLong(1, internalId);
@@ -1260,6 +1343,41 @@ public final class Main {
             while (result.next()) names.put(result.getString(1), result.getString(2));
         }
         return names;
+    }
+
+    private Map<String, Object> projectOutlineDirectory(Connection connection, String outlineId, Map<String, Double> timings) throws SQLException {
+        long started = System.nanoTime();
+        Map<String, Object> header = outlineHeader(connection, outlineId, false);
+        if (header.get("deletedAt") != null) throw new SQLException("OUTLINE_NOT_FOUND");
+        timings.put("header", (System.nanoTime()-started)/1e6);
+        started = System.nanoTime();
+        List<Map<String, Object>> nodes = outlineNodes(connection, ((Number) header.get("internalId")).longValue(), false);
+        timings.put("nodes", (System.nanoTime()-started)/1e6);
+        started = System.nanoTime();
+        Map<String, List<Map<String, Object>>> owners = new LinkedHashMap<>();
+        String sql = "SELECT N.NODE_KEY, I.TECH_DOMAIN_ID, D.DOMAIN_NAME, I.OWNER_PRINCIPAL_ID, P.DISPLAY_NAME, I.BINDING_STATUS "
+            + "FROM KC_MANUAL_OUTLINE_RESP_ITEM I JOIN KC_MANUAL_OUTLINE_NODE N ON N.OUTLINE_NODE_ID=I.OUTLINE_NODE_ID "
+            + "JOIN KC_MANUAL_OUTLINE_VERSION V ON V.CURRENT_RESP_VERSION_ID=I.RESP_VERSION_ID "
+            + "LEFT JOIN KC_TECH_DOMAIN D ON D.TECH_DOMAIN_ID=I.TECH_DOMAIN_ID "
+            + "LEFT JOIN KC_PLATFORM_PRINCIPAL P ON P.PRINCIPAL_ID=I.OWNER_PRINCIPAL_ID WHERE V.OUTLINE_VERSION_ID=?";
+        try (PreparedStatement query = connection.prepareStatement(sql)) {
+            query.setLong(1, ((Number) header.get("internalId")).longValue());
+            try (ResultSet row = query.executeQuery()) {
+                while (row.next()) owners.computeIfAbsent(row.getString(1), ignored -> new ArrayList<>()).add(mapOf(
+                    "techDomainId", row.getString(2), "techDomainName", row.getString(3),
+                    "assigneeId", row.getString(4), "assigneeName", row.getString(5), "status", row.getString(6)));
+            }
+        }
+        timings.put("owners", (System.nanoTime()-started)/1e6);
+        List<Map<String, Object>> effective = new ArrayList<>();
+        for (Map<String, Object> node : nodes) {
+            node.remove("path");
+            if (owners.containsKey(String.valueOf(node.get("id")))) effective.add(mapOf("nodeId", node.get("id"),
+                "documentId", node.get("sourceId"), "ownerships", owners.get(String.valueOf(node.get("id")))));
+        }
+        return mapOf("id", header.get("id"), "outlineId", header.get("id"), "handbookId", header.get("manualId"),
+            "state", header.get("state"), "editVersion", header.get("editVersion"), "nodes", nodes,
+            "governance", mapOf("effectiveDocumentAssignments", effective));
     }
 
     private Map<String, Object> projectOutlineGovernance(Connection connection, String outlineId) throws SQLException {
@@ -2601,8 +2719,13 @@ public final class Main {
     }
 
     private List<Map<String, Object>> outlineNodes(Connection connection, long outlineVersionId) throws SQLException {
+        return outlineNodes(connection, outlineVersionId, true);
+    }
+
+    private List<Map<String, Object>> outlineNodes(Connection connection, long outlineVersionId, boolean descriptions) throws SQLException {
         List<Map<String, Object>> nodes = new ArrayList<>();
-        String sql = "SELECT N.NODE_KEY, P.NODE_KEY, N.NODE_TYPE, N.NODE_KEY, N.NODE_TITLE, N.NODE_DESCRIPTION, N.LEVEL_NO, N.SORT_NO "
+        String sql = "SELECT N.NODE_KEY, P.NODE_KEY, N.NODE_TYPE, N.NODE_KEY, N.NODE_TITLE, "
+            + (descriptions ? "N.NODE_DESCRIPTION" : "NULL") + ", N.LEVEL_NO, N.SORT_NO "
             + "FROM KC_MANUAL_OUTLINE_NODE N LEFT JOIN KC_MANUAL_OUTLINE_NODE P ON P.OUTLINE_NODE_ID=N.PARENT_NODE_ID "
             + "WHERE N.OUTLINE_VERSION_ID = ? ORDER BY N.SORT_NO, N.OUTLINE_NODE_ID";
         try (PreparedStatement statement = connection.prepareStatement(sql)) {
@@ -2615,7 +2738,7 @@ public final class Main {
                     node.put("kind", result.getString(3).toLowerCase());
                     node.put("sourceId", result.getString(4));
                     node.put("title", result.getString(5));
-                    node.put("description", readClobOrNull(result.getClob(6)));
+                    if (descriptions) node.put("description", readClobOrNull(result.getClob(6)));
                     node.put("level", result.getLong(7));
                     node.put("path", null);
                     node.put("order", result.getLong(8));

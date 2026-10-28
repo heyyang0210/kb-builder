@@ -159,3 +159,9 @@ apps/yashandb-storage/start.sh
 认证用户名册批量读取使用三次固定SQL（全部用户授权、用户主体、可分配角色），避免按用户逐条读取角色造成N+1；不缓存权限。隔离Storage回归逐项比较批量与单用户角色、模块、动作、状态及行版本。
 
 HTTP 服务默认设置 `sun.net.httpserver.nodelay=true`，减少持久连接上小响应的传输等待；可通过 JVM `-Dsun.net.httpserver.nodelay=false` 显式覆盖。
+
+## 手册按需读取
+
+`GET /v1/domain/outlines/:id/directory` 仅查询当前大纲目录与有效分工，不读取说明 CLOB 或全局治理数据。`GET /v1/records/handbook-production/state?draftKey=<上下文键>` 返回单篇当前草稿，不返回历史、其他草稿或 AI 任务。服务在监听前预热可丢弃索引，聚合写入提交后同步发布索引，每次读通过数据库 revision 校验；跨实例变更返回可重试 503 并单飞重建，失败不会伪装成空草稿。无数据库结构变更。发布时应先更新 Storage，再更新调用方；旧 Storage 兼容提取仍会读取全聚合，不满足性能目标。详见 [按需读取设计](../../.codex/知识中心建设平台/03-详细设计/知识中心-文档生产-按需读取与性能-详细设计文档.md)。
+
+目录投影读取提供 `Server-Timing`：连接获取、版本头、节点、责任人和总处理耗时，不包含正文或凭据，用于定位运行实例尾延迟。

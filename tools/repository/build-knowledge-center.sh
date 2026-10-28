@@ -197,6 +197,7 @@ java_compile_args=(
   -cp "$stage_rel/java/lib/yashandb-jdbc.jar"
   -d "$stage_rel/java/classes"
   apps/yashandb-storage/src/Main.java
+  apps/yashandb-storage/src/DraftReadProjection.java
   apps/yashandb-storage/src/OutlineNodeSnapshot.java
   apps/yashandb-storage/src/HandbookProjectionRepository.java
   apps/yashandb-storage/src/PrincipalRepository.java

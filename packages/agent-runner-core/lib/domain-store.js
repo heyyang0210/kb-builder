@@ -204,6 +204,11 @@ class DomainStore {
     return result.data || result;
   }
 
+  async readOutlineDirectoryAsync(outlineId) {
+    const result = await this.requestAsync('GET', `/v1/domain/outlines/${encodeURIComponent(outlineId)}/directory`);
+    return result.data || result;
+  }
+
   async readOutlineGovernanceAsync(outlineId) {
     const result = await this.requestAsync('GET', `/v1/domain/outlines/${encodeURIComponent(outlineId)}/governance`);
     return result.data || result;
