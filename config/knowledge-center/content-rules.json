@@ -24,6 +24,13 @@
       }
     ]
   },
+  "productionDelivery": {
+    "version": "managed-images-v1",
+    "resourceDirectory": "assets",
+    "maxCount": 64,
+    "maxBytes": 5242880,
+    "maxTotalBytes": 33554432
+  },
   "productionAI": {
     "version": "production-ai-v5",
     "maxProvenanceSegments": 512,

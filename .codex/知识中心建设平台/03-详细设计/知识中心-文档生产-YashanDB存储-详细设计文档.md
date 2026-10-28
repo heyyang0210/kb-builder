@@ -85,7 +85,7 @@ AI 逻辑量 = 留存任务数 × 每任务去重后输入/来源/输出平均�
 
 ## 5. 逻辑数据模型
 
-以下 `KC_DP_*` 为建议表名，未分配迁移编号。内部主键和已确认的本模块关联键遵循现有 Storage 规范使用 `BIGINT`；GitLab 仓库键、分支、commit、幂等键和摘要等外部标识使用字符串。`MANUAL_ID` 和 `OUTLINE_NODE_ID` 复用现有知识中心主键；`REPOSITORY_KEY` 不能因为 GitLab 当前返回数字就直接当成本库主键；`SCOPE_ID` 需先确认是否已有本地权威目录。序列边界尚未批准，必须在评审记录中选择新增文档生产边界或归并现有四类业务边界，不按每张表扩张。跨表关联默认由 Repository 事务和巡检保证，不采用物理外键；唯一约束、检查约束、索引、LOB 选项在实现阶段形成新增版本化 SQL，并在个人库验证。公共字段包含内部 `*_ID`、已定型的范围键、`CREATED_AT`、必要的 `CREATED_BY`。所有权范围由服务端授权解析，不能相信客户端提交的 scope。
+以下 `KC_DP_*` 为建议表名，未分配迁移编号。内部主键和已确认的本模块关联键遵循现有 Storage 规范使用 `BIGINT`；GitLab 仓库键、分支、commit、幂等键和摘要等外部标识使用字符串。`MANUAL_ID` 和 `OUTLINE_NODE_ID` 复用现有知识中心主键；`REPOSITORY_KEY` 不能因为 GitLab 当前返回数字就直接当成本库主键；`SCOPE_ID` 需先确认是否已有本地权威目录。序列边界尚未批准，必须在评审记录中选择新增文档生产边界或归并现有稳定业务边界（009的手册/大纲/责任/人员及010的平台配置），不按每张表扩张。跨表关联默认由 Repository 事务和巡检保证，不采用物理外键；唯一约束、检查约束、索引、LOB 选项在实现阶段形成新增版本化 SQL，并在个人库验证。公共字段包含内部 `*_ID`、已定型的范围键、`CREATED_AT`、必要的 `CREATED_BY`。所有权范围由服务端授权解析，不能相信客户端提交的 scope。
 
 | 逻辑表 | 关键字段 | 约束及索引 |
 |---|---|---|
@@ -339,6 +339,36 @@ DDL 附件还必须给出：
 
 迁移报告必须包含 `source_count / imported_count / skipped_count / rejected_count / bytes / digest_mismatch_count`，支持按批次重跑。缺失、重复或未授权数据不得静默标记成功。
 
+#### T04内容与关系只读基线契约
+
+独立工具`tools/repository/inventory-production-content.cjs`仅调用`GET /v1/export`，不改变现有引用门禁工具。选择非软删除的两个生产state聚合，按服务当前序列化规则核验修订Markdown/contentDigest、来源content/contentDigest、任务originalMarkdown/originalDigest、产物JSON.stringify(value)/digest；统计UTF-8字节、历史与当前修订、重复内容组；复用现有contextKey函数核对草稿键与上下文，不另造解析规则。检查当前/审核修订、修订附件、审核文档与AI任务产物引用，内嵌旧产物单独核验，不将动态MCP快照误判为丢失来源。孤立产物只登记为未引用，不能据此删除。
+
+附件文件核验仅在显式传入本机权威attachmentRoot时进行：根及祖先不得为符号链接、文件名不得跨目录、文件以O_NOFOLLOW打开并流式计算摘要；比较实际大小/摘要，缺失和无元数据文件单独分类，不读取链接目标、不自动清理。不指定根时物理核验为未执行，不能给出完整通过结论。报告只含固定类别、计数、字节、哈希化标识和摘要，不输出正文、文件名、路径、URL、创建人或错误原文。来源图片补充见下一节；运行模式、发布任务、旧Agent输出、LOB与跨实例/备份恢复仍是独立未验收项。
+
+伪代码：validateExport → selectLiveState → measureAndHashContent → validateLogicalReferences → optionalScanExplicitAttachmentRoot → sanitizedReport。导出和文件扫描并非同一事务快照；observedAt、聚合revision和manifestDigest仅用于定位观测版本，迁移前仍需停写快照和正式对账。协议不完整须失败；异常和未执行项不能静默算作通过。报告以0600独占创建，避免覆盖旧证据或跟随输出链接。
+
+#### T04托管来源图片盘点补充契约
+
+来源图片补验阶段盘点工具schemaVersion为2，scope为production_content_attachments_and_source_images；保留physical作为附件检查，新增sourceImages。按实际readImage授权读取链路遍历aiSources、aiJobs.sourceSnapshots、草稿所有revisions.generationMetadata.sourceSnapshots，分别统计ready/failed引用与按assetId去重的资源。ready资源须满足assetId=contentDigest且为64位小写SHA-256、bytes为非负安全整数、contentType为当前图片识别器支持类型；同一assetId的大小/类型矛盾单独阻断。失败来源图片只计数，不能伪造成现有文件，也不从远端重新拉取。随后正文图片引用盘点升级schemaVersion为3，scope为production_content_attachments_source_images_and_links；新增imageLinks，历史schemaVersion=2报告仍作为当时观测保留。
+
+通过显式KC_SOURCE_IMAGE_ROOT指定当前服务本机权威图片目录，复用附件的只读流式文件核验和路径约束，另用现有imageType验证实际文件签名；所有历史和任务快照同样纳入，不只扫描当前来源集合。没有图片根仍为not_checked，目录不可用为root_unavailable；两种资源目录均checked且无异常才可使scope内passed=true。孤立文件只报告，禁止清理；无资源元数据也须枚举目录才可认定已检查。报告不包含URL/路径/正文，仅聚合数量、大小和哈希标识。此扩展不解析所有Markdown/HTML内链接、不覆盖旧Agent文件、跨聚合事务快照或BLOB恢复，不能替代迁移总验收。
+
+#### T04正文图片引用只读核对契约
+
+在上述盘点工具中解析全部草稿修订Markdown及HTML快照、来源content和AI任务originalMarkdown中的图片引用；Markdown沿用现有marked图片token解析器，HTML用DOM解析img的src、data-src、data-original及首个srcset候选，与当前网页来源处理口径一致。按出现位置与链接类型统计，不输出原文或URL。平台附件引用须能定位state.attachments中的元数据；托管来源图片引用须能定位全部来源、任务和历史修订快照合并后的assetId；缺失引用作为逻辑异常。外部URL、data URI和仓库相对路径只计数，不下载或推断可恢复；srcset其余候选仍列为未检查。代码块、普通超链接和未保存的前端编辑内容不在图片引用口径内。即使本轮逻辑核对无异常，物理目录未检查、旧Agent输出、仓库相对资源字节、跨聚合事务快照与LOB恢复仍不能宣称迁移完成。伪代码：遍历受检正文→结构化提取图片→分类并核对内部元数据→匿名聚合报告→独立物理文件核验。
+
+实际只读观测（2026-10-28 20:58）：Storage聚合revision仍268/52；受检正文69处图片引用，其中来源外部62处、AI任务相对7处，修订Markdown/HTML没有图片引用。没有内部元数据缺失结论，不代表外部链接或仓库相对字节可用。附件root_unavailable、来源图片目录1个未关联文件，完整性仍失败。v3证据为`runtime/test-results/continuation-20261029/production-content-links-v3-final.json`；前两份试运行文件不作为正式结论引用。
+
+#### T04观测结果与迁移前阻断项（2026-10-28）
+
+真实共享Storage聚合revision为268/52：46草稿、75修订、37来源、23任务、52产物，受检摘要无不一致，36产物未被现存任务引用。正文共282561字节、最大45523字节；样本量不足以证明LOB容量。5份附件元数据共19277字节，但当前服务默认目录不存在，不能确认文件可恢复。仅记录根目录不可用，不推断其余机器/备份也丢失；不得创建空目录掩盖缺口。报告scope仅覆盖生产内容及附件，`complete/passed`不代表整套迁移门禁通过，其他未执行项在unchecked中明确列示。
+
+来源图片补验（20:14）：核对13510真实进程工作目录和命令，允许列表读取确认KNOWLEDGE_STORAGE_MODE=database、Storage URL为本机14210；frontend-server与route生产构造链无attachmentRoot/sourceImageRoot覆盖，repo-paths按代码根解析默认目录。附件目录仍不存在，图片目录有1个普通文件；真实GET导出聚合revision仍268/52。三个实际图片授权元数据位置均无图片引用，因此该文件列为UNREFERENCED_SOURCE_IMAGE_FILE，仅说明受检元数据未引用，未核验其字节、未判定可删除，也未把文件直接计作可恢复图片。图片目录已枚举checked，附件root_unavailable，整体complete=false/passed=false。运行模式的这次进程观察不等于跨实例存储恢复验收，保持迁移总门禁未完成。证据production-content-images-live.json、resource-runtime-observation.json；13项本地真实HTTP/文件测试通过，未写共享数据库或资源目录。
+
+迁移步骤提案：先在权威存储冻结快照并分别保留原始聚合与文件私有备份；以源record revision/sha256和内容摘要生成批次清单；将上下文键异常、失效大纲、缺失附件和引用不一致逐条隔离，保留源数据；经数据字典与迁移评审后在test_hy导入，按源ID+摘要幂等定位，逐批核对计数/字节/摘要与目标回读；全部阻断项有处置结论才允许切换。36份未引用产物和重复正文不能直接清理，须核查历史/留存引用并另获对应授权。
+
+回退提案：切换前保留旧模式和冻结快照、记录切换点；切换失败先停止新写入并保留新状态，若已产生新写入，必须先对账增量，不能直接覆盖为旧备份。批准后的恢复脚本只恢复对应批次/环境，CAS冲突停止；需真实恢复演练验证，不以工具单元测试代替。本轮未编写或执行新DDL/迁移/恢复脚本。
+
 ### 13.5 配置、密钥与部署契约
 
 实现前要冻结环境变量、配置文件和数据库配置记录的优先级，避免同一配置无法审计。至少定义存储模式、数据库 URL、超时、连接池、LOB 并发、事务重试、正文/资源/任务/租户限额、任务租约与重试、留存策略、GitLab 项目/分支/MR/LFS 限制、密钥标识和轮换版本。
@@ -372,3 +402,28 @@ DDL 附件还必须给出：
 5. 测试负责人确认测试矩阵、真实依赖环境和覆盖率口径。
 6. 现状基线和迁移映射无未分类高风险数据；例外有责任人、期限和回退措施。
 7. 评审结论、批注和批准版本写入设计文档；未批准参数仍标记为提案。
+
+### 续作T04/T11只读引用盘点（2026-10-28）
+
+在调整迁移或测试初始化前，使用独立只读工具读取Storage现有`GET /v1/export`，按当前服务端引用规则抽取非豁免namespace中的大纲引用（含软删除记录与历史修订），逐一通过`GET /v1/domain/outlines/:id/governance`确认存在及删除状态。规则配置放在`config/knowledge-center/production-reference-audit.json`；配置须与Main.collectOutlineReferences及upsertRecord豁免范围保持一致，不能改变服务端门禁。
+
+输出仅包含记录/引用数量、namespace、哈希化记录键及引用定位、导出revision/数据库摘要、有效/缺失/已删除/未知分类和整体通过状态；正文、凭据、模型上下文、原始URL不落盘。网络失败、协议异常和未知状态均非通过。报告只证明观测时点，导出与逐项读取非同一事务，不能充当冻结备份、原始LOB摘要核验或跨实例一致性证明；迁移前仍需锁定快照及正式对账。
+
+测试复制表行数相同不能证明引用有效。该盘点先在共享实例只读运行以定位原因，再用于隔离环境验证；不自动恢复大纲或删除来源库历史。基线异常报告保留并分类；用户已批准仅对test_hy先备份后重建测试生产状态，具体执行契约见下节。
+
+### T11隔离生产夹具初始化（已获用户批准）
+
+统一入口持有test_hy独占锁，先同步并对账、执行已提交迁移，再启动自有Storage。业务服务启动前执行固定初始化工具：核验测试环境、runId、run-owner、Storage PID的真实进程环境账号为test_hy且端口匹配。仅操作handbook-production/state与production-ai-artifacts/state；两份原始记录在runtime本次运行目录以0700目录、0600文件独占创建并fsync，全部备份成功才允许逐项If-Match CAS写入空状态。初始化前后分别保存只读引用盘点；初始化前只允许归属于这两个记录的已删除引用，缺失、未知状态或其他记录的异常在首次PUT前停止并保留备份，初始化后仍有失效引用则阻止业务启动。记录摘要/版本、回读空值一致；任一步失败停止启动，保留备份及阶段报告，不覆盖冲突或自动恢复旧记录。
+
+伪代码：guardOwnedTestStorage → GET两聚合 → durablePrivateBackupAll → CAS每聚合 → GET比对 → report。空状态保留schemaVersion=1及服务默认容器，具体有效草稿由E2E根据复制的有效手册初始化。禁止清空outlines/assets/auth或写pf_knowledge；测试初始化与迁移分离，不是业务启动自动DDL。回退仅在同一测试Schema停服后，以备份和当前revision逐项CAS恢复，冲突停止；下次正式测试仍必须重新同步，不在部分失败状态继续。
+
+T03补充核验见数据字典§4：已确认现有内部连接/映射与512字符外部项目路径，发现草案256字符键可能收缩；产品版本权威目录与scope仍待定，不能进入新表迁移。仅测试聚合初始化获批，不代表物理存储重构已评审通过。
+
+
+### T04离线备份与恢复演练契约（2026-10-29）
+
+备份工具只读Storage的三个生产聚合（handbook-production、production-ai-artifacts、incremental的state），显式指定当前服务的附件和来源图片目录，包含附件下delivery-images及未关联文件。原始聚合和文件以0700目录、0600文件独占创建并同步落盘，不覆盖既有备份。备份前后比较完整聚合内容与revision/sha256，并二次枚举、核对文件摘要；发现并发变更停止并保留失败现场。此检测不是数据库跨聚合事务快照；正式迁移仍需停写和数据库备份。缺失目录必须记录，禁止创建源空目录掩盖丢失。符号链接、特殊文件及路径重叠拒绝。
+
+恢复仅写入全新独立目录，禁止向Storage或现有业务目录写入；先校验清单及全部文件大小/摘要，再恢复原始聚合和资源，最后通过本机只读HTTP导出适配器复用内容盘点核验。备份自身完整不等于业务引用完整；分别报告copied、stable、inventoryPassed，只有三者通过才接受离线演练。缺失附件、旧候选清单缺口及孤立文件均继续阻断，不自动修复、不清理。报告不输出正文或资源名，私有原始备份则按恢复需要完整保存。
+
+伪代码：exportSelected → inventory → privateCopyAll → exportSelectedAgain → rescanFiles → compare → sealManifest；restore：validateManifestAndFiles → createNewTarget → copyVerified → localReadonlyExport → inventory → compare。线上数据库CAS恢复、LOB、跨实例事务及GC仍属后续任务，本工具不得声称已完成T09。

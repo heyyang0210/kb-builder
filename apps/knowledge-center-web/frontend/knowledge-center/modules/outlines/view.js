@@ -435,6 +435,14 @@ function renderOutlinesLegacy({ outlineProjection: source, outlineView = {}, out
   return `<div class="page-intro outline-list-intro"><div><p class="eyebrow">手册结构治理</p><h2>大纲管理</h2><p class="muted">查找手册并继续处理大纲。</p></div><div class="outline-list-intro-actions"><a class="button secondary" href="/knowledge-center/outlines/resources" data-outline-subpage="resources">准备大纲</a><a class="button secondary" href="/knowledge-center/outlines/recycle" data-outline-subpage="recycle">回收站</a></div></div>${accessNote}${body}${source?.asOf ? dataNote({ asOf: source.asOf }) : ''}`;
 }
 
+export function renderOutlineAssignments({ outlineProjection, outlineView, outlinePermissions, domainBuildTaskProjection }) {
+  const item = outlineProjection.detail;
+  const nodes = hierarchy(firstDefined(item.nodes, item.tree, item.chapters, item.content?.parts, []));
+  return assignmentManagement(item.governance || item.responsibility || {}, domainBuildTaskProjection,
+    item.handbookId || outlineProjection.handbook?.id, item.id, outlineView.domainId,
+    outlineView.nodeId || outlineView.documentId, outlinePermissions, nodes);
+}
+
 export function renderOutlines(args) {
   return renderOutlinesLegacy(args).replace('<p class="eyebrow">手册结构治理</p>', '').replace('<p class="muted">查找手册并继续处理大纲。</p>', '');
 }

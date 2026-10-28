@@ -2,8 +2,11 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { CONFIG_PATHS } = require('./config-registry');
+const { marked } = require('marked');
+const cheerio = require('cheerio');
 
 const DEFAULT_CONFIG_PATH = CONFIG_PATHS.gitlabConnections;
+const MAX_FILE_BYTES = 5 * 1024 * 1024;
 
 class GitLabConnectorError extends Error {
   constructor(code, message, status = 400, details = {}) {
@@ -283,9 +286,110 @@ async function readFile(connection, ref, filePath, options = {}) {
   const allowed = new Set(['.md', '.markdown', '.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp']);
   if (!allowed.has(extension)) throw new GitLabConnectorError('GITLAB_FILE_TYPE_NOT_ALLOWED', '仅允许读取 Markdown 和图片资源', 415);
   const buffer = result.encoding === 'base64' ? Buffer.from(result.content || '', 'base64') : Buffer.from(String(result.content || ''));
-  if (buffer.length > 5 * 1024 * 1024) throw new GitLabConnectorError('GITLAB_FILE_TOO_LARGE', '仓库文件超过 5MB 读取上限', 413);
+  if (buffer.length > MAX_FILE_BYTES) throw new GitLabConnectorError('GITLAB_FILE_TOO_LARGE', '仓库文件超过 5MB 读取上限', 413);
   const text = ['.md', '.markdown', '.svg'].includes(extension);
   return { path: result.file_path || filePath, ref: ref || connection.defaultBranch, blobId: result.blob_id || null, commitId: result.commit_id || null, content: text ? buffer.toString('utf8') : buffer.toString('base64'), encoding: text ? 'utf-8' : 'base64', size: buffer.length };
+}
+
+function extractMarkdownResources(markdown, markdownPath) {
+  const resources = [];
+  function collectReference(value, alt = '') {
+    const raw = String(value || '').trim();
+    if (!raw || /^(?:[a-z][a-z\d+.-]*:|#|\/)/i.test(raw)) {
+      throw new GitLabConnectorError('GITLAB_RESOURCE_DELIVERY_UNSUPPORTED', '图片尚未固化到仓库，请先使用映射目录内的图片链接再提交评审', 422);
+    }
+    let clean;
+    try { clean = decodeURIComponent(raw.split('#', 1)[0].split('?', 1)[0]); }
+    catch { throw new GitLabConnectorError('GITLAB_RESOURCE_PATH_INVALID', 'Markdown 图片路径编码无效', 400); }
+    if (!clean || clean.includes('\\') || clean.startsWith('/') || /[\u0000-\u001f\u007f]/.test(clean)) throw new GitLabConnectorError('GITLAB_RESOURCE_PATH_INVALID', 'Markdown 图片路径无效', 400);
+    const resolved = path.posix.normalize(path.posix.join(path.posix.dirname(markdownPath), clean));
+    if (resolved === '..' || resolved.startsWith('../')) throw new GitLabConnectorError('GITLAB_RESOURCE_PATH_INVALID', 'Markdown 图片路径越出仓库', 400);
+    if (!/^\.(png|jpe?g|gif|svg|webp)$/i.test(path.posix.extname(resolved))) {
+      throw new GitLabConnectorError('GITLAB_RESOURCE_TYPE_NOT_ALLOWED', 'Markdown 引用的资源必须是受支持的仓库图片', 415);
+    }
+    resources.push({ path: resolved, alt });
+  }
+  // Parse the rendered document as one tree: marked splits inline HTML tags
+  // into separate tokens, so token-local parsing loses picture/code ancestry.
+  const $ = cheerio.load(marked.parse(String(markdown || '')), null, false);
+  $('img, picture source').each((_, element) => {
+    const image = $(element);
+    if (image.parents('pre, code, script, style').length) return;
+    if (image.attr('srcset') !== undefined) {
+      throw new GitLabConnectorError('GITLAB_RESOURCE_DELIVERY_UNSUPPORTED', '响应式图片尚不支持冻结交付，请改为单一仓库图片链接再提交评审', 422);
+    }
+    collectReference(image.attr('src'), image.attr('alt') || '');
+  });
+  return [...new Map(resources.map(item => [item.path, item])).values()];
+}
+
+async function readDocumentResources(connection, ref, document, options = {}) {
+  const resources = extractMarkdownResources(document.markdown, document.filePath);
+  const result = [];
+  for (const resource of resources) {
+    const managed = options.managedResources?.find(item => item.path === resource.path);
+    if (managed) { result.push({ ...managed }); continue; }
+    const file = await readFile(connection, ref, resource.path, options).catch(error => {
+      if (error.status === 404) throw new GitLabConnectorError('GITLAB_RESOURCE_READBACK_FAILED', `仓库缺少 Markdown 引用资源：${resource.path}`, 409);
+      throw error;
+    });
+    result.push({ path: resource.path, size: file.size, blobId: file.blobId, contentDigest: crypto.createHash('sha256').update(file.encoding === 'base64' ? Buffer.from(file.content, 'base64') : file.content).digest('hex') });
+  }
+  return result;
+}
+
+async function assertDocumentResources(connection, ref, document, options = {}) {
+  const actual = await readDocumentResources(connection, ref, document, options);
+  const expected = Array.isArray(document.resources) ? document.resources : [];
+  const identity = items => items.map(item => ({ path: item.path, size: item.size, contentDigest: item.contentDigest }));
+  if (JSON.stringify(identity(actual)) !== JSON.stringify(identity(expected))) {
+    throw new GitLabConnectorError('GITLAB_RESOURCE_READBACK_FAILED', '仓库图片与审核候选冻结的资源摘要不一致', 409);
+  }
+  return actual;
+}
+
+// Only the server may supply loadResource. The frozen manifest carries hashes,
+// never remote credentials, arbitrary disk paths, or binary content.
+async function prepareResourceActions(connection, ref, documents, options) {
+  const manifests = new Map();
+  const documentPaths = new Set(documents.map(document => document.filePath));
+  for (const document of documents) {
+    const paths = extractMarkdownResources(document.markdown, document.filePath).map(resource => resource.path);
+    const resources = Array.isArray(document.resources) ? document.resources : [];
+    if (JSON.stringify(paths) !== JSON.stringify(resources.map(resource => resource.path))) {
+      throw new GitLabConnectorError('GITLAB_RESOURCE_READBACK_FAILED', '正文图片与冻结资源清单不一致', 409);
+    }
+    for (const resource of resources) {
+      const previous = manifests.get(resource.path)?.resource;
+      if (documentPaths.has(resource.path) || (previous && (previous.size !== resource.size || previous.contentDigest !== resource.contentDigest || previous.delivery !== resource.delivery))) {
+        throw new GitLabConnectorError('GITLAB_RESOURCE_PATH_CONFLICT', '候选资源路径冲突，请重新准备交付资源', 409);
+      }
+      manifests.set(resource.path, { resource, document });
+    }
+  }
+  const actions = [];
+  for (const { resource, document } of manifests.values()) {
+    const current = await readFile(connection, ref, resource.path, options).catch(error => {
+      if (error.status === 404) return null;
+      throw error;
+    });
+    if (current) {
+      const bytes = current.encoding === 'base64' ? Buffer.from(current.content, 'base64') : Buffer.from(current.content);
+      if (bytes.length !== resource.size || crypto.createHash('sha256').update(bytes).digest('hex') !== resource.contentDigest) {
+        throw new GitLabConnectorError('GITLAB_RESOURCE_READBACK_FAILED', '仓库资源与审核冻结摘要不一致，不能覆盖', 409);
+      }
+      continue;
+    }
+    if (resource.delivery !== 'create' || typeof options.loadResource !== 'function') {
+      throw new GitLabConnectorError('GITLAB_RESOURCE_READBACK_FAILED', '仓库缺少审核资源或托管资源读取器不可用', 409);
+    }
+    const bytes = await options.loadResource(resource, document);
+    if (!Buffer.isBuffer(bytes) || !bytes.length || bytes.length > MAX_FILE_BYTES || bytes.length !== resource.size || crypto.createHash('sha256').update(bytes).digest('hex') !== resource.contentDigest) {
+      throw new GitLabConnectorError('GITLAB_RESOURCE_SNAPSHOT_CHANGED', '托管图片内容与审核冻结摘要不一致或超过读取上限', 409);
+    }
+    actions.push({ action: 'create', file_path: resource.path, content: bytes.toString('base64'), encoding: 'base64' });
+  }
+  return actions;
 }
 
 
@@ -329,11 +433,25 @@ async function submitDocumentMergeRequest(connection, input, options = {}) {
   const previous = existing.find(item => item.source_branch === sourceBranch && item.target_branch === input.branch);
   async function validateExisting(previous) {
     if (!previous.iid || !previous.web_url || previous.description !== `审核候选：${input.candidateDigest}`) throw new GitLabConnectorError('GITLAB_MR_CANDIDATE_CONFLICT', '已有 MR 与审核候选不一致', 409);
-    for (const document of input.documents) {
-      const current = await readFile(connection, sourceBranch, document.filePath, options);
-      if (current.content !== document.markdown) throw new GitLabConnectorError('GITLAB_SOURCE_CHANGED', 'MR 正文已变化，请重新评审', 409);
-    }
     if (!['opened', 'merged'].includes(previous.state)) throw new GitLabConnectorError('GITLAB_MR_CLOSED', '关联 MR 已关闭，请创建新的审核任务', 409);
+    let ref = sourceBranch;
+    if (previous.state === 'merged') {
+      const branch = await request(connection, `${project}/repository/branches/${encodeURIComponent(input.branch)}`, options);
+      ref = branch?.commit?.id;
+      if (!ref) throw new GitLabConnectorError('GITLAB_MR_RESPONSE_INVALID', 'GitLab 未返回目标分支提交', 502);
+    }
+    for (const document of input.documents) {
+      const current = await readFile(connection, ref, document.filePath, options).catch(error => {
+        if (previous.state === 'merged' && error.status === 404) throw new GitLabConnectorError('GITLAB_SOURCE_CHANGED', '合并后目标分支缺少审核正文', 409);
+        throw error;
+      });
+      if (current.content !== document.markdown) throw new GitLabConnectorError('GITLAB_SOURCE_CHANGED', 'MR 正文已变化，请重新评审', 409);
+      await assertDocumentResources(connection, ref, document, options);
+    }
+    if (previous.state === 'merged') {
+      const latest = await request(connection, `${project}/repository/branches/${encodeURIComponent(input.branch)}`, options);
+      if (latest?.commit?.id !== ref) throw new GitLabConnectorError('GITLAB_BASELINE_CHANGED', '目标分支在回读期间已变化，请重试', 409);
+    }
     return { iid: previous.iid, webUrl: previous.web_url, state: previous.state, sourceBranch, targetBranch: input.branch };
   }
   if (previous) return validateExisting(previous);
@@ -342,6 +460,8 @@ async function submitDocumentMergeRequest(connection, input, options = {}) {
   if (!input.documents.some(document => document.markdown !== document.baselineContent)) {
     throw new GitLabConnectorError('GITLAB_NO_CHANGES', '候选正文与目标分支完全一致，没有可提交的变更', 422);
   }
+  // Validate local snapshots before any remote mutation.
+  await prepareResourceActions(connection, input.commitSha, input.documents, options);
   let workBranch;
   try { workBranch = await request(connection, `${project}/repository/branches/${encodeURIComponent(sourceBranch)}`, options); }
   catch (error) { if (error.status !== 404) throw error; }
@@ -353,7 +473,7 @@ async function submitDocumentMergeRequest(connection, input, options = {}) {
       await request(connection, `${project}/repository/branches/${encodeURIComponent(sourceBranch)}`, options);
     }
   }
-  const actions = [];
+  const actions = await prepareResourceActions(connection, sourceBranch, input.documents, options);
   for (const document of input.documents) {
     const current = await readFile(connection, sourceBranch, document.filePath, options).catch(error => {
       if (error.status === 404 && document.action === 'create') return null;
@@ -364,6 +484,11 @@ async function submitDocumentMergeRequest(connection, input, options = {}) {
     actions.push({ action: document.action, file_path: document.filePath, content: document.markdown, ...(current?.commitId ? { last_commit_id: current.commitId } : {}) });
   }
   if (actions.length) await request(connection, `${project}/repository/commits`, { ...options, method: 'POST', body: { branch: sourceBranch, commit_message: input.title, actions } });
+  for (const document of input.documents) {
+    const current = await readFile(connection, sourceBranch, document.filePath, options);
+    if (current.content !== document.markdown) throw new GitLabConnectorError('GITLAB_SOURCE_CHANGED', '任务分支正文与审核候选不一致', 409);
+    await assertDocumentResources(connection, sourceBranch, document, options);
+  }
   // Recheck after the commit so concurrent target changes cannot be reported as
   // a successfully delivered reviewed baseline.
   const latest = await request(connection, `${project}/repository/branches/${encodeURIComponent(input.branch)}`, options);
@@ -380,4 +505,32 @@ async function submitDocumentMergeRequest(connection, input, options = {}) {
   return { iid: mr.iid, webUrl: mr.web_url, state: mr.state, sourceBranch, targetBranch: input.branch };
 }
 
-module.exports = { GitLabConnectorError, readConfig, writeConfig, sanitizeConnection, normalizeGitLabAddress, upsertConnection, recordVerification, setConnectionStatus, upsertMapping, findMapping, findConnection, listBranches, listTree, readFile, listCommits, authorizeMappedRequest, request, submitDocumentMergeRequest };
+// Refresh a previously recorded MR without creating branches, commits, or MRs.
+// A merged result is only evidence when the target branch body matches the
+// frozen candidate at one stable commit SHA.
+async function readMergeRequestDelivery(connection, input, options = {}) {
+  if (!input?.mergeRequest?.iid || !input.documents?.length) throw new GitLabConnectorError('GITLAB_DELIVERY_CONTEXT_INVALID', '缺少 MR 或候选文档上下文', 400);
+  const project = `/projects/${projectPath(connection)}`;
+  const mr = await request(connection, `${project}/merge_requests/${encodeURIComponent(input.mergeRequest.iid)}`, options);
+  if (mr.source_branch !== input.mergeRequest.sourceBranch || mr.target_branch !== input.branch) throw new GitLabConnectorError('GITLAB_MR_CANDIDATE_CONFLICT', '远端 MR 与任务仓库范围不一致', 409);
+  const result = { iid: mr.iid, webUrl: mr.web_url || input.mergeRequest.webUrl, state: mr.state, sourceBranch: mr.source_branch, targetBranch: mr.target_branch };
+  if (mr.state !== 'merged') return result;
+  const branch = await request(connection, `${project}/repository/branches/${encodeURIComponent(input.branch)}`, options);
+  const targetCommitSha = branch?.commit?.id;
+  if (!targetCommitSha) throw new GitLabConnectorError('GITLAB_MR_RESPONSE_INVALID', 'GitLab 未返回合并后的目标提交', 502);
+  const documents = [];
+  for (const document of input.documents) {
+    const current = await readFile(connection, targetCommitSha, document.filePath, options).catch(error => {
+      if (error.status === 404) throw new GitLabConnectorError('GITLAB_DELIVERY_READBACK_FAILED', '合并后的目标分支缺少审核正文', 409);
+      throw error;
+    });
+    if (current.content !== document.markdown) throw new GitLabConnectorError('GITLAB_DELIVERY_READBACK_FAILED', '合并后的目标分支正文与审核候选不一致', 409);
+    const resources = await assertDocumentResources(connection, targetCommitSha, document, options);
+    documents.push({ filePath: document.filePath, contentDigest: crypto.createHash('sha256').update(current.content).digest('hex'), resources });
+  }
+  const latest = await request(connection, `${project}/repository/branches/${encodeURIComponent(input.branch)}`, options);
+  if (latest?.commit?.id !== targetCommitSha) throw new GitLabConnectorError('GITLAB_BASELINE_CHANGED', '目标分支在交付回读期间变化，请重试', 409);
+  return { ...result, targetCommitSha, readback: { status: 'consistent', scope: 'markdown_html_repository_relative_images', resources: 'repository_relative_images_verified', documents } };
+}
+
+module.exports = { GitLabConnectorError, MAX_FILE_BYTES, readConfig, writeConfig, sanitizeConnection, normalizeGitLabAddress, upsertConnection, recordVerification, setConnectionStatus, upsertMapping, findMapping, findConnection, listBranches, listTree, readFile, readDocumentResources, extractMarkdownResources, listCommits, authorizeMappedRequest, request, submitDocumentMergeRequest, readMergeRequestDelivery };

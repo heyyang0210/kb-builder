@@ -149,7 +149,7 @@ function markdownPreview(document, markdown, ui) {
   return renderDatabaseMarkdown(safeMarkdown, markdown, file?.path || '', { handbookId: repo.handbookId, branch: repo.branch, language: repo.language || 'zh' }).html;
 }
 
-function documentStatus(document, ui, branch = '') {
+export function documentStatus(document, ui, branch = '') {
   const branchMatches = !branch || !ui?.draftBranchByDocument?.[document.id] || ui.draftBranchByDocument[document.id] === branch;
   if (!branchMatches) return '未编辑';
   if (ui?.dirtyDocuments?.includes(document.id)) return '未保存';
@@ -217,7 +217,7 @@ function editor(document, outline, ui, templateProjection) {
   if (loadState === 'loading' || (repo.status === 'loading' && !ui.serverDrafts?.[document.id]?.exists && loadState === 'ready')) {
     return `<main class="handbook-production-editor is-reading" data-handbook-current-document="${escapeHtml(document.id)}" aria-busy="true">${pendingHeader}<section class="handbook-production-writing"><div class="handbook-production-content is-reading"><span class="sr-only" role="status">正在加载文档</span><div class="handbook-document-skeleton" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></div></div></section></main>`;
   }
-  if (loadState === 'failed' || loadState === 'forbidden') {
+  if (loadState === 'forbidden' || (loadState === 'failed' && !ui.draftContextResolved)) {
     return `<main class="handbook-production-editor" data-handbook-current-document="${escapeHtml(document.id)}">${pendingHeader}<section class="handbook-production-writing"><p role="alert">${loadState === 'forbidden' ? '当前账号无共享草稿访问权限。' : '当前文档读取失败，请刷新后重试。'}</p></section></main>`;
   }
   const branch = repo.branch || '';
@@ -297,7 +297,7 @@ function draftDialogs(ui) {
   return `<dialog class="asset-dialog handbook-history-dialog" data-handbook-history-dialog data-scroll-region="dialog"><div><header class="asset-dialog-heading"><div><h2>历史版本</h2><p>恢复历史版本会创建新的草稿 revision。</p></div><button class="icon-button asset-dialog-close" type="button" data-handbook-history-close aria-label="关闭"><i data-lucide="x"></i></button></header><div class="handbook-history-list" data-scroll-region="panel">${history?.loading ? '<p role="status">正在读取历史…</p>' : list(history?.items).map(item => `<article><div><strong>v${item.version}</strong><span>${escapeHtml(item.createdBy?.displayName || '未知用户')} · ${escapeHtml(new Date(item.createdAt).toLocaleString('zh-CN'))}</span></div><code>${escapeHtml(String(item.contentDigest || '').slice(0, 12))}</code><button class="button tertiary compact" type="button" data-handbook-history-compare="${escapeHtml(item.revisionId)}">查看差异</button><button class="button tertiary compact" type="button" data-handbook-history-restore="${escapeHtml(item.revisionId)}">恢复为新版本</button></article>`).join('') || '<p>暂无历史版本。</p>'}</div>${comparison}</div></dialog><dialog class="asset-dialog handbook-conflict-dialog" data-handbook-conflict-dialog data-scroll-region="dialog"><div><header class="asset-dialog-heading"><div><h2>草稿版本冲突</h2><p>服务器草稿已变化，本地内容已保留。</p></div><button class="icon-button asset-dialog-close" type="button" data-handbook-conflict-close aria-label="关闭"><i data-lucide="x"></i></button></header><div class="handbook-conflict-columns"><label>本地内容<textarea readonly>${escapeHtml(conflict?.localMarkdown || '')}</textarea></label><label>服务器内容<textarea readonly>${escapeHtml(conflict?.serverDraft?.revision?.markdown || '')}</textarea></div><footer><button class="button tertiary" type="button" data-handbook-conflict-copy>复制本地内容</button><button class="button secondary" type="button" data-handbook-conflict-reload>重新载入服务器版本</button><button class="button" type="button" data-handbook-conflict-merge>保留本地并人工合并</button></footer></div></dialog>`;
 }
 
-export function renderHandbookProduction({ projection, currentUser, ui = {}, templateProjection = {} }) {
+export function renderHandbookProduction({ projection, currentUser, ui = {}, templateProjection = {}, region = 'page' }) {
   const handbookWorkspace = projection?.handbookOutline;
   const handbookId = projection?.requestedHandbookId || '';
   if (projection?.status === 'loading') return '<section class="handbook-production-loading" role="status"><span></span><p>正在读取手册目录…</p></section>';
@@ -319,8 +319,11 @@ export function renderHandbookProduction({ projection, currentUser, ui = {}, tem
   }
   const selected = visible.find(document => document.id === requestedId) || visible[0] || null;
   if (!ui.directoryInitialized) { ui.directoryDrawerOpen = window.matchMedia('(min-width: 1001px)').matches; ui.directoryInitialized = true; }
-  const editorWorkspace = `<div class="handbook-production-layout" id="handbook-production-directory">${directory(outline, documents, selected?.id || '', mode, ui, currentUser)}${editor(selected, outline, { ...ui, handbookName, handbookId }, templateProjection)}</div>`;
-  return `<div class="handbook-production-page${ui.focusMode ? ' is-focus-mode' : ''}">${editorWorkspace}${reviewSelectionDialog(documents, ui)}${reviewDialog()}${draftDialogs(ui)}</div>`;
+  const editorHtml = editor(selected, outline, { ...ui, handbookName, handbookId }, templateProjection);
+  const dialogsHtml = `${reviewSelectionDialog(documents, ui)}${reviewDialog()}${draftDialogs(ui)}`;
+  if (region === 'editor') return editorHtml + dialogsHtml;
+  const editorWorkspace = `<div class="handbook-production-layout" id="handbook-production-directory">${directory(outline, documents, selected?.id || '', mode, ui, currentUser)}${editorHtml}</div>`;
+  return `<div class="handbook-production-page${ui.focusMode ? ' is-focus-mode' : ''}">${editorWorkspace}${dialogsHtml}</div>`;
 }
 
 export { collectDocuments, ownedByCurrentUser, outlineNodes };

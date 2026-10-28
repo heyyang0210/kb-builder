@@ -639,6 +639,10 @@ start_platform() {
     YASDB_STORAGE_CLASSES_DIR="$BUILD_DIR/java/classes" YASDB_JDBC_JAR="$BUILD_DIR/java/lib/yashandb-jdbc.jar" \
     YASDB_STORAGE_SQL_DIR="$BUILD_DIR/java/sql" "$STORAGE_DIR/start.sh" || return 1
   wait_ready storage "$(service_url storage)" || { rollback_started; return 1; }
+  # 仅统一测试入口显式启用；在业务恢复扫描前完成已批准的隔离夹具初始化。
+  if [[ "${KNOWLEDGE_CENTER_E2E_INITIALIZE_PRODUCTION:-0}" == 1 ]]; then
+    "$NODE_BIN" "$REPO_ROOT/tools/repository/initialize-e2e-production.cjs" || { rollback_started; return 1; }
+  fi
 
   start_service document "$DOCUMENT_DIR" "$LOG_DIR/document.log" \
     env NODE_PATH="$NODE_MODULE_PATH" PORT="$DOCUMENT_API_PORT" HOST="$INTERNAL_HOST" \

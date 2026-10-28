@@ -23,6 +23,8 @@ const previewMarkdown = new Marked({ gfm: true, breaks: true, renderer: {
 const escapeAttribute = value => String(value ?? '').replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 
 const names = { generate: '文档生成', polish: '内容修订', continue: '内容续写' };
+// 兼容历史入口参数；页面统一展示“内容修订”，旧调用仍可恢复。
+const legacyOperationAliases = { rewrite: 'polish', update: 'polish' };
 const normalizeOperation = operation => ['rewrite', 'update'].includes(operation) ? 'polish' : operation || 'generate';
 const stateNames = { queued: '等待执行', running: '正在生成', completed: '候选已生成，请比较后采用', failed: '生成失败', cancelled: '已取消', interrupted: '任务中断，可重试' };
 
@@ -33,6 +35,7 @@ export function openProductionWritingPage(options) {
   const initialOperation = normalizeOperation(options.operation);
   let original = options.getMarkdown();
   let originSnapshot = options.originSnapshot || null;
+  let originReady = !options.prepareOrigin; let originChecking = false;
   let editVersion = options.editVersion;
   let range = initialOperation === 'continue' ? { start: original.length, end: original.length } : { start: 0, end: original.length };
   const inherited = options.initialRange;
@@ -91,7 +94,7 @@ export function openProductionWritingPage(options) {
             </div><footer><small>设置仅作用于本次生成</small><button type="button" class="button tertiary" data-ai-settings-cancel>取消</button><button type="button" class="button" data-ai-settings-apply>应用设置</button></footer>
           </section>
         </div>
-        <div class="handbook-writing-submit"><div class="handbook-ai-dialog-actions"><button type="button" data-ai-start>生成候选</button><button type="button" data-ai-cancel hidden disabled>取消任务</button><button type="button" data-ai-retry hidden disabled>重试任务</button></div><button type="button" data-ai-resume hidden>恢复上次任务</button></div>
+        <div class="handbook-writing-submit"><div data-ai-origin hidden><p data-ai-origin-message role="status" aria-live="polite"></p><a class="button secondary" data-ai-origin-authorize target="_blank" rel="noopener noreferrer" hidden>授权 GitLab（新窗口）</a><button type="button" data-ai-origin-recheck>重新检查来源</button></div><div class="handbook-ai-dialog-actions"><button type="button" data-ai-start>生成候选</button><button type="button" data-ai-cancel hidden disabled>取消任务</button><button type="button" data-ai-retry hidden disabled>重试任务</button></div><button type="button" data-ai-resume hidden>恢复上次任务</button></div>
       </aside>
     </div>
     <section data-ai-candidate hidden tabindex="-1" aria-label="候选对照"><h3>比较后采用</h3><div class="handbook-writing-comparison"><label>原片段<textarea data-ai-before rows="10" readonly></textarea></label><label>候选片段（可人工修改）<textarea data-ai-fragment rows="10"></textarea></label></div><p>采用仅替换已确认的片段；其余原文保留。可调整写作要求后重新生成。内容尚待事实与用例核验。</p><div class="handbook-ai-dialog-actions"><button type="button" data-ai-adopt>采用并保存草稿</button><button type="button" data-ai-refine>调整要求重新生成</button><button type="button" data-ai-quality>执行 YashanDB 用例检查</button><button type="button" data-ai-discard>放弃候选</button></div><p data-ai-quality-result role="status"></p></section>
@@ -333,7 +336,8 @@ export function openProductionWritingPage(options) {
     for (const button of sourcePanel.querySelectorAll('button')) button.disabled = !!(busy || running);
     referenceToggle.disabled = !!(busy || running);
     for (const box of find('skill-list').querySelectorAll('input')) box.disabled = busy || running;
-    find('start').disabled ||= !rangeConfirmed || modelsLoading || !selectedModel();
+    find('origin-recheck').disabled = busy || running || originChecking;
+    find('start').disabled ||= !originReady || originChecking || !rangeConfirmed || modelsLoading || !selectedModel();
     find('template-select').disabled ||= templatesLoading;
     find('template-section').hidden = !usesTemplate();
     find('start').disabled ||= find('operation').value === 'generate' && (templatesLoading || !templateId);
@@ -725,8 +729,37 @@ export function openProductionWritingPage(options) {
     resetCandidate(); rangeConfirmed = true;
     range = { start: 0, end: original.length }; pendingStart = null; rangeLabel(); controls();
   };
+  async function checkOrigin() {
+    if (!options.prepareOrigin) return true;
+    originChecking = true; originReady = false;
+    find('origin').hidden = false;
+    find('origin-message').textContent = '正在检查仓库来源…';
+    find('origin-authorize').hidden = true; controls();
+    try {
+      const latest = await options.prepareOrigin();
+      if (!latest?.snapshot || typeof latest.content !== 'string') throw new Error('未取得有效的仓库来源，请重新检查。');
+      if (closed) return false;
+      // Keep the frozen baseline: the server detects drift and the existing comparison requires an explicit choice.
+      if (!originSnapshot) { originSnapshot = latest.snapshot; options.originBaselineContent = latest.content; }
+      originReady = true; find('origin').hidden = true;
+      return true;
+    } catch (error) {
+      if (!closed) {
+        find('origin-message').textContent = error.message;
+        const authorize = find('origin-authorize');
+        authorize.hidden = error.code !== 'GITLAB_OAUTH_REQUIRED' || !options.originAuthorizationHref;
+        if (!authorize.hidden) authorize.href = options.originAuthorizationHref;
+      }
+      return false;
+    } finally { originChecking = false; if (!closed) controls(); }
+  }
+  find('origin-recheck').onclick = () => checkOrigin();
   find('start').onclick = async () => {
-    if (busy || !rangeConfirmed || modelsLoading || !selectedModel()) return;
+    if (busy || originChecking || !originReady || !rangeConfirmed || modelsLoading || !selectedModel()) return;
+    busy = true; controls();
+    if (!await checkOrigin() || closed) { busy = false; if (!closed) controls(); return; }
+    busy = false;
+    controls();
     if (options.getMarkdown() !== original) { status('工作台正文已变化，请关闭并重新打开 AI 文档生产，保留当前人工修改。'); return; }
     if (job?.status === 'completed') fallbackCandidate = { job, fragment: find('fragment').value, provenance: provenancePanel.innerHTML };
     busy = true; controls(); status('正在提交任务…');
@@ -959,5 +992,6 @@ export function openProductionWritingPage(options) {
     }
     sourceHint();
   }).catch(error => { if (!closed) sourceStatus(`来源配置读取失败：${error.message}`, true); });
+  if (options.prepareOrigin) void checkOrigin();
   return dialog;
 }

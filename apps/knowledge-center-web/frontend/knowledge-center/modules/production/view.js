@@ -17,7 +17,11 @@ const phases = [
 const array = value => Array.isArray(value) ? value : [];
 const idOf = value => String(value?.taskId || value?.id || '');
 const selectedTask = projection => projection?.detail?.task || projection?.detail || null;
-const taskStatus = task => task?.statusDisplayName || statusNames[task?.state] || statusNames[task?.status] || task?.state || task?.status || '状态未返回';
+const taskStatus = task => task?.completion?.status === 'completed'
+  ? (task.completion.label || '已完成')
+  : task?.completion?.status === 'pending' && task?.mergeRequest
+    ? (task.completion.label || '待合并回读')
+    : task?.statusDisplayName || statusNames[task?.state] || statusNames[task?.status] || task?.state || task?.status || '状态未返回';
 function fmtTime(value) { if (!value) return '暂无'; const date = new Date(value); return Number.isNaN(date.getTime()) ? escapeHtml(value) : date.toLocaleString('zh-CN', { hour12: false }); }
 function suggestedPhase(task) {
   const status = task?.state || task?.status;
@@ -55,7 +59,7 @@ function myGenerations(projection = {}) {
   if (projection.status === 'unavailable') return `<section class="production-generations-state error" role="alert"><strong>我的生成暂时无法读取</strong><span>${escapeHtml(projection.error?.message || '请稍后重试。')}</span><button class="button secondary compact" type="button" data-incremental-reload>重新读取</button></section>`;
   const items = array(projection.items);
   if (!items.length) return `<section class="production-overview-empty">${emptyState('暂无生成记录', '你还没有发起或实际参与过 Agent 生成运行。审核、发布等事项请前往平台工作台的“待我处理”。')}</section>`;
-  return `<section class="production-generations" aria-label="我的生成记录"><header><div><h2>我的生成</h2><p>只展示你发起或实际参与的 Agent 生成运行。</p></div><span>${items.length} 条</span></header><div class="production-generation-list">${items.map(item => `<article class="production-generation-item"><div class="production-generation-main"><div><strong>${escapeHtml(item.taskName || '未命名生成')}</strong><span>${escapeHtml(item.handbookName || item.handbookId || '手册待确认')}</span></div><em class="${generationStatusClass(item.status)}">${escapeHtml(item.statusDisplayName || '状态待确认')}</em></div><dl><div><dt>运行编号</dt><dd>${escapeHtml(item.generationId)}</dd></div><div><dt>最近更新</dt><dd>${fmtTime(item.updatedAt)}</dd></div>${item.progress !== null && item.progress !== undefined ? `<div><dt>进度</dt><dd>${escapeHtml(String(item.progress))}%</dd></div>` : ''}</dl>${item.progressMessage ? `<p>${escapeHtml(item.progressMessage)}</p>` : ''}${item.failureReason ? `<p class="production-generation-error">${escapeHtml(typeof item.failureReason === 'string' ? item.failureReason : item.failureReason.message || '生成失败')}</p>` : ''}<footer><span>${item.association === 'participant' ? '我参与的运行' : '我发起的运行'}</span><a class="button secondary compact" href="${escapeHtml(item.nextAction?.href || `/knowledge-center/production?view=tasks&taskId=${encodeURIComponent(item.taskId)}&stage=generation`)}">${escapeHtml(item.nextAction?.label || '查看生成')}</a></footer></article>`).join('')}</div></section>`;
+  return `<section class="production-generations" aria-label="我的生成记录"><header><div><h2>我的生成</h2><p>只展示你发起或实际参与的 Agent 生成运行。</p></div><span>${items.length} 条</span></header><div class="production-generation-list">${items.map(item => { const completion = item.completion || {}; return `<article class="production-generation-item"><div class="production-generation-main"><div><strong>${escapeHtml(item.taskName || '未命名生成')}</strong><span>${escapeHtml(item.handbookName || item.handbookId || '手册待确认')}</span></div><em class="${generationStatusClass(item.status)}">${escapeHtml(item.statusDisplayName || '状态待确认')}</em></div><dl><div><dt>运行编号</dt><dd>${escapeHtml(item.generationId)}</dd></div><div><dt>最近更新</dt><dd>${fmtTime(item.updatedAt)}</dd></div>${item.progress !== null && item.progress !== undefined ? `<div><dt>进度</dt><dd>${escapeHtml(String(item.progress))}%</dd></div>` : ''}<div><dt>交付状态</dt><dd>${escapeHtml(completion.label || '待确认')}</dd></div></dl>${item.progressMessage ? `<p>${escapeHtml(item.progressMessage)}</p>` : ''}${item.failureReason ? `<p class="production-generation-error">${escapeHtml(typeof item.failureReason === 'string' ? item.failureReason : item.failureReason.message || '生成失败')}</p>` : ''}<footer><span>${item.association === 'participant' ? '我参与的运行' : '我发起的运行'}</span><a class="button secondary compact" href="${escapeHtml(item.nextAction?.href || `/knowledge-center/production?view=tasks&taskId=${encodeURIComponent(item.taskId)}&stage=generation`)}">${escapeHtml(item.nextAction?.label || '查看生成')}</a></footer></article>`; }).join('')}</div></section>`;
 }
 
 function progress(task, active) {
@@ -128,7 +132,14 @@ function reviewStage(task) {
 }
 
 function publishStage(task, privileged) {
-  if (task.handbookSource) return `<section class="incremental-stage-panel"><h3>发布：创建 GitLab MR</h3><p>将审核通过的正文提交至任务分支，并向 ${escapeHtml(task.handbookSource.branch)} 创建 MR。</p>${task.mergeRequest ? `<a class="button" href="${escapeHtml(task.mergeRequest.webUrl)}" target="_blank" rel="noopener">查看 MR !${escapeHtml(task.mergeRequest.iid)}</a>` : `<button class="button" type="button" data-incremental-publish="${escapeHtml(idOf(task))}" ${task.capabilities?.canPublish ? '' : 'disabled'}>发布：创建 GitLab MR</button>`}<p>MR 由 GitLab 管理后续合并。</p><span class="incremental-form-status" role="status"></span></section>`;
+  if (task.handbookSource) {
+    const completion = task.completion || {};
+    const facts = completion.facts || {};
+    const completionText = completion.status === 'completed'
+      ? 'GitLab 已合并，目标分支正文与仓库相对图片已回读一致。'
+      : task.mergeRequest ? 'MR 已创建，等待合并及目标分支回读。' : '审核通过后创建 GitLab MR。';
+    return `<section class="incremental-stage-panel"><header><div><span class="incremental-stage-eyebrow">第 5 步</span><h3>发布与回读</h3><p>将审核通过的正文提交至 ${escapeHtml(task.handbookSource.branch)}，完成条件是合并并回读一致。</p></div><span class="incremental-stage-state">${escapeHtml(taskStatus(task))}</span></header><div class="incremental-release-summary"><div><span>GitLab MR</span><strong>${task.mergeRequest ? `!${escapeHtml(task.mergeRequest.iid)}` : '待创建'}</strong></div><div><span>正文回读</span><strong>${facts.markdownReadback ? '一致' : '待回读'}</strong></div><div><span>图片资源回读</span><strong>${facts.resourceReadback ? '一致' : '待回读'}</strong></div></div><p class="incremental-block-note">${completionText}</p>${task.mergeRequest ? `<a class="button" href="${escapeHtml(task.mergeRequest.webUrl)}" target="_blank" rel="noopener">查看 MR !${escapeHtml(task.mergeRequest.iid)}</a>` : `<button class="button" type="button" data-incremental-publish="${escapeHtml(idOf(task))}" ${task.capabilities?.canPublish ? '' : 'disabled'}>发布：创建 GitLab MR</button>`}<span class="incremental-form-status" role="status"></span></section>`;
+  }
   const state = task.state || task.status;
   const canPublish = ['pending_publish', 'approved'].includes(state);
   const canPublishTask = task.capabilities?.canPublish ?? privileged;
@@ -199,8 +210,10 @@ function handbookProgress(tasks) {
     draft: '待确认', editing: '编写中', checked: '待提交', candidate_ready: '待审核', under_review: '审核中',
     rejected: '待修订', approved: '待发布', pending_publish: '待发布', published: '已发布', completed: '已完成',
   };
-  const label = current?.statusDisplayName || labels[state] || '处理中';
-  const pending = tasks.filter(task => !['published', 'completed'].includes(task.state || task.status)).length;
+  const label = current?.completion?.label || current?.statusDisplayName || labels[state] || '处理中';
+  const pending = tasks.filter(task => task?.completion?.status
+    ? task.completion.status !== 'completed'
+    : !['published', 'completed'].includes(task.state || task.status)).length;
   return { label, detail: pending > 1 ? `${pending} 个任务待处理` : pending === 1 ? '1 个任务待处理' : '暂无待处理事项' };
 }
 
@@ -248,8 +261,37 @@ function handbookOverview(projection, assetCatalog) {
   return `<section class="production-overview" aria-label="手册生产列表"><div class="production-overview-toolbar"><label class="production-handbook-search">搜索手册<input type="search" data-production-handbook-search value="${escapeHtml(search)}" placeholder="输入手册名称" aria-label="搜索已发布大纲的手册"></label><span data-production-handbook-count>${rows.length} / ${allRows.length} 本</span></div><div class="production-handbook-table-wrap" data-table-view-host ${rows.length ? '' : 'hidden'}><table class="production-handbook-table" data-table-view-id="production-handbooks" data-table-view-schema="1" data-table-view-label="手册生产列表" data-table-view-legacy-key="kc-production-handbook-columns"><caption class="sr-only">手册生产进展</caption><thead><tr>${column('handbook', '手册', true)}${column('product', '所属产品')}${column('owner', '负责人')}${column('progress', '当前进展')}${column('published', '最近发布')}</tr></thead><tbody>${allRows.map(item => `<tr class="production-handbook-row" tabindex="0" role="link" data-production-handbook-row data-handbook-search-text="${escapeHtml(item.name.toLocaleLowerCase())}" data-handbook-href="/knowledge-center/production/handbook/${encodeURIComponent(item.id)}" ${query && !item.name.toLocaleLowerCase().includes(query) ? 'hidden' : ''}>${cell('handbook', `<strong>${escapeHtml(item.name)}</strong>`, 'is-required')}${cell('product', escapeHtml(item.product))}${cell('owner', escapeHtml(item.owner))}${cell('progress', `<strong>${escapeHtml(item.progress)}</strong><small>${escapeHtml(item.progressDetail)}</small>`)}${cell('published', `<strong>${escapeHtml(item.published)}</strong><small>${escapeHtml(item.publishedAt ? fmtTime(item.publishedAt) : '发布时间暂不可用')}</small>`)}</tr>`).join('')}</tbody></table></div><section class="production-overview-empty" data-production-handbook-empty role="status" ${rows.length ? 'hidden' : ''}>没有匹配“${escapeHtml(search)}”的手册，请尝试其他名称。</section></section>`;
 }
 
+function taskDocumentCount(task) {
+  const documents = array(task?.handbookSource?.documents || task?.target?.documentIds);
+  if (documents.length) return new Set(documents.map(item => String(item?.documentId || item?.id || item))).size;
+  return new Set(array(task?.candidate?.operations).map(item => item?.documentId).filter(Boolean).map(String)).size;
+}
+
+function versionOverview(projection) {
+  if (projection?.status === 'loading') return '<section class="production-overview-empty" role="status">正在读取数据库版本任务…</section>';
+  if (projection?.status === 'unavailable') return '<section class="production-overview-empty" role="alert">数据库版本任务暂时无法读取，请稍后重试。</section>';
+  const tasks = array(projection?.items || projection?.tasks);
+  const groups = new Map();
+  tasks.forEach(task => {
+    const version = String(task?.businessVersion || '').trim() || '版本待核对';
+    if (!groups.has(version)) groups.set(version, []);
+    groups.get(version).push(task);
+  });
+  const rows = [...groups.entries()].map(([version, items]) => {
+    const completed = items.filter(item => item?.completion?.status === 'completed').length;
+    const documentCount = items.reduce((total, item) => total + taskDocumentCount(item), 0);
+    const current = [...items].sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')))[0];
+    const completion = current?.completion;
+    const responsibility = current?.ownerName || current?.owner || current?.assigneeName || '责任人待确认';
+    const nextAction = completion?.status === 'completed' ? '等待后续变更' : completion?.facts?.mergeState === 'opened' ? '等待合并并回读' : '处理当前交付阻断';
+    return { version, taskCount: items.length, documentCount, completed, pending: items.length - completed, current, responsibility, nextAction };
+  }).sort((a, b) => a.version.localeCompare(b.version, 'zh-CN', { numeric: true }));
+  if (!rows.length) return `<section class="production-overview-empty">${emptyState('暂无数据库版本任务', '创建增量任务后会按业务版本汇总显示。')}</section>`;
+  return `<section class="production-overview production-version-overview" aria-label="数据库版本任务汇总"><div class="production-overview-toolbar"><div><strong>数据库版本汇总</strong><p>按任务绑定的业务版本聚合，完成状态沿用公共交付投影。</p></div><span>${rows.length} 个版本</span></div><div class="production-handbook-table-wrap"><table class="production-handbook-table" data-table-view-id="production-versions" data-table-view-schema="1"><caption class="sr-only">数据库版本任务汇总</caption><thead><tr><th>数据库版本</th><th>任务数</th><th>目标文档数</th><th>已完成</th><th>待处理</th><th>最近进展</th></tr></thead><tbody>${rows.map(row => `<tr class="production-handbook-row" tabindex="0" role="link" data-production-handbook-row data-handbook-href="/knowledge-center/production?view=tasks&taskId=${encodeURIComponent(row.current?.id || '')}"><td><strong>${escapeHtml(row.version)}</strong><small>${escapeHtml(row.current?.handbookName || row.current?.handbookId || '手册待确认')}</small></td><td>${row.taskCount}</td><td>${row.documentCount}</td><td><strong>${row.completed}</strong></td><td>${row.pending}</td><td><strong>${escapeHtml(row.current?.completion?.label || row.current?.statusDisplayName || '处理中')}</strong><small>${escapeHtml(`责任：${row.responsibility} · 下一步：${row.nextAction}`)}</small><small>${fmtTime(row.current?.updatedAt)}</small></td></tr>`).join('')}</tbody></table></div></section>`;
+}
+
 function productionTabs(active) {
-  return `<nav class="production-overview-tabs" role="tablist" aria-label="文档生产视图"><button type="button" role="tab" data-production-overview-tab="handbooks" aria-selected="${active === 'handbooks'}">手册视图</button><button type="button" role="tab" data-production-overview-tab="tasks" aria-selected="${active === 'tasks'}">任务视图</button><button type="button" role="tab" data-production-overview-tab="generations" aria-selected="${active === 'generations'}">我的生成</button></nav>`;
+  return `<nav class="production-overview-tabs" role="tablist" aria-label="文档生产视图"><button type="button" role="tab" data-production-overview-tab="handbooks" aria-selected="${active === 'handbooks'}">手册视图</button><button type="button" role="tab" data-production-overview-tab="versions" aria-selected="${active === 'versions'}">数据库版本</button><button type="button" role="tab" data-production-overview-tab="tasks" aria-selected="${active === 'tasks'}">任务视图</button><button type="button" role="tab" data-production-overview-tab="generations" aria-selected="${active === 'generations'}">我的生成</button></nav>`;
 }
 
 export function renderProduction({ incrementalProjection, assetCatalog, platformAdmin, currentUser, handbookProductionUi, templateProjection }) {
@@ -259,11 +301,13 @@ export function renderProduction({ incrementalProjection, assetCatalog, platform
   const params = new URLSearchParams(window.location.search);
   const requestedView = params.get('view');
   const normalizedView = requestedView === 'todo' ? 'generations' : requestedView;
-  const active = params.get('taskId') ? 'tasks' : (['handbooks', 'tasks', 'generations'].includes(normalizedView) ? normalizedView : 'handbooks');
+  const active = params.get('taskId') ? 'tasks' : (['handbooks', 'versions', 'tasks', 'generations'].includes(normalizedView) ? normalizedView : 'handbooks');
   const taskItems = array(projection.items || projection.tasks);
   const unavailable = projection.status === 'unavailable' ? `<section class="incremental-list-state error" role="alert"><strong>增量服务暂时不可用</strong><span>${escapeHtml(projection.error?.message || '请稍后重试')}</span><button class="button secondary compact" type="button" data-incremental-reload>重新读取</button></section>` : '';
   const body = unavailable || (active === 'handbooks'
     ? handbookOverview(projection, assetCatalog)
+    : active === 'versions'
+      ? versionOverview(projection)
     : active === 'generations'
       ? myGenerations(projection.generations || { status: 'loading', items: [] })
       : `<div class="incremental-workspace"><aside class="incremental-sidebar" aria-label="增量任务"><header><h2>增量任务</h2><span>${taskItems.length} 项</span></header>${taskList(projection)}</aside><div class="incremental-main">${taskDetail(task, platformAdmin)}</div></div>`);

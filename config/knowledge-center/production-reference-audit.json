@@ -1,0 +1,32 @@
+{
+  "excludedNamespaces": [
+    "outline-lifecycle-audit",
+    "auth",
+    "outlines"
+  ],
+  "referenceFields": [
+    "outlineVersionId",
+    "baseOutlineVersionId"
+  ],
+  "valuePrefixes": [
+    "outline_"
+  ],
+  "structureField": "outlineStructureVersion",
+  "structurePrefix": "outline-v1-outline_",
+  "structureStripPrefix": "outline-v1-",
+  "timeoutMs": 30000,
+  "concurrency": 3,
+  "inventoryCollections": {
+    "handbook-production": [
+      "drafts",
+      "attachments",
+      "reviewBatches",
+      "aiSources",
+      "aiJobs",
+      "qualityReports"
+    ],
+    "production-ai-artifacts": [
+      "artifacts"
+    ]
+  }
+}

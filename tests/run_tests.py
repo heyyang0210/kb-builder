@@ -604,6 +604,8 @@ def isolated_knowledge_center_environment(context: RunContext) -> tuple[dict[str
         "KNOWLEDGE_CENTER_ENV": "test",
         "KNOWLEDGE_CENTER_ENVIRONMENT": "test",
         "KNOWLEDGE_CENTER_TEST_RUN_ID": context.run_id,
+        "KNOWLEDGE_CENTER_E2E_INITIALIZE_PRODUCTION": "1",
+        "KNOWLEDGE_CENTER_E2E_INITIALIZATION_DIR": str(service_root / "production-initialization"),
         "YASDB_CONFIG_DIR": str(TEST_DATABASE_CONFIG_DIR),
         "KNOWLEDGE_STORAGE_MODE": "database",
         "KNOWLEDGE_CENTER_AUTH_STORE": str(service_root / "data" / "auth.json"),

@@ -2,10 +2,11 @@ const { REVIEW_ASSET_STATUSES } = require('../lib/knowledge-asset-utils');
 const http = require('http');
 const crypto = require('crypto');
 const { submitDocumentMergeRequest } = require('../lib/gitlab-connector');
+const { imageType } = require('../lib/source-image-resources');
 const fs = require('fs');
 const path = require('path');
 const { loadPlatformContext, loadPlatformProjection } = require('../lib/platform-context-gateway');
-const { GitLabConnectorError, readConfig: readFileGitLabConfig, upsertConnection: upsertFileConnection, normalizeGitLabAddress, recordVerification: recordFileVerification, setConnectionStatus: setFileConnectionStatus, upsertMapping: upsertFileMapping, findMapping: findFileMapping, findConnection: findFileConnection, listBranches, listTree, readFile: readGitLabFile, listCommits, sanitizeConnection, authorizeMappedRequest } = require('../lib/gitlab-connector');
+const { GitLabConnectorError, readConfig: readFileGitLabConfig, upsertConnection: upsertFileConnection, normalizeGitLabAddress, recordVerification: recordFileVerification, setConnectionStatus: setFileConnectionStatus, upsertMapping: upsertFileMapping, findMapping: findFileMapping, findConnection: findFileConnection, listBranches, listTree, readFile: readGitLabFile, readDocumentResources, extractMarkdownResources, listCommits, sanitizeConnection, authorizeMappedRequest, readMergeRequestDelivery } = require('../lib/gitlab-connector');
 const { GitLabOAuthError, config: gitLabOAuthConfig, start: startGitLabOAuth, callback: completeGitLabOAuth, tokenForUser, status: gitLabOAuthStatus, disconnect: disconnectGitLabOAuth } = require('../lib/gitlab-oauth');
 const { ASSET_STATUS_LABELS, systemAssetStatus, assetStatus, projectAsset, queryKnowledgeAssets: queryKnowledgeAssetsBase, isPlatformAdmin } = require('../lib/knowledge-asset-utils');
 const { matchCleaningEndpoint } = require('../lib/knowledge-center-cleaning-contract');
@@ -321,18 +322,18 @@ function createKnowledgeCenterHandler(options) {
     } catch (error) { res.writeHead(error.status || 500, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify({ success: false, error: { code: error.code || 'TEMPLATE_ERROR', message: error.message } })); }
   }
 
-  function requireHandbookRead(session, handbookId) {
+  async function requireHandbookRead(session, handbookId) {
     if (!hasAction(session, 'knowledge:read')) throw new GitLabConnectorError('HANDBOOK_READ_FORBIDDEN', '没有权限查看此手册', 403);
     const visible = session?.visibleHandbookIds || session?.user?.visibleHandbookIds;
     if (Array.isArray(visible) && !visible.map(String).includes(String(handbookId))) throw new GitLabConnectorError('HANDBOOK_READ_FORBIDDEN', '没有权限查看此手册', 403);
-    assetById(readKnowledgeAssets(), handbookId);
+    return assetById(await readKnowledgeAssets(), handbookId);
   }
 
   async function requireHandbookReadAsync(session, handbookId) {
     if (!hasAction(session, 'knowledge:read')) throw new GitLabConnectorError('HANDBOOK_READ_FORBIDDEN', '没有权限查看此手册', 403);
     const visible = session?.visibleHandbookIds || session?.user?.visibleHandbookIds;
     if (Array.isArray(visible) && !visible.map(String).includes(String(handbookId))) throw new GitLabConnectorError('HANDBOOK_READ_FORBIDDEN', '没有权限查看此手册', 403);
-    return assetById(await readKnowledgeAssetsAsync(), handbookId);
+    return requireHandbookRead(session, handbookId);
   }
 
   function serveOutlineWorkbook(res, filePath, filename, unavailableCode) {
@@ -456,25 +457,21 @@ function createKnowledgeCenterHandler(options) {
 
   // --- Asset store & query wrappers ---
 
-  function readKnowledgeAssets() {
-    const payload = knowledgeAssetsStore.read();
+  async function readKnowledgeAssets() {
+    const payload = knowledgeAssetsStore.readAsync
+      ? await knowledgeAssetsStore.readAsync()
+      : knowledgeAssetsStore.read();
     if (!payload.generatedAt && fs.existsSync(options.KNOWLEDGE_ASSETS_CONFIG_PATH)) {
       payload.generatedAt = fs.statSync(options.KNOWLEDGE_ASSETS_CONFIG_PATH).mtime.toISOString();
     }
-    return applyManualStatusOverrides(payload);
+    const overrides = databaseMode && manualStatusStore
+      ? await readManualStatusOverridesAsync()
+      : null;
+    return applyManualStatusOverrides(payload, overrides?.statuses || {});
   }
 
   async function readKnowledgeAssetsAsync() {
-    const [payload, overrides] = await Promise.all([
-      knowledgeAssetsStore.readAsync ? knowledgeAssetsStore.readAsync() : knowledgeAssetsStore.read(),
-      databaseMode && manualStatusStore
-        ? (manualStatusStore.readAsync ? manualStatusStore.readAsync() : manualStatusStore.read())
-        : null,
-    ]);
-    if (!payload.generatedAt && fs.existsSync(options.KNOWLEDGE_ASSETS_CONFIG_PATH)) {
-      payload.generatedAt = fs.statSync(options.KNOWLEDGE_ASSETS_CONFIG_PATH).mtime.toISOString();
-    }
-    return applyManualStatusOverrides(payload, overrides?.statuses || {});
+    return readKnowledgeAssets();
   }
 
   let reviewAssetsCache = null;
@@ -486,29 +483,33 @@ function createKnowledgeCenterHandler(options) {
     return payload;
   }
 
-  function writeKnowledgeAssets(payload) {
-    persistManualStatusOverrides(payload);
+  async function writeKnowledgeAssets(payload) {
+    await persistManualStatusOverrides(payload);
     payload.generatedAt = new Date().toISOString();
     knowledgeAssetsStore.write(payload);
     reviewAssetsCache = null;
   }
 
-  function writeAssetStatusPayload(payload) {
+  async function writeAssetStatusPayload(payload) {
     if (databaseMode) {
-      persistManualStatusOverrides(payload);
+      await persistManualStatusOverrides(payload);
       reviewAssetsCache = null;
       return;
     }
-    writeKnowledgeAssets(payload);
+    await writeKnowledgeAssets(payload);
   }
 
   function manualStatusKey(handbook) {
     return String(handbook?.handbookId || handbook?.id || handbook?.code || '').trim();
   }
 
-  function readManualStatusOverrides() {
+  async function readManualStatusOverridesAsync() {
     if (!manualStatusStore) return { version: 1, statuses: {}, audits: [] };
-    const payload = manualStatusStore.read();
+    const payload = manualStatusStore.readAsync
+      ? await manualStatusStore.readAsync()
+      : manualStatusStore.read
+        ? manualStatusStore.read()
+        : null;
     return {
       version: Number(payload?.version || 1),
       statuses: payload?.statuses && typeof payload.statuses === 'object' && !Array.isArray(payload.statuses) ? payload.statuses : {},
@@ -516,14 +517,15 @@ function createKnowledgeCenterHandler(options) {
     };
   }
 
-  function writeManualStatusOverrides(payload) {
-    if (!manualStatusStore) return;
-    manualStatusStore.write({ version: Number(payload.version || 1), statuses: payload.statuses || {}, audits: payload.audits || [], updatedAt: new Date().toISOString() });
+  async function writeManualStatusOverrides(payload) {
+    if (!manualStatusStore || (!manualStatusStore.writeAsync && !manualStatusStore.write)) return;
+    const next = { version: Number(payload.version || 1), statuses: payload.statuses || {}, audits: payload.audits || [], updatedAt: new Date().toISOString() };
+    manualStatusStore.write(next);
   }
 
   function applyManualStatusOverrides(payload, statuses = null) {
     if (!databaseMode || !manualStatusStore || !Array.isArray(payload?.handbooks)) return payload;
-    const overrides = statuses || readManualStatusOverrides().statuses;
+    const overrides = statuses || {};
     return {
       ...payload,
       handbooks: payload.handbooks.map(item => {
@@ -534,9 +536,9 @@ function createKnowledgeCenterHandler(options) {
     };
   }
 
-  function persistManualStatusOverrides(payload) {
+  async function persistManualStatusOverrides(payload) {
     if (!databaseMode || !manualStatusStore || !Array.isArray(payload?.handbooks)) return;
-    const overrides = readManualStatusOverrides();
+    const overrides = await readManualStatusOverridesAsync();
     for (const item of payload.handbooks) {
       const key = manualStatusKey(item);
       if (!key) continue;
@@ -546,7 +548,7 @@ function createKnowledgeCenterHandler(options) {
         overrides.statuses[key] = { manualStatus: null, assetVersion: Number(item.assetVersion || overrides.statuses[key].assetVersion || 1), updatedAt: new Date().toISOString() };
       }
     }
-    writeManualStatusOverrides(overrides);
+    await writeManualStatusOverrides(overrides);
   }
 
   async function queryKnowledgeAssets(payload, searchParams, admin) {
@@ -878,26 +880,41 @@ function createKnowledgeCenterHandler(options) {
       if (!service) throw Object.assign(new Error('增量审核服务暂不可用'), { status: 503 });
       const { mapping, connection } = findMapping(handbookId, GITLAB_CONFIG_PATH);
       const branch = body.documents[0].branch;
+      // 分支与数据库版本是独立维度；缺少权威版本时保留待核对状态，
+      // 不把仓库分支名伪装成数据库版本。
+      const businessVersion = String(body.businessVersion || '').trim() || '版本待核对';
       if (body.documents.some(item => item.branch !== branch)) throw Object.assign(new Error('一次评审只能提交同一分支'), { status: 422 });
       const eligible = new Set((await eligibleReviewers(handbookId, session)).map(item => item.id));
+      const savedRevisions = new Map();
       const documents = body.documents.map(item => {
         const result = handbookProductionService.getDraft({ ...item, handbookId }, session);
         if (!result.capabilities.canSubmitReview || !result.exists || result.draft.currentRevisionId !== item.draftRevisionId) throw Object.assign(new Error('草稿版本已变化，请刷新后重新提交'), { status: 409, code: 'REVIEW_REVISION_STALE' });
-        if (result.draft.revision.attachmentIds?.length || /\/knowledge-center\/api\/production\/attachments\//.test(result.draft.revision.markdown)) throw Object.assign(new Error('当前 MR 交付不支持平台临时附件，请先改为仓库内有效链接并重新保存'), { status: 422, code: 'ATTACHMENT_DELIVERY_UNSUPPORTED' });
+        savedRevisions.set(item.documentId, result.draft.revision);
         const filePath = authorizeMappedRequest(mapping, branch, 'zh', item.filePath);
         if (!filePath || !/\.(md|markdown)$/i.test(filePath)) throw Object.assign(new Error('请选择映射目录中的 Markdown 文件路径'), { status: 422 });
         const reviewerIds = item.reviewerIds || body.defaultReviewerIds || [];
         if (!reviewerIds.length || reviewerIds.some(id => !eligible.has(String(id)))) throw Object.assign(new Error('请选择有审核权限的审核人（可以是本人）'), { status: 422 });
-        return { ...item, filePath, reviewerIds, markdown: result.draft.revision.markdown, templateVersionId: result.draft.revision.templateVersionId, baselineDigest: result.draft.revision.baselineDigest };
+        return { handbookId, documentId: item.documentId, draftRevisionId: item.draftRevisionId, outlineVersionId: result.draft.outlineVersionId, branch: result.draft.branch, filePath, reviewerIds, markdown: result.draft.revision.markdown, templateVersionId: result.draft.revision.templateVersionId, baselineDigest: result.draft.revision.baselineDigest };
       });
       if (new Set(documents.map(item => item.documentId)).size !== documents.length) throw Object.assign(new Error('文档不能重复提交'), { status: 422 });
       if (new Set(documents.map(item => item.filePath)).size !== documents.length) throw Object.assign(new Error('多个文档不能映射同一仓库文件'), { status: 422 });
-      const submissionIdentity = [handbookId, documents.map(item => [item.documentId, item.draftRevisionId, item.filePath])];
-      if (body.reviewMode === 'online_review') submissionIdentity.push(body.reviewMode, body.scope);
+      const splitReason = String(body.splitReason || '').trim();
+      if (splitReason.length > 500) throw Object.assign(new Error('拆分原因不能超过500字'), { status: 422, code: 'SPLIT_REASON_TOO_LONG' });
+      // 同一手册、同一版本和同一来源默认复用原任务；只有明确填写原因
+      // 才将原因纳入身份，允许建立一条可追溯的拆分任务。保留不含拆分
+      // 原因的来源身份，供拆分任务回指原任务和审计同源历史。
+      const sourceIdentity = [handbookId, businessVersion, documents.map(item => [item.documentId, item.draftRevisionId, item.filePath])];
+      if (body.reviewMode === 'online_review') sourceIdentity.push(body.reviewMode, body.scope);
+      const sourceSubmissionId = crypto.createHash('sha256').update(JSON.stringify(sourceIdentity)).digest('hex');
+      const submissionIdentity = [...sourceIdentity];
+      if (splitReason) submissionIdentity.push({ splitReason });
       const submissionId = crypto.createHash('sha256').update(JSON.stringify(submissionIdentity)).digest('hex');
       // A retry returns the original frozen task even if the repository has
       // moved since its creation; it never creates another candidate.
       const previous = service.repository.read().tasks.find(item => item.handbookSource?.submissionId === submissionId && service.isOwner(session, item));
+      const splitFrom = splitReason && !previous
+        ? service.repository.read().tasks.find(item => item.handbookSource?.sourceSubmissionId === sourceSubmissionId && service.isOwner(session, item))
+        : null;
       let task = previous ? service.get(session, previous.id) : null;
       if (!task) {
         const branches = await gitLabRequestForUser(session, connection, options => listBranches(connection, options));
@@ -905,6 +922,11 @@ function createKnowledgeCenterHandler(options) {
         if (!commitSha) throw Object.assign(new Error('目标分支不可读取'), { status: 409 });
         for (const document of documents) {
           authorizeMappedRequest(mapping, branch, 'zh', document.filePath);
+          const prepared = handbookProductionService.delivery.prepare(document, savedRevisions.get(document.documentId), session,
+            resourcePath => authorizeMappedRequest(mapping, branch, 'zh', resourcePath));
+          document.markdown = prepared.markdown;
+          const resourcePaths = extractMarkdownResources(document.markdown, document.filePath);
+          resourcePaths.forEach(resource => authorizeMappedRequest(mapping, branch, 'zh', resource.path));
           const file = await gitLabRequestForUser(session, connection, options => readGitLabFile(connection, commitSha, document.filePath, options)).catch(error => {
             if (error.status === 404) return null;
             throw error;
@@ -914,13 +936,15 @@ function createKnowledgeCenterHandler(options) {
           const actualDigest = crypto.createHash('sha256').update(document.baselineContent || '').digest('hex');
           if (actualDigest !== document.baselineDigest) throw Object.assign(new Error('仓库正文与保存时基线不同，请重新加载并保存'), { status: 409, code: 'GITLAB_BASELINE_CHANGED' });
           if (document.markdown === document.baselineContent) throw Object.assign(new Error('候选正文与 GitLab 内容完全一致，没有可提交的变更'), { status: 422, code: 'GITLAB_NO_CHANGES' });
+          document.resources = await gitLabRequestForUser(session, connection, options => readDocumentResources(connection, commitSha, document, { ...options, managedResources: prepared.managedResources }));
         }
         const content = documents.length === 1 ? documents[0].markdown : documents.map(item => `# ${item.filePath}\n\n${item.markdown}`).join('\n\n');
         const baselineContent = documents.length === 1 ? documents[0].baselineContent || '\n' : documents.map(item => `# ${item.filePath}\n\n${item.baselineContent || ''}`).join('\n\n');
         task = service.createHandbookReview(session, key, {
-          handbookId, branch, commitSha, submissionId, documents, content, baselineContent, reviewMode: body.reviewMode || null,
+          handbookId, branch, businessVersion, commitSha, submissionId, documents, content, baselineContent, reviewMode: body.reviewMode || null,
           repositoryIdentity: { connectionId: connection.id, host: connection.host, project: connection.projectPath || connection.project },
           name: body.note || `手册文档评审：${documents.map(item => item.filePath).join('、')}`,
+          sourceSubmissionId, splitFromTaskId: splitFrom?.id || null, splitReason: splitReason || null,
           operations: documents.map(item => ({ type: item.action === 'create' ? 'add' : 'update', documentId: item.documentId, nodeId: item.documentId, beforeDigest: item.baselineDigest, after: { content: item.markdown } })),
         });
       }
@@ -1031,7 +1055,7 @@ function createKnowledgeCenterHandler(options) {
       const name = String(body.name || '').trim();
       const productId = String(body.productId || '').trim();
       if (!name || !productId) throw new Error('手册名称和产品为必填项');
-      const payload = readKnowledgeAssets();
+      const payload = await readKnowledgeAssets();
       const product = payload.handbooks.find(entry => String(entry.productId || entry.productType) === productId);
       const productName = product?.productName || product?.productType;
       if (!productName) throw new Error('产品不存在或未配置产品名称');
@@ -1047,7 +1071,7 @@ function createKnowledgeCenterHandler(options) {
       };
       payload.handbooks.push(item);
       auditAsset(payload, 'ASSET_CREATED', item.handbookId, session);
-      writeKnowledgeAssets(payload);
+      await writeKnowledgeAssets(payload);
       res.writeHead(201, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
       res.end(JSON.stringify({ success: true, data: projectAsset(item, true) }));
     } catch (error) {
@@ -1059,7 +1083,7 @@ function createKnowledgeCenterHandler(options) {
   async function updateKnowledgeAsset(req, res, handbookId, session) {
     try {
       const changes = await readJsonBody(req);
-      const payload = readKnowledgeAssets();
+      const payload = await readKnowledgeAssets();
       const item = payload.handbooks.find(entry => entry.handbookId === handbookId);
       if (!item) { res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify({ success: false, error: { code: 'ASSET_NOT_FOUND', message: '手册不存在' } })); return; }
       const expectedVersion = Number(changes.expectedVersion);
@@ -1072,7 +1096,7 @@ function createKnowledgeCenterHandler(options) {
       validateOwnerPair(item.ownerA, item.ownerB);
       item.assetVersion = Number(item.assetVersion || 1) + 1;
       auditAsset(payload, 'ASSET_UPDATED', handbookId, session, { before, after: { name: item.name, ownerA: item.ownerA, ownerB: item.ownerB } });
-      writeKnowledgeAssets(payload);
+      await writeKnowledgeAssets(payload);
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
       res.end(JSON.stringify({ success: true, data: projectAsset(item, true) }));
     } catch (error) {
@@ -1084,7 +1108,7 @@ function createKnowledgeCenterHandler(options) {
   async function changeAssetStatus(req, res, handbookId, session) {
     try {
       const body = await readJsonBody(req);
-      const payload = readKnowledgeAssets();
+      const payload = await readKnowledgeAssets();
       const item = assetById(payload, handbookId);
       const expectedVersion = Number(body.expectedVersion);
       const currentVersion = Number(item.assetVersion || 1);
@@ -1099,7 +1123,7 @@ function createKnowledgeCenterHandler(options) {
       item.manualStatus = { value: targetStatus, reason, updatedBy: session?.user?.id || null, updatedAt: new Date().toISOString() };
       item.assetVersion = currentVersion + 1;
       auditAsset(payload, 'ASSET_STATUS_CHANGED', handbookId, session, { before, after: targetStatus, reason, systemStatus: systemAssetStatus(item) });
-      writeAssetStatusPayload(payload);
+      await writeAssetStatusPayload(payload);
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
       res.end(JSON.stringify({ success: true, data: projectAsset(item, true) }));
     } catch (error) {
@@ -1111,7 +1135,7 @@ function createKnowledgeCenterHandler(options) {
   async function resolveAssetStatus(req, res, handbookId, session) {
     try {
       const body = await readJsonBody(req);
-      const payload = readKnowledgeAssets();
+      const payload = await readKnowledgeAssets();
       const item = assetById(payload, handbookId);
       const expectedVersion = Number(body.expectedVersion);
       const currentVersion = Number(item.assetVersion || 1);
@@ -1124,7 +1148,7 @@ function createKnowledgeCenterHandler(options) {
       else item.manualStatus = { ...item.manualStatus, reason: String(body.reason).trim(), updatedBy: session?.user?.id || null, updatedAt: new Date().toISOString(), acknowledgedSystemStatus: systemAssetStatus(item) };
       item.assetVersion = currentVersion + 1;
       auditAsset(payload, 'ASSET_STATUS_CONFLICT_RESOLVED', handbookId, session, { action, before, after: assetStatus(item), reason: body.reason || null });
-      writeAssetStatusPayload(payload);
+      await writeAssetStatusPayload(payload);
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
       res.end(JSON.stringify({ success: true, data: projectAsset(item, true) }));
     } catch (error) {
@@ -1133,8 +1157,8 @@ function createKnowledgeCenterHandler(options) {
     }
   }
 
-  function changeArchiveState(res, handbookId, archived, session) {
-    const payload = readKnowledgeAssets();
+  async function changeArchiveState(res, handbookId, archived, session) {
+    const payload = await readKnowledgeAssets();
     const item = payload.handbooks.find(entry => entry.handbookId === handbookId);
     if (!item) { res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify({ success: false, error: { code: 'ASSET_NOT_FOUND', message: '手册不存在' } })); return; }
     const running = Number(item.documentSummary?.runningTasks || 0);
@@ -1153,7 +1177,7 @@ function createKnowledgeCenterHandler(options) {
     item.assetVersion = Number(item.assetVersion || 1) + 1;
     auditAsset(payload, archived ? 'ASSET_ARCHIVED' : 'ASSET_RESTORED', handbookId, session);
     try {
-      writeKnowledgeAssets(payload);
+      await writeKnowledgeAssets(payload);
     } catch (error) {
       item.archivedAt = previousArchivedAt;
       item.status = previousStatus;
@@ -1166,9 +1190,9 @@ function createKnowledgeCenterHandler(options) {
     res.end(JSON.stringify({ success: true, data: projectAsset(item, true) }));
   }
 
-  function serveKnowledgeAssetsCatalog(res) {
+  async function serveKnowledgeAssetsCatalog(res) {
     try {
-      const body = readKnowledgeAssets();
+      const body = await readKnowledgeAssets();
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
       res.end(JSON.stringify({ success: true, data: body }));
     } catch (error) {
@@ -1245,7 +1269,7 @@ function createKnowledgeCenterHandler(options) {
   }
 
   async function handbookRepositoryStatistics(res, session, handbookId, params) {
-    requireHandbookRead(session, handbookId);
+    await requireHandbookRead(session, handbookId);
     const { mapping, connection } = findMapping(handbookId, GITLAB_CONFIG_PATH);
     const ref = params.get('ref') || mapping.defaultBranch;
     const language = params.get('language') === 'en' ? 'en' : 'zh';
@@ -1373,7 +1397,7 @@ function createKnowledgeCenterHandler(options) {
       const handbookOAuthStart = pathname.match(/^\/knowledge-center\/api\/gitlab\/handbooks\/([^/]+)\/oauth\/start$/);
       if (handbookOAuthStart && req.method === 'GET') {
         const handbookId = decodeURIComponent(handbookOAuthStart[1]);
-        requireHandbookRead(session, handbookId);
+        await requireHandbookRead(session, handbookId);
         const { connection } = findMapping(handbookId, GITLAB_CONFIG_PATH);
         if (sanitizeConnection(connection).authMode !== 'user_oauth') throw new GitLabOAuthError('GITLAB_OAUTH_NOT_REQUIRED', '该手册使用平台只读账号，无需连接个人 GitLab', 409);
         const params = new URL(req.url, 'http://localhost').searchParams;
@@ -1478,7 +1502,7 @@ function createKnowledgeCenterHandler(options) {
         const idempotencyKey = String(req.headers['idempotency-key'] || '').trim();
         if (!idempotencyKey) throw new GitLabConnectorError('IDEMPOTENCY_KEY_REQUIRED', '配置更新必须携带 Idempotency-Key', 400);
         const handbookId = decodeURIComponent(mappingUpdate[1]);
-        if (!readKnowledgeAssets().handbooks.some(item => item.handbookId === handbookId)) throw new GitLabConnectorError('ASSET_NOT_FOUND', '手册资产不存在', 404);
+        if (!(await readKnowledgeAssets()).handbooks.some(item => item.handbookId === handbookId)) throw new GitLabConnectorError('ASSET_NOT_FOUND', '手册资产不存在', 404);
         const rowVersion = req.headers['if-match'] == null ? null : Number(String(req.headers['if-match']).replace(/\"/g, ''));
         const mapping = upsertMapping(handbookId, { ...await readJsonBody(req), ...(rowVersion != null ? { rowVersion } : {}) }, GITLAB_CONFIG_PATH, { idempotencyKey, operatorId: session?.user?.id });
         res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
@@ -2009,7 +2033,7 @@ function createKnowledgeCenterHandler(options) {
           }
           return;
         }
-        if (req.method === 'POST' && !forbidUnlessPlatformAdmin(res, session)) createKnowledgeAsset(req, res, session);
+        if (req.method === 'POST' && !forbidUnlessPlatformAdmin(res, session)) await createKnowledgeAsset(req, res, session);
         else if (req.method !== 'POST') { res.writeHead(405); res.end(); }
       });
       return;
@@ -2017,29 +2041,29 @@ function createKnowledgeCenterHandler(options) {
     const assetStatusCommand = pathname.match(/^\/knowledge-center\/api\/assets\/handbooks\/([^/]+)\/status(?:\/(resolve))?$/);
     if (assetStatusCommand) {
       const handbookId = decodeURIComponent(assetStatusCommand[1]);
-      requireSession(req, res, session => {
+      requireSession(req, res, async session => {
         if (forbidUnlessPlatformAdmin(res, session)) return;
         if (req.method !== 'POST') { res.writeHead(405); res.end(); return; }
-        if (assetStatusCommand[2] === 'resolve') resolveAssetStatus(req, res, handbookId, session);
-        else changeAssetStatus(req, res, handbookId, session);
+        if (assetStatusCommand[2] === 'resolve') await resolveAssetStatus(req, res, handbookId, session);
+        else await changeAssetStatus(req, res, handbookId, session);
       });
       return;
     }
     const assetCommand = pathname.match(/^\/knowledge-center\/api\/assets\/handbooks\/([^/]+)(?:\/(archive|restore))?$/);
     if (assetCommand) {
       const handbookId = decodeURIComponent(assetCommand[1]);
-      requireSession(req, res, session => {
+      requireSession(req, res, async session => {
         if (forbidUnlessPlatformAdmin(res, session)) return;
-        if (req.method === 'PATCH' && !assetCommand[2]) updateKnowledgeAsset(req, res, handbookId, session);
-        else if (req.method === 'POST' && assetCommand[2]) changeArchiveState(res, handbookId, assetCommand[2] === 'archive', session);
+        if (req.method === 'PATCH' && !assetCommand[2]) await updateKnowledgeAsset(req, res, handbookId, session);
+        else if (req.method === 'POST' && assetCommand[2]) await changeArchiveState(res, handbookId, assetCommand[2] === 'archive', session);
         else { res.writeHead(405); res.end(); }
       });
       return;
     }
     if (req.method === 'PATCH' && pathname.startsWith('/knowledge-center/api/assets/catalog/')) {
       const handbookId = decodeURIComponent(pathname.slice('/knowledge-center/api/assets/catalog/'.length));
-      requireSession(req, res, session => {
-        if (!forbidUnlessPlatformAdmin(res, session)) updateKnowledgeAsset(req, res, handbookId, session);
+      requireSession(req, res, async session => {
+        if (!forbidUnlessPlatformAdmin(res, session)) await updateKnowledgeAsset(req, res, handbookId, session);
       });
       return;
     }
@@ -2078,6 +2102,38 @@ function createKnowledgeCenterHandler(options) {
     if (pathname.startsWith('/knowledge-center/api/production/handbooks/') || pathname.startsWith('/knowledge-center/api/production/attachments/')) {
       requireSession(req, res, session => handleHandbookProduction(req, res, session, pathname)); return;
     }
+    const reviewResource = pathname.match(/^\/knowledge-center\/api\/incremental-tasks\/([^/]+)\/resources$/);
+    if (reviewResource && req.method === 'GET') {
+      requireSession(req, res, async session => {
+        const service = handleIncrementalBuild?.service;
+        const task = service?.get(session, decodeURIComponent(reviewResource[1]), await service.readState(session));
+        if (!task?.handbookSource) throw new GitLabConnectorError('REVIEW_RESOURCE_NOT_FOUND', '审核图片不存在', 404);
+        await requireHandbookReadAsync(session, task.handbookId);
+        const params = new URL(req.url, 'http://localhost').searchParams;
+        if (params.get('candidateDigest') !== task.candidate?.digest) throw new GitLabConnectorError('CANDIDATE_CHANGED', '审核候选已变化，请重新打开审核文档', 409);
+        const source = task.handbookSource;
+        const document = source.documents.find(item => item.documentId === params.get('documentId'));
+        const resource = document?.resources?.find(item => item.path === params.get('path'));
+        if (!resource) throw new GitLabConnectorError('REVIEW_RESOURCE_NOT_FOUND', '图片不属于当前审核文档', 404);
+        const { mapping, connection } = findMapping(task.handbookId, GITLAB_CONFIG_PATH);
+        const identity = { connectionId: connection.id, host: connection.host, project: connection.projectPath || connection.project };
+        if (JSON.stringify(identity) !== JSON.stringify(source.repositoryIdentity)) throw new GitLabConnectorError('REVIEW_MAPPING_CHANGED', '仓库映射已变化，请重新发起评审', 409);
+        authorizeMappedRequest(mapping, source.branch, 'zh', document.filePath);
+        authorizeMappedRequest(mapping, source.branch, 'zh', resource.path);
+        let bytes;
+        if (resource.delivery === 'create') bytes = handbookProductionService.delivery.readFrozen(resource);
+        else {
+          if (!source.commitSha) throw new GitLabConnectorError('GITLAB_RESOURCE_SNAPSHOT_CHANGED', '缺少审核图片的固定仓库版本', 409);
+          const file = await gitLabRequestForUser(session, connection, options => readGitLabFile(connection, source.commitSha, resource.path, options));
+          bytes = Buffer.from(file.content, file.encoding === 'base64' ? 'base64' : 'utf8');
+        }
+        if (bytes.length !== resource.size || crypto.createHash('sha256').update(bytes).digest('hex') !== resource.contentDigest) throw new GitLabConnectorError('GITLAB_RESOURCE_SNAPSHOT_CHANGED', '审核图片快照不一致', 409);
+        const media = imageType(bytes) || (resource.delivery !== 'create' && path.extname(resource.path).toLowerCase() === '.svg' ? 'image/svg+xml' : null);
+        if (!media) throw new GitLabConnectorError('GITLAB_RESOURCE_TYPE_NOT_ALLOWED', '审核图片格式不受支持', 415);
+        res.writeHead(200, { 'Content-Type': media, 'Content-Length': bytes.length, 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "sandbox; default-src 'none'; style-src 'unsafe-inline'" });
+        res.end(bytes);
+      }); return;
+    }
     const mrPublish = pathname.match(/^\/knowledge-center\/api\/incremental-tasks\/([^/]+)\/publish$/);
     if (mrPublish && req.method === 'POST') {
       requireSession(req, res, async session => {
@@ -2093,16 +2149,33 @@ function createKnowledgeCenterHandler(options) {
         const key = req.headers['idempotency-key'];
         if (!key) throw Object.assign(new Error('发布需要幂等键'), { status: 400 });
         if (body.expectedCandidateDigest !== task.candidate?.digest) throw Object.assign(new Error('候选版本已变化'), { status: 409 });
-        if (task.state === 'mr_submitted') return sendProductionData(res, task.mergeRequest);
+        if (task.state === 'mr_submitted') {
+          const { mapping, connection } = findMapping(task.handbookId, GITLAB_CONFIG_PATH);
+          const identity = { connectionId: connection.id, host: connection.host, project: connection.projectPath || connection.project };
+          if (JSON.stringify(identity) !== JSON.stringify(task.handbookSource.repositoryIdentity)) throw Object.assign(new Error('仓库映射已变化，请重新发起评审'), { status: 409 });
+          task.handbookSource.documents.forEach(item => {
+            authorizeMappedRequest(mapping, task.handbookSource.branch, 'zh', item.filePath);
+            extractMarkdownResources(item.markdown, item.filePath).forEach(resource => authorizeMappedRequest(mapping, task.handbookSource.branch, 'zh', resource.path));
+          });
+          const delivery = await gitLabRequestForUser(session, connection, options => readMergeRequestDelivery(connection, {
+            branch: task.handbookSource.branch,
+            documents: task.handbookSource.documents,
+            mergeRequest: task.mergeRequest,
+          }, options));
+          return sendProductionData(res, service.recordMergeRequestDelivery(session, task.id, key, { delivery }));
+        }
         if (task.state !== 'approved' || !task.reviews.some(item => item.status === 'approved' && item.candidateDigest === task.candidate.digest)) throw Object.assign(new Error('候选必须通过审核'), { status: 409 });
         const { mapping, connection } = findMapping(task.handbookId, GITLAB_CONFIG_PATH);
         const identity = { connectionId: connection.id, host: connection.host, project: connection.projectPath || connection.project };
         if (JSON.stringify(identity) !== JSON.stringify(task.handbookSource.repositoryIdentity)) throw Object.assign(new Error('仓库映射已变化，请重新发起评审'), { status: 409 });
         if (task.candidate.content !== task.handbookSource.content || JSON.stringify(task.candidate.operations) !== JSON.stringify(task.handbookSource.operations)) throw Object.assign(new Error('候选与保存快照不一致，请返回手册重新提交'), { status: 409 });
-        task.handbookSource.documents.forEach(item => authorizeMappedRequest(mapping, task.handbookSource.branch, 'zh', item.filePath));
+        task.handbookSource.documents.forEach(item => {
+          authorizeMappedRequest(mapping, task.handbookSource.branch, 'zh', item.filePath);
+          extractMarkdownResources(item.markdown, item.filePath).forEach(resource => authorizeMappedRequest(mapping, task.handbookSource.branch, 'zh', resource.path));
+        });
         const mergeRequest = await gitLabRequestForUser(session, connection, options => submitDocumentMergeRequest(connection, {
           ...task.handbookSource, taskId: task.id, title: task.name, candidateDigest: task.candidate.digest,
-        }, options));
+        }, { ...options, loadResource: resource => handbookProductionService.delivery.readFrozen(resource) }));
         sendProductionData(res, service.recordMergeRequest(session, task.id, key, { expectedCandidateDigest: body.expectedCandidateDigest, mergeRequest }));
       }); return;
     }

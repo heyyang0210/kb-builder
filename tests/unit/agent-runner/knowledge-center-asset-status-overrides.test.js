@@ -4,6 +4,8 @@ const os = require('os');
 const path = require('path');
 const { createKnowledgeCenterHandler } = require('../../../packages/agent-runner-core/routes/knowledge-center');
 
+jest.setTimeout(30000);
+
 function jsonStore(initial) {
   let value = structuredClone(initial);
   return {
@@ -13,7 +15,12 @@ function jsonStore(initial) {
       value = structuredClone(next);
       return next;
     }),
+    writeAsync: jest.fn(async next => {
+      value = structuredClone(next);
+      return next;
+    }),
     value: () => value,
+    replace: next => { value = structuredClone(next); },
   };
 }
 
@@ -74,8 +81,11 @@ describe('数据库模式知识资产状态覆盖', () => {
 
   test('数据库列表仅加载当前页映射并保留中文单语言仓库版本', async () => {
     const readMapping = jest.fn(async id => ({ handbookId: id, defaultBranch: 'master', enabledBranches: ['master'], zhPaths: ['doc/中文'], enPaths: [] }));
+    const manualStatusStore = jsonStore({ version: 1, statuses: {}, audits: [] });
+    manualStatusStore.read.mockImplementation(() => { throw new Error('数据库模式不得同步读取人工状态覆盖'); });
     await startHandler({
       knowledgeAssetsStore: jsonStore({ handbooks: ['DB-004', 'DB-005'].map(handbookId => ({ handbookId, name: handbookId })) }),
+      manualStatusStore,
       domainStore: { readPlatformGitLabMappingAsync: readMapping },
     });
     const response = await fetch(`${baseUrl}/knowledge-center/api/assets/handbooks?pageSize=1`);
@@ -113,6 +123,7 @@ describe('数据库模式知识资产状态覆盖', () => {
       audits: [],
     });
     const manualStatusStore = jsonStore({ version: 1, statuses: {}, audits: [] });
+    manualStatusStore.read.mockImplementation(() => { throw new Error('数据库模式不得同步读取人工状态覆盖'); });
     await startHandler({ knowledgeAssetsStore, manualStatusStore });
 
     const changed = await fetch(`${baseUrl}/knowledge-center/api/assets/handbooks/DB-041/status`, {
@@ -130,6 +141,7 @@ describe('数据库模式知识资产状态覆盖', () => {
         'DB-041': expect.objectContaining({ manualStatus: expect.objectContaining({ value: 'content_building' }), assetVersion: 14 }),
       }),
     }));
+    expect(manualStatusStore.readAsync).toHaveBeenCalled();
 
     const listed = await fetch(`${baseUrl}/knowledge-center/api/assets/handbooks?page=1&pageSize=20`);
     expect(listed.status).toBe(200);

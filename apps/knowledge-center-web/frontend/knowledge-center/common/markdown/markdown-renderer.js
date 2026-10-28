@@ -22,10 +22,16 @@ function markdownBase(renderMarkdown, markdown, filePath, context) {
       .replace(/<(script|style|iframe|object|embed|form)\b[\s\S]*?<\/\1>/gi, '')
       .replace(/\son[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
       .replace(/\s(?:href|src)\s*=\s*["']\s*(?:javascript|vbscript|data):[^"']*["']/gi, '')
-      .replace(/(href|src)="((?!https?:\/\/|\/|#|mailto:)[^"]+)"/gi, (_match, attr, target) => {
+      .replace(/\b(href|src)=("|')((?!https?:\/\/|\/|#|mailto:)[^"']+)\2/gi, (_match, attr, _quote, target) => {
         const parts = String(filePath || '').split('/'); parts.pop();
-        for (const part of target.split('/')) { if (!part || part === '.') continue; if (part === '..') parts.pop(); else parts.push(part); }
+        const decoded = document.createElement('textarea'); decoded.innerHTML = target;
+        const resourceTarget = attr.toLowerCase() === 'src' ? decodeURIComponent(decoded.value.split('#', 1)[0].split('?', 1)[0]) : target;
+        for (const part of resourceTarget.split('/')) { if (!part || part === '.') continue; if (part === '..') parts.pop(); else parts.push(part); }
         const resolved = parts.join('/');
+        if (attr.toLowerCase() === 'src' && context.reviewResourceContext) {
+          const review = context.reviewResourceContext;
+          return `src="/knowledge-center/api/incremental-tasks/${encodeURIComponent(review.taskId)}/resources?candidateDigest=${encodeURIComponent(review.candidateDigest)}&documentId=${encodeURIComponent(review.documentId)}&path=${encodeURIComponent(resolved)}"`;
+        }
         if (attr.toLowerCase() === 'src' && context.handbookId) return `src="/knowledge-center/api/gitlab/handbooks/${encodeURIComponent(context.handbookId)}/file?ref=${encodeURIComponent(context.branch || '')}&language=${encodeURIComponent(context.language || 'zh')}&path=${encodeURIComponent(resolved)}&raw=1"`;
         if (attr.toLowerCase() === 'href' && context.handbookId) return `href="/knowledge-center/assets/${encodeURIComponent(context.handbookId)}/repository?branch=${encodeURIComponent(context.branch || '')}&lang=${encodeURIComponent(context.language || 'zh')}&path=${encodeURIComponent(resolved)}"`;
         return `${attr}="${resolved}"`;

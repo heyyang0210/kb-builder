@@ -353,6 +353,9 @@ class RepositoryTestRunnerTests(unittest.TestCase):
         self.assertEqual("test", env["KNOWLEDGE_CENTER_ENV"])
         self.assertEqual("test", env["KNOWLEDGE_CENTER_ENVIRONMENT"])
         self.assertEqual(context.run_id, env["KNOWLEDGE_CENTER_TEST_RUN_ID"])
+        self.assertEqual("1", env["KNOWLEDGE_CENTER_E2E_INITIALIZE_PRODUCTION"])
+        self.assertEqual(str(Path(env["KNOWLEDGE_CENTER_STATE_DIR"]).parent / "production-initialization"),
+                         env["KNOWLEDGE_CENTER_E2E_INITIALIZATION_DIR"])
         self.assertEqual(str(RUNNER.TEST_DATABASE_CONFIG_DIR), env["YASDB_CONFIG_DIR"])
         self.assertEqual("database", env["KNOWLEDGE_STORAGE_MODE"])
         self.assertNotEqual("13510", base_url.rsplit(":", 1)[-1])

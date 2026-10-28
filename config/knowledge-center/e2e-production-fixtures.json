@@ -1,0 +1,4 @@
+[
+  {"namespace":"handbook-production","key":"state","payload":{"schemaVersion":1,"drafts":{},"attachments":{},"reviewBatches":[],"idempotency":{},"audits":[]}},
+  {"namespace":"production-ai-artifacts","key":"state","payload":{"schemaVersion":1,"artifacts":{}}}
+]

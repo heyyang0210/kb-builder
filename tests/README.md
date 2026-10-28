@@ -12,6 +12,10 @@ Jest 桥接文件即使模拟 `node:test` 也由 Jest 执行，统一入口优�
 
 隔离 HTTP 的 `handbook-incremental-review.test.js` 使用真实网关与模拟 GitLab 回读项目、源分支、目标分支、MR IID 和 changes，同时覆盖无差异任务保留、目标提交漂移及失败重试。真实 GitLab 验收还须在已授权的读写连接和映射测试文档上回读相同事实，候选必须有非空差异。当前送审契约只产生 create/update 文件动作；删除文档不计入本轮验收。
 
+托管图片交付回归：`node --test tests/unit/agent-runner/gitlab-managed-resource-delivery.test.js tests/unit/agent-runner/handbook-incremental-review.test.js`。新增套件通过真实本地生产 HTTP handler 和 GitLab HTTP 替身，覆盖上传/保存/来源权限/送审/审核/发布/模拟合并后回读，服务端冻结抵御客户端伪造、同源任务重放、原文件删除、冻结快照缺失/损坏，以及共享图片去重和提交响应丢失后的幂等恢复。检查失败时保留已审核状态且无远端写入。HTML/Markdown 改写保留代码示例及周围正文。测试入口按 `node:test` 自动分类，不交给 Jest；不是数据库模式、共享13510实例或企业 GitLab 验收。
+
+现有送审浏览器回归显式使用 `HANDBOOK_BROWSER_CHECK=1 node --test tests/unit/agent-runner/handbook-incremental-review.test.js`；它验证本地 Chromium 的保存与送审/审核入口，不覆盖本次托管图片拖拽上传 UI 或实际企业合并。两类证据分别记录，不能把 HTTP 流程表述为图片浏览器端到端通过。
+
 `outline-import-api.test.js` 使用隔离文件仓储和真实 HTTP，覆盖自然路径候选内容说明保存、清空、目录保存后的投影一致性，以及非法节点拒绝。`outline-natural-path.test.js` 直接读取受版本控制的 `knowledge/outlines/SQL参考手册大纲示例.xlsx` 校验 501 篇文档的路径、顺序、说明、领域和任务，不依赖本地 `documents/` 源文件。
 
 `outline-detail-performance.test.js` 验证大纲详情的 catalog 快速路径、候选/空手册/不存在/失败状态，以及隔离真实 HTTP 精简与完整响应兼容、异步 Storage 等待不阻塞 Worker。`knowledge-center-outlines-layout.spec.js` 验证 SQL 参考手册加载提示和领域任务延迟时的首屏可用性，页面测试只读，不修改已有大纲。空手册用例还验证模板填写说明关闭后焦点返回入口；工作台主滚动用例先在页面内制造足够内容，再检查侧栏固定与右侧独立滚动，避免依赖当天业务数据量。
@@ -237,11 +241,11 @@ PingCode 资料输入回归包含于 `production-writing.test.cjs`：真实 HTTP
 
 ## 手册按需读取性能回归
 
-手册同屏工作台回归：`tests/e2e/agent-runner/knowledge-center-handbook-workspace.spec.js` 覆盖真实隔离服务中的目录、编辑格式快速切换、草稿 HTTP 保存回读、五类来源和 390px 布局；使用统一 `tests/run_tests.py` E2E 入口同步 `pf_knowledge` 到 `test_hy` 后运行。`production-writing.test.cjs` 另覆盖同屏候选生成与明确采用，模型为确定性夹具，不代表外部模型质量验收。
+手册同屏工作台回归：`tests/e2e/agent-runner/knowledge-center-handbook-workspace.spec.js` 覆盖真实隔离服务中的目录、编辑格式快速切换、草稿 HTTP 保存回读、六类来源和 390px 布局；使用统一 `tests/run_tests.py` E2E 入口同步 `pf_knowledge` 到 `test_hy` 后运行。`production-writing.test.cjs` 另覆盖同屏候选生成与明确采用，模型为确定性夹具，不代表外部模型质量验收。
 
 确定性回归：`node --test tests/unit/agent-runner/handbook-demand-read.node.test.cjs`；真实 HTTP 保存/审核/AI 采用与映射授权回归：`node --test --test-name-pattern='生产映射真实 HTTP|shared draft HTTP|attachment and review batch|AI HTTP creates isolated' tests/unit/agent-runner/handbook-production-api.test.js`。
 
-运行实例性能门禁：先通过环境注入 `KPG_BASE_URL`、`KC_PERF_HANDBOOK_ID`、`KNOWLEDGE_CENTER_ADMIN_USERNAME`、`KNOWLEDGE_CENTER_ADMIN_PASSWORD`，执行 `node tools/repository/check-handbook-performance.cjs`。目标手册需要已有共享草稿；工具从生成文档首页实际点击入口，记录目录可见与正文就绪，再各采样100次目录/草稿 API，按 `config/knowledge-center/handbook-performance.json` 判断退出码；结果默认写入 `runtime/performance/handbook-gate.json`，不记录凭据和正文。发布该链路变更须执行此门禁，并确保 Storage 已支持投影；在隔离端口验证，避免与编译、其他压测争用资源。接口测试不替代已连接 GitLab、并发及跨实例恢复验收。
+运行实例性能门禁：先通过环境注入 `KPG_BASE_URL`、`KC_PERF_HANDBOOK_ID`、`KNOWLEDGE_CENTER_ADMIN_USERNAME`、`KNOWLEDGE_CENTER_ADMIN_PASSWORD`，执行 `node tools/repository/check-handbook-performance.cjs`。目标手册需要已有共享草稿；工具从生成文档首页实际点击入口，记录目录可见与正文就绪，再按1/5/10路分别各采样100次目录/草稿 API，按 `config/knowledge-center/handbook-performance.json` 判断退出码；结果默认写入 `runtime/performance/handbook-gate.json`，不记录凭据和正文。发布该链路变更须执行此门禁，并确保 Storage 已支持投影；在隔离端口验证，避免与编译、其他压测争用资源。接口测试不替代已连接 GitLab、并发及跨实例恢复验收。
 
 只读加载体验验收：使用同一组性能账号环境变量运行 `node --test tests/e2e/agent-runner/handbook-loading-readonly.node.cjs`，无需隔离写入环境，不保存业务数据。覆盖桌面/390px慢正文期间目录可用、稳定占位、无错误草稿结论、恢复真实正文，以及模拟读取失败后目录仍可用；截图写入 runtime/test-results/handbook-loading。
 性能门禁的目录指标在下一绘制帧核对展开目录位于视口内且可接收指针操作，不以加载文字消失代替可用；失败结果保留，不覆盖为通过。
@@ -264,7 +268,7 @@ npm run test:performance -- --current
 
 菜单基础回归已接入 `npm run verify:full`，无真实实例变量时仍执行模板契约与隔离浏览器验证；发布验证另启用真实实例用例。真实页面验证必须避免与共享实例压测/其他 Playwright 验收并发运行。
 
-手册工作台参考效果验收：`knowledge-center-handbook-workspace.spec.js` 覆盖目录、格式下拉、AI五类来源、人工内容保留、窄屏与保存回读；格式切换先打开summary。临时格式菜单纳入 `dismissible-menu.node.cjs`。本轮隔离实测2项通过，保存回读仍因历史大纲引用冲突失败；不得将其记为完整流程通过。
+手册工作台参考效果验收：`knowledge-center-handbook-workspace.spec.js` 覆盖目录、格式下拉、AI六类来源、人工内容保留、窄屏与保存回读；格式切换先打开summary。临时格式菜单纳入 `dismissible-menu.node.cjs`。续作隔离实测Chromium/Firefox共6项通过，历史大纲引用409通过已批准的测试Schema备份初始化消除；真实模型生成—采用—送审全链路另行验收。
 
 Jest 的 CommonJS runner 在 `tests/unit/agent-runner/jest.config.js` 中将 `marked` 映射到已安装同版本的 UMD 入口，用于来源图片 Markdown 解析测试；不替换产品运行时依赖或版本。
 
@@ -273,3 +277,65 @@ Jest 的 CommonJS runner 在 `tests/unit/agent-runner/jest.config.js` 中将 `ma
 手册恢复 HTTP 测试注入可控时钟，等写作阶段开始后再推进租约，避免文件证据落盘时间提前耗尽短租约。PingCode 来源预览先关闭添加弹窗再打开预览。大纲菜单测试改用公共菜单模块；大纲 HTTP 夹具注入不参与该接口的生产服务，避免扫描共享任务存储，保持默认测试超时。
 
 本轮六套 Jest（构建契约、大纲、迁移预检、GitLab HTTP、AI 服务、增量 API）106 项通过；`node --test tests/unit/agent-runner/handbook-production-api.test.js tests/unit/agent-runner/handbook-incremental-review.test.js tests/e2e/agent-runner/dismissible-menu.node.cjs` 为 29 通过、4 跳过。跳过项为共享实例菜单两项、真实 YashanDB 质量接口一项、真实配置模型质量接口一项。隔离 HTTP 与浏览器通过不代表真实企业 GitLab、模型质量或共享部署验收通过。原始证据保存在本地 `runtime/test-results/continuation-20261029/`，不提交运行日志。
+
+## 生产历史大纲引用盘点
+
+`node --test tests/unit/agent-runner/production-reference-audit.test.js` 用真实本地HTTP验证历史引用、软删除记录、豁免namespace、有效/缺失/已删除/未知分类、身份错配拒绝及报告脱敏。只读实测命令：
+
+```bash
+YASDB_STORAGE_URL=http://127.0.0.1:14210 KC_REFERENCE_AUDIT_OUTPUT=runtime/test-results/production-reference-audit/report.json node tools/repository/audit-production-references.cjs
+```
+
+目标地址必须明确指定；仅调用现有导出和大纲治理GET，不写数据库。失败退出非零并保留报告；导出/协议失败记录AUDIT_INCOMPLETE，不把未完成扫描记作零异常。规则见`config/knowledge-center/production-reference-audit.json`。报告不含正文与原始记录键，不能替代事务快照、正式备份或LOB核验；异常不能通过绕过保存409解决。
+
+隔离E2E启动顺序为：持有test_hy锁→来源同步对账→已提交迁移→自有Storage→生产聚合私有备份/CAS初始化/回读→业务服务。初始化失败停止启动；备份及阶段报告位于本次运行的knowledge-center/production-initialization，含正文的备份不得提交。
+
+性能门禁工具 `check-handbook-performance.cjs` 按配置执行同目录/草稿的1/5/10路读取，输出每批原始状态及独立成功P95，失败响应不能算成功加载；浏览器另按browserConcurrencyLevels的1/5/10路独立上下文分批采样，每档固定30次；各批入口准备就绪后并发点击，保留每轮成功/失败及各档P95。代表同账号并发读取，不代表多角色验收；不同上下文不共享静态缓存，各自先加载首页。
+
+浏览器样本还记录目录首次DOM、首次动画帧以及目录帧回调断连/不可见次数，用于区分请求、渲染和帧等待；门禁仍按实际可见的目录与正文计算，诊断时间点不能替代成功判定。
+
+工作台补验增加8份本地文档：首份以浏览器文件拖放事件上传，其余文件选择上传；断言真实后端201、解析内容及摘要，验证折叠和原生浏览器拖动保持期间跨列表滚动的优先级。该场景不调用真实模型，不代表生成质量或送审验收。性能采样启用严格JSON业务成功校验，HTTP 200错误体、HTML或无效JSON均保留为失败；浏览器正文就绪还须目录/草稿响应成功，禁止只按外壳DOM判定。
+
+初始化前盘点仅允许两个获批聚合中的已删除引用；未知、缺失及范围外异常在首次PUT前停止，备份和失败报告保留。对应真实本地HTTP失败测试覆盖503引起的未知引用及CAS409。
+
+工作台真实模型补验：`WRITING_LIVE_MODEL=1` 显式启用 `knowledge-center-handbook-workspace.spec.js` 中单个Chromium上传→生成→采用→刷新场景。必须走统一隔离入口（test_hy），不手工指向共享实例；默认跳过。不替代送审、GitLab交付或生成事实质量验收。
+
+工作台来源授权恢复补验：`WRITING_AUTH_RECOVERY=1` 在统一隔离入口显式启用无OAuth账号场景，验证真实access-status不可读、授权入口、重新检查、要求保留和零生成POST；默认不运行该前提场景，已授权账号不得冒充无授权。`production-writing.test.cjs` 另外验证重新检查成功后恢复生成、生成前授权失效不POST，以及保留首次冻结基线；该恢复成功分支仍是确定性模型/内存HTTP夹具。
+
+## 生产正文、产物、附件与来源图片只读基线
+
+`node --test tests/unit/agent-runner/production-content-inventory.test.js` 验证真实本地GET接口与真实文件核验，覆盖健康/损坏摘要、审核冻结/缺失引用、动态MCP、旧内嵌产物、文件大小/摘要/孤立、链接/穿越拒绝、协议和0600独占输出。真实Storage命令：
+
+```bash
+YASDB_STORAGE_URL=http://127.0.0.1:14210 KC_CONTENT_INVENTORY_OUTPUT=runtime/test-results/production-content/report.json node tools/repository/inventory-production-content.cjs
+```
+
+可显式设置`KC_ATTACHMENT_ROOT`和`KC_SOURCE_IMAGE_ROOT`为该服务本机权威附件/来源图片目录；交付图片从`KC_ATTACHMENT_ROOT/delivery-images`读取。任一不设置时对应文件核验not_checked，目录不存在时root_unavailable，均非完整通过。schemaVersion=4，scope包含来源图片、正文链接及增量任务交付图片；sourceImages统计资料、任务和所有历史修订中的ready/failed引用，deliveryImages统计所有保留的`incremental/state`任务资源清单并按摘要去重，逐字节校验大小、摘要和图片类型。16项原生HTTP/文件测试覆盖仅历史引用、元数据冲突、篡改、链接、缺失目录及缺失聚合；无引用也需枚举对应目录。每次更换输出文件，已有报告不覆盖，输出链接不跟随。仅GET导出，不自动创建附件目录、不修复/迁移/删除数据。报告正文不落盘；未引用产物或图片的计数不证明可清理。`passed`仅表示工具scope内检查，不能替代大纲引用盘点、迁移评审、事务快照、LOB/备份恢复或GitLab验收。目录扫描要求稳定的本机目录，不能当作对抗并发目录替换的安全沙箱。
+
+`HANDBOOK_BROWSER_CHECK=1 node --test tests/unit/agent-runner/gitlab-managed-resource-delivery.test.js`验证冻结图片通过真实本机HTTP送审、审核阅读组件与手册总览的Chromium图片解码、合并回读；7项原生测试，不代表13510共享部署或企业GitLab验收。
+
+## 审核决定候选摘要回归
+
+```bash
+runtime/agent-runner/node_modules/.bin/jest --config tests/unit/agent-runner/jest.config.js --runInBand tests/unit/agent-runner/incremental-build-api.test.js
+HANDBOOK_BROWSER_CHECK=1 node --test tests/unit/agent-runner/handbook-incremental-review.test.js
+```
+
+前者20项含真实HTTP对通用/手册审核的错误摘要零副作用、通过/退回、空值/错误类型、同键重试/异体冲突及终态保护。后者显式开启Chromium页面验证，通过“更多→提交审核→选择文档→下一步”送审；可视化编辑先等待编辑器after就绪标记，再实际输入。实际通过/退回请求必须携带所渲染候选摘要，过期摘要保留待审，失败重试及MR恢复保持冻结正文。2项通过、不跳过；未设置开关时不包含浏览器证据。使用本机真实HTTP handler与内存仓储、模拟GitLab；不包含外部模型、真实数据库或企业GitLab写入。当前产品仍为整批审核，逐篇列表不等于逐篇决定。
+
+
+## 生产内容离线备份和恢复演练
+
+`node --test tests/unit/agent-runner/production-content-backup.test.js`通过真实本机HTTP及文件操作，验证正文/附件/历史任务冻结图片备份恢复、源图片删除后恢复、聚合与文件并发变更、封存后篡改、符号链接、已有目录和孤立文件处理。工具只GET Storage，不写数据库；离线恢复会启动短暂的本机只读导出适配器，复用内容盘点检查恢复后的引用和字节。不能代替YashanDB事务快照、数据库恢复、LOB或正式迁移验收。
+
+```bash
+YASDB_STORAGE_URL=http://127.0.0.1:14210 KC_ATTACHMENT_ROOT=runtime/agent-runner/handbook-production/attachments KC_SOURCE_IMAGE_ROOT=runtime/agent-runner/handbook-production/source-images KC_CONTENT_BACKUP_OUTPUT=runtime/test-results/production-backup/new-backup node tools/repository/backup-production-content.cjs
+KC_CONTENT_BACKUP_MODE=restore KC_CONTENT_BACKUP_ROOT=runtime/test-results/production-backup/new-backup KC_CONTENT_BACKUP_OUTPUT=runtime/test-results/production-backup/new-restore node tools/repository/backup-production-content.cjs
+```
+
+父目录须事先存在，输出须位于runtime且为全新独立目录；源与目标不得重叠，不覆盖现有备份或恢复目录。备份包含原始正文、来源等私有数据，目录0700、文件0600，不提交或复制到正式设计。缺失目录和孤立文件照实记录；备份可成功复制但inventoryPassed=false，此时passed=false并以非零退出，恢复拒绝。备份前后完整聚合比对及资源二次扫描只能检测所观测变更，不等同于停写或跨聚合事务；正式恢复需独立批准方案。本工具不删除任何源资源、不自动恢复缺失附件、不触发GC。
+
+
+T13浏览器性能报告另含点击后的longTasks数值，作为主线程阻塞诊断；函数级CPU采样须与正式性能验收分开。`node --test tests/unit/agent-runner/handbook-demand-read.node.test.cjs`当前7项覆盖映射并行、分支固定、拒绝及迟到响应保护。10路超预算仍判失败。
+
+公共滚动实时刷新只检查声明区，显式inspectScrollContract仍默认全树诊断，E2E继续覆盖八模块未声明滚动区。滚动单元11/11，当前工作台+滚动双浏览器28通过4外部条件跳过；10路性能仍失败，不以功能通过替代性能验收。

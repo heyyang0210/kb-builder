@@ -1082,9 +1082,9 @@ body.immersive-writing #main { max-width: none; padding: 0; }
 /* 格式切换与编辑器命令共享正文上方一行。 */
 /* 编辑态使用工作区宽度，正文随视口伸展。 */
 .handbook-production-editor.is-editing > .handbook-production-writing:not(.has-writing-assistant) {
-  --handbook-editor-min-height: max(240px, calc(100dvh - 336px));
+  --handbook-editor-min-height: max(240px, calc(var(--kc-viewport-height) - 336px));
   display: flex; flex-direction: column; gap: 0; box-sizing: border-box;
-  min-height: calc(100dvh - 64px); padding: 64px 32px 12px;
+  min-height: calc(var(--kc-viewport-height) - 64px); padding: 64px 32px 12px;
 }
 .handbook-production-editor.is-editing .handbook-document-heading {
   width: 100%; max-width: none; margin: 0 0 16px;
@@ -1192,7 +1192,7 @@ body.immersive-writing #main { max-width: none; padding: 0; }
 .handbook-production-writing:has(.handbook-empty-intro) .handbook-document-heading { margin-bottom: 40px; }
 .handbook-writing-page .handbook-ai-settings { --settings-accent: var(--workbench-blue, var(--color-brand)); --settings-soft: color-mix(in srgb, var(--settings-accent) 5%, var(--color-surface)); color: var(--color-text); }
 .handbook-writing-page .handbook-ai-settings-backdrop { background: rgb(34 46 65 / 26%); }
-.handbook-writing-page .handbook-ai-settings-dialog { width: min(600px, 100%); max-height: min(850px, calc(100dvh - 40px)); border-radius: 14px; box-shadow: 0 20px 80px rgb(21 42 71 / 14%); overflow: hidden; }
+.handbook-writing-page .handbook-ai-settings-dialog { width: min(600px, 100%); max-height: min(850px, calc(var(--kc-viewport-height) - 40px)); border-radius: 14px; box-shadow: 0 20px 80px rgb(21 42 71 / 14%); overflow: hidden; }
 .handbook-writing-page .handbook-ai-settings-dialog > header { padding: 23px 28px 20px; align-items: flex-start; }
 .handbook-writing-page .handbook-ai-settings-dialog > header h3 { font-size: 20px; font-weight: 550; line-height: 1.5; }
 .handbook-writing-page .handbook-ai-settings-dialog > header p { margin-top: 5px; }
@@ -1228,7 +1228,7 @@ body.immersive-writing #main { max-width: none; padding: 0; }
 .handbook-empty-actions .button:not(.secondary) { background: var(--workbench-blue, var(--color-brand)); border-color: var(--workbench-blue, var(--color-brand)); color: var(--color-on-brand, #fff); }
 .handbook-writing-page .handbook-ai-settings-dialog button:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 2px; }
 @media (max-width: 600px) {
-  .handbook-writing-page .handbook-ai-settings-dialog { max-height: calc(100dvh - 20px); }
+  .handbook-writing-page .handbook-ai-settings-dialog { max-height: calc(var(--kc-viewport-height) - 20px); }
   .handbook-writing-page .handbook-ai-settings-dialog > header,
   .handbook-writing-page .handbook-ai-settings-dialog > footer { padding: 16px 20px; }
   .handbook-writing-page .handbook-ai-settings-body { padding: 20px; gap: 20px; }
@@ -1289,7 +1289,7 @@ body.immersive-writing #main { max-width: none; padding: 0; }
   background: transparent; box-shadow: none; color: var(--workbench-muted); font-size: 12px; font-weight: 400;
 }
 .handbook-writing-page.is-embedded .handbook-writing-document {
-  --handbook-editor-min-height: max(240px, calc(100dvh - 336px));
+  --handbook-editor-min-height: max(240px, calc(var(--kc-viewport-height) - 336px));
   padding: 64px 32px 12px; border-radius: 0;
 }
 .handbook-writing-page.is-embedded .handbook-writing-document > .handbook-writing-breadcrumb {
@@ -1380,6 +1380,20 @@ body.immersive-writing #main { max-width: none; padding: 0; }
 @media (min-width: 1450px) {
   .handbook-article-outline {
     position: fixed; top: 210px; right: 22px; box-sizing: border-box;
-    max-height: calc(100dvh - 234px); overflow-y: auto; overscroll-behavior: contain;
+    max-height: calc(var(--kc-viewport-height) - 234px); overflow-y: auto; overscroll-behavior: contain;
   }
+}
+
+/* 人工可视化编辑与格式选择共用随正文延伸的工具栏。 */
+.handbook-production-writing:has(> [data-handbook-vditor]) { padding-top: 0; }
+.handbook-production-content[data-handbook-vditor] .vditor-toolbar {
+  position: sticky; top: var(--handbook-commandbar-height, 64px); flex: none;
+  left: auto; right: auto; z-index: 8;
+}
+.handbook-production-content[data-handbook-vditor] > .handbook-document-heading {
+  flex: none; padding-top: 64px;
+}
+.handbook-production-content[data-handbook-vditor] .vditor-toolbar > .handbook-editor-format {
+  position: absolute; top: 0; right: 0; margin: 0; z-index: 1; min-height: 48px;
+  width: auto; border: 0; background: var(--color-surface); font-size: 12px;
 }

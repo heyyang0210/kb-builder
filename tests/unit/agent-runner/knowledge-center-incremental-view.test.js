@@ -104,9 +104,14 @@ describe('增量构建前端契约', () => {
   test('文档生产以手册总览为主入口，任务工作区保留兼容视图', () => {
     const css = read('apps/knowledge-center-web/frontend/knowledge-center/modules/production/production.css');
     expect(view()).toContain('data-production-overview-tab="handbooks"');
+    expect(view()).toContain('data-production-overview-tab="versions"');
     expect(view()).toContain('data-production-overview-tab="tasks"');
     expect(view()).toContain('data-production-overview-tab="generations"');
     expect(view()).toContain('我的生成');
+    expect(view()).toContain('数据库版本汇总');
+    expect(view()).toContain('data-table-view-id="production-versions"');
+    expect(view()).toContain('item.completion || {}');
+    expect(view()).toContain('交付状态');
     expect(view()).not.toContain('data-production-overview-tab="todo"');
     expect(view()).not.toContain('我的待办');
     expect(api()).toContain("/knowledge-center/api/production/generations?scope=mine");
@@ -116,6 +121,8 @@ describe('增量构建前端契约', () => {
     expect(view()).toContain('data-production-handbook-search');
     expect(view()).toContain("String(item.state || item.status || '').toLowerCase() === 'published'");
     expect(view()).toContain('publishedHandbookIds.has(item.id)');
+    expect(view()).toContain('current?.completion?.label');
+    expect(view()).toContain("task.completion.status !== 'completed'");
     expect(view()).toContain('projection?.outlineCatalog?.status !== \'ok\'');
     expect(app()).toContain('requestedHandbookId ? Promise.resolve(null) : loadOutlineData()');
     expect(app()).toContain('data-production-handbook-search');

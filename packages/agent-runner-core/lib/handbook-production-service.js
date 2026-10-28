@@ -397,7 +397,12 @@ function createHandbookProductionService(options = {}) {
     store, yashanDB: options.yashanDB, skills: options.qualitySkills, now: options.now, actor, requireCapability, contextKey,
     contentQuality: options.contentQuality,
   });
-  return { getDraft, getDraftAsync, listReviewDrafts, saveDraft, listRevisions, restoreRevision, stageAttachment, readAttachment, createReviewBatch, linkIncrementalReview, capabilities, attachmentRoot, ai, quality, stopRecoveryScheduler };
+  const delivery = require('./production-resource-delivery').createProductionResourceDelivery({
+    root: options.deliveryResourceRoot || path.join(attachmentRoot, 'delivery-images'),
+    readAttachment,
+    readSourceImage: (input, session) => ai.sources.readImage(input, session),
+  });
+  return { getDraft, getDraftAsync, listReviewDrafts, saveDraft, listRevisions, restoreRevision, stageAttachment, readAttachment, createReviewBatch, linkIncrementalReview, capabilities, attachmentRoot, ai, quality, delivery, stopRecoveryScheduler };
 }
 
 module.exports = {

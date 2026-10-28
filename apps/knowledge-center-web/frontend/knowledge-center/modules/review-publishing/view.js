@@ -176,7 +176,7 @@ function handbookReviewOverview(rows, snapshots, back) {
     const document = snapshots.find(item => item.taskId === row.taskId && item.candidateDigest === row.candidateDigest && item.documentId === row.documentId && item.path === row.path);
     const href = reviewDocumentUrl(row, back);
     const body = typeof document?.markdown === 'string'
-      ? `<div class="review-reader-snapshot"><strong>已保存修订 · 冻结审核快照</strong>${renderDatabaseMarkdown(safeMarkdown, document.markdown, row.path, { handbookId: row.handbookId, branch: row.branch, language: 'zh' }).html}</div>`
+      ? `<div class="review-reader-snapshot"><strong>已保存修订 · 冻结审核快照</strong>${renderDatabaseMarkdown(safeMarkdown, document.markdown, row.path, { handbookId: row.handbookId, branch: row.branch, language: 'zh', reviewResourceContext: { taskId: row.taskId, candidateDigest: row.candidateDigest, documentId: row.documentId } }).html}</div>`
       : '<p class="review-overview-unavailable">此事项没有可在总览展示的文档级冻结正文，请打开审核事项查看原始快照。</p>';
     return `<article class="review-handbook-document"><header><div><h4>${esc(row.title || row.path || '整本手册')}</h4><small>${esc(row.path || '整本手册')} · ${esc(labels[row.state] || row.state)} · 候选 ${esc(row.candidateDigest.slice(0, 8))}</small></div><a class="button secondary compact" href="${esc(href)}">查看审核文档</a></header>${body}</article>`;
   }).join('')}</section>`;
@@ -198,7 +198,8 @@ function reader(projection, task, ui = {}) {
   const onlineReviewSnapshot = task?.reviewMode === 'online_review' && snapshot;
   const needsAuthorization = projection?.status === 'unauthorized' || ['GITLAB_OAUTH_REQUIRED', 'GITLAB_UNAUTHORIZED'].includes(projection?.error?.code);
   let content;
-  const renderDb = (value, path) => renderDatabaseMarkdown(safeMarkdown, value, path, { handbookId: projection.handbookId, branch: projection.branch, language }).html;
+  const renderDb = (value, path) => renderDatabaseMarkdown(safeMarkdown, value, path, { handbookId: projection.handbookId, branch: projection.branch, language,
+    ...(frozenDocument ? { reviewResourceContext: { taskId: idOf(task), candidateDigest: candidateDigest(task), documentId: frozenDocument.documentId } } : {}) }).html;
   // 等待状态：没有活动任务时，直接用仓库文件内容作为阅读正文。
   const isWaitingForReview = !idOf(task) && !task?.candidate && !task?.draft && !task?.reviewMode;
   if (task?.handbookSource) {
@@ -329,7 +330,7 @@ function reviewActionPanel(task, review) {
   const canRevise = task?.capabilities?.canRevise === true;
   if (!canReview && !canPublish && !canRevise) return '';
   const revision = canRevise ? `<button class="button secondary" type="button" data-review-revision="${esc(idOf(task))}">创建修订任务</button>` : '';
-  const decision = canReview ? `<details class="review-return"><summary>退回修改</summary><form data-review-decision-form data-task-id="${esc(idOf(task))}" data-review-id="${esc(review.id)}"><label>退回原因<textarea name="comment" required placeholder="请说明需要修改的内容"></textarea></label><button class="button tertiary" type="submit">确认退回</button></form></details><button class="button primary" data-review-decision="approve" data-task-id="${esc(idOf(task))}" data-review-id="${esc(review.id)}" ${blockers ? 'disabled aria-disabled="true" title="请先处理全部阻断意见"' : ''}>审核通过</button>` : '';
+  const decision = canReview ? `<details class="review-return"><summary>退回修改</summary><form data-review-decision-form data-task-id="${esc(idOf(task))}" data-review-id="${esc(review.id)}" data-candidate-digest="${esc(candidateDigest(task))}"><label>退回原因<textarea name="comment" required placeholder="请说明需要修改的内容"></textarea></label><button class="button tertiary" type="submit">确认退回</button></form></details><button class="button primary" data-review-decision="approve" data-task-id="${esc(idOf(task))}" data-review-id="${esc(review.id)}" data-candidate-digest="${esc(candidateDigest(task))}" ${blockers ? 'disabled aria-disabled="true" title="请先处理全部阻断意见"' : ''}>审核通过</button>` : '';
   const legacyOnline = task?.reviewMode === 'online_review' && !task?.handbookSource;
   const publish = canPublish ? `<button class="button primary" data-review-publish="${esc(idOf(task))}">${task?.handbookSource || legacyOnline ? '创建 GitLab MR' : '确认发布'}</button>` : '';
   const legacyHint = legacyOnline ? '<p>此旧在线评审没有修改稿，提交 MR 会报“与 GitLab 内容完全一致”。请返回文档生产修改并重新发起评审。</p>' : '';

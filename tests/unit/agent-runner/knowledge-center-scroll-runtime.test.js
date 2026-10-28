@@ -170,3 +170,20 @@ test('模块不绕过公共令牌定义 dvh 或应用壳尺寸', () => {
     expect(css).not.toMatch(/\.app-shell\s*\{/);
   }
 });
+
+
+test('实时刷新只检查声明区，显式诊断仍能发现未声明滚动区', () => {
+  const env = environment();
+  const region = env.document.createElement('div');
+  region.style.overflowY = 'auto'; region.clientHeight = 20; region.scrollHeight = 100;
+  env.main.append(region);
+  const query = env.document.querySelectorAll;
+  const queried = [];
+  env.document.querySelectorAll = selector => { queried.push(selector); return query(selector); };
+  const runtime = scroll.initScrollRuntime(env);
+  runtime.refresh();
+  expect(queried).not.toContain('#app-shell *');
+  expect(scroll.inspectScrollContract(env.document).issues).toContain('存在未声明的纵向滚动区域');
+  expect(queried).toContain('#app-shell *');
+  runtime.destroy();
+});

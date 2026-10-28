@@ -51,7 +51,7 @@
   "model": {
     "provider": "openai",
     "model": "gpt-5.5",
-    "base_url": "https://api.openai.com/v1",
+    "base_url": "https://ai-green.yasdb.com/v1",
     "temperature": 0.7,
     "max_tokens": 60000,
     "timeout": 180000,
@@ -90,7 +90,39 @@
         ]
       }
     },
-    "api_key_encrypted": "cebc42a5b40585a4abe253efef93e39a:f899cdc44da9972630f3bd02a96dc2e3:3b2861bf07e1ed7a727e59a2f8f17fc8a7a49e444d64f444e0c239d8f34443a4b981ac5f51c932ebbe2f2b4f156c1ccefb802a"
+    "api_key_encrypted": "5e90c840f9b9bd5b0ec877e037449c38:4f6c9486672fea119a83a6be2f4154cf:0d653fdb1adc780d06b31d3f936504b733717e14706fd28313cfcfd14d9943e91433f4040cf816e74d4da6aaabd0c209da712f",
+    "services": [
+      {
+        "id": "legacy-default",
+        "name": "OpenAI",
+        "provider": "openai",
+        "protocol": "chat_completions",
+        "base_url": "https://ai-green.yasdb.com/v1",
+        "models": [
+          "gpt-5.5",
+          "gpt-5.6",
+          "gpt-5.6-luna",
+          "gpt-5.6-sol",
+          "gpt-5.6-terra",
+          "gpt-6-astra",
+          "gpt-6-luna",
+          "gpt-6-sol"
+        ],
+        "enabled": true,
+        "timeout": 180000,
+        "temperature": 0.3,
+        "max_tokens": 60000,
+        "api_key_encrypted": "d1610111be9b6346a56f7d87f38b8632:cb108af2667a07fee5deff94aef83d80:14a3a23a61550e67246a707abf1aa324ddb91c718b9ba18e595e041a31882ac80ce7b521b8488aad45daf0f6471c2ad1634ee5"
+      }
+    ],
+    "defaultSelection": {
+      "serviceId": "legacy-default",
+      "model": "gpt-6-sol"
+    },
+    "modelGovernance": {
+      "updatedAt": "2026-10-26T07:08:31.350Z",
+      "updatedBy": "usr_ASn_MlnBfy9geUzR"
+    }
   },
   "mcp": {
     "server_url": "https://knowledgebase.yashandb.com/api/mcp",

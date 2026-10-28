@@ -7,5 +7,15 @@
   "bodyReadyP95Ms": 500,
   "directoryMaxBytes": 230000,
   "draftMaxBytes": 65536,
-  "timeoutMs": 10000
+  "timeoutMs": 10000,
+  "apiConcurrencyLevels": [
+    1,
+    5,
+    10
+  ],
+  "browserConcurrencyLevels": [
+    1,
+    5,
+    10
+  ]
 }

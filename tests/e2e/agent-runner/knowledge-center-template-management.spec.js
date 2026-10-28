@@ -13,8 +13,27 @@ async function loginAsAdmin(page) {
 
 test('模板管理员可新建模板、保存 v1 并在刷新后回读正文', async ({ page }) => {
   await loginAsAdmin(page);
-  await page.goto(`${baseUrl}/knowledge-center/templates`);
-  await expect(page.locator('#view-root').getByRole('heading', { name: '模板管理' })).toBeVisible();
+  let releaseList;
+  const listGate = new Promise(resolve => { releaseList = resolve; });
+  let markListReady;
+  const listReady = new Promise(resolve => { markListReady = resolve; });
+  const listPattern = '**/knowledge-center/api/templates?summary=1';
+  await page.route(listPattern, async route => {
+    const response = await route.fetch();
+    markListReady();
+    await listGate;
+    await route.fulfill({ response });
+  });
+  try {
+    await page.goto(`${baseUrl}/knowledge-center/templates`);
+    await expect(page.locator('#view-root').getByRole('heading', { name: '模板管理' })).toBeVisible();
+    await listReady;
+    await expect(page.getByRole('button', { name: '新建模板' })).toBeDisabled();
+  } finally {
+    releaseList();
+  }
+  await expect(page.getByRole('button', { name: '新建模板' })).toBeEnabled();
+  await page.unroute(listPattern);
 
   const name = `E2E 模板 ${Date.now()}`;
   await page.getByRole('button', { name: '新建模板' }).click();

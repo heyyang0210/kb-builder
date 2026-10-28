@@ -4,6 +4,7 @@ const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
 const crypto = require('node:crypto');
+const { findMapping, findConnection } = require('../../../packages/agent-runner-core/lib/gitlab-connector');
 const { createKnowledgeCenterHandler } = require('../../../packages/agent-runner-core/routes/knowledge-center');
 const { MemoryIncrementalBuildRepository, IncrementalBuildService, createIncrementalBuildHandler } = require('../../../packages/agent-runner-core/lib/incremental-build-service');
 
@@ -50,7 +51,15 @@ async function fixture(page) {
   seed('不可见候选', [doc('hidden')], 'HB-hidden');
   const handler = createKnowledgeCenterHandler({
     config: { KNOWLEDGE_CENTER_PREFIX: '/knowledge-center', KNOWLEDGE_CENTER_ROOT: root, GITLAB_CONFIG_PATH: configPath, OUTLINE_TEMPLATE_PATH: path.resolve(__dirname, '../../../knowledge/outlines/大纲模板.xlsx'), OUTLINE_SAMPLE_PATH: path.resolve(__dirname, '../../../knowledge/outlines/基本数据库管理手册大纲示例.xlsx') }, KNOWLEDGE_ASSETS_CONFIG_PATH: configPath,
-    stores: { knowledgeAssetsStore: { read: () => ({ handbooks: [{ handbookId: 'HB-1', name: '隔离审核手册', status: 'content_building' }, { handbookId: 'HB-early', name: '早期手册', status: 'outline_published' }, { handbookId: 'HB-hidden', name: '不可见手册', status: 'content_building' }, { handbookId: 'HB-archived', status: 'archived' }] }) }, manualStatusStore: {}, brandIconStore: {}, domainStore: {} },
+    stores: { knowledgeAssetsStore: { read: () => ({ handbooks: [{ handbookId: 'HB-1', name: '隔离审核手册', status: 'content_building' }, { handbookId: 'HB-early', name: '早期手册', status: 'outline_published' }, { handbookId: 'HB-hidden', name: '不可见手册', status: 'content_building' }, { handbookId: 'HB-archived', status: 'archived' }] }) }, manualStatusStore: {}, brandIconStore: {}, domainStore: {
+      readPlatformGitLabMapping(handbookId) {
+        try { return findMapping(handbookId, configPath).mapping; }
+        catch (error) { if (error.code === 'GITLAB_MAPPING_NOT_FOUND') return null; throw error; }
+      },
+      async readPlatformGitLabMappingAsync(handbookId) { return this.readPlatformGitLabMapping(handbookId); },
+      readPlatformGitLabConnection: id => findConnection(id, configPath),
+      readPlatformGitLabConnectionAsync: async id => findConnection(id, configPath),
+    } },
     moduleRegistry: { get: name => name === 'auth' ? {
       authorize: async () => activeSession,
       repository: { listUsers: () => [{ id: 'author', displayName: '提交者', roles: ['REVIEWER'] }, { id: 'usr_heyang', principalId: 178, displayName: '何阳', roles: ['REVIEWER'] }] },
@@ -97,7 +106,7 @@ async function fixture(page) {
     return seedLegacyOnline('sql-online-review', 'document', [filePath], '# SQL参考手册\n\n已发布原文');
   }, seedOnline() {
     return seedLegacyOnline('online-scope-handbook', 'handbook', [], '# 整册不可变快照');
-  }, setRepositoryError(status) { upstreamError = status; }, gitlabWrites: () => gitlabWrites, async close() { delete process.env.GITLAB_TOKEN_workbench_e2e; await Promise.all(servers.map(server => new Promise(resolve => { server.closeAllConnections(); server.close(resolve); }))); fs.rmSync(root, { recursive: true, force: true }); } };
+  }, setRepositoryError(status) { upstreamError = status; }, gitlabWrites: () => gitlabWrites, async close() { await page.goto('about:blank'); await page.unrouteAll({ behavior: 'wait' }); delete process.env.GITLAB_TOKEN_workbench_e2e; await Promise.all(servers.map(server => new Promise(resolve => { server.closeAllConnections(); server.close(resolve); }))); fs.rmSync(root, { recursive: true, force: true }); } };
 }
 
 test('我的审核：人员 ID 指派给何阳时展示待办并可阅读冻结正文', async ({ page }) => {

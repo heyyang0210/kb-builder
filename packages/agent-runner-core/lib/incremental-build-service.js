@@ -233,7 +233,7 @@ class IncrementalBuildService {
       const repository = new MemoryIncrementalBuildRepository(state);
       const service = new IncrementalBuildService(repository);
       const baseline = service.createSyntheticBaseline(session, `${key}:baseline`, {
-        handbookId: body.handbookId, businessVersion: body.branch,
+        handbookId: body.handbookId, businessVersion: body.businessVersion || '版本待核对',
         content: body.baselineContent, branch: body.branch, commitSha: body.commitSha,
       });
       // A comparison snapshot is local to this submission, not a new official
@@ -243,7 +243,7 @@ class IncrementalBuildService {
         if (original) item.current = original.current;
       });
       const task = service.create(session, `${key}:task`, {
-        name: body.name, handbookId: body.handbookId, businessVersion: body.branch, baselineVersionId: baseline.id,
+        name: body.name, handbookId: body.handbookId, businessVersion: body.businessVersion || '版本待核对', baselineVersionId: baseline.id,
       });
       service.addSource(session, task.id, `${key}:source`, { sourceType: 'manual', label: '手册已保存修订', content: body.content, reference: body.submissionId });
       service.updateTarget(session, task.id, `${key}:target`, { documentIds: body.documents.map(item => item.documentId) });
@@ -273,8 +273,44 @@ class IncrementalBuildService {
         throw new IncrementalBuildError('APPROVAL_REQUIRED', '必须提交已审核的同一手册候选版本', 409);
       }
       task.mergeRequest = body.mergeRequest;
+      // 创建 MR 后立即记录一个可投影的“已打开”交付事实。后续回读会覆盖
+      // deliveryObservation，统一完成状态因此不会把“已创建 MR”误报为已完成。
+      task.deliveryObservation = {
+        iid: body.mergeRequest.iid,
+        state: 'opened',
+        sourceBranch: body.mergeRequest.sourceBranch || null,
+        targetBranch: body.mergeRequest.targetBranch || null,
+        readback: null,
+        observedAt: now(),
+      };
       task.state = 'mr_submitted'; task.updatedAt = now();
       this.audit(state, 'GITLAB_MR_SUBMITTED', taskId, session, { mergeRequest: body.mergeRequest });
+      return task.mergeRequest;
+    });
+  }
+
+  recordMergeRequestDelivery(session, taskId, key, body) {
+    requireAction(session, 'publish:manage');
+    return this.withIdempotency(session, key, `merge-request-delivery:${taskId}`, body, state => {
+      const task = this.task(state, taskId);
+      this.requireReadable(session, task);
+      if (task.state !== 'mr_submitted' || !task.mergeRequest) throw new IncrementalBuildError('MR_NOT_SUBMITTED', '任务尚未登记 GitLab MR', 409);
+      const delivery = body.delivery;
+      if (!delivery || delivery.iid !== task.mergeRequest.iid || !['opened', 'merged'].includes(delivery.state)) throw new IncrementalBuildError('MR_DELIVERY_INVALID', 'GitLab MR 状态回读结果无效', 409);
+      if (delivery.state === 'merged' && (delivery.readback?.status !== 'consistent' || delivery.readback?.resources !== 'repository_relative_images_verified')) throw new IncrementalBuildError('MR_READBACK_REQUIRED', '合并后的正文与仓库图片回读未通过', 409);
+      task.deliveryObservation = { ...structuredClone(delivery), observedAt: now() };
+      if (delivery.state === 'merged') {
+        for (const evidence of [
+          { type: 'gitlab_merge_readback', note: '目标分支正文回读一致' },
+          { type: 'gitlab_merge_resource_readback', note: 'Markdown/HTML仓库相对图片回读一致，包含已冻结并改写的平台托管图片；未适配的外链及附件不放行' },
+        ]) {
+          if (!task.externalEvidence.some(item => item.type === evidence.type && item.reference === String(delivery.iid))) {
+            task.externalEvidence.push({ id: identifier('evidence'), ...evidence, reference: String(delivery.iid), status: 'consistent', recordedBy: actor(session), recordedAt: now() });
+          }
+        }
+      }
+      task.updatedAt = now();
+      this.audit(state, 'GITLAB_MR_DELIVERY_REFRESHED', taskId, session, { state: delivery.state, iid: delivery.iid, targetCommitSha: delivery.targetCommitSha || null });
       return task.mergeRequest;
     });
   }
@@ -401,6 +437,7 @@ class IncrementalBuildService {
     const items = (snapshot || this.repository.read()).tasks
       .filter(task => this.canRead(session, task))
       .flatMap(task => {
+        const taskProjection = this.project(task, session, true);
         const runs = Array.isArray(task.generationRuns)
           ? task.generationRuns
           : (task.generationRun ? [task.generationRun] : []);
@@ -428,6 +465,7 @@ class IncrementalBuildService {
             taskName: task.name || task.title || '未命名任务',
             handbookId: task.handbookId,
             handbookName: task.handbookName || task.handbookId,
+            completion: taskProjection.completion || null,
             status,
             statusDisplayName: run.statusDisplayName || ({ queued: '等待生成', running: '生成中', completed: '已完成', failed: '生成失败', cancelled: '已取消' }[status] || '状态待确认'),
             initiatedBy: publicPrincipal(initiatedBy || task.createdBy),
@@ -986,6 +1024,9 @@ class IncrementalBuildService {
       if (task.handbookSource && !isAssignedReviewer(session, review.reviewerIds)) throw new IncrementalBuildError('REVIEWER_NOT_ASSIGNED', '请由所选审核人完成审核', 403);
       if (review.status !== 'pending' || task.state !== 'under_review') throw new IncrementalBuildError('REVIEW_ALREADY_DECIDED', '审核已完成', 409);
       if (review.candidateDigest !== task.candidate?.digest) throw new IncrementalBuildError('REVIEW_CANDIDATE_CONFLICT', '审核对象与当前候选版本不一致', 409);
+      if (Object.prototype.hasOwnProperty.call(body, 'candidateDigest') && body.candidateDigest !== task.candidate.digest) {
+        throw new IncrementalBuildError('REVIEW_CANDIDATE_CONFLICT', '页面中的候选版本已变化，请重新读取后审核', 409);
+      }
       const blockingComments = (review.comments || []).filter(comment => comment.resolved !== true && comment.severity === 'blocker');
       if (body.decision === 'approve' && blockingComments.length) {
         throw new IncrementalBuildError('REVIEW_BLOCKED_BY_COMMENTS', '存在未解决的阻断意见，无法通过审核', 409, { blockerCommentIds: blockingComments.map(comment => comment.id) });
@@ -1084,9 +1125,24 @@ class IncrementalBuildService {
       ? structuredClone(Object.fromEntries([
         'id', 'name', 'title', 'handbookId', 'handbookName', 'productName',
         'businessVersion', 'baselineVersionId', 'baselineVersionLabel',
-        'baselineVersionName', 'state', 'status', 'createdAt', 'updatedAt', 'mergeRequest',
+        'baselineVersionName', 'state', 'status', 'createdAt', 'updatedAt', 'mergeRequest', 'deliveryObservation',
       ].filter(key => Object.prototype.hasOwnProperty.call(task, key)).map(key => [key, task[key]])))
       : structuredClone(task);
+    const delivery = task.deliveryObservation;
+    const completed = delivery?.state === 'merged'
+      && delivery?.readback?.status === 'consistent'
+      && delivery?.readback?.resources === 'repository_relative_images_verified';
+    projection.completion = {
+      status: completed ? 'completed' : 'pending',
+      label: completed ? '已完成' : '待合并回读',
+      completedAt: completed ? (delivery.observedAt || null) : null,
+      criteria: ['gitlab_merged', 'target_branch_markdown_readback', 'repository_relative_images_readback'],
+      facts: {
+        mergeState: delivery?.state || null,
+        markdownReadback: delivery?.readback?.status === 'consistent',
+        resourceReadback: delivery?.readback?.resources === 'repository_relative_images_verified',
+      },
+    };
     projection.capabilities = capabilities;
     projection.candidateSummary = task.candidate ? { id: task.candidate.id, digest: task.candidate.digest, operationCount: task.candidate.operations.length, createdAt: task.candidate.createdAt } : null;
     projection.reviewSummary = { total: task.reviews.length, pending: task.reviews.filter(item => item.status === 'pending').length, approved: task.reviews.filter(item => item.status === 'approved').length, rejected: task.reviews.filter(item => item.status === 'rejected').length };

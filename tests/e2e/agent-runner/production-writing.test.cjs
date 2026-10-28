@@ -734,3 +734,48 @@ test('本地参考文档：拖拽上传、折叠、拖动优先级、键盘调�
   assert.match(captured.sources[0].content, /引用事实1/);
   assert.deepEqual(errors, []);
 });
+
+
+test('仓库授权缺失时保留编辑和设置，重新检查成功后才生成', async t => {
+  const { page, errors } = await launch(t, { generate: async () => ({ content: '恢复后的正文', model: 'deterministic-e2e' }) });
+  let posts = 0; let submittedSnapshot;
+  page.on('request', request => { if (request.method() === 'POST' && /\/ai-jobs(?:\?|$)/.test(request.url())) { posts++; submittedSnapshot = request.postDataJSON().originSnapshot; } });
+  await page.evaluate(() => {
+    window.originAvailable = false;
+    window.originChecks = 0;
+    window.openWriting({ initialRange: { start: 0, end: 6 }, originAuthorizationHref: '/authorize-fixture', prepareOrigin: async () => {
+      window.originChecks++;
+      if (!window.originAvailable) throw Object.assign(new Error('请先授权 GitLab 账号，完成后重新检查来源。'), { code: 'GITLAB_OAUTH_REQUIRED' });
+      window.firstSnapshot ||= `check-${window.originChecks}`;
+      return { content: '', snapshot: { snapshotId: `check-${window.originChecks}`, originType: 'blank', contentDigest: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855', handbookId: 'HB-1', documentId: 'doc-1', branch: 'main' } };
+    } });
+  });
+  await page.locator('[data-ai-origin-authorize]').waitFor({ state: 'visible' });
+  assert.equal(await page.locator('[data-ai-start]').isDisabled(), true);
+  assert.equal(await page.locator('[data-ai-origin-authorize]').getAttribute('target'), '_blank');
+  await page.locator('[data-ai-requirements]').fill('保留这份要求');
+  const markdown = page.locator('[data-ai-original]');
+  await markdown.fill('# 人工修改\n\n保留正文。\n');
+  await page.locator('[data-ai-full]').click();
+  await page.locator('[data-ai-origin-recheck]').click();
+  assert.equal(posts, 0);
+  assert.equal(await page.locator('[data-ai-requirements]').inputValue(), '保留这份要求');
+  assert.match(await markdown.inputValue(), /保留正文/);
+  await page.evaluate(() => { window.originAvailable = true; });
+  await page.locator('[data-ai-origin-recheck]').click();
+  await page.waitForFunction(() => !document.querySelector('[data-ai-start]').disabled);
+  assert.match(await markdown.inputValue(), /保留正文/);
+  await page.evaluate(() => { window.originAvailable = false; });
+  await page.locator('[data-ai-start]').click();
+  await page.locator('[data-ai-origin-authorize]').waitFor({ state: 'visible' });
+  assert.equal(posts, 0, '生成前授权失效时不得发送任务');
+  assert.equal(await page.locator('[data-ai-requirements]').inputValue(), '保留这份要求');
+  await page.evaluate(() => { window.originAvailable = true; });
+  await page.locator('[data-ai-origin-recheck]').click();
+  await page.waitForFunction(() => !document.querySelector('[data-ai-start]').disabled);
+  await page.locator('[data-ai-start]').click(); await waitCandidate(page);
+  assert.equal(posts, 1);
+  assert.equal(submittedSnapshot.snapshotId, await page.evaluate(() => window.firstSnapshot), '重新检查不可静默切换已冻结基线');
+  assert.ok(await page.evaluate(() => window.originChecks >= 4));
+  assert.deepEqual(errors, []);
+});

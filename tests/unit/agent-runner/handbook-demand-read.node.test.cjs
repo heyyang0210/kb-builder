@@ -122,3 +122,42 @@ test('草稿读取失败不会降级为空草稿或调用全局读取', async ()
     await new Promise(resolve => server.close(resolve));
   }
 });
+
+for (const denied of [false, true]) {
+  test(`映射与目录并行，${denied ? '映射拒绝时禁止草稿读取' : '确认实际分支后才读取草稿'}`, async () => {
+    const vm = require('node:vm');
+    const source = fs.readFileSync(path.resolve(__dirname, '../../../apps/knowledge-center-web/frontend/knowledge-center/app.js'), 'utf8');
+    const workspaceSource = source.slice(source.indexOf('let handbookWorkspaceSequence ='), source.indexOf('async function loadIncrementalWorkspace('));
+    let releaseDirectory;
+    let releaseMapping;
+    const directory = new Promise(resolve => { releaseDirectory = resolve; });
+    const mapping = new Promise((resolve, reject) => { releaseMapping = denied ? reject : resolve; });
+    const route = { handbookId: 'HB', documentId: 'doc-1', branch: 'unavailable-branch' };
+    const ui = { draftLoadState: {}, serverDrafts: {} };
+    const calls = [];
+    const sandbox = {
+      appState: { activeView: 'production' }, handbookUi: () => ui,
+      collectDocuments: items => items, outlineNodes: outline => outline.nodes || [],
+      productionRouteState: () => route, render: () => {},
+      loadOutlineData: () => { calls.push('directory'); return directory; },
+      loadTemplates: async () => ({ data: [] }),
+      loadHandbookRepositoryMapping: () => { calls.push('mapping'); return mapping; },
+      loadSharedHandbookDraft: async () => { calls.push(`draft:${ui.repository.branch}`); },
+      loadHandbookProductionRepository: async () => ({}),
+      repositoryStatusFor: () => 'forbidden',
+    };
+    vm.createContext(sandbox);
+    vm.runInContext(workspaceSource + '\nthis.loadWorkspace = loadHandbookWorkspace;', sandbox);
+    const loading = sandbox.loadWorkspace(route, new URLSearchParams());
+    assert.deepEqual(calls, ['mapping', 'directory']);
+    releaseMapping(denied ? Object.assign(new Error('拒绝访问'), { code: 'FORBIDDEN' })
+      : { defaultBranch: 'release', enabledBranches: ['release'] });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(calls.length, 2, '目录未完成时不得选择或读取草稿');
+    releaseDirectory({ status: 'ok', detail: { nodes: [{ id: 'doc-1' }] } });
+    await loading;
+    assert.deepEqual(calls, denied ? ['mapping', 'directory'] : ['mapping', 'directory', 'draft:release']);
+    assert.equal(ui.draftContextResolved, !denied);
+    if (denied) assert.equal(ui.draftLoadState['doc-1'], 'failed');
+  });
+}

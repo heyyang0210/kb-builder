@@ -93,6 +93,36 @@ describe('P0 平台内增量构建 API', () => {
     expect(detail.body.data).toMatchObject({ capabilities: { canEdit: false }, candidateSummary: { operationCount: 1 }, reviewSummary: { approved: 1 } });
   });
 
+  test.each([false, true])('真实HTTP：客户端候选摘要拒绝零副作用及幂等重放（手册=%s）', async handbook => {
+    const taskId = 'digest-task'; const reviewId = 'digest-review';
+    api.repository.transaction(state => state.tasks.push({
+      id: taskId, handbookId: 'DB-001', state: 'under_review', createdBy: editor.user,
+      candidate: { id: 'candidate', digest: 'frozen-digest', operations: [], content: '# 冻结正文' },
+      reviews: [{ id: reviewId, status: 'pending', candidateDigest: 'frozen-digest', reviewerIds: ['reviewer-1'], comments: [] }],
+      ...(handbook ? { handbookSource: { documents: [{ documentId: 'doc', reviewerIds: ['reviewer-1'] }] } } : {}),
+    }));
+    const endpoint = `/knowledge-center/api/incremental-tasks/${taskId}/reviews/${reviewId}/decision`;
+    const before = api.repository.read();
+    for (const decision of ['approve', 'reject']) {
+      for (const candidateDigest of ['stale', '', null, 42, { digest: 'frozen-digest' }]) {
+        const result = await request(api.baseUrl, 'POST', endpoint, { decision, candidateDigest, comment: '需要修改' }, 'digest-retry', 'reviewer');
+        expect(result).toMatchObject({ status: 409, body: { error: { code: 'REVIEW_CANDIDATE_CONFLICT' } } });
+        expect(api.repository.read()).toEqual(before);
+      }
+    }
+    const body = { decision: 'approve', candidateDigest: 'frozen-digest' };
+    const accepted = await request(api.baseUrl, 'POST', endpoint, body, 'digest-retry', 'reviewer');
+    expect(accepted).toMatchObject({ status: 200, body: { data: { status: 'approved' } } });
+    const after = api.repository.read();
+    expect(after.tasks[0].candidate).toEqual(before.tasks[0].candidate);
+    expect(after.audits).toHaveLength(1);
+    expect((await request(api.baseUrl, 'POST', endpoint, body, 'digest-retry', 'reviewer')).body).toEqual(accepted.body);
+    expect(api.repository.read()).toEqual(after);
+    expect(await request(api.baseUrl, 'POST', endpoint, { ...body, candidateDigest: 'stale' }, 'digest-retry', 'reviewer')).toMatchObject({ status: 409, body: { error: { code: 'IDEMPOTENCY_KEY_REUSED' } } });
+    expect(await request(api.baseUrl, 'POST', endpoint, body, 'new-digest-key', 'reviewer')).toMatchObject({ status: 409, body: { error: { code: 'REVIEW_ALREADY_DECIDED' } } });
+    expect(api.repository.read()).toEqual(after);
+  });
+
   test('基线必须来自已发布事实，并提供只读查询', async () => {
     const baselines = await request(api.baseUrl, 'GET', '/knowledge-center/api/incremental-tasks/baselines?handbookId=DB-001&businessVersion=23.4');
     expect(baselines.body.data).toEqual([{ id: 'v1', handbookId: 'DB-001', businessVersion: '23.4', current: true, contentDigest: 'digest-v1', publishedAt: null }]);
@@ -124,6 +154,7 @@ describe('P0 平台内增量构建 API', () => {
     const result = new IncrementalBuildService(api.repository).listMyGenerations(editor, { scope: 'mine' });
     expect(result.items.map(item => item.generationId)).toEqual(['gen-participated', 'gen-own']);
     expect(result.items[0]).toMatchObject({ association: 'participant', resultSummary: '已形成草稿', nextAction: { type: 'open_generation' } });
+    expect(result.items[0].completion).toMatchObject({ status: 'pending', label: '待合并回读', criteria: expect.arrayContaining(['gitlab_merged']) });
     expect(result.items[0]).not.toHaveProperty('privatePrompt');
     expect(result.items.find(item => item.generationId === 'gen-visible-only')).toBeUndefined();
     expect(() => new IncrementalBuildService(api.repository).listMyGenerations(editor, { scope: 'mine', userId: 'editor-2' }))

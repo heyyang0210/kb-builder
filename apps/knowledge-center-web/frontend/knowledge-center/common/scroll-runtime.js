@@ -16,14 +16,14 @@ export function inspectScrollRegion(element) {
   };
 }
 
-export function inspectScrollContract(doc = document) {
+export function inspectScrollContract(doc = document, { scanUndeclared = true } = {}) {
   const owner = getScrollOwner(doc);
   const active = element => element.getClientRects().length && !element.closest('[hidden]');
   const declared = [...doc.querySelectorAll('[data-scroll-owner="main"]')].filter(active);
-  const undeclared = [...doc.querySelectorAll('#app-shell *')].filter(element => {
+  const undeclared = scanUndeclared ? [...doc.querySelectorAll('#app-shell *')].filter(element => {
     if (!active(element) || element === owner || element.matches('[data-scroll-owner], [data-scroll-region], textarea, select')) return false;
     return inspectScrollRegion(element).scrollable;
-  });
+  }) : [];
   const issues = [];
   if (doc.documentElement.dataset.scrollMode === 'main' && !owner) issues.push('缺少主滚动所有者');
   if (declared.length > 1) issues.push('主滚动所有者重复');
@@ -78,7 +78,8 @@ export function initScrollRuntime({ window: win = window, document: doc = docume
         root.style.setProperty('--kc-scroll-bottom', `${bottom}px`);
       }
     }
-    const report = inspectScrollContract(doc);
+    // Full-tree geometry inspection is an explicit diagnostic, not a DOM-mutation hot path.
+    const report = inspectScrollContract(doc, { scanUndeclared: false });
     if (win.matchMedia('(min-width: 901px)').matches && root.dataset.scrollMode !== 'main') report.issues.push('应用壳高度异常，已降级为页面滚动');
     const key = report.issues.join('|');
     if (key && key !== warning) win.console.warn('知识中心滚动契约异常', report);

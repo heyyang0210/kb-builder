@@ -1,11 +1,11 @@
-import { collectDocuments, ownedByCurrentUser, outlineNodes } from './modules/production/handbook-view.js';
+import { collectDocuments, documentStatus, ownedByCurrentUser, outlineNodes, renderHandbookProduction } from './modules/production/handbook-view.js';
 import { mountModelAdmin, hasModelDraft, confirmLeavingModels } from './modules/platform-admin/model-admin.js';
 import { mountMcpAdmin, hasMcpDraft, confirmLeavingMcp } from './modules/platform-admin/mcp-admin.js';
 import { retainWritingSelection } from './modules/production/writing-selection.js';
 import { canSaveHandbookDraft, handbookReviewAction } from './modules/production/handbook-actions.js';
 import { takeReviewBootstrapPrefetch } from './common/api/review-bootstrap-prefetch.js';
 import { archiveAsset, createAsset, createPrincipal, createTeamGroup, deleteOutline, importOutline, validateOutline, importPrincipals, loadAssets, loadOutlineData, loadPlatformData, loadPrincipals, loadTeamGroups, loadTeamGroup, saveTeamRoster, publishOutlineGovernance, resolveAssetStatus, restoreAsset, saveOutlineGovernance, updateAsset, updateAssetStatus, updateDomainBuildTaskItem, loadDomainBuildTasks as fetchDomainBuildTasks, loadPlatformPermissions, updatePlatformUserPermissions, updatePrincipal, loadDatabaseConnectionStatus, testDatabaseConnection, saveDatabaseConnection, loadTemplates, loadTemplate } from './common/api/platform-api.js';
-import { disconnectGitLabOAuth, gitLabOAuthHref, loadGitLabBranches, loadGitLabConnections, loadGitLabOAuthAccounts, loadGitLabOAuthStatus, loadGitLabOAuthConfig, loadGitLabTree, loadHandbookGitLabAccess, loadHandbookRepository, loadHandbookRepositoryCommits, loadHandbookRepositoryFile, loadHandbookRepositoryMapping, loadHandbookRepositoryStatistics, loadHandbookRepositoryTree, loadReviewRepositoryContext, saveGitLabConnection, saveHandbookRepositoryMapping, createGitLabConnection, updateGitLabConnection, verifyGitLabConnection, disableGitLabConnection, enableGitLabConnection, searchGitLabConnections } from './common/api/gitlab-api.js';
+import { disconnectGitLabOAuth, handbookGitLabOAuthHref, gitLabOAuthHref, loadGitLabBranches, loadGitLabConnections, loadGitLabOAuthAccounts, loadGitLabOAuthStatus, loadGitLabOAuthConfig, loadGitLabTree, loadHandbookGitLabAccess, loadHandbookRepository, loadHandbookRepositoryCommits, loadHandbookRepositoryFile, loadHandbookRepositoryMapping, loadHandbookRepositoryStatistics, loadHandbookRepositoryTree, loadReviewRepositoryContext, saveGitLabConnection, saveHandbookRepositoryMapping, createGitLabConnection, updateGitLabConnection, verifyGitLabConnection, disableGitLabConnection, enableGitLabConnection, searchGitLabConnections } from './common/api/gitlab-api.js';
 import { addIncrementalSource, bootstrapBaseline, cancelIncrementalReview, commentIncrementalReview, createIncrementalReview, createIncrementalRevision, createIncrementalTask, createOnlineReview, decideIncrementalReview, loadCandidateDiff, loadHandbookReviewSummary, loadIncrementalBaselines, loadIncrementalTask, loadIncrementalTasks, loadMyGenerations, loadReviewBootstrap, publishIncrementalTask, reassignIncrementalReview, recordIncrementalEvidence, reopenIncrementalReviewComment, replyIncrementalReviewComment, resolveIncrementalReviewComment, runIncrementalChecks, saveIncrementalDraft, submitIncrementalCandidate, updateIncrementalTarget } from './common/api/incremental-api.js';
 import { createHandbookIncrementalReview, loadHandbookDraft, loadHandbookDraftRevisions, loadHandbookReviewDrafts, loadHandbookReviewers, restoreHandbookDraftRevision, saveHandbookDraft, uploadHandbookDraftAttachment } from './common/api/handbook-production-api.js';
 import { sha256Text } from './common/utils/sha256.js';
@@ -223,16 +223,31 @@ async function openHandbookWriting(operation, aiAction) {
     if (writingPageOpening || document.querySelector('.handbook-writing-page')) return;
     writingPageOpening = true;
     try {
-    const repository = handbookUi().repository || {};
-    const originFile = repository.filesByDocument?.[documentId];
-    if (originFile?.matched && !Object.hasOwn(repository.contentByDocument || {}, documentId)) {
-      const latest = await loadHandbookRepositoryFile(context.handbookId, repository.branch, 'zh', originFile.path);
-      if (latest.encoding !== 'utf-8' || typeof latest.content !== 'string') throw new Error('GitLab 基线不是有效的 Markdown 文本');
-      if (JSON.stringify(handbookDraftContext()) !== JSON.stringify(context)) return;
-      repository.contentByDocument[documentId] = latest.content;
-      originFile.commitId = latest.commitId || latest.commitSha || null;
-      originFile.blobId = latest.blobId || latest.blobSha || null;
-    }
+    const prepareOrigin = async () => {
+      const documents = collectDocuments(outlineNodes(appState.incrementalProjection?.handbookOutline?.detail || {}));
+      const mapping = await loadHandbookRepositoryMapping(context.handbookId, 'production').catch(error => {
+        if (['GITLAB_MAPPING_NOT_FOUND', 'GITLAB_LANGUAGE_NOT_MAPPED'].includes(error.code)) return null;
+        throw error;
+      });
+      const repository = await loadHandbookProductionRepository(context.handbookId, documents, context.branch, documentId, { mapping });
+      if (!['ok', 'not-mapped'].includes(repository.status)) {
+        throw Object.assign(new Error(repository.status === 'unauthorized'
+          ? '请先授权 GitLab 账号，完成后重新检查来源。'
+          : repository.error?.message || '仓库来源暂不可读，请检查仓库映射、分支及访问权限后重试。'),
+        { code: repository.error?.code || 'AI_ORIGIN_UNAVAILABLE' });
+      }
+      const file = repository.filesByDocument?.[documentId];
+      if (repository.mapped && !file?.matched) throw new Error('当前文档未匹配到仓库文件，请检查中文仓库路径与文档映射后重新检查。');
+      const content = file?.matched ? repository.contentByDocument?.[documentId] : '';
+      if (typeof content !== 'string') throw new Error('仓库正文尚未读取完成，请重新检查来源。');
+      const contentDigest = await sha256Text(content);
+      return { content, snapshot: file?.matched ? {
+        originType: 'gitlab', snapshotId: file.commitId || file.blobId || contentDigest, contentDigest,
+        handbookId: context.handbookId, documentId, outlineVersionId: context.outlineVersionId,
+        repository: repository.mapping?.repository || repository.mapping?.project || repository.mapping?.projectId || null,
+        branch: repository.branch, path: file.path, commitId: file.commitId || null, blobId: file.blobId || null,
+      } : { originType: 'blank', snapshotId: null, contentDigest, handbookId: context.handbookId, documentId, branch: context.branch } };
+    };
     const { openProductionWritingPage } = await import('./modules/production/production-writing-page.js');
     openProductionWritingPage({
       context, operation, getMarkdown, embedded: true,
@@ -252,18 +267,8 @@ async function openHandbookWriting(operation, aiAction) {
       editVersion: handbookUi().serverDrafts?.[documentId]?.draft?.editVersion || 0,
       templateId: document.querySelector('[data-handbook-template]')?.value || handbookUi().templateByDocument?.[documentId],
       outline: document.querySelector('[data-handbook-document-title]')?.textContent || documentId,
-      originSnapshot: await (async () => {
-        const repository = handbookUi().repository || {};
-        const file = repository.filesByDocument?.[documentId];
-        const content = file?.matched ? String(repository.contentByDocument?.[documentId] || '') : '';
-        const contentDigest = await sha256Text(content);
-        return file?.matched ? {
-          originType: 'gitlab', snapshotId: file.commitId || file.blobId || contentDigest, contentDigest,
-          handbookId: context.handbookId, documentId, outlineVersionId: context.outlineVersionId,
-          repository: repository.mapping?.repository || repository.mapping?.project || repository.mapping?.projectId || null,
-          branch: repository.branch, path: file.path, commitId: file.commitId || null, blobId: file.blobId || null,
-        } : { originType: 'blank', snapshotId: null, contentDigest, handbookId: context.handbookId, documentId, branch: repository.branch };
-      })(),
+      prepareOrigin,
+      originAuthorizationHref: handbookGitLabOAuthHref(context.handbookId, window.location.pathname + window.location.search),
       originBaselineContent: handbookUi().repository?.contentByDocument?.[documentId] || '',
       loadLatestOrigin: async () => {
         const repository = handbookUi().repository || {};
@@ -653,7 +658,7 @@ async function loadOutlines() {
       const domainTasks = await fetchDomainBuildTasks().catch(error => ({ status: 'unavailable', tasks: [], error: { message: error.message } }));
       if (sequence !== outlineLoadSequence || outlineProjectionKey() !== routeKey) return;
       appState.domainBuildTaskProjection = domainTasks.status === 'unavailable' ? domainTasks : { status: 'ok', ...domainTasks };
-      if (appState.activeView === 'outlines') render();
+      if (appState.activeView === 'outlines') await updateOutlineAssignments();
     }
   })().finally(() => { if (outlineLoadPromise?.promise === promise) outlineLoadPromise = null; });
   outlineLoadPromise = { routeKey, promise };
@@ -666,7 +671,32 @@ async function loadDomainBuildTasksWorkspace() {
   } catch (error) {
     appState.domainBuildTaskProjection = { status: 'unavailable', tasks: [], error: { message: error.message } };
   }
-  if (appState.activeView === 'dashboard' || appState.activeView === 'outlines') render();
+  if (appState.activeView === 'dashboard') render();
+  else if (appState.activeView === 'outlines') await updateOutlineAssignments();
+}
+
+async function updateOutlineAssignments() {
+  const routeKey = outlineProjectionKey();
+  const { renderOutlineAssignments } = await import('./modules/outlines/view.js');
+  if (appState.activeView !== 'outlines' || outlineProjectionKey() !== routeKey
+      || appState.outlineProjection?.routeKey !== routeKey) return;
+  const panel = byId('outline-panel-assignments');
+  if (!panel || !appState.outlineProjection?.detail) return;
+  panel.innerHTML = renderOutlineAssignments({
+    outlineProjection: appState.outlineProjection,
+    outlineView: outlineRouteState(),
+    outlinePermissions: { create: canPerform('outline:create'), delete: canPerform('outline:delete'), purge: canPerform('outline:purge'), platformAdmin: isPlatformAdmin() },
+    domainBuildTaskProjection: appState.domainBuildTaskProjection,
+  });
+  cleanupSearchableSelects();
+  markDynamicSelects(panel);
+  enhanceTableViews(panel, {
+    preferenceScope: String(authState.session?.user?.principalId || authState.session?.user?.userId || authState.session?.user?.username || 'local'),
+    onChange: render,
+  });
+  enhanceResizableNavigation(panel);
+  enhanceDirectoryTrees(panel);
+  window.lucide?.createIcons({ nodes: [panel] });
 }
 
 const assetBranchPreferenceKey = handbookId => `knowledge-center:asset-branch:${handbookId}`;
@@ -889,9 +919,42 @@ let productionSearchComposing = false;
 
 let handbookWorkspaceSequence = 0;
 
+function refreshHandbookEditor(documentId) {
+  const page = document.querySelector('.handbook-production-page');
+  const current = page?.querySelector('.handbook-production-editor');
+  const dialogs = [...(page?.querySelectorAll(':scope > dialog') || [])];
+  if (!current || current.dataset.handbookCurrentDocument !== String(documentId) || dialogs.length !== 4) return render();
+  const fragment = document.createElement('template');
+  fragment.innerHTML = renderHandbookProduction({ projection: appState.incrementalProjection,
+    currentUser: { ...(authState.session?.user || {}), displayName: displayName() },
+    ui: handbookUi(), templateProjection: appState.templateProjection, region: 'editor' });
+  const nextEditor = fragment.content.querySelector('.handbook-production-editor');
+  const nextDialogs = [...fragment.content.querySelectorAll('dialog')];
+  if (!nextEditor || nextDialogs.length !== dialogs.length) return render();
+  current.replaceWith(nextEditor);
+  dialogs.forEach((dialog, index) => dialog.replaceWith(nextDialogs[index]));
+  const item = [...page.querySelectorAll('[data-handbook-document]')]
+    .find(node => node.dataset.handbookDocument === String(documentId));
+  const label = item?.querySelector('small');
+  if (label) {
+    const status = documentStatus({ id: documentId }, handbookUi(), handbookUi().repository?.branch || '');
+    label.textContent = status;
+    label.hidden = status === '未编辑';
+  }
+  window.lucide?.createIcons();
+  requestAnimationFrame(mountHandbookVditor);
+}
+
 async function loadHandbookWorkspace(productionState, params) {
   const sequence = ++handbookWorkspaceSequence;
   const handbookId = productionState.handbookId;
+  // Mapping has no directory dependency. Capture errors immediately while the
+  // directory loads; never read a draft until its branch is actually resolved.
+  const mappingResult = loadHandbookRepositoryMapping(handbookId, 'production').then(
+    mapping => ({ mapping }),
+    error => ['GITLAB_MAPPING_NOT_FOUND', 'GITLAB_LANGUAGE_NOT_MAPPED'].includes(error.code)
+      ? { mapping: null } : { error },
+  );
   const isCurrent = () => sequence === handbookWorkspaceSequence
     && appState.activeView === 'production'
     && productionRouteState().handbookId === handbookId
@@ -911,6 +974,7 @@ async function loadHandbookWorkspace(productionState, params) {
   const ui = handbookUi();
   // Entering a handbook opens its directory; a document deep link keeps the reading view.
   if (!productionState.documentId) ui.directoryDrawerOpen = true;
+  ui.draftContextResolved = false;
   ui.repository = { mapped: false, status: 'loading', filesByDocument: {}, contentByDocument: {} };
   if (documentId) ui.draftLoadState[documentId] = 'loading';
   appState.incrementalProjection = { status: 'ok', items: [], detail: null,
@@ -922,22 +986,23 @@ async function loadHandbookWorkspace(productionState, params) {
     if (isCurrent()) appState.templateProjection = { items: result?.data || result?.items || [] };
   }).catch(() => {});
   try {
-    const mapping = await loadHandbookRepositoryMapping(handbookId, 'production').catch(error => {
-      if (['GITLAB_MAPPING_NOT_FOUND', 'GITLAB_LANGUAGE_NOT_MAPPED'].includes(error.code)) return null;
-      throw error;
-    });
+    const resolvedMapping = await mappingResult;
     if (!isCurrent()) return;
+    if (resolvedMapping.error) throw resolvedMapping.error;
+    const mapping = resolvedMapping.mapping;
     const enabled = mapping?.enabledBranches || [mapping?.defaultBranch].filter(Boolean);
     const branch = enabled.includes(productionState.branch) ? productionState.branch : mapping?.defaultBranch || enabled[0] || '';
     ui.repository = { mapped: Boolean(mapping?.connectionId || mapping?.project || Array.isArray(mapping?.zhPaths)),
       status: 'loading', branch, mapping, filesByDocument: {}, contentByDocument: {} };
+    ui.draftContextResolved = true;
     const reviewPath = params.get('reviewPath');
     const draft = !reviewPath && documentId ? loadSharedHandbookDraft(documentId, isCurrent) : Promise.resolve();
     const repository = loadHandbookProductionRepository(handbookId, documents, productionState.branch, documentId,
       { mapping, shouldReadFile: async () => { await draft; return !ui.serverDrafts[documentId]?.exists; } });
     await draft;
     if (!isCurrent()) return;
-    if (ui.serverDrafts[documentId]?.exists || ui.draftLoadState[documentId] === 'failed' || ui.draftLoadState[documentId] === 'forbidden') render();
+    if (ui.serverDrafts[documentId]?.exists) refreshHandbookEditor(documentId);
+    else if (ui.draftLoadState[documentId] === 'failed' || ui.draftLoadState[documentId] === 'forbidden') render();
     const resolvedRepository = await repository;
     if (!isCurrent()) return;
     ui.repository = resolvedRepository;
@@ -950,7 +1015,7 @@ async function loadHandbookWorkspace(productionState, params) {
       return loadIncrementalWorkspace();
     }
     // A saved editor can already be active. Auxiliary completion must not replace its DOM/cursor.
-    if (!ui.serverDrafts[documentId]?.exists && !ui.dirtyDocuments?.includes(documentId)) render();
+    if (!ui.serverDrafts[documentId]?.exists && !ui.dirtyDocuments?.includes(documentId)) refreshHandbookEditor(documentId);
   } catch (error) {
     if (!isCurrent()) return;
     ui.repository = { mapped: false, status: repositoryStatusFor(error), filesByDocument: {}, contentByDocument: {}, error: { message: error.message } };
@@ -1187,7 +1252,15 @@ async function mountHandbookVditor() {
       after: () => {
         if (mountId !== handbookVditorMountId || !target.isConnected) return;
         handbookVditorReady = true;
-        target.querySelector('.vditor-toolbar')?.setAttribute('data-scroll-obstacle', '');
+        const toolbar = target.querySelector('.vditor-toolbar');
+        toolbar?.setAttribute('data-scroll-obstacle', '');
+        const writing = target.closest('.handbook-production-writing');
+        // Keep the format menu in the same sticky row as the editor commands.
+        // The document heading follows that row inside the full-height editor.
+        const format = writing?.querySelector(':scope > .handbook-editor-format');
+        const heading = writing?.querySelector(':scope > .handbook-document-heading');
+        if (toolbar && format) toolbar.append(format);
+        if (toolbar && heading) toolbar.after(heading);
         const editor = target.closest('.handbook-production-editor');
         const commandbar = editor?.querySelector('.handbook-production-toolbar');
         const syncCommandbarHeight = () => {
@@ -1800,8 +1873,8 @@ async function load(scopes = ['context', 'overview']) {
     applyBrandIcon(currentContext?.context?.brand?.icon);
     updatePlatformState(currentContext, currentOverview);
     try {
-      // Context updates have already refreshed the shell; preserve the editor and reader DOM.
-      if (!['production', 'review'].includes(appState.activeView) || requested.overview) render();
+      // Context updates refresh the shell; independent workspaces own their DOM lifecycle.
+      if (!['production', 'review', 'outlines', 'templates'].includes(appState.activeView) || requested.overview) render();
     } catch (error) {
       showApplicationError(error);
     }
@@ -3045,7 +3118,7 @@ document.addEventListener('click', async event => {
     return;
   }
   const reviewDecisionP0 = event.target.closest('[data-review-decision]');
-  if (reviewDecisionP0) { if (reviewDecisionP0.disabled) return; runIncrementalAction(reviewDecisionP0, reviewDecisionP0.dataset.taskId, () => decideIncrementalReview(reviewDecisionP0.dataset.taskId, reviewDecisionP0.dataset.reviewId, { decision: reviewDecisionP0.dataset.reviewDecision }), '审核已通过'); return; }
+  if (reviewDecisionP0) { if (reviewDecisionP0.disabled) return; runIncrementalAction(reviewDecisionP0, reviewDecisionP0.dataset.taskId, () => decideIncrementalReview(reviewDecisionP0.dataset.taskId, reviewDecisionP0.dataset.reviewId, { decision: reviewDecisionP0.dataset.reviewDecision, candidateDigest: reviewDecisionP0.dataset.candidateDigest || '' }), '审核已通过'); return; }
   const reviewPublish = event.target.closest('[data-review-publish]');
   if (reviewPublish) {
     const task = appState.reviewProjection?.detail?.task || appState.reviewProjection?.detail;
@@ -4005,6 +4078,7 @@ document.addEventListener('submit', async event => {
       if (new Set(documents.map(item => item.branch)).size !== 1) throw new Error('一次在线评审只能提交同一目标分支');
       const created = await createHandbookIncrementalReview(onlineReviewForm.dataset.handbookId, {
         reviewMode: 'online_review', scope: onlineReviewForm.elements.scope.value,
+        businessVersion: String(onlineReviewForm.dataset.businessVersion || '').trim(),
         defaultReviewerIds: [reviewerId], documents,
         note: onlineReviewForm.elements.note.value.trim(),
       });
@@ -4031,7 +4105,7 @@ document.addEventListener('submit', async event => {
   const reviewReplyForm = event.target.closest('[data-review-reply-form]');
   if (reviewReplyForm) { event.preventDefault(); const button = reviewReplyForm.querySelector('button[type="submit"]'); await runIncrementalAction(button, reviewReplyForm.dataset.taskId, () => replyIncrementalReviewComment(reviewReplyForm.dataset.taskId, reviewReplyForm.dataset.reviewId, reviewReplyForm.dataset.commentId, { comment: reviewReplyForm.elements.comment.value.trim() }), '回复已发送'); return; }
   const reviewDecisionForm = event.target.closest('[data-review-decision-form]');
-  if (reviewDecisionForm) { event.preventDefault(); const button = reviewDecisionForm.querySelector('button[type="submit"]'); await runIncrementalAction(button, reviewDecisionForm.dataset.taskId, () => decideIncrementalReview(reviewDecisionForm.dataset.taskId, reviewDecisionForm.dataset.reviewId, { decision: 'reject', comment: reviewDecisionForm.elements.comment.value.trim() }), '修改稿已退回'); return; }
+  if (reviewDecisionForm) { event.preventDefault(); const button = reviewDecisionForm.querySelector('button[type="submit"]'); await runIncrementalAction(button, reviewDecisionForm.dataset.taskId, () => decideIncrementalReview(reviewDecisionForm.dataset.taskId, reviewDecisionForm.dataset.reviewId, { decision: 'reject', comment: reviewDecisionForm.elements.comment.value.trim(), candidateDigest: reviewDecisionForm.dataset.candidateDigest || '' }), '修改稿已退回'); return; }
   const evidenceForm = event.target.closest('[data-incremental-evidence-form]');
   if (evidenceForm) {
     event.preventDefault();
@@ -4528,7 +4602,8 @@ document.addEventListener('submit', async event => {
         const override = reviewForm.querySelector(`[data-handbook-review-override="${CSS.escape(documentId)}"]`)?.value;
         return { documentId, outlineVersionId: context.outlineVersionId, branch: context.branch, draftRevisionId: draft?.currentRevisionId, filePath: reviewForm.querySelector(`[data-handbook-review-path="${CSS.escape(documentId)}"]`)?.value.trim(), reviewerIds: [override || reviewerId] };
       });
-      const result = await createHandbookIncrementalReview(handbookId, { documents, defaultReviewerIds: [reviewerId], note: reviewForm.elements.note.value.trim() });
+      const businessVersion = String(handbookUi().repository?.businessVersion || handbookUi().repository?.databaseVersion || '').trim();
+      const result = await createHandbookIncrementalReview(handbookId, { businessVersion, documents, defaultReviewerIds: [reviewerId], note: reviewForm.elements.note.value.trim() });
       handbookUi().selectedForReview = [];
       handbookUi().reviewState = { status: 'submitted', taskId: result.tasks?.[0]?.id, reviewHref: result.reviewHref, message: '审核任务已创建，可查看审核任务。' };
       await Promise.all(selected.map(documentId => loadSharedHandbookDraft(documentId)));

@@ -38,6 +38,12 @@
 
 `productionAI.sources.images` 统一控制来源图片数量、单图/总字节、总下载时限和格式。网页图片经受控 HTTP 读取，PingCode 图片由其登录会话下载，再以内容摘要托管在 runtime；平台预览只访问同源、按手册和文档授权的图片路由。图片失败保留正文及替代文字，旧来源需重新读取才能获得托管图片。
 
+`content-rules.json#/productionDelivery` 控制审核交付的托管图片：`version` 为快照策略版本，`resourceDirectory` 为文档同目录下的资源子目录；`maxCount`、`maxBytes`、`maxTotalBytes` 分别限制每篇文档的托管图片去重数量、单项字节及合计字节。当前默认 64 项、5 MiB/项、32 MiB/篇，单项不能超过 GitLab 连接器的读取上限。配置缺失或数值非法时拒绝交付，不静默放宽。已有仓库相对图片仍按固定提交读取和核对。
+
+送审从保存修订读取附件清单并校验完整文档上下文，来源图片复用原有权限读取路径；支持 PNG/JPEG/GIF/WebP，改写为映射授权范围内的 `assets/<sha256>.<ext>`。冻结字节位于 runtime 附件根下 `delivery-images/<sha256>`，文件权限 0600；任务只保存摘要、大小、目标路径与策略版本。发布前再次验证冻结字节，正文与新增图片使用同一个 GitLab commit；缺失、损坏或路径冲突时拒绝写入。PDF/Office、直接外链及 srcset 暂不支持交付。
+
+交付快照独立于上传附件的 24 小时有效期，不能随临时附件过期清理。T04盘点已覆盖 `delivery-images` 与保留任务历史引用；独立离线备份/恢复工具已补充（见tests README），共享数据仍有旧清单和文件缺口。数据库恢复、事务快照及引用保护GC待补；现在保留快照，不自动删除。该本地快照目录也不代表已完成 T09 数据库资源迁移。
+
 ### 工作台续写 Skill
 
 `product.json#/skills` 登记 `continue-technical-document` 资源；`content-rules.json#/productionAI.skills` 配置中文说明和适用操作，`maxSelectedSkills` 限制选用数量，`skillPrompt` 配置基础约束。新增 Skill 按既有能力包流程加载后可选；生成请求使用 ID 和预览摘要，内容变化要求重新确认。指令来自 knowledge，不执行任意脚本；既有生成策略不变。
@@ -97,3 +103,15 @@ AI 写作页面统一显示文档生成（generate）、内容修订（polish）
 运行配置完整性：独立资料处理工作区已移除，`product.json` 不再保留指向该工作区的旧模块引用；否则文档服务在严格 Profile 校验阶段无法启动。配置变更必须通过 `loadProfile()` 语义校验。
 
 AI写作参考文档上传使用 `productionAI.sources.upload` 限制扩展名、原始与解压大小、解析时限、工作线程内存和PDF页数；正文仍受maxBytes限制。`referenceListCollapsedCount` 控制主面板默认展示条数。上传生成独立来源快照，不保存原文件，不作为草稿附件；DOCX内嵌图片复用来源托管。referenceOrder冻结人工来源与默认MCP分组的顺序，1为最高；缺省保持旧版追加顺序。
+
+### 生产引用只读盘点
+
+`production-reference-audit.json` 定义盘点工具的豁免namespace、引用字段/前缀、结构版本转换、并发/超时及集合计数口径。抽取规则须与Storage的`collectOutlineReferences`和`upsertRecord`一致；这里只控制诊断，不改变保存门禁。工具入口为`tools/repository/audit-production-references.cjs`，结果写runtime，保留失败结果，不自动修复数据。
+
+- `e2e-production-fixtures.json`：仅统一隔离E2E入口在验证真实Storage进程账号为test_hy后，备份并CAS重建的两个生产聚合默认值；禁止作为共享实例清理入口。
+
+`handbook-performance.json` 的 `apiConcurrencyLevels` 固定1/5/10路同URL读取，`apiRounds`为每批总请求数；失败样本单独计数，浏览器单用户采样口径保持明确。
+
+内容补充盘点入口为`tools/repository/inventory-production-content.cjs`，沿用`production-reference-audit.json`的只读请求超时；内容字段与摘要算法来自当前生产服务契约，草稿键直接复用contextKey。显式环境变量`YASDB_STORAGE_URL`、`KC_CONTENT_INVENTORY_OUTPUT`必填，`KC_ATTACHMENT_ROOT`和`KC_SOURCE_IMAGE_ROOT`仅用于已确认的本机权威附件/来源图片目录；schemaVersion=2报告分别记录两类物理状态，图片按当前来源、任务快照及历史修订快照并集去重，并核对摘要/大小/文件签名；不读取service.json凭据，不自动修改配置、目录或数据库。缺省物理检查为未执行，报告独占落盘，不覆盖历史证据。
+
+手册读取性能配置 `handbook-performance.json` 的 `browserConcurrencyLevels` 与 `apiConcurrencyLevels` 分别控制浏览器和API并发档位，两者按阶段分开采样；浏览器每档固定 `browserRounds` 次，使用独立上下文和同账号登录态。目录/正文预算不随并发自动放宽。
