@@ -7,7 +7,7 @@ const streamDownload = require('../../../packages/platform-contracts/knowledge-c
 const read = relative => fs.readFileSync(path.join(root, relative), 'utf8');
 
 describe('知识中心通用化兼容基线', () => {
-  test('兼容清单覆盖统一入口、两个旧入口和 API 代理', () => {
+  test('兼容清单覆盖统一入口、退役入口和 API 代理', () => {
     const paths = baseline.http.map(item => `${item.method} ${item.path}`);
     expect(paths).toEqual(expect.arrayContaining([
       'GET /knowledge-center/',
@@ -16,6 +16,7 @@ describe('知识中心通用化兼容基线', () => {
       'GET /pingcode-materials/',
       'GET /pingcode-api/api/health'
     ]));
+    expect(baseline.http.find(item => item.path === '/pingcode-materials/').expectedStatus).toBe(410);
   });
 
   test('提示词生成器通过前端网关同源访问文档 API', () => {

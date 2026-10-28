@@ -24,7 +24,7 @@ GitLab 仓库访问能力只提供 `read`（只读）和 `read_write`（读写�
 
 大纲治理接口将 Storage 的大写状态投影为小写公共枚举；已发布、已替代和已归档版本不显示“删除候选”，服务端继续执行不可变版本守卫。
 
-平台发布时先在仓库根目录执行 `npm run build`。统一构建脚本将知识中心静态资源和 PingCode Vite 产物写入 `runtime/build/knowledge-center/current/web/`，并由根目录 `knowledge-center.sh` 通过 `KNOWLEDGE_CENTER_FRONTEND_ROOT` 和 `PINGCODE_WEB_DIST_DIR` 注入。源码目录回退仅用于单模块开发调试。
+平台发布时先在仓库根目录执行 `npm run build`。统一构建脚本将知识中心静态资源写入 `runtime/build/knowledge-center/current/web/platform/`，并由根目录 `knowledge-center.sh` 通过 `KNOWLEDGE_CENTER_FRONTEND_ROOT` 注入。PingCode 资料加工仅保留后端 API 适配，不再发布独立前端。源码目录回退仅用于单模块开发调试。
 
 网关拆分路由时，入口解析的运行路径必须通过 `createKnowledgeCenterHandler` 的 `config` 显式注入。大纲模板和样例分别使用 `OUTLINE_TEMPLATE_PATH` 与 `OUTLINE_SAMPLE_PATH`；两者必须是存在、可读的绝对 `.xlsx` 普通文件，否则路由工厂以 `KNOWLEDGE_CENTER_CONFIG_INVALID` 拒绝启动。启动后的文件读取失败只返回 `404/503`，不得导致 13510 网关进程退出。
 

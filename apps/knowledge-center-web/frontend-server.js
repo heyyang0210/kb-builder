@@ -24,10 +24,6 @@ const PUBLIC_BASE_URL = String(process.env.KNOWLEDGE_CENTER_PUBLIC_BASE_URL || `
 const ROOT = process.env.KNOWLEDGE_CENTER_FRONTEND_ROOT
   ? path.resolve(process.env.KNOWLEDGE_CENTER_FRONTEND_ROOT)
   : path.join(__dirname, 'frontend');
-const PINGCODE_ROOT = process.env.PINGCODE_WEB_DIST_DIR
-  ? path.resolve(process.env.PINGCODE_WEB_DIST_DIR)
-  : path.join(REPOSITORY_ROOT, 'apps', 'pingcode-web', 'dist');
-const PINGCODE_PREFIX = '/pingcode-materials';
 const KNOWLEDGE_CENTER_PREFIX = '/knowledge-center';
 const KNOWLEDGE_CENTER_ROOT = path.join(ROOT, 'knowledge-center');
 const outlineTemplateRules = require('../../config/knowledge-center/content-rules.json').outlineTemplate;
@@ -41,7 +37,6 @@ const OUTLINE_SAMPLE_PATH = process.env.KNOWLEDGE_CENTER_OUTLINE_SAMPLE_PATH
 // This avoids relying on an ambiguous generic index.html in the platform bundle.
 const KNOWLEDGE_CENTER_ENTRY = 'knowledge-center-management.html';
 const PINGCODE_API_PREFIX = '/pingcode-api';
-const PINGCODE_APP_ROUTES = ['/workbench', '/upload', '/spaces', '/batches', '/knowledge'];
 const PINGCODE_API_HOST = process.env.PINGCODE_API_HOST || '127.0.0.1';
 const PINGCODE_API_PORT = Number(process.env.PINGCODE_API_PORT || 8001);
 const DOCUMENT_API_HOST = process.env.DOCUMENT_API_HOST || '127.0.0.1';
@@ -276,7 +271,6 @@ const handleKnowledgeCenter = createKnowledgeCenterHandler({
   config: {
     KNOWLEDGE_CENTER_PREFIX, KNOWLEDGE_CENTER_ROOT, KNOWLEDGE_CENTER_ENTRY,
     OUTLINE_TEMPLATE_PATH, OUTLINE_SAMPLE_PATH,
-    PINGCODE_PREFIX, PINGCODE_ROOT,
     DOCUMENT_API_HOST, DOCUMENT_API_PORT,
     PINGCODE_API_HOST, PINGCODE_API_PORT,
     PLATFORM_CONTEXT_TIMEOUT_MS,
@@ -323,25 +317,11 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // Pingcode materials static files
-  if (req.url === PINGCODE_PREFIX || req.url.startsWith(`${PINGCODE_PREFIX}/`)) {
-    const pingcodePathname = new URL(req.url, 'http://localhost').pathname;
-    const relativePath = decodeURIComponent(pingcodePathname.slice(PINGCODE_PREFIX.length)).replace(/^\/+/, '');
-    const requested = relativePath || 'index.html';
-    const candidate = path.resolve(PINGCODE_ROOT, requested);
-    if (!candidate.startsWith(`${path.resolve(PINGCODE_ROOT)}${path.sep}`) && candidate !== path.resolve(PINGCODE_ROOT)) {
-      res.writeHead(400); res.end('Bad Request'); return;
-    }
-    const filePath = path.extname(candidate) ? candidate : path.join(PINGCODE_ROOT, 'index.html');
-    sendFile(filePath, res, req);
-    return;
-  }
-
-  // Pingcode app route redirects
-  if (PINGCODE_APP_ROUTES.some(route => pathname === route || pathname.startsWith(`${route}/`))) {
-    const target = `${PINGCODE_PREFIX}${pathname}${new URL(req.url, 'http://localhost').search}`;
-    res.writeHead(302, { Location: target });
-    res.end();
+  // The standalone PingCode UI was retired. Keep the API adapter available while
+  // returning an explicit response for legacy browser entrypoints.
+  if (pathname === '/pingcode-materials' || pathname.startsWith('/pingcode-materials/')) {
+    res.writeHead(410, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify({ success: false, error: { code: 'PINGCODE_WEB_RETIRED', message: '资料加工独立前端已下线，请使用知识中心管理入口。' } }));
     return;
   }
 
@@ -361,7 +341,7 @@ if (require.main === module) {
   server.listen(PORT, HOST, () => {
     console.log(`Frontend server listening on http://${HOST}:${PORT}`);
     console.log(`Open ${PUBLIC_BASE_URL}/document-generation-workbench.html in your browser`);
-    console.log(`Open ${PUBLIC_BASE_URL}${PINGCODE_PREFIX}/ in your browser`);
+    console.log(`PingCode API adapter: ${PUBLIC_BASE_URL}${PINGCODE_API_PREFIX}/`);
   });
 }
 

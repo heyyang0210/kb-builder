@@ -35,12 +35,6 @@
       "displayName": "文档生成",
       "basePath": "/document-generation-workbench.html",
       "backend": "node"
-    },
-    {
-      "id": "material-processing",
-      "displayName": "资料加工",
-      "basePath": "/pingcode-materials/",
-      "backend": "python"
     }
   ],
   "domain": {
@@ -643,7 +637,6 @@
     "legacyEntrypoints": [
       "/document-generation-workbench.html",
       "/prompt-generator.html",
-      "/pingcode-materials/",
       "/pingcode-api/"
     ],
     "legacyApiPreserved": true,

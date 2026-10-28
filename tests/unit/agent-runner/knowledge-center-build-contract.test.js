@@ -17,7 +17,6 @@ describe('knowledge center unified build contract', () => {
   const storageScript = read('apps/yashandb-storage/start.sh');
   const storageMain = read('apps/yashandb-storage/src/Main.java');
   const schemaMigrationManager = read('apps/yashandb-storage/src/migration/SchemaMigrationManager.java');
-  const pingcodeViteConfig = read('apps/pingcode-web/vite.config.js');
   const yashandbEnvExample = read('config/yashandb/service.env.example');
 
   test('keeps exactly one repository build script', () => {
@@ -28,8 +27,9 @@ describe('knowledge center unified build contract', () => {
     expect(read('package.json')).toContain(`"build": "bash ${buildScriptPath}"`);
   });
 
-  test('centralizes Vite and Java compilation in the build script', () => {
-    expect(buildScript).toContain('npm run build');
+  test('centralizes knowledge center asset packaging and Java compilation in the build script', () => {
+    expect(buildScript).toContain('tar -cf - -C apps/knowledge-center-web/frontend .');
+    expect(buildScript).toContain('web/platform');
     expect(buildScript).toContain('java_compile_args=(');
     expect(buildScript).toContain('apps/yashandb-storage/src/migration/SchemaMigrationManager.java');
     expect(buildScript).toContain('jdk.compiler/com.sun.tools.javac.Main');
@@ -119,13 +119,12 @@ describe('knowledge center unified build contract', () => {
     expect(platformScript).toContain('YASDB_STORAGE_CLASSES_DIR="$BUILD_DIR/java/classes"');
   });
 
-  test('limits frontend build environment loading to public PingCode settings', () => {
-    expect(pingcodeViteConfig).toContain("loadEnv(mode, process.cwd(), 'PINGCODE_WEB_')");
-    expect(pingcodeViteConfig).not.toContain("loadEnv(mode, process.cwd(), '')");
-    expect(buildScript).toContain('grep -R -I -F -l "$repo_root" "$stage_rel"');
-    expect(buildScript).toContain('NODE_ENV=production NODE_OPTIONS="$pingcode_vite_node_options" npm run build');
-    expect(buildScript).toContain('KNOWLEDGE_CENTER_VITE_NODE_OPTIONS');
-    expect(buildScript).toContain('NODE_OPTIONS="$pingcode_vite_node_options"');
+  test('does not build or publish the retired standalone PingCode Web UI', () => {
+    expect(buildScript).not.toContain('apps/pingcode-web');
+    expect(buildScript).not.toContain('web/pingcode');
+    expect(platformScript).not.toContain('PINGCODE_WEB_DIR');
+    expect(platformScript).not.toContain('PINGCODE_WEB_DIST_DIR');
+    expect(read('apps/knowledge-center-web/frontend-server.js')).toContain('PINGCODE_WEB_RETIRED');
   });
 
   test('build fingerprint only scans existing repository inputs', () => {

@@ -68,7 +68,6 @@ DOCUMENT_DIR="$REPO_ROOT/apps/knowledge-center-api"
 AUTH_DIR="$REPO_ROOT/apps/knowledge-center-auth"
 FRONTEND_DIR="$REPO_ROOT/apps/knowledge-center-web"
 PINGCODE_API_DIR="$REPO_ROOT/apps/pingcode-api"
-PINGCODE_WEB_DIR="$REPO_ROOT/apps/pingcode-web"
 PINGCODE_CORE_DIR="$REPO_ROOT/packages/pingcode-core"
 STORAGE_DIR="$REPO_ROOT/apps/yashandb-storage"
 RUNTIME_DIR="$REPO_ROOT/runtime/agent-runner"
@@ -416,7 +415,7 @@ validate_environment() {
     [[ -n "${KNOWLEDGE_CENTER_ADMIN_PASSWORD:-}" && "${KNOWLEDGE_CENTER_ADMIN_PASSWORD:-}" != admin ]] || { echo "错误：共享/生产环境禁止使用默认管理员密码" >&2; return 1; }
     [[ -n "$OUTLINE_INTERNAL_TOKEN" ]] || { echo "错误：共享/生产环境必须配置 KNOWLEDGE_CENTER_OUTLINE_INTERNAL_TOKEN" >&2; return 1; }
   fi
-  for directory in "$DOCUMENT_DIR" "$FRONTEND_DIR" "$PINGCODE_API_DIR" "$PINGCODE_WEB_DIR" "$PINGCODE_CORE_DIR" "$STORAGE_DIR"; do
+  for directory in "$DOCUMENT_DIR" "$FRONTEND_DIR" "$PINGCODE_API_DIR" "$PINGCODE_CORE_DIR" "$STORAGE_DIR"; do
     [[ -d "$directory" ]] || { echo "错误：目录不存在：$directory" >&2; return 1; }
   done
   [[ -f "$DOCUMENT_DIR/server.js" ]] || { echo "错误：文档 API 入口不存在" >&2; return 1; }
@@ -431,7 +430,6 @@ validate_build_artifact() {
   [[ -f "$BUILD_DIR/manifest.sha256" ]] || { echo "错误：缺少统一构建摘要，请先执行 $BUILD_SCRIPT" >&2; return 1; }
   (cd "$BUILD_DIR" && sha256sum -c manifest.sha256 >/dev/null) || { echo "错误：统一构建产物摘要校验失败" >&2; return 1; }
   [[ -f "$BUILD_DIR/web/platform/knowledge-center/knowledge-center-management.html" ]] || { echo "错误：知识中心 Web 构建产物不完整" >&2; return 1; }
-  [[ -f "$BUILD_DIR/web/pingcode/index.html" ]] || { echo "错误：PingCode Web 构建产物不完整" >&2; return 1; }
   [[ -f "$BUILD_DIR/java/classes/Main.class" ]] || { echo "错误：YashanDB Storage 构建产物不完整" >&2; return 1; }
 }
 
@@ -659,7 +657,7 @@ start_platform() {
     KNOWLEDGE_CENTER_PUBLIC_BASE_URL="$PUBLIC_BASE_URL" KNOWLEDGE_CENTER_SERVICE_URL="$PUBLIC_SERVICE_URL" \
     KNOWLEDGE_CENTER_ENVIRONMENT="$KNOWLEDGE_CENTER_ENVIRONMENT" KNOWLEDGE_CENTER_TEST_RUN_ID="${KNOWLEDGE_CENTER_TEST_RUN_ID:-}" \
     KNOWLEDGE_CENTER_GITLAB_OAUTH_REDIRECT_URI="$PUBLIC_OAUTH_REDIRECT_URI" KNOWLEDGE_CENTER_COOKIE_SECURE="$COOKIE_SECURE" \
-    KNOWLEDGE_CENTER_FRONTEND_ROOT="$BUILD_DIR/web/platform" PINGCODE_WEB_DIST_DIR="$BUILD_DIR/web/pingcode" \
+    KNOWLEDGE_CENTER_FRONTEND_ROOT="$BUILD_DIR/web/platform" \
     KNOWLEDGE_CENTER_OUTLINE_INTERNAL_TOKEN="$token" "$NODE_BIN" frontend-server.js || { rollback_started; return 1; }
   wait_ready frontend "$(service_url frontend)" || { rollback_started; return 1; }
 

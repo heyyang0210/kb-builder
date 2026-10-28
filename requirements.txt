@@ -65,22 +65,11 @@ playwright==1.61.0
 # socket.io-client: declared ^4.8.3; locked 4.8.3
 
 # -----------------------------------------------------------------------------
-# Node.js：apps/pingcode-web/package.json / package-lock.json
+# Node.js：知识中心 package.json / package-lock.json
 # -----------------------------------------------------------------------------
 # 运行时依赖（dependencies）
-# dompurify: declared ^3.4.12; locked 3.4.12
-# echarts: declared ^6.1.0; locked 6.1.0
-# lucide-vue-next: declared ^0.468.0; locked 0.468.0
-# marked: declared ^18.0.7; locked 18.0.7
-# mermaid: declared ^11.16.0; locked 11.16.0
-# monaco-editor: declared ^0.56.0; locked 0.56.0
-# vue: declared ^3.5.18; locked 3.5.40
-# vue-router: declared ^4.5.1; locked 4.6.4
+# （独立 PingCode Web 已移除，相关依赖不再纳入主仓库）
 #
-# 构建与开发依赖（devDependencies）
-# @vitejs/plugin-vue: declared ^6.0.1; locked 6.0.8
-# vite: declared ^7.0.6; locked 7.3.6
-
 # -----------------------------------------------------------------------------
 # 仓库内部组件
 # -----------------------------------------------------------------------------
@@ -89,8 +78,6 @@ playwright==1.61.0
 #   Socket.IO 实时通信、文档/表格/演示文稿/PDF 解析与 Markdown/数学公式渲染。
 # apps/pingcode-api
 #   FastAPI 资料加工控制面；共享客户端和领域能力来自 packages/pingcode-core。
-# apps/pingcode-web
-#   Vue + Vite 前端；ECharts 图表、Mermaid 图表、Monaco Editor 编辑器。
 # packages/agent-runner-core
 #   Agent Runner 共享业务核心、路由、工作流与存储适配能力；无额外 package.json 依赖。
 # packages/pingcode-core

@@ -1,6 +1,4 @@
 import json
-import shutil
-import subprocess
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
@@ -174,66 +172,6 @@ class M2PublishContractTests(unittest.TestCase):
         self.assertEqual(compatible.status_code, 200, compatible.text)
         self.assertIsNone(compatible.json()["governance"])
         self.assertEqual(compatible.json()["state"], "published")
-
-
-@unittest.skipUnless(shutil.which("node"), "Node.js 不可用，无法执行前端 helper 契约")
-class M2FrontendGovernanceHelperTests(unittest.TestCase):
-    API_MODULE = (
-        Path(__file__).resolve().parents[4] / "apps" / "pingcode-web" / "src" / "api.js"
-    )
-
-    def _evaluate(self, expression: str):
-        script = (
-            f"const api = await import({json.dumps(self.API_MODULE.as_uri())});"
-            f"console.log(JSON.stringify({expression}));"
-        )
-        completed = subprocess.run(
-            ["node", "--input-type=module", "--eval", script],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        return json.loads(completed.stdout)
-
-    def test_manifest_p0_disables_publish_and_has_chinese_action(self):
-        view = self._evaluate(
-            "api.datasetGovernanceView({state:'candidate',governance:{"
-            "status:'evaluated',statusVersion:3,reasonCode:'PUBLISH_GATE_BLOCKED',"
-            "gateChecks:{entity_relation:true,evidence:true,acl:true,quality:true,"
-            "evaluation:true,manifest:false}}})"
-        )
-        self.assertFalse(view["canPublish"])
-        self.assertIn("manifest", [item["key"] for item in view["blockedChecks"]])
-        self.assertIn("血缘", view["nextAction"])
-
-    def test_conflict_p0_acl_and_fallback_errors_are_chinese(self):
-        messages = self._evaluate(
-            "["
-            "api.governancePublishErrorMessage({code:'STATE_VERSION_CONFLICT'}),"
-            "api.governancePublishErrorMessage({code:'PUBLISH_GATE_BLOCKED'}),"
-            "api.governancePublishErrorMessage({code:'ACL_DENIED'}),"
-            "api.governancePublishErrorMessage({})"
-            "]"
-        )
-        self.assertEqual(len(messages), 4)
-        for message in messages:
-            self.assertRegex(message, r"[\u4e00-\u9fff]")
-
-    def test_legacy_and_governed_views_keep_distinct_semantics(self):
-        views = self._evaluate(
-            "["
-            "api.datasetGovernanceView({state:'candidate',qualityPassed:false,publishable:false}),"
-            "api.datasetGovernanceView({state:'candidate',governance:{status:'evaluated',"
-            "statusVersion:2,reasonCode:'READY_TO_PUBLISH',gateChecks:{entity_relation:true,"
-            "evidence:true,acl:true,quality:true,evaluation:true,manifest:true}}})"
-            "]"
-        )
-        self.assertFalse(views[0]["governed"])
-        self.assertTrue(views[0]["requiresForce"])
-        self.assertTrue(views[1]["governed"])
-        self.assertFalse(views[1]["requiresForce"])
-        self.assertTrue(views[1]["canPublish"])
 
 
 if __name__ == "__main__":

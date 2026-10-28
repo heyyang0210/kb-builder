@@ -5,8 +5,7 @@
   "http": [
     { "method": "GET", "path": "/document-generation-workbench.html", "expectedStatus": 200, "behavior": "document-generation-workbench-entry" },
     { "method": "GET", "path": "/prompt-generator.html", "expectedStatus": 302, "behavior": "document-generation-legacy-redirect" },
-    { "method": "GET", "path": "/pingcode-materials/", "expectedStatus": 200, "behavior": "material-processing-legacy-entry" },
-    { "method": "GET", "path": "/pingcode-materials/workbench?space=ops", "expectedStatus": 200, "behavior": "spa-deep-link-preserves-query" },
+    { "method": "GET", "path": "/pingcode-materials/", "expectedStatus": 410, "behavior": "retired-material-processing-legacy-entry" },
     { "method": "GET", "path": "/pingcode-api/api/health", "expectedStatus": 200, "behavior": "python-api-proxy" },
     { "method": "GET", "path": "/knowledge-center/", "expectedStatus": 200, "behavior": "unified-entry" },
     { "method": "GET", "path": "/knowledge-center/api/platform/context", "expectedStatus": 200, "behavior": "aggregated-redacted-context" },
@@ -26,7 +25,6 @@
     { "path": "/api/datasets/{dataset_id}/keywords/filter-by-skill/stream", "mediaType": "text/event-stream", "verification": "implementation-contract-only" }
   ],
   "redirects": [
-    { "from": "/workbench", "to": "/pingcode-materials/workbench", "status": 302 },
     { "from": "/pingcode-api/{path}", "to": "/{path}", "status": 307, "owner": "python-compatibility-route" }
   ]
 }

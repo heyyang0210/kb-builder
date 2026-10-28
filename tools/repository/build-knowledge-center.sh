@@ -61,7 +61,6 @@ migration_source_sha256="$({
 node_version="$(node --version)"
 npm_version="$(npm --version)"
 python_version="$("$python_bin" --version 2>&1 | awk '{print $2}')"
-pingcode_vite_node_options="${KNOWLEDGE_CENTER_VITE_NODE_OPTIONS:---max-old-space-size=1536}"
 fingerprint_inputs=(
   package.json
   package-lock.json
@@ -69,7 +68,6 @@ fingerprint_inputs=(
   apps/knowledge-center-web/frontend
   apps/knowledge-center-web/frontend-server.js
   apps/pingcode-api
-  apps/pingcode-web
   apps/yashandb-storage/src
   apps/yashandb-storage/sql
   packages/agent-runner-core
@@ -122,7 +120,6 @@ NODE
 
 cache_artifacts_are_valid() {
   [[ -d "$current_rel/web/platform" \
-    && -d "$current_rel/web/pingcode" \
     && -d "$current_rel/java/classes" \
     && -f "$current_rel/java/lib/yashandb-jdbc.jar" \
     && -f "$current_rel/java/sql/migration-source.properties" ]] || return 1
@@ -163,14 +160,13 @@ cleanup_stage() {
 }
 trap cleanup_stage EXIT
 
-mkdir -p "$stage_rel/web/platform" "$stage_rel/web/pingcode" \
-  "$stage_rel/java/classes" "$stage_rel/java/lib" "$stage_rel/java/sql" \
-  "$stage_rel/.work/pingcode-web"
+mkdir -p "$stage_rel/web/platform" \
+  "$stage_rel/java/classes" "$stage_rel/java/lib" "$stage_rel/java/sql"
 
-echo "[1/6] 检查 Node.js 语法"
+echo "[1/5] 检查 Node.js 语法"
 node tools/repository/check-node-syntax.js
 
-echo "[2/6] 检查 Python 语法"
+echo "[2/5] 检查 Python 语法"
 "$python_bin" - <<'PY'
 from pathlib import Path
 
@@ -181,37 +177,14 @@ for root in (Path("apps/pingcode-api"), Path("packages/pingcode-core")):
         compile(path.read_text(encoding="utf-8"), path.as_posix(), "exec")
 PY
 
-echo "[3/6] 构建 PingCode Web"
-npm_cache="${KNOWLEDGE_CENTER_NPM_CACHE:-$repo_root/runtime/deployment/npm-cache}"
-npm_install_args=(ci --include=dev --ignore-scripts --no-audit --no-fund)
-if [[ -n "${KNOWLEDGE_CENTER_NPM_CACHE:-}" || -d "$npm_cache" ]]; then
-  [[ -d "$npm_cache" ]] || fail "指定的 npm 离线缓存不存在：$npm_cache"
-  [[ "$npm_cache" == /* ]] || npm_cache="$repo_root/$npm_cache"
-  npm_install_args+=(--offline --cache "$npm_cache")
-  echo "使用 npm 离线缓存：$npm_cache（按 Web lockfile 校验并安装本机架构依赖）"
-fi
-tar -cf - \
-  --exclude='./node_modules' \
-  --exclude='./dist' \
-  -C apps/pingcode-web . | tar -xf - -C "$stage_rel/.work/pingcode-web"
-(
-  cd "$stage_rel/.work/pingcode-web"
-  npm "${npm_install_args[@]}" || fail "PingCode Web 依赖安装失败；离线环境请按 apps/pingcode-web/package-lock.json 补齐 npm 缓存，详情见 npm 日志。现有产物未替换"
-  [[ -x node_modules/.bin/vite ]] || fail "PingCode Web 依赖不完整：缺少 Vite 入口，拒绝继续构建"
-  # 运行配置可以使用 NODE_ENV=development，但发布构建必须固定为 production。
-  # 否则 Vue 会把组件绝对文件名写入 chunk，破坏可重复构建并泄漏开发机路径。
-  NODE_ENV=production NODE_OPTIONS="$pingcode_vite_node_options" npm run build -- --outDir ../../web/pingcode --emptyOutDir \
-    || fail "PingCode Web 构建失败，现有产物未替换"
-) || fail "PingCode Web 构建阶段失败，现有产物未替换"
-
-echo "[4/6] 准备知识中心静态前端"
+echo "[3/5] 准备知识中心静态前端"
 tar -cf - -C apps/knowledge-center-web/frontend . | tar -xf - -C "$stage_rel/web/platform"
 vditor_target="$stage_rel/web/platform/knowledge-center/common/vendor/vditor"
 mkdir -p "$vditor_target"
 cp -R "$vditor_dist_rel" "$vditor_target/dist"
 cp "$vditor_license_rel" "$vditor_target/LICENSE"
 
-echo "[5/6] 编译 YashanDB Storage"
+echo "[4/5] 编译 YashanDB Storage"
 cp "$jdbc_source_rel" "$stage_rel/java/lib/yashandb-jdbc.jar"
 cp -R apps/yashandb-storage/sql/. "$stage_rel/java/sql/"
 {
@@ -240,7 +213,7 @@ fi
 
 remove_managed_path "$stage_rel/.work"
 
-echo "[6/6] 生成构建清单"
+echo "[5/5] 生成构建清单"
 node - \
   "$stage_rel/manifest.json" \
   "$source_revision" \
@@ -271,7 +244,6 @@ const manifest = {
   },
   components: {
     platformWeb: "web/platform",
-    pingcodeWeb: "web/pingcode",
     storageClasses: "java/classes",
     storageJdbc: "java/lib/yashandb-jdbc.jar",
     storageSql: "java/sql"
