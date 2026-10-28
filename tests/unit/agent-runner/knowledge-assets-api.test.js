@@ -65,4 +65,16 @@ describe('知识资产 API 投影', () => {
     expect(result.page).toBe(2);
     expect(result.items.map(item => item.handbookId)).toContain('DB-021');
   });
+
+  test('数据库配置投影可使用平台服务返回的手册映射', () => {
+    const payload = { handbooks: [handbook({ handbookId: 'DB-004', name: 'SQL参考手册' })] };
+    const result = queryKnowledgeAssets(payload, new URLSearchParams('pageSize=20'), true, {
+      mappings: [{ handbookId: 'DB-004', connectionId: 'yasdoc', defaultBranch: 'master', enabledBranches: ['master'], zhPaths: ['doc/中文'] }],
+    });
+    expect(result.items[0]).toMatchObject({
+      handbookId: 'DB-004',
+      repositoryMapped: true,
+      repository: { status: 'confirmed', defaultBranch: 'master', enabledBranches: ['master'] },
+    });
+  });
 });

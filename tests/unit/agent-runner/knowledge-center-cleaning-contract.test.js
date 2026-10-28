@@ -31,6 +31,8 @@ describe('知识中心资料加工契约适配层', () => {
     let routeCount = 0;
     while ((match = pattern.exec(source))) {
       if (!match[2].startsWith('/api/')) continue;
+      // PingCode reference is a separate service contract, covered by its dedicated tests.
+      if (match[2].startsWith('/api/pingcode/')) continue;
       const method = match[1].toUpperCase();
       const routePath = normalizePythonPath(match[2].replace(/^\/api/, '').replace(/\{([^}]+)\}/g, ':$1'));
       routeCount += 1;

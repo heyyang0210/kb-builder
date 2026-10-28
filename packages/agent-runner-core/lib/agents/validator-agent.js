@@ -18,6 +18,12 @@ class ValidatorAgent extends BaseAgent {
   }
 
   buildPrompt(input, stepConfig) {
+    if (input.qualityReview) {
+      return [
+        { role: 'system', content: input.qualityReview.prompt },
+        { role: 'user', content: JSON.stringify({ document: input.document, ...input.qualityReview.context }) },
+      ];
+    }
     const template = this.loadPromptTemplate('validator.md');
     const criteria = input.validationCriteria || {};
 
@@ -46,6 +52,7 @@ class ValidatorAgent extends BaseAgent {
   }
 
   parseResponse(response, input) {
+    if (input.qualityReview) return this._parseQualityReview(response, input);
     // 3.1 记录原始 LLM 响应
     const rawContent = response.content || '';
     logger.info(`[validator] Raw LLM response: length=${rawContent.length}, has_json_structure=${rawContent.includes('{')}`);
@@ -98,6 +105,39 @@ class ValidatorAgent extends BaseAgent {
     logger.info(`[validator] Report summary: score=${report.score}, passed=${report.passed}, parse_source=${parseSource}, checks=${passedChecks}/${checksCount}, warnings=[${warningsList}]`);
 
     return report;
+  }
+
+  async callLLM(messages, stepConfig = {}) {
+    if (!stepConfig.productionQuality) return super.callLLM(messages, stepConfig);
+    return this.llmClient.chatJSON(messages, {
+      timeout_ms: stepConfig.timeoutMs, max_tokens: stepConfig.maxTokens,
+      max_retries: 0, json_repair: false, temperature: 0.2,
+    });
+  }
+
+  _parseQualityReview(response, input) {
+    const invalid = () => { throw Object.assign(new Error('内容检查返回格式无效，未完成检查'), { code: 'QUALITY_CONTENT_RESPONSE_INVALID' }); };
+    let report;
+    try { report = response.parsed || JSON.parse(response.content); } catch (_) { invalid(); }
+    const names = ['structure', 'template', 'expression', 'sources'];
+    if (!report || !Array.isArray(report.checks) || report.checks.length !== names.length || !Array.isArray(report.issues)) invalid();
+    if (new Set(report.checks.map(item => item?.check)).size !== names.length) invalid();
+    for (const item of report.checks) {
+      if (!names.includes(item?.check) || !['passed', 'failed', 'not_executed'].includes(item.status) || typeof item.details !== 'string' || !item.details.trim()) invalid();
+    }
+    for (const issue of report.issues) {
+      if (!names.includes(issue?.check) || !['blocking', 'warning'].includes(issue.severity) ||
+          !Number.isSafeInteger(issue.start) || !Number.isSafeInteger(issue.end) || issue.start < 0 || issue.end < issue.start || issue.end > input.document.length ||
+          typeof issue.message !== 'string' || !issue.message.trim() || typeof issue.requirement !== 'string' || !issue.requirement.trim()) invalid();
+      for (const position of [issue.start, issue.end]) {
+        if (position > 0 && position < input.document.length && /[\uD800-\uDBFF]/.test(input.document[position - 1]) && /[\uDC00-\uDFFF]/.test(input.document[position])) invalid();
+      }
+      if (issue.severity === 'blocking' && report.checks.find(item => item.check === issue.check).status !== 'failed') invalid();
+    }
+    if (report.checks.some(item => item.status === 'failed' && !report.issues.some(issue => issue.check === item.check))) invalid();
+    // Never accept model-provided replacement text or a claimed overall pass.
+    return { checks: report.checks.map(({ check, status, details }) => ({ check, status, details })),
+      issues: report.issues.map(({ check, severity, start, end, message, requirement }) => ({ check, severity, start, end, message, requirement })) };
   }
 
   _generateBasicReport(document) {

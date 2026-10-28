@@ -113,7 +113,7 @@ class HtmlAdapter extends SourceAdapter {
    * 将 HTML body 内容转为 Markdown 格式
    * 处理顺序很重要：先处理内联元素（粗体/斜体），再处理块级元素（段落）
    */
-  htmlToMarkdown($) {
+  htmlToMarkdown($, options = {}) {
     const body = $('body').length ? $('body') : $;
     
     // 1. 代码块
@@ -144,7 +144,8 @@ class HtmlAdapter extends SourceAdapter {
     body.find('img').each((_, el) => {
       const $el = $(el);
       const alt = $el.attr('alt') || '图片';
-      $el.replaceWith('[图片: ' + alt + ']');
+      const src = options.imageResolver?.($el.attr('src') || '');
+      $el.replaceWith(src ? `![${alt.replace(/[\[\]]/g, '')}](${src})` : '[图片: ' + alt + ']');
     });
 
     // 5. 链接

@@ -67,7 +67,12 @@ function queryKnowledgeAssets(payload, searchParams, admin, gitlabConfigPath) {
   const page = Math.max(1, Number.parseInt(searchParams.get('page') || '1', 10) || 1);
   const pageSize = Math.min(100, Math.max(1, Number.parseInt(searchParams.get('pageSize') || '20', 10) || 20));
   let mappings = new Map();
-  try { mappings = new Map(readGitLabConfig(gitlabConfigPath).mappings.map(item => [item.handbookId, item])); }
+  try {
+    const config = gitlabConfigPath && typeof gitlabConfigPath === 'object'
+      ? gitlabConfigPath
+      : readGitLabConfig(gitlabConfigPath);
+    mappings = new Map((config.mappings || []).map(item => [item.handbookId, item]));
+  }
   catch (_error) { mappings = new Map(); }
   const all = payload.handbooks.map(item => projectAsset(item, admin, mappings.get(item.handbookId) || false));
   const statistics = Object.fromEntries(Object.keys(ASSET_STATUS_LABELS).map(key => [key, all.filter(item => !item.archived && item.status === key).length]));

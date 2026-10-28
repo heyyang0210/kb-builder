@@ -194,7 +194,12 @@ function enhance(select) {
     if (!listbox.hidden) rebuild(input.value === selectedLabel(select) ? '' : input.value);
   });
   observer.observe(select, { childList: true, subtree: true, attributes: true });
-  const controller = { select, close, listbox, observer, position };
+  const sync = () => {
+    input.value = selectedLabel(select);
+    input.setCustomValidity('');
+    if (!listbox.hidden) rebuild(input.value === selectedLabel(select) ? '' : input.value);
+  };
+  const controller = { select, close, listbox, observer, position, sync };
   controllers.set(select, controller);
   activeControllers.add(controller);
 }
@@ -210,6 +215,12 @@ export function cleanupSearchableSelects() {
     controller.listbox.remove();
     activeControllers.delete(controller);
   });
+}
+
+// 动态表单回填原生 select.value 后调用，保证公共 Combobox 的可见输入框、
+// 原生值和候选项状态保持一致。
+export function syncSearchableSelect(select) {
+  controllers.get(select)?.sync();
 }
 
 export function markDynamicSelects(root = document) {

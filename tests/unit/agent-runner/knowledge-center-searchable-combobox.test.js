@@ -7,6 +7,7 @@ const read = relative => fs.readFileSync(path.join(root, relative), 'utf8');
 describe('知识中心动态实体组合选择器契约', () => {
   const component = read('apps/knowledge-center-web/frontend/knowledge-center/common/searchable-combobox.js');
   const app = read('apps/knowledge-center-web/frontend/knowledge-center/app.js');
+  const review = read('apps/knowledge-center-web/frontend/knowledge-center/modules/review-publishing/view.js');
   const styles = read('apps/knowledge-center-web/frontend/knowledge-center/common/components.css');
 
   test('使用渐进增强并保留原生表单值和 change 事件', () => {
@@ -20,6 +21,14 @@ describe('知识中心动态实体组合选择器契约', () => {
 
   test('知识资产局部插入管理弹框后重新执行幂等增强', () => {
     expect(app).toMatch(/if \(selection\.dialogs\) root\.insertAdjacentHTML\('beforeend', selection\.dialogs\);\s*\/\/[^]*?cleanupSearchableSelects\(\);\s*markDynamicSelects\(root\);/);
+    expect(app).toContain('markDynamicSelects(replacement)');
+  });
+
+  test('审核仓库上下文就绪后刷新文档深链和在线评审上下文', () => {
+    expect(review).toContain('data-review-production-editor');
+    expect(review).toContain('export function updateReviewWaitingEntry');
+    expect(review).toContain('projection.file?.path || projection.path || projection.requestedPath');
+    expect(app).toContain('updateReviewWaitingEntry(byId(\'view-root\'), appState.gitlabProjection)');
   });
 
   test('动态实体被标记，固定枚举不进入公共选择器清单', () => {
