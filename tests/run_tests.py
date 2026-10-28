@@ -12,6 +12,7 @@ import ast
 from concurrent.futures import ThreadPoolExecutor
 import fcntl
 import html
+import hashlib
 import json
 import os
 import re
@@ -408,6 +409,7 @@ def test_environment(
     run_context: RunContext | None = None,
     knowledge_center_base_url: str | None = None,
     knowledge_center_test_run_id: str | None = None,
+    knowledge_center_storage_url: str | None = None,
 ) -> dict[str, str]:
     env = os.environ.copy()
     python_paths = [
@@ -431,9 +433,19 @@ def test_environment(
     env["KPG_BASE_URL"] = knowledge_center_base_url or KNOWLEDGE_CENTER_BASE_URL
     if knowledge_center_test_run_id:
         env["KNOWLEDGE_CENTER_TEST_RUN_ID"] = knowledge_center_test_run_id
+    if knowledge_center_storage_url:
+        env["KC_STORAGE_URL"] = knowledge_center_storage_url
+        env["YASDB_STORAGE_URL"] = knowledge_center_storage_url
     if run_context:
         env["YASDB_TEST_RUN_DIR"] = str(run_context.run_dir)
-        env["YASDB_TEST_ARTIFACT_DIR"] = str(run_context.artifact_dir)
+        # Playwright clears its outputDir at startup. Each invocation needs its
+        # own directory so later batches cannot erase earlier failure evidence.
+        artifact_dir = run_context.artifact_dir
+        if task:
+            identity = "\n".join([task.suite, task.framework, *(str(path) for path in task.files)])
+            suffix = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:12]
+            artifact_dir = artifact_dir / f"{task.suite}-{task.framework}-{suffix}"
+        env["YASDB_TEST_ARTIFACT_DIR"] = str(artifact_dir)
         env["YASDB_TEST_TMP_DIR"] = str(TEST_RESULT_ROOT / "tmp")
     return env
 
@@ -775,6 +787,7 @@ def run_task(
     run_context: RunContext | None = None,
     knowledge_center_base_url: str | None = None,
     knowledge_center_test_run_id: str | None = None,
+    knowledge_center_storage_url: str | None = None,
     log_path: Path | None = None,
     jobs: int = 1,
     emit_output: bool = True,
@@ -805,7 +818,7 @@ def run_task(
         completed = subprocess.run(
             command,
             cwd=REPOSITORY_ROOT,
-            env=test_environment(task, run_context, knowledge_center_base_url, knowledge_center_test_run_id),
+            env=test_environment(task, run_context, knowledge_center_base_url, knowledge_center_test_run_id, knowledge_center_storage_url),
             timeout=timeout,
             check=False,
             text=True,
@@ -1334,6 +1347,7 @@ def main(argv: list[str] | None = None) -> int:
                     run_context=context,
                     knowledge_center_base_url=(knowledge_center_lease.base_url if knowledge_center_lease else None),
                     knowledge_center_test_run_id=(context.run_id if knowledge_center_lease else None),
+                    knowledge_center_storage_url=(knowledge_center_lease.environment["YASDB_STORAGE_URL"] if knowledge_center_lease else None),
                     log_path=log_path,
                     jobs=args.jobs,
                     emit_output=emit_output,

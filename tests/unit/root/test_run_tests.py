@@ -318,9 +318,25 @@ class RepositoryTestRunnerTests(unittest.TestCase):
         environment = RUNNER.test_environment(
             knowledge_center_base_url="http://127.0.0.1:45678",
             knowledge_center_test_run_id="run-1",
+            knowledge_center_storage_url="http://127.0.0.1:45679",
         )
+        self.assertEqual("http://127.0.0.1:45679", environment["KC_STORAGE_URL"])
+        self.assertEqual("http://127.0.0.1:45679", environment["YASDB_STORAGE_URL"])
         self.assertEqual("http://127.0.0.1:45678", environment["KPG_BASE_URL"])
         self.assertEqual("run-1", environment["KNOWLEDGE_CENTER_TEST_RUN_ID"])
+
+    def test_browser_batches_keep_separate_failure_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            context = RUNNER.RunContext("full", "run-1", root, root, root, root / "artifacts", True)
+            first = RUNNER.TestTask("e2e", "playwright", "浏览器测试", (Path("first.spec.js"),))
+            second = RUNNER.TestTask("e2e", "playwright", "浏览器测试", (Path("second.spec.js"),))
+            first_dir = Path(RUNNER.test_environment(first, context)["YASDB_TEST_ARTIFACT_DIR"])
+            second_dir = Path(RUNNER.test_environment(second, context)["YASDB_TEST_ARTIFACT_DIR"])
+            self.assertNotEqual(first_dir, second_dir)
+            self.assertEqual(context.artifact_dir, first_dir.parent)
+            self.assertEqual(context.artifact_dir, second_dir.parent)
+            self.assertEqual(str(first_dir), RUNNER.test_environment(first, context)["YASDB_TEST_ARTIFACT_DIR"])
 
     def test_isolated_environment_uses_ephemeral_ports_and_owner(self):
         with tempfile.TemporaryDirectory() as directory:

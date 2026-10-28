@@ -75,6 +75,7 @@ fingerprint_inputs=(
   packages/agent-runner-core
   packages/pingcode-core
   packages/platform-contracts
+  config/knowledge-center
   tools/repository/build-knowledge-center.sh
 )
 for fingerprint_input in "${fingerprint_inputs[@]}"; do
