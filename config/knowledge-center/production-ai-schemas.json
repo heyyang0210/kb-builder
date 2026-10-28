@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "version": "1.0",
+  "stages": {
+    "planner": {
+      "type": "object",
+      "required": ["operation", "range", "requirements", "outline"],
+      "properties": {
+        "operation": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "range": {
+          "type": "object",
+          "required": ["start", "end"],
+          "properties": {
+            "start": { "type": "integer", "minimum": 0 },
+            "end": { "type": "integer", "minimum": 0 }
+          },
+          "additionalProperties": false
+        },
+        "requirements": { "type": "string", "maxLength": 12000 },
+        "outline": { "type": "string", "maxLength": 20000 }
+      },
+      "additionalProperties": true
+    },
+    "evidence": {
+      "type": "object",
+      "required": ["sources"],
+      "properties": {
+        "sources": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "required": ["sourceId", "contentDigest"],
+            "properties": {
+              "sourceId": { "type": "string", "minLength": 1, "maxLength": 256 },
+              "contentDigest": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+            },
+            "additionalProperties": true
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "writer": {
+      "type": "object",
+      "required": ["fragment", "provenance"],
+      "properties": {
+        "fragment": { "type": "string", "minLength": 1, "maxLength": 200000 },
+        "provenance": { "type": "array", "maxItems": 512 }
+      },
+      "additionalProperties": true
+    },
+    "reviewer": {
+      "type": "object",
+      "required": ["status", "candidateDigest", "provenanceSegments"],
+      "properties": {
+        "status": { "type": "string", "enum": ["contract_valid"] },
+        "candidateDigest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "provenanceSegments": { "type": "integer", "minimum": 0, "maximum": 512 }
+      },
+      "additionalProperties": true
+    }
+  }
+}
