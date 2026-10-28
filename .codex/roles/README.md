@@ -2,7 +2,7 @@
 
 `.codex/roles/` 定义整个项目开发团队的稳定职责、权限、状态和证据边界。具体工作方法在未来经评估后可下沉为 `.codex/plugins/` 中的 Skill，但未批准 Skill 不是当前 Role 的运行依赖。
 
-详细接口、状态机和 Skill 候选论证见 [Role Contract v1 与角色治理设计](../../agent-runner/docs/39-Role-Contract-v1与角色治理设计.md)。是否实例化角色及其最小组合由 [Task Routing Contract v1](../../agent-runner/docs/40-Task-Routing-Contract-v1与最小角色路径设计.md) 决定；人工审批判断只依据 [Approval Boundary v1](../../agent-runner/docs/41-Approval-Boundary-v1人工审批边界.md)。
+详细接口、状态机和 Skill 候选论证见 [Role Contract v1 与角色治理设计](../../.codex/知识中心建设平台/07-决策与风险/知识中心-平台-Role Contract v1与角色治理-治理规范文档.md)。是否实例化角色及其最小组合由 [Task Routing Contract v1](../../.codex/知识中心建设平台/07-决策与风险/知识中心-平台-Task Routing Contract v1与最小执行路径-治理规范文档.md) 决定；人工审批判断只依据 [Approval Boundary v1](../../.codex/知识中心建设平台/07-决策与风险/知识中心-平台-Approval Boundary v1人工审批边界-治理规范文档.md)。
 
 ## 路由优先
 

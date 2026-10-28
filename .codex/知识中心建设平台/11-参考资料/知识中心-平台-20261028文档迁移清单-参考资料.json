@@ -1,0 +1,1558 @@
+{
+  "date": "2026-10-28",
+  "scope": "仅迁移与删除，不合并正文；原始摘要为迁移前快照，迁移后仅修正引用路径。",
+  "records": [
+    {
+      "source": "docs/00-概要设计.md",
+      "target": null,
+      "action": "delete",
+      "reason": "早期选型、外部工程或替代执行器示例，不属当前平台基线",
+      "bytes": 5206,
+      "sha256": "2e644ffd217fbff14ab2d8be94ec589d0dfe0c3046ff2c0cc3e7d60db97bf1db"
+    },
+    {
+      "source": "docs/01-PingCode资料预处理步骤详细设计.md",
+      "target": ".codex/知识中心建设平台/03-详细设计/知识中心-资料加工-PingCode资料预处理-详细设计文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 61651,
+      "sha256": "e60cfc8cc61c6515720ab94407e98460f9ac7478251d3877663cab539bcb31e8"
+    },
+    {
+      "source": "docs/02-pingcode-frontend-design.md",
+      "target": null,
+      "action": "delete",
+      "reason": "已退役独立PingCode前端及旧操作入口说明",
+      "bytes": 65167,
+      "sha256": "ff0289e0269d517351883ed929413d772e44c25cc2277ef37bea445c2a2cd5f7"
+    },
+    {
+      "source": "docs/02-pingcode-frontend-design.md.summary",
+      "target": null,
+      "action": "delete",
+      "reason": "旧方案、独立展示材料、备份或其专用图件",
+      "bytes": 3433,
+      "sha256": "ba3729bcda88c17837e1f7ffcfb6d2bd17f04e54103273678f141116e9782b56"
+    },
+    {
+      "source": "docs/03-pingcode-frontend-interaction-detail.md",
+      "target": null,
+      "action": "delete",
+      "reason": "已退役独立PingCode前端及旧操作入口说明",
+      "bytes": 29292,
+      "sha256": "a543037bb350d34d35613eb2056bcfab2e0e71e06fddc339c7127f24d08ee397"
+    },
+    {
+      "source": "docs/04-pingcode-processing-e2e-framework-design.md",
+      "target": ".codex/知识中心建设平台/03-详细设计/知识中心-资料加工-加工端到端框架-详细设计文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 15477,
+      "sha256": "817a425dcd417bd6ef6e5172874f00d808e04cb8513888c2a7af7432f26c33fd"
+    },
+    {
+      "source": "docs/05-pingcode-processing-llm-control-design.md",
+      "target": ".codex/知识中心建设平台/03-详细设计/知识中心-资料加工-加工模型调用控制-详细设计文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 23563,
+      "sha256": "90235dbf5357987fbe40033ccee81cc3daf3800b6ad649109299c47b60173619"
+    },
+    {
+      "source": "docs/06-pingcode-processing-prompt-management-design.md",
+      "target": ".codex/知识中心建设平台/03-详细设计/知识中心-资料加工-加工提示词管理-详细设计文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 5858,
+      "sha256": "6314b06252deab1a655d3a65805f4ff7ddabac0d1992ff3830f5b0e155d84a2c"
+    },
+    {
+      "source": "docs/07-pingcode-processing-prompt-registry-design.md",
+      "target": ".codex/知识中心建设平台/03-详细设计/知识中心-资料加工-加工提示词注册-详细设计文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 5565,
+      "sha256": "6ee3582fef6fbea480c4b0e92fdcbe9a07710f006226a631f206841a9df89f8a"
+    },
+    {
+      "source": "docs/08-pingcode-processing-six-step-pipeline-design.md",
+      "target": ".codex/知识中心建设平台/03-详细设计/知识中心-资料加工-加工流水线-详细设计文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 42052,
+      "sha256": "2dd0629b4eab118a1083a4fc1cec3440c56cd87277a40af8079158db101ceaf0"
+    },
+    {
+      "source": "docs/09-pingcode-processing-unfinished-items.md",
+      "target": ".codex/知识中心建设平台/04-开发任务/知识中心-资料加工-未完成事项-开发任务文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 10478,
+      "sha256": "27f13ca1932d9cd25a6d354befbefc8069fdf424225f5d43ce15a62fe37c3929"
+    },
+    {
+      "source": "docs/10-设计文档预处理-专业提示词.md",
+      "target": ".codex/知识中心建设平台/11-参考资料/知识中心-资料加工-设计文档预处理-提示词参考文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 12300,
+      "sha256": "39d6093f570785e80dceef2430a431366b0e0caf354600147b159d5e9426c46c"
+    },
+    {
+      "source": "docs/11-PingCode元数据构建步骤详细设计.md",
+      "target": ".codex/知识中心建设平台/03-详细设计/知识中心-资料加工-PingCode元数据构建-详细设计文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 12421,
+      "sha256": "8874d8131c26375b16302924dd1f0ecab475e339b440f54bfc3201ca722b4075"
+    },
+    {
+      "source": "docs/12-PingCode知识提取步骤详细设计.md",
+      "target": ".codex/知识中心建设平台/03-详细设计/知识中心-资料加工-PingCode知识提取-详细设计文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 41560,
+      "sha256": "31f6e0633050b234837e3956f30e8471eacb4d2b92229c177c92d0c56974b4e1"
+    },
+    {
+      "source": "docs/13-PingCode按需语义补充步骤详细设计.md",
+      "target": ".codex/知识中心建设平台/03-详细设计/知识中心-资料加工-PingCode按需语义补充-详细设计文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 6897,
+      "sha256": "df8234a23a61cd545d526da3c7b87cdbcc5c69db8751ab4fd5210cd9a0d48d47"
+    },
+    {
+      "source": "docs/14-PingCode知识校验与合并步骤详细设计.md",
+      "target": ".codex/知识中心建设平台/03-详细设计/知识中心-资料加工-PingCode知识校验与合并-详细设计文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 5103,
+      "sha256": "bdf27e13911f57c5d1b8dd4ad6e47be3996e367a8e8dd0675b74f8c9895b936d"
+    },
+    {
+      "source": "docs/15-PingCode图谱与数据集生成步骤详细设计.md",
+      "target": ".codex/知识中心建设平台/03-详细设计/知识中心-资料加工-PingCode图谱与数据集生成-详细设计文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 18019,
+      "sha256": "fecde4a7b256e7a733f7c3e8c6738150057d2f7511ed06c71a190e15d595124d"
+    },
+    {
+      "source": "docs/16-FastGPT集成改造方案.md",
+      "target": null,
+      "action": "delete",
+      "reason": "早期选型、外部工程或替代执行器示例，不属当前平台基线",
+      "bytes": 16489,
+      "sha256": "112083883920b5e546c774e72cdb82ac4362bf6d15cec440ebce6f5e6465b0aa"
+    },
+    {
+      "source": "docs/17-PingCode知识加工全链路测试与问题修复报告.md",
+      "target": null,
+      "action": "delete",
+      "reason": "已完成阶段、旧界面分析或排障过程",
+      "bytes": 6068,
+      "sha256": "64a810912b6e2ed8926e747b4d63631d106ce2d9bafd7dfc7cd68df1005b1c0d"
+    },
+    {
+      "source": "docs/18-PingCode知识提取与构建测试设计.md",
+      "target": ".codex/知识中心建设平台/05-测试设计&报告/01-测试设计/知识中心-资料加工-PingCode知识提取与构建-测试设计文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 37926,
+      "sha256": "c74f459fbe82e99e395191d3701caf4e05d3ca6d0b609a65032bfc5be9b73286"
+    },
+    {
+      "source": "docs/19-YashanDB资料加工平台工程化任务拆分.md",
+      "target": null,
+      "action": "delete",
+      "reason": "已完成阶段、旧界面分析或排障过程",
+      "bytes": 40378,
+      "sha256": "6e4e08ed398d44209ddf44e16472f85a808e13c8eb7948d9f3e4374fc901f737"
+    },
+    {
+      "source": "docs/20-质量分析页面三层重构设计.md",
+      "target": null,
+      "action": "delete",
+      "reason": "已完成阶段、旧界面分析或排障过程",
+      "bytes": 5032,
+      "sha256": "379fdb72aabb754932d2b850fcd37ed5adad20c5d81a16a961b4661dafc93a59"
+    },
+    {
+      "source": "docs/21-TrainingService分层重构详细设计.md",
+      "target": ".codex/知识中心建设平台/03-详细设计/知识中心-资料加工-TrainingService分层-详细设计文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 46543,
+      "sha256": "05c6ce83ad400c7fcf32f2ec2333cf0d3e74426e7070665af25c090672ee7a3b"
+    },
+    {
+      "source": "docs/22-关键词质量过滤643与78不一致问题分析及修改方案.md",
+      "target": null,
+      "action": "delete",
+      "reason": "已完成阶段、旧界面分析或排障过程",
+      "bytes": 10476,
+      "sha256": "1959bb1ab9c75e19f7d847c718729fbe807b444e3747d09e82efca6290417534"
+    },
+    {
+      "source": "docs/23-Codex-Diff报错定位与修复方案.md",
+      "target": null,
+      "action": "delete",
+      "reason": "已完成阶段、旧界面分析或排障过程",
+      "bytes": 5079,
+      "sha256": "bcbe7615d71a5f07e2129310e2589f7994ee92dfdfa31374db804922e3e31d65"
+    },
+    {
+      "source": "docs/24-关键词质量过滤修复执行效果.md",
+      "target": null,
+      "action": "delete",
+      "reason": "已完成阶段、旧界面分析或排障过程",
+      "bytes": 4594,
+      "sha256": "9302fa08cc38614a0c177ce4f6afd3284a32f3d97c80049063a219c188d622c4"
+    },
+    {
+      "source": "docs/25-关键词过滤前端易用性优化设计.md",
+      "target": null,
+      "action": "delete",
+      "reason": "已完成阶段、旧界面分析或排障过程",
+      "bytes": 9047,
+      "sha256": "6b90b802f9fb7c09a6997c8311fdf2d40951d1d2eb303f32fb2a08d13467b531"
+    },
+    {
+      "source": "docs/26-关键词过滤决策审计与历史记录需求.md",
+      "target": null,
+      "action": "delete",
+      "reason": "已完成阶段、旧界面分析或排障过程",
+      "bytes": 10989,
+      "sha256": "cf8f9684067a3fea1fbfc7fca7c95924637ef4923fb4e95b3ed528a3f8f540e9"
+    },
+    {
+      "source": "docs/27-关键词过滤人工调整与问题类别一致性需求.md",
+      "target": null,
+      "action": "delete",
+      "reason": "已完成阶段、旧界面分析或排障过程",
+      "bytes": 10468,
+      "sha256": "633de9e1b5b5a962181fad9f0750c3f9b56b17dea41ed0fdb40582d018148f00"
+    },
+    {
+      "source": "docs/28-文档共性问题总览与证据下钻需求.md",
+      "target": null,
+      "action": "delete",
+      "reason": "已完成阶段、旧界面分析或排障过程",
+      "bytes": 11653,
+      "sha256": "487079ea3d7b03daea1fe10fd2718c8a4722b19fa040a073078e51b2c0985983"
+    },
+    {
+      "source": "docs/683e0bc后手册大纲与领域任务变更交接.md",
+      "target": null,
+      "action": "delete",
+      "reason": "演示阶段设计、旧界面/存储方案、历史交接或迁移过程；现行模块基线位于知识中心目录",
+      "bytes": 22386,
+      "sha256": "9abaee22259706527a862759b6a5748eff28dad7e39aabeb3dbf8d439ffe7a0a"
+    },
+    {
+      "source": "docs/TASK-P2-01-review.md",
+      "target": null,
+      "action": "delete",
+      "reason": "已完成阶段、旧界面分析或排障过程",
+      "bytes": 7343,
+      "sha256": "e2f0a6767b570097a516f75914f85b2c5f8e646e913f3e9368972d0a3f213722"
+    },
+    {
+      "source": "docs/TASK-P2-01-test-guide.md",
+      "target": null,
+      "action": "delete",
+      "reason": "已完成阶段、旧界面分析或排障过程",
+      "bytes": 9233,
+      "sha256": "f4fdde7037921a0cc8f8ef0469b38c7b3af3c17579b925916d11ecb4981b0a24"
+    },
+    {
+      "source": "docs/agent-runner/00-项目总览.md",
+      "target": null,
+      "action": "delete",
+      "reason": "演示阶段设计、旧界面/存储方案、历史交接或迁移过程；现行模块基线位于知识中心目录",
+      "bytes": 6382,
+      "sha256": "d50888813fef0709a3832442608b66deec71a00d3e1810ce1b74df819836a395"
+    },
+    {
+      "source": "docs/agent-runner/01-系统架构设计.md",
+      "target": null,
+      "action": "delete",
+      "reason": "演示阶段设计、旧界面/存储方案、历史交接或迁移过程；现行模块基线位于知识中心目录",
+      "bytes": 14839,
+      "sha256": "50ff8451f706bebcde2f43b7343f7abc40e8fb0a5bb570477f6bb4cd730c0ec4"
+    },
+    {
+      "source": "docs/agent-runner/02-Workflow引擎设计.md",
+      "target": ".codex/知识中心建设平台/03-详细设计/知识中心-文档生产-Workflow引擎-详细设计文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 16783,
+      "sha256": "cb38ec5353a3cf8240b4dfb4e24937ca2272c880fc1ccc3773b1ec583f90f090"
+    },
+    {
+      "source": "docs/agent-runner/03-Agent模块设计.md",
+      "target": ".codex/知识中心建设平台/03-详细设计/知识中心-文档生产-Agent模块-详细设计文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 21285,
+      "sha256": "067c26a95a9f7a64087f64af06059c8fd93d3d5c3be46893a68bfe94d2dbb6a4"
+    },
+    {
+      "source": "docs/agent-runner/04-工具模块设计.md",
+      "target": ".codex/知识中心建设平台/03-详细设计/知识中心-文档生产-工具模块-详细设计文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 14873,
+      "sha256": "dd6db26522a6d70b09ad131955f2f6f30b80c6089424fd3fd95a759be1f244a4"
+    },
+    {
+      "source": "docs/agent-runner/05-API设计.md",
+      "target": null,
+      "action": "delete",
+      "reason": "演示阶段设计、旧界面/存储方案、历史交接或迁移过程；现行模块基线位于知识中心目录",
+      "bytes": 7151,
+      "sha256": "ac4adcf63021dee0815736617e7df56118e10631fc8b9ba4657fe31d2633b06e"
+    },
+    {
+      "source": "docs/agent-runner/06-前端交互设计.md",
+      "target": null,
+      "action": "delete",
+      "reason": "演示阶段设计、旧界面/存储方案、历史交接或迁移过程；现行模块基线位于知识中心目录",
+      "bytes": 26157,
+      "sha256": "bc3e96c33dfd7262329d1d93aa72f34873fc018a2149c3d062077f9590b43f8a"
+    },
+    {
+      "source": "docs/agent-runner/07-配置管理设计.md",
+      "target": null,
+      "action": "delete",
+      "reason": "演示阶段设计、旧界面/存储方案、历史交接或迁移过程；现行模块基线位于知识中心目录",
+      "bytes": 13219,
+      "sha256": "c7753176f583a28c24991d0c2777336e1f854e5d0ec0dccf1bdd2d8fce5578a7"
+    },
+    {
+      "source": "docs/agent-runner/08-开发任务分解.md",
+      "target": null,
+      "action": "delete",
+      "reason": "演示阶段设计、旧界面/存储方案、历史交接或迁移过程；现行模块基线位于知识中心目录",
+      "bytes": 13022,
+      "sha256": "e67c4dd4169cb9c5baed1321663ed9ab5823372164810015a3f48e7d523c2b04"
+    },
+    {
+      "source": "docs/agent-runner/09-开发方式分析与阶段规划.md",
+      "target": null,
+      "action": "delete",
+      "reason": "演示阶段设计、旧界面/存储方案、历史交接或迁移过程；现行模块基线位于知识中心目录",
+      "bytes": 8604,
+      "sha256": "2efebbc451a118264a76928ae0e4d8d4a91ff2ca081e391b373798793cac58ec"
+    },
+    {
+      "source": "docs/agent-runner/10-已知问题与待办.md",
+      "target": null,
+      "action": "delete",
+      "reason": "演示阶段设计、旧界面/存储方案、历史交接或迁移过程；现行模块基线位于知识中心目录",
+      "bytes": 1712,
+      "sha256": "5b6a296333ed6b3a5bfa89f60d6becd3728aea0a07cd8ce6040328201b2a237d"
+    },
+    {
+      "source": "docs/agent-runner/11-已知问题与修复记录.md",
+      "target": null,
+      "action": "delete",
+      "reason": "演示阶段设计、旧界面/存储方案、历史交接或迁移过程；现行模块基线位于知识中心目录",
+      "bytes": 91392,
+      "sha256": "15d9efe9b2ebb1c290e36c2311b170912e47791827a0007df773c8e79c216211"
+    },
+    {
+      "source": "docs/agent-runner/12-执行流程设计与修复方案.md",
+      "target": null,
+      "action": "delete",
+      "reason": "演示阶段设计、旧界面/存储方案、历史交接或迁移过程；现行模块基线位于知识中心目录",
+      "bytes": 21622,
+      "sha256": "adc44296f05519fba25c000f8004594bc90dc0cc3045de8df4dde27cd8647438"
+    },
+    {
+      "source": "docs/agent-runner/12-文档生成与管理功能设计.md",
+      "target": null,
+      "action": "delete",
+      "reason": "演示阶段设计、旧界面/存储方案、历史交接或迁移过程；现行模块基线位于知识中心目录",
+      "bytes": 52685,
+      "sha256": "619b0a90a3a549d6ab061adc83d9be93a404f769306e07bdc0e394401d6bcf96"
+    },
+    {
+      "source": "docs/agent-runner/13-修复伪代码与框架.md",
+      "target": null,
+      "action": "delete",
+      "reason": "演示阶段设计、旧界面/存储方案、历史交接或迁移过程；现行模块基线位于知识中心目录",
+      "bytes": 21424,
+      "sha256": "3530ee6d3f49d6a1c6d69249b67c50dcf1e90306fab9f41f9132b324807d8773"
+    },
+    {
+      "source": "docs/agent-runner/13-全局Tab布局设计方案.md",
+      "target": null,
+      "action": "delete",
+      "reason": "演示阶段设计、旧界面/存储方案、历史交接或迁移过程；现行模块基线位于知识中心目录",
+      "bytes": 18804,
+      "sha256": "bbfd0f5392f34aa1d37734ca68fd24c1421db47b4cdb04f46590369265e20f8a"
+    },
+    {
+      "source": "docs/agent-runner/14-MCP-Headers配置设计.md",
+      "target": ".codex/知识中心建设平台/03-详细设计/知识中心-文档生产-MCP Headers配置-详细设计文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 15067,
+      "sha256": "edcda3d10ad0efc38b377fc036c58c00edd5433beca4ff40eb521d3f71b3366e"
+    },
+    {
+      "source": "docs/agent-runner/14-全局Tab布局测试报告.md",
+      "target": null,
+      "action": "delete",
+      "reason": "演示阶段设计、旧界面/存储方案、历史交接或迁移过程；现行模块基线位于知识中心目录",
+      "bytes": 5972,
+      "sha256": "7d26cb8c652dbbb074ce6c44309c0dd0b3d07462e4436c28e2841c92fcab5a4f"
+    },
+    {
+      "source": "docs/agent-runner/15-前后端分离重构设计.md",
+      "target": null,
+      "action": "delete",
+      "reason": "演示阶段设计、旧界面/存储方案、历史交接或迁移过程；现行模块基线位于知识中心目录",
+      "bytes": 14402,
+      "sha256": "83d1c00a684f2d6aaae9037f6119ae66582218b220eec6e06c7e87a60e6e096e"
+    },
+    {
+      "source": "docs/agent-runner/16-前端按钮功能测试报告.md",
+      "target": null,
+      "action": "delete",
+      "reason": "演示阶段设计、旧界面/存储方案、历史交接或迁移过程；现行模块基线位于知识中心目录",
+      "bytes": 19478,
+      "sha256": "4b0105f31f29cc00de63cee6178b10c33c43aab4bb08bf2b98ae4519975fa679"
+    },
+    {
+      "source": "docs/agent-runner/16-数据库方案设计.md",
+      "target": null,
+      "action": "delete",
+      "reason": "演示阶段设计、旧界面/存储方案、历史交接或迁移过程；现行模块基线位于知识中心目录",
+      "bytes": 15866,
+      "sha256": "3b269c1c122f3cebb2e7ca96db2b0f4e5d0284bc4ce0c939145e1c2988e620e4"
+    },
+    {
+      "source": "docs/agent-runner/17-新功能模块设计.md",
+      "target": null,
+      "action": "delete",
+      "reason": "演示阶段设计、旧界面/存储方案、历史交接或迁移过程；现行模块基线位于知识中心目录",
+      "bytes": 29140,
+      "sha256": "cdcbef39fb5714ac8db673c171792f0d8f356bb51acea2c7cd4a43eb293c9566"
+    },
+    {
+      "source": "docs/agent-runner/18-文档预处理与大纲管理设计.md",
+      "target": null,
+      "action": "delete",
+      "reason": "演示阶段设计、旧界面/存储方案、历史交接或迁移过程；现行模块基线位于知识中心目录",
+      "bytes": 26032,
+      "sha256": "e292d8d8a1a61b3aa082cdd99db21b4d970bc473c1a98fd76fcaf3ecdd529abf"
+    },
+    {
+      "source": "docs/agent-runner/19-知识点驱动的MCP检索流程设计.md",
+      "target": ".codex/知识中心建设平台/03-详细设计/知识中心-文档生产-知识点驱动MCP检索-详细设计文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 20600,
+      "sha256": "744e34fef6c6abd7ea70a251b80088975dfcd80da82619d86816346aa35212ef"
+    },
+    {
+      "source": "docs/agent-runner/20-MCP检索流程追踪与根因分析.md",
+      "target": null,
+      "action": "delete",
+      "reason": "演示阶段设计、旧界面/存储方案、历史交接或迁移过程；现行模块基线位于知识中心目录",
+      "bytes": 16817,
+      "sha256": "5755fb7ea676575bbf4d0fbe4e582e5159bbc8d61833c70315b4716dca7d118c"
+    },
+    {
+      "source": "docs/agent-runner/21-子流程切分与质量控制设计.md",
+      "target": ".codex/知识中心建设平台/03-详细设计/知识中心-文档生产-子流程切分与质量控制-详细设计文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 24432,
+      "sha256": "cbe81cebe22f3c67427f311a829c07779ad5fcfb0da239d52a5d772ad2a3b492"
+    },
+    {
+      "source": "docs/agent-runner/22-Retriever阶段调研-顶级公司方案.md",
+      "target": null,
+      "action": "delete",
+      "reason": "演示阶段设计、旧界面/存储方案、历史交接或迁移过程；现行模块基线位于知识中心目录",
+      "bytes": 8917,
+      "sha256": "244a872776715299c9431bb722541b5adea1a0d3196229b7d9a5795c2f41393c"
+    },
+    {
+      "source": "docs/agent-runner/23-Retriever精准检索优化设计.md",
+      "target": ".codex/知识中心建设平台/03-详细设计/知识中心-文档生产-Retriever精准检索-详细设计文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 42671,
+      "sha256": "bf5754eab18ab7837285920a30958c34915d3b2d396bf91aa4cc9d3d970fb945"
+    },
+    {
+      "source": "docs/agent-runner/24-Retriever精准检索优化-系统测试报告.md",
+      "target": null,
+      "action": "delete",
+      "reason": "演示阶段设计、旧界面/存储方案、历史交接或迁移过程；现行模块基线位于知识中心目录",
+      "bytes": 12754,
+      "sha256": "aeac7410fe9687417811ce54568661846ac85cf195228373aa0325ec048f0c86"
+    },
+    {
+      "source": "docs/agent-runner/25-文档管理列表时间排序优化设计.md",
+      "target": null,
+      "action": "delete",
+      "reason": "演示阶段设计、旧界面/存储方案、历史交接或迁移过程；现行模块基线位于知识中心目录",
+      "bytes": 8845,
+      "sha256": "f47f2f912accc065be1bb2806bd0c7ec6a3e204181e97a3eed136b6548a1166c"
+    },
+    {
+      "source": "docs/agent-runner/26-设计文档预处理与分层索引设计.md",
+      "target": ".codex/知识中心建设平台/03-详细设计/知识中心-资料加工-设计文档预处理与分层索引-详细设计文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 32717,
+      "sha256": "4a5f5f5616d0b14d56dde90c6ba3bd1f9d3d12739ec45e1bf1f4f0ff78f85073"
+    },
+    {
+      "source": "docs/agent-runner/27-资料预处理框架概要设计.md",
+      "target": ".codex/知识中心建设平台/03-详细设计/知识中心-资料加工-资料预处理框架-详细设计文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 62830,
+      "sha256": "2cebd301d4e1a6bffc2feb9a5cd57a3308909d92999c0f27e93c853b428f9d47"
+    },
+    {
+      "source": "docs/agent-runner/27-资料预处理框架概要设计.md.bak.20260724_092136",
+      "target": null,
+      "action": "delete",
+      "reason": "旧方案、独立展示材料、备份或其专用图件",
+      "bytes": 35520,
+      "sha256": "b30f1c96c8446642dbd545073060ba38c9f54e55e8d3f2e799fa981283bd4222"
+    },
+    {
+      "source": "docs/agent-runner/28-向量索引与知识图谱评估及可视化设计.md",
+      "target": ".codex/知识中心建设平台/03-详细设计/知识中心-资料加工-向量索引与知识图谱评估-详细设计文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 18346,
+      "sha256": "e9a36297f1946b3a8a581e6b1be580a759596a55a2938da9d51ef92e2f707bf0"
+    },
+    {
+      "source": "docs/agent-runner/29-PingCode下载图片保真与统一文档预览设计.md",
+      "target": ".codex/知识中心建设平台/03-详细设计/知识中心-资料加工-PingCode图片保真与统一预览-详细设计文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 6306,
+      "sha256": "4021e3ad30e8fdca3b3a6d36d3e9bb191586cdae638090b4aa676631a45d1c3d"
+    },
+    {
+      "source": "docs/agent-runner/30-PingCode文件清单分页与加工配置设计.md",
+      "target": ".codex/知识中心建设平台/03-详细设计/知识中心-资料加工-PingCode文件分页与加工配置-详细设计文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 6195,
+      "sha256": "e61201d305e1b4fbfb723601330772bd9989154e773fd5fc72b5925ebe6412f6"
+    },
+    {
+      "source": "docs/agent-runner/31-PingCode空间映射与下载范围配置优化设计.md",
+      "target": ".codex/知识中心建设平台/03-详细设计/知识中心-资料加工-PingCode空间映射与下载范围-详细设计文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 2560,
+      "sha256": "b1a98c41c7fa87d135945b2cb92ea38e9493ea956ed8f495a20cbbe6b7a17846"
+    },
+    {
+      "source": "docs/agent-runner/33-通用素材上传映射下载与加工平台概要设计.md",
+      "target": ".codex/知识中心建设平台/03-详细设计/知识中心-资料加工-通用素材接入-详细设计文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 26151,
+      "sha256": "1b100155e36a93335074e9dc7913927261c82cc7104155e88c5107aca0f32ac7"
+    },
+    {
+      "source": "docs/agent-runner/34-通用素材接入实施任务分解与框架实现设计.md",
+      "target": null,
+      "action": "delete",
+      "reason": "演示阶段设计、旧界面/存储方案、历史交接或迁移过程；现行模块基线位于知识中心目录",
+      "bytes": 10637,
+      "sha256": "5b3e8124b8e5788e922cc218e6778da05e9069a1b4edb08c65b51fb13bf459a8"
+    },
+    {
+      "source": "docs/agent-runner/35-素材批次来源识别与筛选界面设计.md",
+      "target": null,
+      "action": "delete",
+      "reason": "演示阶段设计、旧界面/存储方案、历史交接或迁移过程；现行模块基线位于知识中心目录",
+      "bytes": 15786,
+      "sha256": "b0dcec5b7ff67097ebfc8e2b3efc3f741d6bda093552ede7e786658394fae88f"
+    },
+    {
+      "source": "docs/agent-runner/36-资料加工平台工作台与全流程前端重构设计.md",
+      "target": null,
+      "action": "delete",
+      "reason": "演示阶段设计、旧界面/存储方案、历史交接或迁移过程；现行模块基线位于知识中心目录",
+      "bytes": 7626,
+      "sha256": "01bd73c17e093b00de55544e4d4eace339274f795f8e8ce3984559b718711133"
+    },
+    {
+      "source": "docs/agent-runner/37-知识生成器使用说明与文档管理刷新设计.md",
+      "target": null,
+      "action": "delete",
+      "reason": "演示阶段设计、旧界面/存储方案、历史交接或迁移过程；现行模块基线位于知识中心目录",
+      "bytes": 1892,
+      "sha256": "bec65722e9f8a75ce31c05d948e22a09db2e761e7b77ceb38faed0d9e4212b21"
+    },
+    {
+      "source": "docs/agent-runner/38-独立质询审查者与门禁设计.md",
+      "target": ".codex/知识中心建设平台/07-决策与风险/知识中心-平台-独立质询审查者与门禁-治理规范文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 15637,
+      "sha256": "402b06b90d3faa3324953141eca2c837bf4c5d130b7d4eccb01f7cc1e7de6d82"
+    },
+    {
+      "source": "docs/agent-runner/39-Role-Contract-v1与角色治理设计.md",
+      "target": ".codex/知识中心建设平台/07-决策与风险/知识中心-平台-Role Contract v1与角色治理-治理规范文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 11837,
+      "sha256": "99de1bf1ef9e9ed5e7f295a5e948d0dd5835b7f04819b436087586f87709c95f"
+    },
+    {
+      "source": "docs/agent-runner/40-Task-Routing-Contract-v1与最小角色路径设计.md",
+      "target": ".codex/知识中心建设平台/07-决策与风险/知识中心-平台-Task Routing Contract v1与最小执行路径-治理规范文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 3910,
+      "sha256": "1df41df51137c2a0144b843558cce7b90b51739dd842a94910bca0289a62ea88"
+    },
+    {
+      "source": "docs/agent-runner/41-Approval-Boundary-v1人工审批边界.md",
+      "target": ".codex/知识中心建设平台/07-决策与风险/知识中心-平台-Approval Boundary v1人工审批边界-治理规范文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 10505,
+      "sha256": "2478e300f9c960103115195055a7d9d8a6ac7a963ef941eb0e91b02f184cfe62"
+    },
+    {
+      "source": "docs/agent-runner/42-Code-Review与提交验证流程.md",
+      "target": ".codex/知识中心建设平台/07-决策与风险/知识中心-平台-Code Review与提交验证流程-治理规范文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 4440,
+      "sha256": "80d0f03161eb8668132213524bedf425854560b6f6bb4d616719668019e2c0e5"
+    },
+    {
+      "source": "docs/agent-runner/LangGraph改造完整示例.md",
+      "target": null,
+      "action": "delete",
+      "reason": "早期选型、外部工程或替代执行器示例，不属当前平台基线",
+      "bytes": 17898,
+      "sha256": "4c7288549cb0075fc7791622408e45c402e87b56ff12a6ec444126b7a0a8b41e"
+    },
+    {
+      "source": "docs/agent-runner/LangGraph补充示例.md",
+      "target": null,
+      "action": "delete",
+      "reason": "早期选型、外部工程或替代执行器示例，不属当前平台基线",
+      "bytes": 19530,
+      "sha256": "260b11a6e494477a90a15dcb2e2412ff518005138b412d42b7dea2e6910efb98"
+    },
+    {
+      "source": "docs/agent-runner/MIGRATION-MAP.md",
+      "target": null,
+      "action": "delete",
+      "reason": "演示阶段设计、旧界面/存储方案、历史交接或迁移过程；现行模块基线位于知识中心目录",
+      "bytes": 9035,
+      "sha256": "d4e98c1dd4683b1c5dfb327067e1813869fc36e8d8168358221703e3b772c28d"
+    },
+    {
+      "source": "docs/agent-runner/README.md",
+      "target": null,
+      "action": "delete",
+      "reason": "旧入口或已被知识中心现行模块基线替代",
+      "bytes": 4892,
+      "sha256": "47b74c5a28514719afbb8deefa700bec24342c7b157763f9c1b999fd3705a1f3"
+    },
+    {
+      "source": "docs/agent-runner/modules/document-management/README.md",
+      "target": null,
+      "action": "delete",
+      "reason": "旧入口或已被知识中心现行模块基线替代",
+      "bytes": 2269,
+      "sha256": "1e8bc97a98d8a1d880f5d01164fb740e19345035d985d6fbdd3dbdf6c3921f2d"
+    },
+    {
+      "source": "docs/agent-runner/modules/document-management/development/complex-relationship-preview-design.md",
+      "target": ".codex/知识中心建设平台/03-详细设计/知识中心-知识资产-复杂关系预览-详细设计文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 2391,
+      "sha256": "d3389b4858ec4f52fe7d5047b10e8e44094b23c9e7614c726ed1b5440ee8fe4c"
+    },
+    {
+      "source": "docs/agent-runner/modules/document-management/development/document-comments-design.md",
+      "target": ".codex/知识中心建设平台/03-详细设计/知识中心-知识资产-文档评论-详细设计文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 4428,
+      "sha256": "925af0b9c8ae35331662a9e563ef390f9dae3dc5d75d4396431d32e82e4bfda3"
+    },
+    {
+      "source": "docs/agent-runner/modules/document-management/development/yashandb-document-production-storage-data-dictionary.md",
+      "target": ".codex/知识中心建设平台/03-详细设计/知识中心-文档生产-YashanDB数据字典评审稿-详细设计文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 19187,
+      "sha256": "4a4334503be7f943cb2a15c72d669b8af1fdc886fcfa07cf027f8b04eeb449b9"
+    },
+    {
+      "source": "docs/agent-runner/modules/document-management/development/yashandb-document-production-storage-design.md",
+      "target": ".codex/知识中心建设平台/03-详细设计/知识中心-文档生产-YashanDB存储-详细设计文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 34637,
+      "sha256": "6d824b24912507a505bd6b4516a33dd5a387fd177295981f3890011ea973a607"
+    },
+    {
+      "source": "docs/agent-runner/modules/knowledge-graph-governance/README.md",
+      "target": null,
+      "action": "delete",
+      "reason": "旧入口或已被知识中心现行模块基线替代",
+      "bytes": 4030,
+      "sha256": "1c63aa92614f44ae96d00445cb94a23fed57ed4756fbdfa99ddccf52600b92db"
+    },
+    {
+      "source": "docs/agent-runner/modules/knowledge-graph-governance/development/01-quality-overview-local-graph-design.md",
+      "target": ".codex/知识中心建设平台/03-详细设计/知识中心-知识图谱治理-质量概览与局部图谱-详细设计文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 25140,
+      "sha256": "6e6d484bce3602102e77480aefa1fb58f28153bdab8a39600b4e452d90e39b41"
+    },
+    {
+      "source": "docs/agent-runner/modules/knowledge-graph-governance/development/02-problem-diagnosis-evidence-linkage-design.md",
+      "target": ".codex/知识中心建设平台/03-详细设计/知识中心-知识图谱治理-问题诊断与证据联动-详细设计文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 11678,
+      "sha256": "079e78544a039c2f31444dd66e207ec92e543a065f64566a5cc6bb4bc635c529"
+    },
+    {
+      "source": "docs/agent-runner/modules/knowledge-graph-governance/development/03-version-governance-quality-operations-design.md",
+      "target": ".codex/知识中心建设平台/03-详细设计/知识中心-知识图谱治理-版本治理与质量运营-详细设计文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 14632,
+      "sha256": "80fb967cb7fa2840eae81240c49a5b1c37f4f4d81b5ba7281ed1c9ebb4979eb0"
+    },
+    {
+      "source": "docs/agent-runner/modules/knowledge-graph-governance/development/04-evidence-source-drilldown-design.md",
+      "target": ".codex/知识中心建设平台/03-详细设计/知识中心-知识图谱治理-证据原文下钻-详细设计文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 5165,
+      "sha256": "81845d48af7e112dfff96a591a605b8318a3cde6555551313c6b58604a0d2d8b"
+    },
+    {
+      "source": "docs/agent-runner/modules/knowledge-graph-governance/development/05-graph-vector-store-selection-adr.md",
+      "target": ".codex/知识中心建设平台/07-决策与风险/知识中心-知识图谱治理-图向量存储选型-决策记录文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 4596,
+      "sha256": "639b6081d62912f2239a301dec21684e10e6ec18e60bea20cbeb5012f2515936"
+    },
+    {
+      "source": "docs/agent-runner/modules/knowledge-graph-governance/development/06-state-api-error-contract.md",
+      "target": ".codex/知识中心建设平台/03-详细设计/知识中心-知识图谱治理-状态接口与错误契约-详细设计文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 5683,
+      "sha256": "0835d9eb60df4a47c59fa797a0495a2393f7021554904d3a3f6845dbac8c2d60"
+    },
+    {
+      "source": "docs/agent-runner/modules/knowledge-graph-governance/development/07-lineage-replay-contract.md",
+      "target": ".codex/知识中心建设平台/03-详细设计/知识中心-知识图谱治理-来源谱系与证据回放-详细设计文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 3960,
+      "sha256": "57c4ff800c2261815b560281625080ab52cc3baf1f10cb418587b467dcce3528"
+    },
+    {
+      "source": "docs/agent-runner/modules/knowledge-graph-governance/development/08-acl-inheritance-contract.md",
+      "target": ".codex/知识中心建设平台/03-详细设计/知识中心-知识图谱治理-权限继承与审计-详细设计文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 4332,
+      "sha256": "8489f5891ede71cc26ddf96765736997b6388072fe0c1aa000947ab2ae3bc43a"
+    },
+    {
+      "source": "docs/agent-runner/modules/knowledge-graph-governance/development/09-minimal-ontology.md",
+      "target": ".codex/知识中心建设平台/03-详细设计/知识中心-知识图谱治理-最小本体-详细设计文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 5058,
+      "sha256": "9da8f36341fd68683bb5a2c99ac37f6391e53a3aceb3b0522edeefdbbb6c5da3"
+    },
+    {
+      "source": "docs/agent-runner/modules/knowledge-graph-governance/development/10-hybrid-retrieval-contract.md",
+      "target": ".codex/知识中心建设平台/03-详细设计/知识中心-知识图谱治理-混合检索契约-详细设计文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 4405,
+      "sha256": "ae330886d5dd783ea3d6aacc1c55ab35b1933ad87c4db5a0b62098c16e2b3b64"
+    },
+    {
+      "source": "docs/agent-runner/modules/knowledge-graph-governance/development/11-evaluation-matrix.md",
+      "target": null,
+      "action": "delete",
+      "reason": "演示阶段设计、旧界面/存储方案、历史交接或迁移过程；现行模块基线位于知识中心目录",
+      "bytes": 3687,
+      "sha256": "d5d94b458f44f139d73528cb946b691296583bb8144d39d2c7371dae5a3ab703"
+    },
+    {
+      "source": "docs/agent-runner/modules/knowledge-graph-governance/development/12-m1-acceptance-matrix.md",
+      "target": null,
+      "action": "delete",
+      "reason": "演示阶段设计、旧界面/存储方案、历史交接或迁移过程；现行模块基线位于知识中心目录",
+      "bytes": 2959,
+      "sha256": "86072e6e896703269014ace3f7b4d29ce199199f93078721f024ee6244b9f842"
+    },
+    {
+      "source": "docs/agent-runner/modules/knowledge-graph-governance/development/13-g2-design-review.md",
+      "target": null,
+      "action": "delete",
+      "reason": "演示阶段设计、旧界面/存储方案、历史交接或迁移过程；现行模块基线位于知识中心目录",
+      "bytes": 3386,
+      "sha256": "d4efa6bfb987b95ddd47a5c924dc056c8d4d704e6d1a323b92081d4692bab34b"
+    },
+    {
+      "source": "docs/agent-runner/modules/knowledge-graph-governance/development/14-m2-safe-publish-decisions.md",
+      "target": ".codex/知识中心建设平台/07-决策与风险/知识中心-知识图谱治理-M2安全发布决策-决策记录文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 8334,
+      "sha256": "8fc0ff84e5dfb55ec68c8b3276e0185136f026f2ee2a6975e0f1c6ffe4e5d2bd"
+    },
+    {
+      "source": "docs/agent-runner/modules/knowledge-graph-governance/development/15-m2-safe-publish-architecture.md",
+      "target": ".codex/知识中心建设平台/02-概要设计/知识中心-知识图谱治理-M2安全发布架构-概要设计文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 3068,
+      "sha256": "0c8a649a4a392c0b075457dc9dd88bf62b63d60d4c762bbaccd44c36c5c1e070"
+    },
+    {
+      "source": "docs/agent-runner/modules/knowledge-graph-governance/development/16-m2-safe-publish-detailed-design.md",
+      "target": ".codex/知识中心建设平台/03-详细设计/知识中心-知识图谱治理-M2安全发布-详细设计文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 21782,
+      "sha256": "c2137b0774bfbef63030d2dc052d82aba9a1c56a9389330fcef132c8250e5005"
+    },
+    {
+      "source": "docs/agent-runner/modules/knowledge-graph-governance/development/17-m2-production-lineage-integration.md",
+      "target": ".codex/知识中心建设平台/03-详细设计/知识中心-知识图谱治理-M2生产谱系接线-详细设计文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 27208,
+      "sha256": "bebb64e36d94de39dfce98072f2813d5fdbed5ccd234bc072e92738e3b53983f"
+    },
+    {
+      "source": "docs/agent-runner/modules/knowledge-graph-governance/development/18-m2-identity-acl-decision-proposal.md",
+      "target": ".codex/知识中心建设平台/07-决策与风险/知识中心-知识图谱治理-M2身份权限决策提案-决策记录文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 14799,
+      "sha256": "9f13411e15ba8afb13ba2ef742dd3ea9eba122cec2bf1f30e4087c39ddb99a41"
+    },
+    {
+      "source": "docs/agent-runner/modules/knowledge-graph-governance/development/19-m2-production-readiness-review.md",
+      "target": null,
+      "action": "delete",
+      "reason": "演示阶段设计、旧界面/存储方案、历史交接或迁移过程；现行模块基线位于知识中心目录",
+      "bytes": 17541,
+      "sha256": "57f8e25a84357c74c81cdba4d6c1888cdddc07c4462dc38dedfa1f7daaba92d8"
+    },
+    {
+      "source": "docs/agent-runner/modules/knowledge-graph-governance/development/20-m2-provider-error-envelope-boundary-design.md",
+      "target": ".codex/知识中心建设平台/03-详细设计/知识中心-知识图谱治理-M2供应商错误输入边界-详细设计文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 11690,
+      "sha256": "6ba95fb432a297761167f91fab1a136dcb6fae88464f808d6c54e49d3930e71c"
+    },
+    {
+      "source": "docs/agent-runner/modules/knowledge-graph-governance/development/21-graph-store-adapter-architecture.md",
+      "target": ".codex/知识中心建设平台/02-概要设计/知识中心-知识图谱治理-图存储适配器架构-概要设计文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 9538,
+      "sha256": "2751b8ed3c4bede8f5733740fb472bf9fec58050457bdfe61c57073fcef4eea8"
+    },
+    {
+      "source": "docs/agent-runner/modules/knowledge-graph-governance/development/22-graph-store-adapter-detailed-design.md",
+      "target": ".codex/知识中心建设平台/03-详细设计/知识中心-知识图谱治理-图存储适配器-详细设计文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 13478,
+      "sha256": "1c5c2d0cb55882982a9cb7c75afb0d8fad97e00f267f77c9aab81198d5f7af50"
+    },
+    {
+      "source": "docs/agent-runner/modules/knowledge-graph-governance/testing/01-m2-contract-lineage-test-report.md",
+      "target": null,
+      "action": "delete",
+      "reason": "已完成阶段、旧界面分析或排障过程",
+      "bytes": 3230,
+      "sha256": "73bd3277e507c1ba294f5bde5b0933c1eb7d41389e06d095d495696c65075e98"
+    },
+    {
+      "source": "docs/agent-runner/modules/knowledge-graph-governance/testing/02-m2-partial-acceptance.md",
+      "target": null,
+      "action": "delete",
+      "reason": "已完成阶段、旧界面分析或排障过程",
+      "bytes": 3736,
+      "sha256": "3890862c3688f799053aa51bf3c4ebbfc90a87f991721bd317154bb71eccac96"
+    },
+    {
+      "source": "docs/agent-runner/modules/knowledge-graph-governance/testing/03-m2-production-lineage-integration-test-design.md",
+      "target": ".codex/知识中心建设平台/05-测试设计&报告/01-测试设计/知识中心-知识图谱治理-M2生产Lineage接线-测试设计文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 27525,
+      "sha256": "9fcddf93aea5fe035d34065a1e614d2e1b4e7d86eaaff0334c3f49f7770553cb"
+    },
+    {
+      "source": "docs/agent-runner/modules/knowledge-graph-governance/testing/04-graph-store-adapter-test-design.md",
+      "target": ".codex/知识中心建设平台/05-测试设计&报告/01-测试设计/知识中心-知识图谱治理-GraphStore Adapter-测试设计文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 7766,
+      "sha256": "7d0040f870768c0efab08fe606ebcbb8a21863cd71cf5f88982879429e89dbe7"
+    },
+    {
+      "source": "docs/agent-runner/modules/outline-management/README.md",
+      "target": null,
+      "action": "delete",
+      "reason": "旧入口或已被知识中心现行模块基线替代",
+      "bytes": 8029,
+      "sha256": "2932f0d299077c09055f4b0c6f46be308155e56e040fd57a579b54c3281504ea"
+    },
+    {
+      "source": "docs/agent-runner/modules/platform-foundation/README.md",
+      "target": null,
+      "action": "delete",
+      "reason": "旧入口或已被知识中心现行模块基线替代",
+      "bytes": 4838,
+      "sha256": "19692eb1087b25d6db5c5076761aeb52596a42637e097a95d0f6b9acf90edb70"
+    },
+    {
+      "source": "docs/agent-runner/modules/platform-foundation/baseline/p0-capability-baseline.json",
+      "target": null,
+      "action": "delete",
+      "reason": "目标模式重构过程、已完成阶段基线或执行提示词",
+      "bytes": 12094,
+      "sha256": "04e47c008829729559a554e2ac33c40bc3ebfc795db3fb3a1bd27265037cd74a"
+    },
+    {
+      "source": "docs/agent-runner/modules/platform-foundation/baseline/p0-capability-baseline.md",
+      "target": null,
+      "action": "delete",
+      "reason": "目标模式重构过程、已完成阶段基线或执行提示词",
+      "bytes": 3614,
+      "sha256": "01ccfd361b2c7fbc1a28712ac82c56ffd4f2a8e960cede5a05b6c8465c895b08"
+    },
+    {
+      "source": "docs/agent-runner/modules/platform-foundation/baseline/p0-migration-dry-run.json",
+      "target": ".codex/知识中心建设平台/11-参考资料/测试基线附件/知识中心-平台-P0迁移预演-测试基线.json",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 2144,
+      "sha256": "f41ec5dce14df2f6edb9cc3d8eefa0a8aab6c24703fe3a4fe24684b43f4bc83f"
+    },
+    {
+      "source": "docs/agent-runner/modules/platform-foundation/baseline/p0-migration-dry-run.log",
+      "target": null,
+      "action": "delete",
+      "reason": "目标模式重构过程、已完成阶段基线或执行提示词",
+      "bytes": 67,
+      "sha256": "efca0383ac76d02da9fe0afc46afd946a570f5d8ab29d74bedf6abd1d045959b"
+    },
+    {
+      "source": "docs/agent-runner/modules/platform-foundation/baseline/understand-anything-duplicate-capabilities.json",
+      "target": null,
+      "action": "delete",
+      "reason": "目标模式重构过程、已完成阶段基线或执行提示词",
+      "bytes": 132,
+      "sha256": "dfcd504981315bec85224fb16f61b0b7f30c60221208f9a99842705abdc03ca9"
+    },
+    {
+      "source": "docs/agent-runner/modules/platform-foundation/baseline/知识中心目标模式重构完成清单报告.md",
+      "target": null,
+      "action": "delete",
+      "reason": "目标模式重构过程、已完成阶段基线或执行提示词",
+      "bytes": 21207,
+      "sha256": "1abe84101d3a6321a9ee9bc188272de292ce1b15b80428d70b69737855a20003"
+    },
+    {
+      "source": "docs/agent-runner/modules/platform-foundation/overview/Understand-Anything-平台特性全景与公共模块重构分析.md",
+      "target": null,
+      "action": "delete",
+      "reason": "目标模式重构过程、已完成阶段基线或执行提示词",
+      "bytes": 21448,
+      "sha256": "d5be9fab6b0a8b6507ac0fca4cb551c3db00854d213ae5aa410924c61d7fe463"
+    },
+    {
+      "source": "docs/agent-runner/modules/platform-foundation/overview/知识中心管理平台目标模式重构执行提示词.md",
+      "target": null,
+      "action": "delete",
+      "reason": "目标模式重构过程、已完成阶段基线或执行提示词",
+      "bytes": 18157,
+      "sha256": "fa4cc4fccecfb4e0afb0fb111ea1a8c64b071433312a04c43450a163daf68284"
+    },
+    {
+      "source": "docs/agent-runner/overview/README.md",
+      "target": null,
+      "action": "delete",
+      "reason": "旧入口或已被知识中心现行模块基线替代",
+      "bytes": 885,
+      "sha256": "1e045bc0df01e1b13a285824ef6594e473dc64a9a988518d5e0018e3493b81a2"
+    },
+    {
+      "source": "docs/agent-runner/overview/文档架构与模块归档规范.md",
+      "target": null,
+      "action": "delete",
+      "reason": "演示阶段设计、旧界面/存储方案、历史交接或迁移过程；现行模块基线位于知识中心目录",
+      "bytes": 6257,
+      "sha256": "b648ce73652c7ad88217b6b071394a1fcf54af10639797a8d7ae39d0b851a6e4"
+    },
+    {
+      "source": "docs/agent-runner/overview/知识平台工程化技术汇报构建思路.md",
+      "target": null,
+      "action": "delete",
+      "reason": "演示阶段设计、旧界面/存储方案、历史交接或迁移过程；现行模块基线位于知识中心目录",
+      "bytes": 18040,
+      "sha256": "1ab35e6c13d033bad236be1bb353dc8aa016d72b0bb3ce0a113c526623e88da2"
+    },
+    {
+      "source": "docs/agent-runner/review-anchor-navigation.md",
+      "target": null,
+      "action": "delete",
+      "reason": "演示阶段设计、旧界面/存储方案、历史交接或迁移过程；现行模块基线位于知识中心目录",
+      "bytes": 2593,
+      "sha256": "0877d6ca50f2032a1307a64df6858e67c2d7454527313b965cfbb13727a1c7c4"
+    },
+    {
+      "source": "docs/application-structure-refactor-checklist.md",
+      "target": null,
+      "action": "delete",
+      "reason": "演示阶段设计、旧界面/存储方案、历史交接或迁移过程；现行模块基线位于知识中心目录",
+      "bytes": 3353,
+      "sha256": "be7238742a5c52d18174627f30cf14246feb06b10293c42b00a0fb90f16e54e0"
+    },
+    {
+      "source": "docs/archive/pingcode-retired/32-PingCode素材平台局域网访问设计.md",
+      "target": null,
+      "action": "delete",
+      "reason": "旧方案、独立展示材料、备份或其专用图件",
+      "bytes": 2024,
+      "sha256": "467ba10523f207f68e49f4cc344f289344bc6f5337deeba0761a06669fa68c2e"
+    },
+    {
+      "source": "docs/archive/root-layout/HTML_GENERATION_SUMMARY.md",
+      "target": null,
+      "action": "delete",
+      "reason": "旧方案、独立展示材料、备份或其专用图件",
+      "bytes": 3480,
+      "sha256": "298eb5f9f046d1c38d9300ffaaf02b8316bacc0ca11d4acca7423ee38d1a62be"
+    },
+    {
+      "source": "docs/archive/root-layout/README.before-runtime.md",
+      "target": null,
+      "action": "delete",
+      "reason": "旧方案、独立展示材料、备份或其专用图件",
+      "bytes": 41005,
+      "sha256": "ad454d16ecd64c6e6001c4353e841906a953727a19083134bdb0e3ab92dbfdea"
+    },
+    {
+      "source": "docs/archive/root-layout/REFACTORING_SUMMARY.md",
+      "target": null,
+      "action": "delete",
+      "reason": "旧方案、独立展示材料、备份或其专用图件",
+      "bytes": 8351,
+      "sha256": "dbbd2d30aeb09372960c78513c35a3c19774d4ca3765c6c3c5c2da1942a99383"
+    },
+    {
+      "source": "docs/archive/root-layout/YashanDB 知识加工平台构建方案.html",
+      "target": null,
+      "action": "delete",
+      "reason": "旧方案、独立展示材料、备份或其专用图件",
+      "bytes": 36376,
+      "sha256": "5f3c15c13b2411347f08a1a09b1c11c5dab309634df891a80c2d3f22cbe37adc"
+    },
+    {
+      "source": "docs/archive/root-layout/YashanDB 知识库建设方案.html",
+      "target": null,
+      "action": "delete",
+      "reason": "旧方案、独立展示材料、备份或其专用图件",
+      "bytes": 46871,
+      "sha256": "ce5302dc59e4f1d0ab8cd77c518797bb94e0c920641b5405566e38577d36d7c1"
+    },
+    {
+      "source": "docs/archive/root-layout/docker-compose.yml",
+      "target": null,
+      "action": "delete",
+      "reason": "旧方案、独立展示材料、备份或其专用图件",
+      "bytes": 1068,
+      "sha256": "769e6cf97c4fc3b3d3b8f1f49d1f7c8d5c1031eb3ba1f12977713a4dbaa0f49e"
+    },
+    {
+      "source": "docs/archive/root-layout/gitlab-multi-repo-designs.html",
+      "target": null,
+      "action": "delete",
+      "reason": "旧方案、独立展示材料、备份或其专用图件",
+      "bytes": 31031,
+      "sha256": "9b85d6464c8cdcdd52513ee795202e05db8e47929f5a1b4d0ecc61b36d29a4b7"
+    },
+    {
+      "source": "docs/archive/root-layout/kb-builder方案和使用介绍.html",
+      "target": null,
+      "action": "delete",
+      "reason": "旧方案、独立展示材料、备份或其专用图件",
+      "bytes": 398319,
+      "sha256": "1099a60b0012de9907546ff2bf1a56ab52aa6e529debc587c47a3b1a762ceb27"
+    },
+    {
+      "source": "docs/archive/root-layout/oracle-kb-generation-plan.md",
+      "target": null,
+      "action": "delete",
+      "reason": "旧方案、独立展示材料、备份或其专用图件",
+      "bytes": 122997,
+      "sha256": "3b9144fca56bde6de10f7dc88f166078797da31cc44bb03638a859c9707aa456"
+    },
+    {
+      "source": "docs/archive/root-layout/prompt-generator-design.md",
+      "target": null,
+      "action": "delete",
+      "reason": "旧方案、独立展示材料、备份或其专用图件",
+      "bytes": 43570,
+      "sha256": "5591716c22553fab89a6e1dedd311440ef4a9cff78ad34d9c1f87cf666574afc"
+    },
+    {
+      "source": "docs/archive/root-layout/prompt-generator.html",
+      "target": null,
+      "action": "delete",
+      "reason": "旧方案、独立展示材料、备份或其专用图件",
+      "bytes": 58526,
+      "sha256": "e5170cf94d5583550183cc12ca26e168c4616c34991788ad8a5f75939c14cddc"
+    },
+    {
+      "source": "docs/archive/root-layout/prompt-generator.html.backup",
+      "target": null,
+      "action": "delete",
+      "reason": "旧方案、独立展示材料、备份或其专用图件",
+      "bytes": 407650,
+      "sha256": "31fa24ac873262b9624a9fbaf9eb537f56f0eeda763a791a6f629826209b2996"
+    },
+    {
+      "source": "docs/archive/root-layout/test_svg.html",
+      "target": null,
+      "action": "delete",
+      "reason": "旧方案、独立展示材料、备份或其专用图件",
+      "bytes": 453,
+      "sha256": "522d0d045b1e8898fabb81b486ad637f15b60a13b68b54ae045d52d1eea5aac8"
+    },
+    {
+      "source": "docs/archive/root-layout/子agent.md",
+      "target": null,
+      "action": "delete",
+      "reason": "旧方案、独立展示材料、备份或其专用图件",
+      "bytes": 350,
+      "sha256": "86a0891c07e31b48e64961f7fab37f029c727cb2110c41e8a7b52ba2c5b9035d"
+    },
+    {
+      "source": "docs/archive/root-layout/批量生成方案.md",
+      "target": null,
+      "action": "delete",
+      "reason": "旧方案、独立展示材料、备份或其专用图件",
+      "bytes": 6845,
+      "sha256": "0815835599b8e5676f1cf31082560cb690059e7f2d31b977b93de46228226fef"
+    },
+    {
+      "source": "docs/codex-multi-agent-deployment-guide.html",
+      "target": null,
+      "action": "delete",
+      "reason": "旧方案、独立展示材料、备份或其专用图件",
+      "bytes": 25824,
+      "sha256": "1ff6c3dbdd8eb1fbb89b81f527d63e8f6d09bdffd735c3574bdab560bf44da29"
+    },
+    {
+      "source": "docs/deepseek-harness-精简手册.md",
+      "target": null,
+      "action": "delete",
+      "reason": "早期选型、外部工程或替代执行器示例，不属当前平台基线",
+      "bytes": 4620,
+      "sha256": "84db8632c13d7ba43a2efae40e5f743d3fea6f17c8c5a7ce2163f76a5c7a7c56"
+    },
+    {
+      "source": "docs/diagrams/diagram-00.mmd",
+      "target": null,
+      "action": "delete",
+      "reason": "旧方案、独立展示材料、备份或其专用图件",
+      "bytes": 556,
+      "sha256": "727038c67a082b4e542628d189916c4a1c07d67f37ca039aa79d7c04271e9d7f"
+    },
+    {
+      "source": "docs/diagrams/diagram-00.svg",
+      "target": null,
+      "action": "delete",
+      "reason": "旧方案、独立展示材料、备份或其专用图件",
+      "bytes": 17334,
+      "sha256": "49795221f4d02bb177911e9f7fdb57425be7ba74c59ec3ee428eb96e4f1a3c0f"
+    },
+    {
+      "source": "docs/diagrams/diagram-01.mmd",
+      "target": null,
+      "action": "delete",
+      "reason": "旧方案、独立展示材料、备份或其专用图件",
+      "bytes": 658,
+      "sha256": "d6b7681a91e9cd727595e0b56a34f669dd76781b2868e9fa777f095bfa3f7859"
+    },
+    {
+      "source": "docs/diagrams/diagram-01.svg",
+      "target": null,
+      "action": "delete",
+      "reason": "旧方案、独立展示材料、备份或其专用图件",
+      "bytes": 17895,
+      "sha256": "045fca31e9b6ee1fb453afd5e0d2af885e0b7a54ce8d298d623dcd91b3131778"
+    },
+    {
+      "source": "docs/diagrams/diagram-02.mmd",
+      "target": null,
+      "action": "delete",
+      "reason": "旧方案、独立展示材料、备份或其专用图件",
+      "bytes": 2131,
+      "sha256": "6ce58825e2a927510044c85c39d94c8ceabcb0ca65f6b93d60686f71cc3d4830"
+    },
+    {
+      "source": "docs/diagrams/diagram-02.svg",
+      "target": null,
+      "action": "delete",
+      "reason": "旧方案、独立展示材料、备份或其专用图件",
+      "bytes": 51068,
+      "sha256": "b5cbd9e2fde4e6978be7681762115aa8cd87a90175f7396a6c3b9cd479993de3"
+    },
+    {
+      "source": "docs/diagrams/diagram-03.mmd",
+      "target": null,
+      "action": "delete",
+      "reason": "旧方案、独立展示材料、备份或其专用图件",
+      "bytes": 1352,
+      "sha256": "b33c5d02584cb053533069330e9aee17e3f18b317b9eeb00c5beeff8d54315e3"
+    },
+    {
+      "source": "docs/diagrams/diagram-03.svg",
+      "target": null,
+      "action": "delete",
+      "reason": "旧方案、独立展示材料、备份或其专用图件",
+      "bytes": 43446,
+      "sha256": "69ba5a86bca3275d742719f495021a280e49f83fe4ff074f6d8676e494700879"
+    },
+    {
+      "source": "docs/diagrams/diagram-04.mmd",
+      "target": null,
+      "action": "delete",
+      "reason": "旧方案、独立展示材料、备份或其专用图件",
+      "bytes": 977,
+      "sha256": "c9d2c327ad11db2d1cb02df708209a49e7d521f69a5baec651ddf78a5baf2cdd"
+    },
+    {
+      "source": "docs/diagrams/diagram-04.svg",
+      "target": null,
+      "action": "delete",
+      "reason": "旧方案、独立展示材料、备份或其专用图件",
+      "bytes": 26070,
+      "sha256": "eda062bcfe9be39b4e036919d34b98504a207189536716b699a5fdcf180f3a3c"
+    },
+    {
+      "source": "docs/diagrams/diagram-05.mmd",
+      "target": null,
+      "action": "delete",
+      "reason": "旧方案、独立展示材料、备份或其专用图件",
+      "bytes": 1283,
+      "sha256": "61946b901bd29e40a4b3bacf58ae8be569e637daba2c6baa7b268e58d5c5d825"
+    },
+    {
+      "source": "docs/diagrams/diagram-05.svg",
+      "target": null,
+      "action": "delete",
+      "reason": "旧方案、独立展示材料、备份或其专用图件",
+      "bytes": 33928,
+      "sha256": "674486d2d17cc4a90f7d8c97bc9c9277395b15ad54e66657a3e5f3f0ded94abc"
+    },
+    {
+      "source": "docs/diagrams/diagram-06.mmd",
+      "target": null,
+      "action": "delete",
+      "reason": "旧方案、独立展示材料、备份或其专用图件",
+      "bytes": 407,
+      "sha256": "2a3cc61856acc82e89e04628238687533fa21503e9e2dcd42f4cd8f15905589c"
+    },
+    {
+      "source": "docs/diagrams/diagram-06.svg",
+      "target": null,
+      "action": "delete",
+      "reason": "旧方案、独立展示材料、备份或其专用图件",
+      "bytes": 15890,
+      "sha256": "9d3c516995b67be823e6e7704bfc5ae928469417904e299e58658ea57aa5b8ad"
+    },
+    {
+      "source": "docs/diagrams/diagram-07.mmd",
+      "target": null,
+      "action": "delete",
+      "reason": "旧方案、独立展示材料、备份或其专用图件",
+      "bytes": 583,
+      "sha256": "147d3626f29ca213fe0f3052faacf6d44204a1bfe8ab0c44287d3e079a903faf"
+    },
+    {
+      "source": "docs/diagrams/diagram-07.svg",
+      "target": null,
+      "action": "delete",
+      "reason": "旧方案、独立展示材料、备份或其专用图件",
+      "bytes": 19946,
+      "sha256": "e0ee8b4d699317ce8af4215127803a7400e907b88730798d46802100601d96bd"
+    },
+    {
+      "source": "docs/diagrams/diagram-08.mmd",
+      "target": null,
+      "action": "delete",
+      "reason": "旧方案、独立展示材料、备份或其专用图件",
+      "bytes": 557,
+      "sha256": "8b06304588a6d6d2c2d7ced5c37a1c255086afd4d0f9954f2ad97239b45e9977"
+    },
+    {
+      "source": "docs/diagrams/diagram-08.svg",
+      "target": null,
+      "action": "delete",
+      "reason": "旧方案、独立展示材料、备份或其专用图件",
+      "bytes": 15604,
+      "sha256": "da39e45c9d22b318a63402f34ad125639b7b6bb57c2a51f8dfa545c661f63e15"
+    },
+    {
+      "source": "docs/diagrams/diagram-09.mmd",
+      "target": null,
+      "action": "delete",
+      "reason": "旧方案、独立展示材料、备份或其专用图件",
+      "bytes": 658,
+      "sha256": "b9335aa36c22c8385931bd906ccd25097f772f15ffaf319d727ff2572c0427b2"
+    },
+    {
+      "source": "docs/diagrams/diagram-09.svg",
+      "target": null,
+      "action": "delete",
+      "reason": "旧方案、独立展示材料、备份或其专用图件",
+      "bytes": 30874,
+      "sha256": "16caa586b698587db735ef3e85ad6dda616062cdcc04d857454fb7fbc62fe226"
+    },
+    {
+      "source": "docs/diagrams/diagram-10.mmd",
+      "target": null,
+      "action": "delete",
+      "reason": "旧方案、独立展示材料、备份或其专用图件",
+      "bytes": 1003,
+      "sha256": "56c0d879658d0ce04729ae0e3832f5fba167137fcae42b13136cab02f6b2f69c"
+    },
+    {
+      "source": "docs/diagrams/diagram-10.svg",
+      "target": null,
+      "action": "delete",
+      "reason": "旧方案、独立展示材料、备份或其专用图件",
+      "bytes": 28547,
+      "sha256": "2665a29845e95e8c1b881f2e812068684c921bcfebb0bbc61150b012d1cde368"
+    },
+    {
+      "source": "docs/diagrams/diagram-11.mmd",
+      "target": null,
+      "action": "delete",
+      "reason": "旧方案、独立展示材料、备份或其专用图件",
+      "bytes": 487,
+      "sha256": "26c0cf9a508c3d7dfef49b6ae0abae35cd8d6d4f7b65a7d15053dca71e3db44d"
+    },
+    {
+      "source": "docs/diagrams/diagram-11.svg",
+      "target": null,
+      "action": "delete",
+      "reason": "旧方案、独立展示材料、备份或其专用图件",
+      "bytes": 23190,
+      "sha256": "2be2f8c32e1a4e6ce87a50ce027a4023dc31f1d428399ac4d82a26618be9a252"
+    },
+    {
+      "source": "docs/diagrams/diagram-12.mmd",
+      "target": null,
+      "action": "delete",
+      "reason": "旧方案、独立展示材料、备份或其专用图件",
+      "bytes": 714,
+      "sha256": "dc8fa2f12c43417a98a1dfd86822e75410a6cdb32368084f6fb9c0ecebcc6569"
+    },
+    {
+      "source": "docs/diagrams/diagram-12.svg",
+      "target": null,
+      "action": "delete",
+      "reason": "旧方案、独立展示材料、备份或其专用图件",
+      "bytes": 30752,
+      "sha256": "387dc680f3382f0e93091e627b782d3c658e29e66e3ff788b3719e3313cfe671"
+    },
+    {
+      "source": "docs/diagrams/knowledge-processing-pipeline.drawio",
+      "target": ".codex/知识中心建设平台/03-详细设计/架构图/知识中心-资料加工-流水线-架构图.drawio",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 18588,
+      "sha256": "17f1d1acc4679ca0df608040a38598b6220ebfe7b1ef149d86664317a9402c47"
+    },
+    {
+      "source": "docs/directory-structure-refactor.md",
+      "target": null,
+      "action": "delete",
+      "reason": "演示阶段设计、旧界面/存储方案、历史交接或迁移过程；现行模块基线位于知识中心目录",
+      "bytes": 6933,
+      "sha256": "886fb2451aae9019bb04e6d21d7bdbe9d3844921960f24fe2cfddb1088b2890b"
+    },
+    {
+      "source": "docs/gitlab-oauth-setup-guide.md",
+      "target": ".codex/知识中心建设平台/10-使用说明/知识中心-平台-GitLab OAuth配置-使用说明文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 13827,
+      "sha256": "be2beec04d2c48f4b725a9d437dd9ae3eccf8a927cebb6773e872b2033d2d801"
+    },
+    {
+      "source": "docs/handbook-demand-read-design.md",
+      "target": ".codex/知识中心建设平台/03-详细设计/知识中心-文档生产-按需读取与性能-详细设计文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 5644,
+      "sha256": "4270ce9db4f43b39c816c3f5af3824c266929a1e605ce22e3774be05167f33ad"
+    },
+    {
+      "source": "docs/operations/knowledge-center-functional-performance-20261028.md",
+      "target": ".codex/知识中心建设平台/05-测试设计&报告/02-测试报告/知识中心-平台-功能链路性能专项-测试报告文档-20261028.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 27777,
+      "sha256": "e8a35f87cc03da504bc9537676c3a93eaf821ad1f35be71799febd2f3bce5821"
+    },
+    {
+      "source": "docs/operations/knowledge-center-performance-20261028.md",
+      "target": ".codex/知识中心建设平台/05-测试设计&报告/02-测试报告/知识中心-平台-端到端性能专项-测试报告文档-20261028.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 12515,
+      "sha256": "94d1abaa5ff252e4e66387de57598c2a1fc0de1d41bbf3bb101bbcb2f5d28d90"
+    },
+    {
+      "source": "docs/operations/knowledge-center-ui-performance-design.md",
+      "target": ".codex/知识中心建设平台/05-测试设计&报告/01-测试设计/知识中心-平台-界面性能专项-测试设计文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 5880,
+      "sha256": "1f46c72527c936a798ff92517026d2aea809837ff84981fd2c30efba1a2adb05"
+    },
+    {
+      "source": "docs/operations/production-deployment.md",
+      "target": ".codex/知识中心建设平台/10-使用说明/知识中心-平台-生产部署与回退-使用说明文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 8433,
+      "sha256": "cd3cae4e1bbb7e05b4288cd7e4d2a3bc4996aedd6c8f06eda309eac4dba024ca"
+    },
+    {
+      "source": "docs/operations/runtime-storage.md",
+      "target": ".codex/知识中心建设平台/10-使用说明/知识中心-平台-运行数据维护-使用说明文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 4730,
+      "sha256": "b9de1445e7deb5a5a8e3b5875997c23842ad7c7d157a67b088922cf8a2cc97e2"
+    },
+    {
+      "source": "docs/operations/第三方依赖与发布合规说明.md",
+      "target": ".codex/知识中心建设平台/10-使用说明/知识中心-平台-第三方依赖与发布合规-使用说明文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 8485,
+      "sha256": "c9c89dbd678a4173ed960daf965bdfccabd4f57e111e9078e9410327bf1cbbab"
+    },
+    {
+      "source": "docs/pingcode/README.md",
+      "target": null,
+      "action": "delete",
+      "reason": "旧入口或已被知识中心现行模块基线替代",
+      "bytes": 7812,
+      "sha256": "af6666af488afcb8c99498b1eccf396c8def62f9eaef62e3649c12eff551f5c3"
+    },
+    {
+      "source": "docs/pingcode/design.md",
+      "target": null,
+      "action": "delete",
+      "reason": "已退役独立PingCode前端及旧操作入口说明",
+      "bytes": 15044,
+      "sha256": "bde19d1984a873fc136db2b23b1213d8df0d53bc47079908aafdedfeffd2b443"
+    },
+    {
+      "source": "docs/pingcode/implementation-plan.md",
+      "target": null,
+      "action": "delete",
+      "reason": "已退役独立PingCode前端及旧操作入口说明",
+      "bytes": 5676,
+      "sha256": "c3cd0a34e39193defc15717fa80643b5aef7e95bd30cb7e2ffed02f6f9d1239e"
+    },
+    {
+      "source": "docs/pingcode/usage.md",
+      "target": null,
+      "action": "delete",
+      "reason": "已退役独立PingCode前端及旧操作入口说明",
+      "bytes": 21015,
+      "sha256": "dc9f075cbfe693d38c89be20ad2cb92114eb272f5a9ea5252aebb5dc9c2e2105"
+    },
+    {
+      "source": "docs/pingcode/web-docs/training-task-cancellation-design.md",
+      "target": null,
+      "action": "delete",
+      "reason": "已退役独立PingCode前端及旧操作入口说明",
+      "bytes": 2296,
+      "sha256": "431795238e292419e192031551d5aa5193da7f7cacd257c8405c676112194a8e"
+    },
+    {
+      "source": "docs/template-management-execution-plan.md",
+      "target": null,
+      "action": "delete",
+      "reason": "演示阶段设计、旧界面/存储方案、历史交接或迁移过程；现行模块基线位于知识中心目录",
+      "bytes": 4528,
+      "sha256": "8e3d9f02644a0e13e206d8bea63ef32ad2f58f24df181684f397a35658fed73e"
+    },
+    {
+      "source": "docs/yashandb-material-processing-platform.html",
+      "target": null,
+      "action": "delete",
+      "reason": "旧方案、独立展示材料、备份或其专用图件",
+      "bytes": 35812,
+      "sha256": "23d8048f92c800db6c3b8087011e3394bf5a93a078ce91006b10b91ce07fa5b3"
+    },
+    {
+      "source": "docs/开发者交接手册.md",
+      "target": null,
+      "action": "delete",
+      "reason": "演示阶段设计、旧界面/存储方案、历史交接或迁移过程；现行模块基线位于知识中心目录",
+      "bytes": 32404,
+      "sha256": "1e12fa5c19664aea85a27cefde390aade17abb518cae52007aa23cca83a4b0d9"
+    },
+    {
+      "source": "docs/待办事项.md",
+      "target": ".codex/知识中心建设平台/04-开发任务/知识中心-平台-配置化与测试缺口-待办事项文档.md",
+      "action": "move",
+      "reason": "原文独立迁移，不合并、不改变业务设计",
+      "bytes": 5184,
+      "sha256": "f5bec35036663fe4f171ab8f4a5fb1112a94d5b5cb4423be69ef86b934ca881c"
+    }
+  ]
+}

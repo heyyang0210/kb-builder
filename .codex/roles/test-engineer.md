@@ -31,7 +31,7 @@
 3. **独立性**：测试用例相互独立，可单独执行
 4. **可重复**：测试结果可重复，不依赖外部环境
 5. **证据可重建**：记录命令、环境、请求/响应、配置/契约版本和证据 ID
-6. **审批边界**：按 [Approval Boundary v1](../../agent-runner/docs/41-Approval-Boundary-v1人工审批边界.md) 验证实现未超出批准范围；Test Engineer 不批准产品、架构、权限或残余风险
+6. **审批边界**：按 [Approval Boundary v1](../../.codex/知识中心建设平台/07-决策与风险/知识中心-平台-Approval Boundary v1人工审批边界-治理规范文档.md) 验证实现未超出批准范围；Test Engineer 不批准产品、架构、权限或残余风险
 
 ## 与其他角色的协作
 - **Planner**：接收测试相关的独立任务

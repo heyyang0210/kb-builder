@@ -14,10 +14,10 @@
 - 生成用户友好的操作指南
 
 ## 可用工具范围
-- `docs/` — 设计文档目录
+- `.codex/知识中心建设平台/` — 设计文档目录
 - `README.md` — 项目说明
 - `CHANGELOG.md` — 变更日志
-- `agent-runner/docs/` — Agent Runner 文档
+- `.codex/知识中心建设平台/` — Agent Runner 文档
 - 各模块的 `README.md`
 
 ## 输出物规范

@@ -96,7 +96,7 @@
 #### 用户既有修改，默认不纳入本专项
 
 - 已跟踪治理文档：`.codex/workflow/NEXT.md`、`PROGRESS.md`、`RISKS.md`。
-- 既有设计与代码：`agent-runner/docs/16-数据库方案设计.md`、`agent-runner/frontend/prompt-generator.html.backup`、`scripts/pingcode/web/backend/app/processing_units.py`。
+- 既有设计与代码：`.codex/知识中心建设平台/03-详细设计/知识中心-页面数据存储现状与集中化路线-详细设计文档.md`、`agent-runner/frontend/prompt-generator.html.backup`、`scripts/pingcode/web/backend/app/processing_units.py`。
 - 大纲运行状态：`agent-runner/outlines/metadata.json` 及已删除的 `outline_1783581157782_guxcaa.md`。
 - 既有任务、审计、日报、汇报、图纸和方案等未跟踪文件共 46 项以上；只有后续任务明确引用且完成归属复核后才可按文件纳入。
 - `.gitignore` 为用户既有修改；即使后续需要增加通用化忽略规则，也必须先读取并保留现有变化，不能覆盖。
@@ -125,7 +125,7 @@
 ### 6.1 TASK-KPG-01 验收证据
 
 - 设计文档：`.codex/知识中心建设平台/02-概要设计/知识中心-平台-通用化目标架构-概要设计文档.md`。
-- 开发设计：`agent-runner/docs/modules/platform-foundation/development/enterprise-profile-v1配置与运行上下文设计.md`。
+- 开发设计：`.codex/知识中心建设平台/03-详细设计/知识中心-平台-详细设计文档.md`。
 - 独立审查：Architect、Backend Worker、Test Engineer 均完成只读审查。
 - 真实探测：4100/8001 健康接口和 3500 两个旧入口及代理均返回 200；`/knowledge-center/` 返回 404，与尚未实施状态一致。
 - 后续冻结输入：公共上下文接口、受控 profile ID、引用内容参与指纹、单模块降级语义和精确兼容快照。

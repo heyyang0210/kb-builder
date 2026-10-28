@@ -43,7 +43,7 @@
 | RG-01 | 核验目标批次和正式知识样本产物统计 | Test Engineer | `completed` | 无 | [RG01 事实核验](../../tasks/TASK-RAG-KG-RG01-fact-check.md)；发现小批次 knowledge=0 仍 publishable=true |
 | RG-02 | 执行数据集、证据和图查询 ACL 只读矩阵 | Security/Test | `blocked` | 无 | [RG02 ACL 核验](../../tasks/TASK-RAG-KG-RG02-acl-audit.md)；图谱/文件入口缺少统一鉴权，P0 风险 |
 | RG-03 | 冻结正式图谱最小形态、状态和模型策略 | Product/Architect | `completed` | RG-01；G0 | Entity/Relation 才可发布；规则优先、模型仅候选 |
-| RG-04 | 完成存储和检索基础设施 ADR 对比 | Architect | `completed` | RG-01 | [Graph/Vector Store ADR](../../../../agent-runner/docs/modules/knowledge-graph-governance/development/05-graph-vector-store-selection-adr.md)；仅完成选型，不引入依赖 |
+| RG-04 | 完成存储和检索基础设施 ADR 对比 | Architect | `completed` | RG-01 | [Graph/Vector Store ADR](../../../../.codex/知识中心建设平台/07-决策与风险/知识中心-知识图谱治理-图向量存储选型-决策记录文档.md)；仅完成选型，不引入依赖 |
 | RG-05 | 冻结 ACL、跨数据集边界和越权处置 | Product/Security | `completed` | RG-02；G0 | 默认拒绝、继承数据集权限、默认禁止跨数据集 |
 | RG-06 | 冻结门禁语义、评测规模和 S/M/L 基线 | Product/Test | `completed` | RG-01；G0 | P0 阻断/P1-P2 告警；1k/10k/100k 文档、5k/50k/500k chunks |
 | RG-07 | 汇总 RG-03—06 审批结果，进入 G1 | Architect/Product | `completed` | RG-03—06 | G0 已完成；G1 保留厂商、部署和外部依赖审批 |
@@ -52,14 +52,14 @@
 
 | ID | 任务 | 负责人 | 状态 | 依赖 | 交付/验收证据 |
 |---|---|---|---|---|---|
-| RG-08 | 状态机、API 字段、错误码和伪代码 | Backend/Doc | `review` | G1 | [状态/API/错误契约](../../../../agent-runner/docs/modules/knowledge-graph-governance/development/06-state-api-error-contract.md)；待 G2 确认兼容映射和投影门禁 |
-| RG-09 | source→chunk→evidence→graph→index→answer lineage | Backend/Doc | `review` | G1 | [Lineage/回放契约](../../../../agent-runner/docs/modules/knowledge-graph-governance/development/07-lineage-replay-contract.md)；待 G2 确认哈希、保留期和格式定位 |
-| RG-10 | ACL 继承矩阵、默认拒绝规则和审计事件 | Security/Backend | `review` | RG-05 | [ACL/审计契约](../../../../agent-runner/docs/modules/knowledge-graph-governance/development/08-acl-inheritance-contract.md)；待安全确认身份、粒度和审计存储 |
-| RG-11 | 最小 Ontology、canonical ID、关系和失败隔离 | Architect/Domain | `review` | RG-03 | [Ontology Schema](../../../../agent-runner/docs/modules/knowledge-graph-governance/development/09-minimal-ontology.md)；待领域确认类型和关系 |
-| RG-12 | sparse/dense/rerank/context/citation 检索接口 | Architect/Backend | `review` | RG-04/G1 | [混合检索契约](../../../../agent-runner/docs/modules/knowledge-graph-governance/development/10-hybrid-retrieval-contract.md)；dense/reranker 保持 disabled |
-| RG-13 | 100 条评测集、标注规范和指标公式 | Test/Domain | `review` | RG-06 | [评测设计](../../../../agent-runner/docs/modules/knowledge-graph-governance/development/11-evaluation-matrix.md)；阈值待 G3 |
-| RG-14 | 六类验收矩阵 | Test Engineer | `review` | RG-08—13 | [M1 验收矩阵](../../../../agent-runner/docs/modules/knowledge-graph-governance/development/12-m1-acceptance-matrix.md) |
-| RG-15 | G2 设计评审 | Architect/Product/Test | `review` | RG-08—14 | [G2 评审记录](../../../../agent-runner/docs/modules/knowledge-graph-governance/development/13-g2-design-review.md)；待联合签核 |
+| RG-08 | 状态机、API 字段、错误码和伪代码 | Backend/Doc | `review` | G1 | [状态/API/错误契约](../../../../.codex/知识中心建设平台/03-详细设计/知识中心-知识图谱治理-状态接口与错误契约-详细设计文档.md)；待 G2 确认兼容映射和投影门禁 |
+| RG-09 | source→chunk→evidence→graph→index→answer lineage | Backend/Doc | `review` | G1 | [Lineage/回放契约](../../../../.codex/知识中心建设平台/03-详细设计/知识中心-知识图谱治理-来源谱系与证据回放-详细设计文档.md)；待 G2 确认哈希、保留期和格式定位 |
+| RG-10 | ACL 继承矩阵、默认拒绝规则和审计事件 | Security/Backend | `review` | RG-05 | [ACL/审计契约](../../../../.codex/知识中心建设平台/03-详细设计/知识中心-知识图谱治理-权限继承与审计-详细设计文档.md)；待安全确认身份、粒度和审计存储 |
+| RG-11 | 最小 Ontology、canonical ID、关系和失败隔离 | Architect/Domain | `review` | RG-03 | [Ontology Schema](../../../../.codex/知识中心建设平台/03-详细设计/知识中心-知识图谱治理-最小本体-详细设计文档.md)；待领域确认类型和关系 |
+| RG-12 | sparse/dense/rerank/context/citation 检索接口 | Architect/Backend | `review` | RG-04/G1 | [混合检索契约](../../../../.codex/知识中心建设平台/03-详细设计/知识中心-知识图谱治理-混合检索契约-详细设计文档.md)；dense/reranker 保持 disabled |
+| RG-13 | 100 条评测集、标注规范和指标公式 | Test/Domain | `review` | RG-06 | [评测设计](../../../../.codex/知识中心建设平台/03-详细设计/知识中心-知识资产-详细设计文档.md)；阈值待 G3 |
+| RG-14 | 六类验收矩阵 | Test Engineer | `review` | RG-08—13 | [M1 验收矩阵](../../../../.codex/知识中心建设平台/03-详细设计/知识中心-知识资产-详细设计文档.md) |
+| RG-15 | G2 设计评审 | Architect/Product/Test | `review` | RG-08—14 | [G2 评审记录](../../../../.codex/知识中心建设平台/03-详细设计/知识中心-知识资产-详细设计文档.md)；待联合签核 |
 
 ## 5. M2—M7 执行清单
 
@@ -87,7 +87,7 @@
 | RG-22 | 状态、发布与前后端契约回归 | `completed` | [RG-22 任务卡](../../tasks/TASK-RAG-KG-RG22-contract-regression.md)；M2 合并回归 51/51 | 真实 ACL 路径不在本任务完成范围 |
 | RG-23 | ACL 越权回归 | `blocked` | [RG-23 任务卡](../../tasks/TASK-RAG-KG-RG23-security-regression.md) | 依赖 RG-20 及隔离测试身份/数据集 |
 | RG-24 | Lineage 重建与证据回放回归 | `completed` | [RG-24 任务卡](../../tasks/TASK-RAG-KG-RG24-lineage-replay-regression.md)；注入式回放及图版本 API 1/1 | 未完成生产 citation/ACL 端到端接线 |
-| RG-25 | M2 G2.5 验收与证据汇总 | `blocked` | [M2 部分验收记录](../../../../agent-runner/docs/modules/knowledge-graph-governance/testing/02-m2-partial-acceptance.md) | RG-20/23 未完成，G2.5 未通过 |
+| RG-25 | M2 G2.5 验收与证据汇总 | `blocked` | [M2 部分验收记录](../../../../.codex/知识中心建设平台/03-详细设计/知识中心-知识资产-详细设计文档.md) | RG-20/23 未完成，G2.5 未通过 |
 | M2-LIN-REWORK | 生产 Lineage 接线修订 | `in_progress` | [修订任务卡](../../tasks/TASK-RAG-KG-M2-LINEAGE-REWORK-01.md)；[生产出口接线](../../tasks/TASK-RAG-KG-M2-LINEAGE-INT-02.md)；[发布重验](../../tasks/TASK-RAG-KG-M2-LINEAGE-INT-03.md)；[API-A 验收](../../tasks/TASK-RAG-KG-M2-LIN-2C-API-ACC-01.md)；API 7/7、治理包 fixture 1/1、发布重验 5/5 通过 | 性能内存门禁、真实训练出口/回放、G-LIN-04、错误信封隔离和 C/D 组仍阻塞；ACL 外部参数未提供，未迁移物理路径 |
 
 ### M8 GraphStore 本地前置阶段

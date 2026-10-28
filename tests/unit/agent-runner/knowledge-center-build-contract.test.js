@@ -273,41 +273,21 @@ describe('knowledge center unified build contract', () => {
     }
   });
 
-  test('知识中心管理平台设计只归档到建设平台设计目录', () => {
-    const migrations = [
-      ['docs/agent-runner/modules/platform-foundation/overview/document-governance-overview-design.md', overviewDesignRoot, '知识中心-平台-文档治理与周期对账-概要设计文档.md'],
-      ['docs/agent-runner/modules/platform-foundation/overview/知识中心平台-业务域与目标架构设计.md', overviewDesignRoot, '知识中心-平台-业务域与目标架构-概要设计文档.md'],
-      ['docs/agent-runner/modules/platform-foundation/overview/知识中心建设平台通用化总体架构设计.md', overviewDesignRoot, '知识中心-平台-通用化目标架构-概要设计文档.md'],
-      ['docs/agent-runner/modules/outline-management/overview/outline-management-overview-design.md', overviewDesignRoot, '知识中心-大纲管理-工作台与治理-概要设计文档.md'],
-      ['docs/agent-runner/modules/platform-foundation/development/enterprise-profile-v1配置与运行上下文设计.md', designRoot, '知识中心-平台-详细设计文档.md'],
-      ['docs/agent-runner/modules/platform-foundation/development/platform-kernel-module-boundary-design.md', designRoot, '知识中心-平台-详细设计文档.md'],
-      ['docs/agent-runner/modules/platform-foundation/development/reconcile-docs-skill-design.md', designRoot, '知识中心-平台-详细设计文档.md'],
-      ['docs/agent-runner/modules/platform-foundation/development/template-management-database-design.md', designRoot, '知识中心-模板管理-详细设计文档.md'],
-      ['docs/agent-runner/modules/platform-foundation/development/yashandb-storage-and-migration-design.md', designRoot, '知识中心-平台-详细设计文档.md'],
-      ['docs/agent-runner/modules/platform-foundation/development/yashandb-storage-table-inventory.md', designRoot, '知识中心-平台-详细设计文档.md'],
-      ['docs/agent-runner/modules/platform-foundation/development/手册与大纲关系模型实施设计.md', designRoot, '知识中心-大纲管理-详细设计文档.md'],
-      ['docs/agent-runner/modules/platform-foundation/development/知识中心看板-表结构说明.md', designRoot, '知识中心-大纲管理-详细设计文档.md'],
-      ['docs/agent-runner/modules/outline-management/development/29-YashanDB知识库大纲上传内容与格式规格.md', designRoot, '知识中心-大纲管理-详细设计文档.md'],
-      ['docs/agent-runner/modules/outline-management/development/39-管理员手册大纲兼容阶段一-基线与规范副本设计.md', designRoot, '知识中心-大纲管理-详细设计文档.md'],
-      ['docs/agent-runner/modules/outline-management/development/40-管理员手册大纲兼容阶段二-统一解析与结构化诊断设计.md', designRoot, '知识中心-大纲管理-详细设计文档.md'],
-      ['docs/agent-runner/modules/outline-management/development/41-管理员手册大纲兼容阶段三-安全上传与真实API验收设计.md', designRoot, '知识中心-大纲管理-详细设计文档.md'],
-      ['docs/agent-runner/modules/outline-management/development/42-管理员手册大纲兼容阶段四-预检差异确认与正式上传设计.md', designRoot, '知识中心-大纲管理-详细设计文档.md'],
-      ['docs/agent-runner/modules/outline-management/development/43-管理员手册大纲兼容阶段五-评分建议与持续治理设计.md', designRoot, '知识中心-大纲管理-详细设计文档.md'],
-      ['docs/agent-runner/modules/outline-management/development/44-知识中心大纲统一解析展示与管理员增删权限设计.md', designRoot, '知识中心-大纲管理-详细设计文档.md'],
-      ['docs/agent-runner/modules/outline-management/development/45-大纲三阶段责任分工与发布任务设计.md', designRoot, '知识中心-大纲管理-详细设计文档.md'],
-      ['docs/agent-runner/modules/platform-foundation/development/knowledge-center-reproducible-build-design.md', designRoot, '知识中心-平台-详细设计文档.md'],
-      ['docs/agent-runner/overview/service-startup-and-restart-design.md', designRoot, '知识中心-平台-详细设计文档.md'],
-    ];
-    const migrationMap = read('docs/agent-runner/MIGRATION-MAP.md');
-
-    expect(migrations).toHaveLength(22);
-    for (const [legacyPath, targetRoot, filename] of migrations) {
-      expect(fs.existsSync(path.join(repoRoot, targetRoot, filename))).toBe(true);
-      expect(fs.existsSync(path.join(repoRoot, legacyPath))).toBe(false);
-      expect(read(`${targetRoot}/README.md`)).toContain(`](./${filename})`);
-      expect(migrationMap).toContain(`\`${legacyPath}\``);
-      expect(migrationMap).toContain(`\`${targetRoot}/${filename}\``);
+  test('文档目录撤销且迁移清单中的独立文档与导航齐全', () => {
+    expect(fs.existsSync(path.join(repoRoot, 'docs'))).toBe(false);
+    const manifest = JSON.parse(read('.codex/知识中心建设平台/11-参考资料/知识中心-平台-20261028文档迁移清单-参考资料.json'));
+    const moved = manifest.records.filter(record => record.action === 'move');
+    expect(moved.length).toBeGreaterThan(0);
+    expect(new Set(moved.map(record => record.target)).size).toBe(moved.length);
+    for (const record of manifest.records) {
+      expect(fs.existsSync(path.join(repoRoot, record.source))).toBe(false);
+      expect(record.sha256).toMatch(/^[a-f0-9]{64}$/);
+      if (record.action !== 'move') continue;
+      expect(record.target.startsWith('.codex/知识中心建设平台/')).toBe(true);
+      expect(fs.existsSync(path.join(repoRoot, record.target))).toBe(true);
+      expect(read(`${path.dirname(record.target)}/README.md`)).toContain(path.basename(record.target));
     }
-    expect(fs.existsSync(path.join(repoRoot, 'docs/agent-runner/modules/platform-foundation/overview/知识中心管理平台目标模式重构执行提示词.md'))).toBe(true);
+    expect(moved.some(record => record.target.includes('YashanDB存储'))).toBe(true);
+    expect(moved.some(record => record.target.includes('YashanDB数据字典'))).toBe(true);
   });
 });

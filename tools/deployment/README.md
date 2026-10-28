@@ -1,6 +1,6 @@
 # 知识中心部署工具
 
-HTTP 私网开发环境连接 GitLab 时，已有配置可使用 `KNOWLEDGE_CENTER_GITLAB_OAUTH_ALLOW_HTTP=true`（兼容旧 `KNOWLEDGE_CENTER_GITLAB_OAUTH_DEV_HTTP=true`）。支持 10/8、172.16/12、192.168/16 和本机地址；默认、公网 HTTP 及非 HTTP/HTTPS 协议仍被拒绝。新变量优先，配置后执行原始 restart。GitLab 应用回调地址须匹配进程实际使用的公开地址，详见[OAuth 回调设计](../../docs/operations/production-deployment.md)。
+HTTP 私网开发环境连接 GitLab 时，已有配置可使用 `KNOWLEDGE_CENTER_GITLAB_OAUTH_ALLOW_HTTP=true`（兼容旧 `KNOWLEDGE_CENTER_GITLAB_OAUTH_DEV_HTTP=true`）。支持 10/8、172.16/12、192.168/16 和本机地址；默认、公网 HTTP 及非 HTTP/HTTPS 协议仍被拒绝。新变量优先，配置后执行原始 restart。GitLab 应用回调地址须匹配进程实际使用的公开地址，详见[OAuth 回调设计](../../.codex/知识中心建设平台/10-使用说明/知识中心-平台-生产部署与回退-使用说明文档.md)。
 
 统一构建由 `knowledge-center.sh` 传递其已验证的 Python 入口，避免生产 PATH 中的旧系统 Python 被误用于语法检查；直接调用构建脚本时可通过 `KNOWLEDGE_CENTER_PYTHON_BIN=/path/to/python` 指定同一入口。
 
@@ -24,7 +24,7 @@ sha256sum runtime/deployment/npm-cache.tar.gz
 
 上传至生产暂存目录，核对 SHA-256 后解压至生产 `runtime/deployment/npm-cache`。不要同步 `config/`。随后在生产执行 `./knowledge-center.sh restart`，查看 `runtime/agent-runner/logs/knowledge-center-isolated/knowledge-center-build.log` 与 `./knowledge-center.sh status --verbose`。以后依赖清单未变更可重复使用缓存；清单变更后需先补充缺失包，不能绕过校验。
 
-现有生产目录可原地执行 `./knowledge-center.sh restart`。仅 JRE 的生产机需要从可信构建机接收与生产源码及构建入口完全匹配、摘要有效的统一产物，同时具备 `apps/yashandb-storage/lib/yashandb-jdbc.jar`。构建入口缓存命中后无需 Java 编译器；源码或摘要不匹配时仍要求 JDK，不会静默跳过构建验证。局部修复应先备份、暂存上传、验证后替换，不发布工作区其他业务改动。详见[离线重启设计](../../docs/operations/production-deployment.md)。
+现有生产目录可原地执行 `./knowledge-center.sh restart`。仅 JRE 的生产机需要从可信构建机接收与生产源码及构建入口完全匹配、摘要有效的统一产物，同时具备 `apps/yashandb-storage/lib/yashandb-jdbc.jar`。构建入口缓存命中后无需 Java 编译器；源码或摘要不匹配时仍要求 JDK，不会静默跳过构建验证。局部修复应先备份、暂存上传、验证后替换，不发布工作区其他业务改动。详见[离线重启设计](../../.codex/知识中心建设平台/10-使用说明/知识中心-平台-生产部署与回退-使用说明文档.md)。
 
 重启会识别工作目录属于本仓库 `apps/yashandb-storage`、且 Java 类路径来自本仓库 `runtime/build/*/current` 的遗留 Storage 实例；构建目录切换后也会受控停止并启动新实例。其他工作目录或类路径不匹配的 14210 进程仍保留现场并阻止接管。检查运行状态时应使用启动所用的 `KNOWLEDGE_CENTER_BUILD_ROOT`；默认完整重启会生成默认构建目录。
 
@@ -38,7 +38,7 @@ sha256sum runtime/deployment/npm-cache.tar.gz
 ./tools/deployment/sync-production.sh --rollback 20261012-180000
 ```
 
-参数可用 `--host`、`--user`、`--port`、`--remote-dir`、`--identity-file` 和 `--version` 覆盖。检查模式不连接生产机；只有显式 `--apply` 或 `--rollback` 才会进行生产写入。版本化发布、配置保留和失败恢复详见[生产发布与回退设计](../../docs/operations/production-deployment.md)。
+参数可用 `--host`、`--user`、`--port`、`--remote-dir`、`--identity-file` 和 `--version` 覆盖。检查模式不连接生产机；只有显式 `--apply` 或 `--rollback` 才会进行生产写入。版本化发布、配置保留和失败恢复详见[生产发布与回退设计](../../.codex/知识中心建设平台/10-使用说明/知识中心-平台-生产部署与回退-使用说明文档.md)。
 
 发布机默认使用 `~/.ssh/id_ed25519`。目标机管理员需将发布机的 `.pub` 公钥追加至 hey 用户的 `~/.ssh/authorized_keys`，目录权限为 `0700`、文件权限为 `0600`。配置后验证：
 

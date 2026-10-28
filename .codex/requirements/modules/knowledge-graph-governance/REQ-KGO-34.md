@@ -10,10 +10,10 @@ version: 1.0.0
 createdAt: 2026-08-17
 relatedRequirements: [REQ-KGO-33, REQ-KGO-29, REQ-KGO-30, REQ-KGO-31, REQ-KGO-32]
 relatedDesigns:
-  - docs/00-概要设计.md
-  - docs/15-PingCode图谱与数据集生成步骤详细设计.md
-  - docs/19-YashanDB资料加工平台工程化任务拆分.md
-  - docs/09-pingcode-processing-unfinished-items.md
+  - .codex/知识中心建设平台/02-概要设计/知识中心-平台-总体架构-概要设计文档.md
+  - .codex/知识中心建设平台/03-详细设计/知识中心-资料加工-PingCode图谱与数据集生成-详细设计文档.md
+  - .codex/知识中心建设平台/README.md
+  - .codex/知识中心建设平台/04-开发任务/知识中心-资料加工-未完成事项-开发任务文档.md
 relatedTasks: [TASK-P2-05, TASK-P2-06, TASK-P2-07, TASK-P2-08]
 ```
 
@@ -107,7 +107,7 @@ GraphRAG 查询必须先获得图候选，再与 sparse/dense 检索结果合并
 | TASK-P2-08 | 有界图查询和 GraphRAG 检索适配器 | P2 | TASK-P2-07、REQ-KGO-33 P0 检索闭环 | ACL、版本过滤、证据反查和降级通过 |
 | TASK-P2-09 | 图数据库 S/M/L 性能、故障和容量验证 | P1 | TASK-P2-06 | P95、并发、重启、限流和恢复报告 |
 
-`docs/09` 中的统一 Model Provider、Embedding/向量库、真实权限、独立 Worker、人工质量门禁和全流程真实模型验收作为关联前置任务；它们未完成时不得宣称 GraphRAG 生产可用。
+[知识中心-资料加工-未完成事项-开发任务文档](../../../知识中心建设平台/04-开发任务/知识中心-资料加工-未完成事项-开发任务文档.md) 中的统一 Model Provider、Embedding/向量库、真实权限、独立 Worker、人工质量门禁和全流程真实模型验收作为关联前置任务；它们未完成时不得宣称 GraphRAG 生产可用。
 
 ## 7. 验收标准
 

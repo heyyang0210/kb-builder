@@ -93,6 +93,6 @@ P1 阶段先以离线规范副本实现步骤 2 至 4 的最小闭环；后续�
 ## 8. 关联文档
 
 - 项目计划：`../../../workflow/modules/outline-management/PLAN.md`
-- 开发设计：`../../../../agent-runner/docs/modules/outline-management/development/`
+- 开发设计：`.codex/知识中心建设平台/03-详细设计/知识中心-大纲管理-详细设计文档.md`
 - 任务卡：`../../../workflow/tasks/outline-management/`
 - 原始样本：`../../../../outlines/yashan数据库管理员手册知识点大纲.md`

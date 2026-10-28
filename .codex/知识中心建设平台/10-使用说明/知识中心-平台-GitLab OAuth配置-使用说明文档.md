@@ -1,0 +1,293 @@
+# GitLab OAuth 配置指南
+
+## 个人外部账号运行契约（2026-09-15）
+
+个人设置通过 `GET /knowledge-center/api/gitlab/oauth/accounts` 读取平台已启用的 `user_oauth` GitLab 实例及当前用户连接状态。普通登录用户只能从该安全投影选择平台预配置实例，不能提交任意 GitLab 地址。连接入口为 `GET /knowledge-center/api/gitlab/oauth/start?connectionId=...`，解除连接为 `POST /knowledge-center/api/gitlab/oauth/disconnect?connectionId=...`。
+
+授权以 `userId + connectionId` 为唯一身份，密文聚合保存到 YashanDB `KC_RECORD` 的 `gitlab-oauth/credentials`。Access Token 与 Refresh Token 使用 AES-256-GCM 加密，密钥优先从 `KNOWLEDGE_CENTER_OAUTH_ENCRYPTION_KEY`（兼容已有部署时可用 `AGENT_RUNNER_KEY`）读取，不写入 JSON、日志、审计或 API 响应。开发模式为兼容既有环境可从 OAuth Client Secret 派生独立领域密钥；生产模式禁止该回退，必须显式注入专用密钥。文件存储模式仅用于隔离开发，回退文件位于 `runtime/knowledge-center/gitlab-oauth-credentials.json` 且权限为 `0600`。
+
+读取令牌采用进程内快照，避免每次仓库请求访问数据库；只有首次装载、授权完成、有效刷新、明确失效或解除连接才读写聚合。令牌进入五分钟安全窗口后自动刷新，同一账号连接使用 single-flight 防止并发刷新风暴。GitLab API 返回 401 时刷新并最多重试一次。网络错误和上游 5xx 只形成内存中的 `temporarily_unavailable` 状态并保留原授权；GitLab 明确拒绝刷新时才持久化为 `reauthorization_required`。
+
+OAuth 授权 state 的默认有效期为 8 小时，仍与发起授权的登录用户绑定、随机生成且只能消费一次；每次创建前清理过期项，并限制单进程最多保留 1000 项，避免长期运行积累。个人设置采用高信息密度实例列表，每行只保留名称、主机、状态、最近使用（有记录时）和必要操作；超过 5 个实例时列表内部滚动。前端只展示 `已连接`、`未连接`、`暂时不可用`、`需要重新连接`、`平台已停用` 等用户状态，异常时才补充一句恢复说明。正常自动刷新无提示，不显示 Token、Refresh Token、scope、权限范围或续期过程。授权回调只允许返回同源 `/knowledge-center/` 路径；个人设置默认使用 `/knowledge-center/?externalAccount=1`，回到页面后自动打开外部账号对话框并清理该参数。
+
+伪代码：
+
+```text
+tokenForUser(userId, connection):
+  record = cachedOrLoad(userId, connection.id)
+  if record.state requires reauthorization: return null
+  if access token is outside refresh window: return decrypted access token
+  singleFlight(userId + connection.id):
+    refresh with GitLab
+    on network/5xx -> keep record, expose temporarily_unavailable
+    on explicit 400/401 -> persist reauthorization_required
+    on success -> atomically persist encrypted replacement
+```
+
+> 适用对象：平台管理员
+> 预计时间：10-15 分钟
+> 配置频率：**只需配置一次**，所有用户共享
+
+---
+
+## 一、重要概念澄清
+
+### Q1: 每个用户都需要配置吗？
+**不需要**。OAuth Application 是平台级别的配置，只需管理员配置一次，所有用户共享。
+
+### Q2: Client ID/Secret 是 GitLab 账号密码吗？
+**不是**。它们是 OAuth 应用的凭证（类似"应用身份证"），不是用户的登录账号。
+
+### Q3: 可以用 CAS 账号直接登录 GitLab 吗？
+**不能**。CAS 和 GitLab OAuth 是独立的认证系统：
+- **CAS**：知识中心的身份认证
+- **GitLab OAuth**：GitLab 的授权机制
+
+用户需要通过 GitLab 自己的授权流程才能获得仓库访问权限。
+
+---
+
+## 二、配置流程概览
+
+```
+┌─────────────────────────────────────────────────────┐
+│  步骤 1：管理员配置 OAuth 应用（一次性）             │
+│  - 在 GitLab 创建 OAuth Application                 │
+│  - 获取 Client ID 和 Secret                         │
+│  - 配置到知识中心                                    │
+└─────────────────────────────────────────────────────┘
+                      ↓
+┌─────────────────────────────────────────────────────┐
+│  步骤 2：用户使用自己的 GitLab 账号授权              │
+│  - 点击"连接 GitLab 账号"                           │
+│  - 在 GitLab 授权页面登录/确认                      │
+│  - 系统自动获得 Access Token                        │
+└─────────────────────────────────────────────────────┘
+```
+
+---
+
+## 三、详细配置步骤
+
+### 步骤 1：在 GitLab 创建 OAuth Application
+
+1. **登录 GitLab**
+   - 访问：https://git-tools.yasdb.com
+   - 使用你的 GitLab 账号登录
+
+2. **进入应用设置**
+   - 点击右上角头像
+   - 选择 **Preferences**（偏好设置）
+   - 左侧菜单选择 **Applications**（应用）
+
+3. **创建新应用**
+   点击 **New application**，填写：
+
+   | 字段 | 值 | 说明 |
+   |------|-----|------|
+   | **Name** | `知识中心管理平台` | 应用名称，可自定义 |
+   | **Redirect URI** | `http://192.168.130.180:13510/knowledge-center/api/gitlab/oauth/callback` | 必须完全一致 |
+   | **Scopes** | 勾选 `read_api`、`read_repository` | 当前实例用于读取和账号重新连接；发布写入需确认应用允许 `api` |
+
+   **重要**：
+   - Redirect URI 必须与知识中心配置的完全一致（包括协议、域名、端口、路径）
+   - 开发环境可以使用 HTTP，生产环境必须使用 HTTPS
+
+4. **保存并记录凭证**
+   点击 **Save application** 后，GitLab 会显示：
+   - **Application ID**（客户端 ID）
+   - **Secret**（客户端密钥）
+
+   **️ 请立即复制保存 Secret，它只会显示一次！**
+
+   ```
+   Application ID: abc123def456...
+   Secret: xyz789uvw012...  ← 复制后立即保存！
+   ```
+
+---
+
+### 步骤 2：配置知识中心
+
+#### 方法 A：使用交互式脚本（推荐）
+
+```bash
+cd /data/docs/AI高效应用示例/06-YashanDB知识库Skill仓库
+./tools/repository/setup-gitlab-oauth.sh
+```
+
+脚本会引导你输入：
+- Application ID
+- Secret
+- Redirect URI（可直接回车使用默认值）
+
+#### 方法 B：手动编辑 .env 文件
+
+1. 复制配置模板：
+   ```bash
+   cp config/knowledge-center/.env.example agent-runner/.env
+   ```
+
+2. 编辑 `agent-runner/.env`，添加以下内容：
+   ```bash
+   # GitLab OAuth 配置
+   KNOWLEDGE_CENTER_GITLAB_OAUTH_CLIENT_ID=你的_Application_ID
+   KNOWLEDGE_CENTER_GITLAB_OAUTH_CLIENT_SECRET=你的_Secret
+   KNOWLEDGE_CENTER_GITLAB_OAUTH_REDIRECT_URI=http://192.168.130.180:13510/knowledge-center/api/gitlab/oauth/callback
+   KNOWLEDGE_CENTER_GITLAB_OAUTH_SCOPES="read_api read_repository"
+   KNOWLEDGE_CENTER_GITLAB_OAUTH_DEV_HTTP=true
+   ```
+
+   **替换说明**：
+   - `你的_Application_ID` → 步骤 1 中获得的 Application ID
+   - `你的_Secret` → 步骤 1 中获得的 Secret
+
+---
+
+### 步骤 3：重启服务
+
+```bash
+cd /data/docs/AI高效应用示例/06-YashanDB知识库Skill仓库
+./knowledge-center.sh restart
+```
+
+---
+
+### 步骤 4：验证配置
+
+#### 4.1 检查配置状态
+
+```bash
+./tools/repository/check-oauth-config.sh
+```
+
+期望输出：
+```
+✅ Client ID:     abc123de...
+✅ Client Secret: xyz789uv...
+✅ Redirect URI:  http://192.168.130.180:13510/...
+✅ OAuth 配置完整
+```
+
+#### 4.2 测试 OAuth 流程
+
+1. 访问：http://192.168.130.180:13510/knowledge-center/platform
+2. 点击"连接 GitLab 账号"按钮
+3. 应跳转到 GitLab 授权页面
+4. 使用你的 GitLab 账号登录并授权
+5. 授权成功后自动跳回知识中心，显示"已连接"
+
+---
+
+## 四、用户使用流程
+
+配置完成后，用户使用流程如下：
+
+```
+1. 用户登录知识中心（通过 CAS）
+   ↓
+2. 访问"平台管理"页面
+   ↓
+3. 看到 GitLab 连接状态
+   - 未连接：显示"连接 GitLab 账号"按钮
+   - 已连接：显示"已连接"状态
+   ↓
+4. 点击"连接 GitLab 账号"
+   ↓
+5. 跳转到 GitLab 授权页面
+   - 如果已登录 GitLab：直接显示授权确认
+   - 如果未登录：需要输入 GitLab 账号密码
+   ↓
+6. 点击"Authorize"授权
+   ↓
+7. 自动跳回知识中心
+   ↓
+8. 系统获得该用户的 Access Token
+   - Token 加密保存在 YashanDB 凭据聚合中，进程内只持有快照
+   - 用户看不到 Token
+   - 令牌正常过期会自动刷新；授权范围变化时需要重新连接
+```
+
+---
+
+## 五、常见问题
+
+### Q1: Redirect URI mismatch
+**原因**：GitLab 中配置的回调地址与知识中心不一致
+**解决**：确保两端完全一致，包括协议、域名、端口和路径
+
+### Q2: invalid_grant
+**原因**：授权码已过期或已使用
+**解决**：重新点击"连接 GitLab 账号"按钮
+
+### Q3: 生产环境必须使用 HTTPS
+**原因**：GitLab OAuth 正式环境要求 HTTPS
+**解决**：
+- 配置反向代理（Nginx/Caddy）启用 HTTPS
+- 或设置 `KNOWLEDGE_CENTER_GITLAB_OAUTH_DEV_HTTP=true`（仅开发环境）
+
+### Q4: 忘记 Secret
+**解决**：在 GitLab 应用设置页面重新生成 Secret
+
+### Q5: 每个用户都需要配置吗？
+**不需要**。OAuth Application 只需配置一次，所有用户共享。用户只需要点击"连接 GitLab 账号"按钮，使用自己的 GitLab 账号授权即可。
+
+### Q6: 可以用 CAS 账号直接登录 GitLab 吗？
+**不能**。CAS 和 GitLab OAuth 是独立的认证系统。用户需要通过 GitLab 自己的授权流程才能获得仓库访问权限。
+
+### Q7: Token 会过期吗？
+**会**。Access Token 有有效期；当前实现会在过期前自动刷新。只有刷新被 GitLab 明确拒绝或授权范围变化时才需要重新连接。
+
+---
+
+## 六、安全建议
+
+1. **生产环境**：
+   - 必须使用 HTTPS
+   - 不要将 `.env` 文件提交到版本控制
+   - 定期轮换 Client Secret
+
+2. **权限最小化**：
+   - 发布连接申请 `api`；GitLab REST API 写接口不接受 `write_repository` 代替
+   - GitLab 项目成员仍需具备创建分支、提交与创建 MR 的权限
+
+3. **监控**：
+   - 定期检查 OAuth Token 使用情况
+   - 发现异常及时撤销授权
+
+4. **Token 存储**：
+   - Token 加密保存在 YashanDB 凭据聚合中，进程内使用快照
+   - 修改 scope 后，旧令牌不会自动升级，用户必须重新连接
+
+---
+
+## 七、配置检查清单
+
+- [ ] 已在 GitLab 创建 OAuth Application
+- [ ] 已记录 Application ID 和 Secret
+- [ ] 已配置 `KNOWLEDGE_CENTER_GITLAB_OAUTH_CLIENT_ID`
+- [ ] 已配置 `KNOWLEDGE_CENTER_GITLAB_OAUTH_CLIENT_SECRET`
+- [ ] 已配置 `KNOWLEDGE_CENTER_GITLAB_OAUTH_REDIRECT_URI`
+- [ ] GitLab OAuth 应用和本地授权请求的 scope 已按目标实例允许范围配置（当前实例为 `read_api read_repository`）
+- [ ] 已设置 `KNOWLEDGE_CENTER_GITLAB_OAUTH_DEV_HTTP=true`（开发环境）
+- [ ] 已重启服务
+- [ ] 已由使用用户重新连接账号，确认授权页不再提示 scope 错误
+- [ ] 若需要发布，另行确认应用允许 `api` 并验证目标项目允许创建任务分支、提交和 MR
+
+
+## 重新连接报 requested scope is invalid（2026-10-23 排障）
+
+### 根因与真实验证
+
+2026-10-23 使用已有 CAS 浏览器会话调用真实 `/knowledge-center/api/gitlab/oauth/accounts` 返回 200，四个连接为 `reauthorization_required`；调用 `/knowledge-center/api/gitlab/oauth/start` 返回 302，授权请求为 `scope=api`。读取 GitLab 授权页复现 `The requested scope is invalid, unknown, or malformed.`；保持应用、回调、state 和 PKCE 参数一致，仅将 scope 改为旧值 `read_api read_repository`，页面不再返回该错误。探测未提交授权表单、未交换令牌、未修改远端应用。
+
+提交 `6f33717` 为支持创建分支、提交与 MR，将默认请求范围从 `read_api read_repository` 改成 `api`。当前业务配置 `config/knowledge-center/.env` 也是 `api`，优先于运行时文件的旧只读配置。故本次报错位于 GitLab 对授权请求范围的校验阶段，与 CAS 登录、令牌存储或 MR 调用无关。现有 GitLab OAuth 应用接受旧只读范围，但不接受当前请求的 `api`；尚未进入应用管理页读取其勾选配置，因此不把具体勾选状态当作已验证事实。
+
+### 修复位置与验收
+
+- 推荐由 OAuth 应用所有者在 GitLab 应用设置核对当前 Client ID 对应应用，并启用发布功能要求的 `api` scope；保持回调地址不变。此项是外部应用权限变更，需要应用所有者明确批准并执行。
+- 修改后用户重新连接，在授权页确认权限并完成回调；平台账号状态应为已连接。真实 MR 写入应另行使用获准测试仓库验收。
+- 若仅恢复旧只读能力，可让本地请求使用 `read_api read_repository` 并重启；该方案无法支持 REST API 发布，不能当作发布功能已修复。
+- `check-oauth-config.sh` 仅验证本地配置，不能读取 GitLab 应用允许范围；本地检查通过不能证明远端授权可用。
+
+复现脚本：`runtime/diagnostics/gitlab-oauth/probe.cjs`，在已有 Windows Chrome CDP 9223 与平台登录会话下使用 Windows Node 执行。脚本只输出 HTTP 状态和 scope 校验结果，不输出凭据、state 或授权 URL。

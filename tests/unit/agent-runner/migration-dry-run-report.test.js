@@ -1,4 +1,4 @@
-const report = require('../../../docs/agent-runner/modules/platform-foundation/baseline/p0-migration-dry-run.json');
+const report = require('../../../.codex/知识中心建设平台/11-参考资料/测试基线附件/知识中心-平台-P0迁移预演-测试基线.json');
 
 describe('知识中心迁移预演报告', () => {
   test('报告为只读预演且每条源都有摘要', () => {

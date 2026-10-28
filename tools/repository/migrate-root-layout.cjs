@@ -11,7 +11,7 @@ const groups = {
   runtime: [['var/agent-runner', 'runtime/agent-runner'], ['var/pingcode', 'runtime/pingcode'], ['logs', 'runtime/logs'], ['output', 'runtime/output'], ['.browser-data', 'runtime/browser-data'], ['dump.rdb', 'runtime/dumps/unclassified/dump.rdb']],
   external: [['src/FastGPT', 'external/FastGPT'], ['yas-ai-helper', 'external/yas-ai-helper'], ['src/README.md', 'external/README.md']],
   residual: [['code', 'runtime/migration-residuals/code'], ['scripts', 'runtime/migration-residuals/scripts'], ['tests/agent-runner', 'runtime/migration-residuals/tests-agent-runner'], ['tools/repository/logs', 'runtime/migration-residuals/tools-repository-logs']],
-  documents: ['HTML_GENERATION_SUMMARY.md', 'REFACTORING_SUMMARY.md', 'YashanDB 知识加工平台构建方案.html', 'YashanDB 知识库建设方案.html', 'gitlab-multi-repo-designs.html', 'kb-builder方案和使用介绍.html', 'oracle-kb-generation-plan.md', 'prompt-generator-design.md', 'test_svg.html', '子agent.md', '批量生成方案.md', 'prompt-generator.html', 'docker-compose.yml'].map(name => [name, `docs/archive/root-layout/${name}`]).concat([['diagrams', 'docs/diagrams']]),
+  documents: ['HTML_GENERATION_SUMMARY.md', 'REFACTORING_SUMMARY.md', 'YashanDB 知识加工平台构建方案.html', 'YashanDB 知识库建设方案.html', 'gitlab-multi-repo-designs.html', 'kb-builder方案和使用介绍.html', 'oracle-kb-generation-plan.md', 'prompt-generator-design.md', 'test_svg.html', '子agent.md', '批量生成方案.md', 'prompt-generator.html', 'docker-compose.yml'].map(name => [name, `runtime/migration-residuals/documents/${name}`]).concat([['diagrams', 'runtime/migration-residuals/diagrams']]),
 };
 
 function inventory(target) {

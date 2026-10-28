@@ -16,7 +16,7 @@
 | external/ | FastGPT 与 yas-ai-helper 独立工程，不参与主仓库默认构建 |
 | runtime/ | 持久状态、日志、缓存、导出和本地迁移记录，不进 Git |
 
-`runtime/` 中持久数据需要备份，不能整体清空。详见[运行数据维护](docs/operations/runtime-storage.md)。
+`runtime/` 中持久数据需要备份，不能整体清空。详见[运行数据维护](.codex/知识中心建设平台/10-使用说明/知识中心-平台-运行数据维护-使用说明文档.md)。
 
 ## 启动与检查
 
@@ -54,12 +54,11 @@ python3 tests/run_tests.py full
 
 ## 文档与协作
 
-- [目录迁移跟踪与验收](docs/directory-structure-refactor.md)
+- [建设平台文档入口](.codex/知识中心建设平台/README.md)
+- [文档目录迁移记录](.codex/知识中心建设平台/08-进度与报告/知识中心-平台-20261028文档目录迁移-进展报告文档.md)
 - [知识资产导航](knowledge/README.md)
-- [DeepSeek Harness 精简手册（新手版）](docs/deepseek-harness-精简手册.md)
 - [数据库配置](config/yashandb/README.md)
 - [工作区约束](AGENTS.md)、[Git 提交规范](git提交规范.md)
 - [提示词与复盘](prompt.md)，`prompt-log.md` 仅保留历史
-- [迁移前完整使用文档（历史路径）](docs/archive/root-layout/README.before-runtime.md)
 
 新增服务放 apps，共享库放 packages，工具放 tools；禁止重新引入根级 code/scripts/var。历史设计中的旧路径仅作历史事实，执行命令以当前入口为准。

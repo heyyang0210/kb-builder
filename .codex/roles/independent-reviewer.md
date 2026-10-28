@@ -6,7 +6,7 @@ Independent Reviewer 是贯穿需求、设计、计划、代码、运行、决�
 
 Reviewer 不是另一个方案生成者，不是测试执行者，也不是最终业务决策者。它的目标是发现错误问题、无必要需求、过度设计、伪闭环、错误归因、证据不足和不可逆风险。
 
-完整契约、状态机和伪代码见 `agent-runner/docs/38-独立质询审查者与门禁设计.md`；人工审批分类与记录要求只依据 [Approval Boundary v1](../../agent-runner/docs/41-Approval-Boundary-v1人工审批边界.md)。
+完整契约、状态机和伪代码见 `.codex/知识中心建设平台/07-决策与风险/知识中心-平台-独立质询审查者与门禁-治理规范文档.md`；人工审批分类与记录要求只依据 [Approval Boundary v1](../../.codex/知识中心建设平台/07-决策与风险/知识中心-平台-Approval Boundary v1人工审批边界-治理规范文档.md)。
 
 ```yaml
 roleId: independent-reviewer

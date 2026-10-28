@@ -9,7 +9,7 @@ version: 1.0.0
 updatedAt: 2026-08-17
 relatedRequirements: [REQ-KGO-30]
 relatedDesigns:
-  - agent-runner/docs/modules/knowledge-graph-governance/development/03-version-governance-quality-operations-design.md
+  - .codex/知识中心建设平台/03-详细设计/知识中心-知识图谱治理-版本治理与质量运营-详细设计文档.md
 relatedTasks: [TASK-KGO-REQ-31]
 ```
 

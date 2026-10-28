@@ -30,7 +30,7 @@
 
 单处理单元模型超时诊断工具位于 `diagnostics/`。它只读取现有运行产物并调用模型网关，不修改模型配置和正式加工产物；诊断用例放在 `knowledge-extraction-timeout-cases.json`，结果写入运行目录的质量诊断目录。
 
-不可变产物读取的损坏隔离策略位于 `artifact-integrity.yaml`。当前契约版本为 `artifact-integrity-config/v1`，单次读取只有在损坏记录比例不超过 `0.001` 且数量不超过 `10` 时才允许隔离并继续；任一阈值超过即按整体完整性失败阻断。业务代码不得硬编码或覆盖这组默认值，运行 manifest 必须记录配置内容哈希。完整快照、single-flight、latest CAS 和错误分类设计见 `docs/08-pingcode-processing-six-step-pipeline-design.md` 第 16 节。
+不可变产物读取的损坏隔离策略位于 `artifact-integrity.yaml`。当前契约版本为 `artifact-integrity-config/v1`，单次读取只有在损坏记录比例不超过 `0.001` 且数量不超过 `10` 时才允许隔离并继续；任一阈值超过即按整体完整性失败阻断。业务代码不得硬编码或覆盖这组默认值，运行 manifest 必须记录配置内容哈希。完整快照、single-flight、latest CAS 和错误分类设计见 `.codex/知识中心建设平台/03-详细设计/知识中心-资料加工-加工流水线-详细设计文档.md` 第 16 节。
 
 ## Skill 目录
 
@@ -98,7 +98,7 @@ training-runs/<taskId>/
 
 步骤六另生成 `datasets/<datasetId>/` 消费目录。删除数据集只清理派生知识、规范化副本和图谱，永久保留 `originals/`、来源映射、元数据、质量问题、运行报告和删除审计。
 
-资料预处理的专项设计见 `docs/01-PingCode资料预处理步骤详细设计.md`，其中规定 Office/PDF 转 Markdown、三层内容保留、来源映射、6000 字符结构化处理单元和单资源隔离重试。图谱只读取 `final-results/knowledge.jsonl`；模型结果缺少原文证据时只生成质量问题。
+资料预处理的专项设计见 `.codex/知识中心建设平台/03-详细设计/知识中心-资料加工-PingCode资料预处理-详细设计文档.md`，其中规定 Office/PDF 转 Markdown、三层内容保留、来源映射、6000 字符结构化处理单元和单资源隔离重试。图谱只读取 `final-results/knowledge.jsonl`；模型结果缺少原文证据时只生成质量问题。
 
 当前预处理默认从规范化加工视图排除 C/C++ 围栏代码块和 `src/.../*.c|*.h` 源码路径标记，原始文件永久保留。排除记录写入源文档的 `excludedRanges` 和 `normalizationEvents`；SQL、Shell、JSON 等非 C/C++ 代码块继续进入结构解析。
 
@@ -110,11 +110,11 @@ training-runs/<taskId>/
 
 五个后续步骤专项设计：
 
-- `docs/11-PingCode元数据构建步骤详细设计.md`
-- `docs/12-PingCode知识提取步骤详细设计.md`
-- `docs/13-PingCode按需语义补充步骤详细设计.md`
-- `docs/14-PingCode知识校验与合并步骤详细设计.md`
-- `docs/15-PingCode图谱与数据集生成步骤详细设计.md`
+- `.codex/知识中心建设平台/03-详细设计/知识中心-资料加工-PingCode元数据构建-详细设计文档.md`
+- `.codex/知识中心建设平台/03-详细设计/知识中心-资料加工-PingCode知识提取-详细设计文档.md`
+- `.codex/知识中心建设平台/03-详细设计/知识中心-资料加工-PingCode按需语义补充-详细设计文档.md`
+- `.codex/知识中心建设平台/03-详细设计/知识中心-资料加工-PingCode知识校验与合并-详细设计文档.md`
+- `.codex/知识中心建设平台/03-详细设计/知识中心-资料加工-PingCode图谱与数据集生成-详细设计文档.md`
 
 当前正式语义 Skill：
 
