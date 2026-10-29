@@ -217,36 +217,38 @@ test('真实平台 HTTP API：权限、GET、未保存测试、PUT、冲突与�
     stores: { knowledgeAssetsStore: { read: () => ({ handbooks: [] }), write() {} } },
     moduleRegistry: { get: key => key === 'auth' ? { authorize: async req => req.headers['x-test-role'] === 'none' ? null : ({ roles: [req.headers['x-test-role'] || 'PLATFORM_ADMIN'], user: { id: 'mcp-admin' } }) } : null },
     mcpGovernance: f.service,
+    handbookProductionService: {},
     sendFile(_path, res) { res.writeHead(404); res.end(); }, proxyAuth() {}, proxyCleaning() {}, proxyOutline() {}, proxyPermission() {}, handleIncrementalBuild() {},
   });
   const server = http.createServer(handler); await listen(server);
   const url = `http://127.0.0.1:${server.address().port}/knowledge-center/api/platform/mcp`;
   const call = (method, body, version, suffix = '') => fetch(url + suffix, { method, headers: { 'Content-Type': 'application/json', 'If-Match': version || '' }, body: body ? JSON.stringify(body) : undefined });
+  const status = async response => { await response.arrayBuffer(); return response.status; };
   try {
     for (const method of ['GET', 'PUT', 'POST']) {
       const suffix = method === 'POST' ? '/test' : '';
-      expect((await fetch(url + suffix, { method, headers: { 'x-test-role': 'none' } })).status).toBe(401);
-      expect((await fetch(url + suffix, { method, headers: { 'x-test-role': 'KNOWLEDGE_EDITOR' } })).status).toBe(403);
+      expect(await status(await fetch(url + suffix, { method, headers: { 'x-test-role': 'none' } }))).toBe(401);
+      expect(await status(await fetch(url + suffix, { method, headers: { 'x-test-role': 'KNOWLEDGE_EDITOR' } }))).toBe(403);
     }
     const read = await fetch(url); expect(read.status).toBe(200); expect(read.headers.get('cache-control')).toBe('no-store');
     const p = (await read.json()).data;
-    expect((await call('POST', input(baseURL), p.rowVersion, '/test')).status).toBe(200);
+    expect(await status(await call('POST', input(baseURL), p.rowVersion, '/test'))).toBe(200);
     expect((await f.service.get()).configured).toBe(false);
     const save = await call('PUT', input(baseURL), p.rowVersion); expect(save.status).toBe(200);
     const text = await save.text(); expect(text).not.toContain('fixture-api-secret'); expect(text).not.toContain('fixture-header-secret');
-    expect((await call('PUT', input(baseURL), p.rowVersion)).status).toBe(409);
+    expect(await status(await call('PUT', input(baseURL), p.rowVersion))).toBe(409);
     mode = 'search';
     const multiConfig = { ...input(baseURL), headers: [
       { name: 'X-Ksacraft-Kb-Id', value: '1', description: '' },
       { name: 'X-Ksacraft-Kb-Id', value: '24', description: '' }
     ] };
     const multiSave = await call('PUT', multiConfig, (await f.service.get()).rowVersion);
-    expect(multiSave.status).toBe(200);
+    expect(await status(multiSave)).toBe(200);
     const runtimeConfig = await f.manager.getMCPConfig();
     const merged = await new MCPClient(runtimeConfig).query('双知识库 API 验证');
     expect(merged.structuredContent.kb_ids).toEqual(['1', '24']);
     expect(merged.structuredContent.results).toHaveLength(3);
-    expect((await call('DELETE')).status).toBe(405);
+    expect(await status(await call('DELETE'))).toBe(405);
     mode = 'rpcError';
     const failure = await call('POST', input(baseURL), (await f.service.get()).rowVersion, '/test');
     expect(failure.status).toBe(502); expect(await failure.text()).not.toContain('fixture-api-secret');

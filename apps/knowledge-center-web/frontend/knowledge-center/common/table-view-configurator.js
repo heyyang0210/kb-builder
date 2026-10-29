@@ -192,7 +192,8 @@ export function enhanceTableViews(root = document, options = {}) {
       table.dataset.tableViewId = id; table.dataset.tableViewSchema = '1'; table.dataset.tableViewLabel = label;
     });
   });
-  root.querySelectorAll('[data-table-view-id]').forEach(table => {
+  const tables = root.querySelectorAll('[data-table-view-id]');
+  tables.forEach(table => {
     table.dataset.tableViewScope = enhancementOptions.preferenceScope || 'local';
     const columns = columnsFor(table); const state = stateFor(table, columns);
     applyState(table, state); createTrigger(table, state, columns);
@@ -205,5 +206,6 @@ export function enhanceTableViews(root = document, options = {}) {
       window.requestAnimationFrame(() => window.scrollTo(restore.scrollX, restore.scrollY));
     }
   }
-  window.lucide?.createIcons();
+  // No table triggers were created on this page; leave unrelated icons untouched.
+  if (tables.length) window.lucide?.createIcons();
 }

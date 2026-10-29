@@ -31,14 +31,15 @@ describe('数据库配置模式 GitLab 验证运行时事实 HTTP 回归', () =>
       },
       stores: { domainStore: { readPlatformGitLabConnections: () => ({ items: [{ ...connection }] }), readPlatformGitLabConnection: () => ({ ...connection }) } },
       modules: { auth: { authorize: async () => ({ user: { id: 'test-admin', roles: ['PLATFORM_ADMIN'] }, roles: ['PLATFORM_ADMIN'] }) } },
+      handbookProductionService: {},
     });
     server = http.createServer((req, res) => handler(req, res));
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     baseUrl = `http://127.0.0.1:${server.address().port}/knowledge-center/api/gitlab/connections`;
   }
   afterAll(async () => {
-    if (server) await new Promise(resolve => server.close(resolve));
-    if (upstream) await new Promise(resolve => upstream.close(resolve));
+    if (server) await new Promise(resolve => { server.close(resolve); server.closeAllConnections?.(); });
+    if (upstream) await new Promise(resolve => { upstream.close(resolve); upstream.closeAllConnections?.(); });
     for (const [key, value] of Object.entries(previousEnv)) {
       if (value === undefined) delete process.env[key]; else process.env[key] = value;
     }
@@ -48,7 +49,7 @@ describe('数据库配置模式 GitLab 验证运行时事实 HTTP 回归', () =>
     const response = await fetch(`${baseUrl}/db-repo/verify`, { method: 'POST' });
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ data: { status: 'verified', branchCount: 1 } });
-    await new Promise(resolve => server.close(resolve));
+    await new Promise(resolve => { server.close(resolve); server.closeAllConnections?.(); });
     await startServer();
     const responseBody = await (await fetch(baseUrl)).json();
     expect(responseBody).toMatchObject({ data: { items: [{ status: 'verified', lastVerification: { status: 'verified', branchCount: 1 } }] } });

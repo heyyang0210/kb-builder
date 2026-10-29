@@ -9,19 +9,53 @@ const viewport = load('viewport-runtime.js', ['initViewportRuntime']);
 const scroll = load('scroll-runtime.js', ['getScrollOwner', 'inspectScrollRegion', 'inspectScrollContract', 'initScrollRuntime']);
 function environment() {
   const listeners = new Map();
+  let mutationCallback = null;
+  const frames = new Map();
+  let nextFrame = 1;
+  let shell = null;
+  let main = null;
   const element = () => {
     const values = new Map();
-    return { dataset: {}, children: [], clientHeight: 0, scrollHeight: 0, scrollTop: 0,
+    return { nodeType: 1, dataset: {}, children: [], clientHeight: 0, scrollHeight: 0, scrollTop: 0,
       style: { setProperty: (key, value) => values.set(key, value), removeProperty: key => values.delete(key), getPropertyValue: key => values.get(key) || '' },
       getBoundingClientRect: () => ({ height: 0 }), getClientRects: () => [{}], closest: () => null,
-      matches(selector) { return selector.includes('data-scroll-owner') && Boolean(this.dataset.scrollOwner); },
+      matches(selector) {
+        return (selector.includes('data-scroll-owner') && Boolean(this.dataset.scrollOwner))
+          || (selector.includes('data-scroll-region') && Boolean(this.dataset.scrollRegion))
+          || (selector.includes('data-scroll-obstacle') && Boolean(this.dataset.scrollObstacle));
+      },
+      closest(selector) {
+        let node = this;
+        while (node) {
+          if (selector === '#app-shell' && node === shell) return shell;
+          if (selector === '[data-scroll-region]' && node.dataset.scrollRegion) return node;
+          if (selector === '[data-scroll-obstacle]' && node.dataset.scrollObstacle) return node;
+          node = node.parentElement;
+        }
+        return null;
+      },
+      querySelector(selector) {
+        const nodes = this.querySelectorAll(selector);
+        return nodes[0] || null;
+      },
+      querySelectorAll(selector) {
+        const found = [];
+        const visit = node => node.children.forEach(child => {
+          if (child.matches(selector)) found.push(child);
+          visit(child);
+        });
+        visit(this);
+        return found;
+      },
       append(child) { this.children.push(child); child.parentElement = this; },
       remove() { this.parentElement.children = this.parentElement.children.filter(child => child !== this); },
-      querySelectorAll: () => [] };
+    };
   };
-  const root = element(), body = element(), shell = element(), main = element();
+  const root = element(), body = element(); shell = element(); main = element();
   main.dataset.scrollOwner = 'main'; main.style.overflowY = 'auto'; main.clientHeight = 900; main.scrollHeight = 2000;
   body.append(shell); shell.append(main);
+  shell.closest = selector => selector === '#app-shell' ? shell : null;
+  main.closest = selector => selector === '#app-shell' ? shell : null;
   main.cloneNode = () => { const item = element(); item.dataset.scrollOwner = 'main'; item.ownerDocument = doc; return item; };
   const doc = { documentElement: root, body, scrollingElement: root,
     createElement: element, getElementById: id => id === 'app-shell' ? shell : main,
@@ -35,15 +69,18 @@ function environment() {
   const win = { document: doc, innerHeight: 900, matchMedia: () => ({ matches: true }),
     console: { warn: jest.fn() },
     getComputedStyle: item => ({ overflowY: item.style.overflowY || 'visible', getPropertyValue: key => item.style.getPropertyValue(key) }),
-    requestAnimationFrame: jest.fn(() => 1), cancelAnimationFrame: jest.fn(),
+    requestAnimationFrame: jest.fn(callback => { const id = nextFrame++; frames.set(id, callback); return id; }),
+    cancelAnimationFrame: jest.fn(id => frames.delete(id)),
     addEventListener: (name, fn) => listeners.set(name, fn), removeEventListener: name => listeners.delete(name),
     dispatchEvent: event => listeners.get(event.type)?.(event), Event: class { constructor(type) { this.type = type; } },
-    MutationObserver: class { observe() {} disconnect() {} } };
+    MutationObserver: class { constructor(callback) { mutationCallback = callback; } observe() {} disconnect() { mutationCallback = null; } } };
   doc.defaultView = win; main.ownerDocument = doc; root.ownerDocument = doc;
   const create = doc.createElement;
   doc.createElement = () => { const item = create(); item.ownerDocument = doc; return item; };
   shell.getBoundingClientRect = () => ({ height: 900 });
-  return { dom: { window: { close() {} } }, window: win, document: doc, main };
+  return { dom: { window: { close() {} } }, window: win, document: doc, main,
+    triggerMutations(records) { mutationCallback?.(records); },
+    flushFrames() { for (const [id, callback] of [...frames]) { frames.delete(id); callback(); } } };
 }
 test('旧环境无 visualViewport 时测量回退，1px 阈值与事件清理', () => {
   const env = environment();
@@ -186,4 +223,43 @@ test('实时刷新只检查声明区，显式诊断仍能发现未声明滚动�
   expect(scroll.inspectScrollContract(env.document).issues).toContain('存在未声明的纵向滚动区域');
   expect(queried).toContain('#app-shell *');
   runtime.destroy();
+});
+
+test('普通视图DOM更新不触发滚动帧，滚动结构变化仍合并调度', () => {
+  const env = environment();
+  const request = jest.spyOn(env.window, 'requestAnimationFrame');
+  const runtime = scroll.initScrollRuntime(env);
+  request.mockClear();
+  const viewRoot = env.document.createElement('div');
+  env.main.append(viewRoot);
+  const ordinaryNode = env.document.createElement('span');
+  viewRoot.append(ordinaryNode);
+  env.triggerMutations([
+    { type: 'attributes', target: ordinaryNode, attributeName: 'class' },
+    { type: 'childList', target: viewRoot, addedNodes: [ordinaryNode], removedNodes: [] },
+  ]);
+  expect(request).not.toHaveBeenCalled();
+
+  const obstacle = env.document.createElement('div');
+  obstacle.dataset.scrollObstacle = 'header';
+  viewRoot.append(obstacle);
+  env.triggerMutations([{ type: 'childList', target: viewRoot, addedNodes: [obstacle], removedNodes: [] }]);
+  expect(request).toHaveBeenCalledTimes(1);
+  env.flushFrames();
+  runtime.destroy(); env.dom.window.close();
+});
+
+test('滚动契约属性变更会在下一帧执行诊断', () => {
+  const env = environment();
+  const request = jest.spyOn(env.window, 'requestAnimationFrame');
+  const runtime = scroll.initScrollRuntime(env);
+  request.mockClear();
+  env.document.getElementById('app-shell').getBoundingClientRect = () => ({ height: 1200 });
+  env.triggerMutations([{ type: 'attributes', target: env.main, attributeName: 'data-scroll-owner' }]);
+  expect(request).toHaveBeenCalledTimes(1);
+  env.flushFrames();
+  expect(env.window.console.warn).toHaveBeenCalledWith('知识中心滚动契约异常', expect.objectContaining({
+    issues: expect.arrayContaining(['应用壳高度异常，已降级为页面滚动']),
+  }));
+  runtime.destroy(); env.dom.window.close();
 });

@@ -176,14 +176,22 @@ function directoryNode(item, context, depth = 0, index = 0) {
     const id = String(first(item.id, item.documentId, item.sourceId, `document-${index + 1}`));
     const document = context.byId.get(id);
     if (!document || !context.visibleIds.has(id)) return '';
-    const owners = ownersFor(context.outline, id);
     const selected = context.selectedId === id;
     const checked = context.selectedForReview.has(id);
     const status = documentStatus(document, context.ui, context.ui?.repository?.branch || '');
     return `<li class="handbook-production-document${selected ? ' selected' : ''}"><button type="button" data-handbook-document="${escapeHtml(id)}"${selected ? ' aria-current="page"' : ''}><i data-lucide="file-text" aria-hidden="true"></i><span><strong>${escapeHtml(displayTitle(title))}</strong><small${status === '未编辑' ? ' hidden' : ''}>${escapeHtml(status)}</small></span>${checked ? '<em>待评审</em>' : ''}</button></li>`;
   }
   const groupKey = [...(context.parentPath || []), title].join('/');
-  const visibleChildren = children.map((child, childIndex) => directoryNode(child, { ...context, parentPath: [...(context.parentPath || []), title] }, depth + 1, childIndex)).filter(Boolean);
+  // Reuse the traversal context for large directories; copying the full context
+  // and path for every child creates avoidable allocation and GC pressure.
+  const parentPath = context.parentPath || (context.parentPath = []);
+  parentPath.push(title);
+  const visibleChildren = [];
+  children.forEach((child, childIndex) => {
+    const rendered = directoryNode(child, context, depth + 1, childIndex);
+    if (rendered) visibleChildren.push(rendered);
+  });
+  parentPath.pop();
   if (!visibleChildren.length) return '';
   const open = context.ui.directoryOpen?.[groupKey] ?? (depth === 0 || visibleChildren.some(child => child.includes('aria-current="page"')));
   return `<li class="handbook-production-group"><details data-handbook-directory-group="${escapeHtml(groupKey)}"${open ? ' open' : ''}><summary><i data-lucide="folder" aria-hidden="true"></i><span>${escapeHtml(title)}</span></summary><ul>${visibleChildren.join('')}</ul></details></li>`;

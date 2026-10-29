@@ -57,13 +57,18 @@ test.describe('手册级文档生成页面 P0/P1', () => {
     expect(catalog.items.map(item => item.name)).toEqual(names);
     expect(catalog.items.find(item => item.sourceType === 'knowledge-mcp').automatic).toBe(true);
     await page.locator('[data-ai-settings-open]').click();
+    await expect(page.locator('[data-ai-settings-panel]')).toBeVisible();
     await page.locator('[data-ai-settings-apply]').click();
+    await expect(page.locator('[data-ai-settings-panel]')).toBeHidden();
     await page.locator('[data-ai-source-add]').click();
-    await expect(page.locator('[data-ai-source-type] option')).toHaveText(names.map((name, index) => `${name}${catalog.items[index].available ? '' : '（未配置）'}`));
+    await expect(page.locator('[data-ai-reference-panel]')).toBeVisible();
+    await expect(page.locator('[data-ai-reference-panel] [data-reference-type]')).toHaveText([
+      'Pingcode设计文档', 'Pingcode测试文档', '测试用例集', '网页来源', '知识库（MCP）', '本地文档',
+    ]);
     await page.locator('[data-reference-type="knowledge-mcp"]').click();
-    await expect(page.locator('[data-ai-source-locator]')).toBeHidden();
-    await expect(page.locator('[data-ai-source-preview]')).toBeDisabled();
-    await expect(page.locator('[data-ai-mcp-status]')).toContainText('默认');
+    await expect(page.locator('[data-ai-reference-panel] [data-ai-source-locator]')).toBeHidden();
+    await expect(page.locator('[data-ai-reference-panel] [data-ai-source-preview]')).toBeDisabled();
+    await expect(page.locator('[data-ai-reference-panel] [data-ai-mcp-status]')).toContainText('默认');
   });
 
   test('P0：局域网 HTTP 缺少 Web Crypto 时仍可生成正确基线摘要', async ({ page }) => {

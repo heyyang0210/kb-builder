@@ -99,7 +99,7 @@ E2E 资源清单维护在 `tests/run_tests.py` 的 `E2E_RESOURCE_BY_FILE`。只�
 
 Playwright 始终由统一入口启动随机本地端口的隔离测试实例，不复用外部 `KPG_BASE_URL`。该实例复用同一 YashanDB 服务，但强制通过 `YASDB_CONFIG_DIR=runtime/test-config/yashandb` 从其 `service.env` 加载 `test_hy` 独立 Schema 账号；缺少配置或账号不是 `test_hy` 时前置失败，不得回退或额外依赖业务配置。
 
-统一入口在启动浏览器测试服务前，会调用 `tools/repository/sync-e2e-yashandb-schema.sh`，将 `pf_knowledge` 的表结构和数据刷新到 `test_hy`。同步不依赖 DBA 或跨 Schema 授权：源账号只读导出结构 SQL，目标账号重建自有对象，本地 JDBC 复制器以双连接流式复制数据，再重建索引和约束。基线对账通过后，入口会构建当前工作树，并只对持锁的 `test_hy` 执行已提交的当前版本迁移。迁移 SQL 或版本别名存在未提交变更时，即使目标是测试 Schema 也会在连库前失败；需要先提交迁移来保证 revision 和聚合摘要可追溯。导出、重建、复制、对账、构建或迁移失败都会阻止 E2E。统一入口持有跨进程独占锁直到服务回收，不允许两个 E2E 运行并发写入 `test_hy`。同步和迁移证据分别写入本次 `details/database-sync/` 与 `details/database-migration/`。
+统一入口在启动浏览器测试服务前，会调用 `tools/repository/sync-e2e-yashandb-schema.sh`，将 `pf_knowledge` 的表结构和数据刷新到 `test_hy`。同步不依赖 DBA 或跨 Schema 授权：源账号只读导出结构 SQL，目标账号重建自有对象，本地 JDBC 复制器以双连接流式复制数据，再重建索引和约束。基线对账通过后，入口会构建当前工作树，并只对持锁的 `test_hy` 执行已提交的当前版本迁移。迁移 SQL 或版本别名存在未提交变更时，即使目标是测试 Schema 也会在连库前失败；需要先提交迁移来保证 revision 和聚合摘要可追溯。对账行数读取会提取明确的数字并对短暂空输出重试三次，仍无数字时按表名失败，避免生成不可解析的假通过报告。导出、重建、复制、对账、构建或迁移失败都会阻止 E2E。统一入口持有跨进程独占锁直到服务回收，不允许两个 E2E 运行并发写入 `test_hy`。同步和迁移证据分别写入本次 `details/database-sync/` 与 `details/database-migration/`。
 
 E2E 启动时还会校验服务端返回的 `environment=test` 和本次 `testRunId`，校验失败则在发送业务写请求前终止。状态与日志位于本次报告 `details/knowledge-center/`。回收必须通过所有权令牌和进程身份校验；校验失败时保留现场，绝不停止共享开发平台。
 
@@ -339,3 +339,5 @@ KC_CONTENT_BACKUP_MODE=restore KC_CONTENT_BACKUP_ROOT=runtime/test-results/produ
 T13浏览器性能报告另含点击后的longTasks数值，作为主线程阻塞诊断；函数级CPU采样须与正式性能验收分开。`node --test tests/unit/agent-runner/handbook-demand-read.node.test.cjs`当前7项覆盖映射并行、分支固定、拒绝及迟到响应保护。10路超预算仍判失败。
 
 公共滚动实时刷新只检查声明区，显式inspectScrollContract仍默认全树诊断，E2E继续覆盖八模块未声明滚动区。滚动单元11/11，当前工作台+滚动双浏览器28通过4外部条件跳过；10路性能仍失败，不以功能通过替代性能验收。
+
+T13函数阶段诊断使用`KC_PERF_DIAGNOSTICS=1`显式启用，报告`measurementMode=diagnostic`；默认不启用，报告`measurementMode=formal`。诊断报告的`measures`采用与请求/长任务相同的点击时间原点，只记录函数阶段名和数值。诊断耗时不作为正式预算验收；必须另跑默认模式，仍使用原1/5/10路、30次浏览器及每档100次API配置。

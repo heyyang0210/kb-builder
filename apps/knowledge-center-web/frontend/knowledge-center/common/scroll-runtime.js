@@ -45,7 +45,51 @@ export function inspectScrollContract(doc = document, { scanUndeclared = true } 
 export function initScrollRuntime({ window: win = window, document: doc = document } = {}) {
   let frame = null;
   let warning = '';
-  function refresh() {
+  let contractDirty = true;
+  const scrollAttributes = new Set(['data-scroll-owner', 'data-scroll-region', 'data-scroll-obstacle']);
+  const shellFor = () => doc.getElementById('app-shell');
+  const mainFor = () => doc.querySelector('[data-scroll-owner="main"]');
+  const isElement = node => node?.nodeType === 1;
+  const withinShell = node => {
+    const shell = shellFor();
+    if (!shell || !isElement(node)) return false;
+    return node === shell || node.closest?.('#app-shell') === shell;
+  };
+  const isDeclaredRegion = node => isElement(node) && node.matches?.('[data-scroll-region]');
+  const isObstacle = node => isElement(node) && node.matches?.('[data-scroll-obstacle]');
+  const withinDeclaredRegion = node => isElement(node) && Boolean(node.closest?.('[data-scroll-region]'));
+  const withinObstacle = node => isElement(node) && Boolean(node.closest?.('[data-scroll-obstacle]'));
+  const hasScrollToken = node => isElement(node) && (
+    node.matches?.('[data-scroll-owner], [data-scroll-region], [data-scroll-obstacle]')
+      || Boolean(node.querySelector?.('[data-scroll-owner], [data-scroll-region], [data-scroll-obstacle]'))
+  );
+  const affectsLayout = record => {
+    if (!record || !withinShell(record.target)) return false;
+    const target = record.target;
+    if (record.type === 'attributes') {
+      if (!['class', 'hidden', 'open', ...scrollAttributes].includes(record.attributeName)) return false;
+      if (scrollAttributes.has(record.attributeName)) return true;
+      return target === shellFor() || target === mainFor() || isDeclaredRegion(target)
+        || isObstacle(target) || withinDeclaredRegion(target) || withinObstacle(target);
+    }
+    if (record.type !== 'childList') return false;
+    if (target === shellFor() || target === mainFor() || isDeclaredRegion(target)
+      || isObstacle(target) || withinDeclaredRegion(target) || withinObstacle(target)) return true;
+    return [...(record.addedNodes || []), ...(record.removedNodes || [])].some(hasScrollToken);
+  };
+  const affectsContract = record => {
+    if (!affectsLayout(record)) return false;
+    if (record.type === 'attributes') {
+      return ['hidden', 'open', ...scrollAttributes].includes(record.attributeName)
+        || record.target === shellFor() || record.target === mainFor()
+        || isDeclaredRegion(record.target) || isObstacle(record.target)
+        || withinDeclaredRegion(record.target) || withinObstacle(record.target);
+    }
+    return record.target === shellFor() || record.target === mainFor() || isDeclaredRegion(record.target)
+      || isObstacle(record.target) || withinDeclaredRegion(record.target) || withinObstacle(record.target)
+      || [...(record.addedNodes || []), ...(record.removedNodes || [])].some(hasScrollToken);
+  };
+  function refresh({ diagnose = true } = {}) {
     const shell = doc.getElementById('app-shell');
     const main = doc.querySelector('[data-scroll-owner="main"]');
     const root = doc.documentElement;
@@ -55,7 +99,7 @@ export function initScrollRuntime({ window: win = window, document: doc = docume
     root.dataset.scrollMode = main && shell && !shell.hidden && desktop ? 'main' : 'document';
     const height = parseFloat(win.getComputedStyle(root).getPropertyValue('--kc-viewport-height'));
     const available = root.dataset.viewportSource === 'measured' ? height : win.innerHeight;
-    const box = shell?.getBoundingClientRect();
+    const box = shell?.getBoundingClientRect() || { height: 0 };
     root.dataset.scrollMode = main && shell && !shell.hidden && desktop
       && box.height > 0 && box.height <= available + 2
       && main.clientHeight > 0 && main.clientHeight <= available + 2
@@ -78,14 +122,29 @@ export function initScrollRuntime({ window: win = window, document: doc = docume
         root.style.setProperty('--kc-scroll-bottom', `${bottom}px`);
       }
     }
-    // Full-tree geometry inspection is an explicit diagnostic, not a DOM-mutation hot path.
-    const report = inspectScrollContract(doc, { scanUndeclared: false });
-    if (win.matchMedia('(min-width: 901px)').matches && root.dataset.scrollMode !== 'main') report.issues.push('应用壳高度异常，已降级为页面滚动');
-    const key = report.issues.join('|');
-    if (key && key !== warning) win.console.warn('知识中心滚动契约异常', report);
-    warning = key;
+    // Contract inspection is intentionally separate from geometry refresh. The explicit
+    // inspector keeps the full diagnostic path; scheduled frames only inspect when a
+    // scroll contract mutation or an explicit refresh requires it.
+    if (diagnose) {
+      const report = inspectScrollContract(doc, { scanUndeclared: false });
+      if (win.matchMedia('(min-width: 901px)').matches && root.dataset.scrollMode !== 'main') report.issues.push('应用壳高度异常，已降级为页面滚动');
+      const key = report.issues.join('|');
+      if (key && key !== warning) win.console.warn('知识中心滚动契约异常', report);
+      warning = key;
+      contractDirty = false;
+      return report;
+    }
+    return null;
   }
-  const schedule = () => { if (frame === null) frame = win.requestAnimationFrame(() => { frame = null; refresh(); }); };
+  const schedule = (records = [], { forceContract = false } = {}) => {
+    const changes = Array.isArray(records) ? records : [];
+    if (forceContract || changes.some(affectsContract)) contractDirty = true;
+    if (!forceContract && changes.length && !changes.some(affectsLayout)) return;
+    if (frame === null) frame = win.requestAnimationFrame(() => {
+      frame = null;
+      refresh({ diagnose: contractDirty });
+    });
+  };
   const focus = event => {
     const target = event.target;
     if (!target?.getBoundingClientRect) return;
@@ -100,17 +159,19 @@ export function initScrollRuntime({ window: win = window, document: doc = docume
       target.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'auto' });
     }
   };
-  const observer = new win.MutationObserver(schedule);
-  observer.observe(doc.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['class', 'hidden', 'open'] });
-  win.addEventListener('kc-viewport-changed', schedule);
-  win.addEventListener('resize', schedule);
+  const observer = new win.MutationObserver(records => schedule(records));
+  observer.observe(doc.body, { subtree: true, childList: true, attributes: true,
+    attributeFilter: ['class', 'hidden', 'open', ...scrollAttributes] });
+  const forceSchedule = () => schedule([], { forceContract: true });
+  win.addEventListener('kc-viewport-changed', forceSchedule);
+  win.addEventListener('resize', forceSchedule);
   doc.addEventListener('focusin', focus);
-  refresh();
+  refresh({ diagnose: true });
   return { refresh, destroy() {
     observer.disconnect();
     if (frame !== null) win.cancelAnimationFrame(frame);
-    win.removeEventListener('kc-viewport-changed', schedule);
-    win.removeEventListener('resize', schedule);
+    win.removeEventListener('kc-viewport-changed', forceSchedule);
+    win.removeEventListener('resize', forceSchedule);
     doc.removeEventListener('focusin', focus);
     delete doc.documentElement.dataset.scrollMode;
   } };

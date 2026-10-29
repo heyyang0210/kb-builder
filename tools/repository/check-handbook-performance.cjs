@@ -6,6 +6,48 @@ const { sampleReads } = require('./sample-read-performance.cjs');
 const { chromium } = require('playwright');
 const budget = require('../../config/knowledge-center/handbook-performance.json');
 const p95 = values => [...values].sort((a, b) => a - b)[Math.ceil(values.length * .95) - 1];
+const diagnosticsEnabled = process.env.KC_PERF_DIAGNOSTICS === '1';
+
+function phaseTime(sample, collection, name, predicate = () => true) {
+  return (sample[collection] || []).find(item => item.name === name && predicate(item))?.startMs ?? null;
+}
+
+function directoryDiagnosticChain(sample) {
+  if (!diagnosticsEnabled) return null;
+  const directoryResponseEndMs = Math.max(0, ...(sample.requests || [])
+    .filter(request => request.kind === 'directory' && Number.isFinite(request.endMs))
+    .map(request => request.endMs));
+  if (!directoryResponseEndMs) return { complete: false, reason: 'directory-response-not-observed' };
+  const stateUpdateStartMs = phaseTime(sample, 'marks', 'workspace.directoryStateUpdateStart');
+  const stateUpdateEndMs = phaseTime(sample, 'marks', 'workspace.directoryStateUpdateEnd');
+  const renderStartMs = phaseTime(sample, 'marks', 'render.start', item => item.activeView === 'production' && item.startMs >= (stateUpdateEndMs ?? 0));
+  const domReplaceStartMs = phaseTime(sample, 'measures', 'render.viewRootReplace', item => item.startMs >= (stateUpdateEndMs ?? 0));
+  const domReplacedMs = phaseTime(sample, 'marks', 'render.domReplaced', item => item.startMs >= (stateUpdateEndMs ?? 0));
+  const syncCompleteMs = phaseTime(sample, 'marks', 'render.syncComplete', item => item.startMs >= (stateUpdateEndMs ?? 0));
+  const firstDomMs = sample.firstDirectoryDomMs ?? phaseTime(sample, 'marks', 'browser.directoryDomDetected');
+  const firstFrameMs = sample.firstDirectoryFrameMs ?? phaseTime(sample, 'marks', 'browser.directoryFirstFrame');
+  const visibleMs = sample.directory ?? phaseTime(sample, 'marks', 'browser.directoryVisible');
+  const chain = {
+    complete: [stateUpdateStartMs, stateUpdateEndMs, domReplaceStartMs, domReplacedMs, firstFrameMs, visibleMs].every(Number.isFinite),
+    directoryResponseEndMs,
+    stateUpdateStartMs,
+    stateUpdateEndMs,
+    renderStartMs,
+    domReplaceStartMs,
+    domReplacedMs,
+    syncCompleteMs,
+    firstDirectoryDomMs: firstDomMs,
+    firstDirectoryFrameMs: firstFrameMs,
+    directoryVisibleMs: visibleMs,
+  };
+  if (Number.isFinite(stateUpdateStartMs)) chain.responseToStateStartMs = stateUpdateStartMs - directoryResponseEndMs;
+  if (Number.isFinite(stateUpdateEndMs) && Number.isFinite(stateUpdateStartMs)) chain.stateUpdateDurationMs = stateUpdateEndMs - stateUpdateStartMs;
+  if (Number.isFinite(domReplaceStartMs) && Number.isFinite(stateUpdateEndMs)) chain.stateToDomReplaceStartMs = domReplaceStartMs - stateUpdateEndMs;
+  if (Number.isFinite(domReplacedMs) && Number.isFinite(domReplaceStartMs)) chain.domReplaceDurationMs = domReplacedMs - domReplaceStartMs;
+  if (Number.isFinite(firstFrameMs) && Number.isFinite(domReplacedMs)) chain.domToFirstFrameMs = firstFrameMs - domReplacedMs;
+  if (Number.isFinite(visibleMs) && Number.isFinite(directoryResponseEndMs)) chain.responseToVisibleMs = visibleMs - directoryResponseEndMs;
+  return chain;
+}
 
 async function main() {
   const base = process.env.KPG_BASE_URL;
@@ -15,7 +57,7 @@ async function main() {
   if (!base || !handbookId || !username || !password) throw Error('请显式配置 KPG_BASE_URL、KC_PERF_HANDBOOK_ID 和性能账号环境变量');
   const output = path.resolve(process.env.KC_PERF_OUTPUT || 'runtime/performance/handbook-gate.json');
   const browser = await chromium.launch({ headless: true });
-  const results = { base, handbookId, budget, api: {}, browser: [], browserLevels: [] };
+  const results = { measurementMode: diagnosticsEnabled ? 'diagnostic' : 'formal', base, handbookId, budget, api: {}, browser: [], browserLevels: [] };
   const failures = [];
   try {
     const context = await browser.newContext();
@@ -36,10 +78,17 @@ async function main() {
             const page = await isolated.newPage();
             const worker = { isolated, page, reads: [], sample: { round: index + 1, passed: false } };
             workers.push(worker);
-            await page.addInitScript(() => {
+            await page.addInitScript(({ diagnosticsEnabled }) => {
               window.__handbookPerf = { start: 0, loading: false, directory: null, body: null,
                 firstDirectoryDomMs: null, firstDirectoryFrameMs: null, directoryFrameAttempts: 0,
                 directoryDetachedFrames: 0, directoryHiddenFrames: 0 };
+              window.__knowledgeCenterPerformance = { enabled: diagnosticsEnabled, start: 0, measures: [], marks: [] };
+              const recordMark = (name, detail = undefined) => {
+                const diagnostics = window.__knowledgeCenterPerformance;
+                if (!diagnostics?.enabled) return;
+                diagnostics.marks ||= [];
+                diagnostics.marks.push({ name, startMs: performance.now(), ...(detail || {}) });
+              };
               const tasks = [];
               window.__handbookPerfTasks = tasks;
               if (PerformanceObserver.supportedEntryTypes?.includes('longtask')) {
@@ -55,21 +104,28 @@ async function main() {
                 if (document.querySelector('.handbook-production-loading')) state.loading = true;
                 const directory = document.querySelector('.handbook-production-directory[aria-hidden="false"]');
                 if (state.loading && state.directory === null && directory) {
-                  if (state.firstDirectoryDomMs === null) state.firstDirectoryDomMs = performance.now() - state.start;
+                  if (state.firstDirectoryDomMs === null) {
+                    state.firstDirectoryDomMs = performance.now() - state.start;
+                    recordMark('browser.directoryDomDetected');
+                  }
                   requestAnimationFrame(() => {
                     state.directoryFrameAttempts += 1;
-                    if (state.firstDirectoryFrameMs === null) state.firstDirectoryFrameMs = performance.now() - state.start;
+                    if (state.firstDirectoryFrameMs === null) {
+                      state.firstDirectoryFrameMs = performance.now() - state.start;
+                      recordMark('browser.directoryFirstFrame');
+                    }
                     if (!directory.isConnected) { state.directoryDetachedFrames += 1; return; }
                     const rect = directory.getBoundingClientRect();
                     if (state.directory === null && directory.isConnected && directory.getAttribute('aria-hidden') === 'false'
                       && rect.width > 0 && rect.left >= 0 && getComputedStyle(directory).pointerEvents !== 'none') {
                       state.directory = performance.now() - state.start;
+                      recordMark('browser.directoryVisible');
                     } else state.directoryHiddenFrames += 1;
                   });
                 }
                 if (state.body === null && document.querySelector('[data-handbook-save-status]')) state.body = performance.now() - state.start;
               }).observe(document, { childList: true, subtree: true });
-            });
+            }, { diagnosticsEnabled });
 
             page.on('response', response => {
               const url = new URL(response.url());
@@ -98,6 +154,7 @@ async function main() {
             if (worker.sample.error) return;
             const { page, sample } = worker;
             try {
+              await page.evaluate(() => Object.assign(window.__knowledgeCenterPerformance, { start: performance.now(), measures: [], marks: [] }));
               await worker.target.click({ timeout: budget.timeoutMs });
               await page.waitForFunction(() => window.__handbookPerf.directory !== null && window.__handbookPerf.body !== null, null, { timeout: budget.timeoutMs });
               await page.waitForLoadState('networkidle', { timeout: budget.timeoutMs });
@@ -112,8 +169,16 @@ async function main() {
                 const longTasks = (window.__handbookPerfTasks || []).filter(entry => entry.start >= start)
                   .map(entry => ({ startMs: entry.start - start, durationMs: entry.duration }));
                 return { directory, body, firstDirectoryDomMs, firstDirectoryFrameMs,
-                  directoryFrameAttempts, directoryDetachedFrames, directoryHiddenFrames, requests, longTasks };
+                  directoryFrameAttempts, directoryDetachedFrames, directoryHiddenFrames, requests, longTasks,
+                  measures: (window.__knowledgeCenterPerformance?.measures || [])
+                    .filter(measure => measure.startMs >= start)
+                    .map(measure => ({ ...measure, startMs: measure.startMs - start })),
+                  marks: (window.__knowledgeCenterPerformance?.marks || [])
+                    .filter(mark => mark.startMs >= start)
+                    .map(mark => ({ ...mark, startMs: mark.startMs - start })),
+                };
               }));
+              sample.diagnosticChain = directoryDiagnosticChain(sample);
               sample.reads = await Promise.all(worker.reads);
               sample.passed = ['directory', 'draft'].every(name => sample.reads.some(read => read.name === name)) && sample.reads.every(read => read.passed);
               if (!sample.passed) sample.error = '目录/草稿未成功读取';

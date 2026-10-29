@@ -101,8 +101,18 @@ table_names() {
 }
 
 table_count() {
-  sql_output "$1" "$2" "$3" "select count(*) from $4;" \
-    | awk '/^-{5,}/{getline; gsub(/[[:space:]]/, ""); print; exit}'
+  local user="$1" password="$2" server="$3" table="$4" attempt output count
+  for attempt in 1 2 3; do
+    output="$(sql_output "$user" "$password" "$server" "select count(*) from $table;" || true)"
+    count="$(printf '%s\n' "$output" | awk '/^[[:space:]]*[0-9]+[[:space:]]*$/ {gsub(/[[:space:]]/, ""); print; exit}')"
+    if [[ "$count" =~ ^[0-9]+$ ]]; then
+      printf '%s' "$count"
+      return 0
+    fi
+    sleep 1
+  done
+  echo "无法读取 $table 的行数，对账查询未返回明确数字" >&2
+  return 1
 }
 
 mapfile -t source_tables < <(table_names "$source_user" "$source_password" "$source_server")

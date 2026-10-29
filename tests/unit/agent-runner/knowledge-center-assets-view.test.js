@@ -161,7 +161,7 @@ describe('知识资产工作台前端契约', () => {
   });
 
   test('已停用资产入口收纳到更多菜单并在停用成功后提供直接入口', () => {
-    expect(view()).toContain('<details class="asset-more-menu" data-asset-more-menu>');
+    expect(view()).toContain('<details class="asset-more-menu" data-asset-more-menu data-dismissible-menu>');
     expect(view()).toContain('class="button tertiary asset-more-trigger">更多');
     expect(view()).toContain('查看已停用资产');
     expect(view()).toContain('查询历史资产并重新启用');
@@ -173,7 +173,7 @@ describe('知识资产工作台前端契约', () => {
     expect(html).toContain('id="notice-action"');
     expect(app).toContain("actionLabel: '查看已停用资产'");
     expect(app).toContain("actionHref: '/knowledge-center/assets?lifecycle=inactive'");
-    expect(app).toContain("document.querySelector('[data-asset-more-menu][open], .outline-import[open]')");
+    expect(app).toContain('initDismissibleMenus()');
     expect(css).toContain('.asset-more-menu-panel { position: absolute;');
     expect(css).toContain('.asset-more-trigger { min-height: 44px;');
   });

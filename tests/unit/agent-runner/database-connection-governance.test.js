@@ -216,6 +216,7 @@ describe('数据库连接治理', () => {
       stores: { knowledgeAssetsStore: { read: () => ({ handbooks: [] }), write() {} } },
       moduleRegistry: { get: key => key === 'auth' ? { authorize: async () => ({ roles: ['PLATFORM_ADMIN'], user: { id: 'database-admin' } }) } : null },
       databaseConnectionGovernance,
+      handbookProductionService: {},
       sendFile(_path, res) { res.writeHead(404); res.end(); }, proxyAuth() {}, proxyCleaning() {}, proxyOutline() {}, proxyPermission() {}, handleIncrementalBuild() {},
     });
     const server = http.createServer(handler);
@@ -228,12 +229,14 @@ describe('数据库连接治理', () => {
       expect(refreshCalls).toBe(0);
       const refreshResponse = await fetch(endpoint, { method: 'POST' });
       expect(refreshResponse.status).toBe(200);
+      await refreshResponse.arrayBuffer();
       expect(refreshCalls).toBe(1);
       const unsupportedResponse = await fetch(endpoint, { method: 'PUT' });
       expect(unsupportedResponse.status).toBe(405);
       expect(unsupportedResponse.headers.get('allow')).toBe('GET, POST');
+      await unsupportedResponse.arrayBuffer();
     } finally {
-      await new Promise(resolve => server.close(resolve));
+      await new Promise(resolve => { server.close(resolve); server.closeAllConnections?.(); });
     }
   });
 });

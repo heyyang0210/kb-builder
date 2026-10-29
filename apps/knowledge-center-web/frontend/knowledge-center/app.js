@@ -79,13 +79,44 @@ let pendingPrincipalImportFile = null;
 let pendingPrincipalCorrection = null;
 let principalSearchTimer = null;
 let platformRenderDeferred = false;
+
+// Explicitly enabled by an isolated performance probe; production runs keep this path inactive.
+function measureHandbookPerformance(name, callback) {
+  const diagnostics = window.__knowledgeCenterPerformance;
+  if (!diagnostics?.enabled) return callback();
+  const start = performance.now();
+  try {
+    return callback();
+  } finally {
+    diagnostics.measures ||= [];
+    diagnostics.measures.push({ name, startMs: start, durationMs: performance.now() - start });
+  }
+}
+
+// Diagnostic-only marks; no document content or credentials enter the report.
+function markHandbookPerformance(name, detail = undefined) {
+  const diagnostics = window.__knowledgeCenterPerformance;
+  if (!diagnostics?.enabled) return;
+  diagnostics.marks ||= [];
+  const mark = { name, startMs: performance.now() };
+  if (detail && typeof detail === 'object') {
+    for (const [key, value] of Object.entries(detail)) {
+      if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'string') mark[key] = value;
+    }
+  }
+  diagnostics.marks.push(mark);
+}
+
 function scheduleIconLibrary() {
   if (iconLibraryScheduled || window.lucide) return;
   iconLibraryScheduled = true;
   const load = () => {
     const script = document.createElement('script');
     script.src = '/knowledge-center/common/vendor/lucide.min.js';
-    script.onload = () => window.lucide?.createIcons();
+    script.onload = () => measureHandbookPerformance('icons.libraryLoaded', () => {
+      if (appState.activeView === 'production') enhanceHandbookEditorIcons([document]);
+      else window.lucide?.createIcons();
+    });
     document.head.append(script);
   };
   window.setTimeout(load, 1200);
@@ -343,6 +374,7 @@ function outlineProjectionKey(route = outlineRouteState()) {
     ensureRenderer(appState.activeView).then(() => { if (renderers[appState.activeView]) render(); }).catch(showApplicationError);
     return;
   }
+  markHandbookPerformance('render.start', { activeView: appState.activeView });
   // 全局平台概览错误不应污染审核与发布工作区。审核页有独立的
   // reviewProjection 错误投影，只有该投影明确失败时才展示页面级错误。
   const globalErrorPanel = byId('error-panel');
@@ -365,7 +397,10 @@ function outlineProjectionKey(route = outlineRouteState()) {
   const openOutlineMenuId = appState.activeView === 'outlines'
     ? document.querySelector('.outline-more-actions[open]')?.dataset.outlineMoreId : undefined;
   const databasePasswordDraft = document.querySelector('[data-database-dialog] [data-database-field="password"]')?.value || '';
-      byId('view-root').innerHTML = renderer({ projection: appState.activeView === 'repository' ? appState.gitlabProjection : appState.projection, templateProjection: appState.templateProjection, cleaningProjection: appState.cleaningProjection, cleaningCanWrite: isPlatformAdmin(), reviewProjection: appState.reviewProjection, reviewUi: appState.reviewUi, outlineProjection, assetCatalog: appState.assetCatalog, principalProjection: appState.principalProjection, principalListState: appState.principalListState, teamGroupProjection: appState.teamGroupProjection, teamGroupView: new URLSearchParams(window.location.search).get('view') || 'people', teamGroupUi: appState.teamGroupUi, incrementalProjection: appState.incrementalProjection, handbookProductionUi: appState.handbookProductionUi, currentUser: { ...(authState.session?.user || {}), displayName: displayName() }, domainBuildTaskProjection: appState.domainBuildTaskProjection, gitlabProjection: appState.gitlabProjection, permissionProjection: appState.permissionProjection, governanceProjection: appState.platformGovernance, databaseConnectionProjection: appState.databaseConnectionProjection, databaseConnectionDrawerOpen: appState.databaseConnectionDrawerOpen, databaseConnectionAdvancedOpen: appState.databaseConnectionAdvancedOpen, databaseConnectionForm: appState.databaseConnectionForm, databaseConnectionStatus: appState.databaseConnectionStatus, selectedPermissionUserId: appState.selectedPermissionUserId, permissionSaveStatus: appState.permissionSaveStatus, permissionUserSearch: appState.permissionUserSearch, permissionListState: appState.permissionListState, gitlabVerification: appState.gitlabVerification, platformAdmin: isPlatformAdmin(), platformTab: appState.platformTab, gitlabListState: appState.gitlabListState, gitlabAddingConnection: appState.gitlabAddingConnection, gitlabEditingConnection: appState.gitlabEditingConnection, outlinePermissions: { create: canPerform('outline:create'), delete: canPerform('outline:delete'), purge: canPerform('outline:purge'), platformAdmin: isPlatformAdmin() }, outlineView });
+      const viewHtml = measureHandbookPerformance('render.viewHtml', () => renderer({ projection: appState.activeView === 'repository' ? appState.gitlabProjection : appState.projection, templateProjection: appState.templateProjection, cleaningProjection: appState.cleaningProjection, cleaningCanWrite: isPlatformAdmin(), reviewProjection: appState.reviewProjection, reviewUi: appState.reviewUi, outlineProjection, assetCatalog: appState.assetCatalog, principalProjection: appState.principalProjection, principalListState: appState.principalListState, teamGroupProjection: appState.teamGroupProjection, teamGroupView: new URLSearchParams(window.location.search).get('view') || 'people', teamGroupUi: appState.teamGroupUi, incrementalProjection: appState.incrementalProjection, handbookProductionUi: appState.handbookProductionUi, currentUser: { ...(authState.session?.user || {}), displayName: displayName() }, domainBuildTaskProjection: appState.domainBuildTaskProjection, gitlabProjection: appState.gitlabProjection, permissionProjection: appState.permissionProjection, governanceProjection: appState.platformGovernance, databaseConnectionProjection: appState.databaseConnectionProjection, databaseConnectionDrawerOpen: appState.databaseConnectionDrawerOpen, databaseConnectionAdvancedOpen: appState.databaseConnectionAdvancedOpen, databaseConnectionForm: appState.databaseConnectionForm, databaseConnectionStatus: appState.databaseConnectionStatus, selectedPermissionUserId: appState.selectedPermissionUserId, permissionSaveStatus: appState.permissionSaveStatus, permissionUserSearch: appState.permissionUserSearch, permissionListState: appState.permissionListState, gitlabVerification: appState.gitlabVerification, platformAdmin: isPlatformAdmin(), platformTab: appState.platformTab, gitlabListState: appState.gitlabListState, gitlabAddingConnection: appState.gitlabAddingConnection, gitlabEditingConnection: appState.gitlabEditingConnection, outlinePermissions: { create: canPerform('outline:create'), delete: canPerform('outline:delete'), purge: canPerform('outline:purge'), platformAdmin: isPlatformAdmin() }, outlineView }));
+      markHandbookPerformance('render.htmlReady', { htmlLength: viewHtml.length });
+      measureHandbookPerformance('render.viewRootReplace', () => { byId('view-root').innerHTML = viewHtml; });
+      markHandbookPerformance('render.domReplaced');
       const mcpRoot = byId('view-root').querySelector('[data-mcp-admin]');
       if (mcpRoot) mountMcpAdmin(mcpRoot);
       const modelRoot = byId('view-root').querySelector('[data-model-admin]');
@@ -379,14 +414,15 @@ function outlineProjectionKey(route = outlineRouteState()) {
           input.checked = permissionDraft.roles.includes(input.value);
         });
       }
-      cleanupSearchableSelects();
-      markDynamicSelects(document);
-      enhanceTableViews(byId('view-root'), {
+      measureHandbookPerformance('render.cleanupSearchableSelects', () => cleanupSearchableSelects());
+      measureHandbookPerformance('render.markDynamicSelects', () => markDynamicSelects(document));
+      measureHandbookPerformance('render.enhanceTableViews', () => enhanceTableViews(byId('view-root'), {
         preferenceScope: String(authState.session?.user?.principalId || authState.session?.user?.userId || authState.session?.user?.username || 'local'),
         onChange: render,
-      });
-      enhanceResizableNavigation(byId('view-root'));
-      enhanceDirectoryTrees(byId('view-root'));
+      }));
+      measureHandbookPerformance('render.enhanceResizableNavigation', () => enhanceResizableNavigation(byId('view-root')));
+      measureHandbookPerformance('render.enhanceDirectoryTrees', () => enhanceDirectoryTrees(byId('view-root')));
+      markHandbookPerformance('render.enhancersComplete');
       if (appState.activeView === 'production') requestAnimationFrame(mountHandbookVditor);
       const teamImpact = appState.teamGroupUi?.impact;
       if (teamImpact?.groupId) {
@@ -410,7 +446,11 @@ function outlineProjectionKey(route = outlineRouteState()) {
       });
     }
   }
-  window.lucide?.createIcons();
+  measureHandbookPerformance('render.createIcons', () => {
+    if (appState.activeView === 'production') enhanceHandbookEditorIcons([document]);
+    else window.lucide?.createIcons();
+  });
+  markHandbookPerformance('render.syncComplete');
   const databaseDialog = document.querySelector('[data-database-dialog]');
   if (databaseDialog && appState.databaseConnectionDrawerOpen && !databaseDialog.open) {
     databaseDialog.showModal();
@@ -918,6 +958,31 @@ let permissionSearchComposing = false;
 let productionSearchComposing = false;
 
 let handbookWorkspaceSequence = 0;
+const handbookIconTemplates = new WeakMap();
+
+function enhanceHandbookEditorIcons(roots) {
+  const lucide = window.lucide;
+  if (!lucide?.createElement || !lucide.icons) return;
+  for (const root of roots) {
+    for (const node of root.querySelectorAll('[data-lucide]:not(svg)')) {
+      const name = node.getAttribute('data-lucide');
+      const key = name.replace(/(\w)(\w*)(_|-|\s*)/g, (_, first, rest) => first.toUpperCase() + rest.toLowerCase());
+      const definition = lucide.icons[key];
+      if (!definition) continue;
+      const [, defaults] = definition;
+      const attrs = { ...defaults, ...Object.fromEntries([...node.attributes].map(attr => [attr.name, attr.value])) };
+      attrs.class = [...new Set(['lucide', `lucide-${name}`, ...(attrs.class || '').split(/\s+/)].filter(Boolean))].join(' ');
+      let template = handbookIconTemplates.get(definition);
+      if (!template) {
+        template = lucide.createElement(definition);
+        handbookIconTemplates.set(definition, template);
+      }
+      const icon = template.cloneNode(true);
+      for (const [key, value] of Object.entries(attrs)) icon.setAttribute(key, value);
+      node.replaceWith(icon);
+    }
+  }
+}
 
 function refreshHandbookEditor(documentId) {
   const page = document.querySelector('.handbook-production-page');
@@ -941,7 +1006,7 @@ function refreshHandbookEditor(documentId) {
     label.textContent = status;
     label.hidden = status === '未编辑';
   }
-  window.lucide?.createIcons();
+  enhanceHandbookEditorIcons([nextEditor, ...nextDialogs]);
   requestAnimationFrame(mountHandbookVditor);
 }
 
@@ -950,11 +1015,11 @@ async function loadHandbookWorkspace(productionState, params) {
   const handbookId = productionState.handbookId;
   // Mapping has no directory dependency. Capture errors immediately while the
   // directory loads; never read a draft until its branch is actually resolved.
-  const mappingResult = loadHandbookRepositoryMapping(handbookId, 'production').then(
-    mapping => ({ mapping }),
-    error => ['GITLAB_MAPPING_NOT_FOUND', 'GITLAB_LANGUAGE_NOT_MAPPED'].includes(error.code)
-      ? { mapping: null } : { error },
-  );
+  let mappingResult;
+  // Start the directory read before the loading render. The loading shell is
+  // independent of directory data; keeping the request ahead of it removes
+  // avoidable click-to-request main-thread delay under browser concurrency.
+  const handbookOutlinePromise = loadOutlineData(handbookId, null, 'directory');
   const isCurrent = () => sequence === handbookWorkspaceSequence
     && appState.activeView === 'production'
     && productionRouteState().handbookId === handbookId
@@ -962,8 +1027,10 @@ async function loadHandbookWorkspace(productionState, params) {
     && productionRouteState().branch === productionState.branch;
   appState.incrementalProjection = { status: 'loading', requestedHandbookId: handbookId };
   render();
-  const handbookOutline = await loadOutlineData(handbookId, null, 'directory');
+  const handbookOutline = await handbookOutlinePromise;
   if (!isCurrent()) return;
+  markHandbookPerformance('workspace.directoryDataReady', { status: handbookOutline.status });
+  markHandbookPerformance('workspace.directoryStateUpdateStart');
   const documents = collectDocuments(outlineNodes(handbookOutline.detail || {}));
   const visibleDocuments = params.get('view') === 'mine'
     ? documents.filter(item => ownedByCurrentUser(handbookOutline.detail, item.id, { ...(authState.session?.user || {}), displayName: displayName() }))
@@ -979,9 +1046,18 @@ async function loadHandbookWorkspace(productionState, params) {
   if (documentId) ui.draftLoadState[documentId] = 'loading';
   appState.incrementalProjection = { status: 'ok', items: [], detail: null,
     requestedHandbookId: handbookId, handbookOutline, handbooks: [] };
+  markHandbookPerformance('workspace.directoryStateUpdateEnd', { documentCount: documents.length, visibleDocumentCount: visibleDocuments.length });
   // Directory is usable before any mapping, draft, template or remote repository response.
   render();
   if (handbookOutline.status !== 'ok') return;
+  // Mapping is auxiliary to the directory. Start it after the directory has
+  // been projected so concurrent entries do not make the directory read
+  // compete with an unrelated repository lookup.
+  mappingResult = loadHandbookRepositoryMapping(handbookId, 'production').then(
+    mapping => ({ mapping }),
+    error => ['GITLAB_MAPPING_NOT_FOUND', 'GITLAB_LANGUAGE_NOT_MAPPED'].includes(error.code)
+      ? { mapping: null } : { error },
+  );
   loadTemplates({ summary: '1' }).then(result => {
     if (isCurrent()) appState.templateProjection = { items: result?.data || result?.items || [] };
   }).catch(() => {});
@@ -989,6 +1065,7 @@ async function loadHandbookWorkspace(productionState, params) {
     const resolvedMapping = await mappingResult;
     if (!isCurrent()) return;
     if (resolvedMapping.error) throw resolvedMapping.error;
+    markHandbookPerformance('workspace.mappingReady', { mapped: Boolean(resolvedMapping.mapping) });
     const mapping = resolvedMapping.mapping;
     const enabled = mapping?.enabledBranches || [mapping?.defaultBranch].filter(Boolean);
     const branch = enabled.includes(productionState.branch) ? productionState.branch : mapping?.defaultBranch || enabled[0] || '';
@@ -1001,10 +1078,12 @@ async function loadHandbookWorkspace(productionState, params) {
       { mapping, shouldReadFile: async () => { await draft; return !ui.serverDrafts[documentId]?.exists; } });
     await draft;
     if (!isCurrent()) return;
+    markHandbookPerformance('workspace.draftReady', { exists: Boolean(ui.serverDrafts[documentId]?.exists) });
     if (ui.serverDrafts[documentId]?.exists) refreshHandbookEditor(documentId);
     else if (ui.draftLoadState[documentId] === 'failed' || ui.draftLoadState[documentId] === 'forbidden') render();
     const resolvedRepository = await repository;
     if (!isCurrent()) return;
+    markHandbookPerformance('workspace.repositoryReady', { status: resolvedRepository.status });
     ui.repository = resolvedRepository;
     if (reviewPath) {
       const matches = Object.entries(resolvedRepository.filesByDocument || {}).filter(([, file]) => file?.matched && file.path === reviewPath);
@@ -1406,7 +1485,8 @@ async function saveCurrentHandbookDraft(documentId) {
     handbookUi().draftSaveState[documentId] = { status: 'saved' };
     updateHandbookUiList('dirtyDocuments', documentId, changedWhileSaving);
     updateHandbookUiList('savedDocuments', documentId, true);
-    render();
+    // 保存只改变当前文档和目录中的状态标签；保留目录 DOM，避免长目录重新布局。
+    refreshHandbookEditor(documentId);
     showAppNotice(changedWhileSaving ? '已保存提交时的正文；保存期间的后续修改仍未保存，请再次保存后送审。' : `共享草稿 v${result.draft.editVersion} 已保存，可点击“发起评审”。`, { title: '保存成功' });
     return !changedWhileSaving;
   } catch (error) {
@@ -1436,7 +1516,7 @@ function discardLocalHandbookChanges(documentId) {
   delete handbookUi().draftSaveState[documentId];
   updateHandbookUiList('dirtyDocuments', documentId, false);
   updateHandbookUiList('selectedForReview', documentId, false);
-  render();
+  refreshHandbookEditor(documentId);
 }
 
 async function openHandbookHistory(documentId) {

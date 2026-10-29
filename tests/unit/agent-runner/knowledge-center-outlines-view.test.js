@@ -39,7 +39,7 @@ describe('知识中心大纲管理前端契约', () => {
   test('详情加载中不误报服务不可用，真实失败和权限不足保持独立语义', () => {
     const source = view()
       .replace(/^import .*;$/gm, '')
-      .replace('export function renderOutlines', 'function renderOutlines');
+      .replace(/^export function /gm, 'function ');
     const pendingState = (title, description) => `<state><strong>${title}</strong><span>${description}</span></state>`;
     const renderOutlines = new Function('dataNote', 'pendingState', 'escapeHtml', 'renderDirectoryTree',
       `${source}\nreturn renderOutlines;`)(() => '', pendingState, value => String(value ?? ''), () => '');
@@ -54,7 +54,7 @@ describe('知识中心大纲管理前端契约', () => {
   test('尚未建立大纲时问号与填写说明面板成对渲染', () => {
     const source = view()
       .replace(/^import .*;$/gm, '')
-      .replace('export function renderOutlines', 'function renderOutlines');
+      .replace(/^export function /gm, 'function ');
     const renderOutlines = new Function('dataNote', 'pendingState', 'escapeHtml', 'renderDirectoryTree',
       `${source}\nreturn renderOutlines;`)(() => '', (title, description) => `<state>${title}${description}</state>`, value => String(value ?? ''), () => '');
     const html = renderOutlines({
@@ -135,8 +135,8 @@ describe('知识中心大纲管理前端契约', () => {
     let route = { isDetail: true, handbookId: 'DB-004', outlineVersionId: 'published' };
     const pending = new Map();
     const loadOutlineData = jest.fn((_handbookId, versionId) => new Promise(resolve => pending.set(versionId, resolve)));
-    const load = new Function('appState', 'outlineRouteState', 'loadOutlineData', 'fetchDomainBuildTasks', 'render',
-      `${state}\n${loader}\nreturn loadOutlines;`)(appState, () => route, loadOutlineData, async () => ({ tasks: [] }), () => {});
+    const load = new Function('appState', 'outlineRouteState', 'loadOutlineData', 'fetchDomainBuildTasks', 'render', 'updateOutlineAssignments',
+      `${state}\n${loader}\nreturn loadOutlines;`)(appState, () => route, loadOutlineData, async () => ({ tasks: [] }), () => {}, async () => {});
     const oldRequest = load();
     const duplicateRequest = load();
     expect(loadOutlineData).toHaveBeenCalledTimes(1);
@@ -160,8 +160,9 @@ describe('知识中心大纲管理前端契约', () => {
     let resolveTasks;
     const tasks = new Promise(resolve => { resolveTasks = resolve; });
     const render = jest.fn();
-    const load = new Function('appState', 'outlineRouteState', 'loadOutlineData', 'fetchDomainBuildTasks', 'render',
-      `${state}\n${loader}\nreturn loadOutlines;`)(appState, () => route, async () => ({ status: 'ok', selectedId: 'published', detail: {} }), () => tasks, render);
+    const updateOutlineAssignments = jest.fn();
+    const load = new Function('appState', 'outlineRouteState', 'loadOutlineData', 'fetchDomainBuildTasks', 'render', 'updateOutlineAssignments',
+      `${state}\n${loader}\nreturn loadOutlines;`)(appState, () => route, async () => ({ status: 'ok', selectedId: 'published', detail: {} }), () => tasks, render, updateOutlineAssignments);
     const pending = load();
     await new Promise(resolve => setImmediate(resolve));
     expect(appState.outlineProjection).toMatchObject({ status: 'ok', selectedId: 'published' });
@@ -169,7 +170,8 @@ describe('知识中心大纲管理前端契约', () => {
     resolveTasks({ tasks: [] });
     await pending;
     expect(appState.domainBuildTaskProjection).toMatchObject({ status: 'ok', tasks: [] });
-    expect(render).toHaveBeenCalledTimes(3);
+    expect(render).toHaveBeenCalledTimes(2);
+    expect(updateOutlineAssignments).toHaveBeenCalledTimes(1);
   });
   test('上传文件由管理员创建候选并由服务端统一解析', () => {
     const source = view();

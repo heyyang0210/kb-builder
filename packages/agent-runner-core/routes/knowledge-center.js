@@ -557,9 +557,11 @@ function createKnowledgeCenterHandler(options) {
     // 否则资产目录会把已保存映射投影成 repositoryMapped=false，前端也不会请求统计。
     const result = queryKnowledgeAssetsBase(payload, searchParams, admin, { mappings: [] });
     const originals = new Map(payload.handbooks.map(item => [item.handbookId, item]));
-    // 只读取当前页，分批异步加载，避免全量手册的同步网络调用阻塞请求。
-    for (let start = 0; start < result.items.length; start += 8) {
-      const projected = await Promise.all(result.items.slice(start, start + 8).map(async item => {
+    // 只读取当前页，并受控并发加载映射。资产页最多 100 条，全部串行会把
+    // 每条映射的 Storage 往返时间叠加到首屏；当前页并发读取不会改变结果顺序。
+    const mappingConcurrency = Math.min(20, Math.max(1, result.items.length));
+    for (let start = 0; start < result.items.length; start += mappingConcurrency) {
+      const projected = await Promise.all(result.items.slice(start, start + mappingConcurrency).map(async item => {
         let mapping = null;
         try { mapping = await domainStore.readPlatformGitLabMappingAsync(item.handbookId); }
         catch (error) {
@@ -1593,23 +1595,32 @@ function createKnowledgeCenterHandler(options) {
         measure('review-state', () => service.readState(session)),
         measure('review-assets', () => readReviewAssetsAsync()),
       ]);
-      const review = service.reviewBootstrap(session, { handbookId: view === 'mine' ? '' : handbookId, taskId: requestedTaskId, view, documentId: params.get('documentId'), path: params.get('path') }, snapshot);
+      const review = await measure('review-projection', () => service.reviewBootstrap(session, { handbookId: view === 'mine' ? '' : handbookId, taskId: requestedTaskId, view, documentId: params.get('documentId'), path: params.get('path') }, snapshot));
       // Empty/unassigned document lists have no reviewer identities to resolve.
       const needsReviewerNames = review.documents.some(item => item.reviewerIds?.length || item.decidedBy?.id);
       const users = needsReviewerNames ? await measure('review-users', () => authModule?.repository?.listUsers?.() || []) : [];
       const selectedId = requestedTaskId;
       const visible = session?.visibleHandbookIds || session?.user?.visibleHandbookIds;
-      const permittedAssets = { ...assets, handbooks: assets.handbooks.filter(item => !Array.isArray(visible) || visible.map(String).includes(String(item.handbookId))) };
+      const permittedAssets = await measure('review-assets-filter', () => ({ ...assets, handbooks: assets.handbooks.filter(item => !Array.isArray(visible) || visible.map(String).includes(String(item.handbookId))) }));
       // A pending review is an authoritative workflow fact. The asset stage
       // projection can lag behind it, so do not hide an actionable review.
       const pendingReviewHandbookIds = new Set(review.documents.filter(item => item.state === 'under_review').map(item => String(item.handbookId)));
+      // Filter before the database-mode asset projection. The projection reads
+      // the GitLab mapping for every candidate item; review only needs assets
+      // in the review lifecycle or with an actionable pending task.
+      const reviewCandidates = {
+        ...permittedAssets,
+        handbooks: permittedAssets.handbooks.filter(item => REVIEW_ASSET_STATUSES.has(assetStatus(item)) || pendingReviewHandbookIds.has(String(item.handbookId))),
+      };
       const reviewHandbooks = [];
       let page = 1;
       let projection;
-      do {
-        projection = await queryKnowledgeAssets(permittedAssets, new URLSearchParams({ pageSize: '100', page: String(page++) }), isPlatformAdmin(session));
-        reviewHandbooks.push(...projection.items.filter(item => REVIEW_ASSET_STATUSES.has(item.status) || pendingReviewHandbookIds.has(String(item.handbookId))));
-      } while (page <= Math.ceil(projection.total / projection.pageSize));
+      await measure('review-handbook-projection', async () => {
+        do {
+          projection = await queryKnowledgeAssets(reviewCandidates, new URLSearchParams({ pageSize: '100', page: String(page++) }), isPlatformAdmin(session));
+          reviewHandbooks.push(...projection.items.filter(item => REVIEW_ASSET_STATUSES.has(item.status) || pendingReviewHandbookIds.has(String(item.handbookId))));
+        } while (page <= Math.ceil(projection.total / projection.pageSize));
+      });
       const eligibleIds = new Set(reviewHandbooks.map(item => String(item.handbookId)));
       const reviewerNames = new Map();
       for (const user of users) {
@@ -1619,17 +1630,17 @@ function createKnowledgeCenterHandler(options) {
           if (id !== undefined && id !== null) reviewerNames.set(String(id), name);
         }
       }
-      const documents = review.documents.filter(item => eligibleIds.has(String(item.handbookId))).map(item => ({
+      const documents = await measure('review-document-projection', () => review.documents.filter(item => eligibleIds.has(String(item.handbookId))).map(item => ({
         ...item,
         reviewerDisplay: (item.decidedBy?.id && reviewerNames.get(String(item.decidedBy.id))) || (item.decidedBy?.displayName !== '未知用户' && item.decidedBy?.displayName) || item.decidedBy?.name
           || (item.decidedBy ? '人员未匹配' : item.reviewerIds.length ? item.reviewerIds.map(id => reviewerNames.get(String(id)) || '人员未匹配').join('、') : '未明确指派'),
-      }));
-      const handbooks = reviewHandbooks.map(item => {
+      })));
+      const handbooks = await measure('review-handbook-summary', () => reviewHandbooks.map(item => {
         const rows = documents.filter(document => document.handbookId === item.handbookId);
         return { ...item, reviewCount: rows.length, pendingCount: rows.filter(document => document.state === 'under_review').length,
           pendingPublishCount: rows.filter(document => document.state === 'approved').length,
           updatedAt: rows.map(document => document.updatedAt || document.submittedAt).filter(Boolean).sort().at(-1) || null };
-      });
+      }));
       const resolvedHandbookId = review.readerHandbookId || '';
       const diff = selectedId && step === 'diff' ? service.getCandidateDiff(session, selectedId, snapshot) : null;
       const overview = view === 'reader' && !requestedTaskId && eligibleIds.has(handbookId)

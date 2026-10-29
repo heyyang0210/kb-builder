@@ -104,6 +104,10 @@ test.describe('知识中心刷新性能门禁', () => {
   });
 
   test(`审核主体与仓库正文分层性能门禁`, async ({ page }, testInfo) => {
+    // 仅为本门禁启用前端阶段诊断；不改变正式预算判定或业务运行路径。
+    await page.addInitScript(() => {
+      window.__knowledgeCenterPerformance = { enabled: true, measures: [], marks: [] };
+    });
     const response = await page.context().request.get(`${baseUrl}/knowledge-center/api/review/bootstrap?view=handbooks`);
     expect(response.ok()).toBeTruthy();
     const projection = (await response.json()).data;
@@ -131,7 +135,21 @@ test.describe('知识中心刷新性能门禁', () => {
         const marks = Object.fromEntries(performance.getEntriesByType('mark').map(item => [item.name, item.startTime]));
         const repositoryStatus = document.querySelector('[data-review-repository-region]')?.dataset.repositoryStatus;
         const bootstrapRequests = performance.getEntriesByType('resource').filter(item => item.name.includes('/api/review/bootstrap?'));
-        return { round: roundNumber, repositoryStatus, bootstrapRequestCount: bootstrapRequests.length, bootstrapTimings: bootstrapRequests.map(item => ({ startTime: item.startTime, duration: item.duration })), forbiddenLoadingMessage: document.body?.textContent?.includes('仓库正文尚未加载') === true, staticShellAt: marks['review-static-shell-painted'], interactiveAt: marks['review-workspace-ready'], repositoryAt: repositoryStatus === 'ok' ? marks['review-repository-ready'] : undefined };
+        const diagnostics = window.__knowledgeCenterPerformance || {};
+        return {
+          round: roundNumber,
+          repositoryStatus,
+          bootstrapRequestCount: bootstrapRequests.length,
+          bootstrapTimings: bootstrapRequests.map(item => ({ startTime: item.startTime, duration: item.duration, serverTiming: (item.serverTiming || []).map(timing => ({ name: timing.name, duration: timing.duration })) })),
+          forbiddenLoadingMessage: document.body?.textContent?.includes('仓库正文尚未加载') === true,
+          staticShellAt: marks['review-static-shell-painted'],
+          interactiveAt: marks['review-workspace-ready'],
+          repositoryAt: repositoryStatus === 'ok' ? marks['review-repository-ready'] : undefined,
+          frontendDiagnostics: {
+            marks: diagnostics.marks || [],
+            measures: diagnostics.measures || [],
+          },
+        };
       }, round);
       samples.push(sample);
       await page.waitForLoadState('networkidle');
@@ -141,6 +159,7 @@ test.describe('知识中心刷新性能门禁', () => {
     const readableSamples = samples.filter(item => Number.isFinite(item.repositoryAt));
     const repositoryP95 = readableSamples.length === samples.length ? percentile(readableSamples.map(item => item.repositoryAt), 0.95) : null;
     console.log(`[knowledge-center-performance] review static=${staticShellP95}ms interactive=${interactiveP95}ms repository=${repositoryP95 ?? 'not-readable'} statuses=${samples.map(item => item.repositoryStatus).join(',')}`);
+    console.log(`[knowledge-center-performance] review diagnostics=${JSON.stringify(samples.map(sample => ({ round: sample.round, bootstrap: sample.bootstrapTimings, marks: sample.frontendDiagnostics?.marks || [], measures: sample.frontendDiagnostics?.measures || [] })))} `);
     await testInfo.attach('审核与发布分层-performance.json', {
       body: JSON.stringify({ staticShellP95, interactiveP95, repositoryP95, samples }, null, 2),
       contentType: 'application/json',
