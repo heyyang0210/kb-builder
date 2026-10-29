@@ -591,8 +591,11 @@ router.get('/governance/:id', async (req, res, next) => {
     const databaseMode = isDatabaseMode();
     if (databaseMode && req.query.view === 'directory') {
       const started = performance.now();
-      const directory = await handbookDomainStore.readOutlineDirectoryAsync(req.params.id);
-      res.setHeader('Server-Timing', `directory_read;dur=${(performance.now() - started).toFixed(2)}`);
+      const result = await handbookDomainStore.readOutlineDirectoryWithMetaAsync(req.params.id);
+      const upstreamTiming = String(result.headers?.serverTiming || '').trim().replace(/[\r\n]/g, '');
+      const localTiming = `directory_read;dur=${(performance.now() - started).toFixed(2)}`;
+      res.setHeader('Server-Timing', [upstreamTiming, localTiming].filter(Boolean).join(', '));
+      const directory = result.data;
       return res.json({ success: true, data: { ...directory, state: publicOutlineState(directory.state) }, generatedAt: new Date().toISOString() });
     }
     let outline;

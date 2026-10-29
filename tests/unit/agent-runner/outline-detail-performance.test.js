@@ -58,6 +58,11 @@ describe('真实异步 HTTP 详情契约（隔离 Storage 替身，不连接数�
       res.json({ success: true, data: { outlines: [{ id: 'candidate', handbookId: 'DB-004', name: 'SQL参考手册', state: 'draft', outlineStructureVersion: 'v2', editVersion: 3, content: { schemaVersion: 2, nodes } }] } });
     });
     app.get('/v1/domain/outlines/:id/governance', (req, res) => req.params.id === 'candidate' ? res.json({ success: true, data: governance }) : res.status(404).json({ success: false, error: { code: 'OUTLINE_NOT_FOUND' } }));
+    app.get('/v1/domain/outlines/:id/directory', (req, res) => {
+      if (req.params.id !== 'candidate') return res.status(404).json({ success: false, error: { code: 'OUTLINE_NOT_FOUND' } });
+      res.set('Server-Timing', 'acquire;dur=1.2, directory;dur=4.5');
+      return res.json({ success: true, data: { id: 'candidate', state: 'DRAFT', nodes } });
+    });
     storage = await new Promise(resolve => { const instance = app.listen(0, '127.0.0.1', () => resolve(instance)); });
     for (const key of ['KNOWLEDGE_STORAGE_MODE', 'YASDB_STORAGE_URL']) saved[key] = process.env[key];
     process.env.KNOWLEDGE_STORAGE_MODE = 'database';
@@ -96,5 +101,14 @@ describe('真实异步 HTTP 详情契约（隔离 Storage 替身，不连接数�
       expect((await fetch(`${base}/health`, { signal: AbortSignal.timeout(1000) })).ok).toBe(true);
     } finally { releaseMetadata.resolve(); releaseMetadata = null; }
     expect((await pending).ok).toBe(true);
+  });
+
+  test('目录代理透传 Storage 分段 Server-Timing 并追加自身耗时', async () => {
+    const response = await fetch(`${base}/api/outline/governance/candidate?view=directory`);
+    expect(response.ok).toBe(true);
+    expect(response.headers.get('server-timing')).toMatch(/acquire;dur=1\.2/);
+    expect(response.headers.get('server-timing')).toMatch(/directory;dur=4\.5/);
+    expect(response.headers.get('server-timing')).toMatch(/directory_read;dur=/);
+    expect((await response.json()).data.nodes).toEqual(nodes);
   });
 });

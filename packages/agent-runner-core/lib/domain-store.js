@@ -62,6 +62,11 @@ class DomainStore {
   }
 
   async requestAsync(method, pathname, body, extraHeaders = {}) {
+    const result = await this.requestAsyncWithMeta(method, pathname, body, extraHeaders);
+    return result.body;
+  }
+
+  async requestAsyncWithMeta(method, pathname, body, extraHeaders = {}) {
     const target = new URL(pathname, this.baseUrl).toString();
     const headers = { ...extraHeaders };
     if (body !== undefined) headers['Content-Type'] = 'application/json; charset=utf-8';
@@ -81,7 +86,12 @@ class DomainStore {
           parsed?.error?.details,
         );
       }
-      return parsed;
+      return {
+        body: parsed,
+        headers: {
+          serverTiming: response.headers.get('server-timing') || '',
+        },
+      };
     } catch (error) {
       if (error instanceof DomainStoreError) throw error;
       throw new DomainStoreError('DOMAIN_UNAVAILABLE', 'YashanDB 领域存储服务不可用', 503, { cause: error.message });
@@ -207,6 +217,11 @@ class DomainStore {
   async readOutlineDirectoryAsync(outlineId) {
     const result = await this.requestAsync('GET', `/v1/domain/outlines/${encodeURIComponent(outlineId)}/directory`);
     return result.data || result;
+  }
+
+  async readOutlineDirectoryWithMetaAsync(outlineId) {
+    const result = await this.requestAsyncWithMeta('GET', `/v1/domain/outlines/${encodeURIComponent(outlineId)}/directory`);
+    return { data: result.body.data || result.body, headers: result.headers };
   }
 
   async readOutlineGovernanceAsync(outlineId) {

@@ -12,7 +12,10 @@ describe('领域存储异步 HTTP 状态边界', () => {
       for await (const chunk of req) body += chunk;
       calls.push({ method: req.method, url: req.url, body, headers: req.headers });
       res.setHeader('content-type', 'application/json');
-      if (req.url.startsWith('/success')) return res.end(JSON.stringify({ success: true, data: { accepted: true } }));
+      if (req.url.startsWith('/success')) {
+        res.setHeader('server-timing', 'storage-total;dur=3.2');
+        return res.end(JSON.stringify({ success: true, data: { accepted: true } }));
+      }
       if (req.url.startsWith('/conflict')) return res.end(JSON.stringify({ success: false, error: { code: 'REVISION_CONFLICT', message: '版本冲突' } }));
       if (req.url.startsWith('/invalid')) {
         res.statusCode = 422;
@@ -33,6 +36,12 @@ describe('领域存储异步 HTTP 状态边界', () => {
     expect(await store.requestAsync('PATCH', '/success?type=outline', { revision: 2 }, { 'If-Match': '1' })).toMatchObject({ data: { accepted: true } });
     expect(calls.at(-1)).toMatchObject({ method: 'PATCH', url: '/success?type=outline', body: '{"revision":2}' });
     expect(calls.at(-1).headers['if-match']).toBe('1');
+  });
+
+  test('带元数据请求保留业务正文和 Server-Timing', async () => {
+    const result = await store.requestAsyncWithMeta('GET', '/success');
+    expect(result.body).toMatchObject({ data: { accepted: true } });
+    expect(result.headers).toEqual({ serverTiming: 'storage-total;dur=3.2' });
   });
 
   test.each([
