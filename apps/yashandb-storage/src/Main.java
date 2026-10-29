@@ -767,7 +767,8 @@ public final class Main {
                     long acquired = System.nanoTime();
                     Map<String, Double> timings = new LinkedHashMap<>();
                     Map<String, Object> data = projectOutlineDirectory(connection, outlineId, timings);
-                    connection.commit();
+                    // 目录接口只读取投影；连接代理在 close 时回滚并归还连接，
+                    // 因此无需为只读事务额外执行一次数据库提交往返。
                     exchange.getResponseHeaders().set("Server-Timing", String.format(Locale.ROOT,
                         "acquire;dur=%.2f, header;dur=%.2f, nodes;dur=%.2f, owners;dur=%.2f, directory;dur=%.2f",
                         (acquired-started)/1e6, timings.get("header"), timings.get("nodes"), timings.get("owners"), (System.nanoTime()-started)/1e6));

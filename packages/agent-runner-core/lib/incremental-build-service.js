@@ -248,6 +248,7 @@ class IncrementalBuildService {
       service.addSource(session, task.id, `${key}:source`, { sourceType: 'manual', label: '手册已保存修订', content: body.content, reference: body.submissionId });
       service.updateTarget(session, task.id, `${key}:target`, { documentIds: body.documents.map(item => item.documentId) });
       service.saveDraft(session, task.id, `${key}:draft`, { editVersion: 0, content: body.content, operations: body.operations });
+      repository.state.tasks.find(item => item.id === task.id).handbookSource = structuredClone(body);
       const checks = service.runChecks(session, task.id, `${key}:checks`);
       if (!checks.passed) throw new IncrementalBuildError('CHECK_REQUIRED', '手册修订转换未通过完整性检查', 409, checks);
       service.createCandidate(session, task.id, `${key}:candidate`);
@@ -255,8 +256,6 @@ class IncrementalBuildService {
       const next = repository.read();
       const created = next.tasks.find(item => item.id === task.id);
       if (body.reviewMode === 'online_review') created.reviewMode = 'online_review';
-      created.reviews[0].reviewerIds = [...new Set(body.documents.flatMap(item => item.reviewerIds).map(String))];
-      created.handbookSource = structuredClone(body);
       next.publishedVersions.find(item => item.id === baseline.id).current = false;
       next.publishedVersions.find(item => item.id === baseline.id).comparisonOnly = true;
       Object.assign(state, next);
@@ -776,10 +775,19 @@ class IncrementalBuildService {
       const task = this.task(state, taskId);
       this.requireOwner(session, task);
       if (task.state !== 'candidate_ready') throw new IncrementalBuildError('CANDIDATE_REQUIRED', '必须先冻结候选版本', 409);
-      const review = { id: identifier('review'), candidateDigest: task.candidate.digest, status: 'pending', comments: [], submittedBy: actor(session), submittedAt: now(), decision: null };
-      task.reviews.push(review); task.state = 'under_review'; task.updatedAt = review.submittedAt;
-      this.audit(state, 'REVIEW_SUBMITTED', taskId, session, { reviewId: review.id });
-      return review;
+      const documents = Array.isArray(task.handbookSource?.documents) && task.handbookSource.documents.length
+        ? task.handbookSource.documents : [{ documentId: null, title: task.name || '整本任务' }];
+      const submittedAt = now();
+      const reviews = documents.map(document => ({
+        id: identifier('review'), documentId: document.documentId || null,
+        documentTitle: document.title || document.name || document.path || null,
+        candidateDigest: task.candidate.digest, status: 'pending', comments: [],
+        submittedBy: actor(session), submittedAt, decision: null,
+        reviewerIds: document.reviewerIds ? [...new Set(document.reviewerIds.map(String))] : [],
+      }));
+      task.reviews.push(...reviews); task.state = 'under_review'; task.updatedAt = submittedAt;
+      this.audit(state, 'REVIEW_SUBMITTED', taskId, session, { reviewIds: reviews.map(review => review.id), documentIds: reviews.map(review => review.documentId) });
+      return reviews.length === 1 ? reviews[0] : reviews;
     });
   }
 
@@ -983,9 +991,11 @@ class IncrementalBuildService {
       if (body.candidateDigest !== task.candidate?.digest || review.candidateDigest !== task.candidate.digest) throw new IncrementalBuildError('REVIEW_CANDIDATE_CONFLICT', '审核候选版本已变化', 409);
       const document = task.handbookSource.documents.find(item => String(item.documentId) === String(body.documentId));
       if (!document) throw new IncrementalBuildError('REVIEW_DOCUMENT_MISMATCH', '文档不属于当前审核候选', 409);
+      const documentReview = task.reviews.find(item => item.candidateDigest === task.candidate.digest && String(item.documentId) === String(document.documentId));
+      if (!documentReview) throw new IncrementalBuildError('REVIEW_DOCUMENT_MISMATCH', '文档尚未生成逐篇审核记录', 409);
       const previous = (document.reviewerIds || []).map(String);
       document.reviewerIds = reviewerIds;
-      review.reviewerIds = [...new Set(task.handbookSource.documents.flatMap(item => item.reviewerIds || []).map(String))];
+      documentReview.reviewerIds = reviewerIds;
       review.assignment = { updatedBy: actor(session), updatedAt: now() };
       task.updatedAt = review.assignment.updatedAt;
       this.audit(state, 'REVIEWERS_REASSIGNED', taskId, session, { reviewId, documentId: document.documentId, previous, reviewerIds });
@@ -1034,8 +1044,11 @@ class IncrementalBuildService {
       const reviewer = actor(session);
       review.status = body.decision === 'approve' ? 'approved' : 'rejected';
       review.decision = { value: body.decision, comment: body.comment || null, decidedBy: reviewer, decidedAt: now() };
-      task.state = review.status === 'approved' ? 'approved' : 'rejected'; task.updatedAt = review.decision.decidedAt;
-      this.audit(state, 'REVIEW_DECIDED', taskId, session, { reviewId, decision: body.decision });
+      const candidateReviews = task.reviews.filter(item => item.candidateDigest === task.candidate.digest);
+      const allApproved = candidateReviews.length > 0 && candidateReviews.every(item => item.status === 'approved');
+      task.state = review.status === 'rejected' ? 'rejected' : (allApproved ? 'approved' : 'under_review');
+      task.updatedAt = review.decision.decidedAt;
+      this.audit(state, 'REVIEW_DECIDED', taskId, session, { reviewId, documentId: review.documentId || null, decision: body.decision, allDocumentsApproved: allApproved });
       return review;
     });
   }
@@ -1050,9 +1063,10 @@ class IncrementalBuildService {
     return this.withIdempotency(session, key, `publish:${taskId}`, body, state => {
       const task = this.task(state, taskId);
       this.requireReadable(session, task);
-      if (task.state !== 'approved') throw new IncrementalBuildError('APPROVAL_REQUIRED', '候选版本必须通过审核', 409);
+      if (task.state !== 'approved') throw new IncrementalBuildError('APPROVAL_REQUIRED', '范围内所有文档必须逐篇通过审核', 409);
       if (body.expectedCandidateDigest !== task.candidate.digest) throw new IncrementalBuildError('CANDIDATE_CONFLICT', '候选版本已变化', 409);
-      if (!task.reviews.some(item => item.status === 'approved' && item.candidateDigest === task.candidate.digest)) throw new IncrementalBuildError('APPROVAL_REQUIRED', '当前候选版本没有有效审核结论', 409);
+      const candidateReviews = task.reviews.filter(item => item.candidateDigest === task.candidate.digest);
+      if (!candidateReviews.length || candidateReviews.some(item => item.status !== 'approved')) throw new IncrementalBuildError('APPROVAL_REQUIRED', '范围内所有文档必须逐篇通过审核', 409);
       this.baselines.require(state, task.baselineVersionId, task.handbookId, task.businessVersion);
       const publication = {
         id: identifier('docver'), handbookId: task.handbookId, businessVersion: task.businessVersion,

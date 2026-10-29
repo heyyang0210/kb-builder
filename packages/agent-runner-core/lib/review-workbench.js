@@ -5,8 +5,8 @@ function reviewDocuments(tasks, userId, canReview) {
   for (const task of tasks) {
     if (!task.candidate || task.state === 'cancelled') continue;
     const reviews = (task.reviews || []).filter(review => review.candidateDigest === task.candidate.digest);
-    const review = reviews.at(-1);
-    if (!review) continue;
+    const fallbackReview = reviews.at(-1);
+    if (!fallbackReview) continue;
     const sources = task.handbookSource?.documents;
     let documents = sources?.length ? sources : [...new Set([
       ...(task.target?.documentIds || []), ...(task.candidate.operations || []).map(item => item.documentId),
@@ -15,6 +15,7 @@ function reviewDocuments(tasks, userId, canReview) {
       documents = [{ documentId: null, filePath: '', title: '整本手册在线评审（聚合事项）', scope: 'handbook' }];
     }
     for (const document of documents) {
+      const review = reviews.find(item => String(item.documentId || '') === String(document.documentId || '')) || fallbackReview;
       const reviewerIds = (document.reviewerIds || review.reviewerIds || []).map(String);
       const id = `${task.id}:${task.candidate.digest}:${document.documentId}`;
       records.set(id, {

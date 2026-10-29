@@ -340,7 +340,9 @@ function reviewActionPanel(task, review) {
 function detail(task, tasks, allTasks, step, projection, diffData, ui) {
   const issues = taskIssues(task);
   if (issues.length) return invalidTaskState(task, issues);
-  const review = list(task.reviews)[0];
+  const params = new URLSearchParams(window.location.search);
+  const currentDocument = task.handbookSource?.documents?.find(item => item.documentId === params.get('documentId') || item.filePath === params.get('path'));
+  const review = list(task.reviews).find(item => !currentDocument || String(item.documentId || '') === String(currentDocument.documentId || '')) || list(task.reviews)[0];
   const current = ['read', 'diff', 'opinions'].includes(step) ? step : 'read';
   const body = projection?.contextConflict && current !== 'read' ? contextConflict(projection) : current === 'read' ? reader(projection, task, ui) : current === 'diff' ? diff(task, diffData, review) : opinions(task, review);
   const affected = task.handbookSource?.documents || [];
@@ -350,8 +352,6 @@ function detail(task, tasks, allTasks, step, projection, diffData, ui) {
   const capability = task?.capabilities?.canReview ? '可提交审核决定' : task?.capabilities?.canComment ? '可阅读并提交意见，不可审核当前候选' : '仅可阅读，不可审核或发布';
   const productName = task.productName || 'YashanDB';
   const handbookName = task.handbookName || task.name || task.title || '产品描述手册';
-  const params = new URLSearchParams(window.location.search);
-  const currentDocument = task.handbookSource?.documents?.find(item => item.documentId === params.get('documentId') || item.filePath === params.get('path'));
   const documentPath = currentDocument?.filePath || params.get('path') || (task.target?.scope === 'handbook' ? '整本手册' : '未指定文档');
   const sourceName = task.handbookSource ? '已保存修订 · 冻结审核快照' : task.reviewMode === 'online_review' ? '正式版本评审快照' : '候选快照';
   // 评论抽屉：默认折叠；上半部显示当前文件的已有意见，下半部为全文意见表单

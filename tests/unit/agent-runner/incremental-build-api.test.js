@@ -93,6 +93,29 @@ describe('P0 平台内增量构建 API', () => {
     expect(detail.body.data).toMatchObject({ capabilities: { canEdit: false }, candidateSummary: { operationCount: 1 }, reviewSummary: { approved: 1 } });
   });
 
+  test('逐篇审核：一篇通过时任务仍审核中，范围内全部通过后才可发布', async () => {
+    const created = await request(api.baseUrl, 'POST', '/knowledge-center/api/incremental-tasks', {
+      name: '双文档逐篇审核', handbookId: 'DB-001', businessVersion: '23.4.5.100', baselineVersionId: 'baseline-v1',
+    }, 'per-doc-create');
+    const taskId = created.body.data.id;
+    await request(api.baseUrl, 'POST', `/knowledge-center/api/incremental-tasks/${taskId}/sources`, { sourceType: 'manual', label: '需求', reference: 'PER-DOC', content: '更新两个文档' }, 'per-doc-source');
+    await request(api.baseUrl, 'PATCH', `/knowledge-center/api/incremental-tasks/${taskId}/target`, { documentIds: ['doc-a', 'doc-b'], sectionIds: ['section-a', 'section-b'], language: 'zh-CN' }, 'per-doc-target');
+    await request(api.baseUrl, 'PUT', `/knowledge-center/api/incremental-tasks/${taskId}/draft`, { editVersion: 0, content: '# 双文档', operations: [updateOperation('doc-a', 'section-a'), updateOperation('doc-b', 'section-b')] }, 'per-doc-draft');
+    await request(api.baseUrl, 'POST', `/knowledge-center/api/incremental-tasks/${taskId}/checks`, {}, 'per-doc-checks');
+    await request(api.baseUrl, 'POST', `/knowledge-center/api/incremental-tasks/${taskId}/candidate`, {}, 'per-doc-candidate');
+    api.repository.transaction(state => { state.tasks.find(item => item.id === taskId).handbookSource = { documents: [{ documentId: 'doc-a', title: '文档 A', reviewerIds: ['reviewer-1'] }, { documentId: 'doc-b', title: '文档 B', reviewerIds: ['reviewer-1'] }] }; });
+    const submitted = await request(api.baseUrl, 'POST', `/knowledge-center/api/incremental-tasks/${taskId}/reviews`, {}, 'per-doc-review');
+    expect(submitted.body.data).toHaveLength(2);
+    const [first, second] = submitted.body.data;
+    const firstDecision = await request(api.baseUrl, 'POST', `/knowledge-center/api/incremental-tasks/${taskId}/reviews/${first.id}/decision`, { decision: 'approve', candidateDigest: first.candidateDigest }, 'per-doc-decision-a', 'reviewer');
+    expect(firstDecision.body.data).toMatchObject({ documentId: 'doc-a', status: 'approved' });
+    expect((await request(api.baseUrl, 'GET', `/knowledge-center/api/incremental-tasks/${taskId}`)).body.data.state).toBe('under_review');
+    const premature = await request(api.baseUrl, 'POST', `/knowledge-center/api/incremental-tasks/${taskId}/publish`, { expectedCandidateDigest: first.candidateDigest }, 'per-doc-publish', 'reviewer');
+    expect(premature.body.error.code).toBe('GITLAB_MR_REQUIRED');
+    await request(api.baseUrl, 'POST', `/knowledge-center/api/incremental-tasks/${taskId}/reviews/${second.id}/decision`, { decision: 'approve', candidateDigest: second.candidateDigest }, 'per-doc-decision-b', 'reviewer');
+    expect((await request(api.baseUrl, 'GET', `/knowledge-center/api/incremental-tasks/${taskId}`)).body.data.state).toBe('approved');
+  });
+
   test.each([false, true])('真实HTTP：客户端候选摘要拒绝零副作用及幂等重放（手册=%s）', async handbook => {
     const taskId = 'digest-task'; const reviewId = 'digest-review';
     api.repository.transaction(state => state.tasks.push({
