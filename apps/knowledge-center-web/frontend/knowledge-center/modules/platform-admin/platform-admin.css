@@ -1037,3 +1037,81 @@
  [data-mcp-admin] .mcp-kb-table td:last-child { text-align:left; }
  [data-mcp-admin] .mcp-list-tools input { width:100%; }
 }
+
+/* Agent 设置：分组配置行，详细连接按需编辑。 */
+.agent-admin {
+  --agent-list-width: 208px;
+  --agent-setting-gap: 12px;
+  --agent-section-space: 16px;
+  --agent-editor-inset: 20px;
+}
+.agent-admin [hidden] { display: none !important; }
+.agent-admin .agent-section-head, .agent-admin .agent-editor-head,
+.agent-admin .agent-list-heading, .agent-admin .agent-header-actions,
+.agent-admin .agent-dialog-actions, .agent-admin .agent-settings-dialog > header {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--agent-setting-gap);
+}
+.agent-admin .agent-section-head { margin-bottom: var(--agent-section-space); }
+.agent-admin h3, .agent-admin h4 { margin: 0; }
+.agent-admin .agent-workspace { display: grid; grid-template-columns: var(--agent-list-width) minmax(0, 1fr); gap: 20px; align-items: start; }
+.agent-admin .agent-list { min-width: 0; padding: 4px 12px 4px 0; border-right: 1px solid var(--color-border); }
+.agent-admin .agent-list-heading { padding: 8px 10px; font-size: 14px; }
+.agent-admin .agent-list-heading span, .agent-admin .agent-editor-title > span { color: var(--color-text-secondary); font-size: 13px; }
+.agent-admin .agent-card { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 4px 8px; width: 100%; padding: 10px; margin: 2px 0; border: 1px solid transparent; border-radius: 4px; background: transparent; color: inherit; text-align: left; cursor: pointer; overflow-wrap: anywhere; }
+.agent-admin .agent-card strong { grid-column: 1 / -1; font-size: 14px; }
+.agent-admin .agent-card span { font-size: 12px; color: var(--color-text-secondary); }
+.agent-admin .agent-card small { font-size: 12px; color: var(--color-brand); }
+.agent-admin .agent-card:hover { background: var(--color-surface-subtle); }
+.agent-admin .agent-card[aria-pressed=true] { border-color: var(--color-brand); background: var(--color-brand-subtle); }
+.agent-admin .agent-editor { min-width: 0; background: var(--color-surface); }
+.agent-admin .agent-editor-head { padding: 8px var(--agent-editor-inset) 14px; border-bottom: 1px solid var(--color-border); flex-wrap: wrap; }
+.agent-admin .agent-editor-title { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; min-width: 0; overflow-wrap: anywhere; }
+.agent-admin .agent-header-actions { justify-content: flex-end; flex-wrap: wrap; }
+.agent-admin .agent-editor-body { padding: 0 var(--agent-editor-inset); }
+.agent-admin .agent-settings-group { padding: var(--agent-section-space) 0; border-bottom: 1px solid var(--color-border); }
+.agent-admin .agent-settings-group h4 { margin-bottom: 8px; font-size: 14px; }
+.agent-admin .agent-setting-row { display: grid; grid-template-columns: 112px minmax(0,1fr); gap: var(--agent-setting-gap); align-items: center; padding: 6px 0; min-height: 44px; box-sizing: border-box; font-size: 14px; }
+.agent-admin .agent-setting-row > :first-child { color: var(--color-text-secondary); }
+.agent-admin .agent-setting-value { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; min-width: 0; }
+.agent-admin [data-agent-name] { max-width: 360px; }
+.agent-admin label { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.agent-admin input:not([type=checkbox]), .agent-admin select { width: 100%; min-height: 38px; box-sizing: border-box; border: 1px solid var(--color-border); border-radius: 4px; padding: 7px 10px; background: var(--color-surface); color: inherit; font: inherit; }
+.agent-admin .mcp-inline-check { flex-direction: row; align-items: center; gap: 8px; }
+.agent-admin .agent-model-picker { position: relative; max-width: 100%; min-width: 220px; border: 1px solid var(--color-border); border-radius: 4px; }
+.agent-admin summary { cursor: pointer; }
+.agent-admin .agent-model-picker > summary { padding: 8px 12px; overflow-wrap: anywhere; }
+.agent-admin .agent-model-picker > summary span { margin-left: 16px; color: var(--color-text-secondary); }
+.agent-admin .agent-model-menu { display: grid; gap: 10px; padding: 0 12px 12px; }
+.agent-admin .agent-model-picker[open] { flex-basis: 100%; max-width: 400px; }
+.agent-admin [data-agent-mcp-summary] { overflow-wrap: anywhere; }
+.agent-admin .agent-permissions { min-width: 0; }
+.agent-admin .agent-permissions summary { color: var(--color-brand); padding: 8px 0; }
+.agent-admin .agent-permissions p { margin: 4px 0; color: var(--color-text-secondary); }
+.agent-admin [data-agent-status]:empty { display: none; }
+.agent-admin [data-agent-status] { padding: 10px 0; margin: 0; overflow-wrap: anywhere; }
+.agent-admin dialog { color: var(--color-text); background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 8px; padding: 20px; max-width: calc(100vw - 32px); box-sizing: border-box; }
+.agent-admin dialog::backdrop { background: rgb(15 23 42 / 28%); }
+.agent-admin .agent-settings-dialog { width: 1040px; max-height: calc(var(--kc-viewport-height, 100vh) - 48px); padding: 0; }
+.agent-admin .agent-settings-dialog > header { padding: 12px 20px; position: sticky; top: 0; z-index: 1; background: var(--color-surface); border-bottom: 1px solid var(--color-border); }
+.agent-admin .agent-dialog-content { padding: 16px 20px; }
+.agent-admin [data-agent-model] fieldset { min-width: 0; }
+.agent-admin .agent-dialog-actions { justify-content: flex-end; margin-top: 20px; }
+.agent-admin button:focus-visible, .agent-admin summary:focus-visible, .agent-admin input:focus-visible, .agent-admin select:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 2px; }
+@media (max-width: 1100px) {
+  .agent-admin { --agent-list-width: 180px; --agent-editor-inset: 12px; }
+  .agent-admin .agent-workspace { gap: 12px; }
+}
+@media (max-width: 720px) {
+  .agent-admin { --agent-editor-inset: 0px; }
+  .agent-admin .agent-workspace { grid-template-columns: minmax(0,1fr); }
+  .agent-admin .agent-list { display: flex; overflow-x: auto; gap: 8px; border: 0; padding: 0 0 8px; }
+  .agent-admin .agent-list-heading { display: none; }
+  .agent-admin .agent-card { min-width: 170px; }
+  .agent-admin .agent-editor-head { align-items: flex-start; }
+  .agent-admin .agent-header-actions { justify-content: flex-start; }
+  .agent-admin .agent-setting-row { grid-template-columns: minmax(0,1fr); gap: 4px; }
+  .agent-admin .agent-model-picker { min-width: 0; width: 100%; }
+.agent-admin .agent-settings-dialog { max-width: calc(100vw - 16px); max-height: calc(var(--kc-viewport-height, 100vh) - 16px); }
+  .agent-admin .agent-dialog-content { padding: 12px; }
+  .agent-admin button, .agent-admin .agent-model-picker > summary { min-height: 44px; }
+}

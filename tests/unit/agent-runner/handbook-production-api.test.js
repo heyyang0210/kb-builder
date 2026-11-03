@@ -39,7 +39,13 @@ async function setup(t, options = {}) {
   });
   const attachmentRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'handbook-production-api-'));
   const store = memoryStore();
-  const service = createHandbookProductionService({ store, attachmentRoot, yashanDB: options.yashanDB, contentQuality: options.contentQuality, recoveryIntervalMs: options.recoveryIntervalMs, aiStageAdapterEnv: options.aiStageAdapterEnv, ai: { loadMCPConfig: async () => ({}), ...options.ai } });
+  // Catalog and execution must resolve the same frozen fixture configuration.
+  // Production constructs both with Agent governance; injected services need
+  // an explicit shared governance instance to avoid mixing catalog versions.
+  const modelGovernance = options.ai?.modelGovernance || require('../../../packages/agent-runner-core/lib/platform-management/model-governance').createModelGovernance({
+    configManager: { getModelConfigSync: () => ({ model: 'isolated-fixture-model', api_key: 'isolated-fixture-key', base_url: 'http://127.0.0.1:1' }) },
+  });
+  const service = createHandbookProductionService({ store, attachmentRoot, yashanDB: options.yashanDB, contentQuality: options.contentQuality, recoveryIntervalMs: options.recoveryIntervalMs, aiStageAdapterEnv: options.aiStageAdapterEnv, ai: { loadMCPConfig: async () => ({}), ...options.ai, modelGovernance } });
   const authModule = {
     authorize: options.authorize || (async () => options.session === undefined ? editor : options.session),
     repository: {
@@ -77,6 +83,7 @@ async function setup(t, options = {}) {
     },
     moduleRegistry: { get: name => name === 'auth' ? authModule : null },
     handbookProductionService: service,
+    modelGovernance,
     databaseConnectionGovernance: {},
     sendFile(_filePath, res) { res.writeHead(404); res.end(); },
     proxyAuth() {},
@@ -895,9 +902,11 @@ test('AI browser dialog uses real HTTP, preserves editor until adoption and read
     });
   });
   await page.locator('[data-ai-original]').evaluate(field => { field.focus(); field.setSelectionRange(2, 4); });
-  await page.locator('[data-ai-selection]').click();
+  // The current writing surface applies the selected polish range automatically.
   await page.locator('[data-ai-start]').click();
   await page.waitForFunction(() => document.querySelector('[data-ai-fragment]')?.value === '浏览器候选');
+  await page.locator('[data-ai-manual-edit]').click();
+  await page.locator('[data-ai-fragment]').waitFor({ state: 'visible' });
   assert.equal(await page.evaluate(() => window.editorMarkdown), '前文旧句后文');
   await page.locator('[data-ai-fragment]').fill('人工核对后的候选');
   const evidenceDir = path.join(repositoryRoot, 'runtime/test-results/production-ai-browser');
@@ -1109,7 +1118,7 @@ test('AI source HTTP freezes confirmed URL and MCP snapshots and rejects cross-d
   assert.equal(await page.locator('[data-ai-source-list] [data-source-id]:not([data-source-id="knowledge-mcp"]) input[type="checkbox"]').isChecked(), true);
   assert.equal(await page.locator('[data-ai-source-list] [data-source-id]:not([data-source-id="knowledge-mcp"]) input[type="checkbox"]').isChecked(), true);
   await page.getByRole('button', { name: '关闭添加参考文档' }).click();
-  await page.locator('[data-ai-full]').click();
+  // Update defaults to the whole document unless an inline range is selected.
   await page.locator('[data-ai-start]').click();
   await page.locator('[data-ai-candidate]').waitFor({ state: 'visible' });
   assert.equal(modelPayload.sources.length, 1);
@@ -1154,25 +1163,24 @@ test('AI Skill browser selection reaches backend execution and persists frozen c
       getMarkdown: () => window.editorMarkdown, baselineDigest: async () => '',
       onAdopt: result => { window.adoptedResult = result; window.editorMarkdown = result.draft.revision.markdown; } });
   });
-  await page.locator('[data-ai-settings-open]').click();
+  await page.locator('[data-ai-skills-open]').waitFor({ state: 'visible' });
+  await page.locator('[data-ai-skills-open]').click();
   const checkbox = page.locator('[data-ai-skill-list] input');
   await checkbox.waitFor({ state: 'attached' });
   if (!await page.locator('[data-ai-skills]').evaluate(node => node.open)) await page.locator('[data-ai-skills] > summary').click(); assert.equal(await checkbox.isChecked(), false);
+  await page.locator('[data-ai-picker-details]').click();
   await page.locator('[data-ai-skill-list] summary').click();
   assert.match(await page.locator('[aria-label="续写能力指令预览"]').inputValue(), /技术文档续写/);
   await checkbox.check();
   await page.locator('[data-ai-settings-apply]').click();
   await page.locator('[data-ai-original]').evaluate(field => { field.focus(); field.setSelectionRange(2, 2); });
-  await page.locator('[data-ai-selection]').click();
   await page.locator('[data-ai-start]').click();
   await page.waitForFunction(() => document.querySelector('[data-ai-fragment]')?.value === '补充：示例需在授权测试库中验证。');
   assert.equal(await page.evaluate(() => window.editorMarkdown), '前文后文');
   assert.equal(received.length, 1);
   assert.equal(received[0].filter(message => message.role === 'system').length, 2);
   const evidenceDir = path.join(repositoryRoot, 'runtime/test-results/production-ai-skills'); fs.mkdirSync(evidenceDir, { recursive: true });
-  await page.locator('[data-ai-settings-open]').click();
   await page.screenshot({ path: path.join(evidenceDir, 'skill-selection.png'), fullPage: true });
-  await page.locator('[data-ai-settings-apply]').click();
   await page.locator('[data-ai-candidate]').scrollIntoViewIfNeeded();
   await page.screenshot({ path: path.join(evidenceDir, 'skill-continuation.png'), fullPage: true });
   await page.locator('[data-ai-adopt]').click(); await page.waitForFunction(() => !!window.adoptedResult);
@@ -1273,20 +1281,22 @@ test('PingCode design and test sources use fixed service, allowed spaces and con
   await page.locator('[data-ai-source-list] [data-source-id]:not([data-source-id="knowledge-mcp"]) input[type="checkbox"]').waitFor({ state: 'attached' });
   assert.match(await page.locator('[data-ai-source-info]').textContent(), /资料已添加/);
   await page.getByRole('button', { name: '关闭添加参考文档' }).click();
+  const expandSources = page.getByRole('button', { name: /^展开全部/ });
+  if (await expandSources.isVisible()) await expandSources.click();
+  const previewButton = page.locator('[data-ai-source-list] [data-source-id]:not([data-source-id="knowledge-mcp"]) button[aria-label^="预览资料："]');
   const popupPromise = page.waitForEvent('popup');
-  await page.getByRole('button', { name: /预览资料：/ }).click();
+  await previewButton.evaluate(button => button.click());
   const previewPage = await popupPromise;
   await previewPage.waitForLoadState();
   assert.match(await previewPage.locator('body').textContent(), /已授权的文档正文/);
   await previewPage.close();
   assert.equal(await page.locator('[data-ai-source-list] [data-source-id]:not([data-source-id="knowledge-mcp"]) input[type="checkbox"]').isChecked(), true);
-  await page.locator('[data-ai-full]').click();
+  // Update defaults to the whole document unless an inline range is selected.
   await page.locator('[data-ai-start]').click();
   await page.locator('[data-ai-candidate]').waitFor({ state: 'visible' });
   assert.equal(modelPayload.sources[0].sourceType, 'pingcode-design');
   const reportRoot = path.join(repositoryRoot, 'runtime/test-results/production-ai-pingcode');
   fs.mkdirSync(reportRoot, { recursive: true });
-  await page.locator('[data-ai-source-list]').scrollIntoViewIfNeeded();
   await page.screenshot({ path: path.join(reportRoot, 'source-preview.png'), fullPage: true });
   fs.writeFileSync(path.join(reportRoot, 'result.json'), JSON.stringify({ realHTTP: true, realBrowser: true, realExternalPingCode: false,
     sourceTypes: ['pingcode-design', 'pingcode-test'], checked: ['fixed service path', 'space allowlist', 'invalid locator', 'failed read', 'page mismatch', 'content size limit', 'frozen model sources', 'browser preview and explicit confirmation'],
@@ -1329,7 +1339,7 @@ test('混合元信息经真实 HTTP 与浏览器预览、人工采用、再次�
   await page.locator('[data-ai-source-preview]').click();
   assert.equal(await page.locator('[data-ai-source-list] [data-source-id]:not([data-source-id="knowledge-mcp"]) input[type="checkbox"]').isChecked(), true);
   await page.getByRole('button', { name: '关闭添加参考文档' }).click();
-  await page.locator('[data-ai-full]').click();
+  // Update defaults to the whole document unless an inline range is selected.
   await page.locator('[data-ai-start]').click();
   await page.locator('[data-ai-provenance]').waitFor();
   await page.locator('[data-ai-provenance] > summary').click();
@@ -1339,6 +1349,8 @@ test('混合元信息经真实 HTTP 与浏览器预览、人工采用、再次�
   const evidenceDir = path.join(repositoryRoot, 'runtime/test-results/production-ai-provenance'); fs.mkdirSync(evidenceDir, { recursive: true });
   await page.locator('[data-ai-provenance]').scrollIntoViewIfNeeded();
   await page.screenshot({ path: path.join(evidenceDir, 'candidate-provenance.png'), fullPage: true });
+  await page.locator('[data-ai-manual-edit]').click();
+  await page.locator('[data-ai-fragment]').waitFor({ state: 'visible' });
   await page.locator('[data-ai-fragment]').fill('引用原句。归纳参数。人工补充。');
   await page.locator('[data-ai-adopt]').click(); await page.waitForFunction(() => !!window.adoptedResult);
   const saved = await api.request('GET', `${draftPath()}${query}`);
@@ -1498,7 +1510,7 @@ test('默认 MCP 真实 HTTP 与浏览器：五类来源、免填地址、自动
   await page.screenshot({ path: path.join(reportRoot, 'automatic-mcp-settings.png'), fullPage: true });
   await page.getByRole('button', { name: '关闭添加参考文档' }).click();
   await page.locator('[data-ai-requirements]').fill('关键词：SELECT SQL');
-  await page.locator('[data-ai-full]').click(); await page.locator('[data-ai-start]').click();
+  await page.locator('[data-ai-start]').click();
   await page.locator('[data-ai-candidate]').waitFor({ state: 'visible' });
   assert.match(await page.locator('[data-ai-mcp-status]').textContent(), /已取得引用/);
   assert.equal(await page.locator('[data-ai-fragment]').inputValue(), 'SELECT用于查询。');

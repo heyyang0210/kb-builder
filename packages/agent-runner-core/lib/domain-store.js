@@ -161,6 +161,11 @@ class DomainStore {
     return result.data || result;
   }
 
+  async readOutlineCatalogWithMetaAsync() {
+    const result = await this.requestAsyncWithMeta('GET', '/v1/domain/outlines/catalog');
+    return { data: result.body.data || result.body, headers: result.headers };
+  }
+
   async readOutlineCatalogAsync() {
     const result = await this.requestAsync('GET', '/v1/domain/outlines/catalog');
     return result.data || result;

@@ -109,4 +109,25 @@ describe('大纲导入和候选编辑边界 HTTP 契约', () => {
     expect(purge.body.error.code).toBe('OUTLINE_PURGE_UNAVAILABLE');
     expect((await request('GET', '/governance/missing')).status).toBe(404);
   });
+  test('任务新增文档复用候选：稳定ID、保留已有节点、幂等及权限拒绝', async () => {
+    const created = await request('POST', '/handbooks', { handbookId: 'HB-A', productId: 'yashandb', businessVersionTags: ['23.4'], content });
+    expect(created.status).toBe(201);
+    const id = created.body.data.id;
+    const original = (await request('GET', `/versions/${id}`)).body.data.nodes;
+    const parent = original.find(n => n.kind !== 'document');
+    const body = { handbookId: 'HB-A', parentId: parent.id, name: '新增说明', targetVersion: '23.4', proposalKey: 'a'.repeat(64) };
+    expect((await request('POST', `/governance/${id}/document-proposals`, body)).status).toBe(403);
+    const headers = { 'x-outline-actions': 'outline:create', 'x-actor-id': 'tester' };
+    const prepared = await request('POST', `/governance/${id}/document-proposals`, body, headers);
+    expect(prepared.status).toBe(201);
+    const replay = await request('POST', `/governance/${id}/document-proposals`, body, headers);
+    expect(replay.status).toBe(200); expect(replay.body.data).toEqual(prepared.body.data);
+    const next = (await request('GET', `/versions/${prepared.body.data.outlineId}`)).body.data;
+    expect(next.nodes).toHaveLength(original.length + 1);
+    expect(next.nodes.slice(0, original.length)).toEqual(original);
+    expect(next.state).toBe('draft');
+    expect(next.nodes.at(-1)).toMatchObject({ id: prepared.body.data.documentId, parentId: parent.id, title: '新增说明' });
+    expect((await request('GET', `/versions/${id}`)).body.data.nodes).toEqual(original);
+  });
+
 });

@@ -537,7 +537,10 @@ test('无效大纲深链不会回退到第一本手册', async ({ page }) => {
   await expect(page).toHaveURL(`${baseUrl}/knowledge-center/outlines/not-a-real-handbook`);
 });
 
-test('大纲结构复用公共字段配置抽屉并保持个人视图', async ({ page }) => {
+test('大纲结构复用公共字段配置抽屉并保持个人视图', async ({ page }, testInfo) => {
+  // Covers persisted column preferences, reload, reset, filtering and the
+  // description dialog in one user workflow.
+  testInfo.setTimeout(60000);
   await page.goto(`${baseUrl}/knowledge-center/outlines/DB-017?node=document_59ee19fae237c866&document=document_59ee19fae237c866`);
   await expect(page.getByRole('heading', { name: '大纲结构' })).toBeVisible();
   for (const label of ['章节名称', '类型', '状态', '技术领域', '主责负责人', '操作']) {

@@ -125,9 +125,11 @@ test('真实模型与存储：拖拽参考文档、生成、采用及刷新回�
   await page.locator('[data-ai-reference-panel] footer [data-ai-reference-close]').click();
   await page.locator('[data-ai-requirements]').fill(`根据本地参考文档撰写三句话的写作步骤说明，必须保留“${marker}”，不包含SQL或数据库操作，不增加技术事实。`);
   try {
-    const creationResponse = page.waitForResponse(r => r.request().method() === 'POST' && /\/ai-jobs(?:\?|$)/.test(r.url()));
-    await page.locator('[data-ai-start]').click();
-    const creation = await creationResponse;
+    await expect(page.locator('[data-ai-start]'), '生成前必须完成来源检查及个人GitLab授权；查看writing-origin附件定位阻塞').toBeEnabled();
+    const [creation] = await Promise.all([
+      page.waitForResponse(r => r.request().method() === 'POST' && /\/ai-jobs(?:\?|$)/.test(r.url())),
+      page.locator('[data-ai-start]').click(),
+    ]);
     const creationBody = await creation.json();
     await testInfo.attach('generation-creation', { body: JSON.stringify({ status: creation.status(), success: creationBody.success, code: creationBody.error?.code }), contentType: 'application/json' });
     expect(creation.status(), creationBody.error?.message || '真实生成任务必须成功创建').toBe(202);
@@ -156,8 +158,15 @@ test('真实模型与存储：拖拽参考文档、生成、采用及刷新回�
     await testInfo.attach('live-writing-result', { body: JSON.stringify({ storage: 'test_hy', model: result.draft.revision.generationMetadata.model, revisionId: result.draft.currentRevisionId, candidateChars: candidate.length, pageErrors: errors }), contentType: 'application/json' });
     expect(errors).toEqual([]);
   } finally {
-    await page.screenshot({ path: testInfo.outputPath('live-writing-final.png'), fullPage: true });
-    if (await page.locator('[data-ai-status]').count()) await testInfo.attach('writing-status', { body: await page.locator('[data-ai-status]').textContent(), contentType: 'text/plain' });
+    if (!page.isClosed()) {
+      const state = await page.evaluate(() => ({
+        origin: document.querySelector('[data-ai-origin-message]')?.textContent || '',
+        status: document.querySelector('[data-ai-status]')?.textContent || '',
+        generationDisabled: document.querySelector('[data-ai-start]')?.disabled ?? null,
+      })).catch(() => null);
+      if (state) await testInfo.attach('writing-origin', { body: JSON.stringify(state), contentType: 'application/json' });
+      await page.screenshot({ path: testInfo.outputPath('live-writing-final.png'), fullPage: true }).catch(() => {});
+    }
   }
 });
 test('工作台阅读、目录切换、编辑保存与刷新回读', async ({ page }) => {
@@ -192,6 +201,12 @@ test('保存与取消局部刷新保留目录导航上下文', async ({ page }) 
   const group = directory.locator('[data-handbook-directory-group]').first();
   const search = directory.locator('[data-handbook-directory-search]');
   await expect(group).toBeVisible();
+  const documentIcon = directory.locator('.handbook-production-document .handbook-document-icon').first();
+  await expect(documentIcon).toBeVisible();
+  expect(await documentIcon.evaluate(node => {
+    const style = getComputedStyle(node);
+    return style.maskImage !== 'none' && style.width === '16px' && style.height === '16px' && node.getAttribute('aria-hidden') === 'true';
+  })).toBe(true);
   await page.locator('.handbook-production-toolbar [data-handbook-mode="edit"]').click();
   await page.locator('.handbook-editor-format > summary').click();
   await page.locator('[data-handbook-editor-format="markdown"]').click();
@@ -308,6 +323,8 @@ test('真实存储：本地拖拽上传、长引用列表折叠与跨滚动优�
     await expect(page.locator('[data-ai-source-list] section')).toHaveCount(index + 1);
   }
   await page.locator('[data-ai-reference-panel] footer [data-ai-reference-close]').click();
+  await expect(page.locator('[data-ai-reference-panel]')).toBeHidden();
+  await page.locator('[data-ai-source-add]').click();
   await expect(page.locator('[data-ai-source-list] section:visible')).toHaveCount(3);
   await page.locator('[data-ai-references-toggle]').focus();
   await page.keyboard.press('Enter');

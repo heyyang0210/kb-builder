@@ -24,7 +24,7 @@
 
 `.env.example` 只描述环境注入契约；本地 `.env` 可保存本机凭据但不得提交，生产密钥应由环境变量或密钥系统注入。`service.json` 中的 `api_key_encrypted` 和加密请求头只用于兼容现有配置，新增或轮换密钥不得写入版本库；生产应由密钥系统注入并按部署策略更新。对外访问地址通过 `KNOWLEDGE_CENTER_PUBLIC_BASE_URL` 统一配置，可使用完整的 IP URL（例如 `http://192.0.2.10:13510`）或域名 URL；平台地址、CAS service 和默认 GitLab OAuth 回调由它派生。
 
-当前 `git-tools.yasdb.com` OAuth 应用接受 `read_api read_repository`，用于知识资产读取和重新连接；修改配置后，已有用户须重新连接 GitLab 账号才能取得新范围。若要启用审核发布的 REST API 写入任务分支、提交和 MR，GitLab OAuth 应用必须额外启用并允许 `api`，同时将 `KNOWLEDGE_CENTER_GITLAB_OAUTH_SCOPES` 改为 `api`。`write_repository` 不能替代 REST API 写权限。
+历史读取配置为 `read_api read_repository`。2026-10-30 用户批准本机平台请求范围调整为 `api`，GitLab 应用侧由用户勾选该范围；配置生效后，已有用户须重新连接 GitLab 账号才能取得新范围，不能仅凭环境配置认定实际令牌已经扩权。若要启用审核发布的 REST API 写入任务分支、提交和 MR，GitLab OAuth 应用必须额外启用并允许 `api`，同时将 `KNOWLEDGE_CENTER_GITLAB_OAUTH_SCOPES` 改为 `api`。`write_repository` 不能替代 REST API 写权限。
 
 环境和内部端口使用统一前缀：`KNOWLEDGE_CENTER_ENV`、`KNOWLEDGE_CENTER_FRONTEND_PORT`、`KNOWLEDGE_CENTER_DOCUMENT_API_PORT`、`KNOWLEDGE_CENTER_PINGCODE_API_PORT`、`KNOWLEDGE_CENTER_INTERNAL_HOST` 和 `KNOWLEDGE_CENTER_PINGCODE_HOST`。旧 `KNOWLEDGE_CENTER_PUBLIC_HOST` 仅作一个兼容周期的输入，不应写入新配置。
 
@@ -71,7 +71,7 @@
 
 ## 平台管理 MCP 配置
 
-入口 `/knowledge-center/platform?tab=mcp`。`service.json#/mcp` 为平台、原知识文档生成器、AI 资料来源共同读取的唯一配置；平台保存通过既有 ConfigManager 加密 Key 与普通请求头值，浏览器读取脱敏配置投影，知识库路由 ID 可见并可编辑。`content-rules.json#/platformMcp` 定义超时、请求头数量/长度、缓存 TTL/条数边界和默认值，不在前端复制业务限值。
+入口 `/knowledge-center/platform?tab=models`，在当前 Agent 中管理 MCP；旧 tab=mcp 自动归入该入口。`service.json#/agentServices.agents[].mcp` 为各 Agent 独立配置；旧顶层 mcp 保留兼容历史调用，未迁移时只读投影。平台保存通过既有 ConfigManager 加密 Key 与普通请求头值，浏览器读取脱敏配置投影，知识库路由 ID 可见并可编辑。`content-rules.json#/platformMcp` 定义超时、请求头数量/长度、缓存 TTL/条数边界和默认值，不在前端复制业务限值。
 
 连接测试使用未保存表单并执行 initialize、initialized 通知和 tools/list；不自动保存，也不执行 tools/call。`content-rules.json#/platformMcp/multiSearchHeaderName` 指定支持重复配置的搜索路由标头；重复行会成为逐库搜索目标，单独建立会话后合并结果。知识库路由 ID 在管理界面直接展示并可编辑；API Key 与普通自定义请求头值继续脱敏。其他重复标头仍需清理并为保留项重填值。现有生成器 `/api/config/*` 保持兼容，其部署访问边界及统一权限治理仍需单独维护；配置加密的 `AGENT_RUNNER_KEY` 应由环境安全提供，沿用默认回退不能视为生产密钥治理完成。
 
@@ -79,7 +79,7 @@
 
 `content-rules.json#/platformModels/providers[].baseUrl` 为模型服务新增表单的公开地址预设；手工地址和历史地址不自动覆盖，不预设模型标识。
 
-`content-rules.json#/productionAI/executionFeedback` 集中设置写作执行反馈的预览落盘间隔 `previewIntervalMs` 与最大字符数 `maxPreviewChars`。仅保存已解码正文，阶段调用的输入摘要和结果随任务记录；实时文本不包含来源协议原始 JSON。
+`content-rules.json#/productionAI/historyLimit` 控制每篇文档可回看的 AI 生成历史条数；`content-rules.json#/productionAI/executionFeedback` 集中设置写作执行反馈的预览落盘间隔 `previewIntervalMs`、最大字符数 `maxPreviewChars`，以及 Codex 活动窗口 `maxAgentEvents`、单条消息 `maxAgentMessageChars`。仅保存已解码正文和经过投影的 Agent 消息/工具状态；不保存原始调用参数或来源协议 JSON。
 
 GPT 服务模型目录按2026-10-26用户提供的网关截图追加文本模型：`gpt-5.5`、`gpt-5.6-luna`、`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-6-astra`、`gpt-6-luna`、`gpt-6-sol`；保留原有模型及默认选择。此列表是网关标识，非官方定价或可调用性验证。`gpt-image-2`、`BAAI/bge-m3`不加入当前文本写作服务目录。测试模型下拉框直接读取对应服务的 `models[]`，无需在前端另写清单。
 
@@ -115,3 +115,21 @@ AI写作参考文档上传使用 `productionAI.sources.upload` 限制扩展名�
 内容补充盘点入口为`tools/repository/inventory-production-content.cjs`，沿用`production-reference-audit.json`的只读请求超时；内容字段与摘要算法来自当前生产服务契约，草稿键直接复用contextKey。显式环境变量`YASDB_STORAGE_URL`、`KC_CONTENT_INVENTORY_OUTPUT`必填，`KC_ATTACHMENT_ROOT`和`KC_SOURCE_IMAGE_ROOT`仅用于已确认的本机权威附件/来源图片目录；schemaVersion=2报告分别记录两类物理状态，图片按当前来源、任务快照及历史修订快照并集去重，并核对摘要/大小/文件签名；不读取service.json凭据，不自动修改配置、目录或数据库。缺省物理检查为未执行，报告独占落盘，不覆盖历史证据。
 
 手册读取性能配置 `handbook-performance.json` 的 `browserConcurrencyLevels` 与 `apiConcurrencyLevels` 分别控制浏览器和API并发档位，两者按阶段分开采样；浏览器每档固定 `browserRounds` 次，使用独立上下文和同账号登录态。目录/正文预算不随并发自动放宽。
+
+## Agent&模型服务与 Codex
+
+平台入口统一为 Agent&模型服务。`service.json#/agentServices` 保存每套 Agent 的模型、MCP、执行器和推理强度；新建时复制默认 Agent 的模型/MCP，之后独立维护，密钥沿用嵌套加密。默认 Agent 独立于 Agent 内默认模型。首次未保存前只投影历史配置，原顶层 model/mcp 保留给兼容调用；写作任务按所选 Agent 取配置和版本。
+
+`content-rules.json#/agentRuntime` 控制 Codex 版本、总超时、产物/事件大小、Agent 数量与名称长度及交付提示词。运行宿主必须提供可执行的 Codex CLI 0.156.1；工作区及事件保存于 runtime/agent-runner/codex-runs。Codex 使用独立 CODEX_HOME，不继承个人登录态。公司网关基础地址为 https://ai-green.yasdb.com/v1，协议 responses，认证 requires_openai_auth=true；实际请求 /v1/responses。
+
+模型连接完整保留原字段。Codex 当前映射模型、Provider、地址、认证与推理强度；temperature/max_tokens 不映射，连接 timeout 不替代 agentRuntime 总超时。Codex 桥接仅支持只读 YashanDB 知识库，启用 generic MCP 会在预检中报错。DeepSeek Harness 仅可保存配置，尚不能运行。仅装配平台冻结的技能文本，不自动加载个人技能脚本。
+
+GitLab OAuth 应用权限排查：个人创建的应用可从 GitLab“偏好设置→应用”（`/-/profile/applications`）查找；管理员创建的应用需由管理员从“管理中心→应用”编辑。通过平台配置的Application ID核对对应应用，保留现有回调地址，不重建应用、不更换Secret。启用api后，获授权的平台管理员同步调整请求范围并重载服务，用户在个人设置重新连接GitLab；已有令牌不会自动扩权。先只读核对新令牌scope和真实账号，再按批准目录创建测试源分支和MR；api不代表获准合并，合并边界仍以用户授权为准。
+
+
+content-rules.json的gitlabParticipants配置项目可访问用户分页大小与上限；使用GitLab /projects/:id/users精确匹配统一登录账号，不以members/all或固定项目角色等级代替可访问性判断。实际指派结果须回读MR核对，分支合并权限不由此授予。
+
+
+## 任务管理 V2（2026-10-30）
+
+content-rules.json 的 documentTasks 提供初始 defaultOwnerId、reasonOptions 与 pingcodeProjectUrl。默认人177为真实目录何灿稳定ID；运行配置后续在任务聚合中维护，变更不重派已有任务。

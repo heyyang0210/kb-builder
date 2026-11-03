@@ -277,10 +277,10 @@ function createProductionAISources({ store, context, contextKey, actor, requireC
       return { ...structuredClone(source), priority: index + 1 };
     });
   }
-  async function retrieveAutomatic(job) {
+  async function retrieveAutomatic(job, agentMcpConfig) {
     const policy = job.mcpRetrievalPolicy;
     if (!policy) return { snapshots: [], retrieval: { status: 'not_configured', attempts: [] } };
-    const outcome = await require('./production-ai-mcp-retrieval').retrieve(job, policy, await mcpConfig(), settings().maxBytes, now);
+    const outcome = await require('./production-ai-mcp-retrieval').retrieve(job, policy, agentMcpConfig || await mcpConfig(), settings().maxBytes, now);
     for (const snapshot of outcome.snapshots) {
       const hosted = await images.materialize(snapshot, snapshot, settings());
       Object.assign(snapshot, hosted, { contentDigest: crypto.createHash('sha256').update(hosted.content).digest('hex') });

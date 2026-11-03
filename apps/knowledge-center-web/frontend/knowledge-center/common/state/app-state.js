@@ -1,5 +1,6 @@
 export const views = {
   dashboard: ['工作台', '工作台'],
+  documentTasks: ['任务管理', '任务管理'],
   assets: ['知识资产', '知识资产'],
   cleaning: ['资料清洗', '资料清洗'],
   outlines: ['大纲管理', '大纲管理'],
@@ -12,7 +13,7 @@ export const views = {
 };
 
 export const appState = {
-  templateProjection: null,
+  templateProjection: null, documentTaskProjection: null,
   activeView: 'dashboard', contextProjection: null, projection: null, cleaningProjection: null, outlineProjection: null, assetCatalog: null, incrementalProjection: null, domainBuildTaskProjection: null, reviewProjection: null, gitlabProjection: { connections: [] }, gitlabAccountProjection: null,
   outlineListState: { search: '', statusFilter: '', scrollPosition: 0 },
   selectedPermissionUserId: null,

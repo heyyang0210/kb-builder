@@ -40,7 +40,7 @@ async function fixture(page) {
   const service = new IncrementalBuildService(repository);
   function seed(id, docs, handbookId = 'HB-1') {
     return service.createHandbookReview(session, id, {
-      submissionId: id, name: id, handbookId, branch: 'main', commitSha: 'base-sha', content: docs.map(d => d.markdown).join('\n\n'), baselineContent: '# 旧正文', documents: docs,
+      submissionId: id, name: id, handbookId, repositoryIdentity: 'fixture:group/docs', branch: 'main', commitSha: 'base-sha', content: docs.map(d => d.markdown).join('\n\n'), baselineContent: '# 旧正文', documents: docs,
       operations: docs.map(d => ({ type: 'update', documentId: d.documentId, nodeId: d.documentId, beforeDigest: crypto.createHash('sha256').update('# 旧正文').digest('hex'), after: { content: d.markdown } })),
     });
   }
@@ -101,7 +101,15 @@ async function fixture(page) {
     repository.transaction(state => state.tasks.push(task));
     return task;
   }
-  return { base, shared, following, unassigned, api, identity, seedEarlyReview() { return seed('早期阶段候选', [doc('early')], 'HB-early'); }, seedPrincipalReview() { return seed('人员 ID 指派', [doc('principal-assigned', ['178'])]); }, seedOnlineDocument() {
+  return { base, shared, following, unassigned, api, identity, reviseShared() {
+    const body = structuredClone(shared.handbookSource);
+    body.submissionId = '共享候选修订'; body.name = '共享候选修订'; body.revisionOfTaskId = shared.id;
+    body.documents.find(item => item.documentId === 'shared-b').markdown += '\n\n已补充操作步骤。';
+    body.content = body.documents.map(item => item.markdown).join('\n\n');
+    body.operations = body.documents.map(item => ({ type: 'update', documentId: item.documentId, nodeId: item.documentId,
+      beforeDigest: crypto.createHash('sha256').update('# 旧正文').digest('hex'), after: { content: item.markdown } }));
+    return service.createHandbookReview(session, '共享候选修订', body);
+  }, seedEarlyReview() { return seed('早期阶段候选', [doc('early')], 'HB-early'); }, seedPrincipalReview() { return seed('人员 ID 指派', [doc('principal-assigned', ['178'])]); }, seedOnlineDocument() {
     const filePath = 'doc/产品文档/开发手册/SQL参考手册/00SQL参考手册.md';
     return seedLegacyOnline('sql-online-review', 'document', [filePath], '# SQL参考手册\n\n已发布原文');
   }, seedOnline() {
@@ -199,6 +207,9 @@ test('审核工作台：早期资产阶段的真实待审候选仍可发现，�
 });
 
 test('工作台：阶段与指派准入、完整清单、冻结正文、只读目录、决定与下一篇', async ({ page }, testInfo) => {
+  // This scenario deliberately covers two documents, a rejected decision,
+  // a retry, and a handoff to the next assigned document.
+  testInfo.setTimeout(60000);
   const f = await fixture(page);
   try {
     const errors = []; page.on('pageerror', error => errors.push(error.message));
@@ -241,6 +252,8 @@ test('工作台：阶段与指派准入、完整清单、冻结正文、只读�
     await expect(page.locator('.review-action-card [data-review-decision="approve"]')).toBeVisible();
     await expect(page.locator('.review-reader-snapshot')).not.toContainText('冻结正文 shared-b');
     await expect(page.locator('.review-scope-notice')).toContainText('2 篇文档');
+    await expect(page.locator('.review-scope-notice')).toContainText('本次仅审核当前文档：docs/shared-a.md');
+    await expect(page.locator('.review-scope-notice')).toContainText('范围内每篇通过才可交付');
     await expect(page.locator('[data-review-document="docs/reference.md"]')).toHaveCount(0);
     await page.locator('[data-review-show-all]').check();
     const referenceLink = page.locator('a[data-review-document="docs/reference.md"]');
@@ -260,6 +273,15 @@ test('工作台：阶段与指派准入、完整清单、冻结正文、只读�
     await page.locator('[data-review-decision="approve"]').click();
     await expect(page.locator('#error-message')).toContainText('测试审核失败');
     expect((await f.api('/review/bootstrap?view=mine')).data.workbench.mine).toHaveLength(3);
+    await page.locator('[data-review-decision="approve"]').click();
+    await expect(page.locator('[data-review-publish]')).toHaveCount(0);
+    expect((await f.api('/review/bootstrap?view=mine')).data.workbench.mine).toHaveLength(2);
+    const remainingDocumentUrl = new URL(page.url());
+    remainingDocumentUrl.searchParams.set('documentId', 'shared-a');
+    remainingDocumentUrl.searchParams.set('path', 'docs/shared-a.md');
+    await page.goto(remainingDocumentUrl.href);
+    await page.getByRole('button', { name: '1 阅读文档', exact: true }).click();
+    await expect(page.locator('.review-reader-snapshot')).toContainText('冻结正文 shared-a');
     await page.locator('[data-review-decision="approve"]').click();
     await expect(page.locator('[data-review-publish]')).toBeVisible();
     expect((await f.api('/review/bootstrap?view=mine')).data.workbench.mine).toHaveLength(1);
@@ -325,6 +347,38 @@ test('整本手册在线评审聚合事项可从完整清单发现并阅读', as
     await expect(page).toHaveURL(new RegExp(`taskId=${task.id}`));
     await expect(page.locator('.review-reader-snapshot')).toContainText('整册不可变快照');
     await expect(page).not.toHaveURL(/documentId=null/);
+    expect(f.gitlabWrites()).toBe(0);
+  } finally { await f.close(); }
+});
+
+
+test('逐篇退回与重审：未改篇保留通过，只审核修改篇，旧退回记录保留', async ({ page }) => {
+  const f = await fixture(page);
+  try {
+    const reader = (taskId, documentId) => `${f.base}/knowledge-center/review?view=reader&handbookId=HB-1&taskId=${taskId}&documentId=${documentId}&path=${encodeURIComponent(`docs/${documentId}.md`)}`;
+    await page.goto(reader(f.shared.id, 'shared-a'));
+    await expect(page.locator('.review-reader-snapshot')).toContainText('冻结正文 shared-a');
+    await page.locator('[data-review-decision="approve"]').click();
+    await expect(page.locator('[data-review-publish]')).toHaveCount(0);
+    await page.goto(reader(f.shared.id, 'shared-b'));
+    await page.locator('.review-return summary').click();
+    await page.locator('[data-review-decision-form] textarea[name="comment"]').fill('请补充操作步骤。');
+    await page.getByRole('button', { name: '确认退回', exact: true }).click();
+    await expect.poll(async () => (await f.api(`/incremental-tasks/${f.shared.id}`)).data.state).toBe('rejected');
+    await expect(page.locator('[data-review-publish]')).toHaveCount(0);
+    const child = f.reviseShared();
+    expect(child.reviews.find(item => item.documentId === 'shared-a').status).toBe('approved');
+    expect(child.reviews.find(item => item.documentId === 'shared-b').status).toBe('pending');
+    await page.goto(reader(child.id, 'shared-b'));
+    await expect(page.locator('.review-reader-snapshot')).toContainText('已补充操作步骤。');
+    await page.locator('[data-review-decision="approve"]').click();
+    await expect(page.locator('[data-review-publish]')).toBeVisible();
+    const after = (await f.api(`/incremental-tasks/${child.id}`)).data;
+    expect(after.state).toBe('approved');
+    expect(after.reviews.find(item => item.documentId === 'shared-a').carriedFrom.taskId).toBe(f.shared.id);
+    const original = (await f.api(`/incremental-tasks/${f.shared.id}`)).data;
+    expect(original.state).toBe('rejected');
+    expect(original.reviews.find(item => item.documentId === 'shared-b').decision.comment).toBe('请补充操作步骤。');
     expect(f.gitlabWrites()).toBe(0);
   } finally { await f.close(); }
 });

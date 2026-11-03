@@ -162,18 +162,18 @@ async function runRound(round) {
   await journey('文档生产', round, () => goto('assets'), [
     nav('production', S('[data-handbook-href]')),
     step('点击SQL参考手册展开目录', `[data-handbook-href*="${source.handbookId}"]`, S('.handbook-production-directory.is-open [data-handbook-document]', { enabled: true })),
-    step('选择对应文档', '.handbook-production-document:nth-of-type(2) [data-handbook-document]', { all: [absent('.handbook-document-skeleton'), absent('.handbook-production-directory.is-open'), S('[data-handbook-mode="edit"]', { enabled: true })] }, { feedback: S('[data-handbook-document-title]') }),
-    step('进入编辑', '[data-handbook-mode="edit"]', S('[data-handbook-editor-format="markdown"]', { enabled: true })),
+    step('选择对应文档', '.handbook-production-document [data-handbook-document]:not([aria-current="page"])', { all: [absent('.handbook-document-skeleton'), absent('.handbook-production-directory.is-open'), S('.handbook-production-editor [data-handbook-mode="edit"]', { enabled: true })] }, { feedback: S('[data-handbook-document-title]') }),
+    step('进入编辑', '.handbook-production-editor [data-handbook-mode="edit"]', S('[data-handbook-editor-format="markdown"]', { enabled: true })),
     step('切换Markdown编辑', '[data-handbook-editor-format="markdown"]', S('[data-handbook-markdown-editor]')),
     step('返回预览', '[data-handbook-mode="read"]', S('.handbook-production-editor.is-reading')),
   ]);
   if (own && report.fixtures.outline) {
     await journey('AI辅助写作', round, async () => {
       await goto(`production/handbook/${encodeURIComponent(own.handbookId)}`);
-      await page.locator('[data-handbook-mode="edit"]').waitFor();
+      await page.locator('.handbook-production-editor [data-handbook-mode="edit"]').first().waitFor();
     }, [
       step('选择专用文档', '[data-handbook-document]:not([aria-current="page"])', async target => ({ all: [await fromTarget('data-handbook-document', '[data-handbook-current-document="$value"]')(target), absent('.handbook-production-directory.is-open')] })),
-      step('编辑专用文档', '[data-handbook-mode="edit"]', S('[data-handbook-editor-format="markdown"]')),
+      step('编辑专用文档', '.handbook-production-editor [data-handbook-mode="edit"]', S('[data-handbook-editor-format="markdown"]')),
       step('切换专用Markdown编辑', '[data-handbook-editor-format="markdown"]', S('[data-handbook-markdown-editor]')),
       step('输入专用正文', '[data-handbook-markdown-editor]', S('[data-handbook-markdown-editor]', { value: `本轮标识：${round}` }), { input: config.draftMarkdown + `\n本轮标识：${round}`, event: 'input' }),
       step('保存专用草稿', '[data-handbook-draft-save]', S('[data-handbook-save-status]', { text: '已保存|保存成功' }), { feedback: S('[data-handbook-save-status]', { text: '保存中|已保存|保存成功' }), verify: () => verifyDraft(config.draftMarkdown + `\n本轮标识：${round}`) }),
@@ -251,7 +251,7 @@ async function readJourneys(round, source) {
     step('取消设置', '[data-service-cancel]', absent('[data-connection-settings]:not([hidden])')),
   ]);
   await journey('模型服务', round, async () => { await goto('platform?tab=governance'); await page.locator('[data-database-open]').waitFor(); }, [
-    step('进入模型服务', '[data-platform-tab="models"]', S('[data-model-default]')),
+    step('进入模型服务', '[data-platform-tab="models"]', S('[data-model-rows]')),
     step('展开模型配置', '.model-service-summary', S('.model-service-editor[open] [name="models"]')),
     step('展开生成参数', '.model-service-editor[open] .model-advanced summary', S('.model-service-editor[open] [name="max_tokens"]')),
   ]);

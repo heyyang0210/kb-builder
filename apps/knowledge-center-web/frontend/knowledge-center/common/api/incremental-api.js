@@ -87,5 +87,6 @@ export const decideIncrementalReview = (taskId, reviewId, body) => command(taskI
 export const cancelIncrementalReview = (taskId, reviewId, body) => command(taskId, `reviews/${encodeURIComponent(reviewId)}/cancel`, body);
 export const reassignIncrementalReview = (taskId, reviewId, body) => request(`/knowledge-center/api/review/tasks/${encodeURIComponent(taskId)}/reviews/${encodeURIComponent(reviewId)}/reviewers`, { method: 'PUT', body: JSON.stringify(body) });
 export const publishIncrementalTask = (taskId, body = {}) => command(taskId, 'publish', body);
+export const loadMRParticipants = taskId => request(`${endpoint}/${encodeURIComponent(taskId)}/mr-participants`);
 export const recordIncrementalEvidence = (taskId, body) => command(taskId, 'external-evidence', body);
 export const createIncrementalRevision = (taskId, body = {}) => command(taskId, 'revisions', body);

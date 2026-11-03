@@ -243,6 +243,9 @@ async function request(connection, apiPath, options = {}) {
   const text = await response.text();
   let body; try { body = JSON.parse(text); } catch (_error) { body = null; }
   if (!response.ok) {
+    if (response.status === 403 && body?.error === 'insufficient_scope') {
+      throw new GitLabConnectorError('GITLAB_INSUFFICIENT_SCOPE', 'GitLab 授权范围不足，请管理员开通所需 API 权限后重新授权', 403, { upstreamStatus: 403 });
+    }
     const code = response.status === 401 ? 'GITLAB_UNAUTHORIZED' : response.status === 403 ? 'GITLAB_FORBIDDEN' : response.status === 404 ? 'GITLAB_NOT_FOUND' : 'GITLAB_REQUEST_FAILED';
     throw new GitLabConnectorError(code, body?.message || `GitLab 请求失败（${response.status}）`, response.status, { upstreamStatus: response.status });
   }
@@ -428,6 +431,20 @@ async function submitDocumentMergeRequest(connection, input, options = {}) {
   if (!input.documents?.length) throw new GitLabConnectorError('GITLAB_NO_CHANGES', '候选没有可提交的文档', 422);
   const project = `/projects/${projectPath(connection)}`;
   const sourceBranch = `knowledge-review/${input.taskId}`;
+  const participants = input.participants;
+  const roleIds = (items = []) => [...new Set(items.map(item => Number(item.gitlabId)))].sort((a, b) => a - b);
+  if (participants && (!participants.assignees?.length || !participants.reviewers?.length || [...participants.assignees, ...participants.reviewers].some(item => !Number.isSafeInteger(item.gitlabId) || item.gitlabId <= 0))) {
+    throw new GitLabConnectorError('GITLAB_PARTICIPANTS_INVALID', '请完整指定合入负责人和审核人', 422);
+  }
+  async function verifyParticipants(mr) {
+    if (!participants) return;
+    const current = await request(connection, `${project}/merge_requests/${mr.iid}`, options);
+    for (const role of ['assignees', 'reviewers']) {
+      const actual = (current[role] || []).map(item => Number(item.id)).sort((a, b) => a - b);
+      if (JSON.stringify(actual) !== JSON.stringify(roleIds(participants[role]))) throw new GitLabConnectorError('GITLAB_MR_PARTICIPANTS_CONFLICT', 'MR 人员与平台选择不一致，请核对 GitLab 后重试', 409);
+    }
+  }
+  const result = mr => ({ iid: mr.iid, webUrl: mr.web_url, state: mr.state, sourceBranch, targetBranch: input.branch, ...(participants ? { participants } : {}) });
   const query = `?state=all&source_branch=${encodeURIComponent(sourceBranch)}&target_branch=${encodeURIComponent(input.branch)}`;
   const existing = await request(connection, `${project}/merge_requests${query}`, options);
   const previous = existing.find(item => item.source_branch === sourceBranch && item.target_branch === input.branch);
@@ -452,7 +469,8 @@ async function submitDocumentMergeRequest(connection, input, options = {}) {
       const latest = await request(connection, `${project}/repository/branches/${encodeURIComponent(input.branch)}`, options);
       if (latest?.commit?.id !== ref) throw new GitLabConnectorError('GITLAB_BASELINE_CHANGED', '目标分支在回读期间已变化，请重试', 409);
     }
-    return { iid: previous.iid, webUrl: previous.web_url, state: previous.state, sourceBranch, targetBranch: input.branch };
+    await verifyParticipants(previous);
+    return result(previous);
   }
   if (previous) return validateExisting(previous);
   const branch = await request(connection, `${project}/repository/branches/${encodeURIComponent(input.branch)}`, options);
@@ -494,7 +512,7 @@ async function submitDocumentMergeRequest(connection, input, options = {}) {
   const latest = await request(connection, `${project}/repository/branches/${encodeURIComponent(input.branch)}`, options);
   if (latest.commit?.id !== input.commitSha) throw new GitLabConnectorError('GITLAB_BASELINE_CHANGED', '目标分支已变化，请重新评审', 409);
   let mr;
-  try { mr = await request(connection, `${project}/merge_requests`, { ...options, method: 'POST', body: { source_branch: sourceBranch, target_branch: input.branch, title: input.title, description: `审核候选：${input.candidateDigest}`, remove_source_branch: true } }); }
+  try { mr = await request(connection, `${project}/merge_requests`, { ...options, method: 'POST', body: { source_branch: sourceBranch, target_branch: input.branch, title: input.title, description: `审核候选：${input.candidateDigest}`, remove_source_branch: true, ...(participants ? { assignee_ids: roleIds(participants.assignees), reviewer_ids: roleIds(participants.reviewers) } : {}) } }); }
   catch (error) {
     const recovered = await request(connection, `${project}/merge_requests${query}`, options);
     mr = recovered.find(item => item.source_branch === sourceBranch && item.target_branch === input.branch && item.state === 'opened');
@@ -502,7 +520,8 @@ async function submitDocumentMergeRequest(connection, input, options = {}) {
     return validateExisting(mr);
   }
   if (!mr.iid || !mr.web_url) throw new GitLabConnectorError('GITLAB_MR_RESPONSE_INVALID', 'GitLab 未返回有效 MR 凭据', 502);
-  return { iid: mr.iid, webUrl: mr.web_url, state: mr.state, sourceBranch, targetBranch: input.branch };
+  await verifyParticipants(mr);
+  return result(mr);
 }
 
 // Refresh a previously recorded MR without creating branches, commits, or MRs.

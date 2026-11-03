@@ -149,7 +149,7 @@ describe('知识中心认证 HTTP 契约（真实服务 + CAS 协议桩）', () 
     const project = role => userProjection({ id: role, loginName: role, displayName: role, identitySource: 'test', roles: [role] });
 
     expect(project('KNOWLEDGE_EDITOR')).toMatchObject({
-      visibleModules: ['dashboard', 'assets', 'outlines', 'production', 'review'],
+      visibleModules: ['dashboard', 'assets', 'outlines', 'production', 'documentTasks', 'review'],
       allowedActions: ['knowledge:read', 'knowledge:write', 'outline:read'],
     });
     expect(project('OUTLINE_MANAGER')).toMatchObject({
@@ -165,7 +165,7 @@ describe('知识中心认证 HTTP 契约（真实服务 + CAS 协议桩）', () 
       allowedActions: ['knowledge:read', 'outline:read', 'template:read', 'template:edit', 'template:manage'],
     });
     expect(project('PLATFORM_ADMIN')).toMatchObject({
-      visibleModules: ['dashboard', 'assets', 'outlines', 'production', 'cleaning', 'templates', 'review', 'platform'],
+      visibleModules: ['dashboard', 'assets', 'outlines', 'production', 'documentTasks', 'cleaning', 'templates', 'review', 'platform'],
       allowedActions: expect.arrayContaining(['review:manage', 'publish:manage', 'platform:manage', 'template:manage']),
     });
   });

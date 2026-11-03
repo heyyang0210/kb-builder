@@ -179,7 +179,7 @@ function directoryNode(item, context, depth = 0, index = 0) {
     const selected = context.selectedId === id;
     const checked = context.selectedForReview.has(id);
     const status = documentStatus(document, context.ui, context.ui?.repository?.branch || '');
-    return `<li class="handbook-production-document${selected ? ' selected' : ''}"><button type="button" data-handbook-document="${escapeHtml(id)}"${selected ? ' aria-current="page"' : ''}><i data-lucide="file-text" aria-hidden="true"></i><span><strong>${escapeHtml(displayTitle(title))}</strong><small${status === '未编辑' ? ' hidden' : ''}>${escapeHtml(status)}</small></span>${checked ? '<em>待评审</em>' : ''}</button></li>`;
+    return `<li class="handbook-production-document${selected ? ' selected' : ''}"><button type="button" data-handbook-document="${escapeHtml(id)}"${selected ? ' aria-current="page"' : ''}><span class="handbook-document-icon" aria-hidden="true"></span><span><strong>${escapeHtml(displayTitle(title))}</strong><small${status === '未编辑' ? ' hidden' : ''}>${escapeHtml(status)}</small></span>${checked ? '<em>待评审</em>' : ''}</button></li>`;
   }
   const groupKey = [...(context.parentPath || []), title].join('/');
   // Reuse the traversal context for large directories; copying the full context
@@ -239,8 +239,17 @@ function editor(document, outline, ui, templateProjection) {
   const shownTitle = displayTitle(document.title);
   const templates = list(templateProjection?.items).filter(item => item.status !== 'disabled');
   const template = selectedTemplate(document, ui, templateProjection);
-  const reviewStatus = server?.draft?.reviewState?.revisionId
-    ? `已提交评审 v${server.draft.reviewState.editVersion || Math.max(1, Number(server.draft.editVersion || 1) - 1)} · 工作草稿 v${server.draft.editVersion}` : '';
+  const reviewState = server?.draft?.reviewState;
+  // 单篇结论优先，其他篇退回不能覆盖本篇已通过或待审状态。
+  const effectiveReviewStatus = reviewState?.reviewStatus || reviewState?.taskState;
+  const reviewStatusLabel = effectiveReviewStatus === 'rejected'
+    ? '已退回，请修改后重新提交'
+    : effectiveReviewStatus === 'approved'
+      ? '该篇已通过审核'
+      : reviewState?.revisionId ? '审核中' : '';
+  const deliveryStatus = reviewState?.taskState === 'mr_submitted' ? ` · ${reviewState.completion?.label || '交付状态待确认'}` : '';
+  const reviewStatus = reviewState?.revisionId
+    ? `${reviewStatusLabel}${deliveryStatus} · 审核版本 v${reviewState.editVersion || Math.max(1, Number(server.draft.editVersion || 1) - 1)} · 工作草稿 v${server.draft.editVersion}` : '';
   const saveState = ui.draftSaveState?.[document.id];
   const draftLoadState = ui.draftLoadState?.[document.id];
   const draftServiceAvailable = draftLoadState === 'ready';
@@ -264,7 +273,7 @@ function editor(document, outline, ui, templateProjection) {
   const documentContext = `<div class="handbook-command-document"><a class="icon-button" href="/knowledge-center/assets?handbookId=${encodeURIComponent(ui.handbookId || '')}" aria-label="返回知识资产" title="返回知识资产"><i data-lucide="arrow-left" aria-hidden="true"></i></a><button class="button tertiary compact handbook-directory-entry" type="button" data-handbook-directory-open aria-controls="handbook-directory-drawer" aria-expanded="${Boolean(ui.directoryDrawerOpen)}" aria-label="切换文档目录"><i data-lucide="panel-left" aria-hidden="true"></i><span class="sr-only">目录</span></button><span class="handbook-command-breadcrumb">知识资产 <span>/</span> <strong>${escapeHtml(ui.handbookName || '当前手册')}</strong></span></div>`;
   const reviewAction = handbookReviewAction(document.id, ui);
   const reviewActionMarkup = server?.draft?.reviewState?.taskId && server.draft.reviewState.revisionId === server.draft.currentRevisionId && !dirty ? `<a class="handbook-menu-item" href="${escapeHtml(server.draft.reviewState.reviewHref)}"><i data-lucide="clipboard-check" aria-hidden="true"></i><span>查看审核任务</span></a>` : '';
-  const submitReviewAction = `<button class="handbook-menu-item" type="button" data-handbook-review-current="${escapeHtml(document.id)}" ${reviewAction.disabled ? 'disabled' : ''} aria-describedby="handbook-review-hint" title="${escapeHtml(reviewAction.hint)}"><i data-lucide="send" aria-hidden="true"></i><span data-handbook-review-label>${dirty ? '保存并提交审核' : '提交审核'}</span></button>`;
+  const submitReviewAction = `<button class="handbook-menu-item" type="button" data-handbook-review-current="${escapeHtml(document.id)}" ${reviewAction.disabled ? 'disabled' : ''} aria-describedby="handbook-review-hint" title="${escapeHtml(reviewAction.hint)}"><i data-lucide="send" aria-hidden="true"></i><span data-handbook-review-label>${escapeHtml(reviewAction.label)}</span></button>`;
   const discardAction = `<button class="handbook-menu-item" type="button" data-handbook-discard="${escapeHtml(document.id)}" ${dirty ? '' : 'disabled'}><i data-lucide="undo-2" aria-hidden="true"></i><span>取消修改</span></button>`;
   const secondaryActions = `<details class="handbook-more-menu" data-dismissible-menu><summary class="button tertiary compact" aria-label="更多操作"><i data-lucide="ellipsis" aria-hidden="true"></i></summary><div class="handbook-more-menu-panel"><button class="handbook-menu-item" type="button" data-handbook-ai-action="check"><i data-lucide="list-checks" aria-hidden="true"></i><span>校验</span></button>${historyAction}<button class="handbook-menu-item" type="button" data-handbook-focus-toggle aria-pressed="${Boolean(ui.focusMode)}"><i data-lucide="scan" aria-hidden="true"></i><span>${ui.focusMode ? '退出全局预览' : '全局预览'}</span></button>${submitReviewAction}${reviewActionMarkup}${discardAction}<p class="handbook-review-hint" id="handbook-review-hint" data-handbook-review-hint role="status" ${reviewAction.reason ? '' : 'hidden'}>${escapeHtml(reviewAction.reason)}</p><label class="handbook-menu-item handbook-attachment-button" ${canEdit && draftServiceAvailable ? '' : 'aria-disabled="true"'}><i data-lucide="paperclip" aria-hidden="true"></i><span>添加附件</span><input type="file" data-handbook-attachment multiple accept=".png,.jpg,.jpeg,.webp,.gif,.md,.markdown,.pdf,.docx,.xlsx" ${canEdit && draftServiceAvailable ? '' : 'disabled'}></label></div></details>`;
   const formatControls = mode === 'edit' ? `<details class="handbook-editor-format" data-dismissible-menu><summary aria-label="正文编写格式">${editorFormat === 'rich' ? '可视化编辑' : 'Markdown'} <i data-lucide="chevron-down" aria-hidden="true"></i></summary><div><button type="button" data-handbook-editor-format="rich" data-document-id="${escapeHtml(document.id)}" aria-pressed="${editorFormat === 'rich'}">可视化编辑</button><button type="button" data-handbook-editor-format="markdown" data-document-id="${escapeHtml(document.id)}" aria-pressed="${editorFormat === 'markdown'}">Markdown</button></div></details>` : '';
@@ -279,16 +288,18 @@ function editor(document, outline, ui, templateProjection) {
 
 function reviewSelectionDialog(documents, ui) {
   const branch = ui?.repository?.branch || '';
-  const changedIds = new Set([...Object.entries(ui.serverDrafts || {}).filter(([, value]) => value?.exists).map(([id]) => id), ...(ui.dirtyDocuments || [])]);
+  const changedIds = new Set([...Object.keys(ui.reviewDraftSummaries || {}), ...(ui.dirtyDocuments || [])]);
   const changed = documents.filter(document => changedIds.has(document.id) && (!ui.draftBranchByDocument?.[document.id] || ui.draftBranchByDocument[document.id] === branch));
 
   const selected = new Set(ui.selectedForReview || []);
   const items = changed.length ? changed.map(document => {
-    const saved = ui.serverDrafts?.[document.id]?.exists && !ui.dirtyDocuments?.includes(document.id) && !handbookReviewAction(document.id, ui).disabled;
-    const version = ui.serverDrafts?.[document.id]?.draft?.editVersion;
+    const server = ui.serverDrafts?.[document.id];
+    const summary = ui.reviewDraftSummaries?.[document.id];
+    const saved = !ui.dirtyDocuments?.includes(document.id) && (server ? server.exists && !handbookReviewAction(document.id, ui).disabled : Boolean(summary));
+    const version = server?.draft?.editVersion ?? summary?.editVersion;
     return `<label class="${saved ? '' : 'blocked'}"><input type="checkbox" data-handbook-review-document value="${escapeHtml(document.id)}" ${selected.has(document.id) ? 'checked' : ''} ${saved ? '' : 'disabled'}><span><strong>${escapeHtml(displayTitle(document.title))}</strong><small>${saved ? `草稿 v${version} · 可提交` : '请先保存当前修改'}</small></span></label>`;
   }).join('') : '<span class="handbook-review-empty">编辑并保存后，这里会显示可提交的文档。</span>';
-  return `<dialog class="asset-dialog handbook-review-dialog" data-handbook-review-selection-dialog aria-labelledby="handbook-review-selection-title"><header class="asset-dialog-heading"><div><h2 id="handbook-review-selection-title">提交审核</h2><p>选择当前分支中已保存的草稿，再确认审核人和提交信息。</p></div><button class="icon-button asset-dialog-close" type="button" data-handbook-review-close aria-label="关闭"><i data-lucide="x" aria-hidden="true"></i></button></header><div class="handbook-review-documents">${items}</div><footer><button class="button tertiary" type="button" data-handbook-review-close>取消</button><button class="button" type="button" data-handbook-review-submit ${selected.size ? '' : 'disabled'}>下一步</button></footer></dialog>`;
+  return `<dialog class="asset-dialog handbook-review-dialog" data-handbook-review-selection-dialog aria-labelledby="handbook-review-selection-title"><header class="asset-dialog-heading"><div><h2 id="handbook-review-selection-title">提交审核</h2><p>选择当前分支中已保存的草稿，再确认审核人和提交信息。</p></div><button class="icon-button asset-dialog-close" type="button" data-handbook-review-close aria-label="关闭"><i data-lucide="x" aria-hidden="true"></i></button></header><div class="handbook-review-documents">${items}</div><p role="status" data-handbook-review-selection-status>${escapeHtml(ui.reviewSelectionStatus || '')}</p><footer><button class="button tertiary" type="button" data-handbook-review-close>取消</button><button class="button" type="button" data-handbook-review-submit ${selected.size && !ui.reviewSelectionStatus ? '' : 'disabled'}>下一步</button></footer></dialog>`;
 }
 
 

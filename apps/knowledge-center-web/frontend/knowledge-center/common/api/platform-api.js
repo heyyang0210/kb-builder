@@ -113,11 +113,17 @@ export async function loadOutlineData(handbookId = null, outlineVersionId = null
       return { status: 'ok', items: Array.isArray(catalog.items) ? catalog.items : [], total: Number(catalog.total || 0), snapshotVersion: catalog.snapshotVersion || null, detail: null, selectedId: null, asOf: catalog.generatedAt || new Date().toISOString() };
     }
     if (outlineVersionId == null) {
-      const response = await outlineGetJson('/knowledge-center/api/outline/catalog');
+      const catalogUrl = view === 'directory'
+        ? `/knowledge-center/api/outline/catalog?handbookId=${encodeURIComponent(handbookId)}&view=directory`
+        : '/knowledge-center/api/outline/catalog';
+      const response = await outlineGetJson(catalogUrl);
       const catalog = response?.data || response || {};
       const selected = (catalog.items || []).find(item => String(item.handbookId || item.manualId) === String(handbookId));
       if (selected) {
         const selectedId = selected.id || selected.outlineId;
+        if (view === 'directory' && catalog.directory && catalog.selectedId === selectedId) {
+          return { status: 'ok', items: [selected], handbook: { handbookId, name: selected.name }, detail: catalog.directory, selectedId, asOf: catalog.generatedAt || new Date().toISOString() };
+        }
         const detail = await outlineGetJson(`${outlineEndpoint}/${encodeURIComponent(selectedId)}?view=${encodeURIComponent(view)}`);
         return { status: 'ok', items: [selected], handbook: { handbookId, name: selected.name }, detail: detail?.data || null, selectedId, asOf: detail?.generatedAt || catalog.generatedAt || new Date().toISOString() };
       }

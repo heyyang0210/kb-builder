@@ -5,6 +5,7 @@ const routeByView = {
   outlines: '/knowledge-center/outlines',
   templates: '/knowledge-center/templates',
   production: '/knowledge-center/production',
+  documentTasks: '/knowledge-center/document-tasks',
   review: '/knowledge-center/review',
   platform: '/knowledge-center/platform',
   repository: '/knowledge-center/assets',

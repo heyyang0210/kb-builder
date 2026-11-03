@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const { requestContext, attachResponseIds } = require('./log-context');
 const fs = require('fs');
 const http = require('http');
 const https = require('https');
@@ -12,7 +13,7 @@ function perfTrace(message, meta) {
 }
 
 const COOKIE_NAME = 'kc_session';
-const BUSINESS_MODULES = ['dashboard', 'assets', 'outlines', 'production'];
+const BUSINESS_MODULES = ['dashboard', 'assets', 'outlines', 'production', 'documentTasks'];
 const CLEANING_MODULES = ['cleaning'];
 const TEMPLATE_MODULES = ['templates'];
 const BUSINESS_ACTIONS = ['knowledge:read', 'knowledge:write', 'outline:read'];
@@ -50,7 +51,7 @@ function ok(res, content, headers) {
   json(res, 200, { success: true, content }, headers);
 }
 
-function fail(res, error, requestId) {
+function fail(res, error, requestId, correlationId = requestId) {
   const known = error instanceof AuthError;
   const status = known ? error.status : 503;
   const code = known ? error.code : 'AUTH_SERVICE_UNAVAILABLE';
@@ -71,7 +72,7 @@ function fail(res, error, requestId) {
       retryable: known ? error.retryable : true,
       ...(requestId ? { requestId } : {}),
     },
-  }, requestId ? { 'X-Request-Id': requestId } : undefined);
+  }, requestId ? { 'X-Request-Id': requestId, 'X-Correlation-Id': correlationId } : undefined);
 }
 
 function parseCookies(header = '') {
@@ -536,7 +537,7 @@ function createKnowledgeCenterAuthService(options = {}) {
   }
 
   async function handler(req, res) {
-    const requestId = String(req.headers['x-request-id'] || randomId(12));
+    const { requestId, correlationId } = requestContext(req);
     try {
       const url = new URL(req.url, 'http://auth.local');
       const pathname = url.pathname.replace(/^\/knowledge-center\/(?:api\/)?auth/, '/auth');
@@ -688,7 +689,7 @@ function createKnowledgeCenterAuthService(options = {}) {
       }
       throw new AuthError('NOT_FOUND', '认证接口不存在', 404);
     } catch (error) {
-      fail(res, error, requestId);
+      fail(res, error, requestId, correlationId);
     }
   }
 

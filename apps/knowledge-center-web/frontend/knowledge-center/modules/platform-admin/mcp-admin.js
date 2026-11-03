@@ -3,7 +3,7 @@ import { escapeHtml as esc } from '../../common/utils/dom.js';
 export const hasMcpDraft = () => document.querySelector('[data-mcp-admin]')?.dataset.dirty === 'true';
 export const confirmLeavingMcp = () => !hasMcpDraft() || window.confirm('MCP 配置尚未保存，确定离开并放弃修改吗？');
 
-export function mountMcpAdmin(root) {
+export function mountMcpAdmin(root, options = {}) {
   if (root.dataset.mounted) return;
   root.dataset.mounted = 'true';
   let projection; let busy = false;
@@ -11,7 +11,7 @@ export function mountMcpAdmin(root) {
   const safe = value => esc(String(value ?? ''));
   const field = (label, name, value, attrs = '') => `<label>${label}<input name="${name}" value="${safe(value)}" ${attrs}></label>`;
   async function request(action = '', body, version) {
-    const response = await fetch(`/knowledge-center/api/platform/mcp${action ? `/services/${action}` : ''}`, {
+    const response = await fetch(`${options.baseUrl || "/knowledge-center/api/platform/mcp"}${action ? `/services/${action}` : ''}`, {
       method: body ? 'POST' : 'GET', credentials: 'same-origin', cache: 'no-store',
       headers: { 'Content-Type': 'application/json', ...(body ? { 'If-Match': version } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}),
     });
@@ -33,6 +33,7 @@ export function mountMcpAdmin(root) {
     const query = root.querySelector('[data-mcp-search]').value.trim().toLowerCase();
     rows.forEach(row => { const data = readRow(row); row.hidden = ![data.name, data.server_url, ...data.knowledgeBases.map(k => `${k.name} ${k.locator}`)].join(' ').toLowerCase().includes(query); });
     syncExpansion();
+    options.onSnapshot?.(projection);
   }
   function syncExpansion() {
     const visible = [...root.querySelectorAll('[data-mcp-service]')].filter(row => !row.hidden);
@@ -171,6 +172,6 @@ export function mountMcpAdmin(root) {
       });
     }
   });
-  async function load() { try { projection = await request(); draw(); } catch (error) { root.innerHTML = '<p data-mcp-status role="status"></p><button type="button" class="button secondary" data-mcp-retry>重新读取</button>'; status(error.message); root.querySelector('[data-mcp-retry]').onclick = load; } }
+  async function load() { try { projection = await request(); draw(); } catch (error) { options.onError?.(error); root.innerHTML = '<p data-mcp-status role="status"></p><button type="button" class="button secondary" data-mcp-retry>重新读取</button>'; status(error.message); root.querySelector('[data-mcp-retry]').onclick = load; } }
   root.innerHTML = '<p data-mcp-status role="status">正在读取 MCP 服务…</p>'; load();
 }

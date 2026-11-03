@@ -1,0 +1,122 @@
+/* 已确认的局部外观层。不得重定义业务、导航、按钮、表格和正文共用令牌。 */
+:root {
+  --appearance-surface: #ffffff;
+  --appearance-subtle: #f7f8fa;
+  --appearance-border: #e6e8eb;
+  --appearance-text: #25262b;
+  --appearance-muted: #606671;
+  --appearance-accent: #335c98;
+  --appearance-accent-subtle: #eaf0f8;
+  --appearance-success: #18794e;
+  --appearance-success-subtle: #e9f6ef;
+  --appearance-warning: #9a6700;
+  --appearance-warning-subtle: #fff5d6;
+  --appearance-danger: #b42318;
+  --appearance-danger-subtle: #fff0ee;
+  --appearance-title-size: 24px;
+  --appearance-radius: 8px;
+  --appearance-icon-size: 18px;
+  --appearance-icon-stroke: 1.7;
+}
+
+/* 只匹配页面标题，不匹配正文、AI、卡片内部标题和动作区。 */
+.page-intro h2,
+.dashboard-header h2,
+.outline-subpage-header h2 {
+  color: var(--appearance-text);
+  font-size: var(--appearance-title-size);
+  font-weight: 650;
+  line-height: 1.35;
+}
+.page-intro,
+.dashboard-header,
+.outline-subpage-header { border-bottom-color: var(--appearance-border); }
+
+/* 容器只改表面；不向子树下发颜色、字体或布局令牌。 */
+.panel,
+.metric,
+.task-summary,
+.asset-summary,
+.domain-task-summary-card,
+.outline-list-summary > div {
+  border: 1px solid var(--appearance-border);
+  border-radius: var(--appearance-radius);
+  background: var(--appearance-surface);
+  box-shadow: none;
+}
+.outline-list-summary > div { padding: var(--space-3) var(--space-4); }
+.task-summary-primary { background: var(--appearance-subtle); }
+.task-summary-primary .summary-icon,
+.capability-state > .icon-wrap {
+  background: var(--appearance-subtle);
+  color: var(--appearance-muted);
+}
+.capability-state,
+.empty-state {
+  border-color: var(--appearance-border);
+  background: var(--appearance-subtle);
+}
+/* 沿用无嵌套卡片的空态，保留全部文字及恢复操作。 */
+.panel > .capability-state,
+.panel > .empty-state { background: transparent; }
+
+/* 第二轮只统一非交互信息容器的外壳，不触及其中的导航、表格和动作。 */
+.asset-workspace-list,
+.asset-workspace-detail,
+.platform-admin-page .governance-summary-item,
+.platform-admin-page .principal-summary > div,
+.platform-admin-page .platform-facts,
+.platform-admin-page .governance-recent-ops:not(.principal-directory),
+.platform-admin-page .database-connection-panel,
+.platform-admin-page .database-runtime-card {
+  border-color: var(--appearance-border);
+  border-radius: var(--appearance-radius);
+  box-shadow: none;
+}
+.capability-state > .icon-wrap > .icon,
+.summary-icon > .icon,
+.risk-summary-icon > .icon,
+.asset-summary-label > .icon {
+  width: var(--appearance-icon-size);
+  height: var(--appearance-icon-size);
+  stroke-width: var(--appearance-icon-stroke);
+}
+
+/* 未确认的风险与零失败均为中性，真实非零失败才强调。 */
+.dashboard-risk-panel {
+  border-left: 1px solid var(--appearance-border);
+}
+.dashboard-risk-panel .panel-heading h2 { color: var(--appearance-text); }
+.risk-summary-icon { background: var(--appearance-subtle); color: var(--appearance-muted); }
+.dashboard-risk-panel[data-appearance-risk="danger"] { border-left: 3px solid var(--appearance-danger); }
+.dashboard-risk-panel[data-appearance-risk="danger"] .panel-heading h2 { color: var(--appearance-danger); }
+.dashboard-risk-panel[data-appearance-risk="danger"] .risk-summary-icon {
+  background: var(--appearance-danger-subtle);
+  color: var(--appearance-danger);
+}
+
+/* 显式标记的表格外状态；不按中文文案猜测，不影响表格内状态。 */
+[data-appearance-state] {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 9px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: var(--appearance-subtle);
+  color: var(--appearance-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+[data-appearance-state="outline_editing"],
+[data-appearance-state="content_building"] {
+  background: var(--appearance-accent-subtle);
+  color: var(--appearance-accent);
+}
+[data-appearance-state="handbook_published"],
+[data-appearance-state="outline_published"] {
+  background: var(--appearance-success-subtle);
+  color: var(--appearance-success);
+}
+/* 缺失能力是中性事实，真正错误仍沿用已有错误提示与危险色。 */
+.domain-task-summary-state { color: var(--appearance-muted); }
+

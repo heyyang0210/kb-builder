@@ -78,3 +78,40 @@ for (const protocol of ['chat-completions', 'responses']) test(`${protocol} 真�
   assert.deepEqual(cancelled.executionPreview, beforeCancel.executionPreview);
   assert.equal(requests, 2);
 });
+
+test('Codex 活动随写作任务回读，取消后拒绝迟到事件', async t => {
+  const runs = [];
+  const selection = { serviceId: 'fixture', model: 'fixture', configVersion: 'v1', agentId: 'codex-fixture', executor: 'codex' };
+  const codexRunner = {
+    preflight() {},
+    run(_messages, _config, execution) {
+      return new Promise(resolve => runs.push({ execution, resolve }));
+    },
+  };
+  const api = await setup(t, { ai: {
+    modelGovernance: { resolve: () => ({ selection, config: { executor: 'codex', model: 'fixture' } }) }, codexRunner,
+  } });
+  const start = async key => {
+    const response = await api.request('POST', root, JSON.stringify(body), { 'Content-Type': 'application/json', 'Idempotency-Key': key });
+    assert.equal(response.status, 202, JSON.stringify(response.body)); return response.body.data.jobId;
+  };
+  const read = async id => (await api.request('GET', `${root}/${id}?${new URLSearchParams(ctx)}`)).body.data;
+  const id = await start('codex-events');
+  await until(() => runs.length, length => length === 1);
+  const emit = (kind, extra, seq) => runs[0].execution.onEvent({ kind, seq, at: new Date().toISOString(), ...extra });
+  emit('tool-started', { tool: 'knowledge_search', itemId: 'call-1', status: 'running' }, 1);
+  emit('tool-completed', { tool: 'knowledge_search', itemId: 'call-1', status: 'completed' }, 2);
+  emit('progress', { text: '正在整理引用。' }, 3);
+  const running = await read(id);
+  assert.deepEqual(running.agentEvents.map(event => event.kind), ['tool-started', 'tool-completed', 'progress']);
+  assert.equal(running.stageRuns.find(run => run.stageId === 'writer').toolName, 'Codex CLI');
+  assert.equal(running.agentEvents[0].tool, 'knowledge_search');
+  const cancel = await api.request('POST', `${root}/${id}/cancel`, JSON.stringify(ctx), { 'Content-Type': 'application/json' });
+  assert.equal(cancel.status, 200);
+  emit('tool-started', { tool: 'late_tool', itemId: 'late', status: 'running' }, 4);
+  runs[0].resolve({ content: '{"markdown":"迟到内容","provenance":[]}', model: 'fixture' });
+  const cancelled = await read(id);
+  assert.equal(cancelled.status, 'cancelled');
+  assert.equal(cancelled.agentEvents.length, 3);
+  assert.equal(cancelled.fragment, undefined);
+});

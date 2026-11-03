@@ -25,7 +25,7 @@ const taskStatus = task => task?.completion?.status === 'completed'
 function fmtTime(value) { if (!value) return '暂无'; const date = new Date(value); return Number.isNaN(date.getTime()) ? escapeHtml(value) : date.toLocaleString('zh-CN', { hour12: false }); }
 function suggestedPhase(task) {
   const status = task?.state || task?.status;
-  if (['pending_publish', 'approved', 'published', 'batch_publish_failed'].includes(status)) return 'publish';
+  if (['pending_publish', 'approved', 'published', 'mr_submitted', 'batch_publish_failed'].includes(status)) return 'publish';
   if (['candidate_ready', 'under_review', 'in_review', 'review_pending', 'rejected', 'changes_requested'].includes(status)) return 'review';
   if (['editing', 'checked', 'pending_submission', 'checks_passed', 'generation_failed'].includes(status) && task?.target) return 'generation';
   if (array(task?.sources || task?.sourceSnapshots).length || task?.target) return 'inputs';
@@ -137,7 +137,8 @@ function publishStage(task, privileged) {
     const facts = completion.facts || {};
     const completionText = completion.status === 'completed'
       ? 'GitLab 已合并，目标分支正文与仓库相对图片已回读一致。'
-      : task.mergeRequest ? 'MR 已创建，等待合并及目标分支回读。' : '审核通过后创建 GitLab MR。';
+      : facts.mergeState === 'closed' ? 'MR 已关闭且未合并，任务尚未完成。请在 GitLab 核对关闭原因，需要重新交付时返回文档写作重新提交审核。'
+        : task.mergeRequest ? 'MR 已创建，等待合并及目标分支回读。' : '审核通过后创建 GitLab MR。';
     return `<section class="incremental-stage-panel"><header><div><span class="incremental-stage-eyebrow">第 5 步</span><h3>发布与回读</h3><p>将审核通过的正文提交至 ${escapeHtml(task.handbookSource.branch)}，完成条件是合并并回读一致。</p></div><span class="incremental-stage-state">${escapeHtml(taskStatus(task))}</span></header><div class="incremental-release-summary"><div><span>GitLab MR</span><strong>${task.mergeRequest ? `!${escapeHtml(task.mergeRequest.iid)}` : '待创建'}</strong></div><div><span>正文回读</span><strong>${facts.markdownReadback ? '一致' : '待回读'}</strong></div><div><span>图片资源回读</span><strong>${facts.resourceReadback ? '一致' : '待回读'}</strong></div></div><p class="incremental-block-note">${completionText}</p>${task.mergeRequest ? `<a class="button" href="${escapeHtml(task.mergeRequest.webUrl)}" target="_blank" rel="noopener">查看 MR !${escapeHtml(task.mergeRequest.iid)}</a>` : `<button class="button" type="button" data-incremental-publish="${escapeHtml(idOf(task))}" ${task.capabilities?.canPublish ? '' : 'disabled'}>发布：创建 GitLab MR</button>`}<span class="incremental-form-status" role="status"></span></section>`;
   }
   const state = task.state || task.status;
@@ -280,14 +281,15 @@ function versionOverview(projection) {
   const rows = [...groups.entries()].map(([version, items]) => {
     const completed = items.filter(item => item?.completion?.status === 'completed').length;
     const documentCount = items.reduce((total, item) => total + taskDocumentCount(item), 0);
-    const current = [...items].sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')))[0];
+    const ordered = [...items].sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
+    const current = ordered.find(item => item?.completion?.status !== 'completed') || ordered[0];
     const completion = current?.completion;
     const responsibility = current?.ownerName || current?.owner || current?.assigneeName || '责任人待确认';
     const nextAction = completion?.status === 'completed' ? '等待后续变更' : completion?.facts?.mergeState === 'opened' ? '等待合并并回读' : '处理当前交付阻断';
     return { version, taskCount: items.length, documentCount, completed, pending: items.length - completed, current, responsibility, nextAction };
   }).sort((a, b) => a.version.localeCompare(b.version, 'zh-CN', { numeric: true }));
   if (!rows.length) return `<section class="production-overview-empty">${emptyState('暂无数据库版本任务', '创建增量任务后会按业务版本汇总显示。')}</section>`;
-  return `<section class="production-overview production-version-overview" aria-label="数据库版本任务汇总"><div class="production-overview-toolbar"><div><strong>数据库版本汇总</strong><p>按任务绑定的业务版本聚合，完成状态沿用公共交付投影。</p></div><span>${rows.length} 个版本</span></div><div class="production-handbook-table-wrap"><table class="production-handbook-table" data-table-view-id="production-versions" data-table-view-schema="1"><caption class="sr-only">数据库版本任务汇总</caption><thead><tr><th>数据库版本</th><th>任务数</th><th>目标文档数</th><th>已完成</th><th>待处理</th><th>最近进展</th></tr></thead><tbody>${rows.map(row => `<tr class="production-handbook-row" tabindex="0" role="link" data-production-handbook-row data-handbook-href="/knowledge-center/production?view=tasks&taskId=${encodeURIComponent(row.current?.id || '')}"><td><strong>${escapeHtml(row.version)}</strong><small>${escapeHtml(row.current?.handbookName || row.current?.handbookId || '手册待确认')}</small></td><td>${row.taskCount}</td><td>${row.documentCount}</td><td><strong>${row.completed}</strong></td><td>${row.pending}</td><td><strong>${escapeHtml(row.current?.completion?.label || row.current?.statusDisplayName || '处理中')}</strong><small>${escapeHtml(`责任：${row.responsibility} · 下一步：${row.nextAction}`)}</small><small>${fmtTime(row.current?.updatedAt)}</small></td></tr>`).join('')}</tbody></table></div></section>`;
+  return `<section class="production-overview production-version-overview" aria-label="数据库版本任务汇总"><div class="production-overview-toolbar"><div><strong>数据库版本汇总</strong><p>按任务绑定的业务版本聚合，完成状态沿用公共交付投影。</p></div><span>${rows.length} 个版本</span></div><div class="production-handbook-table-wrap"><table class="production-handbook-table" data-table-view-id="production-versions" data-table-view-schema="1"><caption class="sr-only">数据库版本任务汇总</caption><thead><tr><th>数据库版本</th><th>任务数</th><th>目标文档数</th><th>已完成</th><th>待处理</th><th>当前进展</th></tr></thead><tbody>${rows.map(row => `<tr class="production-handbook-row" tabindex="0" role="link" data-production-handbook-row data-handbook-href="/knowledge-center/production?view=tasks&taskId=${encodeURIComponent(row.current?.id || '')}"><td><strong>${escapeHtml(row.version)}</strong><small>${escapeHtml(row.current?.handbookName || row.current?.handbookId || '手册待确认')}</small></td><td>${row.taskCount}</td><td>${row.documentCount}</td><td><strong>${row.completed}</strong></td><td>${row.pending}</td><td><strong>${escapeHtml(row.current?.completion?.label || row.current?.statusDisplayName || '处理中')}</strong><small>${escapeHtml(`责任：${row.responsibility} · 下一步：${row.nextAction}`)}</small><small>${fmtTime(row.current?.updatedAt)}</small></td></tr>`).join('')}</tbody></table></div></section>`;
 }
 
 function productionTabs(active) {

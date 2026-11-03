@@ -72,12 +72,18 @@ test('文档生产默认展示手册视图，任务视图继续提供增量工�
 });
 
 test('数据库版本视图按版本汇总任务和目标文档，并复用完成投影', async ({ page }) => {
+  // 版本行的展示用例完整提供目录及资产夹具，避免混入真实手册规模和冷加载。
+  await page.route('**/knowledge-center/api/assets/handbooks?*', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ success: true, data: { items: [] } }),
+  }));
   await page.route('**/knowledge-center/api/incremental-tasks*', route => route.fulfill({
     status: 200,
     contentType: 'application/json',
     body: JSON.stringify({ success: true, data: [
       { id: 'version-task-1', handbookId: 'DB-001', handbookName: '安装手册', businessVersion: '23.4', ownerName: '张三', target: { documentIds: ['d1', 'd2', 'd3', 'd4'] }, completion: { status: 'pending', label: '待合并回读', facts: { mergeState: 'opened' } }, updatedAt: '2026-09-28T08:00:00.000Z' },
       { id: 'version-task-2', handbookId: 'DB-001', handbookName: '安装手册', businessVersion: '23.4', target: { documentIds: ['d1'] }, completion: { status: 'completed', label: '已完成' }, updatedAt: '2026-09-28T09:00:00.000Z' },
+      { id: 'version-task-4', handbookId: 'DB-003', businessVersion: '25.1', completion: { status: 'completed', label: '已完成' }, updatedAt: '2026-09-28T11:00:00.000Z' },
       { id: 'version-task-3', handbookId: 'DB-002', handbookName: '运维手册', businessVersion: '24.1', ownerName: '李四', target: { documentIds: ['d9'] }, completion: { status: 'pending', label: '待合并回读', facts: { mergeState: 'opened' } }, updatedAt: '2026-09-28T10:00:00.000Z' },
     ] }),
   }));
@@ -92,7 +98,17 @@ test('数据库版本视图按版本汇总任务和目标文档，并复用完�
   await expect(page.locator('.production-version-overview')).toContainText('待合并回读');
   await expect(page.locator('.production-version-overview')).toContainText('责任：李四');
   await expect(page.locator('.production-version-overview')).toContainText('下一步：等待合并并回读');
-  await expect(page.locator('.production-version-overview tbody tr')).toHaveCount(2);
+  await expect(page.locator('.production-version-overview tbody tr')).toHaveCount(3);
+  const mixed = page.locator('.production-version-overview tbody tr').filter({ has: page.getByText('23.4', { exact: true }) });
+  await expect(mixed.locator('td').nth(3)).toHaveText('1');
+  await expect(mixed.locator('td').nth(4)).toHaveText('1');
+  await expect(mixed).toContainText('待合并回读');
+  await expect(mixed).not.toContainText('等待后续变更');
+  await expect(mixed).toHaveAttribute('data-handbook-href', '/knowledge-center/production?view=tasks&taskId=version-task-1');
+  const complete = page.locator('.production-version-overview tbody tr').filter({ has: page.getByText('25.1', { exact: true }) });
+  await expect(complete.locator('td').nth(4)).toHaveText('0');
+  await expect(complete).toContainText('等待后续变更');
+  await expect(complete).toHaveAttribute('data-handbook-href', '/knowledge-center/production?view=tasks&taskId=version-task-4');
 });
 
 test('文档生产复用公共字段抽屉并迁移旧偏好', async ({ page }) => {

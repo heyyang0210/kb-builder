@@ -55,6 +55,9 @@ class ConfigManager {
   _encryptSensitiveFields(config) {
     const result = { ...config };
     if (Array.isArray(result.services)) result.services = result.services.map(service => this._encryptSensitiveFields(service));
+    if (Array.isArray(result.agents)) result.agents = result.agents.map(agent => this._encryptSensitiveFields(agent));
+    if (result.model && typeof result.model === 'object') result.model = this._encryptSensitiveFields(result.model);
+    if (result.mcp && typeof result.mcp === 'object') result.mcp = this._encryptSensitiveFields(result.mcp);
     
     // 加密 api_key
     for (const field of this._sensitiveFields) {
@@ -85,6 +88,9 @@ class ConfigManager {
     if (!config) return config;
     const result = { ...config };
     if (Array.isArray(result.services)) result.services = result.services.map(service => this._decryptSensitiveFields(service));
+    if (Array.isArray(result.agents)) result.agents = result.agents.map(agent => this._decryptSensitiveFields(agent));
+    if (result.model && typeof result.model === 'object') result.model = this._decryptSensitiveFields(result.model);
+    if (result.mcp && typeof result.mcp === 'object') result.mcp = this._decryptSensitiveFields(result.mcp);
     
     // 解密 api_key
     if (result.api_key_encrypted) {
@@ -116,7 +122,7 @@ class ConfigManager {
     return result;
   }
 
-  _section(configName) { return { 'model-config': 'model', 'mcp-config': 'mcp', 'agent-presets': 'agentPresets' }[configName] || null; }
+  _section(configName) { return { 'model-config': 'model', 'mcp-config': 'mcp', 'agent-presets': 'agentPresets', 'agent-services': 'agentServices' }[configName] || null; }
 
   async load(configName) {
     if (this.cache.has(configName)) {
@@ -171,6 +177,16 @@ class ConfigManager {
   getModelConfigSync() {
     if (!fs.existsSync(CONFIG_PATHS.service)) return null;
     return this._decryptSensitiveFields(readJson(CONFIG_PATHS.service).model || null);
+  }
+
+  getMCPConfigSync() {
+    if (!fs.existsSync(CONFIG_PATHS.service)) return null;
+    return this._decryptSensitiveFields(readJson(CONFIG_PATHS.service).mcp || null);
+  }
+
+  getAgentServicesSync() {
+    if (!fs.existsSync(CONFIG_PATHS.service)) return null;
+    return this._decryptSensitiveFields(readJson(CONFIG_PATHS.service).agentServices || null);
   }
 
   async getMCPConfig() {

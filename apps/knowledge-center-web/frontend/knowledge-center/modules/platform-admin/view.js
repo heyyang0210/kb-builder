@@ -24,7 +24,7 @@ const TAB_LABELS = {
   permissions: '用户权限',
   gitlab: 'GitLab 仓库',
   mcp: 'MCP 服务',
-  models: '模型服务',
+  models: 'Agent&模型服务',
 };
 
 /* ---- 标签页导航 ---- */
@@ -48,7 +48,6 @@ function renderTabs(activeTab, teamGroupView = 'people') {
     </div>
     ${tabButton('permissions')}
     ${tabButton('gitlab')}
-    ${tabButton('mcp')}
     ${tabButton('models')}
   </nav>`;
 }
@@ -695,7 +694,7 @@ export function renderPlatformAdmin({
   gitlabEditingConnection,
   gitlabVerification,
 }) {
-  const activeTab = platformTab || 'governance';
+  const activeTab = platformTab === 'mcp' ? 'models' : platformTab || 'governance';
 
   let tabContent;
   switch (activeTab) {

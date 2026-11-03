@@ -1,167 +1,151 @@
 import { escapeHtml as esc } from '../../common/utils/dom.js';
-
-export const hasModelDraft = () => document.querySelector('[data-model-admin]')?.dataset.dirty === 'true';
-export const confirmLeavingModels = () => !hasModelDraft() || window.confirm('模型配置尚未保存，确定离开？');
-
+import { mountModelConnection } from './model-connection.js';
+import { mountMcpAdmin } from './mcp-admin.js';
+export const hasModelDraft = () => [...document.querySelectorAll('[data-model-admin],[data-agent-model],[data-mcp-admin]')].some(n => n.dataset.dirty === 'true');
+export const confirmLeavingModels = () => !hasModelDraft() || window.confirm('Agent 配置尚未保存，确定离开？');
 export function mountModelAdmin(root) {
   if (root.dataset.mounted) return;
-  root.dataset.mounted = 'true';
-  let projection; let busy = false; let nextClientId = 0;
-  const status = message => { root.querySelector('[data-model-status]').textContent = message; };
-  async function request(suffix = '', body) {
-    const response = await fetch(`/knowledge-center/api/platform/models${suffix}`, {
-      method: body ? (suffix ? 'POST' : 'PUT') : 'GET', credentials: 'same-origin', cache: 'no-store',
-      headers: { 'Content-Type': 'application/json', ...(body ? { 'If-Match': projection.rowVersion } : {}) },
-      ...(body ? { body: JSON.stringify(body) } : {}),
-    });
+  root.dataset.mounted = 'true'; root.classList.add('agent-admin');
+  let catalog, selected, model, busy = false, runningId = null, eventSource;
+  const stopWatching = () => { eventSource?.close(); eventSource = null; };
+  const observer = new MutationObserver(() => { if (!root.isConnected) { stopWatching(); observer.disconnect(); } });
+  observer.observe(document.body, { childList: true, subtree: true });
+  const names = { codex: 'Codex', deepseek: 'DeepSeek Harness', workflow: '平台内置工作流' };
+  const status = text => { const node = root.querySelector('[data-agent-status]'); if (node) node.textContent = text; };
+  async function request(suffix = '', body, method, version) {
+    const response = await fetch(`/knowledge-center/api/platform/agents${suffix}`, { method: method || (body ? 'PUT' : 'GET'), credentials: 'same-origin', cache: 'no-store', headers: { 'Content-Type': 'application/json', ...(body ? { 'If-Match': version || catalog.rowVersion } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
     if (response.status === 401) window.dispatchEvent(new CustomEvent('knowledge-center:session-expired'));
     if (response.status === 403) window.dispatchEvent(new CustomEvent('knowledge-center:permission-denied'));
-    const result = await response.json();
-    if (!response.ok || result.success === false) throw new Error(result.error?.message || '模型服务暂不可用');
+    let result;
+    try {
+      if (!response.headers.get('content-type')?.includes('application/json')) throw new Error();
+      result = await response.json();
+    } catch (_) {
+      throw new Error('Agent 服务暂不可用，请稍后重新读取');
+    }
+    if (!response.ok || result.success === false) throw new Error(result.error?.message || 'Agent 服务暂不可用');
     return result.data;
   }
-  const preferenceKey = id => `knowledge-center:model-test:${id}`;
-  function rememberedModel(id) { try { return localStorage.getItem(preferenceKey(id)); } catch (_) { return null; } }
-  function rememberModel(id, model) { if (!model) return; try { localStorage.setItem(preferenceKey(id), model); } catch (_) { /* 存储受限时仍允许测试。 */ } }
-  const field = (label, name, value, type = 'text', attrs = '') => `<label>${label}<input name="${name}" type="${type}" value="${esc(value ?? '')}" ${attrs}></label>`;
-  function addRow(s = {}) {
-    const p = projection.limits;
-    const row = document.createElement('section'); row.className = 'model-service';
-    row.dataset.serviceId = s.id || ''; row.dataset.clientId = `new-${++nextClientId}`;
-    const choices = (items, selected) => items.map(v => `<option value="${esc(v.value)}" ${v.value === selected ? 'selected' : ''}>${esc(v.label)}</option>`).join('');
-    const provider = s.provider || p.providers[0].value;
-    const preset = p.providers.find(item => item.value === provider);
-    row.innerHTML = `<div class="model-service-line"><details class="model-service-editor" ${s.id ? '' : 'open'}><summary class="model-service-summary"><strong data-service-title>${esc(s.name || '新模型服务')}</strong><span data-service-description></span><span data-service-state></span><button type="button" class="button secondary model-test-saved" data-test-saved>测试</button></summary><div class="model-service-body">
-      <div class="model-basic-grid">
-      <label>模型服务商<select name="provider">${choices(p.providers, provider)}</select><small>公司统一提供的接口请选择“其他兼容服务”。</small></label>
-      ${field('显示名称', 'name', s.name || preset.label, 'text', `required maxlength="${p.maxNameChars}" aria-label="显示名称"`)}
-      <label>API 地址<input name="base_url" type="url" required value="${esc(s.base_url || preset.baseUrl || '')}" placeholder="https://服务地址/v1"><small>填写服务商提供的基础地址，通常以 /v1 结尾，无需添加 /chat/completions。</small></label>
-      <label>访问密钥（API Key）<input name="api_key" type="password" autocomplete="new-password" placeholder="${s.api_key_configured ? '已保存密钥，无需重复填写' : '粘贴服务商提供的 API Key'}"><small>${s.api_key_configured ? '留空继续使用已保存密钥；输入新密钥可替换。' : '密钥加密保存，保存后不会回显。'}</small></label>
-      <label class="model-wide">可用模型<textarea name="models" rows="2" required placeholder="填写服务商给出的模型名称；多个模型请换行">${esc((s.models || []).join('\n'))}</textarea><small>填写准确的模型标识。保存后，写作页面可选择这里的模型。</small></label></div>
-      <details class="model-advanced"><summary>高级设置 · 接口格式与生成参数</summary><div class="model-basic-grid">
-      <label>接口格式<select name="protocol">${choices(p.protocols, s.protocol)}</select><small>通常使用 Chat Completions；仅在服务商要求时选择 Responses。</small></label>
-      ${field('请求超时（毫秒）', 'timeout', s.timeout ?? p.defaultTimeoutMs, 'number', `required min="${p.minTimeoutMs}" max="${p.maxTimeoutMs}"`)}
-      ${field('最大输出长度（Token）', 'max_tokens', s.max_tokens ?? p.defaultMaxTokens, 'number', `required min="${p.minOutputTokens}" max="${p.maxOutputTokens}"`)}
-      <label>创作随机性（温度）<input name="temperature" type="number" value="${esc(s.temperature ?? p.defaultTemperature)}" required min="${p.minTemperature}" max="${p.maxTemperature}" step="any"><small>数值越低越稳定；不确定时保留默认值。</small></label>
-      <label class="mcp-check"><input name="clearApiKey" type="checkbox">清除已保存的密钥（清除后无法调用）</label></div>
-      <p>更换地址、接口格式或服务商时，请重新填写密钥。</p></details>
-      <div class="model-service-footer"><label class="mcp-check"><input name="enabled" type="checkbox" ${s.enabled !== false ? 'checked' : ''}>在写作页启用</label>
-      <div class="mcp-actions"><label>连接测试使用的模型<select name="testModel"></select></label><button class="button secondary" type="button" data-test-model>测试连接</button></div></div></div></details><button type="button" class="button secondary model-remove platform-danger" data-remove-model aria-label="删除模型服务">删除</button></div><div data-row-result role="status" aria-live="polite"></div>`;
-    root.querySelector('[data-model-rows]').append(row);
-    let suggestedAddress = s.id ? null : (preset.baseUrl || '');
-    let suggestedName = s.id ? null : preset.label;
-    row.querySelector('[name=provider]').addEventListener('change', () => {
-      const next = p.providers.find(item => item.value === row.querySelector('[name=provider]').value);
-      const address = row.querySelector('[name=base_url]'); const name = row.querySelector('[name=name]');
-      if (!address.value || address.value === suggestedAddress) { address.value = next.baseUrl || ''; suggestedAddress = address.value; }
-      if (!name.value || name.value === suggestedName) { name.value = next.label; suggestedName = name.value; }
-    });
-    row.querySelector('[data-remove-model]').onclick = () => {
-      if (s.id && !window.confirm(`移除“${s.name}”？保存后将不能在写作页选择此服务。`)) return;
-      row.remove(); markDirty(); refreshDefaults();
-    };
-    row.querySelector('[data-test-model]').onclick = () => testService(row, true);
-    row.querySelector('[data-test-saved]').onclick = event => { event.preventDefault(); event.stopPropagation(); testService(row, false); };
-    row.querySelector('[name=testModel]').addEventListener('change', event => rememberModel(row.dataset.serviceId || row.dataset.clientId, event.target.value));
-    refreshTestModels(row); refreshSummary(row);
-    if (!s.id) row.querySelector('[name=name]').focus();
+  async function perform(action) {
+    if (busy) return; busy = true; root.setAttribute('aria-busy', 'true');
+    try { await action(); } catch (error) { status(error.message); }
+    finally { busy = false; root.removeAttribute('aria-busy'); }
   }
-  async function testService(row, includeUnsavedChanges) {
-    const button = row.querySelector(includeUnsavedChanges ? '[data-test-model]' : '[data-test-saved]');
-    const resultNode = row.querySelector('[data-row-result]');
-    if (busy) return;
-    busy = true; root.querySelector('fieldset').disabled = true;
-    button.setAttribute('aria-busy', 'true');
-    function showResult(state, title, detail) {
-      resultNode.dataset.state = state;
-      const heading = document.createElement('strong'); heading.textContent = title;
-      const info = document.createElement('span'); info.textContent = detail;
-      resultNode.replaceChildren(heading, info);
-    }
-    showResult('pending', '测试中…', '正在连接模型服务');
-    try {
-      let service; let model;
-      if (includeUnsavedChanges) { service = readRow(row); model = row.querySelector('[name=testModel]').value; }
-      else {
-        const saved = projection.services.find(item => item.id === row.dataset.serviceId);
-        if (!saved) throw new Error('请先保存服务配置，再测试连接。');
-        service = { ...saved, api_key: '', clearApiKey: false };
-        const selected = row.querySelector('[name=testModel]').value;
-        model = saved.models.includes(selected) ? selected : saved.models[0];
-      }
-      const result = await request('/test', { service, model });
-      rememberModel(row.dataset.serviceId || row.dataset.clientId, model);
-      showResult('success', '测试成功', `${result.requestedModel} · 首字 ${result.firstByteMs} 毫秒 · 总耗时 ${result.latencyMs} 毫秒${result.actualModel && result.actualModel !== result.requestedModel ? ` · 实际模型：${result.actualModel}` : ''}`);
-    } catch (error) { showResult('error', '测试失败', error.message); }
-    finally { busy = false; root.querySelector('fieldset').disabled = false; button.setAttribute('aria-busy', 'false'); }
-  }
-
-  function refreshSummary(row) {
-    const service = readRow(row);
-    const provider = projection.limits.providers.find(item => item.value === service.provider)?.label || service.provider;
-    row.querySelector('[data-service-title]').textContent = service.name || '新模型服务';
-    const description = row.querySelector('[data-service-description]');
-    description.textContent = `${provider} · ${service.models.length ? `${service.models.length} 个模型` : '尚未填写模型'}`;
-    description.title = service.models.join('、');
-    row.querySelector('[data-service-state]').textContent = service.enabled ? '已启用' : '已停用';
-    row.querySelector('[data-service-state]').className = `platform-status ${service.enabled ? 'is-success' : 'is-neutral'}`;
-    row.querySelector('[data-remove-model]').setAttribute('aria-label', `删除${service.name || '新模型服务'}`);
-  }
-  function refreshTestModels(row) {
-    const select = row.querySelector('[name=testModel]'); const previous = select.value || rememberedModel(row.dataset.serviceId || row.dataset.clientId);
-    select.replaceChildren(...readRow(row).models.map(model => new Option(model, model)));
-    if ([...select.options].some(v => v.value === previous)) select.value = previous;
-  }
-  function readRow(row) {
-    const v = name => row.querySelector(`[name=${name}]`);
-    return { ...(row.dataset.serviceId ? { id: row.dataset.serviceId } : { clientId: row.dataset.clientId }),
-      name: v('name').value, provider: v('provider').value, protocol: v('protocol').value, base_url: v('base_url').value,
-      api_key: v('api_key').value, clearApiKey: v('clearApiKey').checked, enabled: v('enabled').checked,
-      timeout: Number(v('timeout').value), max_tokens: Number(v('max_tokens').value), temperature: Number(v('temperature').value),
-      models: v('models').value.split('\n').map(s => s.trim()).filter(Boolean) };
-  }
-  function refreshDefaults(preferred) {
-    const select = root.querySelector('[data-model-default]'); const previous = preferred || select.value;
-    select.replaceChildren(new Option('请选择默认模型', ''));
-    root.querySelectorAll('.model-service').forEach(row => {
-      const service = readRow(row); if (!service.enabled) return;
-      service.models.forEach(model => { const value = JSON.stringify({ serviceId: service.id || service.clientId, model }); select.add(new Option(`${service.name || '新服务'} / ${model}`, value)); });
-    });
-    if (previous && [...select.options].some(v => v.value === previous)) select.value = previous;
-    else if (!previous && !projection.defaultSelection && select.options.length > 1) select.selectedIndex = 1;
-  }
-  function refreshListState() {
-    const count = root.querySelectorAll('.model-service').length;
-    root.querySelector('.model-service-count').textContent = count;
-    root.querySelector('.model-empty').hidden = count > 0;
-  }
-  function markDirty() { root.dataset.dirty = 'true'; refreshListState(); }
-  async function perform(action, successMessage = '配置已保存，新写作任务将使用此配置。') {
-    if (busy) return; busy = true; root.querySelector('fieldset').disabled = true; root.setAttribute('aria-busy', 'true'); status('正在处理…');
-    try { await action(); status(successMessage); } catch (error) { status(error.message); }
-    finally { busy = false; root.querySelector('fieldset').disabled = false; root.setAttribute('aria-busy', 'false'); }
+  async function load(id) {
+    stopWatching(); runningId = null;
+    catalog = await request(); selected = catalog.agents.find(a => a.id === id) || catalog.agents[0];
+    model = await request(`/${selected.id}/models`); draw();
   }
   function draw() {
-    root.innerHTML = `<p data-model-status role="status" aria-live="polite"></p><form><fieldset><legend class="model-form-legend">模型服务配置</legend><div class="model-list-heading"><h3>模型服务 <span class="model-service-count">${projection.services.length}</span></h3><button type="button" class="button primary model-add" data-model-add aria-label="添加模型服务" title="添加模型服务"><span aria-hidden="true">＋</span> 添加服务</button></div><div data-model-rows></div><p class="model-empty">暂无模型服务，点击“添加服务”开始配置。</p><div class="model-settings-bar"><label class="model-default-block">写作默认模型<select data-model-default></select></label><div class="mcp-actions"><button type="button" class="button secondary" data-model-reload>取消修改</button><button type="submit" class="button primary">保存配置</button></div></div><p class="model-save-hint">修改后保存生效；点击服务行可展开编辑。</p></fieldset></form>`;
-    projection.services.forEach(addRow); refreshDefaults(projection.defaultSelection ? JSON.stringify(projection.defaultSelection) : '');
-    root.dataset.dirty = 'false'; refreshListState();
-    root.querySelector('form').onsubmit = event => { event.preventDefault(); perform(async () => {
-      const value = root.querySelector('[data-model-default]').value;
-      const testModels = [...root.querySelectorAll('.model-service')].map(row => row.querySelector('[name=testModel]').value);
-      projection = await request('', { services: [...root.querySelectorAll('.model-service')].map(readRow), defaultSelection: value ? JSON.parse(value) : null });
-      projection.services.forEach((service, index) => { if (service.models.includes(testModels[index])) rememberModel(service.id, testModels[index]); });
-      draw();
-    }, '配置已保存，新写作任务将使用此配置。'); };
-    root.querySelector('[data-model-add]').onclick = () => { if (root.querySelectorAll('.model-service').length >= projection.limits.maxServices) { status('已达到服务数量上限'); return; } addRow(); markDirty(); };
-    root.querySelector('[data-model-reload]').onclick = () => { if (!hasModelDraft() || confirmLeavingModels()) perform(async () => { projection = await request(); draw(); }, '已读取保存的配置。'); };
+    root.dataset.dirty = 'false';
+    const choices = model.services.filter(s => s.enabled).flatMap(s => s.models.map(m => ({ serviceId: s.id, model: m, provider: s.name })));
+    const current = model.defaultSelection;
+    root.innerHTML = `<header class="agent-section-head"><h3>Agent&模型服务</h3><button class="button primary" data-agent-add>＋ 新建 Agent</button></header>
+      <div class="agent-workspace">
+        <aside class="agent-list" aria-label="Agent 配置"><div class="agent-list-heading">Agent <span>${catalog.agents.length} 套</span></div>${catalog.agents.map(a => `<button class="agent-card" data-agent-select="${esc(a.id)}" aria-pressed="${a.id === selected.id}"><strong>${esc(a.name)}</strong><span>${esc(names[a.executor])}</span><small>${a.id === catalog.defaultAgentId ? '默认' : a.enabled ? '已启用' : '已停用'}</small></button>`).join('')}</aside>
+        <section class="agent-editor" aria-label="Agent 设置">
+          <header class="agent-editor-head"><div class="agent-editor-title"><h3>${esc(selected.name)}</h3><span>${esc(names[selected.executor])}</span></div><div class="agent-header-actions"><label class="mcp-inline-check"><input type="checkbox" data-agent-enabled ${selected.enabled ? 'checked' : ''}>启用</label><button class="button secondary" data-agent-cancel hidden>取消运行</button><button class="button secondary" data-agent-test>运行测试</button><button class="button primary" data-agent-save>保存</button></div></header>
+          <div class="agent-editor-body">
+            <section class="agent-settings-group"><h4>基本信息</h4>
+              <div class="agent-setting-row"><label for="agent-setting-name">名称</label><div class="agent-setting-value"><input id="agent-setting-name" data-agent-name value="${esc(selected.name)}" maxlength="80"></div></div>
+              <div class="agent-setting-row"><span>默认 Agent</span><label class="mcp-inline-check"><input data-agent-default type="checkbox" ${selected.id === catalog.defaultAgentId ? 'checked' : ''}>用于文档生成</label></div>
+            </section>
+            <section class="agent-settings-group"><h4>模型与工具</h4>
+              <div class="agent-setting-row"><span>模型</span><div class="agent-setting-value agent-model-value"><details class="agent-model-picker"><summary>${esc(current?.model || '选择模型')} <span>${selected.executor === 'codex' ? ({ low: '低', medium: '标准', high: '高', xhigh: '极高' }[selected.reasoningEffort]) : '模型选项'} ⌄</span></summary><div class="agent-model-menu"><label>模型<select data-agent-model-choice><option value="">请选择模型</option>${choices.map(m => `<option value="${esc(JSON.stringify({ serviceId: m.serviceId, model: m.model }))}" ${m.serviceId === current?.serviceId && m.model === current?.model ? 'selected' : ''}>${esc(m.provider)} / ${esc(m.model)}</option>`).join('')}</select></label>${selected.executor === 'codex' ? `<label>推理强度<select data-agent-effort>${[['low','低'],['medium','标准'],['high','高'],['xhigh','极高']].map(([v,t]) => `<option value="${v}" ${selected.reasoningEffort === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>` : ''}</div></details><button class="button secondary" data-agent-open="model">连接设置</button></div></div>
+              <div class="agent-setting-row" data-agent-mcp-row><span>MCP 服务</span><div class="agent-setting-value"><span data-agent-mcp-summary role="status">正在读取…</span><button class="button secondary" data-agent-open="mcp">配置</button></div></div>
+            </section>
+            <section class="agent-settings-group"><h4>技能与权限</h4><div class="agent-setting-row"><span>文档写作</span><div class="agent-setting-value"><span>任务工作区</span><details class="agent-permissions"><summary>查看权限</summary><p>使用文档生产中选定的技能，在任务工作区交付文件。</p></details></div></div></section>
+            <p data-agent-status role="status" aria-live="polite"></p>
+          </div>
+        </section>
+      </div>
+      <dialog class="agent-settings-dialog" data-agent-settings="model" aria-labelledby="agent-model-title"><header><h3 id="agent-model-title">模型连接</h3><button class="button secondary" data-agent-close>完成</button></header><div class="agent-dialog-content" data-agent-model></div></dialog>
+      <dialog class="agent-settings-dialog" data-agent-settings="mcp" aria-labelledby="agent-mcp-title"><header><h3 id="agent-mcp-title">MCP 配置</h3><button class="button secondary" data-agent-close>完成</button></header><div class="agent-dialog-content" data-mcp-admin></div></dialog>
+      <dialog data-agent-dialog><h3>新建 Agent</h3><label>Agent 类型<select data-new-executor>${Object.entries(names).map(([v,t]) => `<option value="${v}">${t}</option>`).join('')}</select></label><div class="agent-dialog-actions"><button class="button secondary" data-new-cancel>取消</button><button class="button primary" data-new-save>创建</button></div></dialog>`;
+    root.querySelectorAll('[data-agent-open]').forEach(button => {
+      button.onclick = () => root.querySelector(`[data-agent-settings="${button.dataset.agentOpen}"]`).showModal();
+    });
+    root.querySelectorAll('[data-agent-settings]').forEach(dialog => {
+      const close = event => {
+        event?.preventDefault();
+        if (dialog.querySelector('[aria-busy="true"]')) return;
+        dialog.close();
+      };
+      dialog.querySelector('[data-agent-close]').onclick = close;
+      dialog.addEventListener('cancel', close);
+    });
+    mountModelConnection(root.querySelector('[data-agent-model]'), { baseUrl: `/knowledge-center/api/platform/agents/${selected.id}/models`, selectionManagedExternally: true, onSaved: async () => { catalog = await request(); model = await request(`/${selected.id}/models`); updatePicker(true); status('连接已保存'); } });
+    mountMcpAdmin(root.querySelector('[data-mcp-admin]'), {
+      baseUrl: `/knowledge-center/api/platform/agents/${selected.id}/mcp`,
+      onSnapshot: snapshot => {
+        const services = snapshot.services || [];
+        const count = services.reduce((sum, service) => sum + (service.knowledgeBases?.length || 0), 0);
+        root.querySelector('[data-agent-mcp-summary]').textContent = services.length ? `${services[0].name} · ${services.length} 个服务 · ${count} 个知识库` : '未配置';
+      },
+      onError: () => { root.querySelector('[data-agent-mcp-summary]').textContent = '读取失败，请打开配置重试'; },
+    });
+    root.querySelectorAll('[data-agent-select]').forEach(b => { b.onclick = () => { if (!confirmLeavingModels()) return; perform(() => load(b.dataset.agentSelect)); }; });
+    root.querySelectorAll('[data-agent-name],[data-agent-enabled],[data-agent-default],[data-agent-effort],[data-agent-model-choice]').forEach(n => n.oninput = () => { root.dataset.dirty = 'true'; if (n.matches('[data-agent-effort],[data-agent-model-choice]')) updatePicker(); });
+    root.querySelector('[data-agent-save]').onclick = () => perform(async () => {
+      if ([...root.querySelectorAll('[data-agent-model],[data-mcp-admin]')].some(n => n.dataset.dirty === 'true')) throw new Error('请先保存连接设置中的修改');
+      const value = root.querySelector('[data-agent-model-choice]').value;
+      if (value && value !== JSON.stringify(model.defaultSelection)) await request(`/${selected.id}/models`, { services: model.services.map(s => ({ ...s, api_key: '' })), defaultSelection: JSON.parse(value) }, 'PUT', model.rowVersion);
+      const fresh = await request();
+      const other = fresh.agents.find(a => a.id === selected.id);
+      if (!other || ['name','enabled','reasoningEffort'].some(key => other[key] !== selected[key])) throw new Error('Agent 配置已变化，请重新读取后保存');
+      catalog = fresh;
+      const agents = catalog.agents.map(a => a.id === selected.id ? { ...a, name: root.querySelector('[data-agent-name]').value, enabled: root.querySelector('[data-agent-enabled]').checked, reasoningEffort: root.querySelector('[data-agent-effort]')?.value || a.reasoningEffort } : a);
+      await request('', { agents, defaultAgentId: root.querySelector('[data-agent-default]').checked ? selected.id : catalog.defaultAgentId });
+      await load(selected.id); status('已保存');
+    });
+    function updatePicker(rebuild = false) {
+      const select = root.querySelector('[data-agent-model-choice]');
+      if (rebuild) select.innerHTML = '<option value="">请选择模型</option>' + model.services.filter(s => s.enabled).flatMap(s => s.models.map(m => `<option value="${esc(JSON.stringify({ serviceId: s.id, model: m }))}" ${s.id === model.defaultSelection?.serviceId && m === model.defaultSelection?.model ? 'selected' : ''}>${esc(s.name)} / ${esc(m)}</option>`)).join('');
+      const chosen = select.value ? JSON.parse(select.value) : null;
+      const effort = root.querySelector('[data-agent-effort]')?.value;
+      root.querySelector('.agent-model-picker>summary').innerHTML = `${esc(chosen?.model || '选择模型')} <span>${effort ? ({ low: '低', medium: '标准', high: '高', xhigh: '极高' }[effort]) : '模型选项'} ⌄</span>`;
+    }
+    root.querySelector('[data-agent-cancel]').onclick = () => perform(async () => {
+      if (!runningId) return;
+      const response = await fetch(`/knowledge-center/api/platform/agent-runs/${runningId}/cancel`, { method: 'POST', credentials: 'same-origin' });
+      if (!response.ok) throw new Error('取消失败，请重试');
+      status('正在取消…');
+    });
+    root.querySelector('[data-agent-test]').onclick = () => perform(async () => {
+      if (hasModelDraft()) throw new Error('请先保存配置再运行测试');
+      if (runningId) return;
+      status('正在运行…');
+      const result = await request(`/${selected.id}/run-test`, {}, 'POST');
+      runningId = result.id;
+      root.querySelector('[data-agent-test]').disabled = true;
+      root.querySelector('[data-agent-cancel]').hidden = false;
+      eventSource = new EventSource(`/knowledge-center/api/platform/agent-runs/${result.id}/events`);
+      const terminal = item => {
+        status(item.kind === 'completed' ? '运行成功，已校验文档文件' : item.kind === 'cancelled' ? '已取消' : '运行未完成，请检查模型连接');
+        runningId = null; stopWatching();
+        root.querySelector('[data-agent-test]').disabled = false;
+        root.querySelector('[data-agent-cancel]').hidden = true;
+      };
+      eventSource.onmessage = event => { const item = JSON.parse(event.data); if (['completed','failed','cancelled','interrupted'].includes(item.kind)) terminal(item); };
+      eventSource.onerror = async () => {
+        stopWatching();
+        try {
+          const response = await fetch(`/knowledge-center/api/platform/agent-runs/${result.id}`, { credentials: 'same-origin' });
+          const data = await response.json();
+          if (response.ok && !['running','queued','cancelling'].includes(data.data.status)) { terminal({ kind: data.data.status }); return; }
+        } catch (_) {}
+        status('连接中断，可取消后重新运行');
+      };
+    });
+    const dialog = root.querySelector('[data-agent-dialog]');
+    root.querySelector('[data-agent-add]').onclick = () => { if (confirmLeavingModels()) dialog.showModal(); };
+    root.querySelector('[data-new-cancel]').onclick = () => dialog.close();
+    root.querySelector('[data-new-save]').onclick = () => perform(async () => {
+      const executor = root.querySelector('[data-new-executor]').value; const before = new Set(catalog.agents.map(a => a.id));
+      catalog = await request('', { agents: [...catalog.agents, { name: `${names[executor]} ${catalog.agents.length + 1}`, executor, enabled: false, reasoningEffort: 'medium' }], defaultAgentId: catalog.defaultAgentId });
+      await load(catalog.agents.find(a => !before.has(a.id)).id);
+    });
   }
-  root.addEventListener('input', event => { if (event.target.name === 'testModel') return; markDirty(); const row = event.target.closest('.model-service'); if (row) { refreshSummary(row); if (event.target.name === 'models') refreshTestModels(row); refreshDefaults(); } });
-  root.addEventListener('change', event => { if (event.target.name === 'testModel') return; markDirty(); const row = event.target.closest('.model-service'); if (row) refreshSummary(row); refreshDefaults(); });
-  root.addEventListener('invalid', event => {
-    let parent = event.target.parentElement;
-    while (parent && parent !== root) { if (parent.tagName === 'DETAILS') parent.open = true; parent = parent.parentElement; }
-  }, true);
-  root.innerHTML = '<p data-model-status role="status">正在读取模型配置…</p><fieldset><button type="button" class="button secondary" data-model-retry>重新读取</button></fieldset>';
-  root.querySelector('[data-model-retry]').onclick = () => perform(async () => { projection = await request(); draw(); }, '已读取保存的配置。');
-  perform(async () => { projection = await request(); draw(); }, '').catch(() => {});
+  root.innerHTML = '<p data-agent-status role="status">正在读取 Agent 配置…</p><button class="button secondary" data-agent-retry>重新读取</button>';
+  root.querySelector('[data-agent-retry]').onclick = () => perform(() => load()); perform(() => load());
 }

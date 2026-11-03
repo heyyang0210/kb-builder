@@ -63,7 +63,10 @@ test('质量结果达到上限但没有更多行时不标记截断（JDBC替身�
       const result = spawnSync('java', [...agent, '-cp', temp, 'QualityExecuteHttpCheck', scenario], {
         encoding: 'utf8', timeout: 30000, env: { ...qualityEnv, ...overrides },
       });
-      expect({ scenario, status: result.status, stderr: result.stderr }).toEqual({ scenario, status: 0, stderr: '' });
+      expect(result.status).toBe(0);
+      // 失败请求现在按统一日志契约写入结构化 stderr；只验证日志可解析且不改变 fixture 断言。
+      expect(result.stderr).toMatch(/event\":\"request\.failed\"/);
+      expect(result.stderr).not.toMatch(/fixture|secret|password|token/i);
       expect(result.stdout).toContain(`PASS: quality HTTP ${scenario}`);
     }
     if (coverageDir) {

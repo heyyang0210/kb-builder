@@ -1,5 +1,7 @@
 # YashanDB 存储服务
 
+`handbook-production/state` 聚合写入时，存储层只对本次新增或修改的实体校验大纲版本引用；未变动的历史草稿引用已删除大纲，不会阻断新 AI 任务。新增、修改或恢复软删除的实体仍按原规则校验，旧值读取与写入锁后的版本必须一致，冲突返回 409。其他命名空间继续全量校验。回归用例位于 `tests/unit/agent-runner/fixtures/ProductionReferenceChangesCheck.java`，真实 JDBC 事务回滚验证位于 `ProductionReferenceJdbcCheck.java`，仅允许 `test_hy` 执行。
+
 数据库结构和迁移变更必须遵循 [YashanDB Storage 变更约束](./AGENTS.md)。
 
 该服务是当前过渡期的 JDBC 运行组件，提供记录读写、乐观并发、Schema 初始化和完整导出。长期目标是将同一数据访问契约作为平台内核 Storage 模块直接调用，业务请求不再经过 HTTP 中转；在 Node/YashanDB 直接适配器和回退验证完成前，14210 仍由运维脚本管理，不得提前删除。
@@ -121,10 +123,12 @@ MIGRATION_APPROVAL_REF=审批单号 MIGRATION_MAINTENANCE_WINDOW=true \
 存储服务启动时会预热最小连接数，并在请求间复用 JDBC 连接，避免每次 HTTP 请求重新建立 YashanDB 会话。可通过环境变量调整：
 
 - `YASDB_STORAGE_POOL_MIN`：预热连接数，默认 1；
-- `YASDB_STORAGE_POOL_MAX`：最大连接数，默认不小于 HTTP 工作线程数（通常为 8）。
+- `YASDB_STORAGE_POOL_MAX`：最大连接数，默认不小于 HTTP 工作线程数（通常为 16）。
 - `YASDB_STORAGE_POOL_BORROW_TIMEOUT_MS`：连接池耗尽时的最大等待时间，默认 5000ms。
 
-连接归还池前会回滚未提交事务；现有 `If-Match` CAS 和 `SELECT ... FOR UPDATE` 语义保持不变。
+借用线程等待创建锁后会再次检查空闲连接，优先复用等待期间归还的连接，避免无必要的串行建连。扩容在锁内预留容量、锁外建立连接，正在建立的连接也计入上限；建连失败释放名额，初始化失败关闭原始连接。连接归还池前会回滚未提交事务；现有 `If-Match` CAS 和 `SELECT ... FOR UPDATE` 语义保持不变。
+
+空闲连接借出前执行 `SELECT 1 FROM DUAL` 验证并回滚探测事务，探测超时由 `YASDB_STORAGE_POOL_VALIDATION_TIMEOUT_SECONDS` 控制（默认3秒）。心跳失败或断网后的无效连接关闭并释放容量，借用在既有等待预算内重新取连接；归还时回滚失败也必须释放容量，避免池永久耗尽。只恢复连接，不自动重放任何业务读写；事务执行期间断线仍由调用方收到失败。
 
 ### 大纲与建设任务存储契约
 
@@ -160,8 +164,14 @@ apps/yashandb-storage/start.sh
 
 HTTP 服务默认设置 `sun.net.httpserver.nodelay=true`，减少持久连接上小响应的传输等待；可通过 JVM `-Dsun.net.httpserver.nodelay=false` 显式覆盖。
 
+HTTP 请求校验并返回 `X-Request-ID`、`X-Correlation-ID`（仅接受 1–128 位字母、数字及 `._:-`）。请求生命周期和错误事件输出 JSON；失败事件含稳定错误码、异常类型/脱敏堆栈及适用的 SQLState/vendorCode。使用 `knowledge-center.sh logs collect --request-id <id>` 或 `--correlation-id <id>` 可生成诊断包。真实数据库故障验收须使用专用测试实例，不能以本地假服务替代。
+
 ## 手册按需读取
 
 `GET /v1/domain/outlines/:id/directory` 仅查询当前大纲目录与有效分工，不读取说明 CLOB 或全局治理数据。`GET /v1/records/handbook-production/state?draftKey=<上下文键>` 返回单篇当前草稿，不返回历史、其他草稿或 AI 任务。服务在监听前预热可丢弃索引，聚合写入提交后同步发布索引，每次读通过数据库 revision 校验；跨实例变更返回可重试 503 并单飞重建，失败不会伪装成空草稿。无数据库结构变更。发布时应先更新 Storage，再更新调用方；旧 Storage 兼容提取仍会读取全聚合，不满足性能目标。详见 [按需读取设计](../../.codex/知识中心建设平台/03-详细设计/知识中心-文档生产-按需读取与性能-详细设计文档.md)。
 
-目录投影读取提供 `Server-Timing`：连接获取、版本头、节点、责任人和总处理耗时，不包含正文或凭据，用于定位运行实例尾延迟。
+目录投影读取提供 `Server-Timing`：连接获取、版本头、节点、责任人和总处理耗时，不包含正文或凭据，用于定位运行实例尾延迟。目录节点和责任映射按大纲版本编辑号短时缓存；每次请求仍读取版本头，版本变更会自动错过缓存。缓存默认最多保留 256 个条目，写入新条目前清理过期条目，避免长期运行因历史编辑版本持续增加内存占用。JSON 响应在客户端声明支持 gzip 且原文达到 1KB 时协商压缩，并保留 `Vary: Accept-Encoding`，不改变业务 JSON 契约。Storage 默认使用 16 个工作线程和连接上限，以覆盖 10 路读取门禁，部署可通过 `YASDB_STORAGE_THREADS`、`YASDB_STORAGE_POOL_MAX` 调整。
+
+## 2026-11-02 普通聚合记录冷读
+
+`GET /v1/records/:namespace/:key` 的 CLOB 改用批量 `getSubString`，配置 `YASDB_RECORD_CLOB_CHUNK_CHARS`（默认1048576字符）。按实际读取字符推进，空片段中止，保留原记录结构、ETag/304、提交和权限契约。200响应增加 `record_query`、`record_clob`、`record_parse` 的 Server-Timing；不含连接借用与完整序列化，不能当作全链路时间。其他 CLOB 读取入口不在本轮范围；无需DDL或迁移。回退使用原构建 Java 产物，保留进程环境与 SQL 目录。证据见 `runtime/diagnostics/task-performance-fix-20261102/`。

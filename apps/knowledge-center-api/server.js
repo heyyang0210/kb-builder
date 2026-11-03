@@ -11,9 +11,11 @@ const { Server: SocketServer } = require('socket.io');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const zlib = require('zlib');
 
 const logger = require('../../packages/agent-runner-core/lib/logger');
 const { errorHandler, notFoundHandler } = require('../../packages/agent-runner-core/middleware/error-handler');
+const { attachResponseIds, requestContext, runWithContext } = require('../../packages/agent-runner-core/lib/log-context');
 
 const configRoutes = require('../../packages/agent-runner-core/routes/config');
 const agentRoutes = require('../../packages/agent-runner-core/routes/agent');
@@ -21,6 +23,7 @@ const outlineRoutes = require('../../packages/agent-runner-core/routes/outline')
 const workflowRoutes = require('../../packages/agent-runner-core/routes/workflow');
 const documentRoutes = require('../../packages/agent-runner-core/routes/document');
 const modelProviderRoutes = require('../../packages/agent-runner-core/routes/model-provider');
+const documentTaskRoutes = require('../../packages/agent-runner-core/routes/document-tasks');
 const ToolManager = require('../../packages/agent-runner-core/lib/tools/tool-manager');
 const { REPOSITORY_ROOT, AGENT_RUNNER_RUNTIME_ROOT } = require('../../packages/agent-runner-core/lib/repo-paths');
 
@@ -84,10 +87,51 @@ app.use(cors({
   origin: true,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-ID', 'X-Correlation-ID']
 }));
 
+app.use((req, res, next) => {
+  const context = requestContext(req);
+  attachResponseIds(res, context);
+  const startedAt = Date.now();
+  runWithContext(context, () => {
+    res.on('finish', () => logger.info('request.completed', {
+      event: 'request.completed', method: req.method, route: req.route?.path || req.path,
+      status: res.statusCode, durationMs: Date.now() - startedAt,
+    }));
+    next();
+  });
+});
+
 app.use(express.json({ limit: '10mb' }));
+
+// 将较大的 JSON 响应压缩后再发送给浏览器，保持业务 JSON 契约不变。
+// 原生 fetch 会自动解压 Storage 响应，因此网关需要单独协商 Node 到浏览器的传输压缩。
+app.use((req, res, next) => {
+  const originalEnd = res.end;
+  res.end = function compressedJsonEnd(chunk, encoding, callback) {
+    const contentType = String(res.getHeader('content-type') || '').toLowerCase();
+    const acceptsGzip = req.acceptsEncodings('gzip') === 'gzip';
+    const alreadyEncoded = Boolean(res.getHeader('content-encoding'));
+    const body = Buffer.isBuffer(chunk) ? chunk : (chunk == null ? null : Buffer.from(String(chunk), encoding));
+    if (body && body.length > 1024 && contentType.includes('application/json') && !alreadyEncoded) {
+      res.vary('Accept-Encoding');
+    }
+    if (!body || body.length <= 1024 || !contentType.includes('application/json') || !acceptsGzip || alreadyEncoded) {
+      return originalEnd.call(this, chunk, encoding, callback);
+    }
+    try {
+      const compressed = zlib.gzipSync(body);
+      res.removeHeader('content-length');
+      res.setHeader('content-encoding', 'gzip');
+      return originalEnd.call(this, compressed, undefined, callback);
+    } catch (error) {
+      logger.warn('JSON response gzip failed; sending uncompressed response', { error: error.message });
+      return originalEnd.call(this, chunk, encoding, callback);
+    }
+  };
+  next();
+});
 
 const outlineInternalToken = process.env.KNOWLEDGE_CENTER_OUTLINE_INTERNAL_TOKEN || '';
 function secureEqual(left, right) {
@@ -97,7 +141,7 @@ function secureEqual(left, right) {
 }
 
 function requireOutlineMutationGateway(req, res, next) {
-  const protectedMutation = (req.method === 'POST' && (req.path === '/import' || req.path === '/handbooks' || /^\/governance\/[^/]+\/(publish|restore|purge)$/.test(req.path)))
+  const protectedMutation = (req.method === 'POST' && (req.path === '/import' || req.path === '/handbooks' || /^\/governance\/[^/]+\/(publish|restore|purge|document-proposals)$/.test(req.path)))
     || (req.method === 'PUT' && /^\/governance\/[^/]+\/governance$/.test(req.path))
     || (req.method === 'PATCH' && /^\/build-tasks\/[^/]+\/items\/[^/]+$/.test(req.path))
     || req.method === 'DELETE'
@@ -127,6 +171,7 @@ app.use('/api/outline', requireOutlineMutationGateway, outlineRoutes);
 app.use('/api/workflow', workflowRoutes);
 app.use('/api/document', documentRoutes);
 app.use('/api/model-provider', modelProviderRoutes);
+app.use('/api/document-tasks', documentTaskRoutes());
 
 app.get('/api/platform/context', (req, res) => {
   res.json(global.__KNOWLEDGE_PLATFORM_CONTEXT__);

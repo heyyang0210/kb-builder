@@ -1,7 +1,9 @@
+const { createDocumentTaskHandler } = require('./document-tasks');
 const { REVIEW_ASSET_STATUSES } = require('../lib/knowledge-asset-utils');
 const http = require('http');
 const crypto = require('crypto');
 const { submitDocumentMergeRequest } = require('../lib/gitlab-connector');
+const { resolveMRParticipants } = require('../lib/gitlab-participants');
 const { imageType } = require('../lib/source-image-resources');
 const fs = require('fs');
 const path = require('path');
@@ -14,6 +16,7 @@ const { createTemplateStore } = require('../lib/template-store');
 const { readTemplateUpload } = require('../lib/template-import');
 const { previewPersonnelImport, readPersonnelUpload, templateWorkbook } = require('../lib/personnel-import');
 const { REPOSITORY_ROOT } = require('../lib/repo-paths');
+const { requestContext } = require('../lib/log-context');
 const { createGitLabVerificationStore } = require('../lib/gitlab-verification-store');
 const verificationRepairs = require('../../../config/knowledge-center/content-rules.json').gitlabVerificationErrors;
 const { readTechDomainConfig } = require('./outline-management');
@@ -63,7 +66,7 @@ function validateOutlineWorkbookPath(key, filePath) {
  */
 function createKnowledgeCenterHandler(options) {
   const {
-    sendFile, proxyAuth, proxyCleaning, proxyOutline, proxyPermission, handleIncrementalBuild,
+    sendFile, proxyAuth, proxyCleaning, proxyOutline, proxyDocumentTasks, proxyPermission, handleIncrementalBuild,
     config, stores, moduleRegistry, modules = {},
   } = options;
 
@@ -81,6 +84,29 @@ function createKnowledgeCenterHandler(options) {
 
   const { knowledgeAssetsStore, manualStatusStore, brandIconStore, domainStore } = stores;
   const databasePlatformMode = String(process.env.KNOWLEDGE_PLATFORM_CONFIG_MODE || process.env.KNOWLEDGE_STORAGE_MODE || '').toLowerCase() === 'database';
+  const handleDocumentTasks = createDocumentTaskHandler(options.documentTasksOptions || {});
+  // Share only overlapping raw directory reads; each request still filters its own session.
+  let documentTaskContextInFlight = null;
+  function readDocumentTaskContext() {
+    if (!documentTaskContextInFlight) {
+      documentTaskContextInFlight = Promise.all([domainStore.readPrincipalsAsync(), readKnowledgeAssetsAsync()])
+        .finally(() => { documentTaskContextInFlight = null; });
+    }
+    return documentTaskContextInFlight;
+  }
+  const publishQueues = new Map();
+  async function serializePublication(taskId, operation) {
+    const previous = publishQueues.get(taskId) || Promise.resolve();
+    let release;
+    const current = new Promise(resolve => { release = resolve; });
+    publishQueues.set(taskId, current);
+    await previous;
+    try { return await operation(); }
+    finally {
+      release();
+      if (publishQueues.get(taskId) === current) publishQueues.delete(taskId);
+    }
+  }
   const verificationStore = createGitLabVerificationStore();
   const readGitLabConfig = filePath => {
     if (!databasePlatformMode) return readFileGitLabConfig(filePath);
@@ -100,11 +126,15 @@ function createKnowledgeCenterHandler(options) {
     const connection = findConnection(mapping.connectionId);
     return { mapping, connection };
   };
-  const findMappingAsync = async handbookId => {
+  const findMappingAsync = async (handbookId, timings) => {
     if (!databasePlatformMode) return findFileMapping(handbookId, GITLAB_CONFIG_PATH);
+    const mappingStarted = performance.now();
     const mapping = await domainStore.readPlatformGitLabMappingAsync(handbookId);
+    if (timings) timings.mapping_read = performance.now() - mappingStarted;
     if (!mapping) throw new GitLabConnectorError('GITLAB_MAPPING_NOT_FOUND', '该手册尚未配置 GitLab 内容映射', 404);
+    const connectionStarted = performance.now();
     const connection = await domainStore.readPlatformGitLabConnectionAsync(mapping.connectionId);
+    if (timings) timings.mapping_connection = performance.now() - connectionStarted;
     if (!connection) throw new GitLabConnectorError('GITLAB_CONNECTION_NOT_FOUND', 'GitLab 仓库连接不存在', 404);
     return { mapping, connection };
   };
@@ -142,6 +172,8 @@ function createKnowledgeCenterHandler(options) {
   const authModule = moduleRegistry?.get?.('auth') || modules.auth;
   const modelGovernance = options.modelGovernance || require('../lib/platform-management/model-governance').createModelGovernance();
   const mcpGovernance = options.mcpGovernance || require('../lib/platform-management/mcp-governance').createMcpGovernance();
+  const agentGovernance = options.agentGovernance || require('../lib/platform-management/agent-governance').createAgentGovernance({ legacyModels: modelGovernance, legacyMcp: mcpGovernance });
+  const codexRunner = options.codexRunner || require('../lib/agent-runtime/codex-runner').createCodexRunner();
   const databaseMode = String(process.env.KNOWLEDGE_STORAGE_MODE || 'file').toLowerCase() === 'database';
   const qualityAdapter = require('../lib/yashandb-quality-adapter');
   const defaultQualityDatabase = databaseMode && qualityAdapter.isolatedQualityDatabaseConfigured() ? qualityAdapter.createYashanDBQualityAdapter({
@@ -152,8 +184,9 @@ function createKnowledgeCenterHandler(options) {
   const handbookProductionService = options.handbookProductionService || createHandbookProductionService({
     autoRecoverOnStart: true,
     recoveryIntervalMs: process.env.KNOWLEDGE_PRODUCTION_RECOVERY_INTERVAL_MS,
-    ai: { modelGovernance, loadMCPConfig: () => mcpGovernance.currentForSources(), pingcodeBaseURL: PINGCODE_API_HOST && PINGCODE_API_PORT ? `http://${PINGCODE_API_HOST}:${PINGCODE_API_PORT}` : undefined },
+    ai: { modelGovernance: options.modelGovernance || agentGovernance, codexRunner, loadMCPConfig: () => mcpGovernance.currentForSources(), pingcodeBaseURL: PINGCODE_API_HOST && PINGCODE_API_PORT ? `http://${PINGCODE_API_HOST}:${PINGCODE_API_PORT}` : undefined },
     yashanDB: defaultQualityDatabase,
+    reviewService: options.handleIncrementalBuild?.service,
   });
 
   // --- Auth helpers ---
@@ -214,8 +247,9 @@ function createKnowledgeCenterHandler(options) {
       try { await action(session); } catch (error) { sendRequestError(res, error); }
       return;
     }
-    const requestId = String(req.headers['x-request-id'] || '');
-    const correlationId = String(req.headers['x-correlation-id'] || requestId);
+    const { requestId, correlationId } = requestContext(req);
+    res.setHeader('x-request-id', requestId);
+    res.setHeader('x-correlation-id', correlationId);
     res.writeHead(401, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
     res.end(JSON.stringify({ success: false, error: { code: 'AUTH_REQUIRED', message: '请登录后继续', retryable: false, requestId, correlationId } }));
   }
@@ -322,18 +356,18 @@ function createKnowledgeCenterHandler(options) {
     } catch (error) { res.writeHead(error.status || 500, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify({ success: false, error: { code: error.code || 'TEMPLATE_ERROR', message: error.message } })); }
   }
 
-  async function requireHandbookRead(session, handbookId) {
+  async function requireHandbookRead(session, handbookId, timings) {
     if (!hasAction(session, 'knowledge:read')) throw new GitLabConnectorError('HANDBOOK_READ_FORBIDDEN', '没有权限查看此手册', 403);
     const visible = session?.visibleHandbookIds || session?.user?.visibleHandbookIds;
     if (Array.isArray(visible) && !visible.map(String).includes(String(handbookId))) throw new GitLabConnectorError('HANDBOOK_READ_FORBIDDEN', '没有权限查看此手册', 403);
-    return assetById(await readKnowledgeAssets(), handbookId);
+    return assetById(await readKnowledgeAssets(timings), handbookId);
   }
 
-  async function requireHandbookReadAsync(session, handbookId) {
+  async function requireHandbookReadAsync(session, handbookId, timings) {
     if (!hasAction(session, 'knowledge:read')) throw new GitLabConnectorError('HANDBOOK_READ_FORBIDDEN', '没有权限查看此手册', 403);
     const visible = session?.visibleHandbookIds || session?.user?.visibleHandbookIds;
     if (Array.isArray(visible) && !visible.map(String).includes(String(handbookId))) throw new GitLabConnectorError('HANDBOOK_READ_FORBIDDEN', '没有权限查看此手册', 403);
-    return requireHandbookRead(session, handbookId);
+    return requireHandbookRead(session, handbookId, timings);
   }
 
   function serveOutlineWorkbook(res, filePath, filename, unavailableCode) {
@@ -457,16 +491,20 @@ function createKnowledgeCenterHandler(options) {
 
   // --- Asset store & query wrappers ---
 
-  async function readKnowledgeAssets() {
+  async function readKnowledgeAssets(timings) {
+    const assetStarted = performance.now();
     const payload = knowledgeAssetsStore.readAsync
       ? await knowledgeAssetsStore.readAsync()
       : knowledgeAssetsStore.read();
+    if (timings) timings.mapping_assets = performance.now() - assetStarted;
     if (!payload.generatedAt && fs.existsSync(options.KNOWLEDGE_ASSETS_CONFIG_PATH)) {
       payload.generatedAt = fs.statSync(options.KNOWLEDGE_ASSETS_CONFIG_PATH).mtime.toISOString();
     }
+    const statusStarted = performance.now();
     const overrides = databaseMode && manualStatusStore
       ? await readManualStatusOverridesAsync()
       : null;
+    if (timings) timings.mapping_status = performance.now() - statusStarted;
     return applyManualStatusOverrides(payload, overrides?.statuses || {});
   }
 
@@ -814,7 +852,10 @@ function createKnowledgeCenterHandler(options) {
       const jobId = aiMatch[3] ? decodeURIComponent(aiMatch[3]) : null;
       const action = aiMatch[4];
       await requireHandbookReadAsync(session, handbookId);
-      if (req.method === 'GET' && jobId && !action) {
+      if (req.method === 'GET' && !jobId) {
+        const params = new URL(req.url, 'http://localhost').searchParams;
+        sendProductionData(res, handbookProductionService.ai.list({ ...productionContext(handbookId, documentId, params) }, session));
+      } else if (req.method === 'GET' && jobId && !action) {
         const params = new URL(req.url, 'http://localhost').searchParams;
         sendProductionData(res, handbookProductionService.ai.get({ ...productionContext(handbookId, documentId, params), jobId }, session));
       } else if (req.method === 'POST' && (!jobId || action)) {
@@ -875,6 +916,7 @@ function createKnowledgeCenterHandler(options) {
       if (!key) throw Object.assign(new Error('提交评审需要幂等键'), { status: 400 });
       const body = await readJsonBody(req);
       if (body.reviewMode && body.reviewMode !== 'online_review') throw Object.assign(new Error('不支持的评审模式'), { status: 422 });
+      if (body.revisionOfTaskId !== undefined && (typeof body.revisionOfTaskId !== 'string' || !body.revisionOfTaskId.trim())) throw Object.assign(new Error('请提供有效的原退回任务标识'), { status: 422, code: 'REVIEW_REVISION_TASK_INVALID' });
       await assertActiveProductionOutline(body);
       if (!Array.isArray(body.documents) || !body.documents.length) throw Object.assign(new Error('至少选择一篇已保存文档'), { status: 422 });
       if (body.reviewMode === 'online_review' && (!['document', 'handbook'].includes(body.scope) || (body.scope === 'document' && body.documents.length !== 1))) throw Object.assign(new Error('在线评审范围与所选文档不一致'), { status: 422, code: 'ONLINE_REVIEW_SCOPE_INVALID' });
@@ -907,6 +949,7 @@ function createKnowledgeCenterHandler(options) {
       // 原因的来源身份，供拆分任务回指原任务和审计同源历史。
       const sourceIdentity = [handbookId, businessVersion, documents.map(item => [item.documentId, item.draftRevisionId, item.filePath])];
       if (body.reviewMode === 'online_review') sourceIdentity.push(body.reviewMode, body.scope);
+      if (body.revisionOfTaskId) sourceIdentity.push({ revisionOfTaskId: body.revisionOfTaskId });
       const sourceSubmissionId = crypto.createHash('sha256').update(JSON.stringify(sourceIdentity)).digest('hex');
       const submissionIdentity = [...sourceIdentity];
       if (splitReason) submissionIdentity.push({ splitReason });
@@ -947,6 +990,7 @@ function createKnowledgeCenterHandler(options) {
           repositoryIdentity: { connectionId: connection.id, host: connection.host, project: connection.projectPath || connection.project },
           name: body.note || `手册文档评审：${documents.map(item => item.filePath).join('、')}`,
           sourceSubmissionId, splitFromTaskId: splitFrom?.id || null, splitReason: splitReason || null,
+          ...(body.revisionOfTaskId ? { revisionOfTaskId: body.revisionOfTaskId } : {}),
           operations: documents.map(item => ({ type: item.action === 'create' ? 'add' : 'update', documentId: item.documentId, nodeId: item.documentId, beforeDigest: item.baselineDigest, after: { content: item.markdown } })),
         });
       }
@@ -1490,9 +1534,14 @@ function createKnowledgeCenterHandler(options) {
       if (mappingUpdate && req.method === 'GET') {
         const handbookId = decodeURIComponent(mappingUpdate[1]);
         const productionView = new URL(req.url, 'http://localhost').searchParams.get('view') === 'production';
-        if (productionView) await requireHandbookReadAsync(session, handbookId);
+        const mappingStarted = performance.now();
+        const timings = {};
+        if (productionView) await requireHandbookReadAsync(session, handbookId, timings);
         else if (forbidUnlessPlatformAdmin(res, session)) return;
-        const { mapping } = await findMappingAsync(handbookId);
+        timings.mapping_access = performance.now() - mappingStarted;
+        const { mapping } = await findMappingAsync(handbookId, timings);
+        timings.mapping_total = performance.now() - mappingStarted;
+        res.setHeader('Server-Timing', Object.entries(timings).map(([name, duration]) => `${name};dur=${duration.toFixed(2)}`).join(', '));
         const data = productionView ? Object.fromEntries(
           ['handbookId', 'connectionId', 'defaultBranch', 'enabledBranches', 'zhPaths', 'enPaths']
             .filter(key => Object.hasOwn(mapping, key)).map(key => [key, mapping[key]])) : mapping;
@@ -1756,6 +1805,66 @@ function createKnowledgeCenterHandler(options) {
     if (req.method === 'GET' && pathname === '/knowledge-center/api/platform/context') {
       requireSession(req, res, () => servePlatformContext(res)); return;
     }
+    if (pathname.startsWith('/knowledge-center/api/platform/agent-runs/')) {
+      requireSession(req, res, async session => {
+        if (forbidUnlessPlatformAdmin(res, session)) return;
+        try {
+          const match = pathname.match(/\/agent-runs\/([^/]+)(?:\/(events|cancel))?$/);
+          if (!match) { res.writeHead(404); res.end(); return; }
+          const [, id, action] = match;
+          if (action === 'cancel' && req.method === 'POST') { sendProductionData(res, codexRunner.cancel(id)); return; }
+          if (req.method !== 'GET' || action === 'cancel') { res.writeHead(405); res.end(); return; }
+          if (action === 'events') {
+            let after = Number(req.headers['last-event-id'] || new URL(req.url, 'http://localhost').searchParams.get('after') || 0);
+            codexRunner.get(id);
+            res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
+            const emit = () => {
+              try { const run = codexRunner.get(id); for (const event of run.events.filter(e => e.seq > after)) { res.write(`id: ${event.seq}\ndata: ${JSON.stringify(event)}\n\n`); after = event.seq; }
+                if (!['running', 'queued', 'cancelling'].includes(run.status)) { clearInterval(timer); res.end(); }
+              } catch (_) { clearInterval(timer); res.end(); }
+            };
+            const timer = setInterval(emit, 500); req.on('close', () => clearInterval(timer)); emit(); return;
+          }
+          sendProductionData(res, codexRunner.get(id));
+        } catch (error) { res.writeHead(error.status || 503, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ success: false, error: { message: error.message } })); }
+      }); return;
+    }
+    if (pathname === '/knowledge-center/api/platform/agents' || pathname.startsWith('/knowledge-center/api/platform/agents/')) {
+      requireSession(req, res, async session => {
+        if (forbidUnlessPlatformAdmin(res, session)) return;
+        const reply = (status, payload) => { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(payload)); };
+        try {
+          const suffix = pathname.slice('/knowledge-center/api/platform/agents'.length);
+          const match = suffix.match(/^\/([^/]+)\/(models|mcp|run-test)(.*)$/);
+          if (!suffix) {
+            if (req.method === 'GET') { reply(200, { success: true, data: await agentGovernance.get() }); return; }
+            if (req.method !== 'PUT') { res.writeHead(405, { Allow: 'GET, PUT' }); res.end(); return; }
+            const input = await readJsonBody(req);
+            reply(200, { success: true, data: await agentGovernance.save(input, req.headers['if-match'], session.user?.id) }); return;
+          }
+          if (!match) { reply(404, { success: false, error: { message: '接口不存在' } }); return; }
+          const [, id, kind, action] = match;
+          const selected = await agentGovernance.agent(id);
+          if (kind === 'run-test') {
+            if (req.method !== 'POST') { res.writeHead(405, { Allow: 'POST' }); res.end(); return; }
+            const resolved = agentGovernance.resolve({ ...agentGovernance.models(id).available().defaultSelection, agentId: id, configVersion: agentGovernance.models(id).available().configVersion });
+            if (selected.executor !== 'codex') { reply(422, { success: false, error: { code: 'AGENT_TEST_UNSUPPORTED', message: selected.executor === 'deepseek' ? 'DeepSeek Harness 尚未部署' : '请在文档生产中验证内置工作流' } }); return; }
+            const result = codexRunner.start([{ role: 'user', content: require('../lib/json-config').readJson(require('../lib/config-registry').CONFIG_PATHS.contentRules).agentRuntime.testPrompt }], resolved.config);
+            reply(202, { success: true, data: result }); return;
+          }
+          const governance = kind === 'models' ? agentGovernance.models(id) : agentGovernance.mcp(id);
+          if (req.method === 'GET' && !action) { reply(200, { success: true, data: await governance.get() }); return; }
+          const valid = kind === 'models' ? ['', '/test'] : ['', '/test', '/services/save', '/services/delete', '/services/test', '/services/verify'];
+          if (!valid.includes(action) || req.method !== (action ? 'POST' : 'PUT')) { res.writeHead(405); res.end(); return; }
+          const input = await readJsonBody(req);
+          const methods = { '/services/save': 'saveService', '/services/delete': 'deleteService', '/services/test': 'testService', '/services/verify': 'verifyKnowledgeBase', '/test': 'test', '': 'save' };
+          reply(200, { success: true, data: await governance[methods[action]](input, req.headers['if-match'] || input.rowVersion, session.user?.id) });
+        } catch (error) {
+          const known = /^(AGENT|MODEL|MCP)_/.test(error.code || '');
+          reply(known ? error.status || 422 : 503, { success: false, error: { code: known ? error.code : 'AGENT_RUN_FAILED', message: known ? error.message : 'Agent 运行失败，请检查执行器和模型连接' } });
+        }
+      }); return;
+    }
     if (pathname === '/knowledge-center/api/platform/models' || pathname === '/knowledge-center/api/platform/models/test') {
       requireSession(req, res, async session => {
         if (forbidUnlessPlatformAdmin(res, session)) return;
@@ -1780,12 +1889,12 @@ function createKnowledgeCenterHandler(options) {
       }); return;
     }
     if (pathname === '/knowledge-center/api/production/models') {
-      requireSession(req, res, session => {
+      requireSession(req, res, async session => {
         if (!hasAction(session, 'knowledge:read') && !isPlatformAdmin(session)) {
           res.writeHead(403, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify({ success: false, error: { message: '无文档读取权限' } })); return;
         }
         if (req.method !== 'GET') { res.writeHead(405, { Allow: 'GET' }); res.end(); return; }
-        sendProductionData(res, modelGovernance.available());
+        sendProductionData(res, await (options.modelGovernance ? modelGovernance.available() : agentGovernance.available()));
       }); return;
     }
     if (pathname === '/knowledge-center/api/platform/mcp' || pathname === '/knowledge-center/api/platform/mcp/test' || /^\/knowledge-center\/api\/platform\/mcp\/services\/(save|delete|test|verify)$/.test(pathname)) {
@@ -2028,6 +2137,25 @@ function createKnowledgeCenterHandler(options) {
         proxyCleaning(req, res, { session, endpoint });
       }); return;
     }
+    if (pathname === '/knowledge-center/api/document-tasks' || pathname.startsWith('/knowledge-center/api/document-tasks/')) {
+      requireSession(req, res, async session => {
+        try {
+          const [directory, assets] = await readDocumentTaskContext();
+          const allowed = session.visibleHandbookIds || session.user?.visibleHandbookIds;
+          const people = (directory.items || []).filter(p => String(p.state || 'active').toLowerCase() === 'active').map(p => ({ id: String(p.id || p.principalId), displayName: p.displayName || p.name || p.loginName || p.id }));
+          const handbooks = (assets.handbooks || []).filter(b => !b.archivedAt && (!Array.isArray(allowed) || allowed.includes(b.handbookId))).map(b => ({ id: b.handbookId, name: b.name }));
+          handleDocumentTasks(req, res, { session, people, handbooks, reviewService: handleIncrementalBuild?.service, createDocument: (id, proposal) => options.documentTaskCreateDocument(id, proposal, session), catalog: async id => {
+            const catalog = await options.documentTaskCatalog(id, session);
+            try { const { mapping } = findMapping(id, GITLAB_CONFIG_PATH); catalog.versions = [...new Set([...catalog.versions, mapping.defaultBranch, ...(mapping.enabledBranches || [])].filter(Boolean))]; } catch (error) { if (error.code !== 'GITLAB_MAPPING_NOT_FOUND') throw error; }
+            return catalog;
+          } });
+        } catch (error) {
+          res.writeHead(error.status || 503, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ success: false, error: { code: error.code || 'TASK_CONTEXT_UNAVAILABLE', message: error.message || '任务目录暂不可用' } }));
+        }
+      });
+      return;
+    }
     if (req.method === 'GET' && pathname === '/knowledge-center/api/assets/catalog') {
       requireSession(req, res, () => serveKnowledgeAssetsCatalog(res)); return;
     }
@@ -2145,9 +2273,24 @@ function createKnowledgeCenterHandler(options) {
         res.end(bytes);
       }); return;
     }
+    const mrParticipants = pathname.match(/^\/knowledge-center\/api\/incremental-tasks\/([^/]+)\/mr-participants$/);
+    if (mrParticipants && req.method === 'GET') {
+      requireSession(req, res, async session => {
+        if (!hasAction(session, 'publish:manage')) throw Object.assign(new Error('没有发布权限'), { status: 403 });
+        const task = handleIncrementalBuild?.service?.get(session, decodeURIComponent(mrParticipants[1]));
+        if (!task?.handbookSource || task.state !== 'approved') throw Object.assign(new Error('请先完成全部文档审核'), { status: 409 });
+        await requireHandbookReadAsync(session, task.handbookId);
+        const { connection } = findMapping(task.handbookId, GITLAB_CONFIG_PATH);
+        const identity = { connectionId: connection.id, host: connection.host, project: connection.projectPath || connection.project };
+        if (JSON.stringify(identity) !== JSON.stringify(task.handbookSource.repositoryIdentity)) throw Object.assign(new Error('仓库映射已变化，请重新发起评审'), { status: 409 });
+        const users = await Promise.resolve(authModule?.repository?.listUsers?.() || []);
+        sendProductionData(res, await gitLabRequestForUser(session, connection, options => resolveMRParticipants(connection, task, users, options)));
+      }); return;
+    }
     const mrPublish = pathname.match(/^\/knowledge-center\/api\/incremental-tasks\/([^/]+)\/publish$/);
     if (mrPublish && req.method === 'POST') {
       requireSession(req, res, async session => {
+        return serializePublication(decodeURIComponent(mrPublish[1]), async () => {
         const service = handleIncrementalBuild?.service;
         const task = service?.get(session, decodeURIComponent(mrPublish[1]));
         if (!task?.handbookSource) {
@@ -2184,10 +2327,18 @@ function createKnowledgeCenterHandler(options) {
           authorizeMappedRequest(mapping, task.handbookSource.branch, 'zh', item.filePath);
           extractMarkdownResources(item.markdown, item.filePath).forEach(resource => authorizeMappedRequest(mapping, task.handbookSource.branch, 'zh', resource.path));
         });
-        const mergeRequest = await gitLabRequestForUser(session, connection, options => submitDocumentMergeRequest(connection, {
-          ...task.handbookSource, taskId: task.id, title: task.name, candidateDigest: task.candidate.digest,
-        }, { ...options, loadResource: resource => handbookProductionService.delivery.readFrozen(resource) }));
+        const users = await Promise.resolve(authModule?.repository?.listUsers?.() || []);
+        const mergeRequest = await gitLabRequestForUser(session, connection, async options => {
+          const resolved = await resolveMRParticipants(connection, task, users, options);
+          const assignee = resolved.assignees.find(item => item.platformId === String(body.assigneeId));
+          if (!resolved.canSubmit || !assignee) throw new GitLabConnectorError('GITLAB_PARTICIPANTS_REQUIRED', '请核对审核人的 GitLab 映射，并选择有效的合入负责人', 422, resolved);
+          return submitDocumentMergeRequest(connection, {
+            ...task.handbookSource, taskId: task.id, title: task.name, candidateDigest: task.candidate.digest,
+            participants: { assignees: [assignee], reviewers: resolved.reviewers },
+          }, { ...options, loadResource: resource => handbookProductionService.delivery.readFrozen(resource) });
+        });
         sendProductionData(res, service.recordMergeRequest(session, task.id, key, { expectedCandidateDigest: body.expectedCandidateDigest, mergeRequest }));
+        });
       }); return;
     }
     if (pathname === '/knowledge-center/api/incremental-tasks' || pathname.startsWith('/knowledge-center/api/incremental-tasks/')) {
@@ -2195,6 +2346,11 @@ function createKnowledgeCenterHandler(options) {
     }
     if (pathname.startsWith('/knowledge-center/api/gitlab/')) {
       requireSession(req, res, session => handleGitLabApi(req, res, session)); return;
+    }
+    if (pathname === '/knowledge-center/api' || pathname.startsWith('/knowledge-center/api/')) {
+      res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+      res.end(JSON.stringify({ success: false, error: { code: 'API_NOT_FOUND', message: '请求的接口不存在，请刷新页面后重试' } }));
+      return;
     }
     if (pathname === KNOWLEDGE_CENTER_PREFIX || pathname.startsWith(`${KNOWLEDGE_CENTER_PREFIX}/`)) {
       const filePath = knowledgeCenterFilePath(req.url);

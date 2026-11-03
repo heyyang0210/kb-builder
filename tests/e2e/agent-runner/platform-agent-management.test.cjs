@@ -1,0 +1,146 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const { chromium } = require('playwright');
+const root = path.resolve('runtime/test-results/platform-agents'); fs.mkdirSync(root, { recursive: true });
+const directory = fs.mkdtempSync(path.join(root, 'config-'));
+const file = path.join(directory, 'service.json');
+fs.writeFileSync(file, JSON.stringify({ model: {}, mcp: {} }));
+const registryPath = require.resolve('../../../packages/agent-runner-core/lib/config-registry');
+const registry = require(registryPath);
+require.cache[registryPath].exports = { ...registry, CONFIG_PATHS: { ...registry.CONFIG_PATHS, service: file } };
+const manager = require('../../../packages/agent-runner-core/lib/config-manager');
+const { setup } = require('./fixtures/production-writing.cjs');
+
+test('Agent 管理真实 HTTP：迁移、配置隔离、加密、版本冲突、权限与界面', async t => {
+  t.after(() => { manager.watcher?.close(); fs.rmSync(directory, { recursive: true, force: true }); });
+  const session = { authenticated: true, user: { id: 'agent-admin', roles: ['PLATFORM_ADMIN'] }, allowedActions: ['knowledge:read', 'knowledge:write'] };
+  const api = await setup(t, { browser: true, session });
+  async function call(suffix = '', body, version, method) {
+    const res = await fetch(api.origin + '/knowledge-center/api/platform/agents' + suffix, { method: method || (body ? 'PUT' : 'GET'), headers: { 'Content-Type': 'application/json', ...(version ? { 'If-Match': version } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
+    return { status: res.status, ...(await res.json()) };
+  }
+  let c = (await call()).data;
+  const missing = await fetch(api.origin + '/knowledge-center/api/platform/unknown-agent-endpoint');
+  assert.equal(missing.status, 404);
+  assert.match(missing.headers.get('content-type'), /application\/json/);
+  assert.equal((await missing.json()).error.code, 'API_NOT_FOUND');
+  assert.equal(c.agents[0].executor, 'workflow'); assert(!JSON.parse(fs.readFileSync(file)).agentServices);
+  const stale = c.rowVersion;
+  c = (await call('', { agents: [...c.agents, { name: 'Codex 文档生成', executor: 'codex', enabled: true, reasoningEffort: 'low' }], defaultAgentId: c.defaultAgentId }, c.rowVersion)).data;
+  assert.equal((await call('', { agents: c.agents, defaultAgentId: c.defaultAgentId }, stale)).status, 409);
+  const id = c.agents.find(a => a.executor === 'codex').id;
+  let m = (await call(`/${id}/models`)).data;
+  const p = m.limits;
+  const service = { clientId: 'new-provider', name: '测试网关', provider: 'custom', protocol: 'responses', base_url: 'https://gateway.example.test/v1', api_key: 'agent-fixture-key', models: ['doc-model'], enabled: true, timeout: p.defaultTimeoutMs, max_tokens: p.defaultMaxTokens, temperature: p.defaultTemperature };
+  m = (await call(`/${id}/models`, { services: [service], defaultSelection: { serviceId: 'new-provider', model: 'doc-model' } }, m.rowVersion)).data;
+  assert.equal(m.services[0].api_key_configured, true); assert(!JSON.stringify(m).includes('agent-fixture-key'));
+  assert(!fs.readFileSync(file, 'utf8').includes('agent-fixture-key'));
+  assert.equal((await call('/builtin-default/models')).data.services.length, 0);
+  const governance = require('../../../packages/agent-runner-core/lib/platform-management/agent-governance').createAgentGovernance();
+  let enabled = (await governance.available()).options.find(o => o.agentId === id);
+  assert.equal(governance.resolve(enabled).config.model, 'doc-model');
+  c = (await call()).data;
+  await call('', { agents: c.agents.map(a => a.id === id ? { ...a, reasoningEffort: 'medium' } : a), defaultAgentId: c.defaultAgentId }, c.rowVersion);
+  assert.throws(() => governance.resolve(enabled), { code: 'AGENT_SELECTION_STALE' });
+  assert.equal((await call(`/${id}/models`, { services: [service], defaultSelection: null }, 'stale')).status, 409);
+  const before = c.rowVersion;
+  c = (await call()).data;
+  assert.notEqual(c.rowVersion, before);
+  const browser = await chromium.launch({ headless: true }); t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1080 } });
+  const errors = []; page.on('pageerror', e => errors.push(e.message));
+  await page.goto(api.origin + '/browser-fixture');
+  await page.addStyleTag({ url: '/knowledge-center/modules/platform-admin/platform-admin.css' });
+  const agentsUrl = api.origin + '/knowledge-center/api/platform/agents';
+  await page.route(agentsUrl, route => route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>平台首页</title>' }));
+  await page.evaluate(async () => {
+    const { renderPlatformAdmin } = await import('/knowledge-center/modules/platform-admin/view.js');
+    const { mountModelAdmin } = await import('/knowledge-center/modules/platform-admin/model-admin.js');
+    document.querySelector('#view-root').innerHTML = renderPlatformAdmin({ platformTab: 'models', platformAdmin: true });
+    mountModelAdmin(document.querySelector('[data-model-admin]'));
+  });
+  await page.waitForFunction(() => document.querySelector('[data-agent-status]')?.textContent === 'Agent 服务暂不可用，请稍后重新读取');
+  await page.unroute(agentsUrl);
+  await page.locator('[data-agent-retry]').click();
+  await page.locator('[data-agent-select]').filter({ hasText: 'Codex 文档生成' }).click();
+  await page.locator('[data-agent-name]').filter({ visible: true }).waitFor();
+  await page.waitForFunction(() => document.querySelector('[data-agent-name]')?.value === 'Codex 文档生成');
+  assert.equal(await page.locator('[data-platform-tab=mcp]').count(), 0);
+  assert.equal(await page.locator('[data-platform-tab=models]').textContent(), 'Agent&模型服务');
+  await page.locator('[data-agent-model-choice]').waitFor({ state: 'attached' });
+  const html = fs.readFileSync(path.resolve('apps/knowledge-center-web/frontend/knowledge-center/knowledge-center-management.html'), 'utf8');
+  const sidebar = html.match(/<aside class="sidebar"[\s\S]*?<\/aside>/)[0];
+  await page.evaluate(sidebar => {
+    const view = document.querySelector('#view-root');
+    const shell = document.createElement('div'); shell.className = 'app-shell';
+    shell.innerHTML = sidebar + '<div class="main-shell"><main id="main"></main></div>';
+    document.body.append(shell); shell.querySelector('#main').append(view);
+    shell.querySelectorAll('[data-view]').forEach(n => n.classList.toggle('active', n.dataset.view === 'platform'));
+    shell.querySelector('#enterprise-name').textContent = '知识中心';
+    shell.querySelector('#platform-status').textContent = '平台管理';
+  }, sidebar);
+  await page.waitForFunction(() => document.querySelector('[data-agent-mcp-summary]')?.textContent === '未配置');
+  for (const [width, height] of [[1366, 768], [1440, 900], [1920, 1080]]) {
+    await page.setViewportSize({ width, height });
+    const layout = await page.evaluate(() => ({
+      overflow: document.documentElement.scrollWidth > innerWidth,
+      controls: ['[data-agent-name]', '.agent-model-picker > summary', '[data-agent-mcp-row]', '[data-agent-save]'].map(selector => {
+        const r = document.querySelector(selector).getBoundingClientRect();
+        return { selector, top: r.top, bottom: r.bottom, left: r.left, right: r.right };
+      }),
+    }));
+    assert.equal(layout.overflow, false, `${width} 桌面无横向溢出`);
+    for (const control of layout.controls) assert(control.top >= 0 && control.bottom <= height && control.left >= 0 && control.right <= width, `${width} 首屏：${JSON.stringify(control)}`);
+    await page.screenshot({ path: path.join(root, `agents-${width}.png`), fullPage: false });
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.screenshot({ path: path.join(root, 'agents-desktop.png'), fullPage: true });
+  await page.locator('[data-agent-open=model]').click();
+  const modelDialog = page.locator('[data-agent-settings=model]');
+  assert.equal(await modelDialog.evaluate(n => n.open), true);
+  assert.equal(await modelDialog.locator('.model-default-block').isVisible(), false);
+  await modelDialog.locator('.model-service-summary').click();
+  await modelDialog.locator('[name=name]').fill('新模型连接名称');
+  await page.keyboard.press('Escape');
+  assert.equal(await modelDialog.evaluate(n => n.open), false);
+  assert.equal(await page.locator('[data-agent-open=model]').evaluate(n => n === document.activeElement), true);
+  await page.locator('[data-agent-open=model]').click();
+  assert.equal(await modelDialog.locator('[name=name]').inputValue(), '新模型连接名称');
+  const modelSaved = page.waitForResponse(r => r.url().endsWith(`/${id}/models`) && r.request().method() === 'PUT');
+  await modelDialog.locator('button[type=submit]').click();
+  assert.equal((await modelSaved).status(), 200);
+  await page.waitForFunction(() => document.querySelector('[data-agent-status]')?.textContent === '连接已保存');
+  assert.equal((await call(`/${id}/models`)).data.services[0].name, '新模型连接名称');
+  await modelDialog.locator('[data-agent-close]').click();
+  await page.locator('[data-agent-open=mcp]').click();
+  const mcpDialog = page.locator('[data-agent-settings=mcp]');
+  await mcpDialog.locator('[data-mcp-add]').click();
+  await mcpDialog.locator('[name=name]').fill('文档知识库服务');
+  await mcpDialog.locator('[name=server_url]').fill('https://mcp.example.test/mcp');
+  await mcpDialog.locator('[data-kb-add]').click();
+  await mcpDialog.locator('[name=kb_name]').fill('SQL知识库');
+  await mcpDialog.locator('[name=kb_locator]').fill('1');
+  const mcpSaved = page.waitForResponse(r => r.url().endsWith('/services/save') && r.request().method() === 'POST');
+  await mcpDialog.locator('button[type=submit]').click();
+  assert.equal((await mcpSaved).status(), 200);
+  await page.waitForFunction(() => document.querySelector('[data-agent-mcp-summary]')?.textContent.includes('1 个知识库'));
+  await page.screenshot({ path: path.join(root, 'agents-mcp-dialog.png'), fullPage: false });
+  await page.keyboard.press('Escape');
+  assert.equal(await page.locator('[data-agent-open=mcp]').evaluate(n => n === document.activeElement), true);
+  assert.equal((await call(`/${id}/mcp`)).data.services[0].name, '文档知识库服务');
+
+  await page.locator('.agent-model-picker>summary').click();
+  await page.locator('[data-agent-effort]').selectOption('high');
+  await page.locator('[data-agent-save]').click();
+  await page.waitForFunction(() => document.querySelector('[data-agent-status]')?.textContent === '已保存');
+  assert.equal((await call()).data.agents.find(a => a.id === id).reasoningEffort, 'high');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForFunction(() => document.querySelector('.sidebar').getBoundingClientRect().right <= 0);
+  assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  await page.screenshot({ path: path.join(root, 'agents-mobile.png'), fullPage: true });
+  assert.deepEqual(errors, []);
+  session.user.roles = ['KNOWLEDGE_EDITOR'];
+  assert.equal((await call()).status, 403);
+});

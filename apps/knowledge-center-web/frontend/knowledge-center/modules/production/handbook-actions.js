@@ -17,5 +17,5 @@ export function handbookReviewAction(documentId, ui) {
   else if (loadState !== 'ready') reason = '正在读取共享草稿';
   else if (saving) reason = '正在保存，请稍候';
   else if (!server?.exists && !dirty) reason = '当前正文尚未保存为共享草稿，请点击“保存”';
-  return { disabled: Boolean(reason), label: dirty ? '保存并发起评审' : '发起评审', reason, hint: reason || (dirty ? '保存成功后确认审核人和仓库路径' : '提交当前已保存文档') };
+  return { disabled: Boolean(reason), label: dirty ? '保存并提交审核' : '提交审核', reason, hint: reason || (dirty ? '保存成功后确认审核人和仓库路径' : '提交当前已保存文档') };
 }

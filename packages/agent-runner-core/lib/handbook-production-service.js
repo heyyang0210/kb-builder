@@ -121,7 +121,27 @@ function createHandbookProductionService(options = {}) {
     filePath: options.aiArtifactFilePath || (store.filePath ? `${store.filePath}.artifacts` : undefined),
   });
 
-  function projectDraft(draft, session) {
+  // 审核任务保存在增量构建服务中；草稿只保存任务引用。读取草稿时
+  // 回读任务投影，避免页面继续显示“审核中”而实际任务已经退回。
+  function projectReviewState(reviewState, draft, session, snapshot) {
+    if (!reviewState?.taskId || !options.reviewService?.get) return reviewState || null;
+    try {
+      const task = options.reviewService.get(session, reviewState.taskId, snapshot);
+      const review = (task.reviews || []).find(item => String(item.documentId || '') === String(draft.context?.documentId || ''));
+      return {
+        ...reviewState,
+        taskState: task.state || null,
+        reviewStatus: review?.status || null,
+        completion: task.completion ? { status: task.completion.status, label: task.completion.label } : null,
+        reviewDecision: review?.decision ? structuredClone(review.decision) : null,
+      };
+    } catch (_) {
+      // 审核任务暂时不可读时保留草稿中的最后已知引用，不阻断正文读取。
+      return reviewState || null;
+    }
+  }
+
+  function projectDraft(draft, session, reviewStateProjection) {
     if (!draft) return { exists: false, draft: null, capabilities: capabilities(session) };
     const revision = draft.revisions.find(item => item.revisionId === draft.currentRevisionId) || null;
     return {
@@ -132,7 +152,9 @@ function createHandbookProductionService(options = {}) {
         currentRevisionId: draft.currentRevisionId,
         editVersion: draft.editVersion,
         reviewRevisionIds: draft.reviewRevisionIds || [],
-        reviewState: draft.reviewState || null,
+        reviewState: reviewStateProjection === undefined
+          ? projectReviewState(draft.reviewState, draft, session)
+          : reviewStateProjection,
         revision,
         updatedBy: draft.updatedBy,
         updatedAt: draft.updatedAt,
@@ -153,7 +175,18 @@ function createHandbookProductionService(options = {}) {
     const draft = typeof store.readDraftAsync === 'function'
       ? await store.readDraftAsync(key)
       : (typeof store.readAsync === 'function' ? await store.readAsync() : store.read()).drafts?.[key];
-    return projectDraft(draft || null, session);
+    let reviewState = draft?.reviewState || null;
+    if (reviewState?.taskId && options.reviewService?.readState) {
+      try {
+        const snapshot = await options.reviewService.readState(session);
+        reviewState = projectReviewState(reviewState, draft, session, snapshot);
+      } catch (_) {
+        // Keep the last known reference when the review snapshot is unavailable.
+      }
+    } else if (reviewState?.taskId) {
+      reviewState = projectReviewState(reviewState, draft, session);
+    }
+    return projectDraft(draft || null, session, reviewState);
   }
 
   function listReviewDrafts(handbookId, session) {

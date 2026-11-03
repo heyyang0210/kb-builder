@@ -13,6 +13,7 @@ function createProductionAIService(options) {
   const artifactStore = options.artifactStore;
   const now = options.now || Date.now;
   const models = options.modelGovernance || require('./platform-management/model-governance').createModelGovernance();
+  const codexRunner = options.codexRunner || require('./agent-runtime/codex-runner').createCodexRunner();
   const fail = (code, message, status = 400) => { throw new ErrorType(code, message, status); };
   const persistArtifact = record => artifactStore?.put(record);
   const artifactReference = record => ({ artifactId: record.artifactId, stageId: record.stageId, contractVersion: record.contractVersion, digest: record.digest });
@@ -70,6 +71,21 @@ function createProductionAIService(options) {
   function get(input, session) {
     // Persist expired leases so a later model response cannot revive an interrupted job.
     return hydrateArtifacts(store.transaction(state => structuredClone(expire(getOwned(state, input, session)))));
+  }
+
+  function list(input, session) {
+    requireCapability(session, 'canRead');
+    const key = contextKey(input);
+    const limit = Math.max(1, Number(rules().historyLimit || 30));
+    return Object.values(store.read().aiJobs || {})
+      .filter(job => job.contextKey === key && job.createdBy?.id === actor(session).id)
+      .sort((a, b) => Date.parse(b.createdAt || 0) - Date.parse(a.createdAt || 0))
+      .slice(0, limit)
+      .map(job => ({
+        jobId: job.jobId, status: ['queued', 'running'].includes(job.status) && job.leaseUntil <= now() ? 'interrupted' : job.status, operation: job.operation,
+        requirements: job.requirements, createdAt: job.createdAt, updatedAt: job.updatedAt,
+        adopted: !!job.adopted, eventCount: Array.isArray(job.agentEvents) ? job.agentEvents.length : 0,
+      }));
   }
 
   function validate(input, config) {
@@ -160,7 +176,7 @@ function createProductionAIService(options) {
   }
 
   async function execute(jobId, modelConfig, recoveryClaimId = null) {
-    let job; let previewTimer;
+    let job; let previewTimer; let agentEventTimer;
     const controller = new AbortController();
     try {
       job = store.transaction(state => {
@@ -203,6 +219,11 @@ function createProductionAIService(options) {
         return structuredClone(current);
       });
       if (!job || job.status !== 'running') return;
+      // Explicit omission applies to both planned retrieval and tools available to the writer, including resumed jobs.
+      if (Array.isArray(job.referenceOrder) && !job.referenceOrder.includes('knowledge-mcp')) {
+        modelConfig = modelConfig ? { ...modelConfig, mcp: { services: [] } } : modelConfig;
+        job.mcpRetrievalPolicy = null;
+      }
       executionControllers.set(jobId, controller);
       job = hydrateArtifacts(job);
       const payload = {
@@ -218,7 +239,7 @@ function createProductionAIService(options) {
       job = store.read().aiJobs?.[jobId];
       if (job?.status !== 'running') return;
       if ((!job.mcpRetrieval || job.mcpRetrieval.status === 'failed') && job.mcpRetrievalPolicy) {
-        const outcome = await sources.retrieveAutomatic(job);
+        const outcome = await sources.retrieveAutomatic(job, modelConfig?.mcp);
         const combined = [...job.sourceSnapshots, ...outcome.snapshots];
         const order = job.referenceOrder || [...job.sourceSnapshots.map(source => source.sourceId), 'knowledge-mcp'];
         const rank = source => { const key = source.automatic ? 'knowledge-mcp' : source.sourceId; const index = order.indexOf(key); return index < 0 ? order.length : index; };
@@ -253,7 +274,7 @@ function createProductionAIService(options) {
         const run = [...(current?.stageRuns || [])].reverse().find(item => item.stageId === 'writer');
         if (!current || expire(current).status !== 'running' || run?.status !== 'pending') return;
         run.status = 'running'; run.attempt = Math.max(1, Number(run.attempt || 0)); run.startedAt = new Date(now()).toISOString();
-        run.toolName = options.stageAdapters?.writer?.run ? '写作阶段适配器调用' : '生成模型调用';
+        run.toolName = options.stageAdapters?.writer?.run ? '写作阶段适配器调用' : modelConfig?.executor === 'codex' ? 'Codex CLI' : '生成模型调用';
         run.inputSummary = { operation: job.operation, selectedChars: job.range.end - job.range.start, sourceCount: job.sourceSnapshots.length, model: job.modelSelection?.model, requirements: job.requirements };
       });
       job = store.read().aiJobs?.[jobId];
@@ -282,13 +303,59 @@ function createProductionAIService(options) {
         });
         lastPreviewAt = now();
       };
-      const execution = { onProgress, signal: controller.signal };
+      let pendingAgentText = '';
+      let lastAgentMessageAt = -Infinity;
+      const saveAgentEvent = event => {
+        if (!['progress', 'tool-started', 'tool-completed', 'error'].includes(event.kind)) return;
+        store.transaction(state => {
+          const current = state.aiJobs?.[jobId];
+          const run = [...(current?.stageRuns || [])].reverse().find(item => item.stageId === 'writer');
+          if (!current || controller.signal.aborted || expire(current).status !== 'running' || run?.stageRunId !== writerRun.stageRunId || run.status !== 'running') return;
+          const events = current.agentEvents ||= [];
+          const projected = { seq: event.seq, at: event.at, kind: event.kind };
+          if (event.kind === 'progress') {
+            const last = events.at(-1);
+            if (last?.kind === 'progress') {
+              last.text = (last.text + event.text).slice(-feedback.maxAgentMessageChars);
+              last.seq = event.seq; last.at = event.at; return;
+            }
+            projected.text = String(event.text || '').slice(0, feedback.maxAgentMessageChars);
+          } else if (event.kind === 'error') projected.text = String(event.message || '').slice(0, feedback.maxAgentMessageChars);
+          else { projected.tool = event.tool; projected.status = event.status; projected.itemId = event.itemId; }
+          events.push(projected);
+          if (events.length > feedback.maxAgentEvents) events.splice(0, events.length - feedback.maxAgentEvents);
+        });
+      };
+      const flushAgentText = () => {
+        clearTimeout(agentEventTimer);
+        agentEventTimer = null;
+        if (!pendingAgentText) return;
+        saveAgentEvent({ kind: 'progress', text: pendingAgentText, seq: lastAgentTextSeq, at: lastAgentTextAt });
+        pendingAgentText = '';
+        lastAgentMessageAt = now();
+      };
+      let lastAgentTextSeq; let lastAgentTextAt;
+      const onEvent = event => {
+        if (event.kind === 'progress') {
+          pendingAgentText = (pendingAgentText + event.text).slice(-feedback.maxAgentMessageChars);
+          lastAgentTextSeq = event.seq; lastAgentTextAt = event.at;
+          if (now() - lastAgentMessageAt >= feedback.previewIntervalMs) flushAgentText();
+          else if (!agentEventTimer) {
+            agentEventTimer = setTimeout(() => { agentEventTimer = null; flushAgentText(); }, feedback.previewIntervalMs - (now() - lastAgentMessageAt));
+            agentEventTimer.unref?.();
+          }
+        } else { flushAgentText(); saveAgentEvent(event); }
+      };
+      const execution = { onProgress, onEvent, signal: controller.signal };
       const writerAdapter = options.stageAdapters?.writer;
       const result = writerRun.status === 'succeeded'
         ? { ...job.writerMetadata, content: JSON.stringify(artifactValue(job, 'writer') ? { markdown: artifactValue(job, 'writer').fragment, provenance: artifactValue(job, 'writer').provenance } : {}) }
+        : modelConfig?.executor === 'codex'
+        ? await codexRunner.run(messages, modelConfig, execution)
         : writerAdapter?.run
         ? await writerAdapter.run(stageContracts.envelope(job, 'writer', writerRun?.attempt || 1), { messages, payload, modelConfig, ...execution })
         : await (options.generate || defaultGenerate)(messages, modelConfig, execution);
+      flushAgentText();
       if (typeof result?.content !== 'string' || !result.content.trim()) fail('AI_EMPTY_RESULT', '模型未返回可用正文', 502);
       const generated = parseGenerated(result.content, job.sourceSnapshots, job.maxProvenanceSegments);
       onProgress(result.content, true);
@@ -405,7 +472,7 @@ function createProductionAIService(options) {
           ? { ...run, status: 'failed', endedAt: current.updatedAt, errorCode: code, errorSummary: current.error.message }
           : run);
       });
-    } finally { clearTimeout(previewTimer); if (executionControllers.get(jobId) === controller) executionControllers.delete(jobId); }
+    } finally { clearTimeout(previewTimer); clearTimeout(agentEventTimer); if (executionControllers.get(jobId) === controller) executionControllers.delete(jobId); }
   }
 
   function start(input, session, idempotencyKey) {
@@ -443,13 +510,14 @@ function createProductionAIService(options) {
         return structuredClone(expire(previous));
       }
       if (!options.generate || request.modelSelection) resolvedModel = models.resolve(request.modelSelection);
+      if (resolvedModel?.config?.executor === 'codex') codexRunner.preflight(resolvedModel.config);
       const draft = state.drafts?.[contextKey(ctx)];
       if (Number(draft?.editVersion || 0) !== input.editVersion) fail('DRAFT_VERSION_CONFLICT', '共享草稿版本已变化，请刷新后生成', 409);
       const sourceSnapshots = sources.confirmed(state, { ...request, ...ctx }, session);
       const selectedIds = sourceSnapshots.map(source => source.sourceId);
       if (request.referenceOrder !== undefined && !Array.isArray(request.referenceOrder)) fail('AI_REFERENCE_ORDER_INVALID', '参考资料优先级格式无效');
-      const requestedOrder = request.referenceOrder || [...selectedIds, 'knowledge-mcp'];
-      if (!requestedOrder.includes('knowledge-mcp') || requestedOrder.length !== selectedIds.length + 1 || new Set(requestedOrder).size !== requestedOrder.length || requestedOrder.some(id => id !== 'knowledge-mcp' && !selectedIds.includes(id)) || selectedIds.some(id => !requestedOrder.includes(id))) fail('AI_REFERENCE_ORDER_INVALID', '参考资料优先级与已选资料不一致');
+      const requestedOrder = request.referenceOrder ?? [...selectedIds, 'knowledge-mcp'];
+      if (requestedOrder.length !== selectedIds.length + Number(requestedOrder.includes('knowledge-mcp')) || new Set(requestedOrder).size !== requestedOrder.length || requestedOrder.some(id => id !== 'knowledge-mcp' && !selectedIds.includes(id)) || selectedIds.some(id => !requestedOrder.includes(id))) fail('AI_REFERENCE_ORDER_INVALID', '参考资料优先级与已选资料不一致');
       sourceSnapshots.sort((a, b) => requestedOrder.indexOf(a.sourceId) - requestedOrder.indexOf(b.sourceId));
       sourceSnapshots.forEach((source, index) => { source.priority = index + 1; });
       const skillSnapshots = skills.selected(request);
@@ -472,7 +540,7 @@ function createProductionAIService(options) {
         jobId, modelSelection: resolvedModel?.selection || null, context: ctx, contextKey: contextKey(ctx), status: 'queued', operation: request.operation,
         range: request.range, originalMarkdown: request.markdown, originalDigest: hash(request.markdown), editVersion: request.editVersion,
         requirements: request.requirements, outline: request.outline, templateSnapshot, sourceSnapshots, skillSnapshots, referenceOrder: requestedOrder,
-        mcpRetrievalPolicy: structuredClone(config.sources?.mcpRetrieval || null),
+        mcpRetrievalPolicy: requestedOrder.includes('knowledge-mcp') ? structuredClone(config.sources?.mcpRetrieval || null) : null,
         skillPrompt: config.skillPrompt || '',
         provenancePrompt: config.provenancePrompt || '', maxProvenanceSegments: config.maxProvenanceSegments || 512,
         originalMetadata,
@@ -691,7 +759,7 @@ function createProductionAIService(options) {
     return artifactStore.sweep(referenced, options);
   }
 
-  return { start, get, cancel, retry, recover, recoverOnStartup, cleanupArtifacts, adopt, sources, skills };
+  return { start, get, list, cancel, retry, recover, recoverOnStartup, cleanupArtifacts, adopt, sources, skills };
 }
 
 module.exports = { createProductionAIService };

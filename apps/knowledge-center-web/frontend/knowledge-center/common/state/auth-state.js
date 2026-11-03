@@ -1,4 +1,4 @@
-const businessViews = ['dashboard', 'assets', 'repository', 'cleaning', 'outlines', 'templates', 'production'];
+const businessViews = ['dashboard', 'assets', 'repository', 'cleaning', 'outlines', 'templates', 'production', 'documentTasks'];
 
 export const authState = {
   status: 'checking',

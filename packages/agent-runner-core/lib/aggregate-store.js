@@ -39,6 +39,8 @@ class FileAggregateStore {
     return JSON.parse(fs.readFileSync(this.filePath, 'utf8'));
   }
 
+  async readAsync() { return this.read(); }
+
   write(payload) {
     fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
     const temporary = `${this.filePath}.${process.pid}.${Date.now()}.tmp`;
@@ -153,27 +155,85 @@ class DatabaseAggregateStore {
   }
 
   async readAsync() {
+    return (await this.readRecordAsync()).payload;
+  }
+
+  async readRecordAsync() {
+    if (!this.readInFlight) {
+      const pending = this.fetchSnapshot();
+      this.readInFlight = pending;
+      pending.finally(() => { if (this.readInFlight === pending) this.readInFlight = null; }).catch(() => {});
+    }
+    return structuredClone(await this.readInFlight);
+  }
+
+  async fetchSnapshot() {
+    const epoch = this.writeEpoch || 0;
+    const cached = this.readSnapshot;
     try {
       const response = await fetch(this.recordUrl(), {
-        headers: this.readSnapshot ? { 'If-None-Match': this.readSnapshot.etag } : {},
+        headers: cached?.etag ? { 'If-None-Match': cached.etag } : {},
         signal: AbortSignal.timeout(this.timeoutSeconds * 1000),
       });
-      if (response.status === 304 && this.readSnapshot) return structuredClone(this.readSnapshot.payload);
+      if (response.status === 304 && cached) return { payload: cached.payload, revision: cached.revision };
       const record = await response.json();
       if (!response.ok || record?.success === false) {
-        this.readSnapshot = null;
-        if (record?.error?.code === 'RECORD_NOT_FOUND') return structuredClone(this.emptyValue);
+        if (epoch === (this.writeEpoch || 0)) this.readSnapshot = null;
+        if (record?.error?.code === 'RECORD_NOT_FOUND') return { payload: structuredClone(this.emptyValue), revision: 0 };
         throw new AggregateStoreError(record?.error?.code || 'STORAGE_REQUEST_FAILED', record?.error?.message || '存储服务请求失败', storageErrorStatus(record?.error?.code), record?.error?.details);
       }
       const payload = record.deleted ? structuredClone(this.emptyValue) : record.payload;
-      const etag = response.headers.get('etag');
-      this.readSnapshot = etag ? { etag, payload: structuredClone(payload) } : null;
-      return payload;
+      const revision = Number(record.revision || 0);
+      if (epoch === (this.writeEpoch || 0)) this.readSnapshot = { etag: response.headers.get('etag'), revision, payload: structuredClone(payload) };
+      return { payload, revision };
+    } catch (error) {
+      if (epoch === (this.writeEpoch || 0)) this.readSnapshot = null;
+      if (error instanceof AggregateStoreError) throw error;
+      throw new AggregateStoreError('STORAGE_UNAVAILABLE', 'YashanDB 存储服务不可用', 503);
+    }
+  }
+
+  async writeAtRevisionAsync(payload, revision) {
+    let response;
+    try {
+      response = await fetch(this.recordUrl(), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json; charset=utf-8', 'If-Match': String(revision) },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(this.timeoutSeconds * 1000),
+      });
+      const result = await response.json();
+      if (!response.ok || result?.success === false) {
+        const error = new AggregateStoreError(result?.error?.code || 'STORAGE_REQUEST_FAILED', result?.error?.message || '存储服务请求失败', storageErrorStatus(result?.error?.code), result?.error?.details);
+        if (error.code === 'REVISION_CONFLICT') this.readSnapshot = null;
+        throw error;
+      }
+      this.writeEpoch = (this.writeEpoch || 0) + 1;
+      this.readSnapshot = null;
+      this.readInFlight = null;
+      return result;
     } catch (error) {
       this.readSnapshot = null;
       if (error instanceof AggregateStoreError) throw error;
       throw new AggregateStoreError('STORAGE_UNAVAILABLE', 'YashanDB 存储服务不可用', 503);
     }
+  }
+
+  async transactionAsync(mutator, retries = 3) {
+    const startedAt = process.hrtime.bigint();
+    for (let attempt = 0; attempt < retries; attempt += 1) {
+      const current = await this.readRecordAsync();
+      const state = structuredClone(current.payload);
+      const result = await mutator(state);
+      try {
+        await this.writeAtRevisionAsync(state, current.revision);
+        perfTrace('storage async transaction', { namespace: this.namespace, key: this.key, attempts: attempt + 1, durationMs: Number(process.hrtime.bigint() - startedAt) / 1e6 });
+        return result;
+      } catch (error) {
+        if (error.code !== 'REVISION_CONFLICT' || attempt === retries - 1) throw error;
+      }
+    }
+    throw new AggregateStoreError('REVISION_CONFLICT', '数据库记录并发更新冲突', 409);
   }
 
   readRecord() {
@@ -192,12 +252,16 @@ class DatabaseAggregateStore {
   }
 
   writeAtRevision(payload, revision) {
-    return this.execute([
+    const result = this.execute([
       '-sS', '--max-time', String(this.timeoutSeconds), '-X', 'PUT',
       '-H', 'Content-Type: application/json; charset=utf-8',
       '-H', `If-Match: ${revision}`,
       '--data-binary', '@-', this.recordUrl(),
     ], JSON.stringify(payload));
+    this.writeEpoch = (this.writeEpoch || 0) + 1;
+    this.readSnapshot = null;
+    this.readInFlight = null;
+    return result;
   }
 
   write(payload) {

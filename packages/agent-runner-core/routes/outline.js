@@ -1,4 +1,4 @@
-﻿const express = require('express');
+const express = require('express');
 const router = express.Router();
 const multer = require('multer');
 const path = require('path');
@@ -301,6 +301,35 @@ router.post('/upload', upload.single('file'), async (req, res) => {
 });
 
 // Create a candidate outline without publishing it.
+// Task proposals reuse candidate publication; published directory IDs stay stable.
+router.post('/governance/:id/document-proposals', (req, res) => {
+  try {
+    if (!String(req.get('x-outline-actions') || '').split(',').includes('outline:create')) return res.status(403).json({ success: false, error: { code: 'OUTLINE_PERMISSION_DENIED', message: '没有大纲创建权限' } });
+    const body = req.body || {};
+    if (!/^[a-f0-9]{64}$/.test(body.proposalKey || '')) return res.status(422).json({ success: false, error: { code: 'PROPOSAL_KEY_REQUIRED', message: '新增文档需要稳定提案键' } });
+    const metadata = repository.read(), candidateId = `outline_task_${body.proposalKey}`;
+    const existing = metadata.outlines.find(o => o.id === candidateId);
+    if (existing) return res.json({ success: true, data: { outlineId: existing.id, documentId: existing.taskProposal.documentId, parentId: existing.taskProposal.parentId, name: existing.taskProposal.name, state: existing.state } });
+    const source = metadata.outlines.find(o => o.id === req.params.id && o.handbookId === body.handbookId && !o.deletedAt);
+    if (!source) return res.status(404).json({ success: false, error: { code: 'OUTLINE_NOT_FOUND', message: '手册大纲不存在' } });
+    const nodes = structuredClone(outlineNodes(source));
+    const parent = nodes.find(n => n.id === body.parentId && !['document', 'knowledge_point'].includes(n.kind));
+    const name = String(body.name || '').trim();
+    if (!parent || !name || !body.targetVersion || (source.businessVersionTags?.length && !source.businessVersionTags.includes(body.targetVersion))) return res.status(422).json({ success: false, error: { code: 'PROPOSAL_INVALID', message: '请选择有效章节、名称和版本' } });
+    if (nodes.some(n => n.parentId === parent.id && n.title === name)) return res.status(409).json({ success: false, error: { code: 'DOCUMENT_EXISTS', message: '该章节已有同名文档，请刷新后关联' } });
+    const documentId = pathId(source.handbookId, `task-proposal:${body.proposalKey}`);
+    nodes.push({ id: documentId, sourceId: documentId, parentId: parent.id, kind: 'document', title: name, path: `${parent.path || parent.id}/${name}`, level: Number(parent.level || 1) + 1, order: nodes.length + 1 });
+    const content = { schemaVersion: pathRules.version, title: source.name, nodes };
+    const check = validateCandidate({ content, productId: source.productId, businessVersionTags: [body.targetVersion] });
+    if (!check.passed) return res.status(422).json({ success: false, error: { code: 'OUTLINE_PREFLIGHT_FAILED', message: '大纲预检未通过', details: check.errors } });
+    const candidate = createCandidate({ name: source.name, content, productId: source.productId, businessVersionTags: [body.targetVersion], handbookId: source.handbookId });
+    Object.assign(candidate, { id: candidateId, content, outlineStructureVersion: `outline-v1-${candidateId}`, taskProposal: { documentId, parentId: parent.id, name, sourceOutlineId: source.id } });
+    candidate.governance = { assignments: assignmentsFromContent(content, candidateId), tasks: [] };
+    repository.append([candidate]);
+    res.status(201).json({ success: true, data: { outlineId: candidateId, documentId, parentId: parent.id, name, state: candidate.state } });
+  } catch (error) { return outlineError(res, error, 'DOCUMENT_PROPOSAL_FAILED', '新增文档候选创建失败'); }
+});
+
 router.post('/handbooks', (req, res) => {
   const body = req.body || {};
   const metadata = repository.read();
@@ -567,7 +596,17 @@ router.get('/governance/list', (req, res) => {
 router.get('/catalog', async (req, res) => {
   try {
     let catalog;
-    if (isDatabaseMode()) {
+    const catalogTimings = [];
+    const directoryRequest = req.query.view === 'directory' && typeof req.query.handbookId === 'string' && req.query.handbookId.length > 0;
+    if (isDatabaseMode() && directoryRequest) {
+      const started = performance.now();
+      const result = await handbookDomainStore.readOutlineCatalogWithMetaAsync();
+      catalog = result.data;
+      const upstream = String(result.headers?.serverTiming || '').replace(/[\r\n]/g, '').trim();
+      if (upstream) catalogTimings.push(upstream.split(',').map(value => `catalog_${value.trim()}`).join(', '));
+      catalogTimings.push(`catalog_read;dur=${(performance.now() - started).toFixed(2)}`);
+      res.setHeader('Server-Timing', catalogTimings.join(', '));
+    } else if (isDatabaseMode()) {
       catalog = await handbookDomainStore.readOutlineCatalogAsync();
     } else {
       const metadata = readMetadata();
@@ -580,8 +619,24 @@ router.get('/catalog', async (req, res) => {
       catalog = { items, total: items.length, snapshotVersion: generatedAt, generatedAt };
     }
     const generatedAt = catalog.generatedAt || new Date().toISOString();
-    const items = Array.isArray(catalog.items) ? catalog.items : [];
-    res.json({ success: true, data: { items, total: Number(catalog.total ?? items.length), snapshotVersion: catalog.snapshotVersion || generatedAt, generatedAt } });
+    let items = Array.isArray(catalog.items) ? catalog.items : [];
+    let directoryProjection = {};
+    if (directoryRequest) {
+      items = items.filter(item => String(item.handbookId || item.manualId) === req.query.handbookId);
+      if (isDatabaseMode()) {
+        const selectedId = items[0]?.id || items[0]?.outlineId || null;
+        let directory = null;
+        if (selectedId) {
+          const started = performance.now();
+          const result = await handbookDomainStore.readOutlineDirectoryWithMetaAsync(selectedId);
+          const upstreamTiming = String(result.headers?.serverTiming || '').trim().replace(/[\r\n]/g, '');
+          res.setHeader('Server-Timing', [...catalogTimings, upstreamTiming, `directory_read;dur=${(performance.now() - started).toFixed(2)}`].filter(Boolean).join(', '));
+          directory = { ...result.data, state: publicOutlineState(result.data.state) };
+        }
+        directoryProjection = { selectedId, directory };
+      }
+    }
+    res.json({ success: true, data: { items, total: directoryRequest ? items.length : Number(catalog.total ?? items.length), snapshotVersion: catalog.snapshotVersion || generatedAt, generatedAt, ...directoryProjection } });
   } catch (error) { outlineError(res, error, 'OUTLINE_CATALOG_FAILED', '大纲目录不可用'); }
 });
 

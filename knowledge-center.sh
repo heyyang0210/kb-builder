@@ -129,6 +129,7 @@ else
 fi
 STOP_TIMEOUT="${KNOWLEDGE_CENTER_STOP_TIMEOUT:-10}"
 START_TIMEOUT="${KNOWLEDGE_CENTER_START_TIMEOUT:-45}"
+DB_PROBE_TIMEOUT="${KNOWLEDGE_CENTER_DB_PROBE_TIMEOUT:-15}"
 NODE_BIN="${KNOWLEDGE_CENTER_NODE_BIN:-node}"
 NPM_BIN="${KNOWLEDGE_CENTER_NPM_BIN:-npm}"
 PYTHON_BIN="${KNOWLEDGE_CENTER_PYTHON_BIN:-}"
@@ -142,7 +143,14 @@ DOCTOR_FORMAT=human
 FAILURE_COMPONENT=""
 FAILURE_LOG=""
 shift $(( $# > 0 ? 1 : 0 ))
-while (( $# > 0 )); do
+LOG_SUBACTION=""
+LOG_ARGS=()
+if [[ "$ACTION" == logs ]]; then
+  LOG_SUBACTION="${1:-}"
+  [[ $# -eq 0 ]] || shift
+  LOG_ARGS=("$@")
+fi
+while (( $# > 0 )) && [[ "$ACTION" != logs ]]; do
   case "$1" in
     --no-build)
       [[ "$ACTION" == start || "$ACTION" == restart ]] || { echo "错误：--no-build 仅适用于 start/restart" >&2; exit 2; }
@@ -160,7 +168,7 @@ while (( $# > 0 )); do
       [[ "$ACTION" == doctor ]] || { echo "错误：--json 仅适用于 doctor" >&2; exit 2; }
       DOCTOR_FORMAT=json
       ;;
-    *) echo "错误：未知参数：$1" >&2; exit 2 ;;
+    *) [[ "$ACTION" == logs ]] || { echo "错误：未知参数：$1" >&2; exit 2; } ;;
   esac
   shift
 done
@@ -190,6 +198,35 @@ lifecycle_event() {
   printf '%s\taction=%s\tservice=%s\tactor=%s\tdetail=%s\n' \
     "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$action" "$service" "$OPERATION_ACTOR" "$detail" >>"$LOG_DIR/lifecycle.log"
 }
+
+if [[ "$ACTION" == logs ]]; then
+  command -v "$PYTHON_BIN" >/dev/null 2>&1 || { echo "错误：缺少 Python 命令：$PYTHON_BIN" >&2; exit 2; }
+  case "$LOG_SUBACTION" in
+    compress|status)
+      if maintenance_output=$("$PYTHON_BIN" "$REPO_ROOT/tools/logging/log_maintenance.py" "$LOG_SUBACTION" --root "$RUNTIME_DIR/logs" --root "$LOG_DIR"); then
+        printf '%s\n' "$maintenance_output"
+        lifecycle_event "logs.$LOG_SUBACTION" "knowledge-center" "$maintenance_output"
+      else
+        maintenance_status=$?
+        lifecycle_event "logs.$LOG_SUBACTION.failed" "knowledge-center" "exit=$maintenance_status"
+        exit "$maintenance_status"
+      fi
+      ;;
+    collect)
+      [[ ${#LOG_ARGS[@]} -eq 2 && ( "${LOG_ARGS[0]}" == --request-id || "${LOG_ARGS[0]}" == --correlation-id || "${LOG_ARGS[0]}" == --task-id || "${LOG_ARGS[0]}" == --run-id ) && -n "${LOG_ARGS[1]}" ]] || { echo "用法：$0 logs collect {--request-id|--correlation-id|--task-id|--run-id} <id>" >&2; exit 2; }
+      if maintenance_output=$("$PYTHON_BIN" "$REPO_ROOT/tools/logging/log_maintenance.py" collect --root "$RUNTIME_DIR/logs" --root "$LOG_DIR" --identifier "${LOG_ARGS[1]}"); then
+        printf '%s\n' "$maintenance_output"
+        lifecycle_event logs.collect knowledge-center "identifier=${LOG_ARGS[1]} output=$maintenance_output"
+      else
+        maintenance_status=$?
+        lifecycle_event logs.collect.failed knowledge-center "exit=$maintenance_status"
+        exit "$maintenance_status"
+      fi
+      ;;
+    *) echo "用法：$0 logs {compress|collect --request-id ID|collect --correlation-id ID|collect --task-id ID|collect --run-id ID|status}"; exit 2 ;;
+  esac
+  exit $?
+fi
 
 archive_service_log() {
   local logfile="$1" name timestamp
@@ -271,13 +308,25 @@ process_matches() {
 service_process_matches() {
   local service="$1" pid="$2" cmdline classpath jar classes build_base
   if [[ "$service" != storage ]]; then
-    process_matches "$pid" "$(service_cwd "$service")" "$(service_pattern "$service")"
-    return
+    if process_matches "$pid" "$(service_cwd "$service")" "$(service_pattern "$service")"; then
+      return 0
+    fi
+    # Older/manual launches may run the frontend from the repository root
+    # with its repository-relative entrypoint. Keep this compatibility path
+    # exact so unrelated node processes are never adopted.
+    if [[ "$service" == frontend && "$pid" =~ ^[0-9]+$ && -d "/proc/$pid" \
+      && "$(readlink -f "/proc/$pid/cwd" 2>/dev/null || true)" == "$REPO_ROOT" ]]; then
+      cmdline="$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null || true)"
+      [[ "$cmdline" == *"node apps/knowledge-center-web/frontend-server.js"* ]] && return 0
+    fi
+    return 1
   fi
 
   [[ "$pid" =~ ^[0-9]+$ && -d "/proc/$pid" ]] || return 1
   [[ "$(awk '/^State:/ {print $2}' "/proc/$pid/status" 2>/dev/null || true)" != "Z" ]] || return 1
-  [[ "$(readlink -f "/proc/$pid/cwd" 2>/dev/null || true)" == "$STORAGE_DIR" ]] || return 1
+  local process_cwd
+  process_cwd="$(readlink -f "/proc/$pid/cwd" 2>/dev/null || true)"
+  [[ "$process_cwd" == "$STORAGE_DIR" || "$process_cwd" == "$REPO_ROOT" ]] || return 1
   cmdline="$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null || true)"
   [[ "$cmdline" == *java* ]] || return 1
   classpath="${cmdline#* -cp }"
@@ -287,6 +336,10 @@ service_process_matches() {
   classes="${classpath#*:}"
   [[ "$classes" != "$classpath" ]] || return 1
   if [[ "$jar" == "$STORAGE_DIR/lib/yashandb-jdbc.jar" && "$classes" == "$RUNTIME_DIR/.runtime/yashandb-storage/classes/" ]]; then
+    return 0
+  fi
+  if [[ "$jar" == "$STORAGE_DIR/lib/yashandb-jdbc.jar" \
+    && "$classes" == "$REPO_ROOT"/runtime/build/*/current/java/classes ]]; then
     return 0
   fi
   [[ "$jar" == "$REPO_ROOT"/runtime/build/*/current/java/lib/yashandb-jdbc.jar ]] || return 1
@@ -423,6 +476,29 @@ validate_environment() {
   [[ -f "$PINGCODE_API_DIR/app/main.py" ]] || { echo "错误：资料加工 API 入口不存在" >&2; return 1; }
   [[ -f "$STORAGE_DIR/start.sh" ]] || { echo "错误：YashanDB 存储服务入口不存在" >&2; return 1; }
   [[ -x "$BUILD_SCRIPT" ]] || { echo "错误：统一构建脚本不存在或不可执行：tools/repository/build-knowledge-center.sh" >&2; return 1; }
+}
+
+validate_database_connection() {
+  local probe_log="$LOG_DIR/database-probe.log"
+  validate_positive_integer KNOWLEDGE_CENTER_DB_PROBE_TIMEOUT "$DB_PROBE_TIMEOUT" || return 1
+  validate_build_artifact || return 1
+  : >"$probe_log"
+  if ! timeout --signal=TERM --kill-after=3s "${DB_PROBE_TIMEOUT}s" \
+    env KNOWLEDGE_CENTER_BUILD_ROOT="$BUILD_ROOT_REL" \
+      YASDB_STORAGE_SQL_DIR="$BUILD_DIR/java/sql" \
+      "$JAVA_BIN" -cp "$BUILD_DIR/java/lib/yashandb-jdbc.jar:$BUILD_DIR/java/classes" Main probe \
+      >"$probe_log" 2>&1; then
+    FAILURE_COMPONENT="YashanDB 数据库连接"
+    FAILURE_LOG="$probe_log"
+    echo "错误：无法连接 YashanDB，未启动或停止任何平台服务。" >&2
+    if grep -Eiq 'invalid username/password|login denied|认证|authorization' "$probe_log"; then
+      echo "诊断：数据库账号或密码不正确，请更新 $SERVICE_ENV_FILE 中的 YASDB_USERNAME/YASDB_PASSWORD。" >&2
+    elif grep -Eiq 'connect|timeout|refused|超时|连接' "$probe_log"; then
+      echo "诊断：数据库地址或网络不可用，请检查 YASDB_JDBC_URL 与数据库监听状态。" >&2
+    fi
+    tail -n 20 "$probe_log" >&2 || true
+    return 1
+  fi
 }
 
 validate_build_artifact() {
@@ -617,6 +693,7 @@ start_platform() {
   else
     validate_build_artifact || return 1
   fi
+  validate_database_connection || return 1
   if [[ "$NO_TAKEOVER" != "1" ]]; then
     reconcile_known_services
     # 14200 是旧认证服务端口。认证模块已并入平台进程，启动时受控清理遗留实例。
@@ -691,6 +768,11 @@ restart_platform() {
     build_platform || return 1
     NO_BUILD=1
   fi
+  # restart may follow a manually started or previously interrupted instance
+  # whose PID files were not persisted. Reconcile only processes that match
+  # this repository's cwd and command contract; unknown listeners remain
+  # protected by assert_port_available during start.
+  reconcile_known_services
   stop_all || return 1
   start_platform || return 1
 }
@@ -765,12 +847,13 @@ platform_healthy() {
 
 case "$ACTION" in
   help|-h|--help)
-    echo "用法：$0 {start|stop|restart|status|doctor} [--no-build|--verbose|--commands|--json]"
+    echo "用法：$0 {start|stop|restart|status|doctor|logs} [--no-build|--verbose|--commands|--json]"
     echo "  start    启动知识中心平台；已运行的同名服务会先受控接管"
     echo "  stop     停止知识中心平台服务，不操作 YashanDB 数据库实例"
     echo "  restart  停止后重新启动全部平台服务"
     echo "  status   显示统一平台状态，不暴露内部诊断端点"
     echo "  doctor   只诊断当前环境，不安装或修改系统"
+    echo "  logs     压缩日志、生成诊断包或查看日志占用"
     echo "  --no-build  启动/重启时复用已有统一构建产物"
     echo "  --verbose   status 时显示内部组件、PID 和诊断端点"
     echo "  --commands  doctor 时只输出可复制的处置命令"

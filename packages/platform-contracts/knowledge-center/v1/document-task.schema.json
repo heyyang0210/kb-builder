@@ -1,0 +1,341 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "任务管理 V2 任务资源",
+  "type": "object",
+  "required": [
+    "number",
+    "description",
+    "ownerId",
+    "revision",
+    "source",
+    "decomposition",
+    "createdAt",
+    "updatedAt"
+  ],
+  "properties": {
+    "number": {
+      "type": "string",
+      "minLength": 1
+    },
+    "description": {
+      "type": "string"
+    },
+    "ownerId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "product": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "version": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "sourceStatus": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "startTime": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "endTime": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "createdAt": {
+      "type": "string"
+    },
+    "updatedAt": {
+      "type": "string"
+    },
+    "source": {
+      "type": "object",
+      "required": [
+        "number"
+      ],
+      "properties": {
+        "number": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "product": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sourceStatus": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sourceOwner": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sourceCreatedAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "output": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sourceUrl": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uri",
+          "description": "XLSX编号单元格原始HTTPS链接"
+        }
+      }
+    },
+    "decomposition": {
+      "type": "object",
+      "required": [
+        "ticketImpact",
+        "confirmed",
+        "handbooks"
+      ],
+      "properties": {
+        "ticketImpact": {
+          "enum": [
+            null,
+            "involved",
+            "not_involved"
+          ]
+        },
+        "ticketReason": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "detail": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "id"
+          ]
+        },
+        "confirmed": {
+          "type": "boolean"
+        },
+        "handbooks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "ownerId",
+              "impact",
+              "confirmed",
+              "documents"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "ownerId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "impact": {
+                "enum": [
+                  null,
+                  "involved",
+                  "not_involved"
+                ]
+              },
+              "confirmed": {
+                "type": "boolean"
+              },
+              "reason": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "detail": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "id"
+                ]
+              },
+              "targetVersion": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "documents": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "kind",
+                    "name",
+                    "ownerId"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "kind": {
+                      "enum": [
+                        "existing",
+                        "new"
+                      ]
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "ownerId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "parentId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "createdDocumentId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "reviewTaskId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "outlineProposal": {
+                      "type": "object"
+                    },
+                    "canAssign": {
+                      "type": "boolean",
+                      "readOnly": true
+                    },
+                    "ownerName": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "readOnly": true
+                    }
+                  }
+                }
+              },
+              "canAssign": {
+                "type": "boolean",
+                "readOnly": true
+              },
+              "canEdit": {
+                "type": "boolean",
+                "readOnly": true
+              }
+            }
+          }
+        }
+      }
+    },
+    "status": {
+      "enum": [
+        "pending_scope",
+        "in_progress",
+        "completed"
+      ],
+      "description": "只读实时投影，持久化记录不含此字段"
+    },
+    "scopeHistory": {
+      "type": "array"
+    },
+    "assignmentHistory": {
+      "type": "array"
+    },
+    "noChangeConfirmation": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "plannedStartTime": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time",
+      "description": "责任人编辑的计划时间，UTC ISO；不参与完成判定"
+    },
+    "plannedEndTime": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time",
+      "description": "责任人编辑的计划时间，UTC ISO；不参与完成判定"
+    },
+    "canEditPlan": {
+      "type": "boolean",
+      "description": "可信会话权限投影"
+    }
+  }
+}

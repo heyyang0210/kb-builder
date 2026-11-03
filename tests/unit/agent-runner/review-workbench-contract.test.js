@@ -24,6 +24,24 @@ function task(id = 'task-1', handbookId = 'HB-1', overrides = {}) {
 const session = (id = 'author', actions = ['knowledge:read', 'knowledge:write', 'review:manage']) => ({ authenticated: true, user: { id, roles: ['REVIEWER'] }, allowedActions: actions });
 
 describe('审核工作台文档投影契约', () => {
+  test('MR 观察权限与完成事实分离，只读角色不获得刷新权限', () => {
+    const source = task('delivery', 'HB-1', { state: 'mr_submitted', mergeRequest: { iid: 7, webUrl: 'https://example.test/mr/7' } });
+    const service = new IncrementalBuildService(new MemoryIncrementalBuildRepository({ schemaVersion: 1, tasks: [source], publishedVersions: [], idempotency: {}, audits: [] }));
+    const reader = service.project(source, session('author', ['knowledge:read']));
+    expect(reader.capabilities.canRefreshDelivery).toBe(false);
+    const publisher = service.project(source, session('author', ['knowledge:read', 'publish:manage']));
+    expect(publisher.capabilities.canRefreshDelivery).toBe(true);
+    expect(publisher.capabilities.canPublish).toBe(false);
+    expect(publisher.completion.status).toBe('pending');
+    source.deliveryObservation = { state: 'closed' };
+    const closed = service.project(source, session());
+    expect(closed.completion).toMatchObject({ status: 'pending', label: 'MR已关闭，待处理', completedAt: null });
+    expect(service.project(source, session(), true).completion).toEqual(closed.completion);
+    source.deliveryObservation = { state: 'merged', readback: { status: 'consistent', resources: 'repository_relative_images_verified' } };
+    expect(service.project(source, session()).completion.status).toBe('completed');
+    source.deliveryObservation.readback.resources = null;
+    expect(service.project(source, session()).completion.status).toBe('pending');
+  });
   test('文档显式指派优先于候选指派，自审要求权限且不修改输入', () => {
     const source = task(); const before = structuredClone(source);
     expect(reviewDocuments([source], 'reviewer', true).filter(row => row.assignedToMe).map(row => row.documentId)).toEqual(['a']);
@@ -136,6 +154,7 @@ describe('审核工作台真实 HTTP 契约与规模边界', () => {
   test('真实 HTTP：改派单篇后待办转移，审核角色可终止误提任务并保留审计', async () => {
     const source = task('reassign-cancel', 'HB-1');
     source.handbookSource.documents = [{ documentId: 'a', filePath: 'docs/a.md', reviewerIds: ['178'] }];
+    source.reviews[0].documentId = 'a';
     source.reviews[0].reviewerIds = ['178'];
     repository.transaction(state => state.tasks.push(source));
     const endpoint = base.replace('/review/bootstrap', `/review/tasks/${source.id}/reviews/${source.reviews[0].id}/reviewers`);
@@ -384,6 +403,8 @@ describe('审核工作台真实 HTTP 契约与规模边界', () => {
       const script = `globalThis.window = { location: { search: '' } }; import { renderReviewPublishing } from ${JSON.stringify(moduleUrl)}; import fs from 'node:fs'; const projection = JSON.parse(fs.readFileSync(0, 'utf8')); process.stdout.write(renderReviewPublishing({ reviewProjection: projection, gitlabProjection: {}, reviewUi: {} }));`;
       const html = execFileSync(process.execPath, ['--input-type=module', '-e', script], { input: JSON.stringify(projection), encoding: 'utf8' });
       expect(html).toContain('data-review-publish');
+      expect(html).toContain('可创建 GitLab MR，提交后等待人工合并');
+      expect(html).not.toContain('仅可阅读，不可审核或发布');
       expect(html).not.toContain('查看 GitLab MR');
     } finally {
       repository.transaction(state => {

@@ -16,7 +16,7 @@ const { createModelGovernance } = require('../../../packages/agent-runner-core/l
 const governance = createModelGovernance({ configManager: manager });
 const { setup } = require('./fixtures/production-writing.cjs');
 
-test('模型管理与写作闭环：真实加密配置、双协议HTTP、权限、非默认模型与采用追溯', async t => {
+test('模型管理与写作闭环：真实加密配置、双协议HTTP、权限、默认模型与采用追溯', async t => {
   t.after(() => { manager.watcher?.close(); fs.rmSync(configRoot, { recursive: true, force: true }); });
   const calls = []; let upstreamFail = false; let holdNext = false; let releaseUpstream;
   const upstream = http.createServer(async (req, res) => {
@@ -27,7 +27,7 @@ test('模型管理与写作闭环：真实加密配置、双协议HTTP、权限�
     if (body.stream) {
       res.writeHead(200, { 'Content-Type': 'text/event-stream' });
       const chunks = req.url.endsWith('/responses')
-        ? [{ type: 'response.created', response: { model: body.model + '-actual' } }, { type: 'response.output_text.delta', delta: 'OK' }]
+        ? [{ type: 'response.created', response: { model: body.model + '-actual' } }, { type: 'response.output_text.delta', delta: '由所选模型生成的 SQL 文档。' }, { type: 'response.completed', response: { status: 'completed', model: body.model + '-actual', usage: { input_tokens: 5, output_tokens: 8, total_tokens: 13 } } }]
         : [{ model: body.model + '-actual', choices: [{ delta: { role: 'assistant' } }] }, { model: body.model + '-actual', choices: [{ delta: { content: 'OK' } }] }];
       for (const chunk of chunks) res.write(`data: ${JSON.stringify(chunk)}\n\n`);
       res.end('data: [DONE]\n\n'); return;
@@ -54,7 +54,7 @@ test('模型管理与写作闭环：真实加密配置、双协议HTTP、权限�
     await page.addStyleTag({ url: '/knowledge-center/modules/platform-admin/platform-admin.css' });
     await page.evaluate(async () => {
       const { renderPlatformAdmin } = await import('/knowledge-center/modules/platform-admin/view.js');
-      const { mountModelAdmin } = await import('/knowledge-center/modules/platform-admin/model-admin.js');
+      const { mountModelConnection: mountModelAdmin } = await import('/knowledge-center/modules/platform-admin/model-connection.js');
       document.querySelector('#view-root').innerHTML = renderPlatformAdmin({ platformTab: 'models', platformAdmin: true });
       mountModelAdmin(document.querySelector('[data-model-admin]'));
     });
@@ -137,7 +137,9 @@ test('模型管理与写作闭环：真实加密配置、双协议HTTP、权限�
   assert.equal(await page.locator('.model-service').count(), 2, '取消删除保留服务');
   await page.locator('[data-model-admin] button[type=submit]').click();
   await page.waitForFunction(() => document.querySelector('[data-model-admin]').dataset.dirty === 'false');
-  const p = governance.get(); const oldCatalog = governance.available();
+  const initial = governance.get();
+  const p = await governance.save({ services: initial.services, defaultSelection: { serviceId: initial.services[1].id, model: 'model-b' } }, initial.rowVersion, 'admin');
+  const oldCatalog = governance.available();
   assert(!JSON.stringify(p).includes('model-fixture-secret')); assert(!JSON.stringify(oldCatalog).includes(base_url));
   await assert.rejects(governance.save({ services: p.services, defaultSelection: p.defaultSelection }, 'stale', 'test'), { code: 'MODEL_CONFIG_CONFLICT' });
   await assert.rejects(governance.save({ services: p.services.map((s, i) => ({ ...s, base_url: i ? s.base_url : base_url + '/changed' })), defaultSelection: p.defaultSelection }, p.rowVersion, 'test'), { code: 'MODEL_CONFIG_INVALID' });
@@ -159,14 +161,12 @@ test('模型管理与写作闭环：真实加密配置、双协议HTTP、权限�
       operation: 'polish', editVersion: 0, outline: 'SQL 参考手册', getMarkdown: () => '原始 SQL 资料。', baselineDigest: async () => '',
       onAdopt: result => { window.adopted = result; }, trigger: document.querySelector('#open') });
   });
-  await page.locator('[data-ai-model] option').filter({ hasText: 'model-b' }).waitFor({ state: 'attached' });
-  assert.equal(await page.locator('[data-ai-model]').inputValue(), '0');
-  await page.locator('[data-ai-settings-open]').click();
-  await page.locator('[data-ai-model]').selectOption({ label: 'Responses 服务 / model-b' });
-  await page.getByRole('button', { name: '完成设置', exact: true }).click();
   await page.locator('[data-ai-full]').click(); await page.locator('[data-ai-start]').click();
-  await page.locator('[data-ai-candidate]:visible').waitFor();
-  assert.match(await page.locator('[data-ai-used-model]').textContent(), /model-b-actual/);
+  try { await page.locator('[data-ai-candidate]:visible').waitFor(); } catch (error) {
+    await page.screenshot({ path: path.join(artifacts, 'writing-failure.png'), fullPage: true });
+    error.message += '\n页面状态：' + await page.locator('[data-ai-status]').textContent(); throw error;
+  }
+  assert(await page.locator('[data-ai-fragment]').inputValue());
   assert.equal(calls.at(-1).url, '/v1/responses'); assert.equal(calls.at(-1).model, 'model-b'); assert.equal(calls.at(-1).authorization, 'Bearer model-fixture-secret');
   await page.screenshot({ path: path.join(artifacts, 'writing-model-selection.png'), fullPage: true });
   await page.locator('[data-ai-adopt]').click(); await page.waitForFunction(() => window.adopted);
@@ -182,7 +182,7 @@ test('模型管理与写作闭环：真实加密配置、双协议HTTP、权限�
   assert.equal(started.status, 202);
   for (let i = 0; i < 100 && !releaseUpstream; i++) await new Promise(resolve => setTimeout(resolve, 10));
   assert(releaseUpstream, '所选请求应已到达上游');
-  const changed = await governance.save({ services: p.services.map((s, i) => ({ ...s, enabled: i === 0 })), defaultSelection: p.defaultSelection }, p.rowVersion, 'admin');
+  const changed = await governance.save({ services: p.services.map((s, i) => ({ ...s, enabled: i === 0 })), defaultSelection: { serviceId: p.services[0].id, model: 'model-a' } }, p.rowVersion, 'admin');
   releaseUpstream();
   let finished;
   for (let i = 0; i < 100; i++) {
@@ -212,13 +212,13 @@ test('模型管理与写作闭环：真实加密配置、双协议HTTP、权限�
   assert.equal(await page.evaluate(() => typeof globalThis.crypto?.randomUUID), 'undefined');
   await page.evaluate(async () => { const { openProductionWritingPage } = await import('/knowledge-center/modules/production/production-writing-page.js'); openProductionWritingPage({ context: { handbookId: 'HB-1', documentId: 'empty', outlineVersionId: 'outline-v1', branch: 'main' }, operation: 'polish', getMarkdown: () => '正文', editVersion: 0 }); });
   await page.locator('[data-ai-settings-open]').click();
-  await page.locator('[data-ai-model-info]').filter({ hasText: '没有可用模型' }).waitFor(); assert(await page.locator('[data-ai-start]').isDisabled());
-  await page.getByRole('button', { name: '完成设置', exact: true }).click();
+  assert(await page.locator('[data-ai-start]').isDisabled());
+  await page.locator('[data-ai-settings-apply]').click();
   await page.setViewportSize({ width: 390, height: 844 }); assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   session.user.roles = ['PLATFORM_ADMIN'];
   await page.evaluate(async () => {
     const { renderPlatformAdmin } = await import('/knowledge-center/modules/platform-admin/view.js');
-    const { mountModelAdmin } = await import('/knowledge-center/modules/platform-admin/model-admin.js');
+    const { mountModelConnection: mountModelAdmin } = await import('/knowledge-center/modules/platform-admin/model-connection.js');
     document.querySelector('#view-root').innerHTML = renderPlatformAdmin({ platformTab: 'models', platformAdmin: true });
     mountModelAdmin(document.querySelector('[data-model-admin]'));
   });

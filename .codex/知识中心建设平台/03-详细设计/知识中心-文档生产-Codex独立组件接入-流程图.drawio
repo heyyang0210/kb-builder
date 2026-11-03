@@ -1,0 +1,410 @@
+<mxfile host="65bd71144e" compressed="false">
+    <diagram name="01 独立组件与通信" id="page-1">
+        <mxGraphModel dx="1467" dy="1585" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1500" pageHeight="1150" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="title" parent="1" style="html=0;whiteSpace=wrap;fontFamily=Noto Sans CJK SC;fontSize=26;fontColor=#172637;text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;" value="01 独立组件与通信" vertex="1">
+                    <mxGeometry height="40" width="1428" x="36" y="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="subtitle" parent="1" style="html=0;whiteSpace=wrap;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#52677b;text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;" value="建议方案 · 平台负责业务任务，Codex 独立进程负责完整 Agent 执行" vertex="1">
+                    <mxGeometry height="30" width="1428" x="36" y="65" as="geometry"/>
+                </mxCell>
+                <mxCell id="ui" parent="1" style="html=0;whiteSpace=wrap;fontFamily=Noto Sans CJK SC;fontSize=17;fontColor=#172637;rounded=1;arcSize=8;fillColor=#eef6fd;strokeColor=#94b9d8;align=center;verticalAlign=middle;spacing=10;" value="平台页面&#xa;Agent 配置 / 文档生产 / 进度" vertex="1">
+                    <mxGeometry height="100" width="360" x="50" y="150" as="geometry"/>
+                </mxCell>
+                <mxCell id="api" parent="1" style="html=0;whiteSpace=wrap;fontFamily=Noto Sans CJK SC;fontSize=17;fontColor=#172637;rounded=1;arcSize=8;fillColor=#eef6fd;strokeColor=#94b9d8;align=center;verticalAlign=middle;spacing=10;" value="平台后端&#xa;鉴权 / 配置快照 / 任务与事件" vertex="1">
+                    <mxGeometry height="100" width="390" x="560" y="150" as="geometry"/>
+                </mxCell>
+                <mxCell id="store" parent="1" style="html=0;whiteSpace=wrap;fontFamily=Noto Sans CJK SC;fontSize=17;fontColor=#172637;rounded=1;arcSize=8;fillColor=#f4f6f8;strokeColor=#b9c5cf;align=center;verticalAlign=middle;spacing=10;" value="配置、密钥与任务存储&#xa;沿用平台治理，按任务授权" vertex="1">
+                    <mxGeometry height="100" width="360" x="1090" y="150" as="geometry"/>
+                </mxCell>
+                <mxCell id="queue" parent="1" style="html=0;whiteSpace=wrap;fontFamily=Noto Sans CJK SC;fontSize=17;fontColor=#172637;rounded=1;arcSize=8;fillColor=#eef6fd;strokeColor=#94b9d8;align=center;verticalAlign=middle;spacing=10;" value="任务调度&#xa;排队 / 租约 / 取消 / 重试" vertex="1">
+                    <mxGeometry height="90" width="390" x="560" y="340" as="geometry"/>
+                </mxCell>
+                <mxCell id="adapter" parent="1" style="html=0;whiteSpace=wrap;fontFamily=Noto Sans CJK SC;fontSize=17;fontColor=#172637;rounded=1;arcSize=8;fillColor=#eef6fd;strokeColor=#94b9d8;align=center;verticalAlign=middle;spacing=10;" value="Codex 运行适配器&#xa;独立 Worker / 容器" vertex="1">
+                    <mxGeometry height="100" width="390" x="560" y="520" as="geometry"/>
+                </mxCell>
+                <mxCell id="codex" parent="1" style="html=0;whiteSpace=wrap;fontFamily=Noto Sans CJK SC;fontSize=17;fontColor=#172637;rounded=1;arcSize=8;fillColor=#e8f5ef;strokeColor=#93c5ad;align=center;verticalAlign=middle;spacing=10;" value="Codex app-server&#xa;固定版本 · 独立子进程" vertex="1">
+                    <mxGeometry height="100" width="390" x="560" y="720" as="geometry"/>
+                </mxCell>
+                <mxCell id="model" parent="1" style="html=0;whiteSpace=wrap;fontFamily=Noto Sans CJK SC;fontSize=17;fontColor=#172637;rounded=1;arcSize=8;fillColor=#eef6fd;strokeColor=#94b9d8;align=center;verticalAlign=middle;spacing=10;" value="现有模型服务&#xa;模型协议通过能力预检" vertex="1">
+                    <mxGeometry height="100" width="360" x="50" y="720" as="geometry"/>
+                </mxCell>
+                <mxCell id="bridge" parent="1" style="html=0;whiteSpace=wrap;fontFamily=Noto Sans CJK SC;fontSize=17;fontColor=#172637;rounded=1;arcSize=8;fillColor=#eef6fd;strokeColor=#94b9d8;align=center;verticalAlign=middle;spacing=10;" value="平台 MCP 桥接层（新增）&#xa;知识库路由 / 工具权限 / 缓存" vertex="1">
+                    <mxGeometry height="100" width="360" x="1090" y="720" as="geometry"/>
+                </mxCell>
+                <mxCell id="mcp" parent="1" style="html=0;whiteSpace=wrap;fontFamily=Noto Sans CJK SC;fontSize=17;fontColor=#172637;rounded=1;arcSize=8;fillColor=#f4f6f8;strokeColor=#b9c5cf;align=center;verticalAlign=middle;spacing=10;" value="现有 MCP 服务&#xa;保持服务、知识库、请求头配置" vertex="1">
+                    <mxGeometry height="90" width="360" x="1090" y="940" as="geometry"/>
+                </mxCell>
+                <mxCell id="files" parent="1" style="html=0;whiteSpace=wrap;fontFamily=Noto Sans CJK SC;fontSize=17;fontColor=#172637;rounded=1;arcSize=8;fillColor=#fff6e5;strokeColor=#d8be8c;align=center;verticalAlign=middle;spacing=10;" value="任务工作区&#xa;输入、Skill、候选文档、来源" vertex="1">
+                    <mxGeometry height="90" width="360" x="50" y="940" as="geometry"/>
+                </mxCell>
+                <mxCell id="review" parent="1" style="html=0;whiteSpace=wrap;fontFamily=Noto Sans CJK SC;fontSize=17;fontColor=#172637;rounded=1;arcSize=8;fillColor=#fff6e5;strokeColor=#d8be8c;align=center;verticalAlign=middle;spacing=10;" value="平台校验 → 候选审核 → 交付&#xa;执行完成后收集真实文件" vertex="1">
+                    <mxGeometry height="90" width="390" x="560" y="940" as="geometry"/>
+                </mxCell>
+                <mxCell id="note" parent="1" style="html=0;whiteSpace=wrap;fontFamily=Noto Sans CJK SC;fontSize=15;fontColor=#172637;text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;" value="实线：任务 / 数据调用    虚线：进度回传    浏览器只连接平台后端；Worker 与 Codex 同容器，通过进程管道通信。" vertex="1">
+                    <mxGeometry height="35" width="1400" x="50" y="1080" as="geometry"/>
+                </mxCell>
+                <mxCell id="e1" edge="1" parent="1" source="ui" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;fontSize=14;fontFamily=Noto Sans CJK SC;strokeColor=#66849d;fontColor=#30465c;labelBackgroundColor=#ffffff;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="api" value="HTTPS / SSE">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="410" y="200" as="sourcePoint"/>
+                        <mxPoint x="560" y="200" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="e2" edge="1" parent="1" source="api" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;fontSize=14;fontFamily=Noto Sans CJK SC;strokeColor=#66849d;fontColor=#30465c;labelBackgroundColor=#ffffff;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="store" value="版本 / 密钥引用">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="950" y="200" as="sourcePoint"/>
+                        <mxPoint x="1090" y="200" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="e3" edge="1" parent="1" source="api" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;fontSize=14;fontFamily=Noto Sans CJK SC;strokeColor=#66849d;fontColor=#30465c;labelBackgroundColor=#ffffff;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" target="queue" value="持久化任务后调度">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="755" y="250" as="sourcePoint"/>
+                        <mxPoint x="755" y="340" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="e4" edge="1" parent="1" source="queue" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;fontSize=14;fontFamily=Noto Sans CJK SC;strokeColor=#66849d;fontColor=#30465c;labelBackgroundColor=#ffffff;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" target="adapter" value="内部任务契约">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="755" y="430" as="sourcePoint"/>
+                        <mxPoint x="755" y="520" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="e5" edge="1" parent="1" source="adapter" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;fontSize=14;fontFamily=Noto Sans CJK SC;strokeColor=#66849d;fontColor=#30465c;labelBackgroundColor=#ffffff;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" target="codex" value="stdio · 双向 JSON-RPC">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="755" y="620" as="sourcePoint"/>
+                        <mxPoint x="755" y="720" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="e6" edge="1" parent="1" source="codex" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;fontSize=14;fontFamily=Noto Sans CJK SC;strokeColor=#66849d;fontColor=#30465c;labelBackgroundColor=#ffffff;exitX=0;exitY=0.5;entryX=1;entryY=0.5;" target="model" value="HTTPS · 模型调用">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="560" y="770" as="sourcePoint"/>
+                        <mxPoint x="410" y="770" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="e7" edge="1" parent="1" source="codex" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;fontSize=14;fontFamily=Noto Sans CJK SC;strokeColor=#66849d;fontColor=#30465c;labelBackgroundColor=#ffffff;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="bridge" value="MCP · 任务凭证">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="950" y="770" as="sourcePoint"/>
+                        <mxPoint x="1090" y="770" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="e8" edge="1" parent="1" source="bridge" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;fontSize=14;fontFamily=Noto Sans CJK SC;strokeColor=#66849d;fontColor=#30465c;labelBackgroundColor=#ffffff;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" target="mcp" value="MCP · 原凭据 / 原请求头">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="1270" y="820" as="sourcePoint"/>
+                        <mxPoint x="1270" y="940" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="e9" edge="1" parent="1" source="codex" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;fontSize=14;fontFamily=Noto Sans CJK SC;strokeColor=#66849d;fontColor=#30465c;labelBackgroundColor=#ffffff;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" target="files" value="受控读写">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="755" y="870"/>
+                            <mxPoint x="230" y="870"/>
+                        </Array>
+                        <mxPoint x="755" y="820" as="sourcePoint"/>
+                        <mxPoint x="230" y="940" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="e10" edge="1" parent="1" source="files" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;fontSize=14;fontFamily=Noto Sans CJK SC;strokeColor=#66849d;fontColor=#30465c;labelBackgroundColor=#ffffff;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="review" value="收集、校验候选">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="410" y="985" as="sourcePoint"/>
+                        <mxPoint x="560" y="985" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="e11" edge="1" parent="1" source="adapter" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;fontSize=14;fontFamily=Noto Sans CJK SC;strokeColor=#66849d;fontColor=#30465c;labelBackgroundColor=#ffffff;dashed=1;exitX=0;exitY=0.5;entryX=0;entryY=0.5;" target="api" value="事件入库 / 推送">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="485" y="570"/>
+                            <mxPoint x="485" y="200"/>
+                        </Array>
+                        <mxPoint x="560" y="570" as="sourcePoint"/>
+                        <mxPoint x="560" y="200" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+    <diagram name="02 文档生成完整时序" id="page-2">
+        <mxGraphModel dx="1722" dy="1861" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1700" pageHeight="1770" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="title" parent="1" style="html=0;whiteSpace=wrap;fontFamily=Noto Sans CJK SC;fontSize=26;fontColor=#172637;text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;" value="02 文档生成完整时序" vertex="1">
+                    <mxGeometry height="40" width="1628" x="36" y="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="subtitle" parent="1" style="html=0;whiteSpace=wrap;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#52677b;text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;" value="建议流程 · initialize 已实测；任务执行、模型、MCP、产物与交付尚待端到端验证" vertex="1">
+                    <mxGeometry height="30" width="1628" x="36" y="65" as="geometry"/>
+                </mxCell>
+                <mxCell id="lane0" parent="1" style="html=0;whiteSpace=wrap;fontFamily=Noto Sans CJK SC;fontSize=16;fontColor=#172637;rounded=1;arcSize=8;fillColor=#eef6fd;strokeColor=#94b9d8;align=center;verticalAlign=middle;spacing=10;" value="用户 / 页面" vertex="1">
+                    <mxGeometry height="64" width="230" x="15" y="120" as="geometry"/>
+                </mxCell>
+                <mxCell id="lane1" parent="1" style="html=0;whiteSpace=wrap;fontFamily=Noto Sans CJK SC;fontSize=16;fontColor=#172637;rounded=1;arcSize=8;fillColor=#eef6fd;strokeColor=#94b9d8;align=center;verticalAlign=middle;spacing=10;" value="平台后端与任务库" vertex="1">
+                    <mxGeometry height="64" width="230" x="295" y="120" as="geometry"/>
+                </mxCell>
+                <mxCell id="lane2" parent="1" style="html=0;whiteSpace=wrap;fontFamily=Noto Sans CJK SC;fontSize=16;fontColor=#172637;rounded=1;arcSize=8;fillColor=#eef6fd;strokeColor=#94b9d8;align=center;verticalAlign=middle;spacing=10;" value="Codex 运行组件" vertex="1">
+                    <mxGeometry height="64" width="230" x="595" y="120" as="geometry"/>
+                </mxCell>
+                <mxCell id="lane3" parent="1" style="html=0;whiteSpace=wrap;fontFamily=Noto Sans CJK SC;fontSize=16;fontColor=#172637;rounded=1;arcSize=8;fillColor=#eef6fd;strokeColor=#94b9d8;align=center;verticalAlign=middle;spacing=10;" value="Codex app-server" vertex="1">
+                    <mxGeometry height="64" width="230" x="895" y="120" as="geometry"/>
+                </mxCell>
+                <mxCell id="lane4" parent="1" style="html=0;whiteSpace=wrap;fontFamily=Noto Sans CJK SC;fontSize=16;fontColor=#172637;rounded=1;arcSize=8;fillColor=#eef6fd;strokeColor=#94b9d8;align=center;verticalAlign=middle;spacing=10;" value="模型 / MCP 桥接" vertex="1">
+                    <mxGeometry height="64" width="230" x="1195" y="120" as="geometry"/>
+                </mxCell>
+                <mxCell id="lane5" parent="1" style="html=0;whiteSpace=wrap;fontFamily=Noto Sans CJK SC;fontSize=16;fontColor=#172637;rounded=1;arcSize=8;fillColor=#eef6fd;strokeColor=#94b9d8;align=center;verticalAlign=middle;spacing=10;" value="工作区 / 候选库" vertex="1">
+                    <mxGeometry height="64" width="230" x="1455" y="120" as="geometry"/>
+                </mxCell>
+                <mxCell id="cancel" parent="1" style="html=0;whiteSpace=wrap;fontFamily=Noto Sans CJK SC;fontSize=15;fontColor=#172637;rounded=1;arcSize=8;fillColor=#fff6e5;strokeColor=#d8be8c;align=center;verticalAlign=middle;spacing=10;" value="取消：平台 → Worker → turn/interrupt&#xa;收到中断结果后结束；超时终止进程，保留未完成状态" vertex="1">
+                    <mxGeometry height="105" width="520" x="35" y="1615" as="geometry"/>
+                </mxCell>
+                <mxCell id="approve" parent="1" style="html=0;whiteSpace=wrap;fontFamily=Noto Sans CJK SC;fontSize=15;fontColor=#172637;rounded=1;arcSize=8;fillColor=#fff6e5;strokeColor=#d8be8c;align=center;verticalAlign=middle;spacing=10;" value="请求批准：Codex → Worker → 平台用户&#xa;回复原请求 ID；拒绝或超时不可自动放行" vertex="1">
+                    <mxGeometry height="105" width="520" x="590" y="1615" as="geometry"/>
+                </mxCell>
+                <mxCell id="recover" parent="1" style="html=0;whiteSpace=wrap;fontFamily=Noto Sans CJK SC;fontSize=15;fontColor=#172637;rounded=1;arcSize=8;fillColor=#fff6e5;strokeColor=#d8be8c;align=center;verticalAlign=middle;spacing=10;" value="进程异常：标记中断，保存已有证据&#xa;校验快照后 thread/resume 或新 attempt" vertex="1">
+                    <mxGeometry height="105" width="520" x="1145" y="1615" as="geometry"/>
+                </mxCell>
+                <mxCell id="life0" edge="1" parent="1" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;fontSize=14;fontFamily=Noto Sans CJK SC;strokeColor=#ccd5de;fontColor=#30465c;labelBackgroundColor=#ffffff;dashed=1;endArrow=none;" value="">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="130" y="184" as="sourcePoint"/>
+                        <mxPoint x="130" y="1600" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="life1" edge="1" parent="1" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;fontSize=14;fontFamily=Noto Sans CJK SC;strokeColor=#ccd5de;fontColor=#30465c;labelBackgroundColor=#ffffff;dashed=1;endArrow=none;" value="">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="410" y="184" as="sourcePoint"/>
+                        <mxPoint x="410" y="1600" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="life2" edge="1" parent="1" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;fontSize=14;fontFamily=Noto Sans CJK SC;strokeColor=#ccd5de;fontColor=#30465c;labelBackgroundColor=#ffffff;dashed=1;endArrow=none;" value="">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="710" y="184" as="sourcePoint"/>
+                        <mxPoint x="710" y="1600" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="life3" edge="1" parent="1" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;fontSize=14;fontFamily=Noto Sans CJK SC;strokeColor=#ccd5de;fontColor=#30465c;labelBackgroundColor=#ffffff;dashed=1;endArrow=none;" value="">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="1010" y="184" as="sourcePoint"/>
+                        <mxPoint x="1010" y="1600" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="life4" edge="1" parent="1" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;fontSize=14;fontFamily=Noto Sans CJK SC;strokeColor=#ccd5de;fontColor=#30465c;labelBackgroundColor=#ffffff;dashed=1;endArrow=none;" value="">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="1310" y="184" as="sourcePoint"/>
+                        <mxPoint x="1310" y="1600" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="life5" edge="1" parent="1" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;fontSize=14;fontFamily=Noto Sans CJK SC;strokeColor=#ccd5de;fontColor=#30465c;labelBackgroundColor=#ffffff;dashed=1;endArrow=none;" value="">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="1570" y="184" as="sourcePoint"/>
+                        <mxPoint x="1570" y="1600" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="msg0" edge="1" parent="1" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;fontSize=14;fontFamily=Noto Sans CJK SC;strokeColor=#66849d;fontColor=#30465c;labelBackgroundColor=#ffffff;" value="1 选择 Agent，提交生成任务">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="130" y="230" as="sourcePoint"/>
+                        <mxPoint x="410" y="230" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="msg1" edge="1" parent="1" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;fontSize=14;fontFamily=Noto Sans CJK SC;strokeColor=#66849d;fontColor=#30465c;labelBackgroundColor=#ffffff;" value="2 鉴权，冻结配置与输入，生成 taskId">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="590" y="295"/>
+                            <mxPoint x="590" y="320"/>
+                        </Array>
+                        <mxPoint x="410" y="295" as="sourcePoint"/>
+                        <mxPoint x="410" y="320" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="msg2" edge="1" parent="1" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;fontSize=14;fontFamily=Noto Sans CJK SC;strokeColor=#66849d;fontColor=#30465c;labelBackgroundColor=#ffffff;" value="3 调度任务，携带快照引用与工作区">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="410" y="360" as="sourcePoint"/>
+                        <mxPoint x="710" y="360" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="msg3" edge="1" parent="1" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;fontSize=14;fontFamily=Noto Sans CJK SC;strokeColor=#66849d;fontColor=#30465c;labelBackgroundColor=#ffffff;" value="4 准备输入、Skill、输出目录及凭证">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="710" y="425" as="sourcePoint"/>
+                        <mxPoint x="1570" y="425" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="msg4" edge="1" parent="1" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;fontSize=14;fontFamily=Noto Sans CJK SC;strokeColor=#66849d;fontColor=#30465c;labelBackgroundColor=#ffffff;" value="5 启动进程，initialize → initialized">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="710" y="490" as="sourcePoint"/>
+                        <mxPoint x="1010" y="490" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="msg5" edge="1" parent="1" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;fontSize=14;fontFamily=Noto Sans CJK SC;strokeColor=#66849d;fontColor=#30465c;labelBackgroundColor=#ffffff;" value="6 thread/start：模型、目录、执行权限">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="710" y="555" as="sourcePoint"/>
+                        <mxPoint x="1010" y="555" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="msg6" edge="1" parent="1" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;fontSize=14;fontFamily=Noto Sans CJK SC;strokeColor=#66849d;fontColor=#30465c;labelBackgroundColor=#ffffff;dashed=1;" value="返回 threadId；绑定 taskId / attemptId">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="1010" y="620" as="sourcePoint"/>
+                        <mxPoint x="710" y="620" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="msg7" edge="1" parent="1" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;fontSize=14;fontFamily=Noto Sans CJK SC;strokeColor=#66849d;fontColor=#30465c;labelBackgroundColor=#ffffff;" value="7 turn/start：文档目标、输入与约束">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="710" y="685" as="sourcePoint"/>
+                        <mxPoint x="1010" y="685" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="msg8" edge="1" parent="1" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;fontSize=14;fontFamily=Noto Sans CJK SC;strokeColor=#66849d;fontColor=#30465c;labelBackgroundColor=#ffffff;dashed=1;" value="返回 turnId；任务进入运行中">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="1010" y="750" as="sourcePoint"/>
+                        <mxPoint x="710" y="750" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="msg9" edge="1" parent="1" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;fontSize=14;fontFamily=Noto Sans CJK SC;strokeColor=#66849d;fontColor=#30465c;labelBackgroundColor=#ffffff;" value="8 自主循环：模型调用 / MCP 工具调用">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="1010" y="815" as="sourcePoint"/>
+                        <mxPoint x="1310" y="815" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="msg10" edge="1" parent="1" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;fontSize=14;fontFamily=Noto Sans CJK SC;strokeColor=#66849d;fontColor=#30465c;labelBackgroundColor=#ffffff;dashed=1;" value="返回模型结果 / 经授权的知识内容">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="1310" y="880" as="sourcePoint"/>
+                        <mxPoint x="1010" y="880" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="msg11" edge="1" parent="1" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;fontSize=14;fontFamily=Noto Sans CJK SC;strokeColor=#66849d;fontColor=#30465c;labelBackgroundColor=#ffffff;" value="9 写入候选文档及来源记录">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="1010" y="945" as="sourcePoint"/>
+                        <mxPoint x="1570" y="945" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="msg12" edge="1" parent="1" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;fontSize=14;fontFamily=Noto Sans CJK SC;strokeColor=#66849d;fontColor=#30465c;labelBackgroundColor=#ffffff;dashed=1;" value="10 持续事件：消息、工具、文件变化">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="1010" y="1010" as="sourcePoint"/>
+                        <mxPoint x="710" y="1010" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="msg13" edge="1" parent="1" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;fontSize=14;fontFamily=Noto Sans CJK SC;strokeColor=#66849d;fontColor=#30465c;labelBackgroundColor=#ffffff;" value="11 规范化事件，脱敏入库并编号">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="710" y="1075" as="sourcePoint"/>
+                        <mxPoint x="410" y="1075" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="msg14" edge="1" parent="1" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;fontSize=14;fontFamily=Noto Sans CJK SC;strokeColor=#66849d;fontColor=#30465c;labelBackgroundColor=#ffffff;dashed=1;" value="SSE 推送进度；断线按事件序号补读">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="410" y="1140" as="sourcePoint"/>
+                        <mxPoint x="130" y="1140" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="msg15" edge="1" parent="1" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;fontSize=14;fontFamily=Noto Sans CJK SC;strokeColor=#66849d;fontColor=#30465c;labelBackgroundColor=#ffffff;dashed=1;" value="12 turn/completed：检查成功 / 失败 / 中断">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="1010" y="1205" as="sourcePoint"/>
+                        <mxPoint x="710" y="1205" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="msg16" edge="1" parent="1" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;fontSize=14;fontFamily=Noto Sans CJK SC;strokeColor=#66849d;fontColor=#30465c;labelBackgroundColor=#ffffff;" value="13 成功时收集文件，校验目录与产物">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="710" y="1270" as="sourcePoint"/>
+                        <mxPoint x="1570" y="1270" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="msg17" edge="1" parent="1" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;fontSize=14;fontFamily=Noto Sans CJK SC;strokeColor=#66849d;fontColor=#30465c;labelBackgroundColor=#ffffff;" value="14 写入候选；记录文档、引用与配置版本">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="710" y="1335" as="sourcePoint"/>
+                        <mxPoint x="410" y="1335" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="msg18" edge="1" parent="1" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;fontSize=14;fontFamily=Noto Sans CJK SC;strokeColor=#66849d;fontColor=#30465c;labelBackgroundColor=#ffffff;dashed=1;" value="15 展示候选，进入已有审核与交付流程">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="410" y="1400" as="sourcePoint"/>
+                        <mxPoint x="130" y="1400" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+    <diagram name="03 配置平移与运行契约" id="page-3">
+        <mxGraphModel dx="1467" dy="1585" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1500" pageHeight="1120" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="title" parent="1" style="html=0;whiteSpace=wrap;fontFamily=Noto Sans CJK SC;fontSize=26;fontColor=#172637;text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;" value="03 配置平移与运行契约" vertex="1">
+                    <mxGeometry height="40" width="1428" x="36" y="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="subtitle" parent="1" style="html=0;whiteSpace=wrap;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#52677b;text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;" value="现有配置内容保留；由适配器转换运行方式，配置兼容与执行兼容分别验证" vertex="1">
+                    <mxGeometry height="30" width="1428" x="36" y="65" as="geometry"/>
+                </mxCell>
+                <mxCell id="h1" parent="1" style="html=0;whiteSpace=wrap;fontFamily=Noto Sans CJK SC;fontSize=20;fontColor=#172637;rounded=1;arcSize=8;fillColor=#e1edf8;strokeColor=#94b9d8;align=center;verticalAlign=middle;spacing=10;" value="当前平台配置" vertex="1">
+                    <mxGeometry height="65" width="380" x="45" y="130" as="geometry"/>
+                </mxCell>
+                <mxCell id="h2" parent="1" style="html=0;whiteSpace=wrap;fontFamily=Noto Sans CJK SC;fontSize=20;fontColor=#172637;rounded=1;arcSize=8;fillColor=#e1edf8;strokeColor=#94b9d8;align=center;verticalAlign=middle;spacing=10;" value="Agent 内一体化配置" vertex="1">
+                    <mxGeometry height="65" width="380" x="560" y="130" as="geometry"/>
+                </mxCell>
+                <mxCell id="h3" parent="1" style="html=0;whiteSpace=wrap;fontFamily=Noto Sans CJK SC;fontSize=20;fontColor=#172637;rounded=1;arcSize=8;fillColor=#e1edf8;strokeColor=#94b9d8;align=center;verticalAlign=middle;spacing=10;" value="Codex 实际使用方式" vertex="1">
+                    <mxGeometry height="65" width="380" x="1075" y="130" as="geometry"/>
+                </mxCell>
+                <mxCell id="mold" parent="1" style="html=0;whiteSpace=wrap;fontFamily=Noto Sans CJK SC;fontSize=16;fontColor=#172637;rounded=1;arcSize=8;fillColor=#f4f6f8;strokeColor=#b9c5cf;align=center;verticalAlign=middle;spacing=10;" value="模型服务&#xa;服务商 / 名称 / API 地址 / 密钥&#xa;可用模型 / 协议 / 超时&#xa;输出上限 / 温度 / 启用状态" vertex="1">
+                    <mxGeometry height="180" width="380" x="45" y="250" as="geometry"/>
+                </mxCell>
+                <mxCell id="mnew" parent="1" style="html=0;whiteSpace=wrap;fontFamily=Noto Sans CJK SC;fontSize=16;fontColor=#172637;rounded=1;arcSize=8;fillColor=#eef6fd;strokeColor=#94b9d8;align=center;verticalAlign=middle;spacing=10;" value="Agent.model&#xa;保留现有模型服务字段&#xa;选择当前模型与推理强度&#xa;默认值与凭据引用随版本冻结" vertex="1">
+                    <mxGeometry height="180" width="380" x="560" y="250" as="geometry"/>
+                </mxCell>
+                <mxCell id="mrun" parent="1" style="html=0;whiteSpace=wrap;fontFamily=Noto Sans CJK SC;fontSize=16;fontColor=#172637;rounded=1;arcSize=8;fillColor=#e8f5ef;strokeColor=#93c5ad;align=center;verticalAlign=middle;spacing=10;" value="模型能力预检 → 原生 Provider&#xa;按版本映射模型、地址与凭据&#xa;不支持的协议 / 参数明确阻断&#xa;不默认承诺所有兼容服务可用" vertex="1">
+                    <mxGeometry height="180" width="380" x="1075" y="250" as="geometry"/>
+                </mxCell>
+                <mxCell id="cold" parent="1" style="html=0;whiteSpace=wrap;fontFamily=Noto Sans CJK SC;fontSize=16;fontColor=#172637;rounded=1;arcSize=8;fillColor=#f4f6f8;strokeColor=#b9c5cf;align=center;verticalAlign=middle;spacing=10;" value="MCP 服务&#xa;服务 / API Key / 请求头 / 超时&#xa;多知识库与启用状态&#xa;缓存开关 / 有效期 / 容量" vertex="1">
+                    <mxGeometry height="180" width="380" x="45" y="520" as="geometry"/>
+                </mxCell>
+                <mxCell id="cnew" parent="1" style="html=0;whiteSpace=wrap;fontFamily=Noto Sans CJK SC;fontSize=16;fontColor=#172637;rounded=1;arcSize=8;fillColor=#eef6fd;strokeColor=#94b9d8;align=center;verticalAlign=middle;spacing=10;" value="Agent.mcpServices[]&#xa;完整保留当前服务及知识库结构&#xa;工具授权随 Agent 独立管理&#xa;不再单列平台 MCP 入口" vertex="1">
+                    <mxGeometry height="180" width="380" x="560" y="520" as="geometry"/>
+                </mxCell>
+                <mxCell id="crun" parent="1" style="html=0;whiteSpace=wrap;fontFamily=Noto Sans CJK SC;fontSize=16;fontColor=#172637;rounded=1;arcSize=8;fillColor=#e8f5ef;strokeColor=#93c5ad;align=center;verticalAlign=middle;spacing=10;" value="Codex → 平台 MCP 桥接&#xa;校验任务、知识库与工具权限&#xa;复用现有 MCPClient 调用服务&#xa;保留请求头、路由、超时与缓存" vertex="1">
+                    <mxGeometry height="180" width="380" x="1075" y="520" as="geometry"/>
+                </mxCell>
+                <mxCell id="local" parent="1" style="html=0;whiteSpace=wrap;fontFamily=Noto Sans CJK SC;fontSize=16;fontColor=#172637;rounded=1;arcSize=8;fillColor=#fff6e5;strokeColor=#d8be8c;align=center;verticalAlign=middle;spacing=10;" value="本地基线&#xa;执行器 / 模型 / Skill / 工具&#xa;输入、权限与环境清单" vertex="1">
+                    <mxGeometry height="150" width="380" x="45" y="820" as="geometry"/>
+                </mxCell>
+                <mxCell id="snapshot" parent="1" style="html=0;whiteSpace=wrap;fontFamily=Noto Sans CJK SC;fontSize=16;fontColor=#172637;rounded=1;arcSize=8;fillColor=#fff6e5;strokeColor=#d8be8c;align=center;verticalAlign=middle;spacing=10;" value="运行快照&#xa;版本与哈希 + 凭据引用&#xa;任务、会话、轮次一一关联" vertex="1">
+                    <mxGeometry height="150" width="380" x="560" y="820" as="geometry"/>
+                </mxCell>
+                <mxCell id="compare" parent="1" style="html=0;whiteSpace=wrap;fontFamily=Noto Sans CJK SC;fontSize=16;fontColor=#172637;rounded=1;arcSize=8;fillColor=#fff6e5;strokeColor=#d8be8c;align=center;verticalAlign=middle;spacing=10;" value="同快照对照验收&#xa;实际模型与工具一致&#xa;候选、引用及审核质量达标" vertex="1">
+                    <mxGeometry height="150" width="380" x="1075" y="820" as="geometry"/>
+                </mxCell>
+                <mxCell id="foot" parent="1" style="html=0;whiteSpace=wrap;fontFamily=Noto Sans CJK SC;fontSize=15;fontColor=#172637;text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;" value="注意：MCP 桥接层是本次接入需要新增的组件；图中业务通信、队列和运行契约为待实施方案。" vertex="1">
+                    <mxGeometry height="40" width="1410" x="45" y="1030" as="geometry"/>
+                </mxCell>
+                <mxCell id="ea" edge="1" parent="1" source="mold" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;fontSize=14;fontFamily=Noto Sans CJK SC;strokeColor=#66849d;fontColor=#30465c;labelBackgroundColor=#ffffff;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="mnew" value="">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="425" y="340" as="sourcePoint"/>
+                        <mxPoint x="560" y="340" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="eb" edge="1" parent="1" source="mnew" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;fontSize=14;fontFamily=Noto Sans CJK SC;strokeColor=#66849d;fontColor=#30465c;labelBackgroundColor=#ffffff;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="mrun" value="">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="940" y="340" as="sourcePoint"/>
+                        <mxPoint x="1075" y="340" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="ec" edge="1" parent="1" source="cold" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;fontSize=14;fontFamily=Noto Sans CJK SC;strokeColor=#66849d;fontColor=#30465c;labelBackgroundColor=#ffffff;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="cnew" value="">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="425" y="610" as="sourcePoint"/>
+                        <mxPoint x="560" y="610" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="ed" edge="1" parent="1" source="cnew" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;fontSize=14;fontFamily=Noto Sans CJK SC;strokeColor=#66849d;fontColor=#30465c;labelBackgroundColor=#ffffff;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="crun" value="">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="940" y="610" as="sourcePoint"/>
+                        <mxPoint x="1075" y="610" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="ee" edge="1" parent="1" source="local" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;fontSize=14;fontFamily=Noto Sans CJK SC;strokeColor=#66849d;fontColor=#30465c;labelBackgroundColor=#ffffff;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="snapshot" value="">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="425" y="895" as="sourcePoint"/>
+                        <mxPoint x="560" y="895" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="ef" edge="1" parent="1" source="snapshot" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;fontSize=14;fontFamily=Noto Sans CJK SC;strokeColor=#66849d;fontColor=#30465c;labelBackgroundColor=#ffffff;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="compare" value="">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="940" y="895" as="sourcePoint"/>
+                        <mxPoint x="1075" y="895" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+</mxfile>

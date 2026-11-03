@@ -16,6 +16,7 @@ test('点击人员管理展开子菜单并进入团队小组', async ({ page }) 
   await page.goto(`${baseUrl}/knowledge-center/platform?tab=governance`);
   const personnel = page.locator('.platform-tab-summary');
   await expect(personnel).toBeVisible();
+  await expect(page.locator('#main')).not.toHaveAttribute('aria-busy', 'true');
   await personnel.click();
   await expect(page.getByRole('menuitem', { name: '人员管理' })).toBeVisible();
   const teamItem = page.getByRole('menuitem', { name: '团队小组' });

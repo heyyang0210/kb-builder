@@ -19,6 +19,27 @@ function digest(value) {
   return crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
 }
 
+function handbookReviewScope(source) {
+  return digest({
+    handbookId: source.handbookId, businessVersion: source.businessVersion || '版本待核对',
+    branch: source.branch, repositoryIdentity: source.repositoryIdentity || null,
+    reviewMode: source.reviewMode || null,
+    documents: source.documents.map(item => [item.documentId, item.filePath, item.outlineVersionId || null])
+      .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
+  });
+}
+
+function handbookDocumentReviewDigest(document) {
+  return digest({
+    documentId: document.documentId, filePath: document.filePath, markdown: document.markdown,
+    baselineContent: document.baselineContent, baselineDigest: document.baselineDigest,
+    action: document.action, templateVersionId: document.templateVersionId || null,
+    reviewerIds: [...new Set((document.reviewerIds || []).map(String))].sort(),
+    resources: (document.resources || []).map(item => [item.path, item.size, item.contentDigest])
+      .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
+  });
+}
+
 function identifier(prefix) {
   return `${prefix}_${crypto.randomBytes(12).toString('hex')}`;
 }
@@ -230,6 +251,21 @@ class IncrementalBuildService {
     return this.withIdempotency(session, key, 'handbook-review', body, state => {
       const existing = state.tasks.find(task => task.handbookSource?.submissionId === body.submissionId && this.isOwner(session, task));
       if (existing) return this.project(existing, session);
+      let previous = null;
+      if (body.revisionOfTaskId) {
+        previous = this.task(state, body.revisionOfTaskId);
+        this.requireReadable(session, previous);
+        this.requireOwner(session, previous);
+        if (previous.state !== 'rejected' || !previous.handbookSource || !previous.candidate) {
+          throw new IncrementalBuildError('REJECTED_TASK_REQUIRED', '只能接续已退回的手册审核任务', 409);
+        }
+        if (handbookReviewScope(previous.handbookSource) !== handbookReviewScope(body)) {
+          throw new IncrementalBuildError('REVIEW_REVISION_SCOPE_CHANGED', '重新送审须保留原手册、版本、仓库、分支及完整文档范围', 409);
+        }
+        if (state.tasks.some(item => item.revisionOf === previous.id)) {
+          throw new IncrementalBuildError('REVIEW_REVISION_ALREADY_CREATED', '该退回任务已有后续修订，请从后续任务继续', 409);
+        }
+      }
       const repository = new MemoryIncrementalBuildRepository(state);
       const service = new IncrementalBuildService(repository);
       const baseline = service.createSyntheticBaseline(session, `${key}:baseline`, {
@@ -255,6 +291,27 @@ class IncrementalBuildService {
       service.submitReview(session, task.id, `${key}:review`);
       const next = repository.read();
       const created = next.tasks.find(item => item.id === task.id);
+      if (previous) {
+        created.revisionOf = previous.id;
+        const carried = [];
+        for (const review of created.reviews) {
+          const document = body.documents.find(item => item.documentId === review.documentId);
+          const before = previous.handbookSource.documents.find(item => item.documentId === review.documentId);
+          const priorReviews = previous.reviews.filter(item => item.documentId === review.documentId && item.candidateDigest === previous.candidate.digest);
+          const prior = priorReviews.length === 1 ? priorReviews[0] : null;
+          if (!before || prior?.status !== 'approved' || prior.decision?.value !== 'approve'
+            || !(review.reviewerIds || []).includes(String(principalId(prior.decision.decidedBy)))
+            || (prior.comments || []).some(item => item.severity === 'blocker' && item.resolved !== true)
+            || !body.repositoryIdentity || !body.commitSha || previous.handbookSource.commitSha !== body.commitSha
+            || handbookDocumentReviewDigest(before) !== handbookDocumentReviewDigest(document)) continue;
+          review.status = 'approved';
+          review.decision = structuredClone(prior.decision);
+          review.carriedFrom = { taskId: previous.id, reviewId: prior.id, candidateDigest: previous.candidate.digest };
+          carried.push(review.documentId);
+        }
+        created.state = created.reviews.every(item => item.status === 'approved') ? 'approved' : 'under_review';
+        this.audit(next, 'HANDBOOK_REVIEW_REVISED', created.id, session, { revisionOf: previous.id, carriedDocumentIds: carried });
+      }
       if (body.reviewMode === 'online_review') created.reviewMode = 'online_review';
       next.publishedVersions.find(item => item.id === baseline.id).current = false;
       next.publishedVersions.find(item => item.id === baseline.id).comparisonOnly = true;
@@ -295,7 +352,7 @@ class IncrementalBuildService {
       this.requireReadable(session, task);
       if (task.state !== 'mr_submitted' || !task.mergeRequest) throw new IncrementalBuildError('MR_NOT_SUBMITTED', '任务尚未登记 GitLab MR', 409);
       const delivery = body.delivery;
-      if (!delivery || delivery.iid !== task.mergeRequest.iid || !['opened', 'merged'].includes(delivery.state)) throw new IncrementalBuildError('MR_DELIVERY_INVALID', 'GitLab MR 状态回读结果无效', 409);
+      if (!delivery || delivery.iid !== task.mergeRequest.iid || !['opened', 'closed', 'merged'].includes(delivery.state)) throw new IncrementalBuildError('MR_DELIVERY_INVALID', 'GitLab MR 状态回读结果无效', 409);
       if (delivery.state === 'merged' && (delivery.readback?.status !== 'consistent' || delivery.readback?.resources !== 'repository_relative_images_verified')) throw new IncrementalBuildError('MR_READBACK_REQUIRED', '合并后的正文与仓库图片回读未通过', 409);
       task.deliveryObservation = { ...structuredClone(delivery), observedAt: now() };
       if (delivery.state === 'merged') {
@@ -413,7 +470,23 @@ class IncrementalBuildService {
 
   async readState(session) {
     requireAction(session, 'knowledge:read');
-    return this.repository.readAsync ? this.repository.readAsync() : this.repository.read();
+    if (!this.repository.readAsync) return this.repository.read();
+    if (!this.pendingReadState) {
+      this.pendingReadState = (async () => {
+        let epoch;
+        let snapshot;
+        do {
+          epoch = this.repository.writeEpoch;
+          snapshot = await this.repository.readAsync();
+        } while (epoch !== this.repository.writeEpoch);
+        return snapshot;
+      })();
+      const pending = this.pendingReadState;
+      pending.finally(() => {
+        if (this.pendingReadState === pending) this.pendingReadState = null;
+      }).catch(() => {});
+    }
+    return structuredClone(await this.pendingReadState);
   }
 
   list(session, query = {}, snapshot = null) {
@@ -1129,6 +1202,7 @@ class IncrementalBuildService {
       canEdit: owner && hasAction(session, 'knowledge:write') && EDITABLE_STATES.has(task.state),
       canReview: hasAction(session, 'review:manage') && task.state === 'under_review' && hasPendingReview && (!task.handbookSource || task.reviews.some(review => review.status === 'pending' && isAssignedReviewer(session, review.reviewerIds))),
       canPublish: hasAction(session, 'publish:manage') && task.state === 'approved',
+      canRefreshDelivery: hasAction(session, 'publish:manage') && Boolean(task.handbookSource && task.mergeRequest) && task.state === 'mr_submitted',
       canComment: this.canComment(session, task),
       canRevise: owner && !task.handbookSource && hasAction(session, 'knowledge:write') && task.state === 'rejected',
       canRecordEvidence: hasAction(session, 'publish:manage') && task.state === 'published',
@@ -1148,7 +1222,7 @@ class IncrementalBuildService {
       && delivery?.readback?.resources === 'repository_relative_images_verified';
     projection.completion = {
       status: completed ? 'completed' : 'pending',
-      label: completed ? '已完成' : '待合并回读',
+      label: completed ? '已完成' : delivery?.state === 'closed' ? 'MR已关闭，待处理' : '待合并回读',
       completedAt: completed ? (delivery.observedAt || null) : null,
       criteria: ['gitlab_merged', 'target_branch_markdown_readback', 'repository_relative_images_readback'],
       facts: {

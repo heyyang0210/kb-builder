@@ -96,6 +96,10 @@ Health check: http://localhost:4100/api/health
 
 文档阅读页支持文档级评论：评论正文必填，可手工附加引用文本，并可新增或删除。评论默认持久化到 `data/document-comments.json`；当前平台尚无身份与权限系统，因此此阶段不区分评论所有者。
 
+知识中心 API 对超过 1KB 的 JSON 响应支持 gzip 协商：客户端在 `Accept-Encoding` 中声明 `gzip` 后，网关返回 `Content-Encoding: gzip` 和 `Vary: Accept-Encoding`。解压后的 JSON、状态码和错误结构保持不变；不支持压缩或小响应仍按原样返回。
+
+日志请求关联：API 校验并透传 `X-Request-ID`、`X-Correlation-ID`（1–128 位字母、数字及 `._:-`），非法或缺失值会重新生成；响应头返回有效标识，浏览器跨域调用已允许这两个请求头。统一日志维护命令见根目录 `knowledge-center.sh logs`；诊断包按 JSON 标识精确匹配并记录来源、事件范围和错误摘要。
+
 知识中心管理平台统一使用根目录 `knowledge-center.sh` 管理存储、文档 API、资料加工 API、认证 API 和 Web 网关。脚本提供 `start/stop/restart/status`，默认先构建 PingCode Web；任一服务失败时会回收本轮已启动进程。
 
 1. 点击右上角 **⚙️ 配置** 按钮
@@ -687,3 +691,34 @@ class MyAdapter extends SourceAdapter {
 ```
 
 详细设计参见 [知识中心-资料加工-资料预处理框架-详细设计文档](../../.codex/知识中心建设平台/03-详细设计/知识中心-资料加工-资料预处理框架-详细设计文档.md) 和 [知识中心-资料加工-通用素材接入-详细设计文档](../../.codex/知识中心建设平台/03-详细设计/知识中心-资料加工-通用素材接入-详细设计文档.md)。
+
+压缩协商遵循 Express 标准编码协商，`gzip;q=0` 不发送 gzip；可压缩 JSON 的原文和压缩版本均追加 `Vary: Accept-Encoding`，保留 CORS 的 `Origin`。
+
+### Agent 配置与独立 Codex 运行
+
+平台管理统一通过 `/knowledge-center/api/platform/agents` 管理 Agent，模型与 MCP 子接口作用于指定 Agent；复用原字段、校验和凭据加密。管理员可通过 `/:id/run-test` 启动测试，在 `/platform/agent-runs/:id` 查询、`/events` 补读 SSE、`/cancel` 取消。写作模型选择增加 agentId 和配置版本，写作阶段可调用独立 Worker/Codex app-server。
+
+运行宿主安装 Codex CLI 0.156.1，使用 Responses Provider；运行数据在 runtime/agent-runner/codex-runs，单任务独立配置和工作区。当前同机进程与只读知识库桥接，不包含跨机队列/人工批准/原会话续跑。详细设计见 `.codex/知识中心建设平台/03-详细设计/知识中心-文档生产-Codex独立组件接入-详细设计文档.md`。
+
+Agent配置页修复（2026-10-29）：新增API部署后必须重启承载平台API的Web网关，避免新静态页面调用旧进程。未匹配 `/knowledge-center/api/*` 返回404 JSON，不回退首页；Agent配置读取遇到HTML或无效JSON时显示中文可重试错误。回归覆盖HTML错配及重新读取恢复，实际环境需同时验证接口和页面。
+
+目录合并读取的 Server-Timing 包含 catalog_read、catalog_ 前缀的 Storage 索引阶段及既有 directory_read，区分索引和目录的等待；空索引仍返回索引计时，业务响应和预算不变。
+
+同实例同任务交付请求按taskId顺序执行，并在进入队列后读取最新审核/交付状态；每个请求保留独立鉴权与摘要检查，失败释放队列，其他任务可并行。用于避免重复点击导致并发远端提交与旧状态登记。该保护不跨进程，多实例数据库租约仍待设计验收。
+
+
+GitLab范围不足恢复：连接器对上游403 + insufficient_scope返回GITLAB_INSUFFICIENT_SCOPE，提示管理员开通所需API权限并重新授权；普通403保持原分类。平台真实HTTP回归位于gitlab-api-http.test.js。OAuth已连接不代表获得仓库写入权限，禁止靠重复提交MR解决授权范围不足。
+
+已有MR刷新接受GitLab的closed观察结果并保留审计，不生成合并回读证据；任务仍未完成。未知状态及MR编号不匹配仍拒绝。
+
+公共completion在MR观察为closed时返回pending和“MR已关闭，待处理”标签，详情/摘要/生成关联复用同一投影。
+
+
+MR人员映射：GET /incremental-tasks/:id/mr-participants 在审核通过后返回逐篇审核人映射和可选合入负责人；手册候选POST publish必填平台assigneeId。服务端按统一登录账号精确匹配GitLab项目可访问用户，提交前重新解析，创建后回读Assignees/Reviewers，冲突不静默覆盖。已有MR刷新只读。
+
+
+## 任务管理 V2（2026-10-30）
+
+任务管理新增文档复用 POST /api/outline/governance/:id/document-proposals；该写入要求内部网关令牌及 outline:create，确定性候选ID保障重试，保留源目录与已有节点ID，不自动发布。内层任务API未经可信上下文一律拒绝。
+
+2026-10-30：任务管理新增 PUT /:number/plan，可信会话责任人可写独立计划时间；版本/幂等/日期范围校验和审计。XLSX导入保留编号单元格HTTPS超链接，重导保留人工字段。正式页面任务聚合由Web网关内路由提供，内层API无可信上下文仍拒绝。

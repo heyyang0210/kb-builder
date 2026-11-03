@@ -22,6 +22,58 @@ describe('AI 候选事务和范围保护', () => {
   beforeEach(() => { root = fs.mkdtempSync(path.join(os.tmpdir(), 'production-ai-')); });
   afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
 
+  test('显式空引用可生成，省略顺序兼容默认知识库，非法优先级仍被拒绝', async () => {
+    const service = setup();
+    const empty = service.ai.start({ ...base, referenceOrder: [] }, editor, 'explicit-empty');
+    expect(empty.referenceOrder).toEqual([]);
+    expect(empty.mcpRetrievalPolicy).toBeNull();
+    await tick();
+    expect(service.ai.get({ ...ctx, jobId: empty.jobId }, editor).status).toBe('completed');
+    const legacy = service.ai.start(base, editor, 'legacy-default');
+    expect(legacy.referenceOrder).toEqual(['knowledge-mcp']);
+    for (const [index, referenceOrder] of [null, 'bad', ['unknown'], ['knowledge-mcp', 'knowledge-mcp']].entries()) {
+      expect(() => service.ai.start({ ...base, referenceOrder }, editor, `invalid-${index}`)).toThrow(/参考资料优先级/);
+    }
+    await tick();
+  });
+
+  test('移除知识库同时屏蔽Codex工具，失败后重试仍屏蔽且不修改全局模型配置', async () => {
+    const config = { executor: 'codex', mcp: { services: [{ id: 'global-kb', enabled: true, server_url: 'http://invalid.test' }] } };
+    let attempts = 0; const seen = [];
+    const service = setup({
+      modelGovernance: { resolve: selection => ({ selection, config }) },
+      codexRunner: { preflight: () => {}, run: async (messages, resolved) => {
+        seen.push(resolved.mcp.services); attempts++;
+        if (attempts === 1) throw new Error('隔离测试模拟暂时失败');
+        return { content: '新句', model: 'isolated-codex' };
+      } },
+    });
+    const job = service.ai.start({ ...base, modelSelection: { profileId: 'test' }, referenceOrder: [] }, editor, 'no-mcp-codex');
+    await tick();
+    expect(service.ai.get({ ...ctx, jobId: job.jobId }, editor).status).toBe('failed');
+    service.ai.retry({ ...ctx, jobId: job.jobId }, editor, 'retry-no-mcp');
+    await tick();
+    expect(service.ai.get({ ...ctx, jobId: job.jobId }, editor).status).toBe('completed');
+    expect(seen).toEqual([[], []]);
+    expect(config.mcp.services).toHaveLength(1);
+  });
+
+  test('历史列表为只读查询，过期状态仅投影且不写回聚合', async () => {
+    let time = Date.now();
+    const store = new FileAggregateStore(path.join(root, 'state.json'), { drafts: {}, idempotency: {}, audits: [] });
+    const transaction = store.transaction.bind(store);
+    let writes = 0;
+    store.transaction = mutator => { writes++; return transaction(mutator); };
+    const service = setup({ now: () => time, generate: () => new Promise(() => {}) }, { store });
+    const job = service.ai.start(base, editor, 'history-read-only');
+    await tick();
+    time += 24 * 60 * 60 * 1000;
+    const before = writes;
+    expect(service.ai.list(ctx, editor)).toEqual([expect.objectContaining({ jobId: job.jobId, status: 'interrupted' })]);
+    expect(writes).toBe(before);
+    expect(store.read().aiJobs[job.jobId].status).not.toBe('interrupted');
+  });
+
   test('候选不写草稿；显式采用原子保存且保留范围外正文，重试只采用一次', async () => {
     const service = setup();
     const job = service.ai.start(base, editor, 'generate');

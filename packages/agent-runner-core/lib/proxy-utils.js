@@ -1,11 +1,15 @@
 const http = require('http');
-const crypto = require('crypto');
+const logger = require('./logger');
+const { createId, validId } = require('./log-context');
 
 function createProxy({ targetHost, targetPort, pathTransform, errorPayload, requestHeaders, normalizeErrorResponse, transformResponse, validateResponse }) {
   return function proxy(req, res, context = {}) {
     const targetPath = pathTransform ? pathTransform(req) : (req.url || '/');
-    const requestId = String(req.headers['x-request-id'] || crypto.randomUUID());
-    const correlationId = String(req.headers['x-correlation-id'] || requestId);
+    const requestHeader = req.headers['x-request-id'];
+    const correlationHeader = req.headers['x-correlation-id'];
+    const requestId = validId(requestHeader) ? requestHeader : createId('req');
+    const correlationId = validId(correlationHeader) ? correlationHeader : requestId;
+    const startedAt = Date.now();
     const headers = { ...req.headers, host: `${targetHost}:${targetPort}`, 'x-request-id': requestId, 'x-correlation-id': correlationId };
     if (requestHeaders) Object.assign(headers, requestHeaders(req, context));
     const proxyRequest = http.request({
@@ -24,6 +28,7 @@ function createProxy({ targetHost, targetPort, pathTransform, errorPayload, requ
         proxyResponse.on('end', () => {
           const raw = Buffer.concat(chunks).toString('utf8');
           const status = proxyResponse.statusCode || 500;
+          logger.info('proxy.completed', { event: status >= 400 ? 'proxy.failed' : 'proxy.completed', requestId, correlationId, method: req.method, route: targetPath.split('?')[0], targetService: `${targetHost}:${targetPort}`, status, durationMs: Date.now() - startedAt });
           const payload = status >= 400
             ? normalizeErrorResponse(raw, status, requestId, correlationId, context)
             : transformResponse(raw, status, requestId, correlationId, context);
@@ -36,6 +41,7 @@ function createProxy({ targetHost, targetPort, pathTransform, errorPayload, requ
             try {
               validateResponse(payload, status, context);
             } catch (error) {
+              logger.error('proxy.contract_invalid', { event: 'proxy.failed', requestId, correlationId, errorCode: 'KNOWLEDGE_CONTRACT_INVALID', errorType: error.name, stack: error.stack, targetService: `${targetHost}:${targetPort}`, durationMs: Date.now() - startedAt });
               const contractPayload = {
                 success: false,
                 error: {
@@ -66,6 +72,7 @@ function createProxy({ targetHost, targetPort, pathTransform, errorPayload, requ
       proxyResponse.pipe(res);
     });
     proxyRequest.on('error', error => {
+      logger.error('proxy.connection_failed', { event: 'proxy.failed', requestId, correlationId, errorCode: error.code || 'PROXY_CONNECTION_FAILED', errorType: error.name, stack: error.stack, targetService: `${targetHost}:${targetPort}`, durationMs: Date.now() - startedAt });
       const body = typeof errorPayload === 'function' ? errorPayload(error, requestId, correlationId) : errorPayload;
       if (body?.error && typeof body.error === 'object') {
         body.error.requestId = body.error.requestId || requestId;

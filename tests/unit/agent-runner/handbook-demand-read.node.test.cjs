@@ -38,6 +38,36 @@ test('单篇草稿真实 HTTP 仅请求上下文投影，不调用全局 read；
   }
 });
 
+test('单篇草稿异步审核快照保留逐篇结论，失败时保留最后已知引用', async () => {
+  const draft = { draftId: 'd1', context, currentRevisionId: 'r1', editVersion: 1,
+    revisions: [{ revisionId: 'r1', markdown: '正文' }],
+    reviewState: { taskId: 'task-1', status: 'under_review' } };
+  let failRead = false;
+  const snapshot = { tasks: [{ id: 'task-1' }] };
+  const calls = [];
+  const service = createHandbookProductionService({
+    store: { readDraftAsync: async () => draft, read: () => { throw Error('禁止同步读取草稿聚合'); } },
+    reviewService: {
+      readState: async () => { calls.push('readState'); if (failRead) throw Error('暂时无法读取审核任务'); return snapshot; },
+      get: (_session, taskId, received) => {
+        calls.push('get'); assert.equal(taskId, 'task-1'); assert.equal(received, snapshot);
+        return { state: 'under_review', reviews: [{ documentId: 'doc-1', status: 'approved', decision: { result: 'pass' } },
+          { documentId: 'doc-2', status: 'returned', decision: { result: 'return' } }] };
+      },
+    },
+  });
+  try {
+    const projected = await service.getDraftAsync(context, editor);
+    assert.deepEqual(calls, ['readState', 'get']);
+    assert.equal(projected.draft.reviewState.reviewStatus, 'approved');
+    assert.deepEqual(projected.draft.reviewState.reviewDecision, { result: 'pass' });
+    failRead = true;
+    const fallback = await service.getDraftAsync(context, editor);
+    assert.deepEqual(calls, ['readState', 'get', 'readState']);
+    assert.deepEqual(fallback.draft.reviewState, draft.reviewState);
+  } finally { service.stopRecoveryScheduler(); }
+});
+
 test('旧版 Storage 忽略 draftKey 时从聚合响应选择当前草稿，缺失时返回空', async () => {
   const draft = { draftId: 'd1', context, currentRevisionId: 'r1', revisions: [{ revisionId: 'r1', markdown: '正文' }] };
   const server = http.createServer((req, res) => {
@@ -81,6 +111,7 @@ test('目录先于慢草稿和仓库显示；切换文档后迟到响应不覆�
   let draftCalls = 0;
   const appState = { activeView: 'production' };
   const sandbox = { appState, handbookUi: () => ui, collectDocuments: items => items, outlineNodes: outline => outline.nodes || [],
+    markHandbookPerformance: () => {}, ownedByCurrentUser: () => true,
     productionRouteState: () => route,
     render: () => renders.push(appState.incrementalProjection.status),
     loadOutlineData: async () => ({ status: 'ok', detail: { nodes: [{ id: 'doc-1', kind: 'document' }, { id: 'doc-2', kind: 'document' }] } }),
@@ -124,7 +155,7 @@ test('草稿读取失败不会降级为空草稿或调用全局读取', async ()
 });
 
 for (const denied of [false, true]) {
-  test(`映射与目录并行，${denied ? '映射拒绝时禁止草稿读取' : '确认实际分支后才读取草稿'}`, async () => {
+  test(`目录完成后解析映射，${denied ? '映射拒绝时禁止草稿读取' : '确认实际分支后才读取草稿'}`, async () => {
     const vm = require('node:vm');
     const source = fs.readFileSync(path.resolve(__dirname, '../../../apps/knowledge-center-web/frontend/knowledge-center/app.js'), 'utf8');
     const workspaceSource = source.slice(source.indexOf('let handbookWorkspaceSequence ='), source.indexOf('async function loadIncrementalWorkspace('));
@@ -137,6 +168,7 @@ for (const denied of [false, true]) {
     const calls = [];
     const sandbox = {
       appState: { activeView: 'production' }, handbookUi: () => ui,
+      markHandbookPerformance: () => {}, ownedByCurrentUser: () => true,
       collectDocuments: items => items, outlineNodes: outline => outline.nodes || [],
       productionRouteState: () => route, render: () => {},
       loadOutlineData: () => { calls.push('directory'); return directory; },
@@ -149,14 +181,15 @@ for (const denied of [false, true]) {
     vm.createContext(sandbox);
     vm.runInContext(workspaceSource + '\nthis.loadWorkspace = loadHandbookWorkspace;', sandbox);
     const loading = sandbox.loadWorkspace(route, new URLSearchParams());
-    assert.deepEqual(calls, ['mapping', 'directory']);
+    assert.deepEqual(calls, ['directory']);
+    assert.equal(calls.length, 1, '目录未完成时不得选择或读取草稿');
+    releaseDirectory({ status: 'ok', detail: { nodes: [{ id: 'doc-1' }] } });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(calls, ['directory', 'mapping']);
     releaseMapping(denied ? Object.assign(new Error('拒绝访问'), { code: 'FORBIDDEN' })
       : { defaultBranch: 'release', enabledBranches: ['release'] });
-    await new Promise(resolve => setImmediate(resolve));
-    assert.equal(calls.length, 2, '目录未完成时不得选择或读取草稿');
-    releaseDirectory({ status: 'ok', detail: { nodes: [{ id: 'doc-1' }] } });
     await loading;
-    assert.deepEqual(calls, denied ? ['mapping', 'directory'] : ['mapping', 'directory', 'draft:release']);
+    assert.deepEqual(calls, denied ? ['directory', 'mapping'] : ['directory', 'mapping', 'draft:release']);
     assert.equal(ui.draftContextResolved, !denied);
     if (denied) assert.equal(ui.draftLoadState['doc-1'], 'failed');
   });

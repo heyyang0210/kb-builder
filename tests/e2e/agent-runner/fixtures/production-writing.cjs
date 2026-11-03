@@ -36,9 +36,14 @@ async function setup(t, options = {}) {
   const runtimeRoot = path.join(repositoryRoot, 'runtime/test-results/production-writing');
   fs.mkdirSync(runtimeRoot, { recursive: true });
   const attachmentRoot = fs.mkdtempSync(path.join(runtimeRoot, 'attachments-'));
-  const store = memoryStore();
+  const store = options.store || memoryStore();
+  // Catalog and execution must resolve the same Agent-scoped configuration.
+  const agentGovernance = options.agentGovernance || require('../../../../packages/agent-runner-core/lib/platform-management/agent-governance').createAgentGovernance();
+  const modelGovernance = options.ai?.modelGovernance || (options.ai?.generate
+    ? require('../../../../packages/agent-runner-core/lib/platform-management/model-governance').createModelGovernance()
+    : agentGovernance);
   const templateStore = require('../../../../packages/agent-runner-core/lib/template-store').createTemplateStore({ store: memoryStore({ schemaVersion: 1, templates: options.templates || [], audits: [] }) });
-  const service = createHandbookProductionService({ store, attachmentRoot, yashanDB: options.yashanDB, contentQuality: options.contentQuality, ai: { loadMCPConfig: async () => ({}), resolveTemplate: id => templateStore.resolveForGeneration(id), ...options.ai } });
+  const service = createHandbookProductionService({ store, attachmentRoot, yashanDB: options.yashanDB, contentQuality: options.contentQuality, ai: { modelGovernance, loadMCPConfig: async () => ({}), resolveTemplate: id => templateStore.resolveForGeneration(id), ...options.ai } });
   const authModule = {
     authorize: async () => options.session || editor,
     repository: {
@@ -77,7 +82,9 @@ async function setup(t, options = {}) {
     },
     moduleRegistry: { get: name => name === 'auth' ? authModule : null },
     handbookProductionService: service,
-    modelGovernance: options.ai?.modelGovernance,
+    modelGovernance: options.ai?.generate || options.ai?.modelGovernance ? modelGovernance : undefined,
+    agentGovernance,
+    codexRunner: options.codexRunner,
     databaseConnectionGovernance: {},
     sendFile(_filePath, res) { res.writeHead(404); res.end(); },
     proxyAuth() {},

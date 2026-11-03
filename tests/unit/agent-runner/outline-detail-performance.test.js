@@ -24,6 +24,26 @@ test('当前版只读 catalog 和精简详情，不读全量列表与手册', as
   expect(fetch.mock.calls.map(([url]) => url)).toEqual([catalog, detail('published')]);
 });
 
+const directoryCatalog = '/knowledge-center/api/outline/catalog?handbookId=DB-004&view=directory';
+test('目录首屏一次请求取得选中版本和目录', async () => {
+  const { load, fetch } = loadWith({ [directoryCatalog]: ok({ items: [{ id: 'published', handbookId: 'DB-004' }], selectedId: 'published', directory: { id: 'published', nodes: [{ id: 'doc' }] } }) });
+  expect(await load('DB-004', null, 'directory')).toMatchObject({ status: 'ok', selectedId: 'published', detail: { nodes: [{ id: 'doc' }] } });
+  expect(fetch).toHaveBeenCalledTimes(1);
+});
+
+test('旧服务未附带目录时仍读取准确版本详情', async () => {
+  const url = '/knowledge-center/api/outline/governance/published?view=directory';
+  const { load, fetch } = loadWith({ [directoryCatalog]: ok({ items: [{ id: 'published', handbookId: 'DB-004' }] }), [url]: ok({ id: 'published', nodes: [] }) });
+  expect(await load('DB-004', null, 'directory')).toMatchObject({ status: 'ok', selectedId: 'published' });
+  expect(fetch.mock.calls.map(([url]) => url)).toEqual([directoryCatalog, url]);
+});
+
+test('合并目录请求失败不能当作空手册或回退绕过错误', async () => {
+  const { load, fetch } = loadWith({ [directoryCatalog]: { status: 503, body: { success: false, error: { code: 'OUTLINE_SERVICE_UNAVAILABLE' } } } });
+  expect(await load('DB-004', null, 'directory')).toMatchObject({ status: 'unavailable' });
+  expect(fetch).toHaveBeenCalledTimes(1);
+});
+
 test('指定候选版不被当前版覆盖', async () => {
   const { load, fetch } = loadWith({ [list]: ok([{ id: 'published', handbookId: 'DB-004', state: 'published' }, { id: 'candidate', handbookId: 'DB-004', state: 'draft' }]), [handbooks]: ok({ items: [{ handbookId: 'DB-004' }] }), [detail('candidate')]: ok({ id: 'candidate', outlineStructureVersion: 'v2' }) });
   expect(await load('DB-004', 'candidate')).toMatchObject({ status: 'ok', selectedId: 'candidate', detail: { outlineStructureVersion: 'v2' } });
@@ -53,6 +73,7 @@ describe('真实异步 HTTP 详情契约（隔离 Storage 替身，不连接数�
   const governance = { manualId: 'DB-004', state: 'draft', editVersion: 3, nodes, assignments: [], effectiveDocumentAssignments: [], techDomains: [], tasks: [] };
   beforeAll(async () => {
     const app = express();
+    app.get('/v1/domain/outlines/catalog', (_req, res) => res.set('Server-Timing', 'db-query;dur=2.5, storage-total;dur=3.5').json({ success: true, data: { items: [{ id: 'candidate', handbookId: 'DB-004' }, { id: 'missing', handbookId: 'broken' }, { id: 'other', handbookId: 'DB-002' }], total: 3 } }));
     app.get('/v1/domain/outlines', async (_req, res) => {
       if (releaseMetadata) { releaseMetadata.received(); await releaseMetadata.promise; }
       res.json({ success: true, data: { outlines: [{ id: 'candidate', handbookId: 'DB-004', name: 'SQL参考手册', state: 'draft', outlineStructureVersion: 'v2', editVersion: 3, content: { schemaVersion: 2, nodes } }] } });
@@ -110,5 +131,29 @@ describe('真实异步 HTTP 详情契约（隔离 Storage 替身，不连接数�
     expect(response.headers.get('server-timing')).toMatch(/directory;dur=4\.5/);
     expect(response.headers.get('server-timing')).toMatch(/directory_read;dur=/);
     expect((await response.json()).data.nodes).toEqual(nodes);
+  });
+
+  test('合并入口只返回指定手册并保留目录状态和阶段计时', async () => {
+    const response = await fetch(`${base}/api/outline/catalog?handbookId=DB-004&view=directory`);
+    expect(response.ok).toBe(true);
+    expect(response.headers.get('server-timing')).toMatch(/directory_read;dur=/);
+    expect(response.headers.get('server-timing')).toMatch(/catalog_read;dur=/);
+    expect(response.headers.get('server-timing')).toMatch(/catalog_db-query;dur=2\.5/);
+    expect(response.headers.get('server-timing')).toMatch(/catalog_storage-total;dur=3\.5/);
+    expect(await response.json()).toMatchObject({ success: true, data: { total: 1, selectedId: 'candidate', items: [{ id: 'candidate', handbookId: 'DB-004' }], directory: { id: 'candidate', state: 'draft', nodes } } });
+  });
+
+  test('无索引与目录已删除的错误严格区分；原catalog不变', async () => {
+    const emptyResponse = await fetch(`${base}/api/outline/catalog?handbookId=absent&view=directory`);
+    expect(emptyResponse.headers.get('server-timing')).toMatch(/catalog_read;dur=/);
+    expect(emptyResponse.headers.get('server-timing')).not.toMatch(/directory_read;dur=/);
+    const empty = await emptyResponse.json();
+    expect(empty.data).toMatchObject({ items: [], total: 0, selectedId: null, directory: null });
+    const broken = await fetch(`${base}/api/outline/catalog?handbookId=broken&view=directory`);
+    expect(broken.status).toBe(404);
+    expect((await broken.json()).error.code).toBe('OUTLINE_NOT_FOUND');
+    const original = await (await fetch(`${base}/api/outline/catalog`)).json();
+    expect(original.data.items).toHaveLength(3);
+    expect(original.data.directory).toBeUndefined();
   });
 });

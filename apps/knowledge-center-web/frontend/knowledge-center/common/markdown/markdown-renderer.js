@@ -1,5 +1,6 @@
 import { enhanceDatabaseMarkdown } from './database-enhancer.js';
 import { marked } from '../vendor/marked.esm.js';
+import { repositoryImageURL } from './repository-images.js';
 
 marked.setOptions({ gfm: true, breaks: true, headerIds: true, mangle: false });
 
@@ -32,7 +33,10 @@ function markdownBase(renderMarkdown, markdown, filePath, context) {
           const review = context.reviewResourceContext;
           return `src="/knowledge-center/api/incremental-tasks/${encodeURIComponent(review.taskId)}/resources?candidateDigest=${encodeURIComponent(review.candidateDigest)}&documentId=${encodeURIComponent(review.documentId)}&path=${encodeURIComponent(resolved)}"`;
         }
-        if (attr.toLowerCase() === 'src' && context.handbookId) return `src="/knowledge-center/api/gitlab/handbooks/${encodeURIComponent(context.handbookId)}/file?ref=${encodeURIComponent(context.branch || '')}&language=${encodeURIComponent(context.language || 'zh')}&path=${encodeURIComponent(resolved)}&raw=1"`;
+        if (attr.toLowerCase() === 'src' && context.handbookId) {
+          const imageURL = repositoryImageURL(decoded.value, filePath, context);
+          if (imageURL) return `src="${imageURL}"`;
+        }
         if (attr.toLowerCase() === 'href' && context.handbookId) return `href="/knowledge-center/assets/${encodeURIComponent(context.handbookId)}/repository?branch=${encodeURIComponent(context.branch || '')}&lang=${encodeURIComponent(context.language || 'zh')}&path=${encodeURIComponent(resolved)}"`;
         return `${attr}="${resolved}"`;
       });

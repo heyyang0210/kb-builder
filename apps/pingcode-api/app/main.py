@@ -1,6 +1,11 @@
 import json
+import logging
+import os
 import queue
 import re
+import time
+import uuid
+from contextvars import ContextVar
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -11,6 +16,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.responses import RedirectResponse
+
+logger = logging.getLogger("knowledge-center.pingcode")
+request_context: ContextVar[dict[str, str]] = ContextVar("request_context", default={})
+_LOG_ID_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
+
+
+def _valid_log_id(value: str | None) -> bool:
+    return bool(value and _LOG_ID_PATTERN.fullmatch(value))
 
 from .config import CONFIG_DIR, PINGCODE_DIR, REPOSITORY_ROOT, runtime_profile, settings
 from .governance_state import GovernanceStateError
@@ -179,6 +192,31 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def request_logging_middleware(request: Request, call_next):
+    incoming_request_id = request.headers.get("x-request-id")
+    incoming_correlation_id = request.headers.get("x-correlation-id")
+    request_id = incoming_request_id if _valid_log_id(incoming_request_id) else f"req-{uuid.uuid4()}"
+    correlation_id = incoming_correlation_id if _valid_log_id(incoming_correlation_id) else request_id
+    token = request_context.set({"requestId": request_id, "correlationId": correlation_id})
+    started = time.perf_counter()
+    try:
+        response = await call_next(request)
+        response.headers["x-request-id"] = request_id
+        response.headers["x-correlation-id"] = correlation_id
+        logger.info(json.dumps({
+            "timestamp": datetime.now().astimezone().isoformat(timespec="milliseconds"),
+            "level": "INFO", "service": "pingcode-api", "version": os.getenv("BUILD_VERSION", "unknown"),
+            "event": "request.completed", "requestId": request_id,
+            "correlationId": correlation_id, "method": request.method,
+            "route": request.url.path, "status": response.status_code,
+            "durationMs": round((time.perf_counter() - started) * 1000, 3), "message": "request.completed",
+        }, ensure_ascii=False))
+        return response
+    finally:
+        request_context.reset(token)
+
+
 def error(
     code: str,
     message: str,
@@ -197,14 +235,37 @@ def error(
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
+    context = request_context.get({})
     detail = exc.detail if isinstance(exc.detail, dict) else {"code": "HTTP_ERROR", "message": str(exc.detail)}
-    detail.setdefault("requestId", request.headers.get("x-request-id", ""))
-    return JSONResponse(status_code=exc.status_code, content={"success": False, "error": detail})
+    detail.setdefault("requestId", context.get("requestId", request.headers.get("x-request-id", "")))
+    logger.warning(json.dumps({
+        "timestamp": datetime.now().astimezone().isoformat(timespec="milliseconds"),
+        "level": "WARN", "service": "pingcode-api", "version": os.getenv("BUILD_VERSION", "unknown"),
+        "event": "request.failed", "requestId": detail["requestId"],
+        "correlationId": context.get("correlationId", detail["requestId"]),
+        "method": request.method, "route": request.url.path, "status": exc.status_code,
+        "errorCode": detail.get("code", "HTTP_ERROR"), "message": "request.failed",
+    }, ensure_ascii=False))
+    response = JSONResponse(status_code=exc.status_code, content={"success": False, "error": detail})
+    response.headers["x-request-id"] = detail["requestId"]
+    response.headers["x-correlation-id"] = context.get("correlationId", detail["requestId"])
+    return response
 
 
 @app.exception_handler(Exception)
 async def unexpected_exception_handler(request: Request, exc: Exception):
-    return JSONResponse(
+    context = request_context.get({})
+    request_id = context.get("requestId", request.headers.get("x-request-id", ""))
+    logger.exception(json.dumps({
+        "timestamp": datetime.now().astimezone().isoformat(timespec="milliseconds"),
+        "level": "ERROR", "service": "pingcode-api", "version": os.getenv("BUILD_VERSION", "unknown"),
+        "event": "request.failed", "requestId": request_id,
+        "correlationId": context.get("correlationId", request_id),
+        "method": request.method, "route": request.url.path,
+        "errorCode": "INTERNAL_ERROR", "errorType": type(exc).__name__,
+        "message": "request.failed",
+    }, ensure_ascii=False))
+    response = JSONResponse(
         status_code=500,
         content={
             "success": False,
@@ -212,10 +273,13 @@ async def unexpected_exception_handler(request: Request, exc: Exception):
                 "code": "INTERNAL_ERROR",
                 "message": "服务处理失败，请根据 requestId 查询后端日志",
                 "retryable": False,
-                "requestId": request.headers.get("x-request-id", ""),
+                "requestId": request_id,
             },
         },
     )
+    response.headers["x-request-id"] = request_id
+    response.headers["x-correlation-id"] = context.get("correlationId", request_id)
+    return response
 
 
 _BYTE_RANGE_PATTERN = re.compile(r"^bytes=(\d*)-(\d*)$")

@@ -2,6 +2,8 @@ import { collectDocuments, documentStatus, ownedByCurrentUser, outlineNodes, ren
 import { mountModelAdmin, hasModelDraft, confirmLeavingModels } from './modules/platform-admin/model-admin.js';
 import { mountMcpAdmin, hasMcpDraft, confirmLeavingMcp } from './modules/platform-admin/mcp-admin.js';
 import { retainWritingSelection } from './modules/production/writing-selection.js';
+import { observeRepositoryImages } from './common/markdown/repository-images.js';
+import { chooseMRParticipants } from './modules/review-publishing/mr-participants.js';
 import { canSaveHandbookDraft, handbookReviewAction } from './modules/production/handbook-actions.js';
 import { takeReviewBootstrapPrefetch } from './common/api/review-bootstrap-prefetch.js';
 import { archiveAsset, createAsset, createPrincipal, createTeamGroup, deleteOutline, importOutline, validateOutline, importPrincipals, loadAssets, loadOutlineData, loadPlatformData, loadPrincipals, loadTeamGroups, loadTeamGroup, saveTeamRoster, publishOutlineGovernance, resolveAssetStatus, restoreAsset, saveOutlineGovernance, updateAsset, updateAssetStatus, updateDomainBuildTaskItem, loadDomainBuildTasks as fetchDomainBuildTasks, loadPlatformPermissions, updatePlatformUserPermissions, updatePrincipal, loadDatabaseConnectionStatus, testDatabaseConnection, saveDatabaseConnection, loadTemplates, loadTemplate } from './common/api/platform-api.js';
@@ -24,6 +26,9 @@ import { updateReviewWaitingEntry } from './modules/review-publishing/view.js';
 import { initViewportRuntime } from './common/viewport-runtime.js';
 import { initScrollRuntime } from './common/scroll-runtime.js';
 import { initDismissibleMenus } from './common/dismissible-menu.js';
+import { loadDocumentTaskWorkspace, renderDocumentTasks } from './modules/document-tasks/view.js';
+// 预加载写作页面模块，点击时只等待实例化，不再等待网络加载模块。
+const productionWritingPagePromise = import('./modules/production/production-writing-page.js');
 const viewportRuntime = initViewportRuntime();
 const scrollRuntime = initScrollRuntime();
 const dismissibleMenus = initDismissibleMenus();
@@ -34,6 +39,7 @@ import { renderReviewPublishing, renderReviewRepositoryRegion } from './modules/
 
 const renderers = {
   review: renderReviewPublishing,
+  documentTasks: () => '<div data-document-task-mount></div>',
 };
 let assetSelectionRenderer = null;
 let assetStatisticsRenderer = null;
@@ -55,6 +61,7 @@ const rendererLoaders = {
   production: () => import('./modules/production/view.js').then(module => module.renderProduction),
   platform: () => import('./modules/platform-admin/view.js').then(module => module.renderPlatformAdmin),
   stages: () => import('./modules/production/view.js').then(module => module.renderStages),
+  documentTasks: () => Promise.resolve(() => '<div data-document-task-mount></div>'),
   repository: () => import('./modules/repository/view.js').then(module => module.renderRepository),
 };
 const rendererPromises = new Map();
@@ -119,7 +126,7 @@ function scheduleIconLibrary() {
     });
     document.head.append(script);
   };
-  window.setTimeout(load, 1200);
+  window.setTimeout(load, 0);
 }
 
 let templateController = null;
@@ -279,16 +286,25 @@ async function openHandbookWriting(operation, aiAction) {
         branch: repository.branch, path: file.path, commitId: file.commitId || null, blobId: file.blobId || null,
       } : { originType: 'blank', snapshotId: null, contentDigest, handbookId: context.handbookId, documentId, branch: context.branch } };
     };
-    const { openProductionWritingPage } = await import('./modules/production/production-writing-page.js');
+    const { openProductionWritingPage } = await productionWritingPagePromise;
     openProductionWritingPage({
       context, operation, getMarkdown, embedded: true,
+      initialMarkdown: currentHandbookMarkdown(documentId),
+      repositoryImageContext: { handbookId: context.handbookId, branch: handbookUi().repository?.branch || context.branch,
+        language: handbookUi().repository?.language || 'zh', filePath: handbookUi().repository?.filesByDocument?.[documentId]?.path || '' },
+      reuseEditor: activeHandbookVditor(documentId),
+      reuseEditorElement: activeHandbookVditor(documentId) ? document.querySelector('[data-handbook-vditor]') : null,
+      observeEditorInput: listener => {
+        handbookAIEditorInputListener = listener;
+        return () => { if (handbookAIEditorInputListener === listener) handbookAIEditorInputListener = null; };
+      },
       initialEditorFormat: handbookUi().editorFormatByDocument?.[documentId],
       onEditorFormatChange: format => {
         handbookUi().editorFormatByDocument ||= {};
         handbookUi().editorFormatByDocument[documentId] = format;
       },
       loadEditor: loadVditorAssets, initialRange: getWritingSelection(), trigger: aiAction,
-      onClose: () => render(),
+      onClose: () => { if (!activeHandbookVditor(documentId) || handbookUi().editorFormatByDocument?.[documentId] === 'markdown') render(); },
       onEdit: markdown => {
         handbookUi().drafts[documentId] = markdown;
         handbookUi().draftHtml[documentId] = '';
@@ -397,7 +413,18 @@ function outlineProjectionKey(route = outlineRouteState()) {
   const openOutlineMenuId = appState.activeView === 'outlines'
     ? document.querySelector('.outline-more-actions[open]')?.dataset.outlineMoreId : undefined;
   const databasePasswordDraft = document.querySelector('[data-database-dialog] [data-database-field="password"]')?.value || '';
-      const viewHtml = measureHandbookPerformance('render.viewHtml', () => renderer({ projection: appState.activeView === 'repository' ? appState.gitlabProjection : appState.projection, templateProjection: appState.templateProjection, cleaningProjection: appState.cleaningProjection, cleaningCanWrite: isPlatformAdmin(), reviewProjection: appState.reviewProjection, reviewUi: appState.reviewUi, outlineProjection, assetCatalog: appState.assetCatalog, principalProjection: appState.principalProjection, principalListState: appState.principalListState, teamGroupProjection: appState.teamGroupProjection, teamGroupView: new URLSearchParams(window.location.search).get('view') || 'people', teamGroupUi: appState.teamGroupUi, incrementalProjection: appState.incrementalProjection, handbookProductionUi: appState.handbookProductionUi, currentUser: { ...(authState.session?.user || {}), displayName: displayName() }, domainBuildTaskProjection: appState.domainBuildTaskProjection, gitlabProjection: appState.gitlabProjection, permissionProjection: appState.permissionProjection, governanceProjection: appState.platformGovernance, databaseConnectionProjection: appState.databaseConnectionProjection, databaseConnectionDrawerOpen: appState.databaseConnectionDrawerOpen, databaseConnectionAdvancedOpen: appState.databaseConnectionAdvancedOpen, databaseConnectionForm: appState.databaseConnectionForm, databaseConnectionStatus: appState.databaseConnectionStatus, selectedPermissionUserId: appState.selectedPermissionUserId, permissionSaveStatus: appState.permissionSaveStatus, permissionUserSearch: appState.permissionUserSearch, permissionListState: appState.permissionListState, gitlabVerification: appState.gitlabVerification, platformAdmin: isPlatformAdmin(), platformTab: appState.platformTab, gitlabListState: appState.gitlabListState, gitlabAddingConnection: appState.gitlabAddingConnection, gitlabEditingConnection: appState.gitlabEditingConnection, outlinePermissions: { create: canPerform('outline:create'), delete: canPerform('outline:delete'), purge: canPerform('outline:purge'), platformAdmin: isPlatformAdmin() }, outlineView }));
+      if (appState.activeView === 'documentTasks') {
+        const taskRoot = byId('view-root');
+        if (taskRoot._taskProjection !== appState.documentTaskProjection || !taskRoot.querySelector('.document-task-page')) {
+          renderDocumentTasks({ documentTaskProjection: appState.documentTaskProjection || { status: 'loading', items: [] } });
+          taskRoot._taskProjection = appState.documentTaskProjection;
+        }
+        syncMobileNavigationState();
+        window.lucide?.createIcons();
+        return;
+      }
+      if (byId('view-root')._taskProjection) { const taskRoot = byId('view-root'); taskRoot.onclick = taskRoot.onchange = taskRoot.onsubmit = taskRoot.onkeydown = null; delete taskRoot._taskProjection; }
+      const viewHtml = measureHandbookPerformance('render.viewHtml', () => renderer({ projection: appState.activeView === 'repository' ? appState.gitlabProjection : appState.projection, templateProjection: appState.templateProjection, cleaningProjection: appState.cleaningProjection, cleaningCanWrite: isPlatformAdmin(), reviewProjection: appState.reviewProjection, reviewUi: appState.reviewUi, outlineProjection, assetCatalog: appState.assetCatalog, principalProjection: appState.principalProjection, principalListState: appState.principalListState, teamGroupProjection: appState.teamGroupProjection, teamGroupView: new URLSearchParams(window.location.search).get('view') || 'people', teamGroupUi: appState.teamGroupUi, incrementalProjection: appState.incrementalProjection, handbookProductionUi: appState.handbookProductionUi, currentUser: { ...(authState.session?.user || {}), displayName: displayName() }, domainBuildTaskProjection: appState.domainBuildTaskProjection, openDomainTaskId, gitlabProjection: appState.gitlabProjection, permissionProjection: appState.permissionProjection, governanceProjection: appState.platformGovernance, databaseConnectionProjection: appState.databaseConnectionProjection, databaseConnectionDrawerOpen: appState.databaseConnectionDrawerOpen, databaseConnectionAdvancedOpen: appState.databaseConnectionAdvancedOpen, databaseConnectionForm: appState.databaseConnectionForm, databaseConnectionStatus: appState.databaseConnectionStatus, selectedPermissionUserId: appState.selectedPermissionUserId, permissionSaveStatus: appState.permissionSaveStatus, permissionUserSearch: appState.permissionUserSearch, permissionListState: appState.permissionListState, gitlabVerification: appState.gitlabVerification, platformAdmin: isPlatformAdmin(), platformTab: appState.platformTab, gitlabListState: appState.gitlabListState, gitlabAddingConnection: appState.gitlabAddingConnection, gitlabEditingConnection: appState.gitlabEditingConnection, outlinePermissions: { create: canPerform('outline:create'), delete: canPerform('outline:delete'), purge: canPerform('outline:purge'), platformAdmin: isPlatformAdmin() }, outlineView }));
       markHandbookPerformance('render.htmlReady', { htmlLength: viewHtml.length });
       measureHandbookPerformance('render.viewRootReplace', () => { byId('view-root').innerHTML = viewHtml; });
       markHandbookPerformance('render.domReplaced');
@@ -583,6 +610,7 @@ async function navigate(view, updateHistory = true) {
     load(['context', 'overview']);
     loadDomainBuildTasksWorkspace();
   }
+  if (view === 'documentTasks') loadTaskManagementWorkspace();
   if (view === 'production') loadIncrementalWorkspace();
   if (view === 'review') loadReviewWorkspace();
   if (view === 'repository') loadRepositoryWorkspace();
@@ -1225,10 +1253,16 @@ function setHandbookDrawerState(drawer, open) {
 let handbookVditor = null;
 let handbookVditorDocumentId = '';
 let handbookVditorReady = false;
+let handbookVditorElement = null;
+let releaseHandbookImages = null;
+let handbookAIEditorInputListener = null;
 let handbookVditorMountId = 0;
 const activeHandbookVditor = documentId => handbookVditorReady && handbookVditorDocumentId === documentId ? handbookVditor : null;
 let handbookCommandbarResizeObserver = null;
-const getWritingSelection = retainWritingSelection(() => ({ editor: handbookVditor, element: document.querySelector('[data-handbook-vditor]') }));
+const getWritingSelection = retainWritingSelection(() => ({
+  editor: handbookVditorReady ? handbookVditor : null,
+  element: handbookVditorReady && handbookVditorElement?.isConnected ? handbookVditorElement : null,
+}));
 let vditorAssetsPromise = null;
 
 function handbookDraftContext(documentId = document.querySelector('[data-handbook-current-document]')?.dataset.handbookCurrentDocument || '') {
@@ -1304,12 +1338,13 @@ async function mountHandbookVditor() {
   resizeHandbookMarkdownInput();
   const target = document.querySelector('[data-handbook-vditor]');
   if (!target) {
+    releaseHandbookImages?.(); releaseHandbookImages = null;
     handbookVditorMountId += 1;
     handbookCommandbarResizeObserver?.disconnect();
     handbookCommandbarResizeObserver = null;
     if (handbookVditor) handbookVditor.destroy();
     handbookVditorReady = false;
-    handbookVditor = null; handbookVditorDocumentId = '';
+    handbookVditor = null; handbookVditorElement = null; handbookVditorDocumentId = '';
     return;
   }
   const documentId = target.dataset.documentId;
@@ -1318,12 +1353,14 @@ async function mountHandbookVditor() {
   handbookVditorReady = false;
   handbookCommandbarResizeObserver?.disconnect();
   handbookCommandbarResizeObserver = null;
+  releaseHandbookImages?.(); releaseHandbookImages = null;
   if (handbookVditor) handbookVditor.destroy();
   handbookVditor = null;
   try {
     const Vditor = await loadVditorAssets();
     if (!target.isConnected || mountId !== handbookVditorMountId) return;
     handbookVditorDocumentId = documentId;
+    handbookVditorElement = target;
     handbookVditor = new Vditor(target, {
       cdn: `${window.location.origin}/knowledge-center/common/vendor/vditor`,
       mode: 'wysiwyg', lang: 'zh_CN', value: currentHandbookMarkdown(documentId),
@@ -1331,6 +1368,10 @@ async function mountHandbookVditor() {
       after: () => {
         if (mountId !== handbookVditorMountId || !target.isConnected) return;
         handbookVditorReady = true;
+        const repository = handbookUi().repository || {};
+        releaseHandbookImages = observeRepositoryImages(target, repository.filesByDocument?.[documentId]?.path || '', {
+          handbookId: handbookDraftContext(documentId).handbookId, branch: repository.branch || handbookDraftContext(documentId).branch, language: repository.language || 'zh',
+        });
         const toolbar = target.querySelector('.vditor-toolbar');
         toolbar?.setAttribute('data-scroll-obstacle', '');
         const writing = target.closest('.handbook-production-writing');
@@ -1362,6 +1403,7 @@ async function mountHandbookVditor() {
         updateHandbookUiList('dirtyDocuments', documentId, true);
         updateHandbookUiList('selectedForReview', documentId, false);
         updateHandbookDraftControls(documentId);
+        handbookAIEditorInputListener?.(markdown);
       },
     });
   } catch (error) {
@@ -1388,7 +1430,7 @@ function updateHandbookDraftControls(documentId) {
   const discard = workspace?.querySelector('[data-handbook-discard]'); if (discard) discard.disabled = false;
   const review = workspace?.querySelector('[data-handbook-review-current]');
   const action = handbookReviewAction(documentId, handbookUi());
-  if (review) { review.disabled = action.disabled; review.title = action.hint; review.querySelector('[data-handbook-review-label]').textContent = handbookUi().dirtyDocuments?.includes(documentId) ? '保存并提交审核' : '提交审核'; }
+  if (review) { review.disabled = action.disabled; review.title = action.hint; review.querySelector('[data-handbook-review-label]').textContent = action.label; }
   const hint = workspace?.querySelector('[data-handbook-review-hint]'); if (hint) { hint.textContent = action.reason; hint.hidden = !action.reason; }
 }
 
@@ -1487,7 +1529,7 @@ async function saveCurrentHandbookDraft(documentId) {
     updateHandbookUiList('savedDocuments', documentId, true);
     // 保存只改变当前文档和目录中的状态标签；保留目录 DOM，避免长目录重新布局。
     refreshHandbookEditor(documentId);
-    showAppNotice(changedWhileSaving ? '已保存提交时的正文；保存期间的后续修改仍未保存，请再次保存后送审。' : `共享草稿 v${result.draft.editVersion} 已保存，可点击“发起评审”。`, { title: '保存成功' });
+    showAppNotice(changedWhileSaving ? '已保存提交时的正文；保存期间的后续修改仍未保存，请再次保存后送审。' : `共享草稿 v${result.draft.editVersion} 已保存，可从“更多”选择“提交审核”。`, { title: '保存成功' });
     return !changedWhileSaving;
   } catch (error) {
     if (error.code === 'DRAFT_VERSION_CONFLICT') {
@@ -1736,10 +1778,12 @@ async function runIncrementalAction(control, taskId, operation, successMessage) 
     else await loadIncrementalWorkspace(taskId);
   } catch (error) {
     const publishing = control.matches('[data-review-publish], [data-incremental-publish]');
-    const recovery = !publishing ? '' : error.code === 'GITLAB_NO_CHANGES' || error.code === 'GITLAB_BASELINE_CHANGED'
-      ? '请返回文档生产修改、保存并重新发起评审。原审核任务已保留。'
+    const recovery = !publishing ? '' : error.code === 'GITLAB_INSUFFICIENT_SCOPE'
+      ? '请在权限开通后到个人设置重新连接 GitLab。审核任务已保留。'
+      : error.code === 'GITLAB_NO_CHANGES' || error.code === 'GITLAB_BASELINE_CHANGED'
+      ? '请返回文档生产修改、保存并重新提交审核。原审核任务已保留。'
       : error.code === 'ONLINE_REVIEW_REVISION_REQUIRED'
-        ? '请返回文档生产保存修改稿并重新发起评审。原审核记录已保留。'
+        ? '请返回文档生产保存修改稿并重新提交审核。原审核记录已保留。'
         : '审核任务已保留，可在确认原因后重试创建 MR。';
     incrementalStatus(container, `${error.message || '操作失败'}${recovery ? ` ${recovery}` : ''}`, true);
     if (appState.activeView === 'review') showAppNotice(error.message || '操作失败，请重试', { title: '操作失败', tone: 'error' });
@@ -1954,7 +1998,7 @@ async function load(scopes = ['context', 'overview']) {
     updatePlatformState(currentContext, currentOverview);
     try {
       // Context updates refresh the shell; independent workspaces own their DOM lifecycle.
-      if (!['production', 'review', 'outlines', 'templates'].includes(appState.activeView) || requested.overview) render();
+      if (!['production', 'review', 'outlines', 'templates', 'documentTasks'].includes(appState.activeView) || (requested.overview && appState.activeView !== 'documentTasks')) render();
     } catch (error) {
       showApplicationError(error);
     }
@@ -2923,8 +2967,7 @@ document.addEventListener('click', async event => {
   const domainTaskOpen = event.target.closest('[data-domain-task-open]');
   if (domainTaskOpen) {
     openDomainTaskId = domainTaskOpen.dataset.domainTaskOpen;
-    const dialog = [...document.querySelectorAll('[data-domain-task-dialog]')].find(item => item.dataset.domainTaskDialog === openDomainTaskId);
-    if (dialog) dialog.showModal();
+    render();
     return;
   }
   if (event.target.closest('[data-domain-task-close]')) {
@@ -3200,15 +3243,38 @@ document.addEventListener('click', async event => {
   const reviewDecisionP0 = event.target.closest('[data-review-decision]');
   if (reviewDecisionP0) { if (reviewDecisionP0.disabled) return; runIncrementalAction(reviewDecisionP0, reviewDecisionP0.dataset.taskId, () => decideIncrementalReview(reviewDecisionP0.dataset.taskId, reviewDecisionP0.dataset.reviewId, { decision: reviewDecisionP0.dataset.reviewDecision, candidateDigest: reviewDecisionP0.dataset.candidateDigest || '' }), '审核已通过'); return; }
   const reviewPublish = event.target.closest('[data-review-publish]');
-  if (reviewPublish) {
+  const deliveryRefresh = event.target.closest('[data-review-delivery-refresh]');
+  if (deliveryRefresh) {
+    if (deliveryRefresh.disabled) return;
     const task = appState.reviewProjection?.detail?.task || appState.reviewProjection?.detail;
+    runIncrementalAction(deliveryRefresh, deliveryRefresh.dataset.reviewDeliveryRefresh, () => publishIncrementalTask(deliveryRefresh.dataset.reviewDeliveryRefresh, { expectedCandidateDigest: task?.candidate?.digest || task?.candidateDigest }), '交付状态已刷新');
+    return;
+  }
+  if (reviewPublish) {
+    if (reviewPublish.disabled) return;
+    const task = appState.reviewProjection?.detail?.task || appState.reviewProjection?.detail;
+    if (task?.handbookSource) {
+      reviewPublish.disabled = true;
+      const selection = await chooseMRParticipants(reviewPublish.dataset.reviewPublish, reviewPublish);
+      reviewPublish.disabled = false;
+      if (selection) runIncrementalAction(reviewPublish, reviewPublish.dataset.reviewPublish, () => publishIncrementalTask(reviewPublish.dataset.reviewPublish, selection), 'GitLab MR 已提交');
+      return;
+    }
     const confirmed = window.confirm(`请确认发布\n基线：${task?.baselineVersionId || '未知'}\n候选摘要：${task?.candidate?.digest || task?.candidateDigest || '未知'}\n${task?.handbookSource ? '发布将向映射仓库创建 MR，不自动合并。' : '发布后将替代当前正式版本。'}`);
     if (!confirmed) return;
     runIncrementalAction(reviewPublish, reviewPublish.dataset.reviewPublish, () => publishIncrementalTask(reviewPublish.dataset.reviewPublish, { expectedCandidateDigest: task?.candidate?.digest || task?.candidateDigest }), task?.handbookSource ? 'GitLab MR 已提交' : '平台版本已发布'); return;
   }
   const publish = event.target.closest('[data-incremental-publish]');
   if (publish) {
+    if (publish.disabled) return;
     const task = appState.incrementalProjection?.detail?.task || appState.incrementalProjection?.detail;
+    if (task?.handbookSource && task.state !== 'mr_submitted') {
+      publish.disabled = true;
+      const selection = await chooseMRParticipants(publish.dataset.incrementalPublish, publish);
+      publish.disabled = false;
+      if (selection) runIncrementalAction(publish, publish.dataset.incrementalPublish, () => publishIncrementalTask(publish.dataset.incrementalPublish, selection), 'GitLab MR 已提交');
+      return;
+    }
     runIncrementalAction(publish, publish.dataset.incrementalPublish, () => publishIncrementalTask(publish.dataset.incrementalPublish, { expectedCandidateDigest: task?.candidate?.digest }), task?.handbookSource ? 'GitLab MR 已提交' : '平台版本已发布');
     return;
   }
@@ -4573,7 +4639,26 @@ document.addEventListener('click', async event => {
     const documentId = reviewCurrent.dataset.handbookReviewCurrent;
     if (handbookReviewAction(documentId, handbookUi()).disabled) return;
     if (handbookUi().dirtyDocuments?.includes(documentId) && !await saveCurrentHandbookDraft(documentId)) return;
-    handbookUi().selectedForReview = [documentId];
+    const ui = handbookUi();
+    const scope = handbookDraftContext(documentId);
+    const isCurrent = () => ui === handbookUi() && JSON.stringify(handbookDraftContext(documentId)) === JSON.stringify(scope);
+    ui.selectedForReview = [documentId];
+    ui.reviewDraftSummaries = {};
+    ui.reviewSelectionStatus = '正在读取已保存草稿…';
+    render();
+    document.querySelector('[data-handbook-review-selection-dialog]')?.showModal();
+    try {
+      const result = await loadHandbookReviewDrafts(scope.handbookId);
+      if (!isCurrent()) return;
+      ui.reviewDraftSummaries = Object.fromEntries((result.items || [])
+        .filter(item => String(item.handbookId) === String(scope.handbookId) && item.outlineVersionId === scope.outlineVersionId && item.branch === scope.branch)
+        .map(item => [item.documentId, item]));
+      ui.reviewSelectionStatus = '';
+    } catch (error) {
+      if (!isCurrent()) return;
+      ui.reviewSelectionStatus = `草稿列表读取失败，请关闭后重试：${error.message}`;
+    }
+    if (!document.querySelector('[data-handbook-review-selection-dialog]')?.open) return;
     render();
     document.querySelector('[data-handbook-review-selection-dialog]')?.showModal();
     return;
@@ -4582,6 +4667,18 @@ document.addEventListener('click', async event => {
   if (reviewSubmit) {
     const selectedCount = handbookUi().selectedForReview?.length || 0;
     if (!selectedCount) return;
+    const ui = handbookUi();
+    const selected = [...ui.selectedForReview];
+    const scope = JSON.stringify(handbookDraftContext());
+    reviewSubmit.disabled = true;
+    await Promise.all(selected.map(id => loadSharedHandbookDraft(id, () => ui === handbookUi() && JSON.stringify(handbookDraftContext()) === scope)));
+    if (ui !== handbookUi() || JSON.stringify(handbookDraftContext()) !== scope) return;
+    if (selected.some(id => !ui.serverDrafts?.[id]?.exists || ui.dirtyDocuments?.includes(id) || handbookReviewAction(id, ui).disabled)) {
+      const status = document.querySelector('[data-handbook-review-selection-status]');
+      if (status) status.textContent = '部分草稿未保存、读取失败或无送审权限，请检查后重试。';
+      reviewSubmit.disabled = false;
+      return;
+    }
     const dialog = document.querySelector('[data-handbook-review-dialog]');
     const count = dialog?.querySelector('[data-handbook-review-count]');
     if (count) count.textContent = `已选择 ${selectedCount} 篇文档`;
@@ -4683,7 +4780,14 @@ document.addEventListener('submit', async event => {
         return { documentId, outlineVersionId: context.outlineVersionId, branch: context.branch, draftRevisionId: draft?.currentRevisionId, filePath: reviewForm.querySelector(`[data-handbook-review-path="${CSS.escape(documentId)}"]`)?.value.trim(), reviewerIds: [override || reviewerId] };
       });
       const businessVersion = String(handbookUi().repository?.businessVersion || handbookUi().repository?.databaseVersion || '').trim();
-      const result = await createHandbookIncrementalReview(handbookId, { businessVersion, documents, defaultReviewerIds: [reviewerId], note: reviewForm.elements.note.value.trim() });
+      const revisionTaskIds = [...new Set(selected
+        .map(documentId => handbookUi().serverDrafts?.[documentId]?.draft?.reviewState?.taskId)
+        .filter(Boolean))];
+      const revisionOfTaskId = revisionTaskIds.length === 1 ? revisionTaskIds[0] : undefined;
+      const result = await createHandbookIncrementalReview(handbookId, {
+        businessVersion, documents, defaultReviewerIds: [reviewerId], note: reviewForm.elements.note.value.trim(),
+        ...(revisionOfTaskId ? { revisionOfTaskId } : {}),
+      });
       handbookUi().selectedForReview = [];
       handbookUi().reviewState = { status: 'submitted', taskId: result.tasks?.[0]?.id, reviewHref: result.reviewHref, message: '审核任务已创建，可查看审核任务。' };
       await Promise.all(selected.map(documentId => loadSharedHandbookDraft(documentId)));
@@ -5153,6 +5257,12 @@ byId('external-account-dialog').addEventListener('click', async event => {
 });
 
 onKnowledgeDataChanged(({ scopes }) => load(scopes));
+async function loadTaskManagementWorkspace() {
+  appState.documentTaskProjection = { status: 'loading', items: [] }; render();
+  appState.documentTaskProjection = await loadDocumentTaskWorkspace();
+  if (appState.activeView === 'documentTasks') render();
+}
+window.addEventListener('knowledge-center:document-tasks-refresh', loadTaskManagementWorkspace);
 
 const mobileNavigation = window.matchMedia('(max-width: 900px)');
 
@@ -5426,6 +5536,7 @@ async function bootstrap() {
   if (appState.activeView === 'outlines') loadOutlines();
   if (appState.activeView === 'assets') loadAssetCatalog();
   if (appState.activeView === 'production') loadIncrementalWorkspace();
+  if (appState.activeView === 'documentTasks') loadTaskManagementWorkspace();
   if (appState.activeView === 'review') await loadReviewWorkspace().finally(() => load(['context']));
   if (appState.activeView === 'repository') loadRepositoryWorkspace();
   if (appState.activeView === 'platform') { loadGitLabAdmin(); loadDatabaseConnectionAdmin(); }

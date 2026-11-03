@@ -29,6 +29,7 @@ export function retainWritingSelection(getContext) {
   let retained;
   const track = () => {
     const context = getContext();
+    if (!context.editor || !context.element?.isConnected) return;
     const selection = window.getSelection();
     if (context.element?.contains(selection?.anchorNode) && context.element.contains(selection?.focusNode) && selection.rangeCount) {
       retained = { editor: context.editor, range: selection.getRangeAt(0).cloneRange() };

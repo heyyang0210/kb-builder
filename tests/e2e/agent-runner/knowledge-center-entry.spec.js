@@ -9,6 +9,52 @@ const viewports = [
 ];
 const navigation = ['工作台', '知识资产', '资料清洗', '大纲管理', '模板管理', '文档生产', '审核与发布', '平台管理'];
 
+// Keep bounded, credential-free diagnostics for intermittent shell readiness failures.
+const entryDiagnostics = new WeakMap();
+test.beforeEach(async ({ page }) => {
+  const started = Date.now();
+  const diagnostics = { requests: [], pageErrors: [] };
+  entryDiagnostics.set(page, diagnostics);
+  const pending = new WeakMap();
+  const relevant = request => {
+    const pathname = new URL(request.url()).pathname;
+    return ['/knowledge-center/api/platform/context', '/knowledge-center/api/platform/overview',
+      '/knowledge-center/api/auth/session'].includes(pathname) ? pathname : null;
+  };
+  page.on('request', request => {
+    const pathname = relevant(request);
+    if (!pathname || diagnostics.requests.length >= 40) return;
+    const row = { path: pathname, startedMs: Date.now() - started };
+    diagnostics.requests.push(row); pending.set(request, row);
+  });
+  page.on('response', response => {
+    const row = pending.get(response.request());
+    if (row) Object.assign(row, { status: response.status(), headersReceivedMs: Date.now() - started });
+  });
+  page.on('requestfinished', request => {
+    const row = pending.get(request);
+    if (row) row.finishedMs = Date.now() - started;
+  });
+  page.on('requestfailed', request => {
+    const row = pending.get(request);
+    if (row) Object.assign(row, { failedMs: Date.now() - started, failure: request.failure()?.errorText });
+  });
+  page.on('pageerror', error => {
+    if (diagnostics.pageErrors.length < 20) diagnostics.pageErrors.push({ atMs: Date.now() - started, message: error.message });
+  });
+});
+
+test.afterEach(async ({ page }, testInfo) => {
+  if (testInfo.status === testInfo.expectedStatus) return;
+  const diagnostics = entryDiagnostics.get(page) || {};
+  diagnostics.shell = await page.evaluate(() => ({
+    path: location.pathname,
+    status: document.querySelector('#platform-status')?.textContent || null,
+    busy: document.querySelector('#main')?.getAttribute('aria-busy') || null,
+  })).catch(() => ({ unavailable: true }));
+  await testInfo.attach('入口加载诊断', { body: Buffer.from(JSON.stringify(diagnostics, null, 2)), contentType: 'application/json' });
+});
+
 test.beforeEach(async ({ page }) => {
   await page.goto(`${baseUrl}/knowledge-center/`);
   await page.getByText('平台管理登录').click();

@@ -211,5 +211,224 @@
       }
     ],
     "default_preset": "default"
+  },
+  "agentServices": {
+    "agents": [
+      {
+        "id": "builtin-default",
+        "name": "内置文档工作流",
+        "executor": "workflow",
+        "enabled": true,
+        "reasoningEffort": "medium",
+        "model": {
+          "provider": "openai",
+          "model": "gpt-5.5",
+          "base_url": "https://ai-green.yasdb.com/v1",
+          "temperature": 0.7,
+          "max_tokens": 60000,
+          "timeout": 180000,
+          "providers": {
+            "openai": {
+              "name": "OpenAI",
+              "base_url": "https://api.openai.com/v1",
+              "models": [
+                "gpt-5.5",
+                "gpt-4.1"
+              ]
+            },
+            "alibaba": {
+              "name": "阿里云百炼",
+              "base_url": "https://dashscope.aliyuncs.com/api/v1",
+              "models": [
+                "qwen-max",
+                "qwen-plus",
+                "qwen-turbo"
+              ]
+            },
+            "zhipu": {
+              "name": "智谱 AI",
+              "base_url": "https://open.bigmodel.cn/api/paas/v4",
+              "models": [
+                "glm-4",
+                "glm-3-turbo"
+              ]
+            },
+            "deepseek": {
+              "name": "DeepSeek",
+              "base_url": "https://api.deepseek.com/v1",
+              "models": [
+                "deepseek-chat",
+                "deepseek-reasoner"
+              ]
+            }
+          },
+          "services": [
+            {
+              "id": "legacy-default",
+              "name": "OpenAI",
+              "provider": "openai",
+              "protocol": "chat_completions",
+              "base_url": "https://ai-green.yasdb.com/v1",
+              "models": [
+                "gpt-5.5",
+                "gpt-5.6",
+                "gpt-5.6-luna",
+                "gpt-5.6-sol",
+                "gpt-5.6-terra",
+                "gpt-6-astra",
+                "gpt-6-luna",
+                "gpt-6-sol"
+              ],
+              "enabled": true,
+              "timeout": 180000,
+              "temperature": 0.3,
+              "max_tokens": 60000,
+              "api_key_encrypted": "3ebfc62410ba7b3171931175883c27ba:402c03bc04cc3f486ddf954f3e80b530:709ab4555528a6a5b69e312233b3871c0a13cb50300d3721b0d39f04b8379ab2e6dcd22d613fdf3d707c6ef722f7fcf975e0bf"
+            }
+          ],
+          "defaultSelection": {
+            "serviceId": "legacy-default",
+            "model": "gpt-6-sol"
+          },
+          "modelGovernance": {
+            "updatedAt": "2026-10-26T07:08:31.350Z",
+            "updatedBy": "usr_ASn_MlnBfy9geUzR"
+          },
+          "api_key_encrypted": "bfc1f40e96468133aa126dbb74e5bef3:014500df32af7c1383c9920ff72f8daa:7048af476be9fd242344b73d3b17e6e1110b61d07bdd01ad417a912faf67f7239b30141c37acf3110712b334856d531a758de3"
+        },
+        "mcp": {
+          "server_url": "https://knowledgebase.yashandb.com/api/mcp",
+          "timeout": 30000,
+          "retry_count": 3,
+          "cache": {
+            "enabled": true,
+            "ttl": 3600
+          },
+          "headers": [
+            {
+              "name": "X-Ksacraft-Kb-Id",
+              "value": "1",
+              "encrypted": false,
+              "description": "YashanDB官方文档"
+            },
+            {
+              "name": "X-Ksacraft-Kb-Id",
+              "value": "24",
+              "encrypted": false,
+              "description": "YashanDB运维文档"
+            }
+          ]
+        }
+      },
+      {
+        "id": "agent-739cbffb-ddec-48cf-a32f-8d1cf8885f8f",
+        "name": "Codex 文档生成",
+        "executor": "codex",
+        "enabled": true,
+        "reasoningEffort": "low",
+        "model": {
+          "provider": "openai",
+          "model": "gpt-5.5",
+          "base_url": "https://ai-green.yasdb.com/v1",
+          "temperature": 0.7,
+          "max_tokens": 60000,
+          "timeout": 180000,
+          "providers": {
+            "openai": {
+              "name": "OpenAI",
+              "base_url": "https://api.openai.com/v1",
+              "models": [
+                "gpt-5.5",
+                "gpt-4.1"
+              ]
+            },
+            "alibaba": {
+              "name": "阿里云百炼",
+              "base_url": "https://dashscope.aliyuncs.com/api/v1",
+              "models": [
+                "qwen-max",
+                "qwen-plus",
+                "qwen-turbo"
+              ]
+            },
+            "zhipu": {
+              "name": "智谱 AI",
+              "base_url": "https://open.bigmodel.cn/api/paas/v4",
+              "models": [
+                "glm-4",
+                "glm-3-turbo"
+              ]
+            },
+            "deepseek": {
+              "name": "DeepSeek",
+              "base_url": "https://api.deepseek.com/v1",
+              "models": [
+                "deepseek-chat",
+                "deepseek-reasoner"
+              ]
+            }
+          },
+          "services": [
+            {
+              "id": "legacy-default",
+              "name": "OpenAI",
+              "provider": "openai",
+              "protocol": "responses",
+              "base_url": "https://ai-green.yasdb.com/v1",
+              "models": [
+                "gpt-5.5",
+                "gpt-5.6",
+                "gpt-5.6-luna",
+                "gpt-5.6-sol",
+                "gpt-5.6-terra",
+                "gpt-6-astra",
+                "gpt-6-luna",
+                "gpt-6-sol"
+              ],
+              "enabled": true,
+              "timeout": 180000,
+              "temperature": 0.3,
+              "max_tokens": 60000,
+              "api_key_encrypted": "4a0495c52b95d534169fb094111df6c0:b8dc2f0e76690e5a918500e5b68c674e:8b539eda1b008885f39d5961c8f939fa1c1ed8f3d8a0820cd6cef3e38cf2bf9343d0c47e87d4be5af75e0ebe535ca4bd90e2b6"
+            }
+          ],
+          "defaultSelection": {
+            "serviceId": "legacy-default",
+            "model": "gpt-6-sol"
+          },
+          "modelGovernance": {
+            "updatedAt": "2026-10-29T10:28:21.050Z",
+            "updatedBy": "codex-implementation"
+          },
+          "api_key_encrypted": "1609db136e7a359c8c245b753851dff3:8dfee6ff962a1002b496c1abe530a840:3aba9b02e6fee55a71e5920b4018548aaf569bd5bb219d62ff9db3b40b9f5fe9143d249793a8f151024ac981a01000bb68a0fb"
+        },
+        "mcp": {
+          "server_url": "https://knowledgebase.yashandb.com/api/mcp",
+          "timeout": 30000,
+          "retry_count": 3,
+          "cache": {
+            "enabled": true,
+            "ttl": 3600
+          },
+          "headers": [
+            {
+              "name": "X-Ksacraft-Kb-Id",
+              "value": "1",
+              "encrypted": false,
+              "description": "YashanDB官方文档"
+            },
+            {
+              "name": "X-Ksacraft-Kb-Id",
+              "value": "24",
+              "encrypted": false,
+              "description": "YashanDB运维文档"
+            }
+          ]
+        }
+      }
+    ],
+    "defaultAgentId": "agent-739cbffb-ddec-48cf-a32f-8d1cf8885f8f",
+    "updatedAt": "2026-10-29T11:19:43.621Z",
+    "updatedBy": "usr_ASn_MlnBfy9geUzR"
   }
 }

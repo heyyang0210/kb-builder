@@ -204,3 +204,62 @@ test('真实 HTTP：条件快照读取校验版本，更新、删除和失败不
     expect((await repository.readAsync()).tasks[0].name).toBe('version-4');
   } finally { await close(storage); }
 });
+
+
+test('并发审核读取只等待同一次存储请求，结束即清除并隔离返回对象', async () => {
+  let release;
+  const repository = { readAsync: jest.fn(() => new Promise(resolve => { release = resolve; })) };
+  const service = new IncrementalBuildService(repository);
+  const pending = Array.from({ length: 10 }, () => service.readState(session));
+  expect(repository.readAsync).toHaveBeenCalledTimes(1);
+  await expect(service.readState({ allowedActions: [] })).rejects.toMatchObject({ status: 403 });
+  release(empty());
+  const snapshots = await Promise.all(pending);
+  snapshots[0].tasks.push({ id: 'caller-only' });
+  expect(snapshots[1].tasks).toEqual([]);
+  repository.readAsync.mockResolvedValueOnce({ ...empty(), tasks: [{ id: 'new-read' }] });
+  expect((await service.readState(session)).tasks).toEqual([{ id: 'new-read' }]);
+  expect(repository.readAsync).toHaveBeenCalledTimes(2);
+});
+
+test('审核读取等待期间完成本进程写入时，所有等待者改读新状态', async () => {
+  let release;
+  const repository = {
+    writeEpoch: 0,
+    readAsync: jest.fn().mockImplementationOnce(() => new Promise(resolve => { release = resolve; }))
+      .mockResolvedValueOnce({ ...empty(), tasks: [{ id: 'after-write' }] }),
+  };
+  const service = new IncrementalBuildService(repository);
+  const first = service.readState(session);
+  repository.writeEpoch++;
+  const afterWrite = service.readState(session);
+  release({ ...empty(), tasks: [{ id: 'before-write' }] });
+  for (const snapshot of await Promise.all([first, afterWrite])) {
+    expect(snapshot.tasks).toEqual([{ id: 'after-write' }]);
+  }
+  expect(repository.readAsync).toHaveBeenCalledTimes(2);
+});
+
+test('审核读取失败清除正在等待的请求，后续读取重新访问存储', async () => {
+  let reject;
+  const repository = { readAsync: jest.fn().mockImplementationOnce(() => new Promise((_, fail) => { reject = fail; }))
+    .mockResolvedValueOnce(empty()) };
+  const service = new IncrementalBuildService(repository);
+  const pending = [service.readState(session), service.readState(session)];
+  reject(new Error('storage unavailable'));
+  expect((await Promise.allSettled(pending)).map(item => item.status)).toEqual(['rejected', 'rejected']);
+  expect(await service.readState(session)).toEqual(empty());
+  expect(repository.readAsync).toHaveBeenCalledTimes(2);
+});
+
+test('数据库写入成功才推进本进程序号并清除条件快照', () => {
+  const repository = new DatabaseIncrementalStore('state', { baseUrl: 'http://127.0.0.1:1' });
+  repository.execute = jest.fn(() => ({ revision: 2 }));
+  repository.readSnapshot = { etag: 'old', payload: empty() };
+  repository.writeAtRevision(empty(), 1);
+  expect(repository.writeEpoch).toBe(1);
+  expect(repository.readSnapshot).toBeNull();
+  repository.execute.mockImplementationOnce(() => { throw new Error('conflict'); });
+  expect(() => repository.writeAtRevision(empty(), 1)).toThrow('conflict');
+  expect(repository.writeEpoch).toBe(1);
+});

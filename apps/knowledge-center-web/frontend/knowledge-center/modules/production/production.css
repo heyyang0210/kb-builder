@@ -37,6 +37,7 @@
 .handbook-production-document button { width: 100%; min-height: 52px; display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: center; gap: 9px; padding: 8px 10px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--color-text); text-align: left; cursor: pointer; }
 .handbook-production-document button:hover, .handbook-production-document button:focus-visible { background: var(--color-surface-subtle); }
 .handbook-production-document button:focus-visible { outline: 0; box-shadow: var(--focus-ring); }
+.handbook-document-icon { --handbook-file-text-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z'/%3E%3Cpath d='M14 2v4a2 2 0 0 0 2 2h4'/%3E%3Cpath d='M10 9H8'/%3E%3Cpath d='M16 13H8'/%3E%3Cpath d='M16 17H8'/%3E%3C/svg%3E"); display: block; width: 16px; height: 16px; background: currentColor; -webkit-mask: var(--handbook-file-text-mask) center / contain no-repeat; mask: var(--handbook-file-text-mask) center / contain no-repeat; }
 .handbook-production-document.selected button { background: var(--color-brand-subtle); color: var(--color-brand); box-shadow: inset 3px 0 var(--color-brand); }
 .handbook-production-toolbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 10px 0 14px; border-bottom: 1px solid var(--color-border); }
 .handbook-production-toolbar label { display: inline-flex; align-items: center; gap: 8px; color: var(--color-text-secondary); font-size: 12px; font-weight: 650; }
@@ -801,6 +802,7 @@
 .handbook-writing-page fieldset { min-width: 0; border: 1px solid var(--color-border); border-radius: 8px; padding: 12px; }
 .handbook-writing-page :is([data-ai-source-list], [data-ai-skill-list]) section { display: grid; gap: 8px; padding-block: 12px; border-bottom: 1px solid var(--color-border); overflow-wrap: anywhere; }
 .handbook-writing-submit { display: grid; gap: 12px; padding-top: 16px; border-top: 1px solid var(--color-border); }
+.handbook-writing-submit-hint { margin: 0; color: var(--color-text-secondary); font-size: 12px; line-height: 1.5; }
 .handbook-writing-page :is([data-ai-start], [data-ai-adopt]) { background: var(--color-brand); color: var(--color-on-brand, white); border-color: var(--color-brand); }
 .handbook-writing-page button:disabled { opacity: .55; cursor: not-allowed; }
 .handbook-writing-comparison { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; }
@@ -869,6 +871,15 @@ body.immersive-writing #main { max-width: none; padding: 0; }
 .handbook-writing-execution summary { cursor: pointer; line-height: 1.6; }
 .handbook-writing-execution pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px; overflow-y: auto; font-size: 13px; padding: 12px; background: var(--color-surface-muted, #f5f6f8); border-radius: 6px; }
 .handbook-writing-execution [data-state="running"] > summary { color: var(--color-primary); font-weight: 600; }
+.handbook-writing-history { margin-top: 14px; border-top: 1px solid var(--color-border); padding-top: 10px; }
+.handbook-writing-history > summary { cursor: pointer; color: var(--color-text-secondary); font-size: 13px; }
+.handbook-writing-history > summary span { margin-left: 5px; color: var(--color-text-tertiary); }
+.handbook-writing-history-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 10px; width: 100%; margin-top: 8px; padding: 9px 10px; border: 1px solid var(--color-border); border-radius: 6px; background: transparent; text-align: left; cursor: pointer; }
+.handbook-writing-history-item:hover { background: var(--color-surface-muted, #f5f6f8); }
+.handbook-writing-history-item strong, .handbook-writing-history-item small { grid-column: 1 / -1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.handbook-writing-history-item span { grid-column: 2; grid-row: 1; color: var(--color-text-secondary); font-size: 12px; white-space: nowrap; }
+.handbook-writing-history-item small { color: var(--color-text-secondary); font-size: 12px; }
+.handbook-writing-history-empty { color: var(--color-text-secondary); font-size: 12px; }
 .handbook-writing-page .handbook-ai-settings .searchable-combobox { width: 100%; }
 .handbook-writing-page .handbook-ai-settings [data-ai-template-select] { display: none; }
 .handbook-writing-page .asset-dialog-heading { flex-wrap: wrap; }
@@ -1125,7 +1136,7 @@ body.immersive-writing #main { max-width: none; padding: 0; }
 .handbook-writing-page.is-embedded .handbook-writing-breadcrumb { color: #64748b; font-size: 13px; }
 .handbook-writing-page.is-embedded .vditor { position: static; border: 0; }
 .handbook-writing-page.is-embedded .vditor-toolbar { position: absolute; top: 0; left: 0; right: 0; height: 48px; padding: 6px 180px 6px 16px; display: flex; align-items: center; justify-content: center; border-bottom: 1px solid var(--workbench-line); border-radius: 0; background: #fff; }
-.handbook-writing-page.is-embedded .handbook-writing-assistant { position: sticky; top: 64px; height: calc(100vh - 64px); padding: 0 24px 32px; gap: 16px; background: #fafbfc; border-color: var(--workbench-line); }
+.handbook-writing-page.is-embedded .handbook-writing-assistant { position: sticky; top: 64px; height: calc(100vh - 64px); padding: 0 24px 32px; gap: 16px; background: #fafbfc; border-color: var(--workbench-line, var(--color-border, #e5e8ed)); }
 .handbook-writing-page.is-embedded .asset-dialog-heading { flex: none; margin: 0 -24px; padding: 12px 20px; min-height: 64px; align-items: center; border-bottom: 1px solid var(--workbench-line); }
 .handbook-writing-page.is-embedded .asset-dialog-heading h2 { margin: 0; font-size: 14px; font-weight: 500; color: #204771; }
 .handbook-writing-page.is-embedded .asset-dialog-heading p { display: none; }
@@ -1399,3 +1410,241 @@ body.immersive-writing #main { max-width: none; padding: 0; }
   position: absolute; top: 0; right: 0; margin: 0; z-index: 1; min-height: 48px;
   width: auto; border: 0; background: var(--color-surface); font-size: 12px;
 }
+
+/* 对话式写作：正文居中工作，配置通过输入框工具按需打开。 */
+.handbook-writing-page.is-conversational .handbook-writing-assistant { display: flex; flex-direction: column; overflow: hidden; background: var(--color-surface); gap: 0; }
+.handbook-writing-conversation { flex: 1; min-height: 180px; overflow-y: auto; overscroll-behavior: contain; padding: 20px 0; overflow-wrap: anywhere; }
+.handbook-writing-recommendation { margin: 0 0 20px; font-size: 13px; line-height: 1.8; color: var(--color-text-secondary); }
+.handbook-writing-request { margin: 12px 0 20px 28px; padding: 12px 14px; border-radius: 12px 12px 2px 12px; background: var(--color-surface-subtle); white-space: pre-wrap; font-size: 14px; line-height: 1.7; }
+.handbook-writing-page.is-conversational .handbook-writing-execution { padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+.handbook-writing-conversation .handbook-writing-execution h3 { font-size: 13px; font-weight: 500; }
+.handbook-writing-conversation .handbook-writing-execution pre { max-height: 260px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.handbook-writing-conversation .handbook-writing-execution-summary { line-height: 1.8; }
+.handbook-writing-agent-events { list-style: none; margin: 12px 0; padding: 0 0 0 12px; border-left: 1px solid var(--color-border); display: grid; gap: 10px; }
+.handbook-writing-agent-events[hidden] { display: none; }
+.handbook-writing-agent-events li { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 8px; align-items: start; font-size: 12px; line-height: 1.6; color: var(--color-text-secondary); }
+.handbook-writing-agent-events strong { font-weight: 600; color: var(--color-text); }
+.handbook-writing-agent-events span { min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.handbook-writing-agent-events li[data-kind="error"] span { color: var(--color-danger, #a33); }
+.handbook-writing-input-area { flex: none; padding-top: 12px; border-top: 1px solid var(--color-border); }
+.handbook-writing-page.is-conversational .handbook-writing-input-area [data-ai-range] { margin: 0 0 8px; font-size: 12px; line-height: 1.6; color: var(--color-text-secondary); }
+.handbook-writing-page.is-conversational .handbook-writing-composer { border: 1px solid var(--color-border); border-radius: 12px; background: var(--color-surface); display: block; }
+.handbook-writing-page.is-conversational .handbook-writing-composer:focus-within { border-color: var(--color-brand); }
+.handbook-writing-page.is-conversational .handbook-writing-composer > label { font-size: 0; gap: 0; }
+.handbook-writing-page.is-conversational .handbook-writing-composer [data-ai-requirements] { min-height: 92px; max-height: 200px; border: 0; border-radius: 12px; padding: 12px; font-size: 14px; line-height: 1.7; margin: 0; box-shadow: none; background: transparent; resize: vertical; }
+.handbook-writing-page.is-conversational .handbook-writing-composer [data-ai-requirements]:focus { box-shadow: none; }
+.handbook-writing-tools { display: flex; align-items: center; gap: 4px; padding: 4px 8px 8px; }
+.handbook-writing-tools > details { position: relative; min-width: 0; flex: none; }
+.handbook-writing-tools summary { list-style: none; display: flex; align-items: center; gap: 4px; padding: 6px; cursor: pointer; font-size: 12px; white-space: nowrap; min-height: 36px; box-sizing: border-box; }
+.handbook-writing-tools summary::-webkit-details-marker { display: none; }
+.handbook-writing-tools .handbook-writing-operations { position: absolute; bottom: calc(100% + 8px); left: 0; z-index: 9; min-width: 150px; display: grid; padding: 6px; border: 1px solid var(--color-border); background: var(--color-surface); box-shadow: 0 8px 24px #00000014; }
+.handbook-writing-tools .handbook-writing-operations .button { text-align: left; min-height: 40px; }
+.handbook-writing-page.is-conversational .handbook-writing-tools .handbook-writing-tool { display: inline-flex; align-items: center; justify-content: center; gap: 3px; width: auto; min-width: 36px; min-height: 36px; padding: 6px; border: 0; background: transparent; color: var(--color-text-secondary); box-shadow: none; }
+.handbook-writing-tools [data-ai-reference-badge] { font-size: 11px; }
+.handbook-writing-page.is-conversational .handbook-writing-tools [data-ai-start] { margin-left: auto; flex: none; width: auto; max-width: none; min-height: 36px; padding: 6px 10px; font-size: 12px; }
+.handbook-writing-default-summary { margin: 8px 0; color: var(--color-text-secondary); font-size: 11px; line-height: 1.7; }
+.handbook-writing-page.is-conversational .handbook-writing-submit { padding-top: 0; }
+.handbook-writing-page.is-conversational .handbook-writing-submit [data-ai-cancel] { display: none; }
+.handbook-writing-page.is-conversational .handbook-writing-adoption-note { display: none; }
+.handbook-writing-page.is-conversational .handbook-reference-modal .handbook-writing-reference { padding: 12px 24px !important; max-height: none; overflow: visible; border-bottom: 1px solid var(--color-border); }
+.handbook-writing-tools summary:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 2px; border-radius: 6px; }
+@media (max-width: 760px) {
+ .handbook-writing-page.is-conversational .handbook-writing-assistant { min-height: 360px; max-height: none; height: auto; }
+ .handbook-writing-page.is-conversational .handbook-writing-conversation { min-height: 100px; max-height: 280px; }
+ .handbook-writing-tools summary, .handbook-writing-page.is-conversational .handbook-writing-tools .handbook-writing-tool { min-height: 44px; }
+ .handbook-writing-tools { flex-wrap: wrap; }
+}
+.handbook-writing-tools svg { flex: none; }
+.handbook-writing-page.is-conversational .handbook-reference-modal .handbook-ai-settings-dialog { grid-template-rows: auto auto minmax(0, 1fr) auto; }
+.handbook-writing-page.is-conversational .handbook-reference-modal [data-ai-source-list] { max-height: 170px; overflow-y: auto; }
+.handbook-writing-page.is-conversational .handbook-reference-modal [data-ai-source-list].is-expanded { max-height: 260px; }
+
+/* 已确认的 WorkBuddy 紧凑交互：正文优先，配置在输入框附近按需选择。 */
+.handbook-writing-page.is-conversational .handbook-writing-layout { position: relative; grid-template-columns: minmax(0, 1fr) var(--writing-sidebar-width, 420px); gap: 0; }
+.handbook-writing-page.is-conversational .handbook-writing-assistant { border-left: 1px solid var(--color-border); border-radius: 0; }
+.handbook-writing-separator { position: absolute; top: 0; bottom: 0; right: calc(var(--writing-sidebar-width, 420px) - 6px); width: 12px; z-index: 10; cursor: col-resize; touch-action: none; }
+.handbook-writing-separator::after { content: ''; position: absolute; top: 0; bottom: 0; left: 5px; width: 1px; background: transparent; }
+.handbook-writing-separator:hover::after, .handbook-writing-separator:focus-visible::after, .is-resizing .handbook-writing-separator::after { background: var(--color-brand); }
+.handbook-writing-separator:focus-visible { outline: 2px solid var(--color-brand); outline-offset: -3px; }
+.handbook-writing-page.is-resizing { cursor: col-resize; user-select: none; }
+.handbook-writing-page.assistant-collapsed .handbook-writing-layout { grid-template-columns: minmax(0, 1fr); }
+.handbook-writing-page.assistant-collapsed .handbook-writing-separator { display: none; }
+.handbook-writing-page .handbook-writing-reset-width { min-height: 28px; width: 28px; padding: 5px; border: 0; background: transparent; color: var(--color-text-secondary); }
+.handbook-writing-reset-width svg { width: 16px; height: 16px; }
+.handbook-writing-selected-chips { display: flex; flex-wrap: wrap; gap: 5px; padding: 9px 10px 0; }
+.handbook-writing-selected-chips > span { padding: 2px 6px; background: var(--color-surface-subtle); color: var(--color-text-secondary); border-radius: 4px; font-size: 12px; overflow-wrap: anywhere; max-width: 100%; }
+.handbook-writing-page.is-conversational .handbook-writing-picker { pointer-events: none; padding: 0; display: block; }
+.handbook-writing-picker > .handbook-ai-settings-backdrop { display: none; }
+.handbook-writing-page.is-conversational .handbook-writing-picker > .handbook-ai-settings-dialog { position: fixed; width: min(320px, calc(100vw - 24px)); pointer-events: auto; border-radius: 10px; box-shadow: 0 8px 32px rgb(25 40 60 / 15%); overflow: hidden; }
+.handbook-writing-page .handbook-writing-picker .handbook-ai-settings-dialog > header { padding: 10px 12px 3px; border: 0; min-height: 0; gap: 6px; }
+.handbook-writing-page .handbook-writing-picker header h3 { font-size: 13px; line-height: 1.5; }
+.handbook-writing-page .handbook-writing-picker header .icon-button { width: 26px; height: 26px; min-height: 26px; padding: 4px; }
+.handbook-writing-page .handbook-writing-picker .handbook-ai-settings-body { padding: 5px 9px 8px; gap: 5px; min-height: 0; overflow-y: auto; }
+.handbook-writing-page .handbook-picker-search { display: flex; align-items: center; gap: 7px; padding: 4px 4px 7px; border-bottom: 1px solid var(--color-border); }
+.handbook-picker-search svg { width: 16px; height: 16px; flex: none; color: var(--color-text-secondary); }
+.handbook-writing-page .handbook-picker-search input { width: 100%; min-width: 0; min-height: 28px; font-size: 12px; border: 0; background: transparent; padding: 3px; box-shadow: none; }
+.handbook-writing-page .handbook-writing-picker .handbook-ai-settings-body > section { display: block; padding: 0; border: 0; }
+.handbook-writing-page .handbook-writing-picker [data-ai-skills] { padding: 0; margin: 0; border: 0; }
+.handbook-writing-picker [data-ai-skills] > summary, .handbook-writing-picker [data-ai-used-skills] { display: none; }
+.handbook-writing-page .handbook-writing-picker .handbook-ai-settings-section { padding: 0; border: 0; margin: 0; background: transparent; }
+.handbook-writing-page .handbook-writing-picker [data-ai-skill-list] { display: grid; gap: 0; }
+.handbook-writing-page .handbook-writing-picker [data-ai-skill-list] > section { padding: 0; margin: 0; border: 0; background: transparent; }
+.handbook-writing-page .handbook-writing-picker label.handbook-picker-item { display: flex; align-items: flex-start; gap: 7px; padding: 7px 6px; margin: 0; min-width: 0; border: 1px solid transparent; border-radius: 6px; cursor: pointer; font-weight: 400; }
+.handbook-writing-page .handbook-picker-item:has(input:checked) { background: var(--color-brand-subtle, var(--color-surface-subtle)); border-color: var(--color-border); }
+.handbook-writing-page .handbook-picker-item:hover { background: var(--color-surface-subtle); }
+.handbook-writing-page .handbook-picker-item > input { width: 14px; min-width: 14px; height: 14px; min-height: 0; margin: 3px 0 0; accent-color: var(--color-brand); }
+.handbook-picker-item > span { min-width: 0; flex: 1; overflow-wrap: anywhere; }
+.handbook-picker-item strong { display: block; color: var(--color-text); font-size: 12px; font-weight: 500; line-height: 1.5; }
+.handbook-picker-item small { display: block; margin-top: 2px; color: var(--color-text-secondary); font-size: 12px; line-height: 1.5; }
+.handbook-writing-picker:not(.show-details) .handbook-picker-item small { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.handbook-writing-picker [data-ai-skill-list] details { display: none; }
+.handbook-writing-picker.show-details [data-ai-skill-list] details { display: block; padding: 4px 6px 8px; font-size: 12px; }
+.handbook-writing-picker [data-ai-skill-list] details textarea { width: 100%; min-height: 100px; margin-top: 5px; font-family: inherit; font-size: 12px; line-height: 1.6; box-sizing: border-box; }
+.handbook-writing-page .handbook-writing-picker .handbook-ai-settings-dialog > footer { padding: 7px 10px; gap: 5px; background: var(--color-surface); }
+.handbook-writing-page .handbook-writing-picker footer small { font-size: 12px; line-height: 1.5; }
+.handbook-writing-page .handbook-writing-picker footer .button { min-height: 30px; padding: 4px 7px; font-size: 12px; }
+.handbook-writing-picker footer [data-ai-settings-cancel] { display: none; }
+.handbook-writing-page .handbook-writing-picker [hidden] { display: none !important; }
+
+.handbook-writing-page.is-conversational .handbook-reference-modal > .handbook-ai-settings-backdrop { background: rgb(39 49 65 / 20%); }
+    .handbook-writing-page.is-conversational .handbook-reference-modal .handbook-ai-settings-dialog { width: min(740px, 100%); grid-template-rows: auto minmax(0, 1fr) auto; max-height: min(650px, calc(var(--kc-viewport-height, 100vh) - 24px)); border-radius: 10px; }
+.handbook-writing-page .handbook-reference-modal .handbook-ai-settings-dialog > header { padding: 15px 18px 11px; }
+.handbook-writing-page .handbook-reference-modal header h3 { font-size: 15px; }
+.handbook-writing-page .handbook-reference-modal header p { font-size: 12px; line-height: 1.5; }
+.handbook-writing-page .handbook-reference-modal .handbook-reference-layout { grid-template-columns: 154px minmax(0, 1fr); min-height: 0; }
+.handbook-writing-page .handbook-reference-modal .handbook-reference-nav { padding: 12px 8px; gap: 2px; }
+.handbook-writing-page .handbook-reference-modal .handbook-reference-nav .button { font-size: 12px; min-height: 32px; padding: 6px 8px; }
+.handbook-writing-page .handbook-reference-modal .handbook-reference-detail { padding: 15px 18px; overflow-y: auto; }
+.handbook-writing-page .handbook-reference-modal .handbook-reference-detail h4 { font-size: 12px; margin: 0 0 8px; }
+.handbook-writing-page .handbook-reference-modal [data-ai-source-entry] { gap: 6px; }
+.handbook-writing-page .handbook-reference-modal .handbook-reference-detail label { font-size: 12px; gap: 5px; }
+.handbook-writing-page .handbook-reference-modal .handbook-reference-detail input { font-size: 12px; min-height: 32px; padding: 6px 9px; box-sizing: border-box; }
+.handbook-writing-page .handbook-reference-modal .handbook-reference-detail p { font-size: 12px; line-height: 1.5; margin: 6px 0 12px; }
+.handbook-writing-page .handbook-reference-modal [data-ai-source-preview] { min-height: 30px; padding: 4px 9px; font-size: 12px; }
+.handbook-writing-page.is-conversational .handbook-reference-modal .handbook-writing-reference { padding: 12px 0 0 !important; border-bottom: 0; }
+.handbook-writing-page .handbook-reference-modal .handbook-ai-source-heading { font-size: 12px; }
+.handbook-writing-page .handbook-reference-modal .handbook-writing-reference [data-ai-source-list] section { padding: 9px 0; gap: 2px 7px; }
+.handbook-writing-page .handbook-reference-modal .handbook-writing-reference [data-ai-source-list] label { font-size: 12px; }
+.handbook-writing-page .handbook-reference-modal .handbook-source-state { font-size: 12px; }
+.handbook-writing-page .handbook-reference-modal .handbook-source-upload { padding: 14px; min-height: 105px; gap: 6px; font-size: 12px; }
+.handbook-writing-page .handbook-reference-modal .handbook-ai-settings-dialog > footer { padding: 10px 18px; gap: 6px; }
+.handbook-writing-page .handbook-reference-modal footer .button { min-height: 30px; padding: 4px 9px; font-size: 12px; }
+@media (max-width: 760px) {
+ .handbook-writing-page.is-conversational .handbook-writing-layout { grid-template-columns: minmax(0, 1fr); }
+ .handbook-writing-separator, .handbook-writing-reset-width { display: none; }
+ .handbook-writing-page .handbook-reference-modal .handbook-reference-layout { grid-template-columns: minmax(0, 1fr); }
+ .handbook-writing-page .handbook-reference-modal .handbook-reference-nav { flex-direction: row; flex-wrap: wrap; border-right: 0; border-bottom: 1px solid var(--color-border); padding: 6px; }
+ .handbook-writing-page .handbook-reference-modal .handbook-reference-nav .button { min-height: 40px; }
+ .handbook-writing-page .handbook-reference-modal .handbook-reference-detail { padding: 12px; }
+}
+.handbook-writing-page.is-conversational .handbook-writing-tools .handbook-writing-tool { font-size: 12px; font-weight: 400; }
+.handbook-writing-page .handbook-reference-modal [data-ai-source-list] section { grid-template-columns: minmax(0, 1fr) auto auto; }
+.handbook-writing-page .handbook-reference-modal .handbook-source-trailing { grid-column: 3; grid-row: 1 / span 2; display: flex; align-items: center; gap: 4px; }
+.handbook-writing-page .handbook-reference-modal .handbook-source-trailing .button { min-height: 28px; padding: 3px 6px; border: 0; background: transparent; font-size: 12px; color: var(--color-text-secondary); }
+.handbook-writing-page .handbook-reference-modal .handbook-source-actions[hidden] { display: none !important; }
+.handbook-writing-page .handbook-writing-picker [data-ai-skills] > summary { display: none; }
+.handbook-writing-page .handbook-reference-modal .handbook-settings-source-note { display: none; }
+
+/* 正文修订使用原位对照，输入框仅保留本次要求与原文引用。 */
+.handbook-writing-page .handbook-writing-selection-reference { display: flex; align-items: flex-start; gap: 8px; padding: 8px 10px; border-left: 2px solid var(--color-brand); background: var(--color-surface-subtle); border-radius: 4px; }
+.handbook-writing-page .handbook-writing-selection-reference[hidden] { display: none; }
+.handbook-writing-selection-reference blockquote { margin: 0; flex: 1; min-width: 0; max-height: 88px; overflow-y: auto; font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--color-text-secondary); }
+.handbook-writing-selection-reference button { border: 0; background: transparent; color: var(--color-text-secondary); min-width: 24px; min-height: 24px; cursor: pointer; }
+.handbook-writing-page.is-conversational .handbook-writing-tools { flex-wrap: nowrap; gap: 2px; }
+.handbook-writing-page.is-conversational .handbook-writing-tools .handbook-writing-tool, .handbook-writing-tools summary, .handbook-writing-page.is-conversational .handbook-writing-tools [data-ai-start] { white-space: nowrap; flex-shrink: 0; }
+.handbook-writing-page .handbook-writing-tools svg { width: 16px; height: 16px; }
+.handbook-writing-page [data-ai-candidate] { border: 0; padding: 0; border-radius: 0; }
+.handbook-writing-page [data-ai-candidate] .handbook-writing-comparison[hidden], .handbook-writing-page [data-ai-candidate] h3[hidden] { display: none; }
+.handbook-writing-page.is-embedded [data-ai-candidate] { padding: 12px 0; border: 0; }
+.handbook-writing-inline-review { font-size: 16px; line-height: 1.8; overflow-wrap: anywhere; min-width: 0; }
+.handbook-writing-inline-review :is(h1,h2,h3,h4) { line-height: 1.5; margin: 20px 0 10px; }
+.handbook-writing-inline-review p { margin: 8px 0; }
+.handbook-writing-inline-review pre { overflow-x: auto; padding: 12px; background: var(--color-surface-subtle); }
+.handbook-writing-inline-review img { max-width: 100%; }
+.handbook-review-change { position: relative; padding: 4px 68px 4px 0; margin: 8px 0; border-right: 1px solid var(--color-border); }
+.handbook-review-removed { color: var(--color-text-secondary); opacity: .6; text-decoration: line-through; }
+.handbook-review-added { color: #18734c; }
+.handbook-review-change-actions { position: absolute; right: 8px; top: 8px; display: flex; flex-direction: column; gap: 4px; }
+.handbook-review-change-actions button { width: 28px; height: 28px; min-height: 28px; padding: 0; border-radius: 50%; border: 0; background: var(--color-surface-subtle); color: var(--color-text-secondary); cursor: pointer; font-size: 19px; }
+.handbook-review-change-actions button:first-child { color: #18734c; }
+.handbook-review-change-actions button[aria-pressed=true] { outline: 2px solid currentColor; }
+.handbook-writing-review-toolbar { position: sticky; bottom: 16px; z-index: 8; display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px; width: fit-content; max-width: 100%; box-sizing: border-box; margin: 20px auto 0; padding: 8px 12px; border: 1px solid var(--color-border); border-radius: 28px; background: var(--color-surface); box-shadow: 0 4px 20px #0000000d; font-size: 12px; }
+.handbook-writing-review-toolbar .button { min-height: 28px; padding: 4px 8px; border: 0; border-radius: 18px; font-size: 12px; white-space: nowrap; }
+.handbook-writing-review-toolbar [data-ai-accept-all] { color: #18734c; background: #edf8f1; }
+.handbook-writing-page.is-reviewing .handbook-writing-document > p { display: none; }
+@media(max-width:760px) {
+ .handbook-writing-page.is-conversational .handbook-writing-tools { flex-wrap: wrap; }
+ .handbook-writing-inline-review { font-size: 14px; }
+ .handbook-writing-review-toolbar { gap: 3px; padding: 6px; }
+}
+
+
+/* 双滚动写作区：工具栏和输入区固定，正文与对话独立滚动。 */
+.handbook-writing-document-scroll { min-width: 0; min-height: 0; }
+.handbook-writing-transcript { margin: 0 0 20px; }
+.handbook-writing-history-turn { margin-bottom: 20px; }
+.handbook-writing-history-turn .handbook-writing-history-item { display: flex; flex-direction: column; gap: 5px; border: 0; border-left: 2px solid var(--color-border); border-radius: 0; padding: 8px 12px; }
+.handbook-writing-history-turn .handbook-writing-history-item span { white-space: normal; }
+.handbook-writing-page.is-conversational .handbook-writing-conversation { scrollbar-gutter: stable; }
+.handbook-writing-page.is-conversational .handbook-writing-conversation :is(pre, [data-ai-preview-panel]) { max-height: none; overflow: visible; }
+.handbook-writing-page.is-embedded.is-conversational .handbook-writing-input-area { background: var(--color-surface); padding-bottom: 12px; }
+@media (min-width: 761px) {
+  .handbook-production-writing.has-writing-assistant { display: block; min-height: 0; }
+  .handbook-writing-page.is-embedded.is-conversational,
+  .handbook-writing-page.is-embedded.is-conversational > form,
+  .handbook-writing-page.is-embedded.is-conversational .handbook-writing-layout { display: grid; height: var(--writing-workspace-height, calc(var(--kc-viewport-height, 100vh) - 64px)); min-height: 0; overflow: hidden; align-items: stretch; }
+  .handbook-writing-page.is-embedded.is-conversational .handbook-writing-document { display: flex; flex-direction: column; min-height: 0; padding: 48px 0 0; overflow: hidden; }
+  .handbook-writing-page.is-embedded.is-conversational .handbook-writing-document-scroll { flex: 1; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding: 16px 32px 32px; }
+  .handbook-writing-page.is-embedded.is-conversational .handbook-writing-assistant { position: relative; top: auto; height: 100%; min-height: 0; padding: 0 20px; overflow: hidden; }
+  .handbook-writing-page.is-embedded.is-conversational .asset-dialog-heading { margin: 0 -20px; padding: 12px 20px; min-height: 56px; }
+  .handbook-writing-page.is-embedded.is-conversational .handbook-writing-conversation { min-height: 0; max-height: none; }
+  .handbook-writing-page.is-embedded.is-conversational [data-ai-rich-editor] :is(.vditor-content, .vditor-wysiwyg) { height: auto !important; max-height: none; overflow: visible; }
+}
+
+/* 参考文档：固定录入和工具区，仅引用列表滚动。 */
+.handbook-writing-page.is-conversational .handbook-reference-modal .handbook-ai-settings-dialog { width: min(1040px, 100%); height: min(736px, calc(var(--kc-viewport-height, 100dvh) - 24px)); max-height: calc(var(--kc-viewport-height, 100dvh) - 24px); }
+.handbook-writing-page .handbook-reference-modal .handbook-reference-layout { grid-template-columns: 164px minmax(0, 1fr); overflow: hidden; }
+.handbook-writing-page .handbook-reference-modal .handbook-reference-detail { display: flex; flex-direction: column; min-height: 0; padding: 18px 24px 0; overflow: hidden; }
+.handbook-writing-page .handbook-reference-modal .handbook-reference-nav { overflow-y: auto; }
+.handbook-writing-page .handbook-reference-modal [data-ai-source-entry] { display: grid; grid-template-columns: minmax(0, 1fr) auto; flex: none; gap: 8px; }
+.handbook-writing-page .handbook-reference-modal [data-ai-source-locator-label] { grid-column: 1; }
+.handbook-writing-page .handbook-reference-modal [data-ai-source-preview] { grid-column: 2; align-self: end; min-height: 34px; }
+.handbook-writing-page .handbook-reference-modal [data-ai-source-info],
+.handbook-writing-page .handbook-reference-modal [data-ai-source-upload] { grid-column: 1 / -1; }
+.handbook-writing-page .handbook-reference-modal [data-ai-mcp-status] { flex: none; }
+.handbook-writing-page.is-conversational .handbook-reference-modal .handbook-writing-reference { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; margin: 0; }
+.handbook-writing-page .handbook-reference-modal .handbook-ai-source-heading { display: flex; align-items: center; flex: none; gap: 8px; margin: 0 0 10px; }
+.handbook-writing-page .handbook-reference-modal .handbook-ai-source-heading strong { font-size: 14px; }
+.handbook-writing-page .handbook-reference-modal .handbook-ai-source-heading [data-ai-source-count] { font-size: 12px; color: var(--color-text-secondary); }
+.handbook-writing-page .handbook-reference-modal .handbook-reference-toggle { margin-left: auto; }
+.handbook-writing-page .handbook-reference-modal .handbook-reference-tools { display: flex; flex: none; gap: 8px; padding-bottom: 10px; border-bottom: 1px solid var(--color-border); }
+.handbook-writing-page .handbook-reference-modal .handbook-reference-tools input { width: auto; flex: 1; min-width: 0; }
+.handbook-writing-page .handbook-reference-modal .handbook-reference-tools select { width: 132px; min-width: 0; font-size: 12px; min-height: 32px; padding: 4px 6px; }
+.handbook-writing-page .handbook-reference-modal .handbook-writing-reference [data-ai-source-list],
+.handbook-writing-page .handbook-reference-modal .handbook-writing-reference [data-ai-source-list].is-expanded { overflow-y: auto; overflow-x: hidden; min-height: 0; max-height: none; flex: 0 1 auto; scrollbar-width: thin; scrollbar-gutter: stable; }
+.handbook-writing-page .handbook-reference-modal .handbook-writing-reference [data-ai-source-list] section { grid-template-columns: 20px minmax(0, 1fr) 30px auto; grid-template-rows: auto auto; min-height: 66px; box-sizing: border-box; padding: 9px 4px; gap: 2px 8px; }
+.handbook-writing-page .handbook-reference-modal .handbook-source-drag-handle { grid-column: 1; grid-row: 1 / 3; align-self: center; border: 0; background: transparent; padding: 0; width: 20px; min-width: 0; min-height: 32px; font-size: 18px; }
+.handbook-writing-page .handbook-reference-modal .handbook-source-drag-handle:disabled { cursor: default; opacity: .45; }
+.handbook-writing-page .handbook-reference-modal [data-ai-source-list] label { grid-column: 2; min-width: 0; }
+.handbook-source-title { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; font-size: 13px; }
+.handbook-writing-page .handbook-reference-modal .handbook-source-priority { grid-column: 3; grid-row: 1 / 3; align-self: center; padding: 3px 4px; font-size: 12px; font-variant-numeric: tabular-nums; text-align: center; background: var(--color-surface-subtle); border-radius: 4px; }
+.handbook-writing-page .handbook-reference-modal .handbook-writing-reference .handbook-source-state { grid-column: 2; grid-row: 2; padding-left: 0; color: var(--color-text-secondary); }
+.handbook-writing-page .handbook-reference-modal .handbook-source-trailing { grid-column: 4; grid-row: 1 / 3; gap: 2px; }
+.handbook-writing-page .handbook-reference-modal .handbook-source-trailing .button { min-height: 32px; white-space: nowrap; }
+.handbook-writing-page .handbook-reference-modal .handbook-source-trailing .button:first-child { color: var(--color-brand); }
+.handbook-writing-page .handbook-reference-modal .handbook-source-trailing .button:last-child:hover { color: var(--color-danger, #b13b3b); background: var(--color-surface-subtle); }
+.handbook-writing-page .handbook-reference-modal .handbook-reference-hint { flex: none; font-size: 12px; margin: 8px 0; }
+.handbook-writing-page .handbook-reference-modal .handbook-reference-empty { text-align: center; padding: 16px 0; }
+.handbook-writing-page .handbook-reference-modal [hidden] { display: none !important; }
+@media (max-width: 760px) {
+ .handbook-writing-page .handbook-reference-modal .handbook-reference-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+ .handbook-writing-page .handbook-reference-modal .handbook-reference-detail { padding: 12px 12px 0; }
+ .handbook-writing-page .handbook-reference-modal .handbook-reference-nav { gap: 0; padding: 4px; }
+ .handbook-writing-page .handbook-reference-modal .handbook-reference-nav .button { min-height: 32px; padding: 4px 6px; }
+ .handbook-writing-page .handbook-reference-modal .handbook-reference-tools select { width: 112px; }
+ .handbook-writing-page .handbook-reference-modal .handbook-writing-reference [data-ai-source-list] section { gap: 2px 4px; }
+ .handbook-writing-page .handbook-reference-modal .handbook-source-trailing .button { padding: 3px 4px; }
+}
+.handbook-writing-page .handbook-reference-modal .handbook-ai-source-heading { justify-content: flex-start; }
+.handbook-writing-page .handbook-reference-modal .handbook-writing-reference { gap: 0; }
+.handbook-writing-page .handbook-reference-modal .handbook-writing-reference [data-ai-source-list] { display: block; margin-top: 0; }

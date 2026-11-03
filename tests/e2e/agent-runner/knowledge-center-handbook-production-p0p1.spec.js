@@ -399,7 +399,7 @@ test.describe('手册级文档生成页面 P0/P1', () => {
   test('P1：手册目录返回 403 时显示无权访问而非文档不存在', async ({ page }, testInfo) => {
     const outline = await handbookFixture(page.context().request, testInfo);
     if (!outline) return;
-    await page.route(`**/knowledge-center/api/outline/governance/${encodeURIComponent(outline.id)}?view=directory`, route => route.fulfill({
+    await page.route(`**/knowledge-center/api/outline/catalog?handbookId=${encodeURIComponent(outline.handbookId)}&view=directory`, route => route.fulfill({
       status: 403,
       contentType: 'application/json',
       body: JSON.stringify({ success: false, error: { code: 'FORBIDDEN', message: '没有权限读取当前手册目录' } }),
@@ -454,4 +454,28 @@ test.describe('手册级文档生成页面 P0/P1', () => {
     await expect(page.getByRole('link', { name: '查看审核任务' })).toHaveCount(0);
   });
 
+});
+
+test('逐篇审核提示：同批退回不覆盖已通过篇和待审篇', async ({ page }) => {
+  await login(page.context().request);
+  await page.goto(`${baseUrl}/knowledge-center/`, { waitUntil: 'networkidle' });
+  // 仅注入渲染输入，不改写业务数据；真实数据库审核另有验收。
+  const cases = [
+    { reviewStatus: 'approved', taskState: 'rejected', expected: '该篇已通过审核' },
+    { reviewStatus: 'pending', taskState: 'rejected', expected: '审核中' },
+    { reviewStatus: 'pending', taskState: 'approved', expected: '审核中' },
+    { reviewStatus: 'rejected', taskState: 'under_review', expected: '已退回，请修改后重新提交' },
+  ];
+  for (const item of cases) {
+    await page.evaluate(async ({ reviewStatus, taskState }) => {
+      const { renderHandbookProduction } = await import('/knowledge-center/modules/production/handbook-view.js');
+      let host = document.getElementById('review-state-browser-check');
+      if (!host) { host = document.createElement('section'); host.id = 'review-state-browser-check'; document.body.append(host); }
+      host.innerHTML = renderHandbookProduction({ region: 'editor',
+        projection: { requestedHandbookId: 'HB', handbookOutline: { status: 'ok', detail: { nodes: [{ id: 'doc', kind: 'document', title: '审核状态验证' }] } } },
+        ui: { directoryInitialized: true, serverDrafts: { doc: { exists: true, draft: { editVersion: 2, reviewState: { revisionId: 'r1', editVersion: 1, reviewStatus, taskState } } } } },
+      });
+    }, item);
+    await expect(page.locator('#review-state-browser-check .handbook-review-submission-status')).toContainText(item.expected);
+  }
 });

@@ -46,6 +46,7 @@ export const startHandbookAI = (context, body, key = idempotencyKey()) => reques
   body: JSON.stringify({ ...body, outlineVersionId: context.outlineVersionId, branch: context.branch }),
 });
 export const loadHandbookAI = (context, jobId) => request(`${aiPath(context, `/${encodeURIComponent(jobId)}`)}?${query(context)}`);
+export const loadHandbookAIHistory = context => request(`${aiPath(context)}?${query(context)}`);
 export const loadHandbookAISkills = context => request(`${aiPath(context).replace(/ai-jobs$/, 'ai-skills')}?${query(context)}`);
 const sourcePath = context => aiPath(context).replace(/ai-jobs$/, 'ai-sources');
 export const loadHandbookAISources = context => request(`${sourcePath(context)}?${query(context)}`);

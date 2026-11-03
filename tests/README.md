@@ -1,5 +1,7 @@
 # 仓库测试入口
 
+Agent 管理回归 `node --test tests/e2e/agent-runner/platform-agent-management.test.cjs` 覆盖真实隔离 HTTP、设置页多桌面尺寸首屏几何、窄屏溢出、模型与 MCP 面板关闭及局部保存、Agent 保存回读。截图仅为证据，首屏位置由明确断言检查。
+
 质量检查隔离修复的覆盖率回归：`yashandb-quality-adapter.test.js` 使用本地真实 HTTP 服务验证适配器请求、凭据边界和版本来源；`outline-storage-java.test.js` 的 `QualityExecuteHttpCheck` 使用真实 Java HTTP 端点与 JDBC 替身验证独立连接、只读标记、SQL 拒绝、异常和结果上限。设置 `QUALITY_JACOCO_DIR="$PWD/runtime/test-results/quality-fix-coverage"` 后运行对应 Jest 用例，会用该目录下的 JaCoCo 0.8.12 agent/CLI 生成 `java.xml`、HTML 和 `java-summary.json`，并对 `Main.qualityExecute`、`Main.qualityResult` 的指令、行、分支覆盖率分别执行 90% 门禁。Java 覆盖率限定为这两个变更方法，JDBC 替身不代表真实 YashanDB 集成验收。
 
 Jest 桥接文件即使模拟 `node:test` 也由 Jest 执行，统一入口优先识别显式 `jest.*` API。`frontend-coverage-summary.test.js` 看护 V8 嵌套区间去重和未执行分支扣除；采集器保留原始偏移量，范围覆盖率不能当作行覆盖率。具体计算约束见 [测试报告设计](TEST_REPORT_DESIGN.md)。
@@ -298,7 +300,7 @@ YASDB_STORAGE_URL=http://127.0.0.1:14210 KC_REFERENCE_AUDIT_OUTPUT=runtime/test-
 
 初始化前盘点仅允许两个获批聚合中的已删除引用；未知、缺失及范围外异常在首次PUT前停止，备份和失败报告保留。对应真实本地HTTP失败测试覆盖503引起的未知引用及CAS409。
 
-工作台真实模型补验：`WRITING_LIVE_MODEL=1` 显式启用 `knowledge-center-handbook-workspace.spec.js` 中单个Chromium上传→生成→采用→刷新场景。必须走统一隔离入口（test_hy），不手工指向共享实例；默认跳过。不替代送审、GitLab交付或生成事实质量验收。
+工作台真实模型补验：`WRITING_LIVE_MODEL=1` 显式启用 `knowledge-center-handbook-workspace.spec.js` 中单个Chromium上传→生成→采用→刷新场景。必须走统一隔离入口（test_hy），不手工指向共享实例；默认跳过。不替代送审、GitLab交付或生成事实质量验收。 生成前先断言按钮可用；失败时附加 `writing-origin`（来源检查提示、任务状态、按钮禁用状态），区分授权未完成与模型请求失败。页面已关闭时不再截图或读取节点，避免掩盖原始错误。
 
 工作台来源授权恢复补验：`WRITING_AUTH_RECOVERY=1` 在统一隔离入口显式启用无OAuth账号场景，验证真实access-status不可读、授权入口、重新检查、要求保留和零生成POST；默认不运行该前提场景，已授权账号不得冒充无授权。`production-writing.test.cjs` 另外验证重新检查成功后恢复生成、生成前授权失效不POST，以及保留首次冻结基线；该恢复成功分支仍是确定性模型/内存HTTP夹具。
 
@@ -341,3 +343,129 @@ T13浏览器性能报告另含点击后的longTasks数值，作为主线程阻�
 公共滚动实时刷新只检查声明区，显式inspectScrollContract仍默认全树诊断，E2E继续覆盖八模块未声明滚动区。滚动单元11/11，当前工作台+滚动双浏览器28通过4外部条件跳过；10路性能仍失败，不以功能通过替代性能验收。
 
 T13函数阶段诊断使用`KC_PERF_DIAGNOSTICS=1`显式启用，报告`measurementMode=diagnostic`；默认不启用，报告`measurementMode=formal`。诊断报告的`measures`采用与请求/长任务相同的点击时间原点，只记录函数阶段名和数值。诊断耗时不作为正式预算验收；必须另跑默认模式，仍使用原1/5/10路、30次浏览器及每档100次API配置。
+
+`handbook-incremental-review.test.js` 补充真实页面渲染断言：单篇通过/待审不被整批退回覆盖，待审不被整批通过覆盖，并保留旧数据回退。此测试不替代浏览器与企业GitLab验收。
+
+P0/P1手册浏览器套件新增逐篇审核提示混合状态用例，注入渲染输入，不改业务数据。20261029-183907隔离运行Chromium通过，Firefox建页阶段SessionStore异常未进入断言；该失败保留，不能宣称双浏览器通过。
+
+
+生产写作API测试 `tests/unit/agent-runner/handbook-production-api.test.js` 的HTTP模型目录与注入生成服务必须使用同一模型治理实例；夹具使用固定的本地不可达模型地址及隔离生成器，避免依赖本机当前Agent配置。模型版本校验保持启用。2026-10-29整组25通过、2跳过；跳过不作为实际数据库或企业GitLab验收证据。
+
+
+托管图片交付用例 `gitlab-managed-resource-delivery.test.js` 支持 `HANDBOOK_DELIVERY_DATABASE=1`：仅允许统一入口提供的本机隔离Storage（拒绝14210），按run id隔离草稿与增量任务聚合。使用正式HTTP保存、送审、审核、发布及草稿回读；GitLab和身份仍为夹具，文件模式的大纲上下文不代表真实数据库治理门禁已验收。新服务实例读取持久化完成状态，报告写入本次运行目录的 `delivery-database-http.json`。不可直接指向共享Storage运行。
+
+托管图片交付数据库用例同时覆盖退回、正式PUT修改、revisionOfTaskId重新送审及旧候选/退回意见保持不变。`delivery-database-http.json`新增rejectedTaskId、rejectionHistoryPreserved、revisedDraftRevisionId。企业GitLab仍为本地HTTP夹具。
+
+入口套件`knowledge-center-entry.spec.js`在失败时附加“入口加载诊断”：有界请求时间线、页面异常及shell最终状态，不记录凭据或响应正文；超时与业务断言保持不变。
+
+托管图片浏览器与数据库联合补验：统一隔离入口环境中同时设置`HANDBOOK_DELIVERY_DATABASE=1`与`HANDBOOK_BROWSER_CHECK=1`，运行`gitlab-managed-resource-delivery.test.js`的真实生产HTTP用例。浏览器单篇和总览共用所选手册标识，不能写死HB-1；覆盖冻结三图解码、退回重审、缺图/篡改阻断、模拟合并及新服务数据库完成回读。企业GitLab与身份仍为夹具。
+
+连接池并发复用回归：`node --test tests/unit/agent-runner/jdbc-pool-reuse.node.test.cjs`，使用Java JDBC替身和可控线程顺序验证等待建连锁期间归还的连接被复用，避免无必要建连；不是实际数据库性能验收。
+
+该回归同时覆盖网络断开但驱动仍报告未关闭的空闲连接淘汰、归还回滚失败的容量释放、重复关闭及旧租约禁止继续写入，保证数据库恢复后连接池能够恢复借用；替身故障验证不代表真实CAS账号登录验收。
+
+连接池替身回归同时验证锁外并行建连、在建连接计入容量、建连失败释放名额、初始化失败关闭原连接；真实冷启动性能仍须单独实测。
+
+托管图片正式HTTP交付用例补验提交已应用但响应丢失：首次请求失败不能显示completed，重试对账后只保留一个commit；模拟合并后正文漂移必须拒绝完成，恢复正确正文后才可确认一致。数据库模式报告增加lostCommitResponseRecovered与mergedContentDriftRejected。GitLab仍为本地HTTP夹具，不代表企业仓库验收。
+
+合并申请丢响应恢复：托管图片套件新增MR已创建但响应连接中断的HTTP夹具，验证连接器查询已有MR恢复，重放不重复创建commit或MR。正式生产HTTP及隔离数据库模式沿用该故障，报告记录lostMergeRequestResponseRecovered；创建MR后completion仍不得为completed。套件现8项，企业GitLab未验收。
+
+正式生产HTTP交付用例新增两个不同幂等键同时publish：都应成功回读同一MR，commit和MR各一份，未合并不完成；统一数据库模式同样执行。旧实现已复现APPROVAL_REQUIRED 409，失败日志保留。覆盖单handler实例排队，不证明多进程互斥。
+
+两篇联合交付补验：托管图片正式HTTP用例现包含两篇文章，覆盖仅部分通过不能发布、退回修改后未改篇继承、两篇草稿回读和同批正文图片交付。普通8项通过；统一隔离数据库入口定向1项通过。GitLab和身份仍为本地夹具，不能替代真实页面或企业GitLab验收。报告新增documentCount、unchangedApprovalCarried、partialApprovalDeliveryBlocked及bothDraftsReadback字段。
+
+审核工作台新增逐篇退回重审浏览器回归：真实审核HTTP、两篇通过/退回、服务创建修订后未改篇继承、修改篇重审及旧原因留存。Chromium/Firefox定向2/2通过。内存仓储和本地身份/GitLab夹具，不替代真实数据库写作页面重新送审验收。
+
+两手册四文档隔离：`handbook-incremental-review.test.js`通过正式草稿/送审/审核HTTP验证相同documentId跨手册独立保存、同版本重复送审复用、退回不影响另一手册、四篇正文回读。内存仓储与本地GitLab/身份夹具，不替代真实数据库和浏览器验收。定向5/5通过。
+
+`HANDBOOK_BROWSER_CHECK=1`的手册增量HTTP回归增加实际Chromium退回→返回写作→编辑→保存并重新送审→新候选正文与接续关系核对→再审核→模拟MR。编辑后等待“保存并提交审核”业务状态，多手册链接按handbookId限定。统一入口运行201423定向5/5通过；内存仓储与身份/大纲/GitLab夹具，不替代真实数据库页面和企业合并验收。
+
+
+手册增量HTTP回归支持`HANDBOOK_REVIEW_DATABASE=1`：仅在统一隔离入口下，结合`HANDBOOK_BROWSER_CHECK=1`运行`handbook-incremental-review.test.js`。按run id隔离草稿/增量聚合，拒绝共享14210，从治理接口选取两个不同手册的有效大纲ID。覆盖页面退回→编辑→保存重审及两手册四文档HTTP隔离，最后用新建聚合读取对象核对持久化记录，报告为运行根目录`writing-review-database.json`。201841运行5/5通过、无重试跳过；身份、页面树和GitLab仍为夹具，不证明真实模型或企业GitLab合并验收。
+
+入口工作台复测：`knowledge-center-entry.spec.js`在统一隔离入口20261029-202206-315243-e2e中，Chromium/Firefox共28/28通过，无失败和跳过；覆盖四种屏幕尺寸、八个模块可达、深链/刷新/后退、数据不可用恢复提示、移动焦点隔离和桌面独立滚动。历史入口首试状态等待失败仍保留，单次复测不等于并发性能或共享13510部署验收。日志：`runtime/test-results/continuation-20261029/entry-diagnostic.log`。
+
+2026-10-29多篇写作页送审：修复刷新后遗漏未打开草稿，隔离入口203630的真实test_hy+Chromium定向5/5通过；两篇联合送审、部分通过禁止交付、第二篇退回保留第一篇结论及数据库新对象回读已验证，报告`runtime/test-results/e2e/20261029-203630-468852-e2e/writing-review-database.json`。真实模型、身份及企业GitLab不在本次验收范围。
+
+2026-10-29两篇写作页面退回重审补验：统一隔离test_hy入口20261029-205325-644451-e2e，`handbook-incremental-review.test.js`定向5/5通过、零跳过。覆盖A通过B退回、只修改B后A继承通过、B重新审核并创建模拟MR，两篇冻结正文分别核对；数据库新对象回读一致。报告`runtime/test-results/e2e/20261029-205325-644451-e2e/writing-review-database.json`，日志`runtime/test-results/continuation-20261029/writing-batch-revision-database-verified.log`。身份、页面树及GitLab仍为夹具，不能代替企业合并验收。
+
+T05同名文档跨手册页面隔离：`handbook-incremental-review.test.js`在统一入口20261029-205936-506687-e2e中，真实test_hy聚合与Chromium切换两本手册，分别读取相同`doc-1`的独立正文，定向5/5通过。页面目录树、身份和GitLab是夹具；日志`runtime/test-results/continuation-20261029/two-handbooks-browser-database-verified.log`。
+
+T13目录图标CPU实验：统一隔离入口20261029-211310-941698-e2e，正式报告`runtime/test-results/e2e/20261029-211310-941698-e2e/details/handbook-function-formal.json`。浏览器1/5/10路目录P95为84.4/130.6/202.3ms，10路仍超200ms；诊断模式另有1路失败样本，不计正式验收。工作台跨浏览器回归20261029-211712-645733-e2e为14通过、4跳过，验证16px CSS mask、目录滚动、局部刷新及窄屏，跳过项不计真实模型或授权仓库验收。实验未改变正式预算。
+
+2026-10-30写作隔离夹具修正：production-writing.cjs默认让模型目录与生产服务共享Agent治理实例，显式注入modelGovernance仍优先使用。避免平台Agent迁移后页面选择版本与旧全局执行版本冲突。长文增量检查对明确生成失败立即报错，不等待完整超时。真实模型补验结果见续作交接。
+
+
+MR 交付观察回归：`HANDBOOK_BROWSER_CHECK=1 node --test tests/unit/agent-runner/handbook-incremental-review.test.js` 覆盖提交后待人工合并、点击刷新后仍 pending、提交数和 MR 数不变、合并接口调用为零；`review-workbench-contract.test.js` 覆盖只读角色无刷新权限及完成必须同时满足正文和图片回读。企业仓库验证不得使用本地模拟合并替代，真实 MR 禁止自动合并。
+
+
+GitLab范围不足恢复：连接器对上游403 + insufficient_scope返回GITLAB_INSUFFICIENT_SCOPE，提示管理员开通所需API权限并重新授权；普通403保持原分类。平台真实HTTP回归位于gitlab-api-http.test.js。OAuth已连接不代表获得仓库写入权限，禁止靠重复提交MR解决授权范围不足。
+
+MR状态恢复回归：`HANDBOOK_BROWSER_CHECK=1 node --test tests/unit/agent-runner/handbook-incremental-review.test.js` 通过页面刷新正式HTTP接口，覆盖上游MR关闭、重新打开、pending状态保持、零额外提交/零额外MR/零合并调用。GitLab和身份为隔离夹具；不代表企业MR验证。数据库模式仍须通过统一隔离入口。
+
+关闭MR回归另覆盖正式任务详情GET及生产任务默认阶段，确保跨审核/生产页面均显示关闭事实；数据库报告增加browserClosedMrCrossPageConsistency。
+
+版本汇总浏览器回归覆盖：较新已完成任务不能掩盖较旧未完成任务，行链接进入未完成任务；全部完成版本显示等待后续变更。此用例任务数据为HTTP夹具，不作为企业交付验收。
+
+
+MR人员映射回归：gitlab-participants.test.js使用真实本地HTTP覆盖分页、平台身份别名、审核人去重、缺失/重名/停用/不可访问；gitlab-managed-resource-delivery.test.js覆盖创建时角色传递、响应丢失恢复、回读冲突及幂等；handbook-incremental-review.test.js覆盖正式API鉴权、无效负责人零写入与浏览器选择/取消。数据库模式须通过tests/run_tests.py统一test_hy隔离入口，企业只读解析证据不能替代真实人员指派验收。
+
+联合真实模型验证：统一test_hy隔离入口同时设置`HANDBOOK_BROWSER_CHECK=1`、`HANDBOOK_REVIEW_DATABASE=1`、`HANDBOOK_REVIEW_LIVE_MODEL=1`运行`handbook-incremental-review.test.js`。共用Agent模型目录/执行配置，页面润色→采用保存→刷新→送审→审核→选择负责人→模拟MR，核对冻结与提交正文、模型来源和新聚合读取。报告`live-model-review-mr.json`；身份、大纲树、GitLab仍为夹具，不证明企业全链路。真实模型调用为显式开关，常规回归不调用。
+
+联合真实模型首个通过记录：20261030-102550-376242-e2e，5/5、零跳过；gpt-6-sol、真实test_hy、Chromium采用/审核/提交内容一致、新聚合回读一致、合并调用零。企业人员映射另以连接器创建!661并读回heyang两个角色，不与该模拟GitLab页面用例混称企业全链路。
+
+
+两手册四篇页面联合回归：统一隔离入口20261030-103350-874200-e2e为5/5、零跳过，真实test_hy+Chromium完成第二本手册两篇送审、未分配审核人被拒绝、切换指定审核人逐篇通过、选择合入负责人创建模拟MR；第一本手册完整状态不变。报告`two-handbook-four-document-browser.json`。身份、大纲树及GitLab仍为夹具。可追加显式开关`HANDBOOK_WORKFLOW_SCREENSHOTS=1`，在运行根目录`workflow-walkthrough/`生成编写、保存、送审、审核及MR共11步原始截图和`steps.json`，仅用于流程观察，不修改产品UI。“保存”指平台共享草稿，并非下载本地文件。
+
+2026-10-30流程提示回归：统一test_hy运行20261030-104656-119702-e2e为5/5、零跳过；浏览器逐篇通过后校验可创建MR说明与按钮一致，正式HTTP审核投影契约21/21。截图查看交付另提供内嵌HTML和11页PDF，不能替代企业身份/MR同次页面验收。
+
+
+2026-10-30 AI生成无反馈回归：`production-writing.test.cjs` 新增1366/390px嵌入长文慢速prepareOrigin检查，来源未就绪前零生成POST，状态立即可见；任务开始与完成后候选自动进入视口，不借助手动滚动截图。修改前复现失败，定向两项通过；完整浏览器13通过、2条件跳过（增加390px用例前），独立启用真实模型润色/阶段/采用/HTTP回读1/1通过。证据runtime/diagnostics/ai-result-visibility-20261030/。
+
+T08写作页交付状态：统一test_hy运行20261030-105235-058355-e2e 5/5、零跳过、自有服务清理；最终普通HTTP回归5/5，含完成标签回读与HTML转义。
+
+### AI 写作对话布局回归（2026-10-30）
+
+`node --test tests/e2e/agent-runner/production-writing.test.cjs` 覆盖图标按需展开、桌面/390px 写作对话、慢来源检查、引用拖拽排序、模板与 Skill 传递、进度和候选可见性、采用后的 HTTP 草稿回读。该 fixture 使用真实后端路由、隔离内存草稿和确定性模型；真实模型需显式设置 `WRITING_LIVE_MODEL=1`，不能将 fixture 结果称为共享平台个人账号全流程验收。
+
+双滚动用例还验证嵌入写作时正文与 AI 历史对话分别滚动、格式栏和输入区保持位置、侧栏调整后不横向溢出、1024px 仍为双栏以及关闭后恢复原工作台；历史读取和候选使用真实隔离 HTTP API。测试过程仅复制历史对话 DOM 来模拟长记录，不把复制内容当作服务端历史。
+
+
+## 任务管理 V2 验证
+
+## 日志专项验证
+
+运行 `npm run test:logging`，覆盖日志上下文、敏感字段脱敏、gzip 可还原、活动日志保护、重复执行幂等和诊断包关联。`knowledge-center.sh logs compress` 的结果及失败原因会写入 `runtime/.../logs/knowledge-center-isolated/lifecycle.log`。真实跨服务与专用数据库故障验收需单独运行隔离 E2E；当前本轮不连接现有数据库，也不重启部署实例。
+
+- HTTP：`npx jest --config tests/unit/agent-runner/jest.config.js --runInBand --runTestsByPath tests/unit/agent-runner/document-tasks-route.test.js tests/unit/agent-runner/outline-route-boundaries-http.test.js`。覆盖可信会话、两级判断、导入、并发/幂等、新增候选与完成门禁。
+- 页面及迁移：`node --test tests/unit/agent-runner/document-tasks-frontend.test.cjs`，真实模块+HTTP，隔离文件存储、夹具人员/目录/交付。企业人工合并回读必须另行真实验收。
+- 证据：`runtime/diagnostics/task-management-20261030/`；实际平台只读验收及资源摘要与隔离测试分别记录。
+
+
+2026-10-30 范围选择纠偏：首次从其他模块进入任务管理必须实际加载任务与权限上下文，覆盖冷进入回归；手册/文档范围弹窗采用已确认PNG的紧凑步骤、工单信息、搜索多选及逐项指派。指定工单输入为 `knowledge/refs/pingcode/工单列表/PingCode-YashanDB研发项目-工单清单.xlsx`（530条），编号为全局唯一工单单号，重复导入仅更新来源。验证证据位于 `runtime/diagnostics/task-management-scope-20261030/`。
+
+2026-10-30：任务管理写入兼容HTTP下无crypto.randomUUID环境；改派移除理由输入，保留审计。接口与浏览器回归覆盖无理由改派和默认责任人保存回读。
+
+2026-10-30：任务列表列名改为开始时间、结束时间；管理员和当前责任人可直接点击列表时间打开日历，普通非责任人只读，后端同步验证。
+
+2026-10-30 时间冲突纠偏：打开日历先读取单任务最新版本；编辑期间遇REVISION_CONFLICT保留日期时间，提供“重新读取”显示最新开始/结束时间，用户核对后再次确认。不自动覆盖并发变更，保留服务端版本校验。回归覆盖陈旧列表、打开后并发变更、读取后重试及连续编辑。
+
+
+### 2026-11-02 AI 写作打开性能回归
+
+`node --test tests/e2e/agent-runner/production-writing.test.cjs` 覆盖原编辑器复用、无 Markdown 中间态、配置按需请求、生成前来源检查、双滚动、关闭恢复、历史候选不改正文和采用后的真实 HTTP 保存回读。后端 `production-ai-service.test.js` 另覆盖历史列表只读及过期状态投影不写回聚合。隔离 HTTP/浏览器证据不等同于真实账号、数据库、GitLab 的性能验收；真实模型用例条件不满足时跳过并单列。证据：`runtime/test-results/production-writing/perf-*`。
+
+
+### 2026-11-02 任务管理性能与工作台按需详情回归
+
+`node --test tests/e2e/agent-runner/dashboard-lazy-dialog.node.test.cjs` 验证工作台默认不构建隐藏领域详情、仅构建当前领域、保留人员选择与刷新后内容。任务聚合异步HTTP回归见 `tests/unit/agent-runner/aggregate-store-async.node.test.cjs`；实际页面18项及隔离操作10项完整性能证据与脚本位于 `runtime/diagnostics/task-performance-fix-20261102/`。实际共享平台仅只读测量，隔离文件写入成绩不代表真实数据库写性能。
+
+
+### 2026-11-02 富文本仓库图片回归
+
+`production-writing.test.cjs` 的“仓库图片”两例覆盖复用/新建编辑器、中文相对图片路径、Markdown预览、候选对照和采用后真实HTTP回读，断言保存正文仍为原始相对引用。GitLab图片二进制使用浏览器路由替身，其他写作API使用真实隔离后端；不替代个人授权下的企业仓库实图验证。
+
+
+### 2026-11-02 参考文档选择与长列表回归
+
+`node --test tests/e2e/agent-runner/production-writing.test.cjs`覆盖知识库直接移除/重加、目录延迟返回不回填、显式空引用真实HTTP生成、历史恢复、8份本地文档上传、搜索及来源筛选保留全局序号、过滤时禁止排序、拖拽及Alt键排序、折叠、固定工具栏与独立列表滚动、桌面及390px布局。知识库使用隔离HTTP MCP服务，以实际调用计数验证移除后无检索、重新加入后有检索。生成模型为确定性替身，真实模型测试保留原条件门禁；不声称验证企业知识库内容或模型质量。`production-ai-service.test.js`另外覆盖显式空数组/旧客户端默认/非法顺序，以及Codex配置屏蔽、失败重试与全局配置不变。

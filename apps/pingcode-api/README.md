@@ -25,4 +25,6 @@ KNOWLEDGE_CENTER_PINGCODE_API_PORT=18010 node tools/repository/probe-production-
 
 页面引用支持空间内唯一 identifier 短标识解析，canonicalPageId 返回内部 ID，校验详情一致性。
 
+所有 HTTP 请求均绑定经过格式校验的 `X-Request-ID`/`X-Correlation-ID` 上下文；非法或超长值会重新生成。异常日志保留错误类型和堆栈，错误响应返回 requestId 供诊断包检索。敏感正文和凭据不得写入日志。
+
 补充核对：原始空间索引字段为 short_id，树响应展示为 identifier；解析同时兼容这两个字段，仍要求空间内唯一匹配。

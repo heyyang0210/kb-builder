@@ -12,6 +12,7 @@ async function fixture(t) {
   const branches = new Map([['main', 'base']]);
   const writes = []; const mrs = [];
   let loseCommitResponse = false;
+  let loseMergeResponse = false;
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost');
     const endpoint = url.pathname.replace(/^\/api\/v4\/projects\/[^/]+/, '');
@@ -19,6 +20,7 @@ async function fixture(t) {
     const body = raw ? JSON.parse(raw) : {};
     const send = (status, data) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(data)); };
     if (req.method !== 'GET') writes.push({ endpoint, body });
+    if (endpoint === '/users') return send(200, [{ id: 101, username: 'author', state: 'active', access_level: 40 }]);
     if (endpoint === '/merge_requests' && req.method === 'GET') return send(200, mrs);
     if (endpoint === '/repository/branches' && req.method === 'GET') return send(200, [...branches].map(([name, sha]) => ({ name, commit: { id: sha } })));
     if (/^\/merge_requests\/\d+$/.test(endpoint)) return send(200, mrs[0]);
@@ -46,8 +48,10 @@ async function fixture(t) {
       return send(201, { id: sha });
     }
     if (endpoint === '/merge_requests' && req.method === 'POST') {
-      const mr = { ...body, iid: 1, state: 'opened', web_url: 'http://fixture.test/mr/1' };
-      mrs.push(mr); return send(201, mr);
+      const mr = { ...body, assignees: (body.assignee_ids || []).map(id => ({ id })), reviewers: (body.reviewer_ids || []).map(id => ({ id })), iid: 1, state: 'opened', web_url: 'http://fixture.test/mr/1' };
+      mrs.push(mr);
+      if (loseMergeResponse) { loseMergeResponse = false; req.socket.destroy(); return; }
+      return send(201, mr);
     }
     return send(404, {});
   });
@@ -60,7 +64,7 @@ async function fixture(t) {
     { filePath: 'docs/b.md', action: 'create', baselineContent: null, markdown: '<img src="images/managed.png">\n', resources: [{ ...resource }] },
   ] };
   const options = { accessToken: 'local-fixture', loadResource: async () => image };
-  return { connection, input, options, files, branches, writes, mrs, loseResponse() { loseCommitResponse = true; } };
+  return { connection, input, options, files, branches, writes, mrs, loseResponse() { loseCommitResponse = true; }, loseMergeResponse() { loseMergeResponse = true; } };
 }
 
 test('真实 GitLab HTTP：两篇正文和共享托管图片原子提交，合并后回读并拒绝资源漂移', async t => {
@@ -85,6 +89,31 @@ test('真实 GitLab HTTP：两篇正文和共享托管图片原子提交，合�
   await assert.rejects(() => readMergeRequestDelivery(f.connection, { ...f.input, mergeRequest: result }, f.options), error => error.code === 'GITLAB_RESOURCE_READBACK_FAILED');
 });
 
+test('MR 人员：创建、响应丢失恢复和重复提交均核对人员，不静默覆盖', async t => {
+  const f = await fixture(t);
+  f.input.participants = { assignees: [{ platformId: 'publisher', gitlabId: 11 }], reviewers: [{ platformId: 'reviewer', gitlabId: 12 }, { platformId: 'reviewer', gitlabId: 12 }] };
+  f.loseMergeResponse();
+  const created = await submitDocumentMergeRequest(f.connection, f.input, f.options);
+  assert.equal(created.iid, 1);
+  const post = f.writes.find(write => write.endpoint === '/merge_requests');
+  assert.deepEqual(post.body.assignee_ids, [11]); assert.deepEqual(post.body.reviewer_ids, [12]);
+  await submitDocumentMergeRequest(f.connection, f.input, f.options);
+  assert.equal(f.mrs.length, 1);
+  f.mrs[0].reviewers = [];
+  await assert.rejects(() => submitDocumentMergeRequest(f.connection, f.input, f.options), error => error.code === 'GITLAB_MR_PARTICIPANTS_CONFLICT');
+  assert.equal(f.mrs.length, 1);
+});
+
+test('MR 人员：已创建 MR 的人员被移除后拒绝复用，修复后幂等复用同 MR', async t => {
+  const f = await fixture(t);
+  f.input.participants = { assignees: [{ gitlabId: 11 }], reviewers: [{ gitlabId: 12 }] };
+  await submitDocumentMergeRequest(f.connection, f.input, f.options);
+  f.mrs[0].assignees = [];
+  await assert.rejects(() => submitDocumentMergeRequest(f.connection, f.input, f.options), error => error.code === 'GITLAB_MR_PARTICIPANTS_CONFLICT');
+  f.mrs[0].assignees = [{ id: 11 }];
+  assert.equal((await submitDocumentMergeRequest(f.connection, f.input, f.options)).iid, 1);
+});
+
 test('真实 GitLab HTTP：提交已应用但响应丢失，重试对账后创建 MR，不重复提交', async t => {
   const f = await fixture(t); f.loseResponse();
   await assert.rejects(() => submitDocumentMergeRequest(f.connection, f.input, f.options), error => error.code === 'GITLAB_UNAVAILABLE');
@@ -93,6 +122,18 @@ test('真实 GitLab HTTP：提交已应用但响应丢失，重试对账后创�
   assert.equal(result.iid, 1);
   assert.equal(f.writes.filter(write => write.endpoint === '/repository/commits').length, 1);
   assert.equal(f.writes.filter(write => write.endpoint === '/repository/branches').length, 1);
+});
+
+test('真实 GitLab HTTP：合并申请已创建但响应丢失，对账恢复且重放不重复创建', async t => {
+  const f = await fixture(t); f.loseMergeResponse();
+  const recovered = await submitDocumentMergeRequest(f.connection, f.input, f.options);
+  assert.equal(recovered.iid, 1);
+  assert.equal(recovered.state, 'opened');
+  const replay = await submitDocumentMergeRequest(f.connection, f.input, f.options);
+  assert.equal(replay.iid, recovered.iid);
+  assert.equal(f.mrs.length, 1);
+  assert.equal(f.writes.filter(write => write.endpoint === '/merge_requests').length, 1);
+  assert.equal(f.writes.filter(write => write.endpoint === '/repository/commits').length, 1);
 });
 
 test('真实 GitLab HTTP：未授权读取器、内容漂移和清单冲突均在写入前拒绝', async t => {
@@ -127,18 +168,41 @@ test('真实生产 HTTP：上传图片和共享来源图片随已保存修订冻
   const session = { authenticated: true, user: { id: 'author', roles: ['KNOWLEDGE_EDITOR', 'REVIEWER'] }, allowedActions: ['knowledge:read', 'knowledge:write', 'review:manage', 'publish:manage'] };
   const ctx = { handbookId: 'HB-1', documentId: 'doc-1', outlineVersionId: 'outline-v1', branch: 'main' };
   let draftState = { schemaVersion: 1, drafts: {}, attachments: {}, reviewBatches: [], idempotency: {}, audits: [] };
-  const store = { read: () => structuredClone(draftState), transaction(fn) { const next = structuredClone(draftState); const result = fn(next); draftState = next; return structuredClone(result); } };
+  let store = { read: () => structuredClone(draftState), transaction(fn) { const next = structuredClone(draftState); const result = fn(next); draftState = next; return structuredClone(result); } };
+  const databaseCheck = process.env.HANDBOOK_DELIVERY_DATABASE === '1';
+  let databaseStores;
+  const aggregateKey = `delivery-${process.env.KNOWLEDGE_CENTER_TEST_RUN_ID}`;
+  if (databaseCheck) {
+    assert(process.env.KNOWLEDGE_CENTER_TEST_RUN_ID && process.env.YASDB_TEST_RUN_DIR, 'Database delivery requires unified isolated runner');
+    const storageUrl = new URL(process.env.KC_STORAGE_URL);
+    assert(['127.0.0.1', 'localhost'].includes(storageUrl.hostname));
+    assert.notEqual(storageUrl.port, '14210', 'Never write shared Storage');
+    const login = await fetch(process.env.KPG_BASE_URL + '/knowledge-center/api/auth/admin/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: 'admin', password: 'admin' }) });
+    assert.equal(login.status, 200);
+    const cookie = login.headers.getSetCookie().map(value => value.split(';')[0]).join('; ');
+    const response = await fetch(process.env.KPG_BASE_URL + '/knowledge-center/api/outline/governance/list', { headers: { cookie } });
+    assert.equal(response.status, 200);
+    const outline = (await response.json()).data.find(item => item.id && item.outlineStructureVersion !== 'legacy-unversioned');
+    assert(outline, 'Database delivery requires an existing active outline');
+    ctx.outlineVersionId = outline.id;
+    ctx.handbookId = outline.handbookId;
+    databaseStores = require('../../../packages/agent-runner-core/lib/aggregate-store');
+    store = new databaseStores.DatabaseAggregateStore('handbook-production', aggregateKey, draftState, { baseUrl: storageUrl.href });
+  }
   const sourceRoot = path.join(root, 'source-images'); fs.mkdirSync(sourceRoot);
   const sourceImage = Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64'); const sourceDigest = hash(sourceImage);
   fs.writeFileSync(path.join(sourceRoot, sourceDigest), sourceImage);
-  const production = createHandbookProductionService({ store, attachmentRoot: path.join(root, 'attachments'), ai: { sourceImageRoot: sourceRoot } });
-  const repository = new MemoryIncrementalBuildRepository({ schemaVersion: 1, tasks: [], publishedVersions: [], idempotency: {}, audits: [] });
+  const repository = databaseCheck
+    ? new databaseStores.DatabaseIncrementalStore(aggregateKey, { baseUrl: process.env.KC_STORAGE_URL })
+    : new MemoryIncrementalBuildRepository({ schemaVersion: 1, tasks: [], publishedVersions: [], idempotency: {}, audits: [] });
   const service = new IncrementalBuildService(repository);
+  const production = createHandbookProductionService({ store, attachmentRoot: path.join(root, 'attachments'), reviewService: service, ai: { sourceImageRoot: sourceRoot } });
+  t.after(() => production.stopRecoveryScheduler());
   const connection = { ...f.connection, id: 'fixture', credentialRef: 'managed_fixture' };
   process.env.GITLAB_TOKEN_managed_fixture = 'local-fixture'; t.after(() => delete process.env.GITLAB_TOKEN_managed_fixture);
   const configPath = path.join(root, 'gitlab.json');
   fs.writeFileSync(configPath, JSON.stringify({ connections: [connection], mappings: [{ handbookId: ctx.handbookId, connectionId: connection.id, defaultBranch: 'main', enabledBranches: ['main'], zhPaths: ['docs'], enPaths: [] }] }));
-  const auth = { authorize: async req => req.headers['x-test-anonymous'] ? null : req.headers['x-test-hidden'] ? { ...session, visibleHandbookIds: ['other'] } : session, repository: { listUsers: () => [{ id: 'author', roles: ['REVIEWER'] }] } };
+  const auth = { authorize: async req => req.headers['x-test-anonymous'] ? null : req.headers['x-test-hidden'] ? { ...session, visibleHandbookIds: ['other'] } : session, repository: { listUsers: () => [{ id: 'author', loginName: 'author', roles: ['REVIEWER'] }] } };
   const handler = createKnowledgeCenterHandler({
     config: { KNOWLEDGE_CENTER_PREFIX: '/knowledge-center', KNOWLEDGE_CENTER_ROOT: root, GITLAB_CONFIG_PATH: configPath, OUTLINE_TEMPLATE_PATH: path.resolve(__dirname, '../../../knowledge/outlines/大纲模板.xlsx'), OUTLINE_SAMPLE_PATH: path.resolve(__dirname, '../../../knowledge/outlines/基本数据库管理手册大纲示例.xlsx') },
     KNOWLEDGE_ASSETS_CONFIG_PATH: configPath,
@@ -159,28 +223,74 @@ test('真实生产 HTTP：上传图片和共享来源图片随已保存修订冻
   const upload = await call('POST', `${prefix}/draft-attachments?${new URLSearchParams(ctx)}`, image, { 'content-type': 'image/png', 'x-file-name': encodeURIComponent('截图.png') });
   assert.equal(upload.status, 201, JSON.stringify(upload));
   f.files.get('base').set('docs/images/existing.png', image);
-  const sourceUrl = `/knowledge-center/api/production/handbooks/HB-1/documents/doc-1/ai-sources/images/${sourceDigest}?${new URLSearchParams({ outlineVersionId: ctx.outlineVersionId, branch: ctx.branch })}`;
-  const content = `# 待交付稿\n\n![上传](${upload.data.stableReference})\n\n<div><img src="${sourceUrl.replace(/&/g, '&amp;')}" alt="来源"></div>\n\n<img src='images/existing.png' alt="基线">\n`;
+  const sourceUrl = `/knowledge-center/api/production/handbooks/${encodeURIComponent(ctx.handbookId)}/documents/doc-1/ai-sources/images/${sourceDigest}?${new URLSearchParams({ outlineVersionId: ctx.outlineVersionId, branch: ctx.branch })}`;
+  let content = `# 待交付稿\n\n![上传](${upload.data.stableReference})\n\n<div><img src="${sourceUrl.replace(/&/g, '&amp;')}" alt="来源"></div>\n\n<img src='images/existing.png' alt="基线">\n`;
   const saved = await call('PUT', `${prefix}/draft`, { ...ctx, editVersion: 0, baselineDigest: hash('# 原稿\n'), markdown: content, attachmentIds: [upload.data.attachmentId] });
   assert.equal(saved.status, 200, JSON.stringify(saved));
-  const submitBody = { defaultReviewerIds: ['author'], documents: [{ ...ctx, filePath: 'docs/a.md', draftRevisionId: saved.data.draft.currentRevisionId, markdown: '# 伪造正文', resources: [{ path: 'outside/forged.png' }] }] };
+  const unchangedCtx = { ...ctx, documentId: 'doc-2' };
+  const unchangedPrefix = `/production/handbooks/${ctx.handbookId}/documents/${unchangedCtx.documentId}`;
+  const unchangedMarkdown = '# 使用说明\n\n这篇保持原样，验证通过结论可以保留。\n';
+  const unchangedSaved = await call('PUT', `${unchangedPrefix}/draft`, { ...unchangedCtx, editVersion: 0, baselineDigest: hash(''), markdown: unchangedMarkdown });
+  assert.equal(unchangedSaved.status, 200, JSON.stringify(unchangedSaved));
+  let submitBody = { defaultReviewerIds: ['author'], documents: [
+    { ...ctx, filePath: 'docs/a.md', draftRevisionId: saved.data.draft.currentRevisionId, markdown: '# 伪造正文', resources: [{ path: 'outside/forged.png' }] },
+    { ...unchangedCtx, filePath: 'docs/b.md', draftRevisionId: unchangedSaved.data.draft.currentRevisionId },
+  ] };
   // A valid digest/file alone does not grant source-image access.
-  const denied = await call('POST', '/production/handbooks/HB-1/incremental-reviews', submitBody);
+  const denied = await call('POST', `/production/handbooks/${encodeURIComponent(ctx.handbookId)}/incremental-reviews`, submitBody);
   assert.equal(denied.status, 404, JSON.stringify(denied));
   assert.equal(repository.read().tasks.length, 0);
   assert.deepEqual(f.writes, []);
   // Shared source snapshots are read through the existing revision permission path.
-  draftState.drafts[contextKey(ctx)].revisions[0].generationMetadata = { sourceSnapshots: [{ contextKey: contextKey(ctx), imageResources: [{ status: 'ready', assetId: sourceDigest, contentDigest: sourceDigest, contentType: 'image/gif' }] }] };
-  const submitted = await call('POST', '/production/handbooks/HB-1/incremental-reviews', submitBody);
+  store.transaction(state => {
+    state.drafts[contextKey(ctx)].revisions[0].generationMetadata = { sourceSnapshots: [{ contextKey: contextKey(ctx), imageResources: [{ status: 'ready', assetId: sourceDigest, contentDigest: sourceDigest, contentType: 'image/gif' }] }] };
+  });
+  // Exercise the same saved document through rejection and revision before delivery.
+  const firstSubmission = await call('POST', `/production/handbooks/${encodeURIComponent(ctx.handbookId)}/incremental-reviews`, submitBody);
+  assert.equal(firstSubmission.status, 201, JSON.stringify(firstSubmission));
+  const rejectedTask = service.get(session, firstSubmission.data.tasks[0].id);
+  assert.equal(rejectedTask.handbookSource.documents.length, 2);
+  const rejectedSnapshot = structuredClone(rejectedTask.candidate);
+  const unchangedReview = rejectedTask.reviews.find(review => review.documentId === unchangedCtx.documentId);
+  assert(unchangedReview);
+  const firstApproval = await call('POST', `/incremental-tasks/${rejectedTask.id}/reviews/${unchangedReview.id}/decision`, {
+    decision: 'approve', candidateDigest: rejectedTask.candidate.digest,
+  });
+  assert.equal(firstApproval.status, 200, JSON.stringify(firstApproval));
+  assert.equal(service.get(session, rejectedTask.id).state, 'under_review');
+  const partialPublish = await call('POST', `/incremental-tasks/${rejectedTask.id}/publish`, { expectedCandidateDigest: rejectedTask.candidate.digest });
+  assert.notEqual(partialPublish.status, 200, JSON.stringify(partialPublish));
+  assert.deepEqual(f.writes, []);
+  const rejection = await call('POST', `/incremental-tasks/${rejectedTask.id}/reviews/${rejectedTask.reviews[0].id}/decision`, {
+    decision: 'reject', comment: '请补充操作说明后重新送审', candidateDigest: rejectedTask.candidate.digest,
+  });
+  assert.equal(rejection.status, 200, JSON.stringify(rejection));
+  const rejectedReadback = await call('GET', `${prefix}/draft?${new URLSearchParams(ctx)}`);
+  assert.equal(rejectedReadback.status, 200, JSON.stringify(rejectedReadback));
+  assert.equal(rejectedReadback.data.draft.reviewState.reviewStatus, 'rejected');
+  content += '\n补充操作说明：核对正文和三张图片后提交审核。\n';
+  const revised = await call('PUT', `${prefix}/draft`, { ...ctx, editVersion: saved.data.draft.editVersion,
+    baselineDigest: hash('# 原稿\n'), markdown: content, attachmentIds: [upload.data.attachmentId] });
+  assert.equal(revised.status, 200, JSON.stringify(revised));
+  assert.notEqual(revised.data.draft.currentRevisionId, saved.data.draft.currentRevisionId);
+  submitBody = { ...submitBody, revisionOfTaskId: rejectedTask.id,
+    documents: [{ ...submitBody.documents[0], draftRevisionId: revised.data.draft.currentRevisionId }, submitBody.documents[1]] };
+  const submitted = await call('POST', `/production/handbooks/${encodeURIComponent(ctx.handbookId)}/incremental-reviews`, submitBody);
   assert.equal(submitted.status, 201, JSON.stringify(submitted));
   const task = service.get(session, submitted.data.tasks[0].id); const doc = task.handbookSource.documents[0];
+  const carriedReview = task.reviews.find(review => review.documentId === unchangedCtx.documentId);
+  assert.equal(carriedReview.status, 'approved');
+  assert.equal(carriedReview.carriedFrom.taskId, rejectedTask.id);
+  assert.equal(task.reviews.find(review => review.documentId === ctx.documentId).status, 'pending');
+  assert.equal(task.capabilities.canPublish, false);
   assert.equal(doc.resources.length, 3);
   assert.deepEqual(doc.resources.map(resource => resource.contentDigest), [hash(image), sourceDigest, hash(image)]);
   assert.equal(doc.resources.filter(resource => resource.delivery === 'create').length, 2);
   assert.equal(doc.markdown.includes('/knowledge-center/api/'), false);
   assert.equal(doc.markdown.includes(`assets/${sourceDigest}.gif`), true);
   assert.equal(production.getDraft(ctx, session).draft.revision.markdown, content);
-  assert.equal(task.candidate.content, doc.markdown);
+  assert.equal(task.candidate.content.includes(doc.markdown), true);
+  assert.equal(task.candidate.content.includes(unchangedMarkdown), true);
   assert.equal(JSON.stringify(task).includes(root), false);
   assert.deepEqual(f.writes, []);
   const previewParams = new URLSearchParams({ candidateDigest: task.candidate.digest, documentId: ctx.documentId, path: doc.resources[0].path });
@@ -207,10 +317,13 @@ test('真实生产 HTTP：上传图片和共享来源图片随已保存修订冻
   assert.equal(approve.status, 200, JSON.stringify(approve));
   // Frozen delivery survives original upload and source-image deletion.
   fs.unlinkSync(path.join(production.attachmentRoot, upload.data.storageName)); fs.unlinkSync(path.join(sourceRoot, sourceDigest));
-  const replayed = await call('POST', '/production/handbooks/HB-1/incremental-reviews', submitBody);
+  const replayed = await call('POST', `/production/handbooks/${encodeURIComponent(ctx.handbookId)}/incremental-reviews`, submitBody);
   assert.equal(replayed.status, 201, JSON.stringify(replayed));
   assert.equal(replayed.data.tasks[0].id, task.id);
-  assert.equal(repository.read().tasks.length, 1);
+  assert.equal(repository.read().tasks.length, 2);
+  assert.equal(service.get(session, rejectedTask.id).state, 'rejected');
+  assert.deepEqual(service.get(session, rejectedTask.id).candidate, rejectedSnapshot);
+  assert.equal(service.get(session, rejectedTask.id).reviews[0].decision.comment, '请补充操作说明后重新送审');
   assert.deepEqual(Buffer.from(await (await fetch(previewUrl)).arrayBuffer()), image);
   if (process.env.HANDBOOK_BROWSER_CHECK === '1') {
     const { chromium } = require('../../../runtime/agent-runner/node_modules/playwright');
@@ -228,13 +341,13 @@ test('真实生产 HTTP：上传图片和共享来源图片随已保存修订冻
       return route.fulfill({ contentType: path.extname(file) === '.js' ? 'application/javascript' : 'text/css', body: fs.readFileSync(file) });
     });
     await page.goto(`${base.replace('/knowledge-center/api', '')}/knowledge-center/review-image-fixture?documentId=${ctx.documentId}&path=docs/a.md`);
-    await page.evaluate(async ({ taskId }) => {
+    await page.evaluate(async ({ taskId, handbookId }) => {
       const { renderReviewRepositoryRegion } = await import('/knowledge-center/modules/review-publishing/view.js');
       window.reviewImageRenderer = { renderReviewRepositoryRegion };
       const response = await fetch(`/knowledge-center/api/incremental-tasks/${taskId}`);
       const payload = await response.json(); const task = payload.data.task || payload.data;
-      document.querySelector('#review').innerHTML = renderReviewRepositoryRegion({ reviewProjection: { items: [task], detail: { task } }, gitlabProjection: { handbookId: 'HB-1', branch: 'main', language: 'zh', tree: [], branches: [] } });
-    }, { taskId: task.id });
+      document.querySelector('#review').innerHTML = renderReviewRepositoryRegion({ reviewProjection: { items: [task], detail: { task } }, gitlabProjection: { handbookId, branch: 'main', language: 'zh', tree: [], branches: [] } });
+    }, { taskId: task.id, handbookId: ctx.handbookId });
     const img = page.locator('.review-reader-snapshot img[alt="上传"]');
     await img.waitFor(); await img.evaluate(el => el.decode());
     assert.equal(await img.evaluate(el => el.naturalWidth), 1);
@@ -248,14 +361,14 @@ test('真实生产 HTTP：上传图片和共享来源图片随已保存修订冻
       documentId: document.documentId, path: document.filePath, handbookId: task.handbookId,
       branch: task.handbookSource.branch, title: document.filePath, state: task.state }));
     const overview = service.reviewOverview(session, overviewRows);
-    await page.evaluate(({ rows, snapshots }) => {
+    await page.evaluate(({ rows, snapshots, handbookId }) => {
       window.history.replaceState(null, '', '/knowledge-center/review-image-fixture');
       const { renderReviewRepositoryRegion } = window.reviewImageRenderer;
       document.querySelector('#review').innerHTML = renderReviewRepositoryRegion({
-        reviewProjection: { handbookId: 'HB-1', workbench: { documents: rows, overview: snapshots }, allItems: [], detail: null },
-        gitlabProjection: { handbookId: 'HB-1', branch: 'main', language: 'zh', status: 'ok', tree: [], branches: [] },
+        reviewProjection: { handbookId, workbench: { documents: rows, overview: snapshots }, allItems: [], detail: null },
+        gitlabProjection: { handbookId, branch: 'main', language: 'zh', status: 'ok', tree: [], branches: [] },
       });
-    }, { rows: overviewRows, snapshots: overview });
+    }, { rows: overviewRows, snapshots: overview, handbookId: ctx.handbookId });
     for (const alt of ['上传', '来源', '基线']) {
       const resourceImage = page.locator(`.review-handbook-overview img[alt="${alt}"]`);
       await resourceImage.evaluate(el => el.decode()); assert.equal(await resourceImage.evaluate(el => el.naturalWidth), 1);
@@ -265,7 +378,7 @@ test('真实生产 HTTP：上传图片和共享来源图片随已保存修订冻
     assert.deepEqual(errors, []);
     t.diagnostic('Chromium实际审核阅读组件：原图删除后，真实HTTP冻结图片decode成功且naturalWidth=1；不是共享13510部署验收');
   }
-  const publishBody = { expectedCandidateDigest: task.candidate.digest };
+  const publishBody = { expectedCandidateDigest: task.candidate.digest, assigneeId: 'author' };
   const frozenPath = path.join(production.attachmentRoot, 'delivery-images', hash(image));
   fs.unlinkSync(frozenPath);
   assert.equal((await fetch(previewUrl)).status, 409);
@@ -280,15 +393,59 @@ test('真实生产 HTTP：上传图片和共享来源图片随已保存修订冻
   assert.equal(service.get(session, task.id).state, 'approved');
   assert.deepEqual(f.writes, []);
   fs.writeFileSync(frozenPath, image);
-  const published = await call('POST', `/incremental-tasks/${task.id}/publish`, publishBody);
+  f.loseResponse();
+  const lostResponse = await call('POST', `/incremental-tasks/${task.id}/publish`, publishBody);
+  assert.notEqual(lostResponse.status, 200, JSON.stringify(lostResponse));
+  assert.notEqual(service.get(session, task.id).completion.status, 'completed');
+  assert.equal(f.writes.filter(write => write.endpoint === '/repository/commits').length, 1);
+  assert.equal(f.mrs.length, 0);
+  f.loseMergeResponse();
+  const concurrentPublish = await Promise.all([
+    call('POST', `/incremental-tasks/${task.id}/publish`, publishBody),
+    call('POST', `/incremental-tasks/${task.id}/publish`, publishBody),
+  ]);
+  for (const response of concurrentPublish) assert.equal(response.status, 200, JSON.stringify(response));
+  const published = concurrentPublish[0];
   assert.equal(published.status, 200, JSON.stringify(published));
+  assert.equal(f.mrs.length, 1);
+  assert.equal(f.writes.filter(write => write.endpoint === '/merge_requests').length, 1);
+  assert.notEqual(service.get(session, task.id).completion.status, 'completed');
   const actions = f.writes.find(write => write.endpoint === '/repository/commits').body.actions;
-  assert.equal(actions.length, 3); assert.equal(actions.filter(action => action.encoding === 'base64').length, 2);
+  assert.equal(actions.length, 4); assert.equal(actions.filter(action => action.encoding === 'base64').length, 2);
   f.branches.set('main', f.branches.get(published.data.sourceBranch)); f.branches.delete(published.data.sourceBranch); f.mrs[0].state = 'merged';
+  const mergedFiles = f.files.get(f.branches.get('main'));
+  const mergedMarkdown = mergedFiles.get('docs/a.md');
+  mergedFiles.set('docs/a.md', Buffer.from('# 远端已变化\n'));
+  const drifted = await call('POST', `/incremental-tasks/${task.id}/publish`, publishBody);
+  assert.notEqual(drifted.status, 200, JSON.stringify(drifted));
+  assert.notEqual(service.get(session, task.id).completion.status, 'completed');
+  mergedFiles.set('docs/a.md', mergedMarkdown);
   const refreshed = await call('POST', `/incremental-tasks/${task.id}/publish`, publishBody);
   assert.equal(refreshed.status, 200, JSON.stringify(refreshed));
   assert.equal(service.get(session, task.id).completion.status, 'completed');
   assert.equal(f.writes.filter(write => write.endpoint === '/repository/commits').length, 1);
+  const savedAgain = await call('GET', `${prefix}/draft?${new URLSearchParams(ctx)}`);
+  assert.equal(savedAgain.status, 200, JSON.stringify(savedAgain));
+  assert.equal(savedAgain.data.draft.revision.markdown, content);
+  assert.equal(savedAgain.data.draft.reviewState.reviewStatus, 'approved');
+  const unchangedReadback = await call('GET', `${unchangedPrefix}/draft?${new URLSearchParams(unchangedCtx)}`);
+  assert.equal(unchangedReadback.status, 200, JSON.stringify(unchangedReadback));
+  assert.equal(unchangedReadback.data.draft.revision.markdown, unchangedMarkdown);
+  assert.equal(unchangedReadback.data.draft.reviewState.reviewStatus, 'approved');
+  assert.equal(mergedFiles.get('docs/b.md').toString('utf8'), unchangedMarkdown);
+  if (databaseCheck) {
+    const fresh = new IncrementalBuildService(new databaseStores.DatabaseIncrementalStore(aggregateKey, { baseUrl: process.env.KC_STORAGE_URL }));
+    assert.equal(fresh.get(session, task.id).completion.status, 'completed');
+    const evidence = { realDatabase: true, realHTTP: true, realEnterpriseGitLab: false, realModel: false,
+      contextMode: 'file fixture', identity: 'fixture author', aggregateKey, taskId: task.id,
+      rejectedTaskId: rejectedTask.id, rejectionHistoryPreserved: fresh.get(session, rejectedTask.id).state === 'rejected',
+      revisedDraftRevisionId: revised.data.draft.currentRevisionId,
+      documentCount: 2, unchangedApprovalCarried: true, partialApprovalDeliveryBlocked: true, bothDraftsReadback: 'exact',
+      concurrentPublishReconciled: true, lostMergeRequestResponseRecovered: true, lostCommitResponseRecovered: true, mergedContentDriftRejected: true, completion: fresh.get(session, task.id).completion, draftReadback: 'exact', reviewStatus: savedAgain.data.draft.reviewState.reviewStatus,
+      resourceCount: doc.resources.length, commitCount: f.writes.filter(write => write.endpoint === '/repository/commits').length };
+    fs.writeFileSync(path.join(process.env.YASDB_TEST_RUN_DIR, 'delivery-database-http.json'), JSON.stringify(evidence, null, 2), { flag: 'wx' });
+    t.diagnostic('真实test_hy保存、正式HTTP送审/审核/交付及新服务完成状态回读；GitLab为本地HTTP夹具');
+  }
 });
 
 test('托管图片适配：保留代码和周围正文，引用式/嵌套 Markdown 与 HTML 共用冻结路径', t => {

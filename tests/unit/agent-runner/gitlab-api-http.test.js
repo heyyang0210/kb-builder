@@ -11,6 +11,7 @@ describe('GitLab same-origin HTTP API', () => {
   let tempRoot;
   let adminCookie;
   let readerCookie;
+  let insufficientScope = false;
 
   beforeAll(async () => {
     tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gitlab-http-'));
@@ -34,6 +35,7 @@ describe('GitLab same-origin HTTP API', () => {
     process.env.GITLAB_TOKEN_local_read = 'test-only-token';
     gitlabServer = http.createServer((req, res) => {
       if (req.headers['private-token'] !== 'test-only-token') { res.writeHead(401); res.end(JSON.stringify({ message: 'unauthorized' })); return; }
+      if (insufficientScope) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'insufficient_scope', error_description: 'Higher privileges required' })); return; }
       res.writeHead(200, { 'Content-Type': 'application/json' });
       if (req.url.includes('/repository/branches')) { res.end(JSON.stringify([{ name: 'master', protected: true, commit: { id: 'abcdef123456' } }])); return; }
       if (req.url.includes('/repository/tree')) { res.end(JSON.stringify([{ name: '基础概念', path: 'doc/产品文档/基础概念', type: 'tree' }, { name: '_index.md', path: 'doc/产品文档/_index.md', type: 'blob' }, { name: 'intro.md', path: 'doc/产品文档/基础概念/intro.md', type: 'blob' }, { name: 'guide.pdf', path: 'doc/产品文档/guide.pdf', type: 'blob' }, { name: 'cover.png', path: 'doc/产品文档/cover.png', type: 'blob' }])); return; }
@@ -76,6 +78,23 @@ describe('GitLab same-origin HTTP API', () => {
     expect(response.status).toBe(403);
     const direct = await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections/unknown/tree`, { headers: { cookie: readerCookie } });
     expect(direct.status).toBe(403);
+  });
+
+  test('真实 HTTP：授权范围不足应提示重新授权，保留403且不泄漏凭据', async () => {
+    const configured = await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections`, {
+      method: 'POST', headers: { cookie: adminCookie, 'content-type': 'application/json', 'idempotency-key': 'http-insufficient-scope' },
+      body: JSON.stringify({ name: 'scope-check', host: gitlabUrl, project: 'cod-doc/scope-check', mode: 'sandbox', authMode: 'service_account', credentialRef: 'local_read', purpose: 'read' }),
+    });
+    expect(configured.status).toBe(200);
+    const connection = (await configured.json()).data;
+    insufficientScope = true;
+    try {
+      const response = await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections/${encodeURIComponent(connection.id)}/branches`, { headers: { cookie: adminCookie } });
+      expect(response.status).toBe(403);
+      const body = await response.json();
+      expect(body.error).toMatchObject({ code: 'GITLAB_INSUFFICIENT_SCOPE', message: expect.stringContaining('重新授权') });
+      expect(JSON.stringify(body)).not.toContain('test-only-token');
+    } finally { insufficientScope = false; }
   });
 
   test('ordinary users can list safe personal-account projections and start only configured OAuth connections', async () => {
