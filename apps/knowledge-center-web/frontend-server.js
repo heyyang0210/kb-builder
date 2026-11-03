@@ -16,6 +16,8 @@ const { createTemplateStore } = require('../../packages/agent-runner-core/lib/te
 const { createDomainStore } = require('../../packages/agent-runner-core/lib/domain-store');
 const { createKnowledgeCenterAuthService } = require('../../packages/agent-runner-core/lib/knowledge-center-auth');
 const { PlatformModuleRegistry } = require('../../packages/agent-runner-core/lib/platform-module-registry');
+const { attachResponseIds, getContext, requestContext, runWithContext } = require('../../packages/agent-runner-core/lib/log-context');
+const logger = require('../../packages/agent-runner-core/lib/logger');
 
 const PORT = Number(process.env.PORT || 3500);
 const HOST = '0.0.0.0';
@@ -236,6 +238,13 @@ const proxyKnowledgeCenterCleaning = createProxy({
   errorPayload: (_error, requestId, correlationId) => ({ success: false, error: { code: 'MATERIAL_PROCESSING_UNAVAILABLE', message: '资料加工服务暂时不可用', retryable: true, requestId, correlationId } }),
 });
 
+const proxyKnowledgeCenterDocumentTasks = createProxy({
+  targetHost: DOCUMENT_API_HOST, targetPort: DOCUMENT_API_PORT,
+  pathTransform: req => `/api/document-tasks${req.url.slice('/knowledge-center/api/document-tasks'.length)}`,
+  requestHeaders: (_req, context) => context?.session?.user?.id ? { 'x-actor-id': String(context.session.user.id) } : {},
+  errorPayload: () => ({ success: false, error: { code: 'DOCUMENT_TASK_SERVICE_UNAVAILABLE', message: '文档任务服务暂时不可用', retryable: true } }),
+});
+
 function proxyKnowledgeCenterOutline(req, res, session) {
   const suffix = req.url.slice('/knowledge-center/api/outline'.length);
   const targetPath = `/api/outline${suffix}`;
@@ -260,11 +269,34 @@ function proxyKnowledgeCenterOutline(req, res, session) {
 
 // --- Knowledge center handler ---
 
+async function handleKnowledgeCenterTaskCatalog(handbookId, session) {
+    const response = await fetch(`http://${DOCUMENT_API_HOST}:${DOCUMENT_API_PORT}/api/outline/catalog?handbookId=${encodeURIComponent(handbookId)}&view=directory`, {
+      headers: { 'x-actor-id': session.user.id, 'x-outline-actions': (session.user.allowedActions || []).join(','), ...(OUTLINE_INTERNAL_TOKEN ? { 'x-knowledge-center-internal-token': OUTLINE_INTERNAL_TOKEN } : {}) },
+      signal: AbortSignal.timeout(15000),
+    });
+    const body = await response.json();
+    if (!response.ok || body.success === false) throw Object.assign(new Error(body.error?.message || '目录暂不可用'), { status: response.status });
+    return require('../../packages/agent-runner-core/lib/document-task-catalog').projectCatalog(body.data);
+}
+
 const handleKnowledgeCenter = createKnowledgeCenterHandler({
+  documentTaskCreateDocument: async (handbookId, proposal, session) => {
+    const catalog = await handleKnowledgeCenterTaskCatalog(handbookId, session);
+    const response = await fetch(`http://${DOCUMENT_API_HOST}:${DOCUMENT_API_PORT}/api/outline/governance/${encodeURIComponent(catalog.outlineId)}/document-proposals`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': `task-document-${proposal.proposalKey}`, 'x-actor-id': session.user.id, 'x-outline-actions': (session.user.allowedActions || []).join(','), ...(OUTLINE_INTERNAL_TOKEN ? { 'x-knowledge-center-internal-token': OUTLINE_INTERNAL_TOKEN } : {}) },
+      body: JSON.stringify({ ...proposal, handbookId }), signal: AbortSignal.timeout(30000),
+    });
+    const body = await response.json();
+    if (!response.ok || body.success === false) throw Object.assign(new Error(body.error?.message || '新增目录文档失败'), { status: response.status, code: body.error?.code });
+    return body.data;
+  },
+  documentTaskCatalog: handleKnowledgeCenterTaskCatalog,
+
   sendFile,
   proxyAuth: null,
   proxyCleaning: proxyKnowledgeCenterCleaning,
   proxyOutline: proxyKnowledgeCenterOutline,
+  proxyDocumentTasks: proxyKnowledgeCenterDocumentTasks,
   proxyPermission: null,
   handleIncrementalBuild,
   KNOWLEDGE_ASSETS_CONFIG_PATH: KNOWLEDGE_ASSETS_CONFIG,
@@ -285,6 +317,19 @@ const handleKnowledgeCenter = createKnowledgeCenterHandler({
 // --- Main server ---
 
 const server = http.createServer((req, res) => {
+  const context = requestContext(req);
+  attachResponseIds(res, context);
+  const startedAt = Date.now();
+  res.on('finish', () => logger.info('request.completed', {
+    event: 'request.completed', service: 'knowledge-center-web', method: req.method,
+    route: new URL(req.url, 'http://localhost').pathname, status: res.statusCode,
+    durationMs: Date.now() - startedAt,
+  }));
+  return runWithContext(context, () => handleRequest(req, res));
+});
+
+function handleRequest(req, res) {
+  const context = getContext();
   const pathname = new URL(req.url, 'http://localhost').pathname;
 
   // Knowledge center routes (auth, assets, gitlab, outline, incremental, static)
@@ -293,13 +338,15 @@ const server = http.createServer((req, res) => {
       Promise.resolve(handleKnowledgeCenter(req, res)).catch(error => {
         if (res.headersSent || res.writableEnded) return;
         const status = Number.isInteger(Number(error?.status)) ? Number(error.status) : 503;
-        res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
-        res.end(JSON.stringify({ success: false, error: { code: error?.code || 'KNOWLEDGE_CENTER_REQUEST_FAILED', message: error?.message || '知识中心服务暂时不可用，请稍后重试。', retryable: status >= 500 } }));
+        logger.error('gateway.request_failed', { event: 'request.failed', errorCode: error?.code || 'KNOWLEDGE_CENTER_REQUEST_FAILED', errorType: error?.name, stack: error?.stack, status, method: req.method, route: pathname });
+        res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'x-request-id': context.requestId, 'x-correlation-id': context.correlationId });
+        res.end(JSON.stringify({ success: false, error: { code: error?.code || 'KNOWLEDGE_CENTER_REQUEST_FAILED', message: error?.message || '知识中心服务暂时不可用，请稍后重试。', retryable: status >= 500, requestId: context.requestId, correlationId: context.correlationId } }));
       });
     } catch (error) {
       if (!res.headersSent && !res.writableEnded) {
-        res.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
-        res.end(JSON.stringify({ success: false, error: { code: error?.code || 'KNOWLEDGE_CENTER_REQUEST_FAILED', message: error?.message || '知识中心服务暂时不可用，请稍后重试。', retryable: true } }));
+        logger.error('gateway.request_failed', { event: 'request.failed', errorCode: error?.code || 'KNOWLEDGE_CENTER_REQUEST_FAILED', errorType: error?.name, stack: error?.stack, status: 503, method: req.method, route: pathname });
+        res.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'x-request-id': context.requestId, 'x-correlation-id': context.correlationId });
+        res.end(JSON.stringify({ success: false, error: { code: error?.code || 'KNOWLEDGE_CENTER_REQUEST_FAILED', message: error?.message || '知识中心服务暂时不可用，请稍后重试。', retryable: true, requestId: context.requestId, correlationId: context.correlationId } }));
       }
     }
     return;
@@ -334,7 +381,7 @@ const server = http.createServer((req, res) => {
   }
   const filePath = path.join(ROOT, pathname === '/' ? '/document-generation-workbench.html' : pathname);
   sendFile(filePath, res, req);
-});
+}
 
 if (require.main === module) {
   databaseConnectionGovernance.startHealthMonitor();

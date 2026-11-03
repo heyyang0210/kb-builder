@@ -36,9 +36,12 @@
     "maxProvenanceSegments": 512,
     "provenancePrompt": "返回一个JSON对象，不要用围栏包裹：{\"markdown\":\"所选范围的Markdown正文片段\",\"provenance\":[{\"start\":0,\"end\":正文片段UTF-16长度,\"kind\":\"model_inference\",\"evidence\":[]}]}。provenance按正文片段中的UTF-16半开区间描述，允许direct_quote（逐字引用）、source_summary（依据资料归纳）、model_inference（无可核验来源的模型推理）。引用或归纳的evidence填写本次sources中的sourceId及其content内的start/end位置，位置同为UTF-16半开区间。不同区间不得重叠，不得拆分Unicode字符；不得编造来源或将推理标为引用。归纳只表示来源关联，仍待核验。markdown仅含处理范围内的正文，续写仅含新增内容。",
     "leaseMs": 1200000,
+    "historyLimit": 30,
     "executionFeedback": {
       "previewIntervalMs": 400,
-      "maxPreviewChars": 200000
+      "maxPreviewChars": 200000,
+      "maxAgentEvents": 80,
+      "maxAgentMessageChars": 1200
     },
     "maxSelectedSkills": 4,
     "skills": [
@@ -56,7 +59,8 @@
       "allowPublicWeb": true,
       "maxRedirects": 5,
       "urlOrigins": [
-        "https://pingcode.yasdb.com"
+        "https://pingcode.yasdb.com",
+        "https://support.yashandb.com"
       ],
       "pingcodeSpaces": [
         "YASSTORAGE",
@@ -612,6 +616,16 @@
       "_index.md"
     ]
   },
+  "agentRuntime": {
+    "codexVersion": "0.156.1",
+    "timeoutMs": 180000,
+    "maxArtifactBytes": 1048576,
+    "outputInstruction": "请根据提供的文档任务完成写作。仅在当前任务工作区创建 output.json，内容必须是 JSON 对象，包含 markdown 字符串和 provenance 数组。不要在聊天消息中代替文件交付；不要修改其他路径。",
+    "maxEvents": 2000,
+    "maxAgents": 30,
+    "maxNameChars": 80,
+    "testPrompt": "请在 output.json 交付一段中文测试正文，provenance 使用空数组。"
+  },
   "platformModels": {
     "maxServices": 20,
     "maxModelsPerService": 50,
@@ -666,5 +680,31 @@
     "minTemperature": 0,
     "maxTemperature": 2,
     "minOutputTokens": 1
+  },
+  "gitlabParticipants": {
+    "pageSize": 100,
+    "maxPages": 50
+  },
+  "documentTasks": {
+    "defaultOwnerId": "177",
+    "pingcodeProjectUrl": null,
+    "reasonOptions": [
+      {
+        "id": "no_impact",
+        "label": "无文档影响"
+      },
+      {
+        "id": "covered",
+        "label": "已有内容覆盖"
+      },
+      {
+        "id": "code_only",
+        "label": "仅代码或配置变更"
+      },
+      {
+        "id": "other",
+        "label": "其他"
+      }
+    ]
   }
 }

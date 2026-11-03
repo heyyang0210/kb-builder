@@ -1,4 +1,5 @@
 import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 import migration.SchemaMigrationManager;
 
@@ -8,6 +9,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.OutputStreamWriter;
+import java.io.PrintWriter;
 import java.io.Reader;
 import java.io.StringReader;
 import java.io.StringWriter;
@@ -29,6 +31,11 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.util.UUID;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+import java.util.logging.Handler;
+import java.util.logging.LogRecord;
 import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
@@ -41,9 +48,13 @@ import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.ConcurrentHashMap;
 import java.lang.reflect.Proxy;
+import java.util.zip.GZIPOutputStream;
 
 public final class Main {
+    private static final Logger LOG = Logger.getLogger(Main.class.getName());
+    private static final java.util.regex.Pattern LOG_ID = java.util.regex.Pattern.compile("^[A-Za-z0-9._:-]{1,128}$");
     private static final String DRIVER = "com.yashandb.jdbc.Driver";
     private static final int DEFAULT_MAX_BODY_BYTES = 16 * 1024 * 1024;
 
@@ -58,6 +69,11 @@ public final class Main {
     private final DraftReadProjection draftReadProjection = new DraftReadProjection();
     private final AtomicBoolean draftProjectionRebuilding = new AtomicBoolean();
     private final HandbookProjectionRepository handbookProjectionRepository = new HandbookProjectionRepository();
+    // The directory is immutable for a given outline edit version. Keep the
+    // expensive node/ownership projection briefly while still checking the
+    // version header on every request, so writes naturally miss the cache.
+    private final Map<String, DirectoryCacheEntry> directoryProjectionCache = new ConcurrentHashMap<>();
+    private static final int DIRECTORY_CACHE_MAX_ENTRIES = 256;
     private final PrincipalRepository principalRepository = new PrincipalRepository();
     private final PlatformAuthRepository platformAuthRepository = new PlatformAuthRepository();
     private final PlatformGitLabRepository platformGitLabRepository = new PlatformGitLabRepository();
@@ -84,6 +100,9 @@ public final class Main {
             } finally {
                 application.connectionPool.closeAll();
             }
+            // The JDBC driver may create non-daemon housekeeping threads.
+            // One-shot commands must terminate after producing their result.
+            System.exit(0);
             return;
         }
         if ("migrate".equals(command)) {
@@ -93,6 +112,7 @@ public final class Main {
             } finally {
                 application.connectionPool.closeAll();
             }
+            System.exit(0);
             return;
         }
         if ("verify".equals(command)) {
@@ -102,6 +122,7 @@ public final class Main {
             } finally {
                 application.connectionPool.closeAll();
             }
+            System.exit(0);
             return;
         }
         application.verifyMigrations();
@@ -117,26 +138,29 @@ public final class Main {
         String host = env("YASDB_STORAGE_HOST", "127.0.0.1");
         int port = integer("YASDB_STORAGE_PORT", 14210);
         HttpServer server = HttpServer.create(new InetSocketAddress(host, port), 0);
-        server.createContext("/health", this::health);
-        server.createContext("/v1/quality/execute", this::qualityExecute);
-        server.createContext("/v1/records", this::records);
-        server.createContext("/v1/domain/handbooks", this::domainHandbooks);
-        server.createContext("/v1/domain/principals", this::domainPrincipals);
-        server.createContext("/v1/domain/outlines", this::domainOutlines);
-        server.createContext("/v1/domain/tech-domains", this::techDomains);
-        server.createContext("/v1/domain/build-tasks", this::buildTasks);
-        server.createContext("/v1/platform/team-groups", this::teamGroups);
-        server.createContext("/v1/platform/auth", this::platformAuth);
-        server.createContext("/v1/platform/gitlab", this::platformGitLab);
-        server.createContext("/v1/export", this::exportAll);
-        server.setExecutor(Executors.newFixedThreadPool(integer("YASDB_STORAGE_THREADS", 8)));
+        register(server, "/health", this::health);
+        register(server, "/v1/quality/execute", this::qualityExecute);
+        register(server, "/v1/records", this::records);
+        register(server, "/v1/domain/handbooks", this::domainHandbooks);
+        register(server, "/v1/domain/principals", this::domainPrincipals);
+        register(server, "/v1/domain/outlines", this::domainOutlines);
+        register(server, "/v1/domain/tech-domains", this::techDomains);
+        register(server, "/v1/domain/build-tasks", this::buildTasks);
+        register(server, "/v1/platform/team-groups", this::teamGroups);
+        register(server, "/v1/platform/auth", this::platformAuth);
+        register(server, "/v1/platform/gitlab", this::platformGitLab);
+        register(server, "/v1/export", this::exportAll);
+        // The read gate exercises ten simultaneous users. Keep the default
+        // worker and JDBC pool capacity above that level; deployments can
+        // still tune both values explicitly through environment variables.
+        server.setExecutor(Executors.newFixedThreadPool(integer("YASDB_STORAGE_THREADS", 16)));
         server.start();
         System.out.printf("YashanDB 存储服务已启动：http://%s:%d%n", host, port);
     }
 
     private Main() throws SQLException {
         this.connectionPool = new JdbcConnectionPool(jdbcUrl, username, password,
-            integer("YASDB_STORAGE_POOL_MAX", Math.max(4, integer("YASDB_STORAGE_THREADS", 8))),
+            integer("YASDB_STORAGE_POOL_MAX", Math.max(4, integer("YASDB_STORAGE_THREADS", 16))),
             integer("YASDB_STORAGE_POOL_MIN", 1));
     }
 
@@ -275,7 +299,7 @@ public final class Main {
                 "driverVersion", metadata.getDriverVersion()
             ));
         } catch (Exception error) {
-            failure(exchange, 503, "DATABASE_UNAVAILABLE", "数据库连接不可用");
+            failure(exchange, 503, "DATABASE_UNAVAILABLE", "数据库连接不可用", error);
         }
     }
 
@@ -317,7 +341,7 @@ public final class Main {
         if (!draftProjectionRebuilding.compareAndSet(false, true)) return;
         Thread worker = new Thread(() -> {
             try { warmDraftReadProjection(); }
-            catch (Exception error) { System.err.println("当前草稿读取索引重建失败"); }
+            catch (Exception error) { LOG.log(Level.WARNING, "draft_projection.rebuild_failed", error); }
             finally { draftProjectionRebuilding.set(false); }
         }, "draft-read-projection");
         worker.setDaemon(true);
@@ -349,7 +373,7 @@ public final class Main {
             exchange.getResponseHeaders().set("Server-Timing", "draft_projection;dur=" + ((System.nanoTime() - started) / 1e6));
             sendJson(exchange, 200, mapOf("success", true, "revision", revision, "payload", draft));
         } catch (Exception error) {
-            failure(exchange, 503, "DATABASE_UNAVAILABLE", "读取共享草稿失败");
+            failure(exchange, 503, "DATABASE_UNAVAILABLE", "读取共享草稿失败", error);
         }
     }
 
@@ -390,7 +414,14 @@ public final class Main {
                     failure(exchange, 404, "RECORD_NOT_FOUND", "记录不存在");
                     return;
                 }
-                String payload = readClob(result.getClob(1));
+                long clobStarted = System.nanoTime();
+                String payload = readRecordClob(result.getClob(1));
+                long clobFinished = System.nanoTime();
+                Object parsedPayload = Json.parse(payload);
+                exchange.getResponseHeaders().set("Server-Timing",
+                    "record_query;dur=" + ((clobStarted - sqlStarted) / 1e6)
+                    + ", record_clob;dur=" + ((clobFinished - clobStarted) / 1e6)
+                    + ", record_parse;dur=" + ((System.nanoTime() - clobFinished) / 1e6));
                 exchange.getResponseHeaders().set("ETag", "\"" + result.getLong(3) + "\"");
                 sendJson(exchange, 200, mapOf(
                     "success", true,
@@ -401,7 +432,7 @@ public final class Main {
                     "sha256", trimToEmpty(result.getString(2)),
                     "createdAt", timestampToString(result.getTimestamp(5)),
                     "updatedAt", timestampToString(result.getTimestamp(6)),
-                    "payload", Json.parse(payload)
+                    "payload", parsedPayload
                 ));
                 connection.commit();
                 perf("get_record", requestStarted, sqlStarted, 0);
@@ -455,7 +486,7 @@ public final class Main {
             sendJson(exchange, 409, mapOf("success", false, "error", mapOf(
                 "code", error.getMessage(),
                 "message", "记录 " + namespace + "/" + key + " 引用了" + reason + "的大纲版本 " + error.outlineVersionId
-                    + "，不能保存关联生产数据；聚合中的历史引用也会触发此校验，请核对该引用及大纲状态",
+                    + "，不能保存本次新增或修改的数据，请核对该引用及大纲状态",
                 "details", mapOf("namespace", namespace, "key", key, "outlineVersionId", error.outlineVersionId))));
         } catch (Exception error) {
             if ("OUTLINE_DELETED".equals(error.getMessage()) || "OUTLINE_NOT_FOUND".equals(error.getMessage())) {
@@ -465,9 +496,25 @@ public final class Main {
     }
 
     private long upsertRecord(Connection connection, String namespace, String key, String payload, String digest, Long expected) throws Exception {
+        // Preserve unrelated historical entities without letting a changed/new entity bypass lifecycle checks.
+        boolean incrementalReferences = "handbook-production".equals(namespace) && "state".equals(key);
+        Long observedRevision = null;
+        Object previousPayload = null;
+        if (incrementalReferences) {
+            try (PreparedStatement read = connection.prepareStatement("SELECT REVISION, PAYLOAD, DELETED FROM KC_RECORD WHERE NAMESPACE=? AND RECORD_KEY=?")) {
+                read.setString(1, namespace); read.setString(2, key);
+                try (ResultSet row = read.executeQuery()) {
+                    if (row.next()) {
+                        observedRevision = row.getLong(1);
+                        if (!"Y".equals(row.getString(3))) previousPayload = Json.parse(readClob(row.getClob(2)));
+                    }
+                }
+            }
+        }
         if (!Set.of("outline-lifecycle-audit", "auth", "outlines").contains(namespace)) {
             Set<String> ids = new java.util.TreeSet<>();
-            collectOutlineReferences(Json.parse(payload), "", ids);
+            if (incrementalReferences) collectChangedOutlineReferences(previousPayload, Json.parse(payload), "", ids);
+            else collectOutlineReferences(Json.parse(payload), "", ids);
             for (String id : ids) {
                 // Same version lock as delete/purge: a concurrent producer cannot insert a dangling reference.
                 try (PreparedStatement lock = connection.prepareStatement("SELECT DELETED_AT FROM KC_MANUAL_OUTLINE_VERSION WHERE SOURCE_REF=? OR TO_CHAR(OUTLINE_VERSION_ID)=? FOR UPDATE")) {
@@ -495,6 +542,8 @@ public final class Main {
             }
         }
         if (perfEnabled()) System.err.printf("[perf] for_update_wait_ms=%.3f%n", (System.nanoTime() - lockStarted) / 1e6);
+        // A concurrent writer may have changed the baseline used for the incremental check.
+        if (incrementalReferences && !java.util.Objects.equals(observedRevision, current)) throw new RevisionConflict();
         if (expected != null && (current == null ? expected != 0 : !expected.equals(current))) {
             throw new RevisionConflict();
         }
@@ -1351,6 +1400,14 @@ public final class Main {
         Map<String, Object> header = outlineHeader(connection, outlineId, false);
         if (header.get("deletedAt") != null) throw new SQLException("OUTLINE_NOT_FOUND");
         timings.put("header", (System.nanoTime()-started)/1e6);
+        String cacheKey = String.valueOf(header.get("internalId")) + ":" + String.valueOf(header.get("editVersion"));
+        DirectoryCacheEntry cached = directoryProjectionCache.get(cacheKey);
+        if (cached != null && cached.expiresAtNanos > System.nanoTime()) {
+            timings.put("nodes", 0d);
+            timings.put("owners", 0d);
+            timings.put("directory", 0d);
+            return cached.data;
+        }
         started = System.nanoTime();
         List<Map<String, Object>> nodes = outlineNodes(connection, ((Number) header.get("internalId")).longValue(), false);
         timings.put("nodes", (System.nanoTime()-started)/1e6);
@@ -1376,10 +1433,21 @@ public final class Main {
             if (owners.containsKey(String.valueOf(node.get("id")))) effective.add(mapOf("nodeId", node.get("id"),
                 "documentId", node.get("sourceId"), "ownerships", owners.get(String.valueOf(node.get("id")))));
         }
-        return mapOf("id", header.get("id"), "outlineId", header.get("id"), "handbookId", header.get("manualId"),
+        Map<String, Object> projected = mapOf("id", header.get("id"), "outlineId", header.get("id"), "handbookId", header.get("manualId"),
             "state", header.get("state"), "editVersion", header.get("editVersion"), "nodes", nodes,
             "governance", mapOf("effectiveDocumentAssignments", effective));
+        long expiresAt = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(integer("YASDB_DIRECTORY_CACHE_TTL_MS", 2000));
+        directoryProjectionCache.entrySet().removeIf(entry -> entry.getValue().expiresAtNanos <= System.nanoTime());
+        if (directoryProjectionCache.size() >= DIRECTORY_CACHE_MAX_ENTRIES) {
+            directoryProjectionCache.entrySet().stream()
+                .min((a, b) -> Long.compare(a.getValue().expiresAtNanos, b.getValue().expiresAtNanos))
+                .ifPresent(oldest -> directoryProjectionCache.remove(oldest.getKey()));
+        }
+        directoryProjectionCache.put(cacheKey, new DirectoryCacheEntry(projected, expiresAt));
+        return projected;
     }
+
+    private record DirectoryCacheEntry(Map<String, Object> data, long expiresAtNanos) {}
 
     private Map<String, Object> projectOutlineGovernance(Connection connection, String outlineId) throws SQLException {
         Map<String, Object> header = outlineHeader(connection, outlineId);
@@ -2205,7 +2273,26 @@ public final class Main {
         return auditId;
     }
 
-    private void collectOutlineReferences(Object value, String field, Set<String> ids) {
+    private static void collectChangedOutlineReferences(Object before, Object after, String field, Set<String> ids) {
+        if (java.util.Objects.equals(before, after)) return;
+        if (after instanceof Map<?, ?> map) {
+            // A map with its own reference is the mutation unit: changing any part revalidates it.
+            Set<String> ownReferences = new java.util.TreeSet<>();
+            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                if (!(entry.getValue() instanceof Map<?, ?>) && !(entry.getValue() instanceof List<?>))
+                    collectOutlineReferences(entry.getValue(), String.valueOf(entry.getKey()), ownReferences);
+            }
+            if (!ownReferences.isEmpty()) { collectOutlineReferences(after, field, ids); return; }
+            Map<?, ?> old = before instanceof Map<?, ?> previous ? previous : Map.of();
+            for (Map.Entry<?, ?> entry : map.entrySet())
+                collectChangedOutlineReferences(old.get(entry.getKey()), entry.getValue(), String.valueOf(entry.getKey()), ids);
+        } else if (after instanceof List<?> list) {
+            // Lists have no reliable entity key: a changed list must pass the complete reference check.
+            collectOutlineReferences(list, field, ids);
+        } else collectOutlineReferences(after, field, ids);
+    }
+
+    private static void collectOutlineReferences(Object value, String field, Set<String> ids) {
         if (value instanceof Map<?, ?> map) {
             for (Map.Entry<?, ?> entry : map.entrySet()) collectOutlineReferences(entry.getValue(), String.valueOf(entry.getKey()), ids);
         } else if (value instanceof List<?> list) {
@@ -3001,6 +3088,19 @@ public final class Main {
         }
     }
 
+    private static String readRecordClob(Clob clob) throws Exception {
+        long length = clob.length();
+        int chunk = Math.max(1, integer("YASDB_RECORD_CLOB_CHUNK_CHARS", 1024 * 1024));
+        StringBuilder value = new StringBuilder();
+        for (long offset = 1; offset <= length;) {
+            String part = clob.getSubString(offset, (int) Math.min(chunk, length - offset + 1));
+            if (part == null || part.isEmpty()) throw new SQLException("Incomplete record CLOB");
+            value.append(part);
+            offset += part.length();
+        }
+        return value.toString();
+    }
+
     private static String readClob(Clob clob) throws Exception {
         try (Reader reader = clob.getCharacterStream(); StringWriter writer = new StringWriter()) {
             reader.transferTo(writer);
@@ -3213,7 +3313,22 @@ public final class Main {
     }
 
     private static void send(HttpExchange exchange, int status, String body) throws IOException {
+        String requestId = requestId(exchange);
+        exchange.getResponseHeaders().set("X-Request-ID", requestId);
+        exchange.getResponseHeaders().set("X-Correlation-ID", correlationId(exchange, requestId));
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+        boolean gzip = bytes.length >= 1024
+            && exchange.getRequestHeaders().getFirst("Accept-Encoding") != null
+            && exchange.getRequestHeaders().getFirst("Accept-Encoding").toLowerCase(Locale.ROOT).contains("gzip");
+        if (gzip) {
+            ByteArrayOutputStream compressed = new ByteArrayOutputStream();
+            try (GZIPOutputStream output = new GZIPOutputStream(compressed)) {
+                output.write(bytes);
+            }
+            bytes = compressed.toByteArray();
+            exchange.getResponseHeaders().set("Content-Encoding", "gzip");
+            exchange.getResponseHeaders().set("Vary", "Accept-Encoding");
+        }
         exchange.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
         exchange.getResponseHeaders().set("Cache-Control", "no-store");
         exchange.sendResponseHeaders(status, bytes.length);
@@ -3223,51 +3338,166 @@ public final class Main {
     }
 
     private static void failure(HttpExchange exchange, int status, String code, String message) throws IOException {
-        send(exchange, status, "{\"success\":false,\"error\":{\"code\":\"" + escape(code) + "\",\"message\":\"" + escape(message) + "\"}}");
+        logEvent(Level.WARNING, "request.failed", exchange, status, code, null);
+        String requestId = requestId(exchange);
+        send(exchange, status, "{\"success\":false,\"error\":{\"code\":\"" + escape(code) + "\",\"message\":\"" + escape(message) + "\",\"requestId\":\"" + escape(requestId) + "\"}}");
     }
+
+    private static void failure(HttpExchange exchange, int status, String code, String message, Throwable cause) throws IOException {
+        logEvent(Level.WARNING, "request.root_cause", exchange, status, code, cause);
+        failure(exchange, status, code, message);
+    }
+
+    private static void logEvent(Level level, String event, HttpExchange exchange, int status, String code, Throwable error) {
+        Map<String, Object> value = new LinkedHashMap<>();
+        value.put("timestamp", java.time.OffsetDateTime.now().toString());
+        value.put("level", level.getName()); value.put("service", "yashandb-storage");
+        value.put("version", env("BUILD_VERSION", "unknown")); value.put("event", event);
+        value.put("requestId", requestId(exchange)); value.put("correlationId", correlationId(exchange, requestId(exchange)));
+        value.put("method", exchange.getRequestMethod()); value.put("route", exchange.getRequestURI().getPath());
+        value.put("status", status); if (code != null) value.put("errorCode", code);
+        if (error != null) {
+            value.put("errorType", error.getClass().getName()); value.put("message", safeLogText(error.getMessage()));
+            StringWriter stack = new StringWriter(); error.printStackTrace(new PrintWriter(stack));
+            value.put("stack", safeLogText(stack.toString()));
+            for (Throwable item = error; item != null; item = item.getCause()) if (item instanceof SQLException sql) {
+                value.put("sqlState", sql.getSQLState()); value.put("vendorCode", sql.getErrorCode()); break;
+            }
+        }
+        LOG.log(level, Json.stringify(value));
+    }
+
+    private static String safeLogText(String value) {
+        if (value == null) return null;
+        String result = value.replaceAll("(?i)(password|passwd|token|secret|cookie|authorization|api[_-]?key)\\s*[=:]\\s*[^,\\s}\\]]+", "$1=[REDACTED]");
+        return result.length() > 8192 ? result.substring(0, 8192) : result;
+    }
+
+    private static String requestId(HttpExchange exchange) {
+        String value = exchange.getRequestHeaders().getFirst("X-Request-ID");
+        return value != null && LOG_ID.matcher(value).matches() ? value : "req-" + UUID.randomUUID();
+    }
+
+    private static String correlationId(HttpExchange exchange, String requestId) {
+        String value = exchange.getRequestHeaders().getFirst("X-Correlation-ID");
+        return value != null && LOG_ID.matcher(value).matches() ? value : requestId;
+    }
+
+    private static void register(HttpServer server, String path, HttpHandler handler) {
+        server.createContext(path, exchange -> {
+            long started = System.nanoTime();
+            String id = requestId(exchange);
+            exchange.setAttribute("requestId", id);
+            exchange.getResponseHeaders().set("X-Request-ID", id);
+            exchange.getResponseHeaders().set("X-Correlation-ID", correlationId(exchange, id));
+            try {
+                handler.handle(exchange);
+            } catch (Exception error) {
+                logEvent(Level.SEVERE, "request.failed", exchange, 500, "INTERNAL_ERROR", error);
+                if (exchange.getResponseCode() < 0) failure(exchange, 503, "INTERNAL_ERROR", "服务处理失败", error);
+            } finally {
+                Map<String, Object> completed = new LinkedHashMap<>();
+                completed.put("timestamp", java.time.OffsetDateTime.now().toString()); completed.put("level", exchange.getResponseCode() >= 500 ? "WARNING" : "INFO");
+                completed.put("service", "yashandb-storage"); completed.put("version", env("BUILD_VERSION", "unknown")); completed.put("event", "request.completed");
+                completed.put("requestId", id); completed.put("correlationId", correlationId(exchange, id)); completed.put("method", exchange.getRequestMethod()); completed.put("route", path);
+                completed.put("status", exchange.getResponseCode()); completed.put("durationMs", (System.nanoTime() - started) / 1e6);
+                LOG.log(exchange.getResponseCode() >= 500 ? Level.WARNING : Level.INFO, Json.stringify(completed));
+            }
+        });
+    }
+
     private static void methodNotAllowed(HttpExchange exchange) throws IOException { failure(exchange, 405, "METHOD_NOT_ALLOWED", "请求方法不支持"); }
     /** Small JDK-only pool: keeps JDBC connections alive without adding a dependency. */
     private static final class JdbcConnectionPool {
         private final String url, user, password;
         private final int max, min;
         private final long borrowTimeoutMs;
+        private final int validationTimeoutSeconds;
         private final BlockingQueue<Connection> idle;
         private int created;
         JdbcConnectionPool(String url, String user, String password, int max, int min) {
             this.url = url; this.user = user; this.password = password;
             this.max = Math.max(1, max); this.min = Math.max(0, Math.min(min, this.max));
             this.borrowTimeoutMs = Math.max(100, Long.parseLong(env("YASDB_STORAGE_POOL_BORROW_TIMEOUT_MS", "5000")));
+            this.validationTimeoutSeconds = Math.max(1, integer("YASDB_STORAGE_POOL_VALIDATION_TIMEOUT_SECONDS", 3));
             this.idle = new ArrayBlockingQueue<>(this.max);
         }
         synchronized void start() throws SQLException {
-            while (created < min) idle.offer(newConnection());
+            while (created < min) { idle.offer(newConnection()); created++; }
         }
         private Connection newConnection() throws SQLException {
             Connection raw = DriverManager.getConnection(url, user, password);
-            raw.setAutoCommit(false); created++;
-            return raw;
+            try { raw.setAutoCommit(false); return raw; }
+            catch (SQLException | RuntimeException error) {
+                try { raw.close(); } catch (SQLException cleanup) { error.addSuppressed(cleanup); }
+                throw error;
+            }
         }
         Connection borrow() throws SQLException {
-            Connection raw = idle.poll();
-            if (raw == null) synchronized (this) { raw = created < max ? newConnection() : null; }
-            if (raw == null) {
-                try { raw = idle.poll(borrowTimeoutMs, TimeUnit.MILLISECONDS); } catch (InterruptedException error) { Thread.currentThread().interrupt(); throw new SQLException("等待数据库连接被中断", error); }
-                if (raw == null) throw new SQLException("数据库连接池耗尽，请稍后重试");
-            }
-            final Connection leased = raw;
-            final AtomicBoolean returned = new AtomicBoolean(false);
-            return (Connection) Proxy.newProxyInstance(Connection.class.getClassLoader(), new Class[]{Connection.class}, (proxy, method, args) -> {
-                if ("close".equals(method.getName())) {
-                    if (!returned.compareAndSet(false, true)) return null;
-                    leased.rollback();
-                    if (!idle.offer(leased)) {
-                        try { leased.close(); } finally { synchronized (JdbcConnectionPool.this) { created--; } }
-                    }
-                    return null;
+            long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(borrowTimeoutMs);
+            while (true) {
+                Connection raw = idle.poll();
+                boolean create = false;
+                if (raw == null) synchronized (this) {
+                    // Count reservations before doing slow JDBC work outside the lock.
+                    raw = idle.poll();
+                    if (raw == null && created < max) { created++; create = true; }
                 }
-                if ("isClosed".equals(method.getName())) return leased.isClosed();
-                try { return method.invoke(leased, args); } catch (java.lang.reflect.InvocationTargetException error) { throw error.getCause(); }
-            });
+                if (create) {
+                    try { raw = newConnection(); }
+                    catch (SQLException | RuntimeException error) {
+                        synchronized (this) { created--; }
+                        throw error;
+                    }
+                }
+                if (raw == null) {
+                    long remaining = deadline - System.nanoTime();
+                    if (remaining <= 0) throw new SQLException("数据库连接池耗尽，请稍后重试");
+                    // Recheck capacity when another borrower discards a broken connection.
+                    try { raw = idle.poll(Math.min(remaining, TimeUnit.MILLISECONDS.toNanos(100)), TimeUnit.NANOSECONDS); }
+                    catch (InterruptedException error) { Thread.currentThread().interrupt(); throw new SQLException("等待数据库连接被中断", error); }
+                    if (raw == null) continue;
+                }
+                if (!create && !validate(raw)) {
+                    discard(raw);
+                    if (System.nanoTime() >= deadline) throw new SQLException("数据库连接验证失败，请稍后重试");
+                    continue;
+                }
+                final Connection leased = raw;
+                final AtomicBoolean returned = new AtomicBoolean(false);
+                return (Connection) Proxy.newProxyInstance(Connection.class.getClassLoader(), new Class[]{Connection.class}, (proxy, method, args) -> {
+                    if ("close".equals(method.getName())) {
+                        if (!returned.compareAndSet(false, true)) return null;
+                        try { leased.rollback(); }
+                        catch (SQLException | RuntimeException error) {
+                            discard(leased);
+                            throw error;
+                        }
+                        if (!idle.offer(leased)) discard(leased);
+                        return null;
+                    }
+                    if ("isClosed".equals(method.getName())) return returned.get() || leased.isClosed();
+                    if (returned.get()) throw new SQLException("数据库连接已归还");
+                    try { return method.invoke(leased, args); } catch (java.lang.reflect.InvocationTargetException error) { throw error.getCause(); }
+                });
+            }
+        }
+        private boolean validate(Connection connection) {
+            try {
+                if (connection.isClosed()) return false;
+                try (Statement query = connection.createStatement()) {
+                    query.setQueryTimeout(validationTimeoutSeconds);
+                    try (ResultSet result = query.executeQuery("SELECT 1 FROM DUAL")) {
+                        if (!result.next()) return false;
+                    }
+                }
+                connection.rollback();
+                return true;
+            } catch (SQLException | RuntimeException error) { return false; }
+        }
+        private void discard(Connection connection) {
+            try { connection.close(); } catch (SQLException | RuntimeException ignored) { }
+            finally { synchronized (this) { created--; } }
         }
         synchronized void closeAll() { idle.forEach(connection -> { try { connection.close(); } catch (Exception ignored) {} }); idle.clear(); created = 0; }
     }

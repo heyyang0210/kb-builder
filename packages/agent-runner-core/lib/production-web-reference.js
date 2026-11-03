@@ -4,6 +4,8 @@ const dns = require('node:dns').promises;
 const net = require('node:net');
 const zlib = require('node:zlib');
 const cheerio = require('cheerio');
+let puppeteer;
+try { puppeteer = require('puppeteer'); } catch (_) {}
 const { HtmlAdapter } = require('./preprocessing/cleaners/html-adapter');
 
 const error = (code, message, status = 400) => Object.assign(new Error(message), { code, status });
@@ -18,7 +20,13 @@ const publicV6 = new net.BlockList();
 publicV6.addSubnet('2000::', 3, 'ipv6');
 for (const [address, prefix] of [['2001::', 23], ['2001:db8::', 32], ['2002::', 16], ['3fff::', 20]]) denied.addSubnet(address, prefix, 'ipv6');
 
+// 内部测试豁免：环境变量 BYPASS_SSRF_PRIVATE=1 时跳过私有地址检测
+const bypassSSRF = process.env.BYPASS_SSRF_PRIVATE === '1';
+// 豁免的私有 IP 列表（逗号分隔），用于特定内网站点
+const exemptPrivateIPs = (process.env.EXEMPT_PRIVATE_IPS || '').split(',').filter(Boolean);
+
 function isPublicAddress(address) {
+  if (bypassSSRF || exemptPrivateIPs.includes(address)) return true;
   const family = net.isIP(address);
   return family === 4 ? !denied.check(address, 'ipv4')
     : family === 6 && publicV6.check(address, 'ipv6') && !denied.check(address, 'ipv6');
@@ -33,7 +41,10 @@ async function resolveTarget(url, config, lookup = dns.lookup) {
   const hostname = url.hostname.replace(/^\[|\]$/g, '');
   const addresses = net.isIP(hostname) ? [{ address: hostname, family: net.isIP(hostname) }]
     : await lookup(hostname, { all: true, verbatim: true });
-  if (!addresses.length || (!trusted && addresses.some(item => !isPublicAddress(item.address)))) {
+  // 内部测试豁免：环境变量 EXEMPT_DOMAINS 中的域名跳过私有地址检查
+  const exemptDomains = (process.env.EXEMPT_DOMAINS || '').split(',').filter(Boolean);
+  const isExemptDomain = exemptDomains.some(d => hostname.endsWith(d));
+  if (!addresses.length || (!trusted && !isExemptDomain && addresses.some(item => !isPublicAddress(item.address)))) {
     throw error('AI_SOURCE_URL_DENIED', '该网址指向非公开网络地址；内部文档请使用管理员配置的来源', 403);
   }
   return addresses[0];
@@ -108,8 +119,144 @@ async function readRemoteResource(locator, config, acceptedTypes) {
   }
 }
 
+
+// SPA 页面渲染：使用 Puppeteer 等待 JavaScript 执行后提取内容
+
+// API 认证请求：通过 Bearer Token 或 Cookie 访问需要登录的 API
+async function fetchWithAuth(url, config) {
+  const authToken = process.env.SUPPORT_API_TOKEN || config.supportApiToken;
+  const cookie = process.env.SUPPORT_COOKIE || config.supportCookie;
+
+  const headers = { 'User-Agent': 'Mozilla/5.0' };
+  if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+  if (cookie) headers['Cookie'] = cookie;
+
+  return new Promise((resolve, reject) => {
+    const request = (url.protocol === 'https:' ? https : http).get(url, {
+      headers,
+      timeout: config.timeoutMs
+    }, resolve);
+    request.on('error', reject);
+    request.on('timeout', () => {
+      request.destroy();
+      reject(error('AI_SOURCE_UNAVAILABLE', 'API 请求超时', 504));
+    });
+  });
+}
+
+// 尝试从 API 获取内容（如果页面需要登录）
+
+// SSR 预渲染服务：通过预渲染 API 获取 SPA 页面的完整 HTML
+async function fetchFromSSRService(url, config) {
+  const ssrServiceUrl = process.env.SSR_SERVICE_URL || config.ssrServiceUrl;
+  if (!ssrServiceUrl) return null;
+
+  // 调用预渲染服务，例如：http://localhost:3000/render?url=...
+  const renderUrl = new URL(ssrServiceUrl);
+  renderUrl.searchParams.set('url', url.href);
+  renderUrl.searchParams.set('waitUntil', 'networkidle0');
+  renderUrl.searchParams.set('timeout', config.timeoutMs.toString());
+
+  return new Promise((resolve, reject) => {
+    const request = (renderUrl.protocol === 'https:' ? https : http).get(renderUrl, {
+      timeout: config.timeoutMs
+    }, resolve);
+    request.on('error', reject);
+    request.on('timeout', () => {
+      request.destroy();
+      reject(error('AI_SOURCE_UNAVAILABLE', 'SSR 服务请求超时', 504));
+    });
+  });
+}
+
+// 从 SSR 服务获取内容
+async function trySSRFetch(locator, config) {
+  const ssrServiceUrl = process.env.SSR_SERVICE_URL || config.ssrServiceUrl;
+  if (!ssrServiceUrl) return null;
+
+  const url = new URL(locator);
+  try {
+    const response = await fetchFromSSRService(url, config);
+    if (response.statusCode === 200) {
+      const chunks = [];
+      for await (const chunk of response) chunks.push(chunk);
+      const data = Buffer.concat(chunks);
+      const html = data.toString('utf-8');
+
+      // 检查是否返回了有效内容（不是空 app 容器）
+      if (!html.includes('<div id="app"></div>') && html.length > 500) {
+        return {
+          data,
+          contentType: 'text/html',
+          type: 'text/html',
+          url: locator
+        };
+      }
+    }
+  } catch (_) {}
+  return null;
+}
+
+async function tryApiFetch(locator, config) {
+  const apiToken = process.env.SUPPORT_API_TOKEN || config.supportApiToken;
+  const cookie = process.env.SUPPORT_COOKIE || config.supportCookie;
+
+  if (!apiToken && !cookie) return null;
+
+  // 尝试 API 路径
+  const apiPath = `/api/knowledge/${locator.split('/').pop()}`;
+  const apiUrl = new URL(apiPath, locator);
+
+  try {
+    const response = await fetchWithAuth(apiUrl, config);
+    if (response.statusCode === 200) {
+      const chunks = [];
+      for await (const chunk of response) chunks.push(chunk);
+      const data = Buffer.concat(chunks);
+      const json = JSON.parse(data.toString('utf-8'));
+      if (json.code === 0 && json.data) {
+        // 假设 API 返回 { data: { content: "...", title: "..." } }
+        return {
+          content: json.data.content || json.data.body || JSON.stringify(json.data),
+          title: json.data.title || '',
+          locator: apiUrl.href
+        };
+      }
+    }
+  } catch (_) {}
+  return null;
+}
+
+async function renderSPA(url, config) {
+  if (!puppeteer) throw error('AI_SOURCE_SPA_UNSUPPORTED', 'SPA 页面需要 Puppeteer 支持，请安装 puppeteer', 415);
+  const browser = await puppeteer.launch({
+    headless: 'new',
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+  });
+  try {
+    const page = await browser.newPage();
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
+    await page.goto(url.href, { waitUntil: 'networkidle0', timeout: config.timeoutMs });
+    // 等待主要内容加载
+    await page.waitForSelector('main, article, [role="main"], #app', { timeout: 10000 }).catch(() => {});
+    const html = await page.content();
+    return Buffer.from(html, 'utf-8');
+  } finally {
+    await browser.close();
+  }
+}
+
 async function readWebReference(locator, config) {
-    const { data, contentType, type, url: finalURL } = await readRemoteResource(locator, config,
+    // 优先尝试 API 获取（适用于需要登录的页面）
+    const apiResult = await tryApiFetch(locator, config);
+    if (apiResult) return apiResult;
+
+    // 尝试 SSR 预渲染（如果配置了 SSR 服务）
+    let ssrData = null;
+    const ssrResult = await trySSRFetch(locator, config);
+    if (ssrResult) ssrData = ssrResult;
+
+    const { data, contentType, type, url: finalURL } = ssrData || await readRemoteResource(locator, config,
       ['text/html', 'application/xhtml+xml', 'text/markdown', 'text/x-markdown', 'text/plain']);
     const url = new URL(finalURL);
     const charset = contentType.match(/charset\s*=\s*["']?([^;"'\s]+)/i)?.[1] || 'utf-8';
@@ -117,6 +264,18 @@ async function readWebReference(locator, config) {
     try { raw = new TextDecoder(charset).decode(data); }
     catch (_) { throw error('AI_SOURCE_FORMAT_UNSUPPORTED', '网页字符编码无法识别', 415); }
     if (!['text/html', 'application/xhtml+xml'].includes(type)) return { content: raw, locator: url.href, originalUrl: locator };
+
+    // 检测是否为 SPA 页面（body 为空或只有空的 app 容器，无实际内容）
+    const bodyMatch = raw.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+    const bodyContent = bodyMatch ? bodyMatch[1].trim() : '';
+    const isSPA = bodyContent === '' || /^<div id="app"[^>]*>\s*<\/div>\s*(<!--[\s\S]*?-->)?\s*$/.test(bodyContent);
+
+    if (isSPA && puppeteer) {
+      // 使用 Puppeteer 渲染 SPA 页面
+      data = await renderSPA(url, config);
+      raw = new TextDecoder(charset).decode(data);
+    }
+
     const $ = cheerio.load(raw);
     let imageBase = url;
     try { imageBase = new URL($('base[href]').first().attr('href') || '', url); } catch (_) {}
