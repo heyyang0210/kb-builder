@@ -506,7 +506,7 @@ public final class Main {
                 try (ResultSet row = read.executeQuery()) {
                     if (row.next()) {
                         observedRevision = row.getLong(1);
-                        if (!"Y".equals(row.getString(3))) previousPayload = Json.parse(readClob(row.getClob(2)));
+                        if (!"Y".equals(row.getString(3))) previousPayload = Json.parse(readRecordClob(row.getClob(2)));
                     }
                 }
             }

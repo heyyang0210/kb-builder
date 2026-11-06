@@ -175,3 +175,7 @@ HTTP 请求校验并返回 `X-Request-ID`、`X-Correlation-ID`（仅接受 1–1
 ## 2026-11-02 普通聚合记录冷读
 
 `GET /v1/records/:namespace/:key` 的 CLOB 改用批量 `getSubString`，配置 `YASDB_RECORD_CLOB_CHUNK_CHARS`（默认1048576字符）。按实际读取字符推进，空片段中止，保留原记录结构、ETag/304、提交和权限契约。200响应增加 `record_query`、`record_clob`、`record_parse` 的 Server-Timing；不含连接借用与完整序列化，不能当作全链路时间。其他 CLOB 读取入口不在本轮范围；无需DDL或迁移。回退使用原构建 Java 产物，保留进程环境与 SQL 目录。证据见 `runtime/diagnostics/task-performance-fix-20261102/`。
+
+2026-11-04：`handbook-production/state` 写入前校验旧值时，复用同一分块 CLOB 读取函数。隔离 `test_hy` 中 3.6 MB 等长内容的逐流读取为 6.3–9.3 秒，分块读取为 0.31–0.44 秒，正文逐字相等；写入、版本锁、引用校验与记录格式不变。实际平台保存和附件上传仍须在更新存储进程后分别复测。
+
+后续实际 13510 本人专用数据复测已完成：保存五次 P50/P95 为 842/846.5ms，54 字节附件上传五次为 831.2/914ms，正文及附件回读一致。运行实例已加载候选存储类；数据量扩大和并发性能需另测。原始证据位于 `runtime/diagnostics/workbench-acceptance-20261104/`。

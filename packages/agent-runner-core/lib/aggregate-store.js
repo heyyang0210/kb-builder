@@ -209,7 +209,7 @@ class DatabaseAggregateStore {
         throw error;
       }
       this.writeEpoch = (this.writeEpoch || 0) + 1;
-      this.readSnapshot = null;
+      this.readSnapshot = { etag: `"${result.revision}"`, revision: Number(result.revision), payload: structuredClone(payload) };
       this.readInFlight = null;
       return result;
     } catch (error) {
