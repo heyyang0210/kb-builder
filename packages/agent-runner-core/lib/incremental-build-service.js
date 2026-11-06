@@ -1104,7 +1104,7 @@ class IncrementalBuildService {
       this.requireReadable(session, task);
       const review = task.reviews.find(item => item.id === reviewId);
       if (!review) throw new IncrementalBuildError('REVIEW_NOT_FOUND', '审核记录不存在', 404);
-      if (task.handbookSource && !isAssignedReviewer(session, review.reviewerIds)) throw new IncrementalBuildError('REVIEWER_NOT_ASSIGNED', '请由所选审核人完成审核', 403);
+      if (task.handbookSource && !isAssignedReviewer(session, review.reviewerIds) && !hasAction(session, 'platform:manage')) throw new IncrementalBuildError('REVIEWER_NOT_ASSIGNED', '请由所选审核人或管理员完成审核', 403);
       if (review.status !== 'pending' || task.state !== 'under_review') throw new IncrementalBuildError('REVIEW_ALREADY_DECIDED', '审核已完成', 409);
       if (review.candidateDigest !== task.candidate?.digest) throw new IncrementalBuildError('REVIEW_CANDIDATE_CONFLICT', '审核对象与当前候选版本不一致', 409);
       if (Object.prototype.hasOwnProperty.call(body, 'candidateDigest') && body.candidateDigest !== task.candidate.digest) {
@@ -1121,7 +1121,7 @@ class IncrementalBuildService {
       const allApproved = candidateReviews.length > 0 && candidateReviews.every(item => item.status === 'approved');
       task.state = review.status === 'rejected' ? 'rejected' : (allApproved ? 'approved' : 'under_review');
       task.updatedAt = review.decision.decidedAt;
-      this.audit(state, 'REVIEW_DECIDED', taskId, session, { reviewId, documentId: review.documentId || null, decision: body.decision, allDocumentsApproved: allApproved });
+      this.audit(state, 'REVIEW_DECIDED', taskId, session, { reviewId, documentId: review.documentId || null, decision: body.decision, allDocumentsApproved: allApproved, responsibleIds: review.reviewerIds || [], delegatedByAdmin: !isAssignedReviewer(session, review.reviewerIds) && hasAction(session, 'platform:manage') });
       return review;
     });
   }
@@ -1200,7 +1200,7 @@ class IncrementalBuildService {
       canReassign: owner && hasAction(session, 'knowledge:write') && Boolean(task.handbookSource) && task.state === 'under_review' && hasPendingReview,
       canCancelReview: hasAction(session, 'review:manage') && task.state === 'under_review' && hasPendingReview,
       canEdit: owner && hasAction(session, 'knowledge:write') && EDITABLE_STATES.has(task.state),
-      canReview: hasAction(session, 'review:manage') && task.state === 'under_review' && hasPendingReview && (!task.handbookSource || task.reviews.some(review => review.status === 'pending' && isAssignedReviewer(session, review.reviewerIds))),
+      canReview: hasAction(session, 'review:manage') && task.state === 'under_review' && hasPendingReview && (!task.handbookSource || hasAction(session, 'platform:manage') || task.reviews.some(review => review.status === 'pending' && isAssignedReviewer(session, review.reviewerIds))),
       canPublish: hasAction(session, 'publish:manage') && task.state === 'approved',
       canRefreshDelivery: hasAction(session, 'publish:manage') && Boolean(task.handbookSource && task.mergeRequest) && task.state === 'mr_submitted',
       canComment: this.canComment(session, task),

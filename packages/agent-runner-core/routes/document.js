@@ -848,7 +848,7 @@ router.post('/preprocess', docUpload.single('file'), async (req, res) => {
     };
     fs.writeFileSync(path.join(DOC_PROCESSED_DIR, storedName), JSON.stringify(docData, null, 2), 'utf-8');
     const metadata = await loadDocMetadata();
-    metadata.documents.push({ id: docId, title: docData.title, original_name: req.file.originalname, uploaded_at: docData.uploaded_at, status: 'processed', section_count: countSections(parsed.sections) });
+    metadata.documents.push({ id: docId, title: docData.title, original_name: req.file.originalname, stored_file: storedName, uploaded_at: docData.uploaded_at, status: 'processed', section_count: countSections(parsed.sections) });
     await saveDocMetadata(metadata);
     try { fs.unlinkSync(req.file.path); } catch (e) { /* ignore */ }
     res.json({ success: true, data: docData });
@@ -883,7 +883,7 @@ router.delete('/preprocess/:id', async (req, res) => {
     const docIndex = metadata.documents.findIndex(d => d.id === req.params.id);
     if (docIndex === -1) return res.status(404).json({ success: false, message: '文档不存在' });
     const doc = metadata.documents[docIndex];
-    const storedPath = path.join(DOC_PROCESSED_DIR, doc.stored_file);
+    const storedPath = path.join(DOC_PROCESSED_DIR, doc.stored_file || `${doc.id}.json`);
     if (fs.existsSync(storedPath)) fs.unlinkSync(storedPath);
     const jsonPath = path.join(DOC_PROCESSED_DIR, `${doc.id}.json`);
     if (fs.existsSync(jsonPath)) fs.unlinkSync(jsonPath);

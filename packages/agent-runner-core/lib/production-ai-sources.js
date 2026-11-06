@@ -12,6 +12,10 @@ function createProductionAISources({ store, context, contextKey, actor, requireC
   const uploadPolicy = () => settings().upload || defaultSources().upload;
   const mcpConfig = loadMCPConfig || (() => require('./config-manager').getMCPConfig());
   const images = require('./source-image-resources').createSourceImageResources({ root: sourceImageRoot });
+  const restrictedSnapshot = source => source?.sourceType === 'url' && (
+    /(?:wappoc_appmsgcaptcha|captcha|challenge|access[-_/]?denied|login)/i.test(String(source.locator || '')) ||
+    /环境异常.{0,40}(验证|访问)|完成验证后.{0,30}(继续|访问)|验证码|人机验证|访问受限|登录后查看|请先登录/i.test(String(source.content || '').slice(0, 16000))
+  );
 
   async function list(input, session) {
     requireCapability(session, 'canEdit'); context(input);
@@ -269,6 +273,7 @@ function createProductionAISources({ store, context, contextKey, actor, requireC
       if (!source || source.contextKey !== contextKey(input) || source.createdBy.id !== actor(session).id) {
         fail('AI_SOURCE_NOT_FOUND', '当前文档下不存在可引用的资料', 404);
       }
+      if (restrictedSnapshot(source)) fail('AI_SOURCE_ACCESS_RESTRICTED', '这份网页快照是登录、验证或访问限制页面，不能用于生成。请重新读取，或移除后上传已取得的本地文档。', 422);
       const identity = JSON.stringify([source.sourceType, source.mcpServiceId || '', source.mcpKnowledgeBaseId || '', source.locator]);
       if (versions.has(identity) && versions.get(identity) !== source.contentDigest) {
         fail('AI_SOURCE_VERSION_CONFLICT', '已选资料包含同一来源的不同内容版本，请取消旧版本引用后重试', 409);

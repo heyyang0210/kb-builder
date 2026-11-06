@@ -1,5 +1,9 @@
 # 知识中心配置
 
+本地工作台责任人预览默认关闭。仅隔离本地测试部署可设置 `KNOWLEDGE_CENTER_LOCAL_OWNER_PREVIEW=1`；还须以具有 `platform:manage` 的账号登录，工作台才显示责任人下拉框。切换只读取其他责任人的待办摘要，不改变会话或操作权限；大纲来源暂标记为部分数据。正式部署不要启用该开关。
+
+`coverage-targets.json` 记录知识中心管理平台各运行时的测试覆盖率目标：行 100%、分支 95%。这是测试门禁配置，不属于业务运行配置；Node、浏览器前端和 Java 均需分别给出可核对的源码分母和采集结果，不能以单一运行时通过代替全平台验收。统一测试入口已接入三类采集器，但当前均未达到目标。
+
 文档生产任务默认在服务启动时扫描过期租约；设置 `KNOWLEDGE_PRODUCTION_RECOVERY_INTERVAL_MS` 为正整数毫秒可启用周期恢复。周期扫描复用同一恢复事务，服务关闭或测试结束时应调用 `stopRecoveryScheduler()`；该配置不提供多实例调度 claim。
 
 `content-rules.json#/outlineTemplate` 定义自然路径大纲模板的版本、六列表头、最大深度、Markdown 扩展名、介绍文件前缀和 SQL 示例源。每行完整路径、不继承空白；Excel 行序是文档顺序。根介绍和目录介绍均须在各自文档范围内排首位。正式模板和下载样例统一存放在 `knowledge/outlines/`，不得生成到仓库根目录；`templatePath` 与 `sampleDownloadPath` 是仓库内资源路径，`sampleDownloadName` 仅是用户下载文件名。示例下载副本通过 `tools/repository/generate-sql-outline-sample.js` 生成，原始 Excel 不修改。
@@ -64,6 +68,8 @@
 
 `content-rules.json#/productionQuality` 配置内容检查规则版本、提示词、超时与输出上限。工作台检查弹窗勾选联合检查后，质量服务在 SQL 验证之前复用 ValidatorAgent 和统一模型配置。模型必须返回四项检查及带位置、等级和处理要求的问题；响应无效、模型不可用、模板或来源缺失不能记为通过。报告区分 `contentQuality.gate` 和 `sqlGate`，请求联合检查时整体 gate 同时要求两者通过；不自动批准审核发布。规则摘要与 ValidatorAgent 实现摘要随报告保留。
 
+`template-mapping.json` 配置模板适用范围分析：规则按优先级确定性匹配手册、栏目路径、文档类型或标题；仅未命中/冲突项调用默认 Agent。提示词、超时、证据上限和并发度均可配置。AI 结果是待确认建议，不能自动覆盖规则或已有映射。修改规则需提供当前版本号；生产映射记录保存操作者决定、规则版本、AI 运行标识和理由；确认时还会核对分析批次与当前发布大纲版本。Codex 与普通 LLM 均受同一超时和取消信号控制。不要将手册名称、模板名称和业务关键词硬编码在服务中。
+
 `productionAI.sources.pingcodeOrigins` 将 PingCode 页面网址转交既有资料服务，仍受 `pingcodeSpaces` 限制；其他公开网址通过通用网页正文读取。参考资料可多选，作者确定的引用优先级随任务快照保留，数值 1 为最高。
 
 真实网关内容检查使用 `productionQuality.timeoutMs=120000`，超过期限仍按未执行返回，不能降级为通过。
@@ -102,7 +108,9 @@ AI 写作页面统一显示文档生成（generate）、内容修订（polish）
 
 运行配置完整性：独立资料处理工作区已移除，`product.json` 不再保留指向该工作区的旧模块引用；否则文档服务在严格 Profile 校验阶段无法启动。配置变更必须通过 `loadProfile()` 语义校验。
 
-AI写作参考文档上传使用 `productionAI.sources.upload` 限制扩展名、原始与解压大小、解析时限、工作线程内存和PDF页数；正文仍受maxBytes限制。`referenceListCollapsedCount` 控制主面板默认展示条数。上传生成独立来源快照，不保存原文件，不作为草稿附件；DOCX内嵌图片复用来源托管。referenceOrder冻结人工来源与默认MCP分组的顺序，1为最高；缺省保持旧版追加顺序。
+AI写作参考文档上传使用 `productionAI.sources.upload` 限制扩展名、原始与解压大小、解析时限、工作线程内存和PDF页数；正文仍受maxBytes限制。`referenceListCollapsedCount` 控制参考文档面板默认展示条数，当前为4，超过时显示剩余条数与展开入口。上传生成独立来源快照，不保存原文件，不作为草稿附件；DOCX内嵌图片复用来源托管。referenceOrder冻结人工来源与默认MCP分组的顺序，1为最高；缺省保持旧版追加顺序。
+
+本地参考文档上传白名单包含 `html`、`htm`；HTML 在隔离解析 Worker 中提取正文并转成 Markdown，脚本和非正文节点不进入引用，外部图片不自动抓取。上传仍受原始文件上限、解析时限和最终正文上限约束。
 
 ### 生产引用只读盘点
 
@@ -133,3 +141,7 @@ content-rules.json的gitlabParticipants配置项目可访问用户分页大小�
 ## 任务管理 V2（2026-10-30）
 
 content-rules.json 的 documentTasks 提供初始 defaultOwnerId、reasonOptions 与 pingcodeProjectUrl。默认人177为真实目录何灿稳定ID；运行配置后续在任务聚合中维护，变更不重派已有任务。
+
+`template-mapping.json` 仅保存 AI 分析策略；已发布规则以模板映射聚合为事实源，管理员通过适用文档页提交版本化规则。
+
+公开网页的 `productionAI.sources.webMaxResponseBytes` 限制解压后原始 HTML（默认 2 MiB），`maxBytes` 继续限制最终可引用正文（256 KiB）。验证页、登录墙和访问限制页返回 `AI_SOURCE_ACCESS_RESTRICTED`（422），不保存来源快照；需要认证的资料使用专用连接器或本地文档上传。

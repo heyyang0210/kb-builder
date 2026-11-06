@@ -69,6 +69,7 @@
       "testCaseRoot": "knowledge/references/test-cases",
       "timeoutMs": 15000,
       "maxBytes": 262144,
+      "webMaxResponseBytes": 2097152,
       "maxConfirmed": 8,
       "maxLocatorChars": 2048,
       "images": {
@@ -162,13 +163,15 @@
         ],
         "fallback": "legacy-default-or-unconfigured"
       },
-      "referenceListCollapsedCount": 3,
+      "referenceListCollapsedCount": 4,
       "upload": {
         "extensions": [
           "md",
           "markdown",
           "txt",
           "sql",
+          "html",
+          "htm",
           "pdf",
           "docx"
         ],

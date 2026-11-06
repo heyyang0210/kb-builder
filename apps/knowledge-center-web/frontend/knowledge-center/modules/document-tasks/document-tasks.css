@@ -4,6 +4,29 @@
 @media(max-width:700px){.task-scope-dialog{width:calc(100vw - 20px)}.task-scope-dialog header{padding:15px 12px 0}.task-scope-steps{gap:4px;font-size:10px}.task-scope-steps li{gap:3px}.task-scope-steps span{width:16px;height:16px}.task-choice-heading,.task-scope-dialog .task-choices [data-choice]{grid-template-columns:minmax(0,1fr) 112px;gap:6px}.task-scope-dialog footer{padding:12px;flex-wrap:wrap}.task-scope-footer-note{width:100%}}
 .task-scope-dialog footer button[value=confirm]{background:var(--color-primary,#0369a1);border-color:var(--color-primary,#0369a1);color:#fff}.task-scope-dialog footer button[value=confirm]:disabled{opacity:.6}
 .document-task-table th:first-child,.document-task-table td:first-child{min-width:112px}.task-number{white-space:nowrap}
+.document-task-table td.task-output-cell{min-width:190px;width:220px;max-width:260px}
+.task-output-list{display:flex;flex-wrap:wrap;align-content:flex-start;gap:4px 9px;min-width:0}
+.task-output-link{display:inline-flex;align-items:center;color:var(--appearance-accent,#335c98);font-size:12px;line-height:1.5;text-decoration:none;white-space:nowrap}
+.task-output-document{display:inline-block;max-width:100%;overflow:hidden;text-overflow:ellipsis;vertical-align:bottom}
+.task-output-link:hover{text-decoration:underline}
+.task-output-link:focus-visible{outline:2px solid var(--appearance-accent,#335c98);outline-offset:2px}
+.task-output-more{width:100%;min-width:0;font-size:12px}
+.task-output-more summary{width:max-content;max-width:100%;color:var(--appearance-accent,#335c98);cursor:pointer}
+.task-output-more summary:focus-visible{outline:2px solid var(--appearance-accent,#335c98);outline-offset:2px}
+.task-output-more>div{display:flex;flex-wrap:wrap;gap:4px 9px;max-height:150px;margin-top:4px;overflow-y:auto}
+@media(max-width:700px){
+  .document-task-table,.document-task-table tbody{display:block;width:100%}
+  .document-task-table thead{display:none}
+  .document-task-table tr.task-data-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:0 10px;padding:10px;border-bottom:1px solid var(--appearance-border,#e6e8eb)}
+  .document-task-table tr.task-data-row td{min-width:0;padding:3px 0;border:0}
+  .document-task-table tr.task-data-row td:first-child{grid-column:1;grid-row:1;min-width:0}
+  .document-task-table tr.task-data-row td:nth-child(2){grid-column:1;grid-row:2;min-width:0;overflow-wrap:anywhere}
+  .document-task-table tr.task-data-row td:nth-child(3){grid-column:2;grid-row:1/3;max-width:90px}
+  .document-task-table tr.task-data-row td.task-output-cell{display:block!important;grid-column:1/-1;width:100%;max-width:none;padding-top:8px}
+  .document-task-table tr.task-data-row td:last-child{display:block!important;grid-column:1/-1}
+  .task-output-list{max-width:none}
+  .task-output-link{max-width:100%}
+}
 
 /* 已确认的任务计划日期选择器：列表紧凑展示，窄屏通过详情编辑。 */
 .task-plan-date{display:inline-flex;align-items:center;gap:7px;white-space:nowrap;border:0;border-radius:4px;padding:5px 0;background:transparent;color:var(--color-text-secondary,#556477);font:inherit;font-size:12px;cursor:pointer}.task-plan-date:hover{color:var(--color-primary,#0369a1)}.task-plan-date svg{width:14px;height:14px}.document-task-table td:last-child a{display:inline-flex;align-items:center;gap:4px;white-space:nowrap;color:var(--color-primary,#0369a1);text-decoration:none}.document-task-table td:last-child a svg{width:13px;height:13px}.task-plan-calendar{width:min(320px,calc(100vw - 32px));font-size:13px;box-shadow:0 15px 50px #1b2c4926}.task-plan-calendar::backdrop{background:#26364c22}.task-plan-calendar header{padding:16px 16px 0;border:0}.task-plan-calendar h2{font-size:15px}.task-plan-calendar .task-modal-body{padding:16px}.task-calendar-month{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}.task-calendar-month button,.task-calendar-grid button{font:inherit;background:transparent;color:inherit;border:0;border-radius:5px;padding:8px;cursor:pointer}.task-calendar-month button:hover,.task-calendar-grid button:hover{background:var(--color-surface-muted,#edf5fa)}.task-calendar-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:3px;text-align:center}.task-calendar-grid>span{padding:8px 0;color:var(--color-text-secondary,#7c8795);font-size:12px}.task-calendar-grid button{padding:8px 0}.task-plan-calendar .task-calendar-grid button[aria-pressed=true],.task-plan-calendar button[type=submit]{background:var(--color-primary,#0369a1);color:#fff}.task-plan-calendar .task-calendar-clock{display:flex;flex-direction:row;align-items:center;justify-content:space-between;margin:15px 0 0}.task-calendar-clock input{width:110px}.task-plan-calendar footer{padding:12px 16px;gap:8px;font-size:13px}.task-plan-calendar footer>span{flex:1}.task-plan-calendar footer .button{font-size:13px;padding:7px}.task-plan-calendar button:disabled{opacity:.6;cursor:wait}.task-plan-date:focus-visible,.task-plan-calendar button:focus-visible{outline:2px solid var(--color-primary,#0369a1);outline-offset:2px}

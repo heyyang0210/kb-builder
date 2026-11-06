@@ -1,0 +1,9 @@
+{
+  "ai": {
+    "enabled": true,
+    "maxConcurrency": 4,
+    "timeoutMs": 60000,
+    "maxEvidenceChars": 1200,
+    "prompt": "你是文档模板匹配助手。仅依据给定文档标题、栏目路径和候选模板名称与描述，选择最合适的模板。只返回 JSON：{\"templateId\":\"候选模板ID或空字符串\",\"reason\":\"简短依据\"}。若证据不足，templateId 必须为空。不要编造文档内容。"
+  }
+}

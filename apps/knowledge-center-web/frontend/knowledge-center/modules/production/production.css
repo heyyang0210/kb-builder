@@ -1622,7 +1622,7 @@ body.immersive-writing #main { max-width: none; padding: 0; }
 .handbook-writing-page .handbook-reference-modal .handbook-reference-tools select { width: 132px; min-width: 0; font-size: 12px; min-height: 32px; padding: 4px 6px; }
 .handbook-writing-page .handbook-reference-modal .handbook-writing-reference [data-ai-source-list],
 .handbook-writing-page .handbook-reference-modal .handbook-writing-reference [data-ai-source-list].is-expanded { overflow-y: auto; overflow-x: hidden; min-height: 0; max-height: none; flex: 0 1 auto; scrollbar-width: thin; scrollbar-gutter: stable; }
-.handbook-writing-page .handbook-reference-modal .handbook-writing-reference [data-ai-source-list] section { grid-template-columns: 20px minmax(0, 1fr) 30px auto; grid-template-rows: auto auto; min-height: 66px; box-sizing: border-box; padding: 9px 4px; gap: 2px 8px; }
+.handbook-writing-page .handbook-reference-modal .handbook-writing-reference [data-ai-source-list] section { grid-template-columns: 20px minmax(0, 1fr) 30px auto; grid-template-rows: auto auto; min-height: 62px; box-sizing: border-box; padding: 7px 4px; gap: 2px 8px; }
 .handbook-writing-page .handbook-reference-modal .handbook-source-drag-handle { grid-column: 1; grid-row: 1 / 3; align-self: center; border: 0; background: transparent; padding: 0; width: 20px; min-width: 0; min-height: 32px; font-size: 18px; }
 .handbook-writing-page .handbook-reference-modal .handbook-source-drag-handle:disabled { cursor: default; opacity: .45; }
 .handbook-writing-page .handbook-reference-modal [data-ai-source-list] label { grid-column: 2; min-width: 0; }

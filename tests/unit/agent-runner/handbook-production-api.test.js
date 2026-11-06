@@ -80,7 +80,9 @@ async function setup(t, options = {}) {
       manualStatusStore: {},
       brandIconStore: {},
       domainStore: {},
+      ...(options.templateStore ? { templateStore: options.templateStore } : {}),
     },
+    ...(options.templateMappingService ? { templateMappingService: options.templateMappingService } : {}),
     moduleRegistry: { get: name => name === 'auth' ? authModule : null },
     handbookProductionService: service,
     modelGovernance,
@@ -130,7 +132,7 @@ async function setup(t, options = {}) {
       body: contentType.includes('application/json') ? await response.json() : Buffer.from(await response.arrayBuffer()),
     };
   }
-  return { request, origin: `http://127.0.0.1:${server.address().port}`, setSession(session) { options.session = session; } };
+  return { request, store, origin: `http://127.0.0.1:${server.address().port}`, setSession(session) { options.session = session; } };
 }
 
 function draftPath(suffix = '') {
@@ -149,6 +151,44 @@ test('认证后端短暂失败返回503且后续真实HTTP请求仍可恢复', a
   unavailable = false;
   const recovered = await api.request('GET', `${draftPath()}?outlineVersionId=v1&branch=main`);
   assert.equal(recovered.status, 200);
+});
+
+test('网页验证页经真实来源 API 拒绝且不产生可引用快照', async t => {
+  const upstream = http.createServer((req, res) => {
+    if (req.url === '/article') { res.writeHead(302, { location: '/mp/wappoc_appmsgcaptcha' }); res.end(); return; }
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end('<html><body>环境异常，完成验证后即可继续访问</body></html>');
+  });
+  await new Promise(resolve => upstream.listen(0, '127.0.0.1', resolve));
+  t.after(() => { upstream.closeAllConnections(); upstream.close(); });
+  const rules = structuredClone(require('../../../config/knowledge-center/content-rules.json').productionAI);
+  rules.sources.lookup = async () => [{ address: '1.1.1.1', family: 4 }];
+  rules.sources.receive = (url, _address, signal) => new Promise((resolve, reject) => {
+    const request = http.get({ hostname: '127.0.0.1', port: upstream.address().port, path: url.pathname, signal }, resolve);
+    request.on('error', reject);
+  });
+  const api = await setup(t, { browser: true, ai: { rules } });
+  const result = await api.request('POST', '/handbooks/HB-1/documents/doc-1/ai-sources', JSON.stringify({
+    outlineVersionId: 'outline-v1', branch: 'main', sourceType: 'url', locator: 'https://mp.weixin.qq.com/article',
+  }), { 'content-type': 'application/json' });
+  assert.equal(result.status, 422);
+  assert.equal(result.body.error.code, 'AI_SOURCE_ACCESS_RESTRICTED');
+  assert.deepEqual(api.store.read().aiSources || {}, {});
+  const browser = await require('playwright').chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  await page.goto(`${api.origin}/browser-fixture`);
+  await page.evaluate(async () => {
+    const { openProductionAIDialog } = await import('/knowledge-center/modules/production/production-ai-dialog.js');
+    openProductionAIDialog({ context: { handbookId: 'HB-1', documentId: 'doc-1', outlineVersionId: 'outline-v1', branch: 'main' },
+      operation: 'update', editVersion: 0, getMarkdown: () => '原文', baselineDigest: async () => '', onAdopt() {} });
+  });
+  await page.locator('[data-ai-source-add]').click();
+  await page.locator('[data-ai-source-locator]').fill('https://mp.weixin.qq.com/article');
+  await page.locator('[data-ai-source-preview]').click();
+  await page.getByRole('alert').filter({ hasText: '本地文档' }).waitFor();
+  assert.equal(await page.locator('[data-ai-source-type] option[value="local-document"]').count(), 1);
+  assert.equal(await page.locator('[data-ai-source-upload]').count(), 1);
 });
 
 test('来源图片经真实 HTTP 托管，失效图片降级，跨文档访问受限', async t => {
@@ -175,15 +215,21 @@ test('来源图片经真实 HTTP 托管，失效图片降级，跨文档访问�
   await new Promise(resolve => upstream.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise(resolve => { upstream.close(resolve); upstream.closeAllConnections(); }));
   const origin = `http://127.0.0.1:${upstream.address().port}`;
+  const webOrigin = 'http://public.example';
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'source-image-test-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const rules = structuredClone(require('../../../config/knowledge-center/content-rules.json').productionAI);
-  rules.sources.urlOrigins = [origin];
+  rules.sources.urlOrigins = [webOrigin];
   rules.sources.allowPublicWeb = false;
+  rules.sources.lookup = async () => [{ address: '1.1.1.1', family: 4 }];
+  rules.sources.receive = (url, _address, signal) => new Promise((resolve, reject) => {
+    const request = http.get({ hostname: '127.0.0.1', port: upstream.address().port, path: url.pathname, signal }, resolve);
+    request.on('error', reject);
+  });
   rules.sources.pingcodeSpaces = ['YASDOC'];
   const api = await setup(t, { browser: true, ai: { rules, sourceImageRoot: root, pingcodeBaseURL: origin } });
   const endpoint = '/handbooks/HB-1/documents/doc-1/ai-sources';
-  const preview = await api.request('POST', endpoint, JSON.stringify({ outlineVersionId: 'outline-v1', branch: 'main', sourceType: 'url', locator: `${origin}/page` }), { 'content-type': 'application/json' });
+  const preview = await api.request('POST', endpoint, JSON.stringify({ outlineVersionId: 'outline-v1', branch: 'main', sourceType: 'url', locator: `${webOrigin}/page` }), { 'content-type': 'application/json' });
   assert.equal(preview.status, 201, JSON.stringify(preview.body));
   const source = preview.body.data;
   assert.match(source.content, /正文/);
@@ -191,7 +237,7 @@ test('来源图片经真实 HTTP 托管，失效图片降级，跨文档访问�
   assert.match(source.content, /图片未能读取：伪造图/);
   const ready = source.imageResources.find(image => image.status === 'ready');
   assert.ok(ready, JSON.stringify(source.imageResources));
-  assert.ok(!JSON.stringify(source).includes(`${origin}/image`));
+  assert.ok(!JSON.stringify(source).includes(`${webOrigin}/image`));
   assert.equal(imageRequests, 1);
   const pingcode = await api.request('POST', endpoint, JSON.stringify({ outlineVersionId: 'outline-v1', branch: 'main', sourceType: 'pingcode-design', locator: 'YASDOC/page1' }), { 'content-type': 'application/json' });
   assert.equal(pingcode.status, 201, JSON.stringify(pingcode.body));
@@ -222,7 +268,7 @@ test('来源图片经真实 HTTP 托管，失效图片降级，跨文档访问�
       operation: 'update', editVersion: 0, getMarkdown: () => '旧说明', baselineDigest: async () => '', onAdopt() {} });
   });
   await page.locator('[data-ai-source-add]').click();
-  await page.locator('[data-ai-source-locator]').fill(`${origin}/page`);
+  await page.locator('[data-ai-source-locator]').fill(`${webOrigin}/page`);
   await page.locator('[data-ai-source-preview]').click();
   await page.locator('[data-ai-source-list] [data-source-id]:not([data-source-id="knowledge-mcp"]) input[type="checkbox"]').waitFor({ state: 'attached' });
   const popupPromise = page.waitForEvent('popup');
@@ -487,6 +533,18 @@ const json = (value, key) => ({
     'content-type': 'application/json',
     ...(key ? { 'idempotency-key': key } : {}),
   },
+});
+
+test('停用模板的旧映射不会自动填入新生成任务', async t => {
+  const api = await setup(t, {
+    templateStore: { get: () => ({ status: 'disabled' }) },
+    templateMappingService: { resolve: () => ({ status: 'active', templateId: 'disabled-template', decisionId: 'old-decision' }) },
+  });
+  const input = json({ outlineVersionId: 'outline-v1', branch: 'main', operation: 'rewrite', markdown: '正文',
+    editVersion: 0, range: { start: 0, end: 2 } }, 'disabled-mapping');
+  const result = await api.request('POST', '/handbooks/HB-1/documents/doc-1/ai-jobs', input.body, input.headers);
+  assert.notEqual(result.status, 202);
+  assert.equal(result.body.error.code, 'AI_TEMPLATE_REQUIRED');
 });
 
 test('AI HTTP creates isolated candidates and explicitly adopts once into the shared draft', async t => {
@@ -1021,9 +1079,15 @@ test('AI source HTTP freezes confirmed URL and MCP snapshots and rejects cross-d
   await new Promise(resolve => sourceServer.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise(resolve => { sourceServer.close(resolve); sourceServer.closeAllConnections(); }));
   const sourceOrigin = `http://127.0.0.1:${sourceServer.address().port}`;
+  const webOrigin = 'http://public.example';
   const rules = structuredClone(require('../../../config/knowledge-center/content-rules.json').productionAI);
-  rules.sources.urlOrigins = [sourceOrigin];
+  rules.sources.urlOrigins = [webOrigin];
   rules.sources.allowPublicWeb = false;
+  rules.sources.lookup = async () => [{ address: '1.1.1.1', family: 4 }];
+  rules.sources.receive = (url, _address, signal) => new Promise((resolve, reject) => {
+    const request = http.get({ hostname: '127.0.0.1', port: sourceServer.address().port, path: url.pathname, signal }, resolve);
+    request.on('error', reject);
+  });
   let modelPayload;
   const api = await setup(t, { browser: true, ai: { rules,
     loadMCPConfig: async () => ({ server_url: `${sourceOrigin}/mcp` }),
@@ -1037,7 +1101,7 @@ test('AI source HTTP freezes confirmed URL and MCP snapshots and rejects cross-d
   assert.equal(available.status, 200, JSON.stringify(available.body));
   assert.deepEqual(available.body.data.items.map(item => item.available), [true, false, false, true, true, true]);
   assert.equal(available.body.data.items.find(item => item.sourceType === 'test-case-library').available, true);
-  const preview = await post(sourcesPath, { sourceType: 'url', locator: `${sourceOrigin}/document` });
+  const preview = await post(sourcesPath, { sourceType: 'url', locator: `${webOrigin}/document` });
   assert.equal(preview.status, 201, JSON.stringify(preview.body));
   assert.equal(preview.body.data.content, '# 引用资料\n参数值为 42。');
   const mcp = await post(sourcesPath, { sourceType: 'knowledge-mcp', locator: '参数说明' });
@@ -1065,7 +1129,7 @@ test('AI source HTTP freezes confirmed URL and MCP snapshots and rejects cross-d
   assert.equal(modelPayload.sources[0].contentDigest, preview.body.data.contentDigest);
   assert.equal(candidate.body.data.metadata.sourceSnapshots[1].content, '知识库原文，参数值 42。');
   sourceText = '# 引用资料\n参数值更新为 43。';
-  const refreshed = await post(sourcesPath, { sourceType: 'url', locator: `${sourceOrigin}/document#fragment` });
+  const refreshed = await post(sourcesPath, { sourceType: 'url', locator: `${webOrigin}/document#fragment` });
   assert.equal(refreshed.status, 201);
   assert.equal(refreshed.body.data.locator, preview.body.data.locator);
   const callsBeforeConflict = modelCalls;
@@ -1086,12 +1150,12 @@ test('AI source HTTP freezes confirmed URL and MCP snapshots and rejects cross-d
   assert.equal((await post(aiPath, { ...generation, confirmedSourceIds: ['client-invented-source'] }, 'invented')).status, 404);
   assert.equal((await post(sourcesPath, { sourceType: 'url', locator: 'http://unconfigured.invalid/document' })).status, 403);
   for (const pathname of ['/redirect', '/html']) {
-    const parsed = await post(sourcesPath, { sourceType: 'url', locator: `${sourceOrigin}${pathname}` });
+    const parsed = await post(sourcesPath, { sourceType: 'url', locator: `${webOrigin}${pathname}` });
     assert.equal(parsed.status, 201, JSON.stringify(parsed.body));
     assert.ok(parsed.body.data.content.trim());
   }
   for (const pathname of ['/missing']) {
-    const failed = await post(sourcesPath, { sourceType: 'url', locator: `${sourceOrigin}${pathname}` });
+    const failed = await post(sourcesPath, { sourceType: 'url', locator: `${webOrigin}${pathname}` });
     assert.ok(failed.status >= 400, pathname);
     assert.ok(!JSON.stringify(failed.body).includes('secret-error-body'));
   }
@@ -1112,7 +1176,7 @@ test('AI source HTTP freezes confirmed URL and MCP snapshots and rejects cross-d
       operation: 'update', editVersion: 0, getMarkdown: () => '旧说明', baselineDigest: async () => '', onAdopt() {} });
   });
   await page.locator('[data-ai-source-add]').click();
-  await page.locator('[data-ai-source-locator]').fill(`${sourceOrigin}/document`);
+  await page.locator('[data-ai-source-locator]').fill(`${webOrigin}/document`);
   await page.locator('[data-ai-source-preview]').click();
   await page.locator('[data-ai-source-list] [data-source-id]:not([data-source-id="knowledge-mcp"]) input[type="checkbox"]').waitFor({ state: 'attached' });
   assert.equal(await page.locator('[data-ai-source-list] [data-source-id]:not([data-source-id="knowledge-mcp"]) input[type="checkbox"]').isChecked(), true);
@@ -1281,7 +1345,7 @@ test('PingCode design and test sources use fixed service, allowed spaces and con
   await page.locator('[data-ai-source-list] [data-source-id]:not([data-source-id="knowledge-mcp"]) input[type="checkbox"]').waitFor({ state: 'attached' });
   assert.match(await page.locator('[data-ai-source-info]').textContent(), /资料已添加/);
   await page.getByRole('button', { name: '关闭添加参考文档' }).click();
-  const expandSources = page.getByRole('button', { name: /^展开全部/ });
+  const expandSources = page.locator('[data-ai-references-toggle]');
   if (await expandSources.isVisible()) await expandSources.click();
   const previewButton = page.locator('[data-ai-source-list] [data-source-id]:not([data-source-id="knowledge-mcp"]) button[aria-label^="预览资料："]');
   const popupPromise = page.waitForEvent('popup');
@@ -1303,7 +1367,7 @@ test('PingCode design and test sources use fixed service, allowed spaces and con
   }, null, 2));
 });
 
-test('混合元信息经真实 HTTP 与浏览器预览、人工采用、再次生成及保存保留证据', async t => {
+test('混合元信息经真实 HTTP 与浏览器预览、人工采用、再次生成及保存保留证据', { timeout: 90000 }, async t => {
   const sourceText = '引用原句。参数为42。';
   const sourceServer = http.createServer((_req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' }); res.end(sourceText);
@@ -1311,9 +1375,15 @@ test('混合元信息经真实 HTTP 与浏览器预览、人工采用、再次�
   await new Promise(resolve => sourceServer.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise(resolve => { sourceServer.close(resolve); sourceServer.closeAllConnections(); }));
   const sourceOrigin = `http://127.0.0.1:${sourceServer.address().port}`;
+  const webOrigin = 'http://public.example';
   const rules = structuredClone(require('../../../config/knowledge-center/content-rules.json').productionAI);
-  rules.sources.urlOrigins = [sourceOrigin];
+  rules.sources.urlOrigins = [webOrigin];
   rules.sources.allowPublicWeb = false;
+  rules.sources.lookup = async () => [{ address: '1.1.1.1', family: 4 }];
+  rules.sources.receive = (url, _address, signal) => new Promise((resolve, reject) => {
+    const request = http.get({ hostname: '127.0.0.1', port: sourceServer.address().port, path: url.pathname, signal }, resolve);
+    request.on('error', reject);
+  });
   let calls = 0;
   const api = await setup(t, { browser: true, ai: { rules, generate: async messages => {
     calls++;
@@ -1335,7 +1405,7 @@ test('混合元信息经真实 HTTP 与浏览器预览、人工采用、再次�
       getMarkdown: () => '旧说明', baselineDigest: async () => '', onAdopt: result => { window.adoptedResult = result; } });
   });
   await page.locator('[data-ai-source-add]').click();
-  await page.locator('[data-ai-source-locator]').fill(`${sourceOrigin}/reference.md`);
+  await page.locator('[data-ai-source-locator]').fill(`${webOrigin}/reference.md`);
   await page.locator('[data-ai-source-preview]').click();
   assert.equal(await page.locator('[data-ai-source-list] [data-source-id]:not([data-source-id="knowledge-mcp"]) input[type="checkbox"]').isChecked(), true);
   await page.getByRole('button', { name: '关闭添加参考文档' }).click();
@@ -1503,9 +1573,11 @@ test('默认 MCP 真实 HTTP 与浏览器：五类来源、免填地址、自动
   await page.locator('[data-ai-source-add]').click();
   await page.locator('[data-reference-type="knowledge-mcp"]').click();
   assert.equal(await page.locator('[data-ai-source-locator]').isVisible(), false);
-  assert.equal(await page.locator('[data-ai-source-preview]').isVisible(), false);
+  assert.equal(await page.locator('[data-ai-source-preview]').isVisible(), true);
+  assert.equal(await page.locator('[data-ai-source-preview]').textContent(), '已引用');
+  assert.equal(await page.locator('[data-ai-source-preview]').isDisabled(), true);
   assert.equal(await page.locator('[data-ai-mcp-service]').count(), 0);
-  assert.match(await page.locator('[data-ai-source-info]').textContent(), /默认参与生成/);
+  assert.match(await page.locator('[data-ai-source-info]').textContent(), /按写作要求检索知识库/);
   const reportRoot = path.join(repositoryRoot, 'runtime/test-results/production-ai-default-mcp'); fs.mkdirSync(reportRoot, { recursive: true });
   await page.screenshot({ path: path.join(reportRoot, 'automatic-mcp-settings.png'), fullPage: true });
   await page.getByRole('button', { name: '关闭添加参考文档' }).click();

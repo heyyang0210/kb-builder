@@ -16,7 +16,7 @@ function actor(ctx) { return clean(ctx.session?.user?.principalId || ctx.session
 function actions(ctx) { return ctx.session?.user?.allowedActions || ctx.session?.allowedActions || []; }
 function admin(ctx) { return actions(ctx).includes('platform:manage'); }
 function writable(ctx) { if (!actions(ctx).includes('knowledge:write')) fail('FORBIDDEN', '没有任务处理权限', 403); }
-function owns(ctx, id) { writable(ctx); if (actor(ctx) !== id) fail('FORBIDDEN', '只有当前责任人可以确认此层范围', 403); }
+function owns(ctx, id) { writable(ctx); if (actor(ctx) !== id && !admin(ctx)) fail('FORBIDDEN', '只有当前责任人或管理员可以确认此层范围', 403); }
 function canEditPlan(ctx, task) { return actions(ctx).includes('knowledge:write') && (admin(ctx) || actor(ctx) === task.ownerId); }
 function requireAdmin(ctx) { if (!admin(ctx)) fail('FORBIDDEN', '只有管理员可以维护配置与责任人', 403); }
 function person(ctx, id, required = true) {
@@ -35,8 +35,31 @@ function reason(config, value, detail, confirmed) {
   if (value === 'other' && !clean(detail)) fail('REASON_DETAIL_REQUIRED', '选择其他时必须补充理由');
   return { id: value, detail: clean(detail) || null };
 }
+function assignSubtaskNumbers(task, documents) {
+  const previous = [task.decomposition, ...(task.scopeHistory || [])]
+    .flatMap(scope => scope?.handbooks || (scope?.documents ? [scope] : [])).flatMap(book => book.documents || []);
+  const used = new Set(previous.map(doc => Number(doc.subtaskNumber)).filter(n => Number.isSafeInteger(n) && n > 0));
+  let next = Math.max(Number(task.nextSubtaskNumber) || 1, ...used, 0);
+  if (used.has(next)) next++;
+  const current = new Set();
+  for (const doc of documents) {
+    if (!Number.isSafeInteger(doc.subtaskNumber) || doc.subtaskNumber < 1) {
+      while (used.has(next) || current.has(next)) next++;
+      doc.subtaskNumber = next++;
+    }
+    if (current.has(doc.subtaskNumber)) fail('SUBTASK_NUMBER_CONFLICT', '同一工单的子任务编号重复', 409);
+    current.add(doc.subtaskNumber);
+    used.add(doc.subtaskNumber);
+  }
+  task.nextSubtaskNumber = Math.max(next, Number(task.nextSubtaskNumber) || 1);
+}
 function audit(state, ctx, task, type, previous, next, note) {
-  const event = { type, at: now(), operatorId: actor(ctx), previous: structuredClone(previous ?? null), next: structuredClone(next ?? null), reason: clean(note) || null };
+  const responsibleId = ['ticket_scope', 'no_change_complete'].includes(type) ? task?.ownerId
+    : ['handbook_scope', 'handbook_owner'].includes(type) ? previous?.ownerId || next?.ownerId
+      : ['new_document_prepare', 'new_document_link', 'review_link', 'document_owner'].includes(type) ? previous?.ownerId || next?.ownerId || null : null;
+  const event = { type, at: now(), operatorId: actor(ctx), responsibleId: responsibleId || null,
+    delegatedByAdmin: Boolean(responsibleId && actor(ctx) !== responsibleId && admin(ctx)),
+    previous: structuredClone(previous ?? null), next: structuredClone(next ?? null), reason: clean(note) || null };
   if (task) { task.assignmentHistory ||= []; task.assignmentHistory.push(event); task.updatedAt = event.at; task.revision = Number(task.revision || 0) + 1; if (['ticket_scope', 'handbook_scope'].includes(type)) task.noChangeConfirmation = null; }
   state.audits.push({ number: task?.number || null, ...event }); state.revision++;
 }
@@ -88,12 +111,20 @@ function preview(state, rows) {
   return { items, summary, digest: hash({ revision: state.revision, rows }), revision: state.revision };
 }
 function reviewDocuments(review) { return review.handbookSource?.documents || []; }
+function matchesReviewScope(review, book, documentId) {
+  // The task catalog's targetVersion currently identifies the repository
+  // branch. Review businessVersion is a separate database version.
+  return review.handbookId === book.id
+    && review.handbookSource?.branch === book.targetVersion
+    && reviewDocuments(review).some(document => String(document.documentId) === String(documentId)
+      && document.branch === book.targetVersion);
+}
 function delivery(ctx, book, doc) {
   if (!doc.reviewTaskId) return { status: 'pending', label: doc.kind === 'new' && !doc.createdDocumentId ? '待创建并发布大纲文档' : '待编写、保存与送审' };
   try {
     const review = ctx.reviewService.get(ctx.session, doc.reviewTaskId);
     const id = doc.createdDocumentId || doc.id;
-    if (review.handbookId !== book.id || review.businessVersion !== book.targetVersion || !reviewDocuments(review).some(d => String(d.documentId) === id)) return { status: 'pending', label: '审核关联范围或版本不一致' };
+    if (!matchesReviewScope(review, book, id)) return { status: 'pending', label: '审核关联范围或分支不一致' };
     return { ...review.completion, reviewState: review.state, reviewTaskId: review.id, mergeRequest: review.mergeRequest || null, label: review.state === 'rejected' ? '审核退回，请修订并重新送审' : review.completion.label };
   } catch (error) { return { status: 'pending', label: '关联审核不可读取，请检查权限或重新关联', code: error.code }; }
 }
@@ -108,7 +139,7 @@ function project(ctx, raw, config) {
   let hasDocuments = false;
   for (const book of scope.handbooks || []) {
     book.ownerName = ctx.people.find(p => p.id === book.ownerId)?.displayName || book.ownerId;
-    book.canEdit = Boolean(scope.confirmed && actor(ctx) === book.ownerId && actions(ctx).includes('knowledge:write'));
+    book.canEdit = Boolean(scope.confirmed && (actor(ctx) === book.ownerId || admin(ctx)) && actions(ctx).includes('knowledge:write'));
     book.canAssign = actions(ctx).includes('knowledge:write') && (admin(ctx) || actor(ctx) === task.ownerId);
     book.completed = Boolean(book.confirmed && book.impact === 'not_involved' && book.reason);
     if (book.impact === 'involved') {
@@ -117,7 +148,7 @@ function project(ctx, raw, config) {
         doc.completion = delivery(ctx, book, doc);
         doc.ownerName = ctx.people.find(p => p.id === doc.ownerId)?.displayName || doc.ownerId;
         doc.canAssign = Boolean(scope.confirmed && actions(ctx).includes('knowledge:write') && (admin(ctx) || actor(ctx) === book.ownerId));
-        doc.canEdit = Boolean(scope.confirmed && book.confirmed && actor(ctx) === doc.ownerId && actions(ctx).includes('knowledge:write'));
+        doc.canEdit = Boolean(scope.confirmed && book.confirmed && (actor(ctx) === doc.ownerId || admin(ctx)) && actions(ctx).includes('knowledge:write'));
         doc.writingUrl = book.targetVersion && doc.kind !== 'new' ? `/knowledge-center/production/handbook/${encodeURIComponent(book.id)}?documentId=${encodeURIComponent(doc.createdDocumentId || doc.id)}&branch=${encodeURIComponent(book.targetVersion)}&taskNumber=${encodeURIComponent(task.number)}` : null;
         if (doc.createdDocumentId) doc.writingUrl = `/knowledge-center/production/handbook/${encodeURIComponent(book.id)}?documentId=${encodeURIComponent(doc.createdDocumentId)}&branch=${encodeURIComponent(book.targetVersion)}&taskNumber=${encodeURIComponent(task.number)}`;
       }
@@ -128,11 +159,103 @@ function project(ctx, raw, config) {
   if (!hasDocuments) done = Boolean(scope.confirmed && task.noChangeConfirmation && (scope.ticketImpact === 'not_involved' || (scope.handbooks?.length && scope.handbooks.every(b => b.confirmed && b.impact === 'not_involved' && b.reason))));
   task.status = done ? 'completed' : !scope.confirmed ? 'pending_scope' : 'in_progress';
   task.endTime = done ? (task.noChangeConfirmation?.at || (scope.handbooks || []).flatMap(b => b.documents || []).map(d => d.completion?.completedAt).filter(Boolean).sort().at(-1) || null) : null;
-  task.canConfirm = actor(ctx) === task.ownerId && actions(ctx).includes('knowledge:write');
+  task.canConfirm = (actor(ctx) === task.ownerId || admin(ctx)) && actions(ctx).includes('knowledge:write');
   task.canAdmin = admin(ctx);
   task.pending = !scope.confirmed ? ['责任人确认工单范围'] : scope.ticketImpact === 'not_involved' ? done ? [] : ['责任人确认不涉及完成'] : (scope.handbooks || []).flatMap(b => !b.confirmed ? [`${b.name}：手册负责人确认范围`] : b.impact === 'involved' ? b.documents.filter(d => d.completion.status !== 'completed').map(d => `${d.name}：${d.completion.label}`) : []);
   if (!done && !hasDocuments && scope.confirmed && !task.pending.length) task.pending.push('责任人确认所有手册不涉及并完成');
+  task.nextAction = null;
+  if (task.canConfirm && !scope.confirmed) task.nextAction = { label: '确认工单范围', action: 'ticket-scope' };
+  if (!task.nextAction && !done) {
+    const allScopesNotInvolved = scope.ticketImpact === 'not_involved' && scope.ticketReason
+      || scope.ticketImpact === 'involved' && scope.handbooks?.length
+        && scope.handbooks.every(book => book.confirmed && book.impact === 'not_involved' && book.reason);
+    if (task.canConfirm && !hasDocuments && scope.confirmed && !done && allScopesNotInvolved) task.nextAction = { label: '确认不涉及并完成', action: 'complete' };
+    const ownedBook = (scope.handbooks || []).find(book => book.canEdit && !book.confirmed);
+    if (ownedBook) task.nextAction = { label: '确认文档范围', action: 'book-scope', handbookId: ownedBook.id };
+    if (!task.nextAction) {
+      const ownedDocument = (scope.handbooks || []).flatMap(book => (book.documents || []).map(document => ({ book, document })))
+        .find(({ book, document }) => document.canEdit && book.confirmed && document.completion?.reviewState !== 'under_review');
+      if (ownedDocument?.document.writingUrl) task.nextAction = { label: ownedDocument.document.completion?.reviewState === 'rejected' ? '修订文档' : '进入文档生产', url: ownedDocument.document.writingUrl };
+      else if (ownedDocument?.document.kind === 'new') task.nextAction = { label: '创建/关联新增文档', action: 'new-document', handbookId: ownedDocument.book.id, documentId: ownedDocument.document.id };
+    }
+    if (!task.nextAction) {
+      const reviewDocument = (scope.handbooks || []).flatMap(book => (book.documents || []).map(document => ({ book, document })))
+        .find(({ document }) => document.reviewTaskId && document.completion?.status !== 'completed'
+          && ['under_review', 'approved', 'mr_submitted'].includes(document.completion?.reviewState));
+      if (reviewDocument) task.nextAction = { label: reviewDocument.document.completion?.reviewState === 'under_review' ? '查看审核进度' : '查看交付进度', url: `/knowledge-center/review?taskId=${encodeURIComponent(reviewDocument.document.reviewTaskId)}&documentId=${encodeURIComponent(reviewDocument.document.createdDocumentId || reviewDocument.document.id)}` };
+    }
+  }
   return task;
+}
+function mine(ctx, state) {
+    const current = actor(ctx);
+    const canWrite = actions(ctx).includes('knowledge:write');
+    if (!canWrite) return { items: [], total: 0, following: [] };
+    const items = [];
+    const following = [];
+    for (const raw of state.tasks) {
+      if (!visible(ctx, raw) || raw.status === 'completed') continue;
+      const scope = raw.decomposition || {};
+      const relevant = raw.ownerId === current || (scope.handbooks || []).some(book => book.ownerId === current || (book.documents || []).some(doc => doc.ownerId === current));
+      if (!relevant) continue;
+      const task = project(ctx, raw, state.config);
+      if (task.status === 'completed') continue;
+      const follow = () => {
+        const base = { number: task.number, plannedStartTime: task.plannedStartTime, plannedEndTime: task.plannedEndTime,
+          updatedAt: task.updatedAt || task.createdAt, queue: 'waiting', state: 'waiting', source: '任务管理',
+          url: `/knowledge-center/document-tasks?task=${encodeURIComponent(task.number)}` };
+        const add = (id, kind, title, status, book, doc) => following.push({ ...base, id, kind,
+          taskType: { assign: '任务管理', document: '文档生产', review: '文档审核', merge: '文档发布' }[kind],
+          title, status, subtaskNumber: doc?.subtaskNumber || null,
+          version: book?.targetVersion || task.version || '',
+          lineage: { ticketNumber: task.number, handbookId: book?.id, handbookName: book?.name, documentId: doc?.id, documentName: doc?.name } });
+        if (!scope.confirmed || scope.ticketImpact !== 'involved') {
+          if (task.ownerId !== current || scope.confirmed) add(`wait:ticket:${task.number}`, 'assign', task.description || task.number, '等待他人确认范围');
+          return;
+        }
+        let added = false;
+        for (const book of task.decomposition?.handbooks || []) {
+          if (task.ownerId !== current && book.ownerId !== current && !(book.documents || []).some(doc => doc.ownerId === current)) continue;
+          if (!book.confirmed) {
+            if (book.ownerId !== current) { add(`wait:handbook:${task.number}:${book.id}`, 'assign', book.name || task.description, '等待他人确认范围', book); added = true; }
+            continue;
+          }
+          for (const doc of book.documents || []) {
+            if (task.ownerId !== current && book.ownerId !== current && doc.ownerId !== current) continue;
+            if (doc.completion?.status === 'completed') continue;
+            const phase = doc.completion?.reviewState;
+            const kind = ['approved', 'mr_submitted', 'merged', 'published'].includes(phase) ? 'merge'
+              : phase === 'under_review' ? 'review' : 'document';
+            const status = kind === 'merge' ? doc.completion?.label || '等待合并或回读'
+              : kind === 'review' ? '等待他人审核' : '等待他人编写';
+            if (kind === 'document' && doc.ownerId === current) continue;
+            add(`wait:document:${task.number}:${book.id}:${doc.id}`, kind, doc.name || task.description, status, book, doc);
+            added = true;
+          }
+        }
+        if (!added && !items.some(item => item.number === task.number)) add(`wait:ticket:${task.number}`, 'assign', task.description || task.number, '等待他人处理');
+      };
+      const base = { number: task.number, subtaskNumber: null, taskType: '任务管理', plannedStartTime: task.plannedStartTime, plannedEndTime: task.plannedEndTime, description: task.description, source: '任务管理', updatedAt: task.updatedAt || task.createdAt, url: `/knowledge-center/document-tasks?task=${encodeURIComponent(task.number)}` };
+      if (task.ownerId === current && !scope.confirmed) items.push({ ...base, id: `ticket:${task.number}:scope`, kind: 'assign', actionLabel: '确认工单范围', title: `确认 ${task.number} 的工单范围`, context: task.description || task.number, status: '待处理', state: 'pending', version: task.version || '', url: `${base.url}&action=ticket-scope`, lineage: { ticketNumber: task.number } });
+      if (task.ownerId === current && scope.confirmed && task.nextAction?.action === 'complete') items.push({ ...base, id: `ticket:${task.number}:complete`, kind: 'assign', actionLabel: '确认不涉及并完成', title: `确认 ${task.number} 不涉及文档并完成`, context: task.description || task.number, status: '待处理', state: 'pending', version: task.version || '', url: `${base.url}&action=complete`, lineage: { ticketNumber: task.number } });
+      if (!scope.confirmed || scope.ticketImpact !== 'involved') { follow(); continue; }
+      for (const book of task.decomposition.handbooks || []) {
+        const context = `${task.number} · ${book.name}`;
+        if (book.ownerId === current && !book.confirmed) items.push({ ...base, id: `handbook:${task.number}:${book.id}:scope`, kind: 'assign', actionLabel: '确认文档范围', title: `确认 ${book.name} 的文档范围`, context, status: '待处理', state: 'pending', version: book.targetVersion || task.version || '', url: `${base.url}&action=book-scope&handbookId=${encodeURIComponent(book.id)}`, lineage: { ticketNumber: task.number, handbookId: book.id, handbookName: book.name } });
+        if (!book.confirmed || book.impact !== 'involved') continue;
+        for (const doc of book.documents || []) {
+          if (doc.ownerId !== current || doc.completion?.status === 'completed') continue;
+          if (['under_review', 'approved', 'mr_submitted', 'merged', 'published', 'completed'].includes(doc.completion?.reviewState)) continue;
+          const needsCreation = doc.kind === 'new' && !doc.createdDocumentId;
+          const writingUrl = needsCreation ? `${base.url}&action=new-document&handbookId=${encodeURIComponent(book.id)}&documentId=${encodeURIComponent(doc.id)}` : doc.writingUrl || base.url;
+          items.push({ ...base, subtaskNumber: doc.subtaskNumber || null, taskType: '文档生产', id: `document:${task.number}:${book.id}:${doc.id}:write`, kind: 'document', actionLabel: needsCreation ? '创建/关联新增文档' : doc.completion?.reviewState === 'rejected' ? '修订文档' : '进入文档生产', title: needsCreation ? `创建 ${doc.name}` : `编写或修订 ${doc.name}`, context: `${context} · ${doc.name}`, status: doc.completion?.reviewState === 'rejected' ? '需修订' : '待处理', state: doc.completion?.reviewState === 'rejected' ? 'risk' : 'pending', version: book.targetVersion || '', url: writingUrl, lineage: { ticketNumber: task.number, handbookId: book.id, handbookName: book.name, documentId: doc.id, documentName: doc.name } });
+        }
+      }
+      follow();
+    }
+    items.sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
+    following.sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
+    return { items, total: items.length, following };
 }
 function createDocumentTaskRouter(options = {}) {
   const router = express.Router();
@@ -175,6 +298,7 @@ function createDocumentTaskRouter(options = {}) {
   router.get('/context', route(async (req, ctx) => ({ people: ctx.people, handbooks: ctx.handbooks, actorId: actor(ctx), canAdmin: admin(ctx), canWrite: actions(ctx).includes('knowledge:write'), config: (await read()).config })));
   router.get('/catalog', route(async (req, ctx) => { handbook(ctx, clean(req.query.handbookId)); return ctx.catalog(clean(req.query.handbookId)); }));
   router.get('/config', route(async () => (await read()).config));
+  router.get('/mine', route(async (req, ctx) => mine(ctx, await read())));
   router.put('/config', route((req, ctx) => {
     requireAdmin(ctx);
     return mutate(req, ctx, state => {
@@ -305,7 +429,11 @@ function createDocumentTaskRouter(options = {}) {
       if (new Set(documents.map(d => d.id)).size !== documents.length) fail('DOCUMENT_DUPLICATE', '文档不能重复');
       if (confirmed && input.impact === 'involved' && (!documents.length || !input.targetVersion)) fail('DOCUMENT_SCOPE_REQUIRED', '涉及文档时请选择文档、负责人和真实目标版本');
       if (previous.confirmed && previous.documents.some(d => input.impact !== 'involved' || !documents.some(next => next.id === d.id))) fail('SCOPE_WITHDRAWAL_REQUIRED', '已分派文档不能直接移除，请保留现有范围');
+      if (confirmed && input.impact === 'involved' && task.decomposition.handbooks.some(item => (item.documents || []).some(document => !document.subtaskNumber))) fail('MIGRATION_REQUIRED', '旧文档任务需先完成编号预检与回填', 409);
+      if (confirmed && input.impact === 'involved') assignSubtaskNumbers(task, documents);
       Object.assign(book, { impact: input.impact || null, reason: input.impact === 'not_involved' ? reason(state.config, input.reasonId, input.reasonDetail, confirmed) : null, confirmed, targetVersion: input.targetVersion || null, documents: input.impact === 'involved' ? documents : [] });
+      const activeNumbers = task.decomposition.handbooks.flatMap(item => item.documents || []).map(item => item.subtaskNumber).filter(Boolean);
+      if (new Set(activeNumbers).size !== activeNumbers.length) fail('SUBTASK_NUMBER_CONFLICT', '同一工单的子任务编号重复', 409);
       audit(state, ctx, task, 'handbook_scope', previous, book, input.reason); return project(ctx, task, state.config);
     });
   }));
@@ -315,7 +443,7 @@ function createDocumentTaskRouter(options = {}) {
     const doc = book?.documents.find(d => d.id === req.query.documentId);
     if (!doc) fail('DOCUMENT_NOT_FOUND', '文档不属于当前任务');
     const documentId = doc.createdDocumentId || doc.id;
-    return ctx.reviewService.list(ctx.session, { handbookId: book.id, businessVersion: book.targetVersion }).map(summary => ctx.reviewService.get(ctx.session, summary.id)).filter(review => review.handbookId === book.id && review.businessVersion === book.targetVersion && reviewDocuments(review).some(d => String(d.documentId) === documentId)).map(review => ({ id: review.id, name: review.name || review.title, state: review.state }));
+    return ctx.reviewService.list(ctx.session, { handbookId: book.id }).map(summary => ctx.reviewService.get(ctx.session, summary.id)).filter(review => matchesReviewScope(review, book, documentId)).map(review => ({ id: review.id, name: review.name || review.title, state: review.state }));
   }));
   router.post('/:number/documents/:key/prepare-new', route(async (req, ctx) => {
     const state = await read(), { identity, digest } = writeIdentity(req, ctx);
@@ -352,7 +480,7 @@ function createDocumentTaskRouter(options = {}) {
     if (!doc || !task.decomposition.confirmed || !book.confirmed) fail('DOCUMENT_NOT_FOUND', '请先确认文档范围'); owns(ctx, doc.ownerId);
     const review = ctx.reviewService.get(ctx.session, clean(req.body.reviewTaskId));
     const documentId = doc.createdDocumentId || doc.id;
-    if (review.handbookId !== book.id || review.businessVersion !== book.targetVersion || !reviewDocuments(review).some(d => String(d.documentId) === documentId)) fail('REVIEW_SCOPE_MISMATCH', '审核任务的手册、文档或目标版本不一致');
+    if (!matchesReviewScope(review, book, documentId)) fail('REVIEW_SCOPE_MISMATCH', '审核任务的手册、文档或目标分支不一致');
     const previous = doc.reviewTaskId; doc.reviewTaskId = review.id; audit(state, ctx, task, 'review_link', previous, { handbookId: book.id, documentId, reviewTaskId: review.id }); return project(ctx, task, state.config);
   })));
   router.post('/:number/complete', route((req, ctx) => mutate(req, ctx, state => {
@@ -367,8 +495,11 @@ function createDocumentTaskRouter(options = {}) {
   return router;
 }
 function createDocumentTaskHandler(options = {}) {
-  const app = express(); app.disable('x-powered-by'); app.use('/', createDocumentTaskRouter(options));
-  return (req, res, context) => { req[CONTEXT] = context; req.url = req.url.slice('/knowledge-center/api/document-tasks'.length) || '/'; if (req.url.startsWith('?')) req.url = `/${req.url}`; app(req, res); };
+  const router = createDocumentTaskRouter(options);
+  const app = express(); app.disable('x-powered-by'); app.use('/', router);
+  const handler = (req, res, context) => { req[CONTEXT] = context; req.url = req.url.slice('/knowledge-center/api/document-tasks'.length) || '/'; if (req.url.startsWith('?')) req.url = `/${req.url}`; app(req, res); };
+  handler.store = router.store;
+  return handler;
 }
 module.exports = createDocumentTaskRouter;
-Object.assign(module.exports, { createDocumentTaskRouter, createDocumentTaskHandler, emptyState, project, preview });
+Object.assign(module.exports, { createDocumentTaskRouter, createDocumentTaskHandler, emptyState, project, preview, mine });

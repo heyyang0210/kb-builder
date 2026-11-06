@@ -24,6 +24,22 @@ async function parse() {
     if (content.includes('\0')) throw new Error('文本包含二进制内容');
     return { content };
   }
+  if (['html', 'htm'].includes(extension)) {
+    const raw = new TextDecoder('utf-8', { fatal: true }).decode(buffer);
+    if (raw.includes('\0') || !/<[a-z][\s\S]*?>/i.test(raw)) throw new Error('HTML 文件格式无效');
+    const $ = require('cheerio').load(raw);
+    $('script, style, noscript, template, nav, footer, header, aside, form, iframe, svg, [hidden], [aria-hidden="true"]').remove();
+    $('a[href]').each((_, element) => {
+      const link = $(element);
+      const href = link.attr('href') || '';
+      if (!/^https?:\/\//i.test(href) && !href.startsWith('#')) link.replaceWith(link.text());
+    });
+    const main = $('main, article, [role="main"]').first();
+    if (main.length) $('body').empty().append(main);
+    const content = new (require('./preprocessing/cleaners/html-adapter').HtmlAdapter)()
+      .htmlToMarkdown($, { imageResolver: () => null });
+    return { content };
+  }
   if (extension === 'pdf') {
     if (buffer.subarray(0, 5).toString() !== '%PDF-') throw new Error('PDF 文件格式无效');
     const result = await require('pdf-parse/lib/pdf-parse')(buffer, { max: policy.maxPdfPages });

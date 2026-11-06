@@ -13,7 +13,7 @@ export const views = {
 };
 
 export const appState = {
-  templateProjection: null, documentTaskProjection: null,
+  templateProjection: null, documentTaskProjection: null, myTasksProjection: null,
   activeView: 'dashboard', contextProjection: null, projection: null, cleaningProjection: null, outlineProjection: null, assetCatalog: null, incrementalProjection: null, domainBuildTaskProjection: null, reviewProjection: null, gitlabProjection: { connections: [] }, gitlabAccountProjection: null,
   outlineListState: { search: '', statusFilter: '', scrollPosition: 0 },
   selectedPermissionUserId: null,

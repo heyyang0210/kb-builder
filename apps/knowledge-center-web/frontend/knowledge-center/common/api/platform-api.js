@@ -44,6 +44,14 @@ export const loadTemplateVersion = (id, version) => templateRequest(`/${encodeUR
 export const restoreTemplateDraft = (id, version) => templateRequest(`/${encodeURIComponent(id)}/restore-draft`, templateJson('POST', { version }));
 export const updateTemplateMetadata = (id, payload) => templateRequest(`/${encodeURIComponent(id)}`, templateJson('PATCH', payload));
 export const setTemplateEnabled = (id, enabled) => templateRequest(`/${encodeURIComponent(id)}/${enabled ? 'restore' : 'disable'}`, { method: 'POST' });
+export const loadTemplateMappingRules = () => templateRequest('/mapping-rules');
+export const previewTemplateMappingRules = payload => templateRequest('/mapping-rules/preview', templateJson('POST', payload));
+export const saveTemplateMappingRules = payload => templateRequest('/mapping-rules', templateJson('PUT', payload));
+export const loadTemplateMappings = params => templateRequest(`/mappings?${new URLSearchParams(params)}`);
+export const analyzeTemplateMappings = handbookId => templateRequest('/mappings/analyze', templateJson('POST', { handbookId }));
+export const loadTemplateMappingBatch = id => templateRequest(`/mappings/${encodeURIComponent(id)}`);
+export const cancelTemplateMappingBatch = id => templateRequest(`/mappings/${encodeURIComponent(id)}/cancel`, { method: 'POST' });
+export const decideTemplateMapping = payload => templateRequest('/mappings/decisions', templateJson('POST', payload));
 const templateJson = (method, payload) => ({ method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
 async function templateRequest(suffix, options = {}) {
   const response = await fetch(`${templatesEndpoint}${suffix}`, { cache: 'no-store', credentials: 'same-origin', ...options });

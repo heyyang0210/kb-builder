@@ -1,4 +1,7 @@
-const { createDocumentTaskHandler } = require('./document-tasks');
+const { createDocumentTaskHandler, mine: projectDocumentTaskMine } = require('./document-tasks');
+const { queryWorkbench } = require('./workbench-query');
+const { numberForReview } = require('../lib/workbench-numbering');
+const { userProjection } = require('../lib/knowledge-center-auth');
 const { REVIEW_ASSET_STATUSES } = require('../lib/knowledge-asset-utils');
 const http = require('http');
 const crypto = require('crypto');
@@ -13,6 +16,8 @@ const { GitLabOAuthError, config: gitLabOAuthConfig, start: startGitLabOAuth, ca
 const { ASSET_STATUS_LABELS, systemAssetStatus, assetStatus, projectAsset, queryKnowledgeAssets: queryKnowledgeAssetsBase, isPlatformAdmin } = require('../lib/knowledge-asset-utils');
 const { matchCleaningEndpoint } = require('../lib/knowledge-center-cleaning-contract');
 const { createTemplateStore } = require('../lib/template-store');
+const { createTemplateMappingService } = require('../lib/template-mapping-service');
+const { parseTemplateMappingModelOutput } = require('../lib/template-mapping-model-output');
 const { readTemplateUpload } = require('../lib/template-import');
 const { previewPersonnelImport, readPersonnelUpload, templateWorkbook } = require('../lib/personnel-import');
 const { REPOSITORY_ROOT } = require('../lib/repo-paths');
@@ -174,6 +179,26 @@ function createKnowledgeCenterHandler(options) {
   const mcpGovernance = options.mcpGovernance || require('../lib/platform-management/mcp-governance').createMcpGovernance();
   const agentGovernance = options.agentGovernance || require('../lib/platform-management/agent-governance').createAgentGovernance({ legacyModels: modelGovernance, legacyMcp: mcpGovernance });
   const codexRunner = options.codexRunner || require('../lib/agent-runtime/codex-runner').createCodexRunner();
+  const templateMapping = options.templateMappingService || createTemplateMappingService({ templateStore,
+    analyzeAI: async ({ document, templates, prompt, timeoutMs, signal }) => {
+      const selection = (await agentGovernance.available()).defaultSelection;
+      if (!selection) throw new Error('尚未配置默认模型');
+      const config = agentGovernance.resolve(selection).config;
+      const messages = [{ role: 'system', content: prompt }, { role: 'user', content: JSON.stringify({ document: { title: document.title, path: document.path, type: document.type }, templates }) }];
+      let content = '';
+      const timed = AbortSignal.timeout(timeoutMs || 60000);
+      const combined = signal ? AbortSignal.any([signal, timed]) : timed;
+      if (config.executor === 'codex') {
+        const result = await codexRunner.run(messages, { ...config, mcp: { services: [] } }, { signal: combined });
+        content = result.content;
+      } else {
+        const Client = require('../lib/llm-client');
+        for await (const chunk of new Client(config).chatStream(messages, { signal: combined })) content += chunk.content || '';
+      }
+      const value = parseTemplateMappingModelOutput(content);
+      return { templateId: value.templateId, reason: value.reason, modelRunId: crypto.randomUUID() };
+    },
+  });
   const databaseMode = String(process.env.KNOWLEDGE_STORAGE_MODE || 'file').toLowerCase() === 'database';
   const qualityAdapter = require('../lib/yashandb-quality-adapter');
   const defaultQualityDatabase = databaseMode && qualityAdapter.isolatedQualityDatabaseConfigured() ? qualityAdapter.createYashanDBQualityAdapter({
@@ -289,6 +314,20 @@ function createKnowledgeCenterHandler(options) {
 
   function templateResponse(res, content, status = 200) { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify({ success: true, data: content })); }
 
+  async function mappingPreviewCatalogs(handbookId, candidateRules, session) {
+    if (!options.documentTaskCatalog) throw Object.assign(new Error('文档目录不可用'), { status: 503 });
+    const allRules = [...templateMapping.rules().rules, ...(Array.isArray(candidateRules) ? candidateRules : [])];
+    const global = allRules.some(rule => !rule?.when?.handbookId);
+    const scopedIds = allRules.map(rule => rule?.when?.handbookId).filter(Boolean).map(String);
+    const assets = global ? await readKnowledgeAssetsAsync() : null;
+    const ids = [...new Set([handbookId, ...scopedIds, ...(assets?.handbooks || []).filter(book => !book.archivedAt).map(book => String(book.handbookId || book.id))])].sort();
+    const visible = session.visibleHandbookIds || session.user?.visibleHandbookIds;
+    if (Array.isArray(visible) && ids.some(id => !visible.map(String).includes(id))) {
+      throw Object.assign(new Error('全部受影响手册须可访问，才能发布规则'), { status: 403, code: 'MAPPING_PREVIEW_SCOPE_FORBIDDEN' });
+    }
+    return Promise.all(ids.map(async id => ({ handbookId: id, catalog: await options.documentTaskCatalog(id, session) })));
+  }
+
   function sendBrandIcon(res) {
     try {
       const icon = brandIconStore.current();
@@ -305,6 +344,59 @@ function createKnowledgeCenterHandler(options) {
     const startedAt = process.hrtime.bigint();
     perfTrace('template request start', { method: req.method, path: parsed.pathname, id });
     try {
+      if (parts[3] === 'mapping-rules' || parts[3] === 'mappings') {
+        const sub = parts[4]; const action = req.method === 'GET' ? 'template:read' : 'template:manage';
+        if (forbidUnlessTemplateAction(res, session, action)) return;
+        if (parts[3] === 'mapping-rules') {
+          if (req.method === 'GET') return templateResponse(res, templateMapping.rules());
+          if (req.method === 'POST' && sub === 'preview') {
+            const input = await readJsonBody(req); const handbookId = String(input.handbookId || '');
+            const visible = session.visibleHandbookIds || session.user?.visibleHandbookIds;
+            if (!handbookId || Array.isArray(visible) && !visible.map(String).includes(handbookId)) throw Object.assign(new Error('手册不可访问'), { status: 403 });
+            return templateResponse(res, templateMapping.previewRules(input, await mappingPreviewCatalogs(handbookId, input.rules, session), handbookId));
+          }
+          if (req.method === 'PUT') {
+            const input = await readJsonBody(req); const handbookId = String(input.handbookId || '');
+            const visible = session.visibleHandbookIds || session.user?.visibleHandbookIds;
+            if (!handbookId || Array.isArray(visible) && !visible.map(String).includes(handbookId)) throw Object.assign(new Error('手册不可访问'), { status: 403 });
+            const preview = templateMapping.previewRules(input, await mappingPreviewCatalogs(handbookId, input.rules, session), handbookId);
+            if (input.candidateDigest !== preview.candidateDigest || input.outlineVersionId !== preview.outlineVersionId) throw Object.assign(new Error('预览已过期，请重新预览'), { status: 409, code: 'MAPPING_PREVIEW_STALE' });
+            return templateResponse(res, templateMapping.saveRules(input, session.user?.id));
+          }
+        }
+        if (parts[3] === 'mappings') {
+          const handbookId = String(parsed.searchParams.get('handbookId') || '');
+          const visible = session.visibleHandbookIds || session.user?.visibleHandbookIds;
+          const allowed = id => !Array.isArray(visible) || visible.map(String).includes(id);
+          if (req.method === 'GET' && !sub) {
+            if (!handbookId) throw Object.assign(new Error('请指定手册'), { status: 400, code: 'MAPPING_HANDBOOK_REQUIRED' });
+            if (handbookId && !allowed(handbookId)) throw Object.assign(new Error('没有此手册访问权限'), { status: 403 });
+            const cursor = Math.max(0, Number(parsed.searchParams.get('cursor')) || 0);
+            const limit = Math.max(1, Math.min(100, Number(parsed.searchParams.get('limit')) || 50));
+            return templateResponse(res, templateMapping.list(handbookId, parsed.searchParams.get('status') || '', cursor, limit, parsed.searchParams.get('documentId') || ''));
+          }
+          if ((req.method === 'GET' && sub && parts.length === 5) || (req.method === 'POST' && parts[5] === 'cancel')) {
+            const item = templateMapping.batch(sub);
+            if (!item) throw Object.assign(new Error('分析批次不存在'), { status: 404 });
+            if (!allowed(item.handbookId)) throw Object.assign(new Error('没有此手册访问权限'), { status: 403 });
+            return templateResponse(res, req.method === 'POST' ? templateMapping.cancel(sub) : item);
+          }
+          if (req.method === 'POST' && sub === 'analyze') {
+            const input = await readJsonBody(req); const id = String(input.handbookId || '');
+            if (!id || !allowed(id)) throw Object.assign(new Error('没有此手册访问权限'), { status: 403 });
+            if (!options.documentTaskCatalog) throw Object.assign(new Error('文档目录不可用'), { status: 503 });
+            const catalog = await options.documentTaskCatalog(id, session);
+            return templateResponse(res, templateMapping.start(id, catalog, session.user?.id), 202);
+          }
+          if (req.method === 'POST' && sub === 'decisions') {
+            const input = await readJsonBody(req); const batch = templateMapping.batch(input.batchId);
+            if (!batch || !allowed(batch.handbookId)) throw Object.assign(new Error('分析批次不可访问'), { status: 403 });
+            const catalog = await options.documentTaskCatalog(batch.handbookId, session);
+            return templateResponse(res, templateMapping.decide(input, session.user?.id, catalog.documents, catalog.outlineVersionId));
+          }
+        }
+        res.writeHead(405); res.end(); return;
+      }
       const action = req.method === 'GET' ? 'template:read' : req.method === 'DELETE' || ['disable', 'restore'].includes(parts[4]) ? 'template:manage' : 'template:edit';
       if (forbidUnlessTemplateAction(res, session, action)) return;
       if (req.method === 'POST' && parts.length === 4 && parts[3] === 'import') {
@@ -863,6 +955,13 @@ function createKnowledgeCenterHandler(options) {
         await assertActiveProductionOutline(body);
         let input = { ...body, handbookId, documentId, jobId };
         if (!jobId) {
+          if (!input.templateId) {
+            const mapping = templateMapping.resolve(handbookId, documentId);
+            if (mapping?.status === 'active' && templateStore.get(mapping.templateId)?.status === 'active') {
+              input.templateId = mapping.templateId;
+              input.mappingDecisionId = mapping.decisionId || mapping.batchId;
+            }
+          }
           input.originSnapshot = await verifyProductionOriginSnapshot(input, session);
           sendProductionData(res, handbookProductionService.ai.start(input, session, req.headers['idempotency-key']), 202);
         }
@@ -1008,6 +1107,7 @@ function createKnowledgeCenterHandler(options) {
       return true;
     }
     if (attachmentMatch && req.method === 'POST') {
+      const started = performance.now();
       const params = new URL(req.url, 'http://localhost').searchParams;
       const handbookId = decodeURIComponent(attachmentMatch[1]);
       const documentId = decodeURIComponent(attachmentMatch[2]);
@@ -1016,11 +1116,15 @@ function createKnowledgeCenterHandler(options) {
       let fileName;
       try { fileName = decodeURIComponent(rawName); } catch (_error) { fileName = rawName; }
       const buffer = await readBinaryBody(req);
-      sendProductionData(res, handbookProductionService.stageAttachment({
+      const parsed = performance.now();
+      const stage = handbookProductionService.stageAttachmentAsync || handbookProductionService.stageAttachment;
+      const attachment = await stage({
         ...productionContext(handbookId, documentId, params),
         fileName,
         mimeType: req.headers['content-type'],
-      }, buffer, session), 201);
+      }, buffer, session);
+      res.setHeader('Server-Timing', `attachment_parse;dur=${(parsed - started).toFixed(2)}, attachment_store;dur=${(performance.now() - parsed).toFixed(2)}`);
+      sendProductionData(res, attachment, 201);
       return true;
     }
     if (documentMatch) {
@@ -1037,9 +1141,16 @@ function createKnowledgeCenterHandler(options) {
         return true;
       }
       if (req.method === 'PUT' && !suffix) {
+        const started = performance.now();
         const body = await readJsonBody(req);
+        const parsed = performance.now();
         await assertActiveProductionOutline(body);
-        sendProductionData(res, handbookProductionService.saveDraft({ ...body, handbookId, documentId }, session, req.headers['idempotency-key']));
+        const validated = performance.now();
+        const save = handbookProductionService.saveDraftAsync || handbookProductionService.saveDraft;
+        const saved = await save({ ...body, handbookId, documentId }, session, req.headers['idempotency-key']);
+        const finished = performance.now();
+        res.setHeader('Server-Timing', `draft_parse;dur=${(parsed - started).toFixed(2)}, draft_outline;dur=${(validated - parsed).toFixed(2)}, draft_store;dur=${(finished - validated).toFixed(2)}`);
+        sendProductionData(res, saved);
         return true;
       }
       if (req.method === 'GET' && suffix === 'revisions') {
@@ -1640,9 +1751,10 @@ function createKnowledgeCenterHandler(options) {
         timings[name] = Number(process.hrtime.bigint() - start) / 1e6;
         return result;
       };
-      const [snapshot, assets] = await Promise.all([
+      const [snapshot, assets, ticketState] = await Promise.all([
         measure('review-state', () => service.readState(session)),
         measure('review-assets', () => readReviewAssetsAsync()),
+        view === 'mine' ? measure('review-ticket-numbers', () => handleDocumentTasks.store.readAsync()) : Promise.resolve(null),
       ]);
       const review = await measure('review-projection', () => service.reviewBootstrap(session, { handbookId: view === 'mine' ? '' : handbookId, taskId: requestedTaskId, view, documentId: params.get('documentId'), path: params.get('path') }, snapshot));
       // Empty/unassigned document lists have no reviewer identities to resolve.
@@ -1681,9 +1793,43 @@ function createKnowledgeCenterHandler(options) {
       }
       const documents = await measure('review-document-projection', () => review.documents.filter(item => eligibleIds.has(String(item.handbookId))).map(item => ({
         ...item,
+        ...(ticketState ? numberForReview(ticketState, snapshot, item.taskId, item.documentId, eligibleIds) : {}),
         reviewerDisplay: (item.decidedBy?.id && reviewerNames.get(String(item.decidedBy.id))) || (item.decidedBy?.displayName !== '未知用户' && item.decidedBy?.displayName) || item.decidedBy?.name
           || (item.decidedBy ? '人员未匹配' : item.reviewerIds.length ? item.reviewerIds.map(id => reviewerNames.get(String(id)) || '人员未匹配').join('、') : '未明确指派'),
       })));
+      const currentIds = new Set([session?.user?.id, session?.user?.principalId, session?.principalId]
+        .filter(value => value !== undefined && value !== null && value !== '').map(String));
+      const visibleHandbooks = session?.visibleHandbookIds || session?.user?.visibleHandbookIds;
+      const myMergeRequests = view === 'mine' ? snapshot.tasks.flatMap(task => {
+        if (task.state !== 'mr_submitted' || !task.mergeRequest || !task.handbookSource
+          || (Array.isArray(visibleHandbooks) && !visibleHandbooks.map(String).includes(String(task.handbookId)))) return [];
+        const assignees = task.mergeRequest.participants?.assignees || [];
+        if (!assignees.some(person => currentIds.has(String(person.platformId)))) return [];
+        const url = task.mergeRequest.webUrl;
+        try {
+          const parsed = new URL(url);
+          if (parsed.protocol !== 'https:' || parsed.username || parsed.password) return [];
+        } catch (_) { return []; }
+        const projection = service.project(task, session, true);
+        if (projection.completion.status === 'completed') return [];
+        return (task.handbookSource.documents || []).map(document => ({ taskId: task.id, documentId: document.documentId, handbookId: task.handbookId, title: document.title || document.filePath || task.name || 'GitLab 合入任务',
+          ...numberForReview(ticketState, snapshot, task.id, document.documentId, eligibleIds),
+          businessVersion: task.businessVersion || '', documentNames: [document.title || document.filePath],
+          mergeRequest: { iid: task.mergeRequest.iid, webUrl: url, state: task.mergeRequest.state || task.deliveryObservation?.state || 'opened' },
+          deliveryObservation: { state: task.deliveryObservation?.state || 'opened' }, updatedAt: task.updatedAt || task.createdAt }));
+      }) : [];
+      const myDeliveryActions = view === 'mine' ? snapshot.tasks.flatMap(task => {
+        if (!task.handbookSource || !currentIds.has(String(task.createdBy?.id || ''))
+          || (Array.isArray(visibleHandbooks) && !visibleHandbooks.map(String).includes(String(task.handbookId)))) return [];
+        const projection = service.project(task, session, true);
+        const label = projection.capabilities.canPublish ? '创建 GitLab MR'
+          : projection.capabilities.canRefreshDelivery ? '刷新交付状态' : null;
+        if (!label) return [];
+        return (task.handbookSource.documents || []).map(document => ({ taskId: task.id, documentId: document.documentId, handbookId: task.handbookId, title: document.title || document.filePath || task.name || '文档交付',
+          ...numberForReview(ticketState, snapshot, task.id, document.documentId, eligibleIds),
+          businessVersion: task.businessVersion || '', label, updatedAt: task.updatedAt || task.createdAt,
+          url: `/knowledge-center/review?taskId=${encodeURIComponent(task.id)}&documentId=${encodeURIComponent(document.documentId)}` }));
+      }) : [];
       const handbooks = await measure('review-handbook-summary', () => reviewHandbooks.map(item => {
         const rows = documents.filter(document => document.handbookId === item.handbookId);
         return { ...item, reviewCount: rows.length, pendingCount: rows.filter(document => document.state === 'under_review').length,
@@ -1700,7 +1846,7 @@ function createKnowledgeCenterHandler(options) {
         'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store',
         'Server-Timing': [`review-bootstrap;dur=${totalMs.toFixed(3)}`, ...Object.entries(timings).map(([name, ms]) => `${name};dur=${ms.toFixed(3)}`)].join(', '),
       });
-      res.end(JSON.stringify({ success: true, data: { view, workbench: { handbooks, documents, mine: documents.filter(item => item.assignedToMe), ...(overview ? { overview } : {}) }, items: review.items, allItems: review.allItems, detail: review.detail ? { task: review.detail } : null, handbookId: resolvedHandbookId, reviewHandbooks, onlineReviewBaselines: review.baselines, onlineReviewBaselineError: null, diff } }));
+      res.end(JSON.stringify({ success: true, data: { view, workbench: { handbooks, documents, mine: documents.filter(item => item.assignedToMe), myMergeRequests, myDeliveryActions, ...(overview ? { overview } : {}) }, items: review.items, allItems: review.allItems, detail: review.detail ? { task: review.detail } : null, handbookId: resolvedHandbookId, reviewHandbooks, onlineReviewBaselines: review.baselines, onlineReviewBaselineError: null, diff } }));
     } catch (error) {
       res.writeHead(error.status || 500, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
       res.end(JSON.stringify({ success: false, error: { code: error.code || 'REVIEW_BOOTSTRAP_FAILED', message: error.message || '审核工作区读取失败' } }));
@@ -2109,6 +2255,91 @@ function createKnowledgeCenterHandler(options) {
     }
     if (req.method === 'GET' && pathname === '/knowledge-center/api/platform/overview') {
       requireSession(req, res, () => servePlatformProjection(res)); return;
+    }
+    if (['/knowledge-center/api/workbench/responsibles', '/knowledge-center/api/workbench/preview', '/knowledge-center/api/workbench/delegated', '/knowledge-center/api/workbench/my-tasks/query'].includes(pathname)) {
+      requireSession(req, res, async session => {
+        const send = (status, payload) => { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(payload)); };
+        const isQuery = pathname.endsWith('/my-tasks/query');
+        if (isQuery && !hasAction(session, 'knowledge:read')) {
+          send(403, { success: false, error: { code: 'WORKBENCH_READ_FORBIDDEN', message: '当前账号无权读取工作台任务' } }); return;
+        }
+        if ((!isQuery && !hasAction(session, 'platform:manage')) || (pathname.endsWith('/preview') && process.env.KNOWLEDGE_CENTER_LOCAL_OWNER_PREVIEW !== '1')) {
+          send(403, { success: false, error: { code: 'WORKBENCH_DELEGATION_FORBIDDEN', message: '当前账号无权查看他人工作' } }); return;
+        }
+        try {
+          if (isQuery && req.method !== 'POST') { send(405, { success: false, error: { code: 'METHOD_NOT_ALLOWED', message: '请使用 POST 查询工作台' } }); return; }
+          const query = isQuery ? await readJsonBody(req) : null;
+          const users = await Promise.resolve(authModule?.repository?.listUsers?.() || []);
+          if (pathname.endsWith('/responsibles')) {
+            send(200, { success: true, data: users.filter(user => user.enabled !== false).map(user => ({ id: String(user.principalId || user.id || user.userId), displayName: String(user.displayName || user.name || user.loginName || user.id) })).filter(user => user.id) }); return;
+          }
+          const callerId = String(session.user?.principalId || session.user?.id || '');
+          const requestedId = isQuery ? String(query?.responsibleId || callerId) : new URL(req.url, 'http://localhost').searchParams.get('responsibleId');
+          if (isQuery && requestedId !== callerId && !hasAction(session, 'platform:manage')) {
+            send(403, { success: false, error: { code: 'WORKBENCH_DELEGATION_FORBIDDEN', message: '当前账号无权查看他人工作' } }); return;
+          }
+          const target = users.find(user => user.enabled !== false && [user.id, user.principalId, user.userId].filter(value => value != null).map(String).includes(String(requestedId || '')));
+          if (!target) { send(404, { success: false, error: { code: 'RESPONSIBLE_NOT_FOUND', message: '责任人不存在或已停用' } }); return; }
+          const targetId = String(target.principalId || target.id || target.userId);
+          const targetActions = (userProjection(target).allowedActions || []).filter(action => action !== 'platform:manage');
+          const targetSession = { ...session, user: { ...target, id: String(target.id || targetId), principalId: targetId, allowedActions: targetActions }, principalId: targetId, allowedActions: targetActions };
+          const callerVisible = session.visibleHandbookIds || session.user?.visibleHandbookIds;
+          if (Array.isArray(target.visibleHandbookIds) || Array.isArray(callerVisible)) {
+            const targetVisible = Array.isArray(target.visibleHandbookIds) ? target.visibleHandbookIds.map(String) : null;
+            targetSession.visibleHandbookIds = Array.isArray(callerVisible)
+              ? callerVisible.map(String).filter(id => !targetVisible || targetVisible.includes(id))
+              : targetVisible;
+          }
+          let directory = { items: [] }, assets = { handbooks: [] }, taskSourceFailed = false;
+          try { [directory, assets] = await readDocumentTaskContext(); }
+          catch (error) { taskSourceFailed = true; }
+          const visible = targetSession.visibleHandbookIds || target.visibleHandbookIds;
+          const targetContext = {
+            session: targetSession, people: (directory.items || []).map(person => ({ id: String(person.id || person.principalId), displayName: person.displayName || person.name || person.loginName || person.id })),
+            handbooks: (assets.handbooks || []).filter(book => !book.archivedAt && (!Array.isArray(visible) || visible.map(String).includes(String(book.handbookId)))).map(book => ({ id: book.handbookId, name: book.name })),
+            reviewService: handleIncrementalBuild?.service,
+          };
+          let taskState = { tasks: [], historyNumbering: {} };
+          let taskProjection = { items: [], following: [] };
+          if (!taskSourceFailed) {
+            try {
+              taskState = await handleDocumentTasks.store.readAsync();
+              taskProjection = projectDocumentTaskMine(targetContext, taskState);
+            } catch (error) { taskSourceFailed = true; }
+          }
+          const delegated = pathname.endsWith('/delegated') || isQuery;
+          const items = taskProjection.items.map(item => delegated ? item : Object.fromEntries(['id', 'kind', 'title', 'context', 'status', 'state', 'version', 'source', 'updatedAt', 'number', 'subtaskNumber', 'taskType', 'plannedStartTime', 'plannedEndTime'].map(key => [key, item[key]])));
+          const following = taskProjection.following.map(item => delegated ? item : Object.fromEntries(['number', 'subtaskNumber', 'taskType', 'title', 'status', 'plannedStartTime', 'plannedEndTime', 'updatedAt', 'handbooks'].map(key => [key, item[key]])));
+          const unavailable = taskSourceFailed ? ['任务管理'] : [];
+          try {
+            const service = handleIncrementalBuild?.service;
+            if (!service) throw new Error('审核服务不可用');
+            const [snapshot, reviewAssets] = await Promise.all([service.readState(targetSession), readReviewAssetsAsync()]);
+            const review = service.reviewBootstrap(targetSession, { view: 'mine' }, snapshot);
+            const visibleIds = new Set(reviewAssets.handbooks.filter(item => !Array.isArray(visible) || visible.map(String).includes(String(item.handbookId))).map(item => String(item.handbookId)));
+            for (const item of review.documents.filter(item => item.assignedToMe && visibleIds.has(String(item.handbookId)))) items.push({ id: `review:${item.taskId}:${item.reviewId}:${item.documentId || 'handbook'}`, kind: 'review', taskType: '文档审核', ...numberForReview(taskState, snapshot, item.taskId, item.documentId, visibleIds), title: `审核 ${item.title || item.documentId || '手册文档'}`, context: `${item.handbookId || '手册'} · ${item.documentId || '整本手册'} · ${item.taskId}`, lineage: { handbookId: item.handbookId, documentId: item.documentId, documentName: item.title }, status: '待审核', state: 'pending', version: item.businessVersion || '', source: '审核与发布', updatedAt: item.updatedAt || item.submittedAt, ...(delegated ? { url: `/knowledge-center/review?taskId=${encodeURIComponent(item.taskId)}&documentId=${encodeURIComponent(item.documentId || '')}`, actionLabel: '开始审核' } : {}) });
+            for (const task of snapshot.tasks || []) {
+              if (!visibleIds.has(String(task.handbookId))) continue;
+              if (String(task.createdBy?.id || '') === String(target.id) || String(task.createdBy?.id || '') === targetId) {
+                const projection = service.project(task, targetSession, true);
+                const label = projection.capabilities.canPublish ? '创建 GitLab MR'
+                  : projection.capabilities.canRefreshDelivery ? '刷新交付状态' : null;
+                if (label) for (const document of task.handbookSource.documents || []) items.push({ id: `delivery:${task.id}:${document.documentId}`, kind: 'merge', taskType: '文档发布', ...numberForReview(taskState, snapshot, task.id, document.documentId, visibleIds), title: document.title || document.filePath || task.name || '文档交付', context: `${task.handbookId} · ${task.id}`, lineage: { handbookId: task.handbookId, documentId: document.documentId, documentName: document.title || document.filePath }, status: label === '创建 GitLab MR' ? '审核已通过' : '待回读', state: 'pending', version: task.businessVersion || '', source: '审核与发布', updatedAt: task.updatedAt || task.createdAt, actionLabel: label, ...(delegated ? { url: `/knowledge-center/review?taskId=${encodeURIComponent(task.id)}&documentId=${encodeURIComponent(document.documentId)}` } : {}) });
+              }
+              if (task.state !== 'mr_submitted' || !task.mergeRequest || !task.handbookSource) continue;
+              const assignees = task.mergeRequest.participants?.assignees || [];
+              if (assignees.some(person => [person.platformId, person.id, person.userId].filter(value => value != null).map(String).includes(targetId)) && service.project(task, targetSession, true).completion.status !== 'completed') for (const document of task.handbookSource.documents || []) items.push({ id: `merge:${task.id}:${document.documentId}:${task.mergeRequest.iid}`, kind: 'merge', taskType: '文档发布', ...numberForReview(taskState, snapshot, task.id, document.documentId, visibleIds), title: document.title || document.filePath || task.name || `GitLab MR !${task.mergeRequest.iid}`, context: `${task.handbookId} · ${document.title || document.filePath || document.documentId}`, lineage: { handbookId: task.handbookId, documentId: document.documentId, documentName: document.title || document.filePath }, status: task.deliveryObservation?.state === 'closed' ? 'MR 已关闭' : '待在 GitLab 合入', state: task.deliveryObservation?.state === 'closed' ? 'risk' : 'pending', version: task.businessVersion || '', source: 'GitLab 交付', updatedAt: task.updatedAt || task.createdAt, ...(delegated ? { url: task.mergeRequest.webUrl, external: true, actionLabel: '查看 GitLab MR' } : {}) });
+            }
+          } catch (_) { unavailable.push('审核与发布'); }
+          items.sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
+          if (isQuery) {
+            const result = queryWorkbench([...items.map(item => ({ ...item, queue: 'actionable' })), ...following.map(item => ({ ...item, queue: 'waiting' }))], query, { unavailable });
+            send(200, { success: true, data: { ...result, responsible: { id: targetId, displayName: target.displayName || target.name || target.loginName || targetId }, operator: { id: callerId, displayName: session.user?.displayName || session.user?.loginName || '管理员' } } });
+            return;
+          }
+          send(200, { success: true, data: { responsible: { id: targetId, displayName: target.displayName || target.name || target.loginName || targetId }, operator: { id: String(session.user?.principalId || session.user?.id || ''), displayName: session.user?.displayName || session.user?.loginName || '管理员' }, items, following, unavailable, completeness: unavailable.length ? 'partial' : 'complete', readOnly: !delegated, asOf: new Date().toISOString() } });
+        } catch (error) { send(error.status || 503, { success: false, error: { code: error.code || 'LOCAL_PREVIEW_UNAVAILABLE', message: error.message || '责任人预览暂不可用' } }); }
+      }); return;
     }
     if (req.method === 'GET' && pathname === '/knowledge-center/api/review/bootstrap') {
       requireSession(req, res, session => serveReviewBootstrap(req, res, session)); return;

@@ -38,6 +38,7 @@ test('模板管理员可新建模板、保存 v1 并在刷新后回读正文', a
   const name = `E2E 模板 ${Date.now()}`;
   await page.getByRole('button', { name: '新建模板' }).click();
   await page.getByRole('button', { name: '空白创建' }).click();
+  await page.locator('[data-template-format="markdown"]').click();
   await page.locator('[data-template-field="name"]').fill(name);
   await page.locator('[data-template-field="type"]').fill('E2E 回归');
   await page.locator('[data-template-field="description"]').fill('E2E 创建与刷新回读');
@@ -55,6 +56,7 @@ test('模板管理员可新建模板、保存 v1 并在刷新后回读正文', a
 
   const toggle = page.locator('[data-template-toggle]');
   if (await toggle.count()) {
+    await page.locator('.template-more summary').click();
     await toggle.click();
     await expect(page.locator('[data-template-status]')).toContainText(/模板状态已更新/);
   }

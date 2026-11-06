@@ -433,7 +433,7 @@ function createProductionAIService(options) {
           taskId: jobId, operation: job.operation, generatedAt: current.updatedAt,
           originalDigest: job.originalDigest, candidateDigest: current.candidateDigest,
           model: result.model || null, modelSelection: job.modelSelection || null, usage: result.usage || null,
-          ruleVersion: job.ruleVersion, template: job.templateSnapshot,
+          ruleVersion: job.ruleVersion, template: job.templateSnapshot, mappingDecisionId: job.mappingDecisionId || null,
           outputFormat: generated.format,
           provenance: [
             ...outsideRange(job.originalMetadata?.provenance, job.range.start, job.range.end, fragment.length),
@@ -484,7 +484,7 @@ function createProductionAIService(options) {
     const request = {
       ...ctx, operation: input.operation, markdown: input.markdown, range: { start: input.range.start, end: input.range.end },
       editVersion: input.editVersion, requirements: String(input.requirements || ''),
-      outline: String(input.outline || ''), templateId: input.templateId || null,
+      outline: String(input.outline || ''), templateId: input.templateId || null, mappingDecisionId: input.mappingDecisionId || null,
       confirmedSourceIds: input.confirmedSourceIds || [],
       ...(input.referenceOrder !== undefined ? { referenceOrder: input.referenceOrder } : {}),
       selectedSkills: input.selectedSkills || [],
@@ -539,7 +539,7 @@ function createProductionAIService(options) {
       const job = {
         jobId, modelSelection: resolvedModel?.selection || null, context: ctx, contextKey: contextKey(ctx), status: 'queued', operation: request.operation,
         range: request.range, originalMarkdown: request.markdown, originalDigest: hash(request.markdown), editVersion: request.editVersion,
-        requirements: request.requirements, outline: request.outline, templateSnapshot, sourceSnapshots, skillSnapshots, referenceOrder: requestedOrder,
+        requirements: request.requirements, outline: request.outline, templateSnapshot, mappingDecisionId: request.mappingDecisionId, sourceSnapshots, skillSnapshots, referenceOrder: requestedOrder,
         mcpRetrievalPolicy: requestedOrder.includes('knowledge-mcp') ? structuredClone(config.sources?.mcpRetrieval || null) : null,
         skillPrompt: config.skillPrompt || '',
         provenancePrompt: config.provenancePrompt || '', maxProvenanceSegments: config.maxProvenanceSegments || 512,

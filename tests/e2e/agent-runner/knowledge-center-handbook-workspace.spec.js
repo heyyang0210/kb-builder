@@ -325,7 +325,7 @@ test('真实存储：本地拖拽上传、长引用列表折叠与跨滚动优�
   await page.locator('[data-ai-reference-panel] footer [data-ai-reference-close]').click();
   await expect(page.locator('[data-ai-reference-panel]')).toBeHidden();
   await page.locator('[data-ai-source-add]').click();
-  await expect(page.locator('[data-ai-source-list] section:visible')).toHaveCount(3);
+  await expect(page.locator('[data-ai-source-list] section:visible')).toHaveCount(4);
   await page.locator('[data-ai-references-toggle]').focus();
   await page.keyboard.press('Enter');
   await expect(page.locator('[data-ai-references-toggle]')).toHaveAttribute('aria-expanded', 'true');
@@ -347,11 +347,12 @@ test('真实存储：本地拖拽上传、长引用列表折叠与跨滚动优�
   await page.mouse.up();
   await expect(rows.first()).toHaveAttribute('data-source-id', original.at(-1));
   expect(await rows.evaluateAll(nodes => nodes.map(node => node.dataset.sourceId))).toEqual([original.at(-1), ...original.slice(0, -1)]);
-  await expect(rows.first().locator('[data-source-priority]')).toHaveText('优先级 1');
+  await expect(rows.first().locator('[data-source-priority]')).toHaveText('01');
+  await expect(rows.first().locator('[data-source-priority]')).toHaveAttribute('aria-label', '优先级 1');
   await page.locator('[data-ai-references-toggle]').focus();
   await page.keyboard.press('Enter');
   await expect(page.locator('[data-ai-references-toggle]')).toHaveAttribute('aria-expanded', 'false');
-  await expect(page.locator('[data-ai-source-list] section:visible')).toHaveCount(3);
+  await expect(page.locator('[data-ai-source-list] section:visible')).toHaveCount(4);
   await page.screenshot({ path: testInfo.outputPath('reference-order-after-scroll.png'), fullPage: true });
 });
 

@@ -203,6 +203,11 @@ function createHandbookProductionService(options = {}) {
     return store.transaction(state => saveDraftInState(state, input, session, idempotencyKey));
   }
 
+  async function saveDraftAsync(input, session, idempotencyKey) {
+    const transaction = store.transactionAsync || store.transaction;
+    return transaction.call(store, state => saveDraftInState(state, input, session, idempotencyKey));
+  }
+
   function saveDraftInState(state, input, session, idempotencyKey) {
     requireCapability(session, 'canEdit');
     const ctx = context(input);
@@ -309,7 +314,7 @@ function createHandbookProductionService(options = {}) {
     });
   }
 
-  function stageAttachment(input, buffer, session) {
+  function stageAttachment(input, buffer, session, asyncWrite = false) {
     requireCapability(session, 'canUploadAttachment');
     const ctx = context(input);
     const rule = attachmentRule(input.mimeType, input.fileName);
@@ -330,9 +335,12 @@ function createHandbookProductionService(options = {}) {
       status: 'ready', scanStatus: 'validated', stableReference: `/knowledge-center/api/production/attachments/${attachmentId}`,
       storageName: safeName, createdBy: who, createdAt: now, expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
     };
-    store.transaction(state => { state.attachments ||= {}; state.attachments[attachmentId] = metadata; return metadata; });
-    return metadata;
+    const transaction = asyncWrite ? store.transactionAsync || store.transaction : store.transaction;
+    const saved = transaction.call(store, state => { state.attachments ||= {}; state.attachments[attachmentId] = metadata; return metadata; });
+    return asyncWrite ? Promise.resolve(saved).then(() => metadata) : metadata;
   }
+
+  const stageAttachmentAsync = (input, buffer, session) => stageAttachment(input, buffer, session, true);
 
   function readAttachment(attachmentId, session) {
     requireCapability(session, 'canRead');
@@ -435,7 +443,7 @@ function createHandbookProductionService(options = {}) {
     readAttachment,
     readSourceImage: (input, session) => ai.sources.readImage(input, session),
   });
-  return { getDraft, getDraftAsync, listReviewDrafts, saveDraft, listRevisions, restoreRevision, stageAttachment, readAttachment, createReviewBatch, linkIncrementalReview, capabilities, attachmentRoot, ai, quality, delivery, stopRecoveryScheduler };
+  return { getDraft, getDraftAsync, listReviewDrafts, saveDraft, saveDraftAsync, listRevisions, restoreRevision, stageAttachment, stageAttachmentAsync, readAttachment, createReviewBatch, linkIncrementalReview, capabilities, attachmentRoot, ai, quality, delivery, stopRecoveryScheduler };
 }
 
 module.exports = {

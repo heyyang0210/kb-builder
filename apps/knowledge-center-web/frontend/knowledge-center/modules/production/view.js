@@ -229,7 +229,7 @@ function handbookRows(projection, assetCatalog) {
     byHandbook.get(id).push(task);
   });
   return source.map(item => {
-    const id = String(item.handbookId || item.id || '');
+    const id = handbookValue(item, ['handbookId', 'id']);
     const related = byHandbook.get(id) || [];
     const progress = handbookProgress(related);
     const publishedTask = related.find(task => task.publication || task.publishedVersion || ['published', 'completed'].includes(task.state || task.status));

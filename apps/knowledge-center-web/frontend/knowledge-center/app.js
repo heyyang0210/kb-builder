@@ -6,7 +6,7 @@ import { observeRepositoryImages } from './common/markdown/repository-images.js'
 import { chooseMRParticipants } from './modules/review-publishing/mr-participants.js';
 import { canSaveHandbookDraft, handbookReviewAction } from './modules/production/handbook-actions.js';
 import { takeReviewBootstrapPrefetch } from './common/api/review-bootstrap-prefetch.js';
-import { archiveAsset, createAsset, createPrincipal, createTeamGroup, deleteOutline, importOutline, validateOutline, importPrincipals, loadAssets, loadOutlineData, loadPlatformData, loadPrincipals, loadTeamGroups, loadTeamGroup, saveTeamRoster, publishOutlineGovernance, resolveAssetStatus, restoreAsset, saveOutlineGovernance, updateAsset, updateAssetStatus, updateDomainBuildTaskItem, loadDomainBuildTasks as fetchDomainBuildTasks, loadPlatformPermissions, updatePlatformUserPermissions, updatePrincipal, loadDatabaseConnectionStatus, testDatabaseConnection, saveDatabaseConnection, loadTemplates, loadTemplate } from './common/api/platform-api.js';
+import { archiveAsset, createAsset, createPrincipal, createTeamGroup, deleteOutline, importOutline, validateOutline, importPrincipals, loadAssets, loadOutlineData, loadPlatformData, loadPrincipals, loadTeamGroups, loadTeamGroup, saveTeamRoster, publishOutlineGovernance, resolveAssetStatus, restoreAsset, saveOutlineGovernance, updateAsset, updateAssetStatus, updateDomainBuildTaskItem, loadDomainBuildTasks as fetchDomainBuildTasks, loadPlatformPermissions, updatePlatformUserPermissions, updatePrincipal, loadDatabaseConnectionStatus, testDatabaseConnection, saveDatabaseConnection, loadTemplates, loadTemplate, loadTemplateMappings } from './common/api/platform-api.js';
 import { disconnectGitLabOAuth, handbookGitLabOAuthHref, gitLabOAuthHref, loadGitLabBranches, loadGitLabConnections, loadGitLabOAuthAccounts, loadGitLabOAuthStatus, loadGitLabOAuthConfig, loadGitLabTree, loadHandbookGitLabAccess, loadHandbookRepository, loadHandbookRepositoryCommits, loadHandbookRepositoryFile, loadHandbookRepositoryMapping, loadHandbookRepositoryStatistics, loadHandbookRepositoryTree, loadReviewRepositoryContext, saveGitLabConnection, saveHandbookRepositoryMapping, createGitLabConnection, updateGitLabConnection, verifyGitLabConnection, disableGitLabConnection, enableGitLabConnection, searchGitLabConnections } from './common/api/gitlab-api.js';
 import { addIncrementalSource, bootstrapBaseline, cancelIncrementalReview, commentIncrementalReview, createIncrementalReview, createIncrementalRevision, createIncrementalTask, createOnlineReview, decideIncrementalReview, loadCandidateDiff, loadHandbookReviewSummary, loadIncrementalBaselines, loadIncrementalTask, loadIncrementalTasks, loadMyGenerations, loadReviewBootstrap, publishIncrementalTask, reassignIncrementalReview, recordIncrementalEvidence, reopenIncrementalReviewComment, replyIncrementalReviewComment, resolveIncrementalReviewComment, runIncrementalChecks, saveIncrementalDraft, submitIncrementalCandidate, updateIncrementalTarget } from './common/api/incremental-api.js';
 import { createHandbookIncrementalReview, loadHandbookDraft, loadHandbookDraftRevisions, loadHandbookReviewDrafts, loadHandbookReviewers, restoreHandbookDraftRevision, saveHandbookDraft, uploadHandbookDraftAttachment } from './common/api/handbook-production-api.js';
@@ -27,6 +27,7 @@ import { initViewportRuntime } from './common/viewport-runtime.js';
 import { initScrollRuntime } from './common/scroll-runtime.js';
 import { initDismissibleMenus } from './common/dismissible-menu.js';
 import { loadDocumentTaskWorkspace, renderDocumentTasks } from './modules/document-tasks/view.js';
+import { loadMyTasks, MY_TASK_SOURCE_COUNT, setRefreshHandler, setResponsibleHandler, getSelectedResponsibleId, resetResponsibleSelection, updateMyTasksProjection } from './modules/dashboard/my-tasks.js';
 // 预加载写作页面模块，点击时只等待实例化，不再等待网络加载模块。
 const productionWritingPagePromise = import('./modules/production/production-writing-page.js');
 const viewportRuntime = initViewportRuntime();
@@ -46,7 +47,7 @@ let assetStatisticsRenderer = null;
 let assetArchiveManageDialog = null;
 let assetArchiveTrigger = null;
 const rendererLoaders = {
-  dashboard: () => import('./modules/dashboard/view.js').then(module => module.renderDashboard),
+  dashboard: () => import('./modules/dashboard/my-tasks.js').then(module => () => module.renderMyTasks(appState.myTasksProjection)),
   assets: () => import('./modules/assets/view.js').then(module => {
     assetSelectionRenderer = module.renderAssetSelection;
     assetStatisticsRenderer = module.renderAssetStatistics;
@@ -132,7 +133,15 @@ function scheduleIconLibrary() {
 let templateController = null;
 let cleaningApiPromise = null;
 const cleaningApi = () => cleaningApiPromise ||= import('./common/api/cleaning-api.js');
-const loadCleaningWorkspace = (...args) => cleaningApi().then(api => api.loadCleaningWorkspace(...args));
+let cleaningWorkspaceInFlight;
+const loadCleaningWorkspace = (...args) => {
+  if (!cleaningWorkspaceInFlight) {
+    const pending = cleaningApi().then(api => api.loadCleaningWorkspace(...args));
+    cleaningWorkspaceInFlight = pending;
+    pending.finally(() => { if (cleaningWorkspaceInFlight === pending) cleaningWorkspaceInFlight = null; }).catch(() => {});
+  }
+  return cleaningWorkspaceInFlight;
+};
 const createUploadSession = (...args) => cleaningApi().then(api => api.createUploadSession(...args));
 const addUploadFile = (...args) => cleaningApi().then(api => api.addUploadFile(...args));
 const uploadChunk = (...args) => cleaningApi().then(api => api.uploadChunk(...args));
@@ -607,10 +616,9 @@ async function navigate(view, updateHistory = true) {
   if (view === 'outlines' && (!appState.outlineProjection || appState.outlineProjection.routeKey !== outlineProjectionKey())) loadOutlines();
   if (view === 'assets') loadAssetCatalog();
   if (view === 'dashboard') {
-    load(['context', 'overview']);
-    loadDomainBuildTasksWorkspace();
+    loadMyTasksWorkspace({ retain: Boolean(appState.myTasksProjection?.items?.length) });
   }
-  if (view === 'documentTasks') loadTaskManagementWorkspace();
+  if (view === 'documentTasks') loadTaskManagementWorkspace({ retain: Boolean(appState.documentTaskProjection?.items?.length) });
   if (view === 'production') loadIncrementalWorkspace();
   if (view === 'review') loadReviewWorkspace();
   if (view === 'repository') loadRepositoryWorkspace();
@@ -618,6 +626,74 @@ async function navigate(view, updateHistory = true) {
   if (view === 'templates') loadTemplateWorkspace();
   closeMobileNavigation(false);
   byId('main').focus();
+}
+
+const handbookEntry = new Map();
+let activeHandbookPath = '';
+function handbookEntryKey(pathname = location.pathname) {
+  return pathname.startsWith('/knowledge-center/production/handbook/') ? pathname : '';
+}
+function rememberHandbookEntry(url) {
+  const key = handbookEntryKey(new URL(url, location.origin).pathname);
+  if (!key) return;
+  const entry = { url: location.pathname + location.search, view: appState.activeView,
+    scrollTop: byId('main-shell')?.scrollTop || 0,
+    projection: appState.activeView === 'production' ? appState.incrementalProjection : null };
+  captureHandbookSource(entry);
+  handbookEntry.clear();
+  handbookEntry.set(key, entry);
+  activeHandbookPath = key;
+}
+function captureHandbookSource(entry) {
+  const root = byId('view-root');
+  if (!root || !root.firstChild) return;
+  const fragment = document.createDocumentFragment();
+  while (root.firstChild) fragment.append(root.firstChild);
+  entry.snapshot = { fragment, onclick: root.onclick, onchange: root.onchange,
+    onsubmit: root.onsubmit, onkeydown: root.onkeydown, taskProjection: root._taskProjection };
+  root.onclick = root.onchange = root.onsubmit = root.onkeydown = null;
+  delete root._taskProjection;
+  entry.scrollTop = byId('main-shell')?.scrollTop || 0;
+}
+function showCachedReturn(view, entry) {
+  if (!views[view] || !canAccessView(view) || !entry?.snapshot?.fragment?.firstChild) return false;
+  if (view === 'production' && entry?.projection) appState.incrementalProjection = entry.projection;
+  appState.activeView = view;
+  if (view === 'production' && productionRouteState().handbookId) collapseSidebarForProduction();
+  else restoreSidebarAfterProduction();
+  ensureRouteStyles(view);
+  const root = byId('view-root');
+  if (root) {
+    root.replaceChildren(entry.snapshot.fragment);
+    root.onclick = entry.snapshot.onclick;
+    root.onchange = entry.snapshot.onchange;
+    root.onsubmit = entry.snapshot.onsubmit;
+    root.onkeydown = entry.snapshot.onkeydown;
+    if (entry.snapshot.taskProjection) root._taskProjection = entry.snapshot.taskProjection;
+    byId('page-title').textContent = views[view][1];
+    document.querySelectorAll('.nav-item').forEach(button => {
+      const active = button.dataset.view === view;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-current', active ? 'page' : 'false');
+    });
+    syncMobileNavigationState();
+  } else return false;
+  const main = byId('main-shell');
+  if (main) main.scrollTop = entry?.scrollTop || 0;
+  return true;
+}
+function returnFromHandbook(fallbackHref) {
+  if (history.state?.handbookFrom) { history.back(); return; }
+  if (!confirmLeavingHandbookDraft()) return;
+  const entry = handbookEntry.get(handbookEntryKey()) || handbookEntry.get(activeHandbookPath);
+  const fallback = new URL(fallbackHref, location.origin);
+  const target = entry && new URL(entry.url, location.origin).pathname !== location.pathname
+    ? new URL(entry.url, location.origin) : fallback;
+  const view = viewFromPath(target.pathname) || 'assets';
+  history.replaceState({ view, handbookReturn: true }, '', target.pathname + target.search);
+  if (!showCachedReturn(view, entry)) { navigate(view, false); return; }
+  // The source DOM is retained so its filters, drawer and scroll position survive.
+  // Refreshing it here would immediately replace the restored page with a loading state.
 }
 
 async function loadTemplateWorkspace(selectedId) {
@@ -742,6 +818,53 @@ async function loadDomainBuildTasksWorkspace() {
   if (appState.activeView === 'dashboard') render();
   else if (appState.activeView === 'outlines') await updateOutlineAssignments();
 }
+
+let myTasksRequestVersion = 0;
+let myTasksPaintFrame = 0;
+let responsibleDirectory = null;
+async function loadMyTasksWorkspace({ retain = false } = {}) {
+  if (!canPerform('platform:manage')) { responsibleDirectory = null; resetResponsibleSelection(); }
+  if (myTasksPaintFrame) cancelAnimationFrame(myTasksPaintFrame);
+  myTasksPaintFrame = 0;
+  const requestVersion = ++myTasksRequestVersion;
+  const publish = projection => {
+    if (requestVersion !== myTasksRequestVersion) return;
+    appState.myTasksProjection = projection;
+    window.__knowledgeMyTasksProjection = projection;
+    if (appState.activeView !== 'dashboard' || myTasksPaintFrame) return;
+    myTasksPaintFrame = requestAnimationFrame(() => {
+      myTasksPaintFrame = 0;
+      if (requestVersion !== myTasksRequestVersion || appState.activeView !== 'dashboard' || document.querySelector('[data-my-task-dialog][open]')) return;
+      if (!updateMyTasksProjection(appState.myTasksProjection)) render();
+    });
+  };
+  const ownId = String(authState.session?.user?.principalId || authState.session?.user?.id || '');
+  const selectedId = getSelectedResponsibleId() || ownId;
+  const preview = { enabled: Boolean(responsibleDirectory), selectedId, delegated: selectedId !== ownId, displayName: responsibleDirectory?.find(person => person.id === selectedId)?.displayName || '', operatorName: authState.session?.user?.displayName || authState.session?.user?.loginName || '管理员' };
+  let people = responsibleDirectory || [];
+  const publishWithPreview = projection => publish({ ...projection, responsibles: people, preview: { ...preview } });
+  publishWithPreview(retain && appState.myTasksProjection?.status === 'ok'
+    ? { ...appState.myTasksProjection, status: 'loading', pending: MY_TASK_SOURCE_COUNT }
+    : { status: 'loading', items: [], total: 0, facets: { all: 0, actionable: 0, waiting: 0, types: {} }, unavailable: [], pending: MY_TASK_SOURCE_COUNT });
+  if (!responsibleDirectory && canPerform('platform:manage')) {
+    void (async () => { try {
+      const response = await fetch('/knowledge-center/api/workbench/responsibles', { credentials: 'same-origin', cache: 'no-store' });
+      if (response.ok) {
+        responsibleDirectory = (await response.json()).data || null;
+        people = responsibleDirectory || [];
+        preview.enabled = Boolean(responsibleDirectory);
+        if (requestVersion === myTasksRequestVersion) publishWithPreview(appState.myTasksProjection);
+      }
+    } catch (_) { /* The personal workbench remains available. */ } })();
+  }
+  try {
+    publishWithPreview(await loadMyTasks());
+  } catch (error) {
+    publishWithPreview({ status: 'unavailable', items: [], total: 0, facets: { all: 0, actionable: 0, waiting: 0, types: {} }, unavailable: ['个人待办'], error: { message: error.message } });
+  }
+}
+setRefreshHandler(loadMyTasksWorkspace);
+setResponsibleHandler(loadMyTasksWorkspace);
 
 async function updateOutlineAssignments() {
   const routeKey = outlineProjectionKey();
@@ -1086,9 +1209,23 @@ async function loadHandbookWorkspace(productionState, params) {
     error => ['GITLAB_MAPPING_NOT_FOUND', 'GITLAB_LANGUAGE_NOT_MAPPED'].includes(error.code)
       ? { mapping: null } : { error },
   );
-  loadTemplates({ summary: '1' }).then(result => {
-    if (isCurrent()) appState.templateProjection = { items: result?.data || result?.items || [] };
+  const templateSummaries = loadTemplates({ summary: '1' }).then(result => {
+    const items = result?.data || result?.items || [];
+    if (isCurrent()) appState.templateProjection = { items };
+    return items;
+  });
+  if (documentId) Promise.all([loadTemplateMappings({ handbookId, documentId, limit: 1 }), templateSummaries]).then(([result, templates]) => {
+    const item = result?.data?.items?.[0];
+    if (!isCurrent() || item?.status !== 'active') return;
+    if (templates.some(template => template.id === item.templateId && template.status === 'active')) {
+      if (!ui.templateByDocument?.[documentId]) { ui.templateByDocument[documentId] = item.templateId; render(); }
+    } else {
+      if (ui.templateByDocument?.[documentId] === item.templateId) delete ui.templateByDocument[documentId];
+      showAppNotice('已关联的模板已停用，请重新选择启用模板。');
+      render();
+    }
   }).catch(() => {});
+  else templateSummaries.catch(() => {});
   try {
     const resolvedMapping = await mappingResult;
     if (!isCurrent()) return;
@@ -1493,7 +1630,9 @@ async function uploadFilesIntoHandbookDraft(documentId, files) {
 async function handbookBaselineDigest(documentId) {
   const contents = handbookUi().repository?.contentByDocument || {};
   if (Object.hasOwn(contents, documentId)) return sha256Text(contents[documentId]);
-  return handbookUi().serverDrafts?.[documentId]?.draft?.revision?.baselineDigest || '';
+  // A new repository file has an empty baseline. Its digest must match the
+  // server's baseline check when the saved draft is submitted for review.
+  return handbookUi().serverDrafts?.[documentId]?.draft?.revision?.baselineDigest || sha256Text('');
 }
 
 async function saveCurrentHandbookDraft(documentId) {
@@ -1791,9 +1930,12 @@ async function runIncrementalAction(control, taskId, operation, successMessage) 
   }
 }
 
+let noticeDismissTimer;
 function showAppNotice(message, options = {}) {
+  clearTimeout(noticeDismissTimer);
+  noticeDismissTimer = undefined;
   const panel = byId('error-panel');
-  const tone = options.tone || 'warning';
+  const tone = options.tone === 'error' ? 'danger' : options.tone || 'warning';
   const action = byId('notice-action');
   panel.className = `notice notice-${tone}`;
   panel.hidden = false;
@@ -1807,6 +1949,13 @@ function showAppNotice(message, options = {}) {
   } else {
     action.removeAttribute('href');
     action.textContent = '';
+  }
+  const duration = tone === 'success' ? 3000 : ['error', 'danger'].includes(tone) ? 5000 : 0;
+  if (duration) {
+    noticeDismissTimer = setTimeout(() => {
+      if (panel.classList.contains(`notice-${tone}`)) panel.hidden = true;
+      noticeDismissTimer = undefined;
+    }, duration);
   }
 }
 
@@ -1998,7 +2147,7 @@ async function load(scopes = ['context', 'overview']) {
     updatePlatformState(currentContext, currentOverview);
     try {
       // Context updates refresh the shell; independent workspaces own their DOM lifecycle.
-      if (!['production', 'review', 'outlines', 'templates', 'documentTasks'].includes(appState.activeView) || (requested.overview && appState.activeView !== 'documentTasks')) render();
+      if (!['dashboard', 'production', 'review', 'outlines', 'templates', 'documentTasks'].includes(appState.activeView) || (requested.overview && !['dashboard', 'documentTasks'].includes(appState.activeView))) render();
     } catch (error) {
       showApplicationError(error);
     }
@@ -2949,6 +3098,25 @@ document.addEventListener('click', async event => {
     if (!updateAssetSelection(assetLink.dataset.assetId)) render();
     return;
   }
+  const handbookReturn = event.target.closest('[data-handbook-return]');
+  if (handbookReturn) {
+    event.preventDefault();
+    returnFromHandbook(handbookReturn.href);
+    return;
+  }
+  const handbookEntryLink = event.target.closest('a[href^="/knowledge-center/production/handbook/"]');
+  if (handbookEntryLink && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey && event.button === 0) {
+    if (!canAccessView('production')) return;
+    event.preventDefault();
+    rememberHandbookEntry(handbookEntryLink.href);
+    history.pushState({ view: 'production', handbookFrom: true }, '', handbookEntryLink.pathname + handbookEntryLink.search);
+    appState.activeView = 'production';
+    collapseSidebarForProduction();
+    ensureRouteStyles('production');
+    render();
+    loadIncrementalWorkspace();
+    return;
+  }
   const outlineLink = event.target.closest('[data-outline-id]');
   if (outlineLink) {
     event.preventDefault();
@@ -3017,7 +3185,8 @@ document.addEventListener('click', async event => {
   }
   const productionHandbookRow = event.target.closest('[data-production-handbook-row]');
   if (productionHandbookRow && !event.target.closest('button, a, input, select, textarea, details, summary')) {
-    window.history.pushState({ view: 'production', from: 'production' }, document.title, productionHandbookRow.dataset.handbookHref);
+    rememberHandbookEntry(productionHandbookRow.dataset.handbookHref);
+    window.history.pushState({ view: 'production', handbookFrom: true }, document.title, productionHandbookRow.dataset.handbookHref);
     loadIncrementalWorkspace();
     return;
   }
@@ -5221,6 +5390,7 @@ byId('admin-login-form').addEventListener('submit', async event => {
     window.history.replaceState({}, document.title, destination);
     appState.activeView = viewFromPath(destination) || 'dashboard';
     render();
+    scheduleIconLibrary();
     byId('main').focus();
     formElement.reset();
   } catch (error) { showAuth(error); }
@@ -5257,8 +5427,8 @@ byId('external-account-dialog').addEventListener('click', async event => {
 });
 
 onKnowledgeDataChanged(({ scopes }) => load(scopes));
-async function loadTaskManagementWorkspace() {
-  appState.documentTaskProjection = { status: 'loading', items: [] }; render();
+async function loadTaskManagementWorkspace({ retain = false } = {}) {
+  if (!retain || !appState.documentTaskProjection) { appState.documentTaskProjection = { status: 'loading', items: [] }; render(); }
   appState.documentTaskProjection = await loadDocumentTaskWorkspace();
   if (appState.activeView === 'documentTasks') render();
 }
@@ -5369,6 +5539,21 @@ window.addEventListener('popstate', event => {
   const view = viewFromPath(window.location.pathname) || 'dashboard';
   if (view === "platform") appState.platformTab = platformTabFromSearch(window.location.search);
   if (authState.status === 'authenticated') {
+    if (event.state?.handbookFrom && view === 'production' && productionRouteState().handbookId) {
+      const entry = handbookEntry.get(handbookEntryKey());
+      if (entry && appState.activeView === entry.view) captureHandbookSource(entry);
+      appState.activeView = 'production';
+      collapseSidebarForProduction();
+      render();
+      loadIncrementalWorkspace();
+      return;
+    }
+    const directEntry = handbookEntry.get(activeHandbookPath);
+    if (directEntry && directEntry.url === location.pathname + location.search && appState.activeView === 'production') {
+      if (showCachedReturn(view, directEntry)) {
+        return;
+      }
+    }
     if (view === 'assets' && appState.activeView === 'assets' && appState.assetCatalog && assetCatalogQuery().toString() === assetCatalogRouteKey) {
       updateAssetSelection(new URLSearchParams(window.location.search).get('handbookId'));
       return;
@@ -5412,7 +5597,7 @@ function syncSidebarToggleIcon(collapsed) {
   const toggle = byId('sidebar-collapse');
   const current = toggle?.querySelector?.('[data-lucide]');
   if (!current) return;
-  const iconName = collapsed ? 'panel-left-open' : 'panel-left-close';
+  const iconName = collapsed ? 'panel-left-open' : 'panel-left';
   if (current.getAttribute('data-lucide') === iconName) return;
   const replacement = document.createElement('i');
   replacement.setAttribute('data-lucide', iconName);
@@ -5531,8 +5716,8 @@ async function bootstrap() {
   window.lucide?.createIcons();
   // The review loader paints its own loading state; avoid painting it twice.
   if (appState.activeView !== 'review') render();
-  if (appState.activeView !== 'review') load(appState.activeView === 'dashboard' || appState.activeView === 'platform' ? ['context', 'overview'] : ['context']);
-  if (appState.activeView === 'dashboard') loadDomainBuildTasksWorkspace();
+  if (appState.activeView !== 'review') load(appState.activeView === 'platform' ? ['context', 'overview'] : ['context']);
+  if (appState.activeView === 'dashboard') loadMyTasksWorkspace();
   if (appState.activeView === 'outlines') loadOutlines();
   if (appState.activeView === 'assets') loadAssetCatalog();
   if (appState.activeView === 'production') loadIncrementalWorkspace();

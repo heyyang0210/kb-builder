@@ -105,7 +105,7 @@ export function openProductionWritingPage(options) {
             <div class="handbook-ai-settings-body">
               <section><span class="handbook-settings-label">写作方式</span><div class="handbook-settings-operations" role="group" aria-label="本次生成的写作方式">${Object.entries(names).map(([key, name]) => `<button type="button" data-ai-settings-operation="${key}" aria-pressed="false">${name}</button>`).join('')}</div><label hidden>写作方式<select data-ai-operation>${Object.entries(names).map(([key, name]) => `<option value="${key}">${name}</option>`).join('')}</select></label></section>
               <section data-ai-template-section><label>文档模板<select data-ai-template-select data-searchable-placeholder="输入模板名称搜索或展开选择" data-combobox-size="full" disabled><option value="">正在读取模板…</option></select></label><p data-ai-template role="status"></p></section>
-              <section class="handbook-ai-sources" data-ai-sources><div class="handbook-ai-source-heading"><strong>参考资料</strong><span data-ai-source-count>已添加 0 项</span></div><p class="handbook-settings-source-note">引用优先级从高到低，拖动左侧手柄调整。</p><button type="button" class="button tertiary" data-ai-source-add aria-expanded="false" aria-controls="handbook-ai-source-entry">＋ 添加参考资料</button><div id="handbook-ai-source-entry" class="handbook-ai-settings-section" data-ai-source-entry hidden><label>资料来源<select data-ai-source-type><option value="url">网页来源</option><option value="pingcode-design">Pingcode设计文档</option><option value="pingcode-test">Pingcode测试文档</option><option value="knowledge-mcp">知识库（MCP）</option><option value="test-case-library">测试用例集</option><option value="local-document">本地文档</option></select></label><label data-ai-source-locator-label>资料地址或文档标识<input data-ai-source-locator type="text" placeholder="输入 HTTP(S) 网页地址或文档标识"></label><div class="handbook-source-upload" data-ai-source-upload hidden tabindex="0"><input type="file" data-ai-source-file accept=".md,.markdown,.txt,.sql,.pdf,.docx,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden><strong>拖拽本地文档到这里</strong><span>或点击选择，支持 Markdown、TXT、SQL、PDF、DOCX</span></div><button type="button" data-ai-source-preview>添加并读取</button><p data-ai-source-info hidden></p></div><div data-ai-source-list></div></section>
+              <section class="handbook-ai-sources" data-ai-sources><div class="handbook-ai-source-heading"><strong>参考资料</strong><span data-ai-source-count>已添加 0 项</span></div><p class="handbook-settings-source-note">引用优先级从高到低，拖动左侧手柄调整。</p><button type="button" class="button tertiary" data-ai-source-add aria-expanded="false" aria-controls="handbook-ai-source-entry">＋ 添加参考资料</button><div id="handbook-ai-source-entry" class="handbook-ai-settings-section" data-ai-source-entry hidden><label>资料来源<select data-ai-source-type><option value="url">网页来源</option><option value="pingcode-design">Pingcode设计文档</option><option value="pingcode-test">Pingcode测试文档</option><option value="knowledge-mcp">知识库（MCP）</option><option value="test-case-library">测试用例集</option><option value="local-document">本地文档</option></select></label><label data-ai-source-locator-label>资料地址或文档标识<input data-ai-source-locator type="text" placeholder="输入 HTTP(S) 网页地址或文档标识"></label><div class="handbook-source-upload" data-ai-source-upload hidden tabindex="0"><input type="file" data-ai-source-file accept=".md,.markdown,.txt,.sql,.html,.htm,.pdf,.docx,text/plain,text/html,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden><strong>拖拽本地文档到这里</strong><span>或点击选择，支持 Markdown、TXT、SQL、HTML、PDF、DOCX</span></div><button type="button" data-ai-source-preview>添加并读取</button><p data-ai-source-info hidden></p></div><div data-ai-source-list></div></section>
               <details data-ai-skills><summary>扩展能力 <span data-ai-skill-count>（未选）</span></summary><div class="handbook-ai-settings-section"><p data-ai-skill-info>正在读取可选能力…</p><div data-ai-skill-list></div><p data-ai-used-skills></p></div></details>
 
             </div><footer><small>设置仅作用于本次生成</small><button type="button" class="button tertiary" data-ai-settings-cancel>取消</button><button type="button" class="button" data-ai-settings-apply>应用设置</button></footer>
@@ -268,7 +268,7 @@ export function openProductionWritingPage(options) {
   dialog.querySelector('form').append(sourcePanel);
   const isLocked = () => busy || ['queued', 'running'].includes(job?.status);
   let referenceReturnFocus = null; let referencesExpanded = false; let referenceDragId = null;
-  let collapsedReferenceCount = 3;
+  let collapsedReferenceCount = 4;
   const referenceTools = document.createElement('div'); referenceTools.className = 'handbook-reference-tools';
   referenceTools.innerHTML = `<input type="search" data-ai-reference-search aria-label="搜索已引用文档" placeholder="搜索已引用文档"><select data-ai-reference-filter aria-label="筛选引用来源"><option value="">全部来源</option></select>`;
   for (const [value, label] of types) { const option = document.createElement('option'); option.value = value; option.textContent = label; findFilter().append(option); }
@@ -315,7 +315,7 @@ export function openProductionWritingPage(options) {
       handle.disabled = isLocked() || filtered;
     }
     referenceToggle.hidden = rows.length <= collapsedReferenceCount || filtered;
-    referenceToggle.textContent = referencesExpanded ? `收起至前 ${collapsedReferenceCount} 项` : `展开全部 ${rows.length} 项`;
+    referenceToggle.textContent = referencesExpanded ? `收起至前 ${collapsedReferenceCount} 项` : `还有 ${Math.max(0, rows.length - collapsedReferenceCount)} 项，展开查看`;
     referenceToggle.setAttribute('aria-expanded', String(referencesExpanded));
     find('source-list').classList.toggle('is-expanded', referencesExpanded || filtered || !!referenceDragId);
     referenceHint.textContent = filtered ? `找到 ${matched} 项 · 清空搜索和筛选后可调整优先级` : '从高到低引用 · 拖动手柄或 Alt + ↑ / ↓ 调整顺序';
@@ -859,6 +859,10 @@ export function openProductionWritingPage(options) {
     referenceOrder = [...(previous.referenceOrder ?? ['knowledge-mcp']), ...sourceSnapshots.map(source => source.sourceId)].filter((id, index, list) => (id === 'knowledge-mcp' || sourceSnapshots.some(source => source.sourceId === id)) && list.indexOf(id) === index);
     pendingStart = null; renderSources(); sourceHint(); updateSettingsSummary();
   }
+  function restrictedWebSource(source) { return source?.sourceType === 'url' && (
+    /(?:wappoc_appmsgcaptcha|captcha|challenge|access[-_/]?denied|login)/i.test(source.locator || '') ||
+    /环境异常.{0,40}(验证|访问)|完成验证后.{0,30}(继续|访问)|验证码|人机验证|访问受限|登录后查看|请先登录/i.test((source.content || '').slice(0, 16000))
+  ); }
   function sourceCount() {
     const selected = referenceOrder.filter(id => id === 'knowledge-mcp' || sourceSnapshots.some(source => source.sourceId === id));
     find('source-count').textContent = `${selected.length} 项`;
@@ -878,7 +882,7 @@ export function openProductionWritingPage(options) {
     for (const source of referenceOrder.filter(id => id === 'knowledge-mcp' || known.has(id)).map(id => id === 'knowledge-mcp' ? { sourceId: id, sourceType: id, title: '知识库（MCP）', locator: '按写作要求自动检索', automatic: true } : known.get(id))) {
       const row = document.createElement('section');
       const label = document.createElement('label');
-      const box = document.createElement('input'); box.type = 'checkbox'; box.value = source.sourceId; box.checked = source.sourceId !== 'knowledge-mcp'; box.hidden = true; box.tabIndex = -1;
+      const box = document.createElement('input'); box.type = 'checkbox'; box.value = source.sourceId; box.checked = source.sourceId !== 'knowledge-mcp' && !restrictedWebSource(source); box.disabled = restrictedWebSource(source); box.hidden = true; box.tabIndex = -1;
       row.dataset.sourceId = source.sourceId; row.dataset.sourceType = source.sourceType;
       row.dataset.search = `${source.title || ''} ${source.locator || ''}`.toLocaleLowerCase();
       const handle = document.createElement('button'); handle.type = 'button'; handle.className = 'handbook-source-drag-handle'; handle.textContent = '⋮⋮';
@@ -912,7 +916,7 @@ export function openProductionWritingPage(options) {
       row.ondragover = event => { if (isLocked() || isReferenceFiltered() || !referenceDragId) return; event.preventDefault(); event.dataTransfer.dropEffect = 'move'; row.classList.add('is-drag-target'); };
       row.ondragleave = () => row.classList.remove('is-drag-target');
       row.ondrop = event => { event.preventDefault(); row.classList.remove('is-drag-target'); if (isLocked() || isReferenceFiltered() || !referenceDragId) return; const id = referenceDragId; referenceDragId = null; const from = referenceOrder.indexOf(id); const to = referenceOrder.indexOf(source.sourceId); if (from < 0 || to < 0 || from === to) { syncReferenceCollapse(); return; } referenceOrder.splice(from, 1); referenceOrder.splice(to, 0, id); pendingStart = null; renderSources(); updateSettingsSummary(); };
-      const state = document.createElement('span'); state.className = 'handbook-source-state'; state.textContent = source.automatic ? '默认引用 · 自动检索' : types.find(([value]) => value === source.sourceType)?.[1] || '已引用';
+      const state = document.createElement('span'); state.className = 'handbook-source-state'; state.textContent = restrictedWebSource(source) ? '不可引用 · 请重新读取或移除' : source.automatic ? '默认引用 · 自动检索' : types.find(([value]) => value === source.sourceType)?.[1] || '已引用';
       const trailing = document.createElement('div'); trailing.className = 'handbook-source-trailing'; trailing.append(preview, remove);
       row.append(handle, label, priority, state, trailing); find('source-list').append(row);
     }
@@ -1013,7 +1017,7 @@ export function openProductionWritingPage(options) {
       sourceCount();
       sourceStatus('资料已添加，并已排在引用优先级末尾。拖动资料卡可调整顺序。');
       find('source-locator').value = '';
-    } catch (error) { sourceStatus(`资料读取失败：${error.message}${error.requestId ? `（诊断编号：${error.requestId}）` : ''}`, true); }
+    } catch (error) { sourceStatus(`资料读取失败：${error.message}${error.code === 'AI_SOURCE_ACCESS_RESTRICTED' || /验证|限制/.test(error.message) ? ' 可选择“本地文档”上传已取得的文章文件。' : ''}${error.requestId ? `（诊断编号：${error.requestId}）` : ''}`, true); }
     finally { busy = false; controls(); }
   };
   const host = options.host || (embedded ? document.querySelector('.handbook-production-writing') : document.getElementById('view-root'));

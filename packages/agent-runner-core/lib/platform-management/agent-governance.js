@@ -110,7 +110,9 @@ function createAgentGovernance(options = {}) {
     const config = await current();
     const options = config.agents.filter(a => a.enabled && a.executor !== 'deepseek').flatMap(a => models(a.id).available().options.map(option => ({ ...option, agentId: a.id, executor: a.executor, agentName: a.name, agentConfigVersion: digest(a) })));
     const defaultAgent = config.agents.find(a => a.id === config.defaultAgentId);
-    return { options, defaultSelection: defaultAgent ? { ...models(defaultAgent.id).available().defaultSelection, agentId: defaultAgent.id } : null };
+    const preferred = defaultAgent && models(defaultAgent.id).available().defaultSelection;
+    const defaultSelection = preferred ? options.find(option => option.agentId === defaultAgent.id && option.serviceId === preferred.serviceId && option.model === preferred.model) || null : null;
+    return { options, defaultSelection };
   }
   function resolve(selection) {
     // The production pipeline resolves synchronously, so use the fresh on-disk snapshot.

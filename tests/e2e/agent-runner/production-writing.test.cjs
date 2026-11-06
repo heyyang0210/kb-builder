@@ -6,6 +6,10 @@ const path = require('node:path');
 const { chromium } = require('playwright');
 const { setup } = require('./fixtures/production-writing.cjs');
 const artifacts = path.resolve('runtime/test-results/production-writing');
+const coverageCases = process.env.KC_FRONTEND_ISTANBUL_CASE_DIR;
+const frontendRoot = path.resolve('apps/knowledge-center-web/frontend/knowledge-center');
+const coverageKey = '__kc_istanbul_coverage__';
+let coverageCaseNumber = 0;
 fs.mkdirSync(artifacts, { recursive: true });
 const ctx = { outlineVersionId: 'outline-v1', branch: 'main' };
 const suffix = '/handbooks/HB-1/documents/doc-1';
@@ -14,8 +18,38 @@ const selected = '安装前，请确认环境满足部署要求，并准备所�
 
 async function launch(t, ai = {}, fixtureOptions = {}) {
   const api = await setup(t, { ...fixtureOptions, browser: true, ai });
-  const browser = await chromium.launch({ headless: true }); t.after(() => browser.close());
+  const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: 1366, height: 900 } });
+  if (coverageCases) {
+    const { createInstrumenter } = require('istanbul-lib-instrument');
+    const instrumenter = createInstrumenter({ esModules: true, coverageVariable: coverageKey, compact: false });
+    await page.context().addInitScript(key => {
+      if (location.pathname === '/browser-fixture') globalThis[key] = {};
+    }, coverageKey);
+    await page.route('**/knowledge-center/**/*.js', async route => {
+      const pathname = new URL(route.request().url()).pathname;
+      const relative = pathname.replace(/^\/knowledge-center\//, '');
+      const file = path.resolve(frontendRoot, relative);
+      if (!pathname.startsWith('/knowledge-center/') || !file.startsWith(frontendRoot + path.sep) || relative.split('/').includes('vendor') || !fs.existsSync(file)) {
+        return route.continue();
+      }
+      const response = await route.fetch();
+      if (!response.ok()) return route.fulfill({ response });
+      return route.fulfill({ response, body: instrumenter.instrumentSync(await response.text(), file) });
+    });
+    const caseFile = path.join(coverageCases, `${process.pid}-${++coverageCaseNumber}.json`);
+    t.after(async () => {
+      try {
+        const coverage = await page.evaluate(key => globalThis[key] || {}, coverageKey);
+        fs.mkdirSync(coverageCases, { recursive: true });
+        fs.writeFileSync(caseFile, JSON.stringify(coverage));
+      } finally {
+        await browser.close();
+      }
+    });
+  } else {
+    t.after(() => browser.close());
+  }
   page.setDefaultTimeout(15000);
   const errors = []; page.on('pageerror', error => errors.push(error.message));
   await page.goto(api.origin + '/browser-fixture');
@@ -126,9 +160,14 @@ test('网页资料多选按作者调整的引用优先级进入生成任务', as
   });
   await new Promise(resolve => web.listen(0, '127.0.0.1', resolve));
   t.after(() => { web.closeAllConnections(); web.close(); });
-  const origin = `http://127.0.0.1:${web.address().port}`;
+  const origin = 'http://public.example';
   const rules = structuredClone(require('../../../config/knowledge-center/content-rules.json').productionAI);
   rules.sources.urlOrigins = [origin];
+  rules.sources.lookup = async () => [{ address: '1.1.1.1', family: 4 }];
+  rules.sources.receive = (url, _address, signal) => new Promise((resolve, reject) => {
+    const request = http.get({ hostname: '127.0.0.1', port: web.address().port, path: url.pathname, signal }, resolve);
+    request.on('error', reject);
+  });
   const calls = [];
   const { api, page, errors } = await launch(t, { rules, generate: async messages => {
     calls.push(JSON.parse(messages.at(-1).content));
@@ -160,9 +199,21 @@ test('网页资料多选按作者调整的引用优先级进入生成任务', as
   assert.match(await previewPage.locator('main').textContent(), /甲事实/);
   assert.match(await previewPage.locator('header').textContent(), /甲资料/);
   assert.equal(await previewPage.getByRole('button', { name: '阅读视图' }).getAttribute('aria-pressed'), 'true');
-  await previewPage.locator('#reading img').waitFor();
-  await previewPage.waitForFunction(() => document.querySelector('#reading img')?.complete);
-  assert.ok(await previewPage.locator('#reading img').evaluate(img => img.naturalWidth > 0));
+  await previewPage.locator('#reading img').waitFor({ state: 'attached' });
+  if (coverageCases) {
+    const imageUrl = await previewPage.locator('#reading img').getAttribute('src');
+    const response = await previewPage.request.get(new URL(imageUrl, api.origin).href);
+    assert.equal(response.status(), 200);
+    assert.match(response.headers()['content-type'] || '', /^image\/png/);
+    assert.ok((await response.body()).length > 0);
+  } else {
+    await previewPage.locator('#reading img').evaluate(img => img.scrollIntoView({ block: 'center' }));
+    await previewPage.waitForFunction(() => {
+      const img = document.querySelector('#reading img');
+      return img?.complete && img.naturalWidth > 0;
+    });
+    assert.ok(await previewPage.locator('#reading img').evaluate(img => img.naturalWidth > 0));
+  }
   assert.ok(imageReads > 0);
   assert.equal(await previewPage.locator('#reading img[onerror]').count(), 0);
   await previewPage.screenshot({ path: path.join(artifacts, 'source-reading-preview.png'), fullPage: true });
@@ -775,7 +826,7 @@ test('本地参考文档：拖拽上传、折叠、拖动优先级、键盘调�
     await page.waitForFunction(count => document.querySelectorAll('[data-ai-source-list] section').length === count && !document.querySelector('[data-ai-source-file]').disabled, index + 1);
   }
   await openReferences(page);
-  assert.equal(await page.locator('[data-ai-source-list] section:visible').count(), 3);
+  assert.equal(await page.locator('[data-ai-source-list] section:visible').count(), 4);
   assert.equal(await page.locator('[data-ai-references-toggle]').getAttribute('aria-expanded'), 'false');
   await page.locator('[data-ai-references-toggle]').click();
   assert.equal(await page.locator('[data-ai-source-list] section:visible').count(), 5);
@@ -797,13 +848,56 @@ test('本地参考文档：拖拽上传、折叠、拖动优先级、键盘调�
   await page.screenshot({ path: path.join(artifacts, 'reference-local-upload-mobile.png') });
   assert.equal(await page.locator('[data-ai-reference-panel] .handbook-ai-settings-dialog').evaluate(el => el.scrollWidth <= el.clientWidth + 1), true);
   await page.locator('[data-ai-references-toggle]').click();
-  assert.equal(await page.locator('[data-ai-source-list] section:visible').count(), 3);
+  assert.equal(await page.locator('[data-ai-source-list] section:visible').count(), 4);
   await closeReferences(page);
   await page.setViewportSize({ width: 1366, height: 900 });
   await page.locator('[data-ai-start]').click(); await waitCandidate(page);
   assert.deepEqual(captured.sources.map(source => source.title), ['参考1.md','参考2.md','SELECT知识库原文','参考4.md','参考3.md']);
   assert.deepEqual(captured.sources.map(source => source.priority), [1,2,3,4,5]);
   assert.match(captured.sources[0].content, /引用事实1/);
+  assert.deepEqual(errors, []);
+});
+
+test('本地 HTML/HTM 参考文档：文件选择与拖拽经真实 API 解析并进入引用', async t => {
+  let captured;
+  const { page, errors } = await launch(t, { generate: async messages => {
+    captured = JSON.parse(messages.at(-1).content);
+    return { content: '引用后的正文', model: 'fixture' };
+  } });
+  await selectText(page, selected); await page.locator('#open-writing').click(); await openReferences(page);
+  await page.locator('[data-reference-type="local-document"]').click();
+  const fileInput = page.locator('[data-ai-source-file]');
+  assert.match(await fileInput.getAttribute('accept'), /\.html,\.htm/);
+  assert.match(await page.locator('[data-ai-source-upload]').textContent(), /HTML/);
+  const html = '<!doctype html><html><head><title>资料</title><style>.noise{color:red}</style></head><body><nav>导航噪声</nav><main><h1>SQL 参数依据</h1><p>参数值为 42。</p><img src="https://example.com/secret.png" alt="示意图"><a href="javascript:alert(1)">链接文字</a></main><script>secretScript()</script></body></html>';
+  const firstResponse = page.waitForResponse(response => response.request().method() === 'POST' && response.url().includes('/ai-sources/uploads?'));
+  await fileInput.setInputFiles({ name: '参数依据.html', mimeType: 'text/html', buffer: Buffer.from(html) });
+  const first = await firstResponse;
+  assert.equal(first.status(), 201);
+  const source = (await first.json()).data;
+  assert.equal(source.sourceType, 'local-document');
+  assert.match(source.content, /SQL 参数依据[\s\S]*参数值为 42/);
+  assert.doesNotMatch(source.content, /导航噪声|secretScript|javascript:|secret\.png/);
+  assert.match(source.content, /链接文字/);
+  await page.locator('[data-ai-source-list] section').filter({ hasText: '参数依据.html' }).waitFor();
+  const secondResponse = page.waitForResponse(response => response.request().method() === 'POST' && response.url().includes('/ai-sources/uploads?'));
+  const transfer = await page.evaluateHandle(() => {
+    const data = new DataTransfer(); data.items.add(new File(['<html><body><article><h2>拖拽资料</h2><p>第二份正文。</p></article></body></html>'], '拖拽依据.htm', { type: 'text/html' })); return data;
+  });
+  await page.locator('[data-ai-source-upload]').dispatchEvent('drop', { dataTransfer: transfer });
+  await transfer.dispose();
+  const second = await secondResponse;
+  assert.equal(second.status(), 201);
+  assert.match((await second.json()).data.content, /第二份正文/);
+  await page.locator('[data-ai-source-list] section').filter({ hasText: '拖拽依据.htm' }).waitFor();
+  const beforeInvalid = await page.locator('[data-ai-source-list] section').count();
+  await fileInput.setInputFiles({ name: '损坏.html', mimeType: 'text/html', buffer: Buffer.from([0xff, 0xfe, 0x00]) });
+  await page.getByRole('alert').filter({ hasText: '本地文档读取失败' }).waitFor();
+  assert.equal(await page.locator('[data-ai-source-list] section').count(), beforeInvalid);
+  await closeReferences(page);
+  await page.locator('[data-ai-requirements]').fill('依据本地 HTML 参考资料修订。');
+  await page.locator('[data-ai-start]').click(); await waitCandidate(page);
+  assert.ok(captured.sources.some(item => item.sourceId === source.sourceId && item.content.includes('参数值为 42')));
   assert.deepEqual(errors, []);
 });
 
@@ -1285,9 +1379,21 @@ test('长引用列表：固定工具栏、全局序号筛选、直接移除和�
   for (let index = 1; index <= 8; index++) {
     await page.locator('[data-ai-source-file]').setInputFiles({ name: `参考${index}-非常长的资料标题用于检查省略效果及完整标题提示.md`, mimeType: 'text/markdown', buffer: Buffer.from(`# SELECT依据${index}\n\n引用事实${index}。`) });
     await page.waitForFunction(count => document.querySelectorAll('[data-ai-source-list] section').length === count && !document.querySelector('[data-ai-source-file]').disabled, index + 1);
+    if (index === 3) {
+      assert.equal(await page.locator('[data-ai-source-list] section:visible').count(), 4);
+      assert.equal(await page.locator('[data-ai-references-toggle]').isVisible(), false);
+      const fourthGeometry = await page.evaluate(() => {
+        const element = document.querySelector('[data-ai-source-list]');
+        const list = element.getBoundingClientRect();
+        const fourth = element.querySelectorAll('section')[3].getBoundingClientRect();
+        return { fourthBottom: fourth.bottom, listBottom: list.bottom, listHeight: list.height, listScrollHeight: element.scrollHeight, viewportHeight: innerHeight };
+      });
+      assert.ok(fourthGeometry.fourthBottom <= fourthGeometry.listBottom + 1, `第 4 项应完整位于默认列表可视区域：${JSON.stringify(fourthGeometry)}`);
+    }
   }
   const rows = page.locator('[data-ai-source-list] section');
-  assert.equal(await page.locator('[data-ai-source-list] section:visible').count(), 3);
+  assert.equal(await page.locator('[data-ai-source-list] section:visible').count(), 4);
+  assert.equal(await page.locator('[data-ai-references-toggle]').textContent(), '还有 5 项，展开查看');
   await page.locator('[data-ai-references-toggle]').click();
   await page.locator('[data-ai-reference-search]').fill('参考8');
   assert.equal(await page.locator('[data-ai-source-list] section:visible').count(), 1);
@@ -1318,6 +1424,6 @@ test('长引用列表：固定工具栏、全局序号筛选、直接移除和�
   assert.equal(await rows.count(), 8);
   assert.equal(await rows.first().locator('[data-source-priority]').textContent(), '01');
   await page.locator('[data-ai-references-toggle]').click();
-  assert.equal(await page.locator('[data-ai-source-list] section:visible').count(), 3);
+  assert.equal(await page.locator('[data-ai-source-list] section:visible').count(), 4);
   assert.deepEqual(errors, []);
 });
