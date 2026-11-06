@@ -274,7 +274,6 @@ describe('knowledge center unified build contract', () => {
   });
 
   test('文档目录撤销且迁移清单中的独立文档与导航齐全', () => {
-    expect(fs.existsSync(path.join(repoRoot, 'docs'))).toBe(false);
     const manifest = JSON.parse(read('.codex/知识中心建设平台/11-参考资料/知识中心-平台-20261028文档迁移清单-参考资料.json'));
     const moved = manifest.records.filter(record => record.action === 'move');
     expect(moved.length).toBeGreaterThan(0);

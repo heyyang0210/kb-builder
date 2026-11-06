@@ -35,6 +35,8 @@ NODE_TEST_ROOT = REPOSITORY_ROOT / "tests" / "unit" / "agent-runner"
 PYTHON_TEST_ROOT = REPOSITORY_ROOT / "tests" / "unit"
 E2E_TEST_ROOT = REPOSITORY_ROOT / "tests" / "e2e" / "agent-runner"
 JEST_CONFIG = REPOSITORY_ROOT / "tests" / "unit" / "agent-runner" / "jest.config.js"
+JEST_COVERAGE_CONFIG = REPOSITORY_ROOT / "tests" / "unit" / "agent-runner" / "jest.coverage.config.js"
+COVERAGE_TARGETS = REPOSITORY_ROOT / "config" / "knowledge-center" / "coverage-targets.json"
 PLAYWRIGHT_CONFIG = REPOSITORY_ROOT / "tests" / "unit" / "agent-runner" / "playwright.config.js"
 TEST_REPORT_ROOT = REPOSITORY_ROOT / "runtime" / "test-reports"
 TEST_RESULT_ROOT = REPOSITORY_ROOT / "runtime" / "test-results"
@@ -131,6 +133,9 @@ class CoverageSummary:
     metrics: dict[str, float]
     lowest_files: tuple[tuple[str, float], ...] = ()
     diagnostic: str = ""
+    source_files: int = 0
+    counts: dict[str, dict[str, int]] | None = None
+    runtime_metrics: dict[str, dict[str, Any]] | None = None
 
 
 @dataclass(frozen=True)
@@ -1037,14 +1042,77 @@ def write_execution_log(path: Path, command: str, results: list[TaskResult], ela
     print(f"测试日志：{target}")
 
 
+def coverage_meets_target(counts: dict[str, dict[str, int]], target: dict[str, int]) -> bool:
+    return all(
+        counts[name]["total"] > 0 and counts[name]["covered"] * 100 >= counts[name]["total"] * target[name]
+        for name in ("lines", "branches")
+    )
+
+
+def coverage_gate_status(runtime_metrics: dict[str, dict[str, Any]], targets: dict[str, dict[str, int]], test_exit_code: int) -> tuple[str, list[str]]:
+    shortfalls = []
+    for runtime_name, target in targets.items():
+        runtime = runtime_metrics.get(runtime_name)
+        if not runtime:
+            shortfalls.append(f"{runtime_name} 缺少覆盖率报告")
+            continue
+        for metric_name in ("lines", "branches"):
+            measured = runtime["summary"][metric_name]
+            if measured["total"] <= 0 or measured["covered"] * 100 < measured["total"] * target[metric_name]:
+                shortfalls.append(f"{runtime_name} {metric_name} {measured['covered']}/{measured['total']}（目标 {target[metric_name]}%）")
+    return ("PASS" if test_exit_code == 0 and not shortfalls else "FAIL", shortfalls)
+
+
+def run_frontend_coverage(coverage_dir: Path, log_path: Path, timeout: int) -> tuple[dict[str, Any] | None, str]:
+    output_dir = coverage_dir / "frontend"
+    command = ["node", str(REPOSITORY_ROOT / "tools" / "repository" / "collect-frontend-istanbul-coverage.cjs")]
+    env = test_environment()
+    env["KC_FRONTEND_ISTANBUL_OUTPUT"] = str(output_dir)
+    try:
+        completed = subprocess.run(
+            command, cwd=REPOSITORY_ROOT, env=env, timeout=timeout, check=False,
+            text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        )
+        log_path.write_text(f"命令：{shlex.join(command)}\n\n{completed.stdout}", encoding="utf-8")
+    except (OSError, subprocess.TimeoutExpired) as error:
+        log_path.write_text(f"命令：{shlex.join(command)}\n\n{error}\n", encoding="utf-8")
+        return None, str(error)
+    summary_path = output_dir / "coverage-summary.json"
+    if completed.returncode != 0 or not summary_path.is_file():
+        return None, f"前端覆盖率采集退出码 {completed.returncode}，详见 {log_path}"
+    raw = json.loads(summary_path.read_text(encoding="utf-8"))
+    return {"summary": raw["total"], "source_files": len(raw) - 1}, ""
+
+
+def run_java_coverage(coverage_dir: Path, log_path: Path, timeout: int) -> tuple[dict[str, Any] | None, str]:
+    output_dir = coverage_dir / "java"
+    command = [sys.executable, str(REPOSITORY_ROOT / "tools" / "repository" / "collect-java-coverage.py")]
+    env = test_environment()
+    env["KC_JAVA_COVERAGE_OUTPUT"] = str(output_dir)
+    try:
+        completed = subprocess.run(
+            command, cwd=REPOSITORY_ROOT, env=env, timeout=timeout, check=False,
+            text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        )
+        log_path.write_text(f"命令：{shlex.join(command)}\n\n{completed.stdout}", encoding="utf-8")
+    except (OSError, subprocess.TimeoutExpired) as error:
+        log_path.write_text(f"命令：{shlex.join(command)}\n\n{error}\n", encoding="utf-8")
+        return None, str(error)
+    summary_path = output_dir / "coverage-summary.json"
+    if completed.returncode != 0 or not summary_path.is_file():
+        return None, f"Java 覆盖率采集退出码 {completed.returncode}，详见 {log_path}"
+    raw = json.loads(summary_path.read_text(encoding="utf-8"))
+    return {"summary": raw, "source_files": raw["sourceFiles"]}, ""
+
+
 def run_jest_coverage(tasks: list[TestTask], context: RunContext, timeout: int) -> CoverageSummary:
     jest_files = sorted({path for task in tasks if task.framework == "jest" for path in task.files})
     coverage_dir = context.details_dir / "coverage"
     log_path = context.tasks_dir / "coverage-jest.log"
     if not jest_files:
-        return CoverageSummary("FAIL", "Jest 管理的 JavaScript 代码", {}, diagnostic="没有可采集的 Jest 测试")
+        return CoverageSummary("FAIL", "Node 产品源码（含未执行文件）", {}, diagnostic="没有可采集的 Jest 测试")
     command = [
-        *node_tool("jest"), "--config", relative(JEST_CONFIG), "--runInBand", "--coverage",
+        *node_tool("jest"), "--config", relative(JEST_COVERAGE_CONFIG), "--runInBand", "--coverage",
         # 传入的是已经由统一入口判定为 Jest 的精确文件列表。若缺少该参数，
         # Jest 会把路径当作正则并再次扫描同目录，把 node:test/独立脚本误收集进来。
         "--runTestsByPath",
@@ -1069,27 +1137,67 @@ def run_jest_coverage(tasks: list[TestTask], context: RunContext, timeout: int) 
         log_path.write_text(f"命令：{command_text}\n\n{completed.stdout}", encoding="utf-8")
     except (OSError, subprocess.TimeoutExpired) as error:
         log_path.write_text(f"命令：{command_text}\n\n{error}\n", encoding="utf-8")
-        return CoverageSummary("FAIL", "Jest 管理的 JavaScript 代码", {}, diagnostic=str(error))
+        return CoverageSummary("FAIL", "Node 产品源码（含未执行文件）", {}, diagnostic=str(error))
     summary_path = coverage_dir / "coverage-summary.json"
-    if completed.returncode != 0 or not summary_path.is_file():
+    if not summary_path.is_file():
         return CoverageSummary(
-            "FAIL", "Jest 管理的 JavaScript 代码", {},
+            "FAIL", "Node 产品源码（含未执行文件）", {},
             diagnostic=f"Jest coverage 退出码 {completed.returncode}，详见 details/tasks/coverage-jest.log",
         )
     raw = json.loads(summary_path.read_text(encoding="utf-8"))
     total = raw.get("total", {})
-    metrics = {
-        name: float(total.get(name, {}).get("pct", 0.0))
-        for name in ("statements", "branches", "functions", "lines")
+    node_counts = {
+        name: {
+            "covered": int(total.get(name, {}).get("covered", 0)),
+            "total": int(total.get(name, {}).get("total", 0)),
+        }
+        for name in ("lines", "branches")
     }
+    frontend, frontend_error = run_frontend_coverage(coverage_dir, context.tasks_dir / "coverage-frontend.log", timeout)
+    java, java_error = run_java_coverage(coverage_dir, context.tasks_dir / "coverage-java.log", timeout)
+    runtime_metrics: dict[str, dict[str, Any]] = {"node": {"summary": total, "source_files": len(raw) - 1}}
+    if frontend:
+        runtime_metrics["frontend"] = frontend
+    if java:
+        runtime_metrics["java"] = java
+    combined_counts = {
+        name: {
+            "covered": sum(int(runtime["summary"][name]["covered"]) for runtime in runtime_metrics.values()),
+            "total": sum(int(runtime["summary"][name]["total"]) for runtime in runtime_metrics.values()),
+        }
+        for name in ("lines", "branches")
+    }
+    metrics = {
+        name: round(combined_counts[name]["covered"] * 100 / combined_counts[name]["total"], 2) if combined_counts[name]["total"] else 0.0
+        for name in ("lines", "branches")
+    }
+    metrics.update({name: float(total.get(name, {}).get("pct", 0.0)) for name in ("statements", "functions")})
+    targets = json.loads(COVERAGE_TARGETS.read_text(encoding="utf-8"))
+    status, shortfalls = coverage_gate_status(runtime_metrics, targets, completed.returncode)
+    diagnostic = ""
+    if completed.returncode != 0:
+        diagnostic = f"Jest 用例退出码 {completed.returncode}，详见 details/tasks/coverage-jest.log"
+    if frontend_error:
+        diagnostic = f"{diagnostic}；" if diagnostic else ""
+        diagnostic += frontend_error
+    if java_error:
+        diagnostic = f"{diagnostic}；" if diagnostic else ""
+        diagnostic += java_error
+    if shortfalls:
+        diagnostic = f"{diagnostic}；" if diagnostic else ""
+        diagnostic += f"覆盖率未达标：{', '.join(shortfalls)}"
     lowest = []
     for file_name, values in raw.items():
         if file_name == "total":
             continue
         lowest.append((Path(file_name).name, float(values.get("lines", {}).get("pct", 0.0))))
     return CoverageSummary(
-        "PASS", "Jest 管理的 JavaScript 代码", metrics,
+        status, "知识中心管理平台 Node、浏览器脚本和 Java 存储", metrics,
         tuple(sorted(lowest, key=lambda item: (item[1], item[0]))[:10]),
+        diagnostic=diagnostic,
+        source_files=sum(item["source_files"] for item in runtime_metrics.values()),
+        counts=combined_counts,
+        runtime_metrics=runtime_metrics,
     )
 
 
@@ -1156,13 +1264,19 @@ def write_markdown_report(
         lines.append("无失败或阻塞。")
     lines.extend(["", "## 代码覆盖率", ""])
     if coverage:
-        if coverage.status == "PASS":
+        if coverage.metrics:
             lines.extend([
-                f"> 范围：{coverage.scope}。这不是全仓覆盖率；Python、独立 Node 脚本和 Playwright 未纳入。",
+                f"> 范围：{coverage.scope}，源文件 {coverage.source_files} 个。Node、浏览器和 Java 分别采集并独立判定目标。",
                 "",
-                "| 语句 | 分支 | 函数 | 行 |",
+                "| Node 语句 | 全平台分支 | Node 函数 | 全平台行 |",
                 "|---:|---:|---:|---:|",
                 f"| {coverage.metrics['statements']:.2f}% | {coverage.metrics['branches']:.2f}% | {coverage.metrics['functions']:.2f}% | {coverage.metrics['lines']:.2f}% |",
+                "",
+                f"计数：行 {coverage.counts['lines']['covered']}/{coverage.counts['lines']['total']}，分支 {coverage.counts['branches']['covered']}/{coverage.counts['branches']['total']}。" if coverage.counts else "",
+                *[
+                    f"{name}：源文件 {item['source_files']} 个，行 {item['summary']['lines']['covered']}/{item['summary']['lines']['total']}，分支 {item['summary']['branches']['covered']}/{item['summary']['branches']['total']}。"
+                    for name, item in (coverage.runtime_metrics or {}).items()
+                ],
                 "",
                 "覆盖率较低的文件（按行覆盖率）：",
                 "",
@@ -1170,6 +1284,8 @@ def write_markdown_report(
                 "",
                 "完整报告：[details/coverage/lcov-report/index.html](./details/coverage/lcov-report/index.html)",
             ])
+            if coverage.status != "PASS":
+                lines.extend(["", f"未通过：{coverage.diagnostic}"])
         else:
             lines.append(f"采集失败：{coverage.diagnostic}")
     else:
@@ -1437,7 +1553,7 @@ def main(argv: list[str] | None = None) -> int:
             if coverage.status != "PASS":
                 print(f"覆盖率采集失败：{coverage.diagnostic}", file=sys.stderr)
         elif args.coverage:
-            coverage = CoverageSummary("NOT_RUN", "Jest 管理的 JavaScript 代码", {}, diagnostic="dry-run 未执行")
+            coverage = CoverageSummary("NOT_RUN", "Node 产品源码（含未执行文件）", {}, diagnostic="dry-run 未执行")
     finally:
         if preflight_executor:
             preflight_executor.shutdown(wait=True)

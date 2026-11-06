@@ -138,13 +138,13 @@ describe('增量构建前端契约', () => {
     const review = read('apps/knowledge-center-web/frontend/knowledge-center/modules/review-publishing/view.js');
     const app = read('apps/knowledge-center-web/frontend/knowledge-center/app.js');
     const css = read('apps/knowledge-center-web/frontend/knowledge-center/styles.css');
-    expect(review).toContain('1 阅读文档');
-    expect(review).toContain('2 查看修改');
-    expect(review).toContain('3 处理审核意见');
+    expect(review).toContain('>阅读文档</button>');
+    expect(review).toContain('>查看修改（${metrics.operations.length}）</button>');
+    expect(review).toContain('>审核意见（${unresolved}）</button>');
     expect(review).toContain('修改前后全文对照');
     expect(review).toContain('data-review-line');
     expect(review).toContain('data-review-comment-form');
-    expect(review).toContain('待审核版本：修改稿');
+    expect(review).toContain('已保存修订 · 冻结审核快照');
     expect(review).not.toContain('审核收件箱');
     expect(review).not.toContain('候选版本：v1.0.2');
     expect(review).toContain('class="icon-button review-panel-close" data-review-panel-close aria-label="关闭审核依据侧栏" title="关闭审核依据侧栏"><i data-lucide="x"');
@@ -184,7 +184,7 @@ describe('增量构建前端契约', () => {
   test('阅读文档步骤提供在线选区提意见入口并复用审核线程', () => {
     const review = read('apps/knowledge-center-web/frontend/knowledge-center/modules/review-publishing/view.js');
     const app = read('apps/knowledge-center-web/frontend/knowledge-center/app.js');
-    for (const marker of ['data-review-reader-comment-form', 'candidateDigest', '在阅读文档中提出意见', 'data-review-selection-bubble', 'data-review-bubble-trigger', '全文意见（兼容模式）']) expect(review).toContain(marker);
+    for (const marker of ['data-review-reader-comment-form', 'candidateDigest', 'data-review-selection-bubble', 'data-review-bubble-trigger', '全文意见（兼容模式）']) expect(review).toContain(marker);
     for (const marker of ['data-review-inline-form', 'commentType', 'severity']) expect(app).toContain(marker);
     expect(review).not.toContain('value="important"');
     expect(app).toContain('document_span');

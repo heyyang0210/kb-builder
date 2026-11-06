@@ -24,11 +24,13 @@ test('filters, editing, draft preservation projection and history readonly state
   const { renderTemplates, authState } = await modules();
   authState.session = { allowedActions: ['template:read', 'template:edit', 'template:manage'] };
   const data = { selected, items: [selected, { ...selected, id: 'disabled', name: '停用样例', status: 'disabled' }] };
-  const ui = { status: 'active', draftKey: selected.id, drafts: { [selected.id]: { ...selected, content: '未保存内容', dirty: true } }, mode: 'edit' };
+  const ui = { status: 'active', draftKey: selected.id, drafts: { [selected.id]: { ...selected, content: '未保存内容', dirty: true } }, mode: 'edit', editorFormat: 'markdown' };
   const html = renderTemplates({ templateProjection: data, templateUi: ui });
   assert.match(html, /data-template-save/); assert.match(html, /data-template-content/); assert.match(html, /未保存内容/); assert.doesNotMatch(html, /data-template-id="disabled"/);
+  const rich = renderTemplates({ templateProjection: data, templateUi: { ...ui, editorFormat: 'rich' } });
+  assert.match(rich, /data-template-rich-editor/);
   const history = renderTemplates({ templateProjection: data, templateUi: { ...ui, historyOpen: true, historyVersion: selected.versions[0] } });
-  assert.match(history, /正在只读查看历史版本 v1/); assert.match(history, /<h1>原始正文<\/h1>/); assert.doesNotMatch(history, /data-template-content/); assert.doesNotMatch(history, /data-template-save/); assert.match(history, /载入为当前草稿/);
+  assert.match(history, /正在只读查看历史版本 v1/); assert.match(history, /<h1>原始正文<\/h1>/); assert.doesNotMatch(history, /data-template-content/); assert.doesNotMatch(history, /data-template-save/); assert.match(history, /恢复为草稿/);
   assert.match(history, /class="template-history"/);
 });
 

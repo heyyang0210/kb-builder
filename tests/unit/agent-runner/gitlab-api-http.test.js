@@ -12,6 +12,8 @@ describe('GitLab same-origin HTTP API', () => {
   let adminCookie;
   let readerCookie;
   let insufficientScope = false;
+  let oauthBranchFailure = false;
+  let oauthTokenExchanges = 0;
 
   beforeAll(async () => {
     tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gitlab-http-'));
@@ -34,8 +36,11 @@ describe('GitLab same-origin HTTP API', () => {
     process.env.KNOWLEDGE_STORAGE_MODE = 'file';
     process.env.GITLAB_TOKEN_local_read = 'test-only-token';
     gitlabServer = http.createServer((req, res) => {
-      if (req.headers['private-token'] !== 'test-only-token') { res.writeHead(401); res.end(JSON.stringify({ message: 'unauthorized' })); return; }
+      if (req.url === '/oauth/token' && req.method === 'POST') { oauthTokenExchanges++; res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ access_token: 'oauth-local-token', expires_in: 3600 })); return; }
+      if (req.headers['private-token'] !== 'test-only-token' && req.headers.authorization !== 'Bearer oauth-local-token') { res.writeHead(401); res.end(JSON.stringify({ message: 'unauthorized' })); return; }
       if (insufficientScope) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'insufficient_scope', error_description: 'Higher privileges required' })); return; }
+      if (oauthBranchFailure && req.url.includes('/repository/branches')) { res.writeHead(503, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ message: 'branch verification unavailable' })); return; }
+      if (req.url.includes('/repository/files/') && req.url.includes('missing.md')) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ message: 'File Not Found' })); return; }
       res.writeHead(200, { 'Content-Type': 'application/json' });
       if (req.url.includes('/repository/branches')) { res.end(JSON.stringify([{ name: 'master', protected: true, commit: { id: 'abcdef123456' } }])); return; }
       if (req.url.includes('/repository/tree')) { res.end(JSON.stringify([{ name: '基础概念', path: 'doc/产品文档/基础概念', type: 'tree' }, { name: '_index.md', path: 'doc/产品文档/_index.md', type: 'blob' }, { name: 'intro.md', path: 'doc/产品文档/基础概念/intro.md', type: 'blob' }, { name: 'guide.pdf', path: 'doc/产品文档/guide.pdf', type: 'blob' }, { name: 'cover.png', path: 'doc/产品文档/cover.png', type: 'blob' }])); return; }
@@ -109,6 +114,57 @@ describe('GitLab same-origin HTTP API', () => {
     const start = await fetch(`${baseUrl}/knowledge-center/api/gitlab/oauth/start?connectionId=${encodeURIComponent(connection.id)}`, { headers: { cookie: readerCookie }, redirect: 'manual' });
     expect(start.status).toBe(302);
     expect(new URL(start.headers.get('location')).pathname).toBe('/oauth/authorize');
+  });
+
+  test('OAuth callback exchanges a local token, verifies branches and preserves the return target', async () => {
+    const configured = await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections`, {
+      method: 'POST', headers: { cookie: adminCookie, 'content-type': 'application/json', 'idempotency-key': 'http-oauth-callback' },
+      body: JSON.stringify({ name: 'oauth-callback', host: gitlabUrl, project: 'cod-doc/oauth-callback', mode: 'sandbox', authMode: 'user_oauth', purpose: 'read' }),
+    });
+    expect(configured.status).toBe(200);
+    const connection = (await configured.json()).data;
+    const returnTo = '/knowledge-center/platform?tab=gitlab#accounts';
+    const start = await fetch(`${baseUrl}/knowledge-center/api/gitlab/oauth/start?connectionId=${encodeURIComponent(connection.id)}&returnTo=${encodeURIComponent(returnTo)}`, { headers: { cookie: readerCookie }, redirect: 'manual' });
+    expect(start.status).toBe(302);
+    const state = new URL(start.headers.get('location')).searchParams.get('state');
+    expect(state).toBeTruthy();
+    const before = oauthTokenExchanges;
+    const callback = await fetch(`${baseUrl}/knowledge-center/api/gitlab/oauth/callback?code=local-code&state=${encodeURIComponent(state)}`, { headers: { cookie: readerCookie }, redirect: 'manual' });
+    expect(callback.status).toBe(302);
+    const location = new URL(callback.headers.get('location'), baseUrl);
+    expect(location.pathname).toBe('/knowledge-center/platform');
+    expect(location.searchParams.get('tab')).toBe('gitlab');
+    expect(location.searchParams.get('gitlabConnection')).toBe(connection.id);
+    expect(location.searchParams.get('gitlabConnectionStatus')).toBe('verified');
+    expect(location.hash).toBe('#accounts');
+    expect(oauthTokenExchanges).toBe(before + 1);
+    const status = await fetch(`${baseUrl}/knowledge-center/api/gitlab/oauth/status?connectionId=${encodeURIComponent(connection.id)}`, { headers: { cookie: readerCookie } });
+    expect(status.status).toBe(200);
+    await expect(status.json()).resolves.toMatchObject({ data: { connected: true } });
+  });
+
+  test('OAuth callback reports branch verification failure while retaining the local authorization', async () => {
+    const configured = await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections`, {
+      method: 'POST', headers: { cookie: adminCookie, 'content-type': 'application/json', 'idempotency-key': 'http-oauth-failed-check' },
+      body: JSON.stringify({ name: 'oauth-failed-check', host: gitlabUrl, project: 'cod-doc/oauth-failed-check', mode: 'sandbox', authMode: 'user_oauth', purpose: 'read' }),
+    });
+    expect(configured.status).toBe(200);
+    const connection = (await configured.json()).data;
+    const start = await fetch(`${baseUrl}/knowledge-center/api/gitlab/oauth/start?connectionId=${encodeURIComponent(connection.id)}`, { headers: { cookie: readerCookie }, redirect: 'manual' });
+    const state = new URL(start.headers.get('location')).searchParams.get('state');
+    oauthBranchFailure = true;
+    try {
+      const callback = await fetch(`${baseUrl}/knowledge-center/api/gitlab/oauth/callback?code=local-code&state=${encodeURIComponent(state)}`, { headers: { cookie: readerCookie }, redirect: 'manual' });
+      expect(callback.status).toBe(302);
+      const location = new URL(callback.headers.get('location'), baseUrl);
+      expect(location.pathname).toBe('/knowledge-center/');
+      expect(location.searchParams.get('externalAccount')).toBe('1');
+      expect(location.searchParams.get('gitlabConnection')).toBe(connection.id);
+      expect(location.searchParams.get('gitlabConnectionStatus')).toBe('failed');
+    } finally { oauthBranchFailure = false; }
+    const status = await fetch(`${baseUrl}/knowledge-center/api/gitlab/oauth/status?connectionId=${encodeURIComponent(connection.id)}`, { headers: { cookie: readerCookie } });
+    expect(status.status).toBe(200);
+    await expect(status.json()).resolves.toMatchObject({ data: { connected: true } });
   });
 
   test('knowledge readers can inspect handbook access status without enumerating connections', async () => {
@@ -213,6 +269,30 @@ describe('GitLab same-origin HTTP API', () => {
     await expect(file.json()).resolves.toMatchObject({ data: { content: '# 产品文档', commitId: 'abcdef123456' } });
     const statistics = await fetch(`${baseUrl}/knowledge-center/api/gitlab/handbooks/DB-001/statistics?ref=master&language=zh`, { headers: { cookie: readerCookie } });
     await expect(statistics.json()).resolves.toMatchObject({ data: { branch: 'master', chapterCount: 1, documentCount: 2, headSha: 'abcdef123456' } });
+  });
+
+  test('review repository context returns mapped tree, Markdown and staged timing through HTTP', async () => {
+    const endpoint = `${baseUrl}/knowledge-center/api/review/repository-context?handbookId=DB-001`;
+    const response = await fetch(endpoint, { headers: { cookie: readerCookie } });
+    expect(response.status).toBe(200);
+    expect(response.headers.get('server-timing')).toMatch(/metadata;dur=.*branches;dur=.*tree;dur=.*file;dur=.*repository-context;dur=/);
+    const result = (await response.json()).data;
+    expect(result).toMatchObject({ status: 'ok', handbookId: 'DB-001', handbookName: '数据库手册',
+      branch: 'master', language: 'zh', languages: { zh: true, en: false }, commitSha: 'abcdef123456',
+      file: { content: '# 产品文档', commitId: 'abcdef123456' } });
+    expect(result.tree).toEqual(expect.arrayContaining([expect.objectContaining({ path: 'doc/产品文档/_index.md' })]));
+    expect(result.requestedPath).toBe('doc/产品文档/_index.md');
+    const english = await fetch(`${endpoint}&language=en`, { headers: { cookie: readerCookie } });
+    expect(english.status).toBe(404);
+    await expect(english.json()).resolves.toMatchObject({ error: { code: 'GITLAB_LANGUAGE_NOT_MAPPED' } });
+    const branch = await fetch(`${endpoint}&branch=unapproved`, { headers: { cookie: readerCookie } });
+    expect(branch.status).toBe(403);
+    await expect(branch.json()).resolves.toMatchObject({ error: { code: 'GITLAB_BRANCH_NOT_ALLOWED' } });
+    const absentFile = await fetch(`${endpoint}&preferredPath=${encodeURIComponent('doc/产品文档/missing.md')}`, { headers: { cookie: readerCookie } });
+    expect(absentFile.status).toBe(200);
+    const absentContext = (await absentFile.json()).data;
+    expect(absentContext).toMatchObject({ status: 'ok', file: null, error: { code: 'GITLAB_NOT_FOUND' }, requestedPath: 'doc/产品文档/missing.md' });
+    expect(absentContext.tree).toEqual(expect.arrayContaining([expect.objectContaining({ path: 'doc/产品文档/_index.md' })]));
   });
 
   test('connection verification persists its latest result in the admin projection', async () => {

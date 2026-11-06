@@ -187,4 +187,59 @@ describe('数据库模式知识资产状态覆盖', () => {
     const health = await fetch(`${baseUrl}/knowledge-center/api/assets/handbooks?page=1&pageSize=20`);
     expect(health.status).toBe(200);
   });
+
+  test('文件模式创建手册校验产品与责任人，并写入审计记录', async () => {
+    process.env.KNOWLEDGE_STORAGE_MODE = 'file';
+    const knowledgeAssetsStore = jsonStore({ version: 1, handbooks: [{ handbookId: 'DB-001', productId: 'db', productName: 'DB', name: '已有手册' }], audits: [] });
+    await startHandler({ knowledgeAssetsStore });
+    const url = `${baseUrl}/knowledge-center/api/assets/handbooks`;
+    const post = body => fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    for (const body of [
+      { name: '', productId: 'db' },
+      { name: '新手册', productId: 'missing' },
+      { name: '新手册', productId: 'db', ownerA: { principalId: 0, displayName: '无效人员' } },
+      { name: '新手册', productId: 'db', ownerA: { principalId: 2, displayName: '甲' }, ownerB: { principalId: 2, displayName: '乙' } },
+    ]) {
+      const response = await post(body);
+      expect(response.status).toBe(400);
+      expect((await response.json()).error.code).toBe('ASSET_CREATE_FAILED');
+    }
+    const created = await post({ name: ' 新手册 ', productId: 'db', ownerA: { principalId: 2, displayName: '甲' }, ownerB: { principalId: 3, displayName: '乙' }, externalVisible: true });
+    expect(created.status).toBe(201);
+    expect(await created.json()).toMatchObject({ data: { handbookId: 'DB-002', name: '新手册', ownerA: { principalId: 2 } } });
+    expect(knowledgeAssetsStore.value().handbooks[1].externalVisible).toBe(true);
+    expect(knowledgeAssetsStore.value()).toMatchObject({ audits: [{ action: 'ASSET_CREATED', handbookId: 'DB-002', operatorId: 'admin' }] });
+    expect(knowledgeAssetsStore.value().handbooks).toHaveLength(2);
+  });
+
+  test('文件模式编辑校验版本和责任人，归档受运行任务保护', async () => {
+    process.env.KNOWLEDGE_STORAGE_MODE = 'file';
+    const knowledgeAssetsStore = jsonStore({ version: 1, handbooks: [{ handbookId: 'DB-001', productId: 'db', productName: 'DB', name: '已有手册', assetVersion: 1, ownerA: { principalId: 2, displayName: '甲' }, documentSummary: { runningTasks: 1 } }], audits: [] });
+    await startHandler({ knowledgeAssetsStore });
+    const url = `${baseUrl}/knowledge-center/api/assets/handbooks/DB-001`;
+    const patch = body => fetch(url, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    const stale = await patch({ expectedVersion: 0, name: '过期更新' });
+    expect(stale.status).toBe(409);
+    expect((await stale.json()).error.code).toBe('ASSET_VERSION_CONFLICT');
+    const invalid = await patch({ expectedVersion: 1, ownerB: { principalId: 2, displayName: '同一人' } });
+    expect(invalid.status).toBe(400);
+    const missing = await fetch(`${baseUrl}/knowledge-center/api/assets/handbooks/missing`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ expectedVersion: 1 }) });
+    expect(missing.status).toBe(404);
+    const changed = await patch({ expectedVersion: 1, name: ' 更新后 ', ownerB: { principalId: 3, displayName: '乙' } });
+    expect(changed.status).toBe(200);
+    expect(await changed.json()).toMatchObject({ data: { name: '更新后', assetVersion: 2, ownerB: { principalId: 3 } } });
+    const blocked = await fetch(`${url}/archive`, { method: 'POST' });
+    expect(blocked.status).toBe(409);
+    expect(await blocked.json()).toMatchObject({ error: { code: 'ASSET_HAS_RUNNING_TASKS', details: { runningTasks: 1 } } });
+    const payload = knowledgeAssetsStore.value();
+    payload.handbooks[0].documentSummary.runningTasks = 0;
+    knowledgeAssetsStore.replace(payload);
+    const archived = await fetch(`${url}/archive`, { method: 'POST' });
+    expect(archived.status).toBe(200);
+    expect(knowledgeAssetsStore.value().handbooks[0].archivedAt).toEqual(expect.any(String));
+    const restored = await fetch(`${url}/restore`, { method: 'POST' });
+    expect(restored.status).toBe(200);
+    expect(knowledgeAssetsStore.value().handbooks[0].archivedAt).toBeNull();
+    expect(knowledgeAssetsStore.value().audits.map(entry => entry.action)).toEqual(['ASSET_UPDATED', 'ASSET_ARCHIVED', 'ASSET_RESTORED']);
+  });
 });

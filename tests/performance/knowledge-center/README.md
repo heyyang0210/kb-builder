@@ -1,5 +1,13 @@
 # 知识中心功能链路性能专项
 
+2026-11-04：工作台步骤已对齐当前“待我处理”五类视图，使用分类切换代替旧领域任务明细按钮；模板专用数据创建步骤先完成基本信息，再切换 Markdown 正文编辑。完整性能结论必须区分点击反馈、业务成功和后端提交，具体口径见测试设计。
+任务管理补列表与流程视图切换；文档生产选篇以目标正文及编辑入口就绪为终态，目录是否保持展开不作为成功条件。
+
+当前运行资源与源码版本不一致时，可用 `--frontend-source` 仅在测试浏览器覆盖 `app.js` 与任务管理视图模块，对比候选前端逻辑；报告 `results.json.frontendSource` 标记此模式。该结果不作为共享实例已部署的证据。
+
+模板映射数据库容量定向验证：通过 `tests/run_tests.py` 的 `ensure_knowledge_center` 启动 `test_hy` 独占实例后，设置 `KC_STORAGE_URL` 与 `KNOWLEDGE_CENTER_TEST_RUN_ID`，运行 `node tests/performance/knowledge-center/template-mapping-database.cjs`。脚本使用唯一测试键写入 500 条映射，测量 100 条分页读取和两个并发 CAS 写入，最后按 revision 删除并核对测试记录；不会使用平台正式映射键。原始结果位于 `runtime/test-results/template-management/database-capacity.json`。该测量只覆盖数据库记录层，不代表前端端到端响应。
+本次记录还包括平台真实 HTTP API 的 20 次分页读取：P95 33.8ms，最大 38.7ms；数据库 P95 13.7ms，并发 CAS 一成功一冲突。浏览器 504 条回访与分段展示由 `tests/e2e/agent-runner/template-mapping-workspace.cjs` 验证，最近一次 301.6ms。上述分别是单次容量和隔离浏览器结果，不代表持续压力或真实数据库加浏览器的同一次完整链路。
+
 设计契约：`.codex/知识中心建设平台/05-测试设计&报告/01-测试设计/知识中心-平台-界面性能专项-测试设计文档.md`。
 
 ```bash

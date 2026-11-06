@@ -1,7 +1,9 @@
 import importlib.util
+import glob
 import json
 import os
 import re
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -236,6 +238,54 @@ class RepositoryTestRunnerTests(unittest.TestCase):
     def test_coverage_runs_only_files_classified_for_jest(self):
         source = RUNNER_PATH.read_text(encoding="utf-8")
         self.assertIn('"--runTestsByPath"', source)
+
+    def test_coverage_target_uses_exact_counts_not_rounded_percentage(self):
+        target = json.loads(RUNNER.COVERAGE_TARGETS.read_text(encoding="utf-8"))["node"]
+        self.assertTrue(RUNNER.coverage_meets_target(
+            {"lines": {"covered": 100, "total": 100}, "branches": {"covered": 95, "total": 100}}, target,
+        ))
+        self.assertFalse(RUNNER.coverage_meets_target(
+            {"lines": {"covered": 9999, "total": 10000}, "branches": {"covered": 95, "total": 100}}, target,
+        ))
+        self.assertFalse(RUNNER.coverage_meets_target(
+            {"lines": {"covered": 100, "total": 100}, "branches": {"covered": 94, "total": 100}}, target,
+        ))
+
+    def test_full_coverage_gate_requires_every_runtime_and_green_tests(self):
+        targets = json.loads(RUNNER.COVERAGE_TARGETS.read_text(encoding="utf-8"))
+        perfect = {name: {"summary": {"lines": {"covered": 100, "total": 100},
+                                               "branches": {"covered": 95, "total": 100}}} for name in targets}
+        self.assertEqual(("PASS", []), RUNNER.coverage_gate_status(perfect, targets, 0))
+        self.assertEqual("FAIL", RUNNER.coverage_gate_status(perfect, targets, 1)[0])
+        status, shortfalls = RUNNER.coverage_gate_status({"node": perfect["node"]}, targets, 0)
+        self.assertEqual("FAIL", status)
+        self.assertIn("frontend 缺少覆盖率报告", shortfalls)
+        self.assertIn("java 缺少覆盖率报告", shortfalls)
+
+    def test_node_coverage_includes_unexecuted_product_sources(self):
+        config = json.loads(subprocess.check_output(
+            ["node", "-e", "process.stdout.write(JSON.stringify(require(process.argv[1])))", str(RUNNER.JEST_COVERAGE_CONFIG)],
+            cwd=REPOSITORY_ROOT,
+            text=True,
+        ))
+        self.assertEqual(str(REPOSITORY_ROOT), config["rootDir"])
+        self.assertEqual(4, len(config["roots"]))
+        self.assertTrue(all("/runtime" not in root for root in config["roots"]))
+        included = {
+            Path(name).resolve()
+            for pattern in config["collectCoverageFrom"]
+            for name in glob.glob(str(REPOSITORY_ROOT / pattern), recursive=True)
+        }
+        expected = {
+            file.resolve()
+            for directory in ("lib", "routes", "middleware")
+            for file in (REPOSITORY_ROOT / "packages" / "agent-runner-core" / directory).rglob("*.js")
+        }
+        expected.update({
+            REPOSITORY_ROOT / "apps" / "knowledge-center-api" / "server.js",
+            REPOSITORY_ROOT / "apps" / "knowledge-center-web" / "frontend-server.js",
+        })
+        self.assertEqual(expected, included)
 
     def test_dry_run_does_not_fail_when_coverage_is_not_executed(self):
         coverage = RUNNER.CoverageSummary(

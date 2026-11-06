@@ -27,6 +27,8 @@ const output = path.resolve(option('--output', path.join(root, 'runtime/performa
 if (!output.startsWith(path.join(root, 'runtime') + path.sep)) throw Error('专项运行产物必须写入 runtime 目录');
 fs.mkdirSync(output, { recursive: true });
 const report = { runId, startedAt: new Date().toISOString(), base, rounds, config, samples: [], journeys: [], fixtures: {}, gaps: [], errors: [] };
+const frontendSource = args.includes('--frontend-source');
+if (frontendSource) report.frontendSource = path.join(root, 'apps/knowledge-center-web/frontend/knowledge-center/app.js');
 const S = (selector, extra = {}) => ({ selector, ...extra });
 const absent = selector => S(selector, { absent: true });
 const step = (name, target, ready, extra = {}) => ({ name, target, ready, ...extra });
@@ -129,9 +131,14 @@ async function runRound(round) {
   const source = report.fixtures.source;
   const own = report.fixtures.handbook;
   await journey('工作台', round, () => goto('assets'), [
-    nav('dashboard', S('[data-domain-task-open]', { enabled: true })),
-    step('打开页面任务明细', '[data-domain-task-open]', S('dialog[open] [data-domain-task-close]')),
-    step('关闭任务明细', 'dialog[open] [data-domain-task-close]', absent('dialog[open]')),
+    nav('dashboard', S('.my-tasks [data-my-task-kind="all"]', { enabled: true })),
+    step('切换文档编写分类', '[data-my-task-kind="document"]', S('[data-my-task-kind="document"]', { attribute: ['aria-current', 'true'] })),
+    step('返回全部分类', '[data-my-task-kind="all"]', S('[data-my-task-kind="all"]', { attribute: ['aria-current', 'true'] })),
+  ]);
+  await journey('任务管理', round, () => goto('assets'), [
+    nav('documentTasks', S('.document-task-page [data-task-tab="list"]', { enabled: true })),
+    step('切换流程流转', '[data-task-tab="flow"]', absent('[data-task-list]:not([hidden])')),
+    step('返回任务列表', '[data-task-tab="list"]', S('[data-task-list]:not([hidden])')),
   ]);
   await journey('知识资产', round, () => goto(''), [
     nav('assets', S('[data-asset-loaded="true"] [data-asset-id]')),
@@ -155,6 +162,8 @@ async function runRound(round) {
     await page.locator('[data-template-field="name"]').fill(`${config.testPrefix}-${runId}-${round}`);
     await page.locator('[data-template-field="type"]').fill('性能专项');
     await page.locator('[data-template-field="description"]').fill('专用性能链路测试模板');
+    await page.locator('[data-template-meta-done]').click();
+    await page.locator('[data-template-format="markdown"]').click();
     await page.locator('[data-template-content]').fill(config.templateMarkdown);
     try { await measure('模板管理', round, step('保存专用模板', '[data-template-save]', S('[data-template-status]', { text: '保存成功' }))); report.fixtures.templateName = `${config.testPrefix}-${runId}-${round}`; }
     catch (_) { report.journeys.at(-1).status = '失败'; }
@@ -162,8 +171,9 @@ async function runRound(round) {
   await journey('文档生产', round, () => goto('assets'), [
     nav('production', S('[data-handbook-href]')),
     step('点击SQL参考手册展开目录', `[data-handbook-href*="${source.handbookId}"]`, S('.handbook-production-directory.is-open [data-handbook-document]', { enabled: true })),
-    step('选择对应文档', '.handbook-production-document [data-handbook-document]:not([aria-current="page"])', { all: [absent('.handbook-document-skeleton'), absent('.handbook-production-directory.is-open'), S('.handbook-production-editor [data-handbook-mode="edit"]', { enabled: true })] }, { feedback: S('[data-handbook-document-title]') }),
-    step('进入编辑', '.handbook-production-editor [data-handbook-mode="edit"]', S('[data-handbook-editor-format="markdown"]', { enabled: true })),
+    step('选择对应文档', '.handbook-production-document [data-handbook-document]:not([aria-current="page"])', { all: [absent('.handbook-document-skeleton'), S('.handbook-production-editor [data-handbook-mode="edit"]', { enabled: true })] }, { feedback: S('[data-handbook-document-title]') }),
+    step('进入编辑', '.handbook-production-editor [data-handbook-mode="edit"]', S('.handbook-editor-format summary')),
+    step('打开正文格式菜单', '.handbook-editor-format summary', S('.handbook-editor-format[open] [data-handbook-editor-format="markdown"]')),
     step('切换Markdown编辑', '[data-handbook-editor-format="markdown"]', S('[data-handbook-markdown-editor]')),
     step('返回预览', '[data-handbook-mode="read"]', S('.handbook-production-editor.is-reading')),
   ]);
@@ -172,8 +182,9 @@ async function runRound(round) {
       await goto(`production/handbook/${encodeURIComponent(own.handbookId)}`);
       await page.locator('.handbook-production-editor [data-handbook-mode="edit"]').first().waitFor();
     }, [
-      step('选择专用文档', '[data-handbook-document]:not([aria-current="page"])', async target => ({ all: [await fromTarget('data-handbook-document', '[data-handbook-current-document="$value"]')(target), absent('.handbook-production-directory.is-open')] })),
-      step('编辑专用文档', '.handbook-production-editor [data-handbook-mode="edit"]', S('[data-handbook-editor-format="markdown"]')),
+      step('选择专用文档', '[data-handbook-document]:not([aria-current="page"])', async target => ({ all: [await fromTarget('data-handbook-document', '[data-handbook-current-document="$value"]')(target), absent('.handbook-document-skeleton')] })),
+      step('编辑专用文档', '.handbook-production-editor [data-handbook-mode="edit"]', S('.handbook-editor-format summary')),
+      step('打开专用正文格式菜单', '.handbook-editor-format summary', S('.handbook-editor-format[open] [data-handbook-editor-format="markdown"]')),
       step('切换专用Markdown编辑', '[data-handbook-editor-format="markdown"]', S('[data-handbook-markdown-editor]')),
       step('输入专用正文', '[data-handbook-markdown-editor]', S('[data-handbook-markdown-editor]', { value: `本轮标识：${round}` }), { input: config.draftMarkdown + `\n本轮标识：${round}`, event: 'input' }),
       step('保存专用草稿', '[data-handbook-draft-save]', S('[data-handbook-save-status]', { text: '已保存|保存成功' }), { feedback: S('[data-handbook-save-status]', { text: '保存中|已保存|保存成功' }), verify: () => verifyDraft(config.draftMarkdown + `\n本轮标识：${round}`) }),
@@ -288,6 +299,10 @@ function writeReport() {
   try {
     browser = await chromium.launch({ headless: true }); report.browserVersion = browser.version();
     context = await browser.newContext({ viewport: config.viewport });
+    if (frontendSource) {
+      await context.route('**/knowledge-center/app.js', route => route.fulfill({ path: report.frontendSource, contentType: 'text/javascript; charset=utf-8' }));
+      await context.route('**/knowledge-center/modules/document-tasks/view.js', route => route.fulfill({ path: path.join(root, 'apps/knowledge-center-web/frontend/knowledge-center/modules/document-tasks/view.js'), contentType: 'text/javascript; charset=utf-8' }));
+    }
     const health = await context.request.get(base + '/knowledge-center/api/auth/config');
     if (!health.ok()) throw Error('真实环境探活失败');
     if (args.includes('--isolated')) {

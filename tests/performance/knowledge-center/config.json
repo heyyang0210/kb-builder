@@ -5,8 +5,8 @@
     "width": 1440,
     "height": 900
   },
-  "feedbackP95Ms": 200,
-  "readyP95Ms": 500,
+  "feedbackP95Ms": 100,
+  "readyP95Ms": 100,
   "actionTimeoutMs": 15000,
   "aiTimeoutMs": 180000,
   "aiCompleteP95Ms": 120000,
@@ -14,6 +14,7 @@
   "testPrefix": "性能专项",
   "requiredModules": [
     "dashboard",
+    "documentTasks",
     "assets",
     "outlines",
     "templates",
@@ -24,6 +25,7 @@
   ],
   "requiredJourneys": [
     "工作台",
+    "任务管理",
     "知识资产",
     "大纲管理",
     "模板管理",
@@ -51,8 +53,13 @@
   "requiredSteps": {
     "工作台": [
       "进入模块",
-      "打开页面任务明细",
-      "关闭任务明细"
+      "切换文档编写分类",
+      "返回全部分类"
+    ],
+    "任务管理": [
+      "进入模块",
+      "切换流程流转",
+      "返回任务列表"
     ],
     "知识资产": [
       "进入模块",
@@ -77,12 +84,14 @@
       "点击SQL参考手册展开目录",
       "选择对应文档",
       "进入编辑",
+      "打开正文格式菜单",
       "切换Markdown编辑",
       "返回预览"
     ],
     "AI辅助写作": [
       "选择专用文档",
       "编辑专用文档",
+      "打开专用正文格式菜单",
       "切换专用Markdown编辑",
       "输入专用正文",
       "保存专用草稿",

@@ -29,7 +29,7 @@ describe('知识中心导航面板 P0 契约', () => {
 
   test('全局主导航的图标与折叠状态同步', () => {
     expect(app).toContain('function syncSidebarToggleIcon');
-    expect(app).toContain("collapsed ? 'panel-left-open' : 'panel-left-close'");
+    expect(app).toContain("collapsed ? 'panel-left-open' : 'panel-left'");
     expect(app).toContain('syncSidebarToggleIcon(sidebarCollapsed)');
   });
 

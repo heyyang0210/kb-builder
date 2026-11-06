@@ -25,5 +25,9 @@ test('并发读取合并、304校验、跨进程修改、冲突重试和写后�
   const result=await store.transactionAsync(s=>++s.count);
   assert.equal(result,6);assert.equal((await store.readAsync()).count,6);
   assert.equal((await store.readRecordAsync()).revision,4);
+  assert.equal(full,3, '写入后由数据库 304 验证本地快照，不重新读取整份聚合');
+  revision++;payload={count:8};
+  assert.equal((await store.readAsync()).count,8, '外部写入后必须读取新版本');
+  assert.equal(full,4);
  }finally{await new Promise(r=>server.close(r));}
 });

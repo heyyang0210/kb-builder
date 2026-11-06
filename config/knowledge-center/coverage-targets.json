@@ -1,0 +1,5 @@
+{
+  "node": { "lines": 100, "branches": 95 },
+  "frontend": { "lines": 100, "branches": 95 },
+  "java": { "lines": 100, "branches": 95 }
+}

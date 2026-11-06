@@ -9,7 +9,7 @@ const catalog = { versions: ['23.4'], documents: [{ id: 'd1', name: '安装', pa
 let reviewState, proposalCalls;
 const context = req => {
   const id = req.get('x-test-user') || 'owner';
-  return { session: { user: { id: `auth-${id}`, principalId: id, allowedActions: ['knowledge:read', 'knowledge:write', 'outline:create', ...(id === 'owner' ? ['platform:manage'] : [])] } }, people, handbooks: [{ id: 'h1', name: '手册一' }, { id: 'h2', name: '手册二' }], catalog: async () => catalog, createDocument: async () => { proposalCalls++; return { outlineId: 'new-candidate', documentId: 'd2' }; },
+  return { session: { user: { id: `auth-${id}`, principalId: id, allowedActions: ['knowledge:read', 'knowledge:write', 'outline:create', ...(['owner', 'admin'].includes(id) ? ['platform:manage'] : [])] } }, people, handbooks: [{ id: 'h1', name: '手册一' }, { id: 'h2', name: '手册二' }], catalog: async () => catalog, createDocument: async () => { proposalCalls++; return { outlineId: 'new-candidate', documentId: 'd2' }; },
     reviewService: { list: () => reviewState ? [{ id: reviewState.id }] : [], get: () => IncrementalBuildService.prototype.project.call({ isOwner: () => false, canComment: () => false }, reviewState, { user: { id, allowedActions: [] } }) } };
 };
 describe('任务管理真实HTTP契约', () => {
@@ -27,10 +27,35 @@ describe('任务管理真实HTTP契约', () => {
   test('重复导入更新来源，保留分派、历史、已确认范围', async () => { let t = (await ticket(await imported())).data; const tasks = [{ number: t.number, title: '新标题' }]; const p = await request('POST', '/import?preview=true', { tasks }); expect(p.data.summary.updated).toBe(1); await request('POST', '/import', { tasks, digest: p.data.digest }); const next = (await get(t.number)).data; expect(next.description).toBe('新标题'); expect(next.ownerId).toBe('owner'); expect(next.decomposition).toEqual(t.decomposition); expect(next.assignmentHistory.length).toBeGreaterThan(t.assignmentHistory.length); const same = await request('POST', '/import?preview=true', { tasks }); expect(same.data.summary.unchanged).toBe(1); });
   test('过期预览被拒绝；默认配置只影响新任务', async () => { const a = await imported(); const p = await request('POST', '/import?preview=true', { tasks: [{ number: 'P-2' }] }); const c = (await request('GET', '/config')).data; expect((await request('PUT', '/config', { expectedRevision: c.revision, defaultOwnerId: 'next' })).status).toBe(200); expect((await request('POST', '/import', { tasks: [{ number: 'P-2' }], digest: p.data.digest })).status).toBe(409); const b = await imported('P-2'); expect(b.ownerId).toBe('next'); expect((await get(a.number)).data.ownerId).toBe('owner'); });
   test('两个层次独立确认，可保存草稿且不自动生成决定', async () => { let t = await imported(); t = (await ticket(t, { confirm: false, handbooks: [{ id: 'h1' }] })).data; expect(t.status).toBe('pending_scope'); expect(t.decomposition.handbooks[0].impact).toBe(null); t = (await ticket(t)).data; expect(t.startTime).toBeTruthy(); expect(t.decomposition.handbooks.every(b => !b.confirmed)).toBe(true); t = (await book(t)).data; expect(t.decomposition.handbooks[0].confirmed).toBe(true); expect(t.decomposition.handbooks[1].confirmed).toBe(false); });
+  test('同工单跨手册文档序号递增，重排与增补不复用', async () => {
+    let t = (await ticket(await imported())).data;
+    t = (await book(t, 'h1', { documents: [{ id: 'd1', ownerId: 'writer' }, { id: 'd2', ownerId: 'writer' }] })).data;
+    expect(t.decomposition.handbooks[0].documents.map(doc => doc.subtaskNumber)).toEqual([1, 2]);
+    t = (await book(t, 'h1', { documents: [{ id: 'd2', ownerId: 'writer' }, { id: 'd1', ownerId: 'writer' }] })).data;
+    expect(t.decomposition.handbooks[0].documents.map(doc => doc.subtaskNumber)).toEqual([2, 1]);
+    t = (await book(t, 'h2', { documents: [{ id: 'd1', ownerId: 'writer' }] })).data;
+    expect(t.decomposition.handbooks[1].documents[0].subtaskNumber).toBe(3);
+    const mine = await request('GET', '/mine', undefined, 'writer');
+    expect(mine.data.items.filter(item => item.kind === 'document').map(item => item.subtaskNumber).sort()).toEqual([1, 2, 3]);
+  });
   test('两级不涉及必须选理由，其他需要补充且总责任人确认完成', async () => { let t = await imported(); expect((await ticket(t, { ticketImpact: 'not_involved', reasonId: 'other' })).status).toBe(422); t = (await ticket(t, { ticketImpact: 'not_involved', reasonId: 'covered' })).data; expect(t.status).toBe('in_progress'); expect((await request('POST', '/P-1/complete', { expectedRevision: t.revision }, 'writer')).status).toBe(403); t = (await request('POST', '/P-1/complete', { expectedRevision: t.revision })).data; expect(t.status).toBe('completed'); expect(t.endTime).toBeTruthy(); });
   test('全部手册不涉及仍须总责任人确认', async () => { let t = (await ticket(await imported())).data; expect((await book(t, 'h1', { impact: 'not_involved' })).status).toBe(422); t = (await book(t, 'h1', { impact: 'not_involved', reasonId: 'covered' })).data; t = (await book(t, 'h2', { impact: 'not_involved', reasonId: 'no_impact' })).data; expect(t.status).toBe('in_progress'); expect((await request('POST', '/P-1/complete', { expectedRevision: t.revision })).data.status).toBe('completed'); });
   test('有效人员、真实版本与目录边界服务端验证', async () => { let t = await imported(); expect((await ticket(t, { handbooks: [{ id: 'h1', ownerId: 'fake' }] })).status).toBe(422); expect((await ticket(t, { handbooks: [{ id: 'hidden', ownerId: 'writer' }] })).status).toBe(403); t = (await ticket(t)).data; expect((await book(t, 'h1', { targetVersion: 'fake' })).status).toBe(422); expect((await book(t, 'h1', { documents: [{ id: 'fake', ownerId: 'writer' }] })).status).toBe(422); });
   test('可信会话校验操作者，伪造请求体无效', async () => { const t = await imported(); expect((await request('PUT', '/P-1/decomposition', { ...t.decomposition, confirm: true, expectedRevision: t.revision, operatorId: 'owner', ticketImpact: 'not_involved', reasonId: 'covered' }, 'writer')).status).toBe(403); expect((await request('PUT', '/config', { expectedRevision: 0, defaultOwnerId: 'writer' }, 'writer')).status).toBe(403); });
+  test('管理员代他人确认两级范围，保留责任人及实际操作者', async () => {
+    let task = await imported();
+    task = (await request('PUT', '/P-1/owner', { expectedRevision: task.revision, ownerId: 'next' })).data;
+    const denied = await request('PUT', '/P-1/decomposition', { expectedRevision: task.revision, confirm: true, ticketImpact: 'involved', handbooks: [{ id: 'h1', ownerId: 'book-owner' }] }, 'writer');
+    expect(denied.status).toBe(403);
+    task = (await request('PUT', '/P-1/decomposition', { expectedRevision: task.revision, confirm: true, ticketImpact: 'involved', handbooks: [{ id: 'h1', ownerId: 'book-owner' }], operatorId: 'next' }, 'admin')).data;
+    expect(task.ownerId).toBe('next');
+    expect(task.assignmentHistory.at(-1)).toMatchObject({ type: 'ticket_scope', operatorId: 'admin', responsibleId: 'next', delegatedByAdmin: true });
+    expect(task.canConfirm).toBe(true);
+    task = (await request('PUT', '/P-1/handbooks/h1', { expectedRevision: task.revision, confirm: true, impact: 'not_involved', reasonId: 'covered' }, 'admin')).data;
+    expect(task.decomposition.handbooks[0].ownerId).toBe('book-owner');
+    expect(task.assignmentHistory.at(-1)).toMatchObject({ type: 'handbook_scope', operatorId: 'admin', responsibleId: 'book-owner', delegatedByAdmin: true });
+    expect((await request('GET', '/P-1', undefined, 'writer')).data.canConfirm).toBe(false);
+  });
   test('乐观并发与幂等重放，不覆盖他人修改', async () => { let t = await imported(); const body = { expectedRevision: t.revision, ownerId: 'next' }; const r = await request('PUT', '/P-1/owner', body, 'owner', 'same'); expect(r.status).toBe(200); expect((await request('PUT', '/P-1/owner', body, 'owner', 'same')).data.revision).toBe(r.data.revision); expect((await request('PUT', '/P-1/owner', { ...body, reason: '不同' }, 'owner', 'same')).status).toBe(409); expect((await request('PUT', '/P-1/owner', { ...body, ownerId: 'writer' })).status).toBe(409); expect((await request('PUT', '/P-1/owner', { ownerId: 'writer' })).status).toBe(428); });
   test('无理由改派保留原人与新人、真实操作者和时间', async () => { const t = await imported(); const r = await request('PUT', '/P-1/owner', { expectedRevision: t.revision, ownerId: 'next' }); expect(r.data.assignmentHistory.at(-1)).toMatchObject({ previous: 'owner', next: 'next', operatorId: 'owner' }); });
   test('手册和文档快捷改派：父级权限、并发、幂等、审计及关联保留', async () => {
@@ -52,7 +77,7 @@ describe('任务管理真实HTTP契约', () => {
     expect((await request('GET', '/P-1', undefined, 'next')).data.decomposition.handbooks[0].documents[0].canEdit).toBe(true);
     const confirmedBook = t.decomposition.handbooks[0];
     t = (await request('PUT', handPath, { expectedRevision: t.revision, ownerId: 'next' })).data;
-    expect(t.decomposition.handbooks[0].documents).toEqual(confirmedBook.documents);
+    expect(t.decomposition.handbooks[0].documents.map(({ id, name, ownerId, reviewTaskId }) => ({ id, name, ownerId, reviewTaskId }))).toEqual(confirmedBook.documents.map(({ id, name, ownerId, reviewTaskId }) => ({ id, name, ownerId, reviewTaskId })));
     expect(t.assignmentHistory.at(-1)).toMatchObject({ type: 'handbook_owner', previous: { ownerId: 'book-owner' }, next: { ownerId: 'next' }, operatorId: 'owner' });
     expect((await book(t)).status).toBe(403);
   });
@@ -90,14 +115,64 @@ describe('任务管理真实HTTP契约', () => {
     expect((await request('POST', '/P-1/documents/proposal/prepare-new', { expectedRevision: t.revision, handbookId: 'h1' }, 'writer')).status).toBe(422);
   });
   test('完成门禁复用真实审核服务投影：创建、关闭、退回、图片失败不算完成', async () => { let t = (await ticket(await imported())).data; t = (await book(t)).data; t = (await book(t, 'h2', { impact: 'not_involved', reasonId: 'covered' })).data;
-    reviewState = { id: 'review', handbookId: 'h1', businessVersion: '23.4', state: 'mr_submitted', handbookSource: { documents: [{ documentId: 'd1' }] }, reviews: [], createdBy: 'writer', deliveryObservation: { state: 'opened' } };
+    reviewState = { id: 'review', handbookId: 'h1', businessVersion: '23.4', state: 'mr_submitted', handbookSource: { branch: '23.4', documents: [{ documentId: 'd1', branch: '23.4' }] }, reviews: [], createdBy: 'writer', deliveryObservation: { state: 'opened' } };
     t = (await request('POST', '/P-1/documents/d1/link', { expectedRevision: t.revision, handbookId: 'h1', reviewTaskId: 'review' }, 'writer')).data; expect(t.status).toBe('in_progress');
     for (const delivery of [{ state: 'closed' }, { state: 'merged', readback: { status: 'consistent', resources: 'failed' } }]) { reviewState.deliveryObservation = delivery; expect((await get('P-1')).data.status).toBe('in_progress'); }
     reviewState.state = 'rejected'; reviewState.deliveryObservation = { state: 'opened' }; expect((await get('P-1')).data.status).toBe('in_progress'); expect((await get('P-1')).data.decomposition.handbooks[0].documents[0].completion.label).toContain('审核退回'); reviewState.state = 'mr_submitted';
     reviewState.deliveryObservation = { state: 'merged', observedAt: new Date().toISOString(), readback: { status: 'consistent', resources: 'repository_relative_images_verified' } }; expect((await get('P-1')).data.status).toBe('completed'); expect((await request('PATCH', '/P-1', { status: '已完成' })).status).toBe(422);
   });
-  test('部分文档完成不能完成工单，关联错版本不允许', async () => { let t = (await ticket(await imported())).data; t = (await book(t)).data; t = (await book(t, 'h2')).data; reviewState = { id: 'review', handbookId: 'h1', businessVersion: 'wrong', handbookSource: { documents: [{ documentId: 'd1' }] }, state: 'approved', reviews: [] }; expect((await request('POST', '/P-1/documents/d1/link', { expectedRevision: t.revision, handbookId: 'h1', reviewTaskId: 'review' }, 'writer')).status).toBe(422); reviewState.businessVersion = '23.4'; reviewState.deliveryObservation = { state: 'merged', readback: { status: 'consistent', resources: 'repository_relative_images_verified' } }; t = (await request('POST', '/P-1/documents/d1/link', { expectedRevision: t.revision, handbookId: 'h1', reviewTaskId: 'review' }, 'writer')).data; expect(t.status).toBe('in_progress'); });
+  test('部分文档完成不能完成工单，关联错分支不允许', async () => { let t = (await ticket(await imported())).data; t = (await book(t)).data; t = (await book(t, 'h2')).data; reviewState = { id: 'review', handbookId: 'h1', businessVersion: '版本待核对', handbookSource: { branch: 'wrong', documents: [{ documentId: 'd1', branch: 'wrong' }] }, state: 'approved', reviews: [] }; expect((await request('POST', '/P-1/documents/d1/link', { expectedRevision: t.revision, handbookId: 'h1', reviewTaskId: 'review' }, 'writer')).status).toBe(422); reviewState.handbookSource.branch = '23.4'; reviewState.handbookSource.documents[0].branch = '23.4'; reviewState.deliveryObservation = { state: 'merged', readback: { status: 'consistent', resources: 'repository_relative_images_verified' } }; expect((await request('GET', '/P-1/reviews?handbookId=h1&documentId=d1', undefined, 'writer')).data.map(item => item.id)).toEqual(['review']); t = (await request('POST', '/P-1/documents/d1/link', { expectedRevision: t.revision, handbookId: 'h1', reviewTaskId: 'review' }, 'writer')).data; expect(t.status).toBe('in_progress'); });
   test('分页、搜索、责任人与状态筛选', async () => { await imported(); await imported('P-2'); const r = await request('GET', '?pageSize=1&page=2'); expect(r.data.items.length).toBe(1); expect(r.data.total).toBe(2); expect((await request('GET', '?q=P-2&ownerId=owner&status=pending_scope')).data.total).toBe(1); });
+  test('个人待办按可信会话责任人及层级确认过滤', async () => {
+    let task = await imported();
+    expect((await request('GET', '/mine', undefined, 'owner')).data.items.map(item => item.kind)).toEqual(['assign']);
+    expect((await request('GET', '/mine', undefined, 'writer')).data.total).toBe(0);
+    task = (await ticket(task)).data;
+    expect((await request('GET', '/mine', undefined, 'book-owner')).data.items).toHaveLength(2);
+    expect((await request('GET', '/P-1', undefined, 'book-owner')).data.nextAction).toMatchObject({ label: '确认文档范围', action: 'book-scope', handbookId: 'h1' });
+    expect((await request('GET', '/mine', undefined, 'writer')).data.total).toBe(0);
+    task = (await book(task)).data;
+    const writer = (await request('GET', '/mine', undefined, 'writer')).data.items;
+    expect(writer).toHaveLength(1);
+    expect(writer[0]).toMatchObject({ kind: 'document', version: '23.4' });
+    expect(writer[0].url).toContain('documentId=d1');
+    expect((await request('GET', '/P-1', undefined, 'writer')).data.nextAction).toMatchObject({ label: '进入文档生产' });
+    expect((await request('GET', '/mine?ownerId=writer', undefined, 'next')).data.total).toBe(0);
+  });
+  test('新增文档和无变更确认的个人待办提供对应动作深链', async () => {
+    let task = (await ticket(await imported())).data;
+    task = (await book(task, 'h1', { documents: [{ id: 'proposal', kind: 'new', name: '新增', parentId: 'chapter', ownerId: 'writer' }] })).data;
+    const writing = (await request('GET', '/mine', undefined, 'writer')).data.items;
+    expect(writing).toEqual([expect.objectContaining({ actionLabel: '创建/关联新增文档' })]);
+    expect(writing[0].url).toContain('action=new-document&handbookId=h1&documentId=proposal');
+    expect((await request('GET', '/P-1', undefined, 'writer')).data.nextAction).toMatchObject({ action: 'new-document', handbookId: 'h1', documentId: 'proposal' });
+
+    let unchanged = await imported('P-2');
+    unchanged = (await ticket(unchanged, { ticketImpact: 'not_involved', reasonId: 'covered', handbooks: [] })).data;
+    const completion = (await request('GET', '/mine', undefined, 'owner')).data.items.find(item => item.id === 'ticket:P-2:complete');
+    expect(completion).toMatchObject({ actionLabel: '确认不涉及并完成', url: '/knowledge-center/document-tasks?task=P-2&action=complete' });
+    expect((await request('GET', '/P-2', undefined, 'writer')).data.nextAction).toBeNull();
+    expect((await request('POST', '/P-2/complete', { expectedRevision: unchanged.revision }, 'writer')).status).toBe(403);
+  });
+  test('本人无当前动作时按业务阶段显示等待事项，交付标签来自审核投影', async () => {
+    let task = (await ticket(await imported())).data;
+    const owner = (await request('GET', '/mine')).data;
+    expect(owner.items).toHaveLength(0);
+    expect(owner.following).toHaveLength(2);
+    expect(owner.following.map(item => item.lineage.handbookId)).toEqual(['h1', 'h2']);
+    expect(owner.following[0]).toMatchObject({ number: 'P-1', kind: 'assign', status: '等待他人确认范围' });
+    task = (await book(task)).data;
+    const writing = (await request('GET', '/mine', undefined, 'writer')).data;
+    expect(writing.items[0].lineage).toMatchObject({ ticketNumber: 'P-1', handbookId: 'h1', documentId: 'd1' });
+    expect(writing.following).toHaveLength(0);
+    reviewState = { id: 'review', handbookId: 'h1', businessVersion: '23.4', state: 'mr_submitted', handbookSource: { branch: '23.4', documents: [{ documentId: 'd1', branch: '23.4' }] }, reviews: [], createdBy: 'writer', deliveryObservation: { state: 'opened' } };
+    task = (await request('POST', '/P-1/documents/d1/link', { expectedRevision: task.revision, handbookId: 'h1', reviewTaskId: 'review' }, 'writer')).data;
+    const following = (await request('GET', '/mine', undefined, 'writer')).data;
+    expect(following.items).toHaveLength(0);
+    expect(following.following[0]).toMatchObject({ id: 'wait:document:P-1:h1:d1', kind: 'merge', taskType: '文档发布' });
+    expect(following.following[0].status).toBe(task.decomposition.handbooks[0].documents[0].completion.label);
+    expect((await request('GET', '/mine?ownerId=writer', undefined, 'next')).data.following).toHaveLength(0);
+  });
   test('计划只允许责任人修改，验证时间范围、并发、幂等和实际时间隔离', async () => {
     let t = await imported();
     const body = { expectedRevision: t.revision, plannedStartTime: '2026-11-02T01:00:00.000Z', plannedEndTime: '2026-11-06T10:00:00.000Z', operatorId: 'owner' };

@@ -382,12 +382,13 @@ describe('AI 候选事务和范围保护', () => {
     const generate = jest.fn(async () => ({ content: '新内容', model: 'test' }));
     const snapshot = { templateId: 'tpl', templateVersion: 1, templateContent: '# 测试结构', templateHash: 'fixed' };
     const service = setup({ generate, resolveTemplate: () => snapshot });
-    const input = { ...base, operation, templateId: 'tpl', range: operation === 'continue' ? { start: 2, end: 2 } : base.range };
+    const input = { ...base, operation, templateId: 'tpl', mappingDecisionId: 'batch-1', range: operation === 'continue' ? { start: 2, end: 2 } : base.range };
     const job = service.ai.start(input, editor, operation); await tick();
     expect(JSON.parse(generate.mock.calls[0][0][1].content).template).toBe('# 测试结构');
     const candidate = service.ai.get({ ...ctx, jobId: job.jobId }, editor);
     expect(candidate.candidateMarkdown).toBe(operation === 'continue' ? '前文新内容旧句后文' : '前文新内容后文');
     expect(candidate.metadata.template.templateVersion).toBe(1);
+    expect(candidate.metadata.mappingDecisionId).toBe('batch-1');
   });
 
   test('按模板改写闭环：冻结模板、重组指定范围并保存后回读', async () => {

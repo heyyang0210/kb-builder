@@ -203,7 +203,7 @@ test('模块不绕过公共令牌定义 dvh 或应用壳尺寸', () => {
   function walk(dir) { return fs.readdirSync(dir, { withFileTypes: true }).flatMap(entry => entry.isDirectory() ? walk(path.join(dir, entry.name)) : [path.join(dir, entry.name)]); }
   for (const file of walk(path.join(base, 'modules')).filter(file => file.endsWith('.css'))) {
     const css = fs.readFileSync(file, 'utf8');
-    expect(css).not.toMatch(/\d+dvh/);
+    expect(css.replace(/var\(--kc-viewport-height,\s*\d+dvh\)/g, 'var(--kc-viewport-height)')).not.toMatch(/\d+dvh/);
     expect(css).not.toMatch(/\.app-shell\s*\{/);
   }
 });

@@ -45,14 +45,15 @@ describe('知识中心刷新性能契约', () => {
   test('审核路由提前展示稳定框架、延迟其他页面资源并并行认证', () => {
     expect(entry).toContain('data-review-static-shell');
     expect(entry).toContain('data-href="./modules/dashboard/dashboard.css" data-route-style="dashboard" media="not all"');
-    expect(app).toContain("dashboard: () => import('./modules/dashboard/view.js')");
+    expect(app).toContain("dashboard: () => import('./modules/dashboard/my-tasks.js')");
     expect(app).toContain('await ensureRenderer(targetView);');
     expect(authController).toContain('Promise.allSettled([getAuthConfig(), getSession()])');
   });
 
   test('非工作台页面不预取领域任务，模板摘要仅为选中项读取详情', () => {
-    expect(app).toContain("if (appState.activeView === 'dashboard') loadDomainBuildTasksWorkspace();");
-    expect(app).toContain("load(appState.activeView === 'dashboard' || appState.activeView === 'platform' ? ['context', 'overview'] : ['context']);");
+    expect(app).toContain("if (view === 'dashboard') {");
+    expect(app).toContain("loadMyTasksWorkspace();");
+    expect(app).toContain("load(appState.activeView === 'platform' ? ['context', 'overview'] : ['context']);");
     expect(templateController).toContain("const hasContent = item => typeof item?.current?.content === 'string';");
     expect(templateController).toContain('const detail = !target ? null : hasContent(listed) ? listed : (await api.loadTemplate(target)).data;');
     expect(templateController).toContain("throw new Error('模板详情未返回正文，请刷新后重试。')");

@@ -98,6 +98,27 @@ public final class OutlineStorageContractCheck {
         if (!value) throw new AssertionError(message);
     }
 
+    static Map<String, Object> snapshotNode(String id, String title, String kind, String parentId, long order, long level) {
+        Map<String, Object> node = new LinkedHashMap<>();
+        node.put("id", id);
+        node.put("title", title);
+        node.put("kind", kind);
+        node.put("parentId", parentId);
+        node.put("order", order);
+        node.put("level", level);
+        return node;
+    }
+
+    @SafeVarargs
+    static void invalidNodes(String code, Map<String, Object>... nodes) throws Exception {
+        try {
+            OutlineNodeSnapshot.normalize(List.of(nodes));
+            throw new AssertionError("invalid outline accepted: " + code);
+        } catch (SQLException expected) {
+            check(code.equals(expected.getMessage()), "outline validation: " + expected.getMessage());
+        }
+    }
+
     @SuppressWarnings("unchecked")
     public static void main(String[] args) throws Exception {
         Class<?> json = Class.forName("Main$Json");
@@ -157,6 +178,20 @@ public final class OutlineStorageContractCheck {
         invalid.put("parentId", "missing-parent");
         try { OutlineNodeSnapshot.normalize(List.of(invalid)); throw new AssertionError("missing parent accepted"); }
         catch (SQLException expected) { check(expected.getMessage().equals("INVALID_DIRECTORY_HIERARCHY"), "hierarchy validation"); }
+        Map<String, Object> directory = snapshotNode("dir", "目录", "directory", null, 1, 1);
+        invalidNodes("INVALID_OUTLINE_NODE", snapshotNode(null, "文档", "document", null, 1, 1));
+        invalidNodes("INVALID_OUTLINE_NODE", snapshotNode("doc", "", "document", null, 1, 1));
+        invalidNodes("INVALID_OUTLINE_NODE", snapshotNode("doc", "文档", "unknown", null, 1, 1));
+        invalidNodes("INVALID_OUTLINE_NODE", directory, snapshotNode("dir", "文档", "document", "dir", 2, 2));
+        for (String title : List.of("目录/文档", "目录\\文档", ".", ".."))
+            invalidNodes("INVALID_OUTLINE_PATH", snapshotNode("doc", title, "document", null, 1, 1));
+        invalidNodes("INVALID_DIRECTORY_HIERARCHY", snapshotNode("doc", "文档", "document", null, 1, 1),
+            snapshotNode("child", "子项", "document", "doc", 2, 2));
+        invalidNodes("INVALID_OUTLINE_ORDER_OR_LEVEL", snapshotNode("doc", "文档", "document", null, 0, 1));
+        invalidNodes("INVALID_OUTLINE_ORDER_OR_LEVEL", snapshotNode("doc", "文档", "document", null, 1, 2));
+        invalidNodes("INVALID_OUTLINE_ORDER_OR_LEVEL", directory, snapshotNode("doc", "文档", "document", "dir", 1, 2));
+        invalidNodes("DUPLICATE_OUTLINE_PATH", directory, snapshotNode("other", "目录", "directory", null, 2, 1));
+        invalidNodes("OUTLINE_DOCUMENT_REQUIRED", directory);
         System.out.println("PASS: 501 documents, node insertion/readback/order/assignments, insert-only conflict protection");
     }
 }

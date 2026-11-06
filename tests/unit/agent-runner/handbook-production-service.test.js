@@ -51,6 +51,14 @@ describe('手册生产共享草稿服务', () => {
       .toThrow(expect.objectContaining({ code: 'ATTACHMENT_CONTEXT_MISMATCH' }));
   });
 
+  test('异步附件暂存后仍可由草稿绑定并回读', async () => {
+    const bytes = Buffer.from('# 异步附件');
+    const attachment = await service.stageAttachmentAsync({ ...context, fileName: '异步.md', mimeType: 'text/markdown' }, bytes, editor);
+    const saved = await service.saveDraftAsync({ ...context, editVersion: 0, markdown: `[异步](${attachment.stableReference})`, htmlSnapshot: '<p>异步</p>', attachmentIds: [attachment.attachmentId] }, editor, 'async-attachment');
+    expect(saved.draft.revision.attachmentIds).toEqual([attachment.attachmentId]);
+    expect(service.readAttachment(attachment.attachmentId, editor).buffer).toEqual(bytes);
+  });
+
   test('评审校验审核资格、允许本人并冻结旧批次 revision', () => {
     const saved = service.saveDraft({ ...context, editVersion: 0, markdown: '待评审', htmlSnapshot: '<p>待评审</p>', attachmentIds: [] }, editor, 'save-review');
     expect(() => service.createReviewBatch({ handbookId: context.handbookId, documents: [{ ...context, draftRevisionId: saved.draft.currentRevisionId, reviewerIds: ['unqualified'] }] }, editor, 'review-invalid', [{ id: 'author-1' }]))

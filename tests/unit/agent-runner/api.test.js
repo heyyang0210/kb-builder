@@ -133,6 +133,53 @@ describe('API Integration', () => {
     expect(Array.isArray(res.data.presets)).toBe(true);
   });
 
+  test('配置接口覆盖默认值、敏感请求头和 Agent 预设保存', async () => {
+    const model = await request('POST', '/api/config/model', {
+      provider: 'custom', model: 'coverage-model', base_url: 'http://127.0.0.1:9',
+      temperature: 0, max_tokens: 1, api_key: 'coverage-secret'
+    });
+    expect(model.status).toBe(200);
+
+    const mcp = await request('POST', '/api/config/mcp', {
+      server_url: 'http://127.0.0.1:9', timeout: 1000,
+      cache: { enabled: false, ttl: 0, max_size: 1 },
+      headers: [
+        { name: 'Authorization', encrypted: true, value: 'secret-header' },
+        { name: 'X-Trace', encrypted: false, value: 'trace' }
+      ]
+    });
+    expect(mcp.status).toBe(200);
+    const readMcp = await request('GET', '/api/config/mcp');
+    expect(readMcp.status).toBe(200);
+    expect(readMcp.data.headers).toEqual([
+      { name: 'Authorization', value: '', encrypted: true, description: '' },
+      { name: 'X-Trace', value: 'trace', encrypted: false, description: '' }
+    ]);
+
+    const preset = await request('POST', '/api/config/agent', {
+      id: 'coverage-preset', name: '覆盖率预设', description: '测试',
+      steps: [{ name: '规划', agent: 'planner' }]
+    });
+    expect(preset.status).toBe(200);
+    expect(preset.data.success).toBe(true);
+    const agents = await request('GET', '/api/config/agents');
+    expect(agents.status).toBe(200);
+    expect(agents.data.presets.some(item => item.id === 'coverage-preset')).toBe(true);
+  });
+
+  test('LLM 测试接口将连接异常转换为可读结果', async () => {
+    const res = await request('POST', '/api/config/test-llm');
+    expect(res.status).toBe(200);
+    expect(res.data.success).toBe(false);
+    expect(res.data.message).toContain('LLM 连接失败');
+  });
+
+  test('MCP 测试接口将不可达服务交给统一错误处理', async () => {
+    const res = await request('POST', '/api/config/test-mcp');
+    expect([200, 500]).toContain(res.status);
+    if (res.status === 200) expect(res.data.success).toBe(false);
+  });
+
   test('POST /api/agent/execute 创建任务', async () => {
     const res = await request('POST', '/api/agent/execute', {
       knowledge_point: { name: 'API测试知识点', type: '通用基础' }

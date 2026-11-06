@@ -180,6 +180,59 @@ describe('审核工作台真实 HTTP 契约与规模边界', () => {
     }
   });
 
+  test('真实 HTTP：MR 合入待办只投影给匹配 Assignee，且不扩大只读正文权限', async () => {
+    const source = task('merge-assigned', 'HB-1', { state: 'mr_submitted' });
+    source.handbookSource.documents = [{ documentId: 'a', filePath: 'docs/a.md', title: '甲', reviewerIds: ['179'] }];
+    source.mergeRequest = { iid: 73, webUrl: 'https://git.example.test/group/project/-/merge_requests/73', state: 'opened', participants: { reviewers: [{ platformId: '179' }], assignees: [{ platformId: '178' }] } };
+    source.deliveryObservation = { state: 'opened' };
+    repository.transaction(state => state.tasks.push(source));
+    try {
+      const assignee = await get('?view=mine', { 'x-user': 'usr_heyang', 'x-principal': '178' });
+      expect(assignee.body.data.workbench.myMergeRequests).toEqual([expect.objectContaining({
+        taskId: source.id, handbookId: 'HB-1', documentNames: ['甲'],
+        mergeRequest: { iid: 73, webUrl: source.mergeRequest.webUrl, state: 'opened' },
+      })]);
+      repository.transaction(state => { state.tasks.find(item => item.id === source.id).deliveryObservation = { state: 'closed' }; });
+      expect((await get('?view=mine', { 'x-user': 'usr_heyang', 'x-principal': '178' })).body.data.workbench.myMergeRequests[0].deliveryObservation.state).toBe('closed');
+      repository.transaction(state => { state.tasks.find(item => item.id === source.id).deliveryObservation = { state: 'merged', readback: { status: 'consistent', resources: 'repository_relative_images_verified' } }; });
+      expect((await get('?view=mine', { 'x-user': 'usr_heyang', 'x-principal': '178' })).body.data.workbench.myMergeRequests).toEqual([]);
+      const unrelated = await get('?view=mine', { 'x-user': 'usr_reviewer', 'x-principal': '179' });
+      expect(unrelated.body.data.workbench.myMergeRequests).toEqual([]);
+      const noAssets = await get('?view=mine', { 'x-user': 'usr_heyang', 'x-principal': '178', 'x-visible': '[]' });
+      expect(noAssets.body.data.workbench.myMergeRequests).toEqual([]);
+      const bodyRead = await get(`?view=reader&taskId=${source.id}`, { 'x-user': 'usr_heyang', 'x-principal': '178' });
+      expect(bodyRead.status).toBe(404);
+    } finally {
+      repository.transaction(state => { state.tasks = state.tasks.filter(item => item.id !== source.id); });
+    }
+  });
+
+  test('真实 HTTP：创建 MR 和刷新交付只列给有发布权限的任务提交人', async () => {
+    const source = task('delivery-actions', 'HB-1', { state: 'approved', createdBy: { id: 'usr_heyang' } });
+    repository.transaction(state => state.tasks.push(source));
+    try {
+      const owner = { 'x-user': 'usr_heyang', 'x-principal': '178', 'x-publish': '1' };
+      expect((await get('?view=mine', owner)).body.data.workbench.myDeliveryActions).toEqual([
+        expect.objectContaining({ taskId: source.id, documentId: 'a', label: '创建 GitLab MR', url: `/knowledge-center/review?taskId=${source.id}&documentId=a` }),
+        expect.objectContaining({ taskId: source.id, documentId: 'b', label: '创建 GitLab MR', url: `/knowledge-center/review?taskId=${source.id}&documentId=b` }),
+      ]);
+      expect((await get('?view=mine', { 'x-user': 'usr_heyang', 'x-principal': '178' })).body.data.workbench.myDeliveryActions).toEqual([]);
+      expect((await get('?view=mine', { 'x-user': 'usr_reviewer', 'x-principal': '179', 'x-publish': '1' })).body.data.workbench.myDeliveryActions).toEqual([]);
+      repository.transaction(state => {
+        const current = state.tasks.find(item => item.id === source.id);
+        current.state = 'mr_submitted';
+        current.mergeRequest = { iid: 75, webUrl: 'https://git.example.test/group/project/-/merge_requests/75' };
+        current.deliveryObservation = { state: 'opened' };
+      });
+      expect((await get('?view=mine', owner)).body.data.workbench.myDeliveryActions).toEqual([
+        expect.objectContaining({ taskId: source.id, documentId: 'a', label: '刷新交付状态' }),
+        expect.objectContaining({ taskId: source.id, documentId: 'b', label: '刷新交付状态' }),
+      ]);
+    } finally {
+      repository.transaction(state => { state.tasks = state.tasks.filter(item => item.id !== source.id); });
+    }
+  });
+
   test('超过100本仍完整汇总，末页任务不丢失，排除早期和归档资产', async () => {
     const result = await get();
     expect(result.status).toBe(200);
@@ -196,7 +249,7 @@ describe('审核工作台真实 HTTP 契约与规模边界', () => {
     const limited = await get('?view=handbooks', { 'x-visible': '["HB-125"]' });
     expect(limited.body.data.workbench.handbooks.map(item => item.handbookId)).toEqual(['HB-125']);
     expect(limited.body.data.workbench.documents.every(item => item.handbookId === 'HB-125')).toBe(true);
-    expect((await get('?view=mine', { 'x-visible': '[]' })).body.data.workbench).toEqual({ handbooks: [], documents: [], mine: [] });
+    expect((await get('?view=mine', { 'x-visible': '[]' })).body.data.workbench).toEqual({ handbooks: [], documents: [], mine: [], myMergeRequests: [], myDeliveryActions: [] });
     const denied = await get('?view=reader&taskId=task-1', { 'x-visible': '["HB-125"]' });
     expect(denied.status).toBe(404); expect(denied.body.data).toBeUndefined();
   });
@@ -403,7 +456,7 @@ describe('审核工作台真实 HTTP 契约与规模边界', () => {
       const script = `globalThis.window = { location: { search: '' } }; import { renderReviewPublishing } from ${JSON.stringify(moduleUrl)}; import fs from 'node:fs'; const projection = JSON.parse(fs.readFileSync(0, 'utf8')); process.stdout.write(renderReviewPublishing({ reviewProjection: projection, gitlabProjection: {}, reviewUi: {} }));`;
       const html = execFileSync(process.execPath, ['--input-type=module', '-e', script], { input: JSON.stringify(projection), encoding: 'utf8' });
       expect(html).toContain('data-review-publish');
-      expect(html).toContain('可创建 GitLab MR，提交后等待人工合并');
+      expect(html).toContain('创建 GitLab MR');
       expect(html).not.toContain('仅可阅读，不可审核或发布');
       expect(html).not.toContain('查看 GitLab MR');
     } finally {
