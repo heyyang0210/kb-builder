@@ -59,6 +59,7 @@ function createProxy({ targetHost, targetPort, pathTransform, errorPayload, requ
             }
           }
           const headers = { ...proxyResponse.headers, 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(JSON.stringify(payload)), 'x-request-id': requestId, 'x-correlation-id': correlationId };
+          delete headers['transfer-encoding'];
           res.writeHead(status, headers);
           res.end(JSON.stringify(payload));
         });
