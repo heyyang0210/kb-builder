@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>知识中心工作台 · 工单进展效果稿</title>
+  <style>
+    :root{font-family:"Microsoft YaHei","PingFang SC",Arial,sans-serif;--canvas:#f7f8fa;--surface:#fff;--line:#e6e8eb;--text:#25262b;--muted:#606671;--blue:#335c98;--blue-pale:#eaf0f8;--green:#18794e;--amber:#946200;--amber-pale:#fff5d6}
+    *{box-sizing:border-box}body{margin:0;background:var(--canvas);color:var(--text);font-size:13px;line-height:1.55;letter-spacing:0}button,input,select{font:inherit}button{cursor:pointer}button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--blue);outline-offset:2px}[hidden]{display:none!important}
+    .preview{height:30px;padding:0 16px;display:flex;align-items:center;justify-content:space-between;background:#323b46;color:white;font-size:11px}.preview strong{font-weight:600}.preview span{opacity:.78}
+    .shell{display:flex;min-height:calc(100vh - 30px)}.sidebar{width:248px;flex:none;background:#f1f5f9;border-right:1px solid #dfe5eb}.brand{height:72px;padding:12px;display:flex;align-items:center;gap:10px;border-bottom:1px solid #e0e6ec}.brand-mark{height:36px;width:36px;display:grid;place-items:center;background:#e5f2fb;border-radius:6px;color:#1681c1}.brand-mark svg{width:23px;height:23px}.brand b{display:block;font-size:15px;color:#273847}.brand small{display:block;color:#778593;font-size:11px}.side-label{padding:18px 14px 5px;color:#758597;font-size:11px}.nav-item{height:46px;margin:2px 8px;padding:0 10px;display:flex;align-items:center;gap:11px;border-radius:6px;color:#415a72;font-size:13px;font-weight:600}.nav-item svg{width:18px;height:18px;stroke-width:1.8}.nav-item.active{background:#d7eefa;box-shadow:inset 3px 0 #1479b8;color:#166495}.nav-item small{display:block;color:#7d8996;font-size:11px;font-weight:400}.nav-item div{line-height:1.3}
+    .main{flex:1;min-width:0}.content{width:100%;padding:24px 28px 64px}.page-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:18px}.page-head h1{font-size:24px;line-height:1.35;margin:0}.page-head p{margin:4px 0 0;color:var(--muted);font-size:12px}.ghost{height:38px;display:inline-flex;align-items:center;gap:6px;padding:0 12px;border:1px solid var(--line);border-radius:5px;background:white;color:#394d60}.ghost svg{width:16px;height:16px}.ghost:hover{background:#f2f6fa}
+    .board{background:var(--surface);border:1px solid var(--line);border-radius:8px;overflow:hidden}.board-top{padding:16px 20px 0;border-bottom:1px solid var(--line)}.board-top h2{margin:0;font-size:16px}.board-top p{margin:3px 0 0;color:var(--muted);font-size:12px}.tabs{display:flex;gap:3px;margin-top:14px;overflow-x:auto;white-space:nowrap}.tabs button{height:42px;flex:none;padding:0 13px;border:0;border-bottom:2px solid transparent;background:none;color:var(--muted)}.tabs button:first-child{padding-left:0}.tabs button.active{border-bottom-color:var(--blue);color:var(--blue);font-weight:700}.tabs small{margin-left:5px;font-size:11px}
+    .toolbar{min-height:66px;padding:12px 20px;display:flex;align-items:end;gap:10px;flex-wrap:wrap}.toolbar label{display:grid;gap:3px;color:var(--muted);font-size:11px}.toolbar input,.toolbar select{height:34px;padding:0 10px;border:1px solid #d5dce3;border-radius:5px;background:white;color:var(--text);font-size:13px}.toolbar input{width:290px;max-width:100%}.toolbar .count{margin-left:auto;align-self:center;color:var(--muted);font-size:12px}.column-head{display:grid;grid-template-columns:minmax(0,1.8fr) minmax(125px,.55fr) minmax(140px,.65fr) minmax(150px,.65fr) 118px;gap:16px;padding:9px 20px;background:#fbfcfd;border-top:1px solid var(--line);color:#78828d;font-size:11px}.column-head span:first-child{padding-left:30px}
+    .ticket{border-top:1px solid var(--line)}.ticket-head{display:grid;grid-template-columns:minmax(0,1.8fr) minmax(125px,.55fr) minmax(140px,.65fr) minmax(150px,.65fr) 118px;gap:16px;min-height:74px;align-items:center;padding:10px 20px}.ticket-head:hover{background:#fbfcfd}.identity{display:flex;align-items:center;gap:8px;min-width:0}.expand{flex:none;width:28px;height:32px;display:grid;place-items:center;border:0;border-radius:4px;background:transparent;color:#5f6c78}.expand:hover{background:#eaf0f8}.expand svg{width:16px;height:16px;transition:transform .16s}.ticket.expanded .expand svg{transform:rotate(90deg)}.identity-text{min-width:0}.identity-text strong{display:block;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.identity-text small{display:block;color:var(--muted);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.status{display:inline-flex;align-items:center;width:max-content;max-width:100%;padding:3px 7px;border-radius:4px;background:var(--blue-pale);color:var(--blue);font-size:11px;white-space:nowrap}.status.wait{background:var(--amber-pale);color:var(--amber)}.cell{min-width:0;color:#43505d;font-size:12px}.cell strong{display:block;font-size:12px;font-weight:600}.cell small{display:block;color:#798591;font-size:11px}.action{display:flex;justify-content:flex-end}.action button{height:34px;padding:0 10px;border:1px solid #cfd9e3;border-radius:5px;background:white;color:var(--blue);white-space:nowrap}.action button:hover{background:#edf3f8}
+    .children{padding:0 20px 16px 58px;background:#fbfcfd;border-top:1px solid #eef0f2}.child{display:grid;grid-template-columns:155px minmax(0,1fr) minmax(160px,.55fr) 110px;gap:12px;align-items:center;min-height:47px;border-bottom:1px solid #edf0f3}.child:last-child{border-bottom:0}.child-name{display:flex;align-items:center;gap:7px;min-width:0;font-weight:600}.child-name svg{width:15px;height:15px;flex:none;color:#718091}.child-name span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.child-context{color:#52606c;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.child-context small{color:#81909a}.child .action button{height:30px}.child.level-2{padding-left:18px}.child.level-3{padding-left:36px}.child .muted{color:#7b8691}.empty{padding:40px 18px;text-align:center;color:var(--muted)}.empty strong{color:var(--text)}.empty p{margin:5px 0 0}.foot{padding:10px 20px;border-top:1px solid var(--line);color:#7a8792;font-size:11px}.toast{position:fixed;bottom:20px;right:20px;padding:10px 14px;background:#293948;color:white;border-radius:5px;font-size:12px;z-index:10}
+    @media(max-width:1120px){.column-head,.ticket-head{grid-template-columns:minmax(0,1.6fr) 115px 150px 95px}.column-head span:nth-child(4),.ticket-head>.cell:nth-child(4){display:none}.child{grid-template-columns:130px minmax(0,1fr) 120px 80px}}
+    @media(max-width:760px){.sidebar{display:none}.content{padding:18px 12px 48px}.column-head{display:none}.ticket-head{grid-template-columns:minmax(0,1fr) auto;gap:5px;padding:11px 12px}.ticket-head>.cell{grid-column:1/-1;padding-left:36px}.ticket-head>.cell:nth-child(4){display:block}.ticket-head>.action{grid-column:2;grid-row:1/4;align-self:center}.ticket-head>.action button{min-height:44px}.identity-text strong{white-space:normal}.identity-text small{white-space:normal}.children{padding:5px 12px 12px 24px}.child{grid-template-columns:minmax(0,1fr) auto;gap:2px 8px;padding:9px 0}.child-name{grid-column:1}.child-context{grid-column:1;white-space:normal}.child>.status{grid-column:1}.child>.action{grid-column:2;grid-row:1/4}.child .action button{min-height:44px}.child.level-2{padding-left:8px}.child.level-3{padding-left:16px}.toolbar{padding:12px}.toolbar label:first-child{width:100%}.toolbar input{width:100%}.toolbar .count{width:100%;margin-left:0}.board-top{padding:14px 12px 0}}
+  </style>
+</head>
+<body>
+  <div class="preview"><strong>工作台 · 工单主行与分层展开效果稿</strong><span>示例数据，不连接业务 API</span></div>
+  <div class="shell">
+    <aside class="sidebar" aria-label="平台导航">
+      <div class="brand"><span class="brand-mark"><i data-lucide="cloud"></i></span><span><b>知识中心管理</b><small>YashanDB</small></span></div>
+      <div class="side-label">工作区</div>
+      <div class="nav-item active"><i data-lucide="layout-dashboard"></i><div>工作台<small>我的待办</small></div></div>
+      <div class="nav-item"><i data-lucide="library"></i><div>知识资产<small>手册、文档与版本</small></div></div>
+      <div class="nav-item"><i data-lucide="list-tree"></i><div>大纲管理<small>目录与责任映射</small></div></div>
+      <div class="nav-item"><i data-lucide="files"></i><div>模板管理<small>正文、版本与适用范围</small></div></div>
+      <div class="nav-item"><i data-lucide="workflow"></i><div>文档生产<small>来源、策略与任务</small></div></div>
+      <div class="nav-item"><i data-lucide="list-checks"></i><div>任务管理<small>工单拆分与协作</small></div></div>
+      <div class="nav-item"><i data-lucide="badge-check"></i><div>审核与发布<small>候选、评论与发布</small></div></div>
+      <div class="side-label">治理</div><div class="nav-item"><i data-lucide="settings"></i><div>平台管理<small>连接、权限与审计</small></div></div>
+    </aside>
+    <main class="main"><div class="content">
+      <header class="page-head"><div><h1>我的工作</h1><p>分派、编写与交付进展</p></div><button class="ghost" id="refresh" type="button"><i data-lucide="refresh-cw"></i>刷新</button></header>
+      <section class="board" aria-label="我的任务">
+        <div class="board-top"><h2>任务清单</h2><p>工单持续显示至完成，展开查看手册、文档和交付状态</p><nav class="tabs" aria-label="任务筛选"><button class="active" data-tab="all" aria-current="true">全部 <small>3</small></button><button data-tab="action" aria-current="false">待我处理 <small>2</small></button><button data-tab="following" aria-current="false">跟进中 <small>1</small></button></nav></div>
+        <div class="toolbar"><label>搜索<input type="search" id="query" placeholder="工单编号或内容"></label><label>目标分支<select id="branch"><option value="">全部分支</option><option value="master">master</option></select></label><span class="count" id="count" role="status">3 项任务</span></div>
+        <div class="column-head"><span>工单 / 内容</span><span>阶段</span><span>任务进度</span><span>责任关系</span><span>操作</span></div>
+        <div id="tickets"></div><div class="empty" id="empty" hidden><strong>没有符合条件的任务</strong><p>调整筛选条件后重试。</p></div>
+        <div class="foot">待我处理只统计当前需要本人操作的事项；跟进中的工单仍在清单中。</div>
+      </section>
+    </div></main>
+  </div>
+  <div class="toast" id="toast" role="status" hidden></div>
+  <script src="../../../apps/knowledge-center-web/frontend/knowledge-center/common/vendor/lucide.min.js"></script>
+  <script>
+    const data=[
+      {number:'E2E-WB-20261104-HE-YANG',title:'工作台验收文档任务',branch:'master',state:'following',stage:'交付中',progress:'1 篇待合并回读',owner:'何阳',current:'等待 MR 人工合并与回读',children:[
+        {level:1,icon:'book-open',name:'DB-054',context:'手册范围已确认 · 目标分支 master',state:'已分派',action:'查看手册'},
+        {level:2,icon:'file-text',name:'工作台验收说明',context:'文档负责人 何阳 · 审核已通过',state:'待合并回读',action:'查看文档'},
+        {level:3,icon:'git-pull-request',name:'Draft MR !458',context:'已提交 · 目标分支 master',state:'等待人工合并',action:'查看交付'}
+      ]},
+      {number:'YDBRD-42617',title:'数值型文档更新',branch:'master',state:'action',stage:'文档编写',progress:'1 篇待编写',owner:'何阳（文档）',current:'数值型',children:[
+        {level:1,icon:'book-open',name:'SQL 参考手册',context:'手册负责人 李梦莹 · 目标分支 master',state:'已分派',action:'查看手册'},
+        {level:2,icon:'file-text',name:'数值型',context:'文档负责人 何阳',state:'待处理',action:'去编写'}
+      ]},
+      {number:'YDBRD-42618',title:'字面量文档更新',branch:'master',state:'action',stage:'文档编写',progress:'1 篇待编写',owner:'何阳',current:'字面量',children:[
+        {level:1,icon:'book-open',name:'SQL 参考手册',context:'手册负责人 何阳 · 目标分支 master',state:'已分派',action:'查看手册'},
+        {level:2,icon:'file-text',name:'字面量',context:'文档负责人 何阳',state:'待处理',action:'去编写'}
+      ]}
+    ];
+    const expanded=new Set(['E2E-WB-20261104-HE-YANG']);let tab='all';const $=id=>document.getElementById(id);
+    function render(){const q=$('query').value.trim().toLowerCase(),branch=$('branch').value;const list=data.filter(t=>(tab==='all'||t.state===tab)&&(!q||`${t.number} ${t.title} ${t.current} ${t.children.map(c=>c.name).join(' ')}`.toLowerCase().includes(q))&&(!branch||t.branch===branch));$('count').textContent=`${list.length} 项任务`;$('empty').hidden=!!list.length;
+      $('tickets').innerHTML=list.map(t=>`<article class="ticket ${expanded.has(t.number)?'expanded':''}" data-number="${t.number}"><div class="ticket-head"><div class="identity"><button class="expand" type="button" aria-label="${expanded.has(t.number)?'收起':'展开'} ${t.number} 的手册和文档" aria-expanded="${expanded.has(t.number)}" data-expand="${t.number}"><i data-lucide="chevron-right"></i></button><div class="identity-text"><strong>${t.number}</strong><small>${t.title}</small></div></div><div class="cell"><span class="status ${t.state==='following'?'wait':''}">${t.stage}</span><small>${t.current}</small></div><div class="cell"><strong>${t.progress}</strong><small>目标分支 ${t.branch}</small></div><div class="cell">${t.owner}</div><div class="action"><button type="button" data-open="${t.number}">查看工单</button></div></div>${expanded.has(t.number)?`<div class="children" aria-label="${t.number} 的任务层级">${t.children.map(c=>`<div class="child level-${c.level}"><div class="child-name"><i data-lucide="${c.icon}"></i><span>${c.name}</span></div><div class="child-context">${c.context}</div><span class="status ${c.state.includes('等待')||c.state.includes('待合并')?'wait':''}">${c.state}</span><div class="action"><button type="button" data-open="${t.number}:${c.name}">${c.action}</button></div></div>`).join('')}</div>`:''}</article>`).join('');window.lucide?.createIcons()}
+    document.querySelectorAll('[data-tab]').forEach(button=>button.addEventListener('click',()=>{tab=button.dataset.tab;document.querySelectorAll('[data-tab]').forEach(b=>{b.classList.toggle('active',b===button);b.setAttribute('aria-current',String(b===button))});render()}));
+    $('tickets').addEventListener('click',event=>{const expand=event.target.closest('[data-expand]');if(expand){expanded.has(expand.dataset.expand)?expanded.delete(expand.dataset.expand):expanded.add(expand.dataset.expand);render();document.querySelector(`[data-expand="${expand.dataset.expand}"]`)?.focus();return}const open=event.target.closest('[data-open]');if(open)toast(`效果稿：打开 ${open.dataset.open} 的来源页面`)});
+    function toast(message){const node=$('toast');node.textContent=message;node.hidden=false;clearTimeout(toast.timer);toast.timer=setTimeout(()=>node.hidden=true,2800)}
+    $('query').addEventListener('input',render);$('branch').addEventListener('change',render);$('refresh').addEventListener('click',()=>{render();toast('已刷新效果稿示例')});render();
+  </script>
+</body>
+</html>

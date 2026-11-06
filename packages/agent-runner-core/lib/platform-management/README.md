@@ -20,3 +20,4 @@ API Key 和普通自定义请求头值不回显；搜索路由标头中的知识
 ## AI 写作模型治理
 
 `model-governance.js` 维护 `service.json#/model.services` 与默认选择，复用 ConfigManager 加密和 LLMClient。管理员 GET/PUT `/knowledge-center/api/platform/models`、POST `/test`；作者 GET `/knowledge-center/api/production/models` 仅返回启用且密钥可读的模型。保存需要 If-Match；新行提供 clientId、旧行提供 id；版本冲突409。地址/服务商/协议变化需重填或清除密钥。写作任务启动时解析并固定配置，任务和草稿仅记录脱敏选择、配置版本与上游实际模型。支持 Chat Completions 与 Responses 的非流式生成；保存后新任务生效。旧无 services 配置投影为单个默认服务。
+`agent-governance.js` 的默认模型选择取自同次可用目录，包含模型与 Agent 配置版本，可直接用于执行解析；默认项不可用时返回空值，由调用方明确提示配置缺失。模板映射的普通 JSON 和 Codex markdown 信封由统一解析器转换为相同建议结构。
