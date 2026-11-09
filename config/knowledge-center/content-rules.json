@@ -1,4 +1,8 @@
 {
+  "handbookValidation": {
+    "duplicateName": "该产品下已存在同名手册，请使用其他名称。",
+    "duplicateInactiveName": "该产品下已存在同名手册（已停用），请在‘更多 → 查看已停用资产’中查看，或使用其他名称。"
+  },
   "platformMcp": {
     "minTimeoutMs": 1000,
     "maxTimeoutMs": 120000,

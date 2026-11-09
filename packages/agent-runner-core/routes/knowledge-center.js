@@ -24,6 +24,7 @@ const { REPOSITORY_ROOT } = require('../lib/repo-paths');
 const { requestContext } = require('../lib/log-context');
 const { createGitLabVerificationStore } = require('../lib/gitlab-verification-store');
 const verificationRepairs = require('../../../config/knowledge-center/content-rules.json').gitlabVerificationErrors;
+const handbookValidation = require('../../../config/knowledge-center/content-rules.json').handbookValidation;
 const { readTechDomainConfig } = require('./outline-management');
 const { rules: outlineTemplateRules } = require('../lib/outline-path-template');
 const { createDatabaseConnectionGovernance } = require('../lib/platform-management/database-connection-governance');
@@ -1206,6 +1207,37 @@ function createKnowledgeCenterHandler(options) {
 
   // --- Asset CRUD ---
 
+  function duplicateHandbookMessage(payload, productId, name, excludedId) {
+    const duplicate = payload.handbooks.find(entry =>
+      (excludedId == null || entry.handbookId !== excludedId)
+      && String(entry.productId || entry.productType) === String(productId)
+      && entry.name === name);
+    if (!duplicate) return null;
+    return duplicate.archivedAt ? handbookValidation.duplicateInactiveName : handbookValidation.duplicateName;
+  }
+
+  function assertHandbookNameAvailable(payload, productId, name, excludedId) {
+    const message = duplicateHandbookMessage(payload, productId, name, excludedId);
+    if (message) throw new Error(message);
+  }
+
+  async function writeNamedKnowledgeAsset(payload, item, checkDuplicate) {
+    try {
+      await writeKnowledgeAssets(payload);
+    } catch (error) {
+      if (checkDuplicate && error.code === 'DATABASE_UNAVAILABLE') {
+        // A concurrent writer may have introduced the name after the precheck.
+        // Only replace the message when a fresh read confirms another handbook.
+        try {
+          const message = duplicateHandbookMessage(await readKnowledgeAssets(),
+            item.productId || item.productType, item.name, item.handbookId);
+          if (message) error.message = message;
+        } catch (_) { /* Keep the original save error when the read fails. */ }
+      }
+      throw error;
+    }
+  }
+
   async function createKnowledgeAsset(req, res, session) {
     try {
       const body = await readJsonBody(req);
@@ -1218,6 +1250,7 @@ function createKnowledgeCenterHandler(options) {
       if (!productName) throw new Error('产品不存在或未配置产品名称');
       const ownerA = ownerValue(body.ownerA, true); const ownerB = ownerValue(body.ownerB);
       validateOwnerPair(ownerA, ownerB);
+      assertHandbookNameAvailable(payload, productId, name);
       const item = {
         handbookId: nextHandbookId(payload, productName), productId, productName, productType: productName, name,
         ownerA, ownerB,
@@ -1228,7 +1261,7 @@ function createKnowledgeCenterHandler(options) {
       };
       payload.handbooks.push(item);
       auditAsset(payload, 'ASSET_CREATED', item.handbookId, session);
-      await writeKnowledgeAssets(payload);
+      await writeNamedKnowledgeAsset(payload, item, true);
       res.writeHead(201, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
       res.end(JSON.stringify({ success: true, data: projectAsset(item, true) }));
     } catch (error) {
@@ -1247,13 +1280,19 @@ function createKnowledgeCenterHandler(options) {
       const currentVersion = Number(item.assetVersion || 1);
       if (!Number.isInteger(expectedVersion) || expectedVersion !== currentVersion) throw Object.assign(new Error('手册信息已变化，请刷新后重试'), { code: 'ASSET_VERSION_CONFLICT', status: 409 });
       const before = { name: item.name, ownerA: item.ownerA, ownerB: item.ownerB };
-      if (Object.hasOwn(changes, 'name')) { const name = String(changes.name || '').trim(); if (!name) throw new Error('手册名称不能为空'); item.name = name; }
-      if (Object.hasOwn(changes, 'ownerA')) item.ownerA = ownerValue(changes.ownerA, true);
-      if (Object.hasOwn(changes, 'ownerB')) item.ownerB = ownerValue(changes.ownerB);
-      validateOwnerPair(item.ownerA, item.ownerB);
+      const name = Object.hasOwn(changes, 'name') ? String(changes.name || '').trim() : item.name;
+      if (Object.hasOwn(changes, 'name') && !name) throw new Error('手册名称不能为空');
+      const ownerA = Object.hasOwn(changes, 'ownerA') ? ownerValue(changes.ownerA, true) : item.ownerA;
+      const ownerB = Object.hasOwn(changes, 'ownerB') ? ownerValue(changes.ownerB) : item.ownerB;
+      validateOwnerPair(ownerA, ownerB);
+      const nameChanged = name !== item.name;
+      if (nameChanged) assertHandbookNameAvailable(payload, item.productId || item.productType, name, item.handbookId);
+      if (Object.hasOwn(changes, 'name')) item.name = name;
+      if (Object.hasOwn(changes, 'ownerA')) item.ownerA = ownerA;
+      if (Object.hasOwn(changes, 'ownerB')) item.ownerB = ownerB;
       item.assetVersion = Number(item.assetVersion || 1) + 1;
       auditAsset(payload, 'ASSET_UPDATED', handbookId, session, { before, after: { name: item.name, ownerA: item.ownerA, ownerB: item.ownerB } });
-      await writeKnowledgeAssets(payload);
+      await writeNamedKnowledgeAsset(payload, item, nameChanged);
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
       res.end(JSON.stringify({ success: true, data: projectAsset(item, true) }));
     } catch (error) {
