@@ -198,9 +198,13 @@ export function renderDocumentTasks({ documentTaskProjection }) {
     else dialog.showModal();
     markDynamicSelects(dialog); window.lucide?.createIcons();
     dialog.querySelectorAll('[data-modal-close]').forEach(b => b.onclick = () => dialog.close());
-    dialog.addEventListener('close', () => {
+    dialog.addEventListener('close', async () => {
       if (dialog.dataset.scopeChangeId && dialog.dataset.scopeConfirmed !== 'true') {
-        taskWrite(`/${encodeURIComponent(state.selected.number)}/scope-changes/${encodeURIComponent(dialog.dataset.scopeChangeId)}/cancel`, { expectedRevision: state.selected.revision, reason: '用户取消范围纠偏预览' }, 'POST').catch(() => {});
+        try {
+          const current = await loadDocumentTask(state.selected.number);
+          await taskWrite(`/${encodeURIComponent(current.number)}/scope-changes/${encodeURIComponent(dialog.dataset.scopeChangeId)}/cancel`, { expectedRevision: current.revision, reason: '用户取消范围纠偏预览' }, 'POST');
+          await refresh();
+        } catch (error) { status(`范围纠偏取消失败：${error.message}`); }
       }
       dialog.remove(); cleanupSearchableSelects();
     });
@@ -265,8 +269,7 @@ export function renderDocumentTasks({ documentTaskProjection }) {
     };
     dialog.addEventListener('change', update); dialog.querySelector('[data-scope-search]').addEventListener('input', update); update();
   }
-  async function saveScopeWithPreview(form, task, level, handbookId, proposed) {
-    const dialog = form.closest('dialog');
+  async function saveScopeWithPreview(form, dialog, task, level, handbookId, proposed) {
     const endpoint = `/${encodeURIComponent(task.number)}/scope-changes`;
     if (!dialog.dataset.scopeChangeId) {
       const reason = String(form.get('scopeChangeReason') || '').trim();
@@ -282,17 +285,20 @@ export function renderDocumentTasks({ documentTaskProjection }) {
           .map(doc => ({ handbookId: book.id, documentId: doc.createdDocumentId || doc.id }));
       });
       const change = await taskWrite(endpoint, { expectedRevision: current.revision, level, handbookId, reason, affectedDocuments }, 'POST');
-      state.selected = await loadDocumentTask(task.number);
-      const preview = await taskWrite(`${endpoint}/${encodeURIComponent(change.id)}/preview`, { proposed }, 'POST');
       dialog.dataset.scopeChangeId = change.id;
+      state.selected = await loadDocumentTask(task.number);
+    }
+    if (dialog.dataset.previewedProposal !== JSON.stringify(proposed) || !dialog.dataset.impactDigest || dialog.dataset.scopeCanConfirm === 'false') {
+      const preview = await taskWrite(`${endpoint}/${encodeURIComponent(dialog.dataset.scopeChangeId)}/preview`, { proposed }, 'POST');
+      dialog.dataset.previewedProposal = JSON.stringify(proposed);
       dialog.dataset.impactDigest = preview.impactDigest;
-      const summary = document.createElement('section');
+      const summary = dialog.querySelector('.task-scope-impact-preview') || document.createElement('section');
       summary.className = 'task-scope-impact-preview';
       summary.setAttribute('aria-live', 'polite');
       summary.innerHTML = `<h3>变更影响预览</h3><p>${preview.items.length ? preview.items.map(item => `${e(item.operation === 'withdraw' ? '撤出' : item.operation === 'add' ? '新增' : '调整')} ${e(item.documentId)} · MR ${e(item.mrState || '未创建')}${item.canConfirm ? '' : ` · ${e(item.nextAction === 'close_mr_manually' ? '需人工关闭 MR' : '需刷新状态')}`}`).join('<br>') : '没有文档范围变化'}</p>${preview.canConfirm ? '<p>确认后受影响文档按新范围重新计算。</p>' : '<p role="alert">当前不能确认。先处理上方列出的 MR 状态，再重新打开范围调整。</p>'}`;
       dialog.querySelector('.task-modal-body').append(summary);
-      dialog.querySelector('button[value=confirm]').textContent = preview.canConfirm ? '确认范围变更' : '当前不能确认';
-      dialog.querySelector('button[value=confirm]').disabled = !preview.canConfirm;
+      dialog.dataset.scopeCanConfirm = String(preview.canConfirm);
+      dialog.querySelector('button[value=confirm]').textContent = preview.canConfirm ? '确认范围变更' : '重新预览';
       return { keepOpen: true };
     }
     const current = await loadDocumentTask(task.number);
@@ -305,7 +311,7 @@ export function renderDocumentTasks({ documentTaskProjection }) {
     const reasonField = s.confirmed ? '<label>范围调整原因<textarea name="scopeChangeReason" required rows="2" placeholder="说明为什么需要增减手册"></textarea></label>' : '';
     const dialog = modal('选择涉及的手册', `${s.confirmed ? '<p>已分派范围需要先预览影响，再确认变更。</p>' : ''}${reasonField}${decision(s.ticketImpact, s.ticketReason)}<div data-involved><label>搜索手册<input type="search" data-scope-search></label><p data-selected-count></p><div class="task-choices">${state.context.handbooks.map(b => { const old = s.handbooks.find(x => x.id === b.id); const candidate = old?.ownerId || b.ownerId; const valid = state.context.people.some(p => p.id === candidate) ? candidate : null; return `<div data-choice><label><input type="checkbox" name="selected" value="${e(b.id)}" ${old ? 'checked' : ''}>${e(b.name)}</label>${person(`owner:${b.id}`, valid)}</div>`; }).join('')}</div></div>`, async (form, confirm) => {
       const proposed = { ticketImpact: form.get('impact'), reasonId: form.get('reasonId'), reasonDetail: form.get('reasonDetail'), handbooks: form.getAll('selected').map(id => ({ id, ownerId: form.get(`owner:${id}`) })) };
-      if (s.confirmed) return saveScopeWithPreview(form, t, 'ticket', null, proposed);
+      if (s.confirmed) return saveScopeWithPreview(form, dialog, t, 'ticket', null, proposed);
       return taskWrite(`/${encodeURIComponent(t.number)}/decomposition`, { expectedRevision: t.revision, confirm, ...proposed, reason: form.get('reason') });
     });
     decorateScope(dialog, t, 'handbook');
@@ -367,7 +373,7 @@ export function renderDocumentTasks({ documentTaskProjection }) {
     const reasonField = book.confirmed ? '<label>范围调整原因<textarea name="scopeChangeReason" required rows="2" placeholder="说明为什么需要增减或调整文档"></textarea></label>' : '';
     const dialog = modal(`${book.name} · 文档范围`, `${book.confirmed ? '<p>已分派文档需要先预览审核、MR 和交付影响，再确认变更。</p>' : ''}${reasonField}${decision(book.impact, book.reason)}<div data-involved>${versionField}<label>搜索目录或文档<input type="search" data-scope-search></label><p data-selected-count></p>${catalog.outlineVersionId ? '' : '<p class="task-outline-alert" role="alert">未找到已发布大纲，无法选择存量文档</p>'}<div class="task-choices">${tree}</div></div>`, async (form, confirm) => {
       const proposed = { impact: form.get('impact'), reasonId: form.get('reasonId'), reasonDetail: form.get('reasonDetail'), targetVersion: form.get('targetVersion'), documents: form.getAll('selected').map(key => ({ ...(newDocs.find(d => d.id === key) || { id: key, kind: 'existing' }), ownerId: form.get(`owner:${key}`) })) };
-      if (book.confirmed) return saveScopeWithPreview(form, t, 'handbook', id, proposed);
+      if (book.confirmed) return saveScopeWithPreview(form, dialog, t, 'handbook', id, proposed);
       return taskWrite(`/${encodeURIComponent(t.number)}/handbooks/${encodeURIComponent(id)}`, { expectedRevision: t.revision, confirm, ...proposed, reason: form.get('reason') });
     }, { inline: true });
     const closeMenus = () => dialog.querySelectorAll('[data-folder-menu]').forEach(button => {

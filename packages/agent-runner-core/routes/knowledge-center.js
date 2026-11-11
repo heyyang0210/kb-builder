@@ -97,7 +97,8 @@ function createKnowledgeCenterHandler(options) {
       if (String(doc.reviewTaskId || '') !== String(reviewTaskId)) continue;
       const documentId = String(doc.createdDocumentId || doc.id);
       const blocked = (task.scopeChanges || []).some(change => change.status === 'reported'
-        && (change.affectedDocuments || []).some(item => item.handbookId === book.id && item.documentId === documentId));
+        && (change.level === 'ticket' || change.level === 'handbook' && change.handbookId === book.id
+          || (change.affectedDocuments || []).some(item => item.handbookId === book.id && item.documentId === documentId)));
       if (blocked) throw Object.assign(new Error('该文档正在进行范围纠偏，确认新范围或取消纠偏前不能审核通过或创建 MR'), { status: 409, code: 'SCOPE_BLOCKED' });
     }
   }

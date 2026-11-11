@@ -1,4 +1,12 @@
 const { createDshRunner, versionAtLeast, requiredVersion } = require('../../../packages/agent-runner-core/lib/agent-runtime/dsh-runner');
+const { sandboxFactsValid } = require('../../../packages/agent-runner-core/lib/agent-runtime/dsh-adapter');
+
+test.each(['v24.9.0', 'v24.10.0', 'v25.0.0'])('DSH 探针接受符合最低版本的独立运行时 %s', node => {
+  expect(sandboxFactsValid({ node, repo: false, home: false, bus: false, pid: 1, network: false })).toBe(true);
+});
+test.each([undefined, 'v24.8.9', 'invalid'])('DSH 探针拒绝缺失、低于最低版本或无效版本 %s', node => {
+  expect(sandboxFactsValid({ node, repo: false, home: false, bus: false, pid: 1, network: false })).toBe(false);
+});
 
 test('DSH 试运行在 SDK、隔离和任务凭据通道未就绪时 fail closed', () => {
   const runner = createDshRunner({

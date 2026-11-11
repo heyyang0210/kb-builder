@@ -304,6 +304,25 @@ describe('文档任务范围纠偏与发布核对真实 HTTP', () => {
     }
   });
 
+  test('已合并文档撤回后以新审核完成修复交付，原审核不能复用', async () => {
+    linkReview({ deliveryObservation: { state: 'merged', observedAt: new Date().toISOString(), targetCommit: 'commit-1' } });
+    seed();
+    const change = await report('handbook', { affectedDocuments: [] });
+    const { result } = await confirm(change, proposedBook({ impact: 'not_involved', reasonId: 'covered', documents: [] }));
+    expect(result.status).toBe(200);
+    expect(result.data.scopeChecks).toEqual([expect.objectContaining({ documentId: 'd1', reviewTaskId: 'review-1', status: 'pending' })]);
+    const check = result.data.scopeChecks[0];
+    reviews.get('review-1').completion.status = 'completed';
+    await unchanged('POST', `/P-1/publication-checks/${check.id}/complete`,
+      { expectedRevision: result.data.revision, conclusion: 'repair_delivered', reviewTaskId: 'review-1' },
+      'PUBLICATION_REPAIR_UNVERIFIED', 409, 'publisher');
+    reviews.set('review-2', { ...reviews.get('review-1'), id: 'review-2' });
+    const delivered = await request('POST', `/P-1/publication-checks/${check.id}/complete`,
+      { expectedRevision: result.data.revision, conclusion: 'repair_delivered', reviewTaskId: 'review-2' }, 'publisher');
+    expect(delivered.status).toBe(200);
+    expect(delivered.data.scopeChecks[0]).toMatchObject({ status: 'completed', reviewTaskId: 'review-2' });
+  });
+
   test('恢复查询返回文档与纠偏、核对事项的当前快照', async () => {
     linkReview({ deliveryFailure: { at: '2026-11-01T00:00:00Z', message: '回读中断' } }); publicationFixture(); seed();
     const r = await request('GET', '/P-1/recovery', undefined, 'writer');

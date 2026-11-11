@@ -6,10 +6,16 @@ const { spawn } = require('node:child_process');
 const { Readable } = require('node:stream');
 const { REPOSITORY_ROOT } = require('../repo-paths');
 const { writeJsonAtomic, readJson } = require('../json-config');
+const { versionAtLeast, requiredNode } = require('./dsh-runner');
 
 const terminal = new Set(['completed', 'failed', 'cancelled', 'interrupted']);
 const idPattern = /^[a-f0-9-]{36}$/;
 const fail = (message, status = 404) => Object.assign(new Error(message), { code: 'DSH_RUN_UNAVAILABLE', status });
+function sandboxFactsValid(facts) {
+  return /^v\d+\.\d+\.\d+$/.test(facts.node) && versionAtLeast(facts.node, requiredNode)
+    && !facts.repo && !facts.home && !facts.bus
+    && facts.pid === 1 && !facts.network;
+}
 
 function createDshAdapter(options = {}) {
   const root = options.root || path.join(REPOSITORY_ROOT, 'runtime', 'agent-runner', 'dsh-runs');
@@ -212,8 +218,7 @@ function createDshAdapter(options = {}) {
         child.on('close', code => code === 0 ? resolve(stdout) : reject(new Error(stderr.slice(-300))));
       });
       const facts = JSON.parse(output.split('\n').find(line => line.startsWith('{')) || '{}');
-      sandboxProven = facts.node === 'v24.9.0' && !facts.repo && !facts.home && !facts.bus
-        && facts.pid === 1 && !facts.network;
+      sandboxProven = sandboxFactsValid(facts);
       credentialProven = facts.socket === true && !facts.env.some(name => /KEY|TOKEN|SECRET|AUTH|DBUS|SSH/i.test(name));
     } catch (_) { sandboxProven = false; credentialProven = false; }
     finally {
@@ -229,4 +234,4 @@ function createDshAdapter(options = {}) {
     probe };
 }
 
-module.exports = { createDshAdapter };
+module.exports = { createDshAdapter, sandboxFactsValid };

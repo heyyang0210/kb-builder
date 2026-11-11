@@ -140,7 +140,8 @@ function scopeSnapshot(ctx, task) {
 }
 function activeScopeChange(task, handbookId, documentId) {
   return (task.scopeChanges || []).find(change => !['confirmed', 'cancelled'].includes(change.status)
-    && (change.affectedDocuments || []).some(item => item.handbookId === handbookId && item.documentId === documentId));
+    && (change.level === 'ticket' || change.level === 'handbook' && change.handbookId === handbookId
+      || (change.affectedDocuments || []).some(item => item.handbookId === handbookId && item.documentId === documentId)));
 }
 function delivery(ctx, book, doc, task) {
   const scopeChange = activeScopeChange(task, book.id, doc.createdDocumentId || doc.id);
@@ -339,11 +340,12 @@ function createDocumentTaskRouter(options = {}) {
   function scopeProposal(task, change, proposed) {
     const currentBooks = task.decomposition?.handbooks || [];
     const nextDocuments = change.level === 'ticket'
-      ? (proposed.handbooks || []).flatMap(book => {
+      ? proposed.ticketImpact === 'not_involved' ? [] : (proposed.handbooks || []).flatMap(book => {
         const existing = currentBooks.find(item => item.id === book.id);
         return (book.documents || existing?.documents || []).map(doc => ({ handbookId: book.id, documentId: doc.createdDocumentId || doc.id }));
       })
-      : (proposed.documents || []).map(doc => ({ handbookId: change.handbookId, documentId: doc.createdDocumentId || doc.id }));
+      : proposed.impact === 'not_involved' ? []
+        : (proposed.documents || []).map(doc => ({ handbookId: change.handbookId, documentId: doc.createdDocumentId || doc.id }));
     const nextIds = new Set(nextDocuments.map(item => `${item.handbookId}:${item.documentId}`));
     const current = currentBooks.flatMap(book => (book.documents || []).map(doc => ({ book, doc, key: `${book.id}:${doc.createdDocumentId || doc.id}` })));
     const removed = current.filter(item => change.level === 'ticket' ? !nextIds.has(item.key) : item.book.id === change.handbookId && !nextIds.has(item.key));
@@ -628,9 +630,12 @@ function createDocumentTaskRouter(options = {}) {
       check.operatorId = actor(ctx); check.completedAt = now(); check.revision++;
     } else if (req.body.conclusion === 'repair_delivered') {
       const review = ctx.reviewService.get(ctx.session, clean(req.body.reviewTaskId));
-      const book = task.decomposition.handbooks.find(item => item.id === check.handbookId);
+      const book = task.decomposition.handbooks.find(item => item.id === check.handbookId
+        && item.documents?.some(doc => (doc.createdDocumentId || doc.id) === check.documentId))
+        || [...(task.scopeHistory || [])].reverse().flatMap(scope => scope?.handbooks || [])
+          .find(item => item.id === check.handbookId && item.documents?.some(doc => (doc.createdDocumentId || doc.id) === check.documentId));
       const doc = book?.documents.find(item => (item.createdDocumentId || item.id) === check.documentId);
-      if (!book || !doc || !matchesReviewScope(review, book, check.documentId) || review.completion?.status !== 'completed') fail('PUBLICATION_REPAIR_UNVERIFIED', '修复交付必须关联同手册、同文档且正文和图片回读一致的完成记录', 409);
+      if (!book || !doc || review.id === check.reviewTaskId || !matchesReviewScope(review, book, check.documentId) || review.completion?.status !== 'completed') fail('PUBLICATION_REPAIR_UNVERIFIED', '修复交付必须关联同手册、同文档且正文和图片回读一致的完成记录', 409);
       check.status = 'completed'; check.conclusion = 'repair_delivered'; check.reviewTaskId = review.id;
       check.evidence = { reviewTaskId: review.id, targetCommit: review.deliveryObservation?.targetCommit || null };
       check.operatorId = actor(ctx); check.completedAt = now(); check.revision++;

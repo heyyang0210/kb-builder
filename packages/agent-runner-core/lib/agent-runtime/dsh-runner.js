@@ -84,4 +84,4 @@ function createDshRunner(options = {}) {
   return { readiness, start, get, cancel, owns };
 }
 
-module.exports = { createDshRunner, versionAtLeast, requiredVersion };
+module.exports = { createDshRunner, versionAtLeast, requiredNode, requiredVersion };

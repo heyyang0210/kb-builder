@@ -71,6 +71,20 @@ describe('工作台责任人和联合查询的真实 HTTP 覆盖', () => {
   const query = (body, headers = {}) => fetch(`${base}/my-tasks/query`, { method: 'POST',
     headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) });
 
+  test.each(['ticket', 'handbook'])('漏报文档的%s级纠偏仍阻断审核决定', async level => {
+    const state = JSON.parse(fs.readFileSync(path.join(root, 'tasks.json'), 'utf8'));
+    state.tasks[0].decomposition = { confirmed: true, ticketImpact: 'involved', handbooks: [{
+      id: 'HB-1', confirmed: true, ownerId: 'admin', documents: [{ id: 'doc-1', reviewTaskId: 'review-task' }],
+    }] };
+    state.tasks[0].scopeChanges = [{ status: 'reported', level, handbookId: level === 'handbook' ? 'HB-1' : null, affectedDocuments: [] }];
+    fs.writeFileSync(path.join(root, 'tasks.json'), JSON.stringify(state));
+    reviewTasks.push({ id: 'review-task', handbookId: 'HB-1', state: 'under_review' });
+    const endpoint = base.replace('/api/workbench', '/api/incremental-tasks/review-task/reviews/review-1/decision');
+    const response = await fetch(endpoint, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ decision: 'approved' }) });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: { code: 'SCOPE_BLOCKED' } });
+  });
+
   test('本人生成记录读取透传会话、筛选和快照，并映射服务错误', async () => {
     reviewTasks.push({ id: 'task-1' });
     const endpoint = base.replace('/api/workbench', '/api/production/generations');
