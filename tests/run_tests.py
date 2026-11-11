@@ -23,6 +23,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+import xml.etree.ElementTree as ET
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -113,6 +114,7 @@ class TaskResult:
     test_failed: int | None = None
     test_skipped: int | None = None
     log_file: str = ""
+    cases: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -520,6 +522,75 @@ def extract_test_counts(framework: str, output: str) -> tuple[int | None, int | 
     return None, None, None, None
 
 
+def collect_case_results(framework: str, output: str, result_path: Path | None) -> tuple[dict[str, Any], ...]:
+    """Read framework records; scripts without a case protocol remain uncounted."""
+    cases = []
+    def add(name, status, duration=None, detail="", file=""):
+        cases.append(dict(name=name, status=status, duration_seconds=duration, detail=detail, file=file))
+    if result_path and result_path.is_file():
+        if framework == "jest":
+            raw = json.loads(result_path.read_text(encoding="utf-8"))
+            for suite in raw.get("testResults", []):
+                for case in suite.get("assertionResults", []):
+                    status = case.get("status")
+                    add(case.get("fullName", case.get("title", "未命名用例")),
+                        {"passed": "PASS", "failed": "FAIL", "pending": "SKIP", "todo": "SKIP"}.get(status, "NOT_RUN"),
+                        case["duration"] / 1000 if case.get("duration") is not None else None,
+                        "\n".join(case.get("failureMessages", [])), suite.get("name", ""))
+        elif framework == "pytest":
+            for case in ET.parse(result_path).iter("testcase"):
+                failures = list(case.findall("failure")) + list(case.findall("error"))
+                skipped = case.find("skipped")
+                add(case.get("classname", "") + "::" + case.get("name", ""),
+                    "FAIL" if failures else "SKIP" if skipped is not None else "PASS",
+                    float(case.get("time", 0)),
+                    "\n".join((item.text or item.get("message", "")) for item in failures) if failures else
+                    ((skipped.text or skipped.get("message", "")) if skipped is not None else ""), case.get("file", ""))
+        elif framework == "playwright":
+            raw = json.loads(result_path.read_text(encoding="utf-8"))
+            def visit(suite, parents=()):
+                for spec in suite.get("specs", []):
+                    for test in spec.get("tests", []):
+                        attempts = test.get("results", [])
+                        last = attempts[-1] if attempts else {}
+                        status = test.get("status")
+                        add(" › ".join((*parents, spec.get("title", ""), test.get("projectName", ""))),
+                            "PASS" if status in {"expected", "flaky"} else "SKIP" if status == "skipped" else "FAIL",
+                            sum(item.get("duration", 0) for item in attempts) / 1000,
+                            "\n".join(error.get("message", "") for item in attempts for error in item.get("errors", [])),
+                            spec.get("file", ""))
+                for child in suite.get("suites", []):
+                    visit(child, (*parents, child.get("title", "")))
+            for suite in raw.get("suites", []):
+                visit(suite)
+    if not cases and framework == "unittest":
+        for match in re.finditer(r"^(.+?) \.\.\. (ok|FAIL|ERROR|skipped[^\n]*|expected failure|unexpected success)$", output, re.MULTILINE):
+            name, outcome = match.groups()
+            status = "PASS" if outcome == "ok" else "SKIP" if outcome.startswith(("skipped", "expected")) else "FAIL"
+            add(name, status, detail=output if status == "FAIL" else outcome if status == "SKIP" else "")
+    if not cases and framework == "node-test":
+        # TAP suite records contain '# type: suite'; only leaf tests are counted.
+        lines = output.splitlines()
+        for index, line in enumerate(lines):
+            match = re.match(r"^\s*(not ok|ok) \d+ - (.*)$", line)
+            if not match:
+                continue
+            block = []
+            for following in lines[index + 1:]:
+                if re.match(r"^\s*(?:not ok|ok) \d+ - |^\s*# Subtest:|^\s*1\.\.", following):
+                    break
+                block.append(following)
+            detail = "\n".join(block)
+            if re.search(r"type: ['\"]?suite", detail):
+                continue
+            name = match.group(2)
+            status = "SKIP" if re.search(r"# (SKIP|TODO)\b", name, re.I) else "FAIL" if match.group(1) == "not ok" else "PASS"
+            duration = re.search(r"duration_ms: ([\d.]+)", detail)
+            add(re.sub(r"\s+# (SKIP|TODO).*", "", name, flags=re.I), status,
+                float(duration.group(1)) / 1000 if duration else None, detail if status == "FAIL" else "")
+    return tuple(cases)
+
+
 def http_ready(url: str) -> bool:
     try:
         with urllib.request.urlopen(url, timeout=3) as response:
@@ -820,12 +891,26 @@ def run_task(
             log_file=(log_path.relative_to(run_context.run_dir).as_posix() if log_path and run_context else str(log_path or "")),
         )
 
+    result_path = log_path.with_suffix(".results.xml" if task.framework == "pytest" else ".results.json") if log_path else None
+    if result_path and task.framework == "jest":
+        command.extend(("--json", "--outputFile", str(result_path)))
+    elif result_path and task.framework == "pytest":
+        command.append(f"--junitxml={result_path}")
+    elif task.framework == "node-test":
+        command.insert(2, "--test-reporter=tap")
+    elif result_path and task.framework == "playwright":
+        command = ["--reporter=list,json" if item == "--reporter=list" else item for item in command]
+    command_text = shlex.join(command)
+    environment = test_environment(task, run_context, knowledge_center_base_url, knowledge_center_test_run_id, knowledge_center_storage_url)
+    if result_path and task.framework == "playwright":
+        environment["PLAYWRIGHT_JSON_OUTPUT_FILE"] = str(result_path)
+    cases = ()
     started = time.monotonic()
     try:
         completed = subprocess.run(
             command,
             cwd=REPOSITORY_ROOT,
-            env=test_environment(task, run_context, knowledge_center_base_url, knowledge_center_test_run_id, knowledge_center_storage_url),
+            env=environment,
             timeout=timeout,
             check=False,
             text=True,
@@ -849,6 +934,13 @@ def run_task(
         if return_code == 5 and not failed_tests:
             failed_tests = ("未收集到测试用例",)
         test_total, test_passed, test_failed, test_skipped = extract_test_counts(task.framework, completed.stdout)
+        try:
+            cases = collect_case_results(task.framework, completed.stdout, result_path)
+        except (OSError, ValueError, ET.ParseError) as error:
+            print(f"用例明细读取失败，保留任务日志：{error}", file=sys.stderr)
+        if cases:
+            test_total = len(cases)
+            test_passed, test_failed, test_skipped = (sum(case["status"] == state for case in cases) for state in ("PASS", "FAIL", "SKIP"))
     except FileNotFoundError as error:
         if emit_output:
             print(f"无法启动测试命令：{error}", file=sys.stderr)
@@ -858,7 +950,7 @@ def run_task(
         test_total = test_passed = test_failed = test_skipped = None
         if log_path:
             log_path.write_text(f"命令：{command_text}\n\n{error}\n", encoding="utf-8")
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as error:
         if emit_output:
             print(f"测试执行超过 {timeout} 秒，已终止。", file=sys.stderr)
         return_code = 124
@@ -866,7 +958,10 @@ def run_task(
         failed_tests = (f"任务超时：{task.label}",)
         test_total = test_passed = test_failed = test_skipped = None
         if log_path:
-            log_path.write_text(f"命令：{command_text}\n\n任务超过 {timeout} 秒。\n", encoding="utf-8")
+            partial = error.stdout or ""
+            if isinstance(partial, bytes):
+                partial = partial.decode("utf-8", errors="replace")
+            log_path.write_text(f"命令：{command_text}\n\n{partial}\n任务超过 {timeout} 秒。\n", encoding="utf-8")
     except KeyboardInterrupt:
         if emit_output:
             print("测试执行被用户中断。", file=sys.stderr)
@@ -880,7 +975,7 @@ def run_task(
     log_file = log_path.relative_to(run_context.run_dir).as_posix() if log_path and run_context else str(log_path or "")
     return TaskResult(
         task.suite, task.label, task.framework, status, duration, return_code, len(task.files),
-        failed_tests, command_text, test_total, test_passed, test_failed, test_skipped, log_file,
+        failed_tests, command_text, test_total, test_passed, test_failed, test_skipped, log_file, cases,
     )
 
 
@@ -931,73 +1026,254 @@ def report_payload(
     }
     if coverage is not None:
         payload["coverage"] = asdict(coverage)
+        payload["coverageTargets"] = json.loads(COVERAGE_TARGETS.read_text(encoding="utf-8"))
     return payload
 
 
-HTML_REPORT_COMMANDS = frozenset({"unit", "e2e", "smoke"})
+SCENE_LABELS = {
+    "smoke": "冒烟测试", "gate": "门禁测试", "unit": "单元测试", "contract": "契约测试",
+    "integration": "集成测试", "system": "系统测试", "e2e": "端到端测试", "preflight": "环境准备",
+}
+CASE_STATUS_LABELS = {"PASS": "通过", "FAIL": "失败", "SKIP": "跳过", "NOT_RUN": "未执行", "TIMEOUT": "超时", "INTERRUPTED": "中断", "DRY-RUN": "仅预览"}
 
 
-def render_html_report(payload: dict[str, Any]) -> str:
-    """Render one self-contained run summary from the saved JSON report."""
-    escape = lambda value: html.escape(str(value), quote=True)
-    tasks = payload.get("tasks") or []
-    passed = bool(payload.get("passed"))
-    known_counts = [task for task in tasks if task.get("test_total") is not None]
-    count = lambda field: sum(task.get(field) or 0 for task in tasks)
-    total = sum(task.get("test_total") or 0 for task in known_counts) if known_counts else "未统计"
-    success_tasks = sum(task.get("status") in {"PASS", "DRY-RUN"} for task in tasks)
+def report_escape(value: Any) -> str:
+    return html.escape(str(value), quote=True)
 
-    def log_link(task: dict[str, Any]) -> str:
-        raw = task.get("log_file") or ""
-        path = Path(raw)
-        if not raw or path.is_absolute() or ".." in path.parts or path.parts[:2] != ("details", "tasks"):
-            return "—"
-        from urllib.parse import quote
-        href = quote(path.as_posix(), safe="/")
-        return f'<a href="{escape(href)}">任务日志</a>'
 
+def report_badge(status: str, large: bool = False) -> str:
+    tone = "pass" if status == "PASS" else "fail" if status in {"FAIL", "TIMEOUT", "INTERRUPTED"} else "skip" if status == "SKIP" else ""
+    return f'<span class="badge {tone}{" large" if large else ""}">{report_escape(CASE_STATUS_LABELS.get(status, status or "未知"))}</span>'
+
+
+def report_duration(value: Any, digits: int = 2) -> str:
+    return f"{value:.{digits}f} 秒" if isinstance(value, (float, int)) else "未统计"
+
+
+def report_log_link(task: dict[str, Any], prefix: str = "") -> str:
+    from urllib.parse import quote
+    raw = task.get("log_file") or ""
+    path = Path(raw)
+    if not raw or path.is_absolute() or ".." in path.parts or path.parts[:2] != ("details", "tasks") or "\\" in raw:
+        return "—"
+    return f'<a class="table-link" href="{report_escape(prefix + quote(path.as_posix(), safe="/"))}">任务日志 ↗</a>'
+
+
+def report_model(payload: dict[str, Any], page_size: int) -> dict[str, Any]:
+    scenes: dict[str, dict[str, Any]] = {}
+    records = []
+    for task_index, task in enumerate(payload.get("tasks") or [], 1):
+        scene = task.get("suite") or "unknown"
+        if scene not in scenes:
+            scenes[scene] = {"id": len(scenes) + 1, "label": SCENE_LABELS.get(scene, scene), "tasks": [], "records": []}
+        group = scenes[scene]
+        group["tasks"].append(task)
+        for case_index, case in enumerate(task.get("cases") or [], 1):
+            page = len(group["records"]) // page_size + 1
+            anchor = f"case-{task_index}-{case_index}"
+            record = {"task": task, "case": case, "id": anchor,
+                      "href": f'scenes/scene-{group["id"]}-{page}.html#{anchor}', "scene": group["label"]}
+            group["records"].append(record)
+            records.append(record)
+    for group in scenes.values():
+        group["pages"] = max(1, (len(group["records"]) + page_size - 1) // page_size)
+    return {"scenes": scenes, "records": records, "page_size": page_size}
+
+
+def report_search() -> str:
+    filters = (("ALL", "全部"), ("PASS", "通过"), ("FAIL", "失败 / 异常"), ("SKIP", "跳过"), ("NOT_RUN", "未执行"))
+    buttons = ''.join(f'<button type="button" data-status-filter="{state}" aria-pressed="{"true" if state == "ALL" else "false"}">{label}</button>' for state, label in filters)
+    return f'''<section class="search-panel" data-search-panel hidden aria-label="全局用例检索">
+<div class="search-controls"><div class="search-field"><label for="case-search">搜索全部用例</label><input id="case-search" data-case-search type="search" placeholder="用例名称、文件、框架或错误关键词" autocomplete="off"></div>
+<div class="filters" role="group" aria-label="按用例状态筛选">{buttons}</div><button type="button" class="clear-button" data-clear-search>清除</button></div>
+<p class="search-summary" data-search-summary role="status" aria-live="polite"></p><ul class="search-results" data-search-results hidden></ul></section>
+<noscript><p class="no-js">当前未启用 JavaScript，可通过场景导航和分页浏览全部用例与日志。</p></noscript>'''
+
+
+def report_shell(payload: dict[str, Any], model: dict[str, Any], body: str, *, title: str, active: str = "overview", prefix: str = "", subtitle: str = "运行总览") -> str:
+    escape = report_escape
+    nav = f'<a href="{prefix}report.html"' + (' aria-current="page"' if active == "overview" else '') + '>运行总览</a>'
+    for scene, group in model["scenes"].items():
+        current = ' aria-current="page"' if active == scene else ''
+        nav += f'<a href="{prefix}scenes/scene-{group["id"]}-1.html"{current}><span>{escape(group["label"])}</span><small>{len(group["records"])}</small></a>'
+    return f'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{escape(title)}</title><link rel="stylesheet" href="{prefix}assets/report.css">
+<script defer src="{prefix}assets/report.js"></script></head>
+<body data-prefix="{prefix}" data-case-count="{len(model['records'])}"><a class="skip-link" href="#main">跳转至报告内容</a><aside class="sidebar" aria-label="报告导航">
+<div class="brand"><span class="brand-mark" aria-hidden="true">✓</span>知识中心 · 测试报告</div>
+<p class="side-caption">本次运行</p><nav aria-label="测试场景">{nav}</nav><div class="side-footer">离线报告<br>结果、用例与执行证据</div></aside>
+<main class="workspace" id="main"><header class="topbar"><span><a href="{prefix}report.html">测试报告</a> / {escape(subtitle)}</span><span class="tag">{escape(payload.get("command") or "测试")} · 本次运行</span></header>
+{body}<footer class="footer"><span>知识中心管理平台 · 统一测试报告<br>生成于 {escape(payload.get("generatedAt") or "未记录")}</span><a href="{prefix}details/report.json">原始 JSON ↗</a></footer></main></body></html>'''
+
+
+def report_coverage(payload: dict[str, Any]) -> str:
+    escape = report_escape
+    coverage = payload.get("coverage")
+    heading = '<section class="panel" id="coverage"><div class="panel-head"><h2>覆盖率门禁</h2><small>独立检查每个运行时</small></div>'
+    if not coverage:
+        return heading + '<div class="panel-body"><p>本次未启用覆盖率采集。</p><p class="muted">使用 <code>--coverage</code> 采集覆盖率；测试通过与覆盖率达标分别判定。</p></div></section>'
+    targets = payload.get("coverageTargets") or {}
     rows = []
-    failures = []
+    for runtime, result in (coverage.get("runtime_metrics") or {}).items():
+        cells = [f'<strong>{escape(runtime)}</strong><small>{escape(result.get("source_files", "未统计"))} 个源文件</small>']
+        deficits = []
+        measured = True
+        runtime_passed = True
+        for metric, label in (("lines", "行"), ("branches", "分支")):
+            value = (result.get("summary") or {}).get(metric) or {}
+            covered, total = value.get("covered", 0), value.get("total", 0)
+            target = (targets.get(runtime) or {}).get(metric)
+            if not total:
+                cells.append('未统计')
+                measured = False
+            else:
+                pct = covered / total * 100
+                gate = target is not None and covered * 100 >= total * target
+                runtime_passed = runtime_passed and gate
+                needed = max(0, -(-(total * target) // 100) - covered) if target is not None else None
+                if needed:
+                    deficits.append(f'{label}还差 {needed} 项')
+                cells.append(f'<strong class="{"" if gate else "fail-text"}">{pct:.2f}%</strong><div class="bar" aria-hidden="true"><span style="width:{min(100, max(0, pct)):.2f}%"></span></div><div class="coverage-detail">{covered}/{total} · 目标 {escape(str(target) + "%" if target is not None else "未提供")}</div>')
+        state = '未采集' if not measured else '达标' if runtime_passed else '未达标'
+        tone = 'pass' if state == '达标' else 'fail' if state == '未达标' else ''
+        cells.append(f'<span class="badge {tone}">{state}</span><small>{escape("；".join(deficits))}</small>')
+        rows.append('<tr>' + ''.join(f'<td>{cell}</td>' for cell in cells) + '</tr>')
+    if not rows:
+        metrics = coverage.get("metrics") or {}
+        rows.append('<tr><td>汇总</td><td>' + escape(metrics.get('lines', '未统计')) + '</td><td>' + escape(metrics.get('branches', '未统计')) + '</td><td>未提供运行时明细</td></tr>')
+    return heading + '<div class="panel-body">' + report_badge(coverage.get('status', '')) + '<p class="muted long-text">' + escape(coverage.get('diagnostic') or '按原始计数检查门禁，不以显示值四舍五入判定。') + '</p></div><div class="table-wrap"><table><thead><tr><th>运行时</th><th>行覆盖率</th><th>分支覆盖率</th><th>门禁与缺口</th></tr></thead><tbody>' + ''.join(rows) + '</tbody></table></div></section>'
+
+
+def render_html_report(payload: dict[str, Any], model: dict[str, Any] | None = None) -> str:
+    """Render a professional, offline summary without inventing missing telemetry."""
+    escape = report_escape
+    model = model or report_model(payload, 50)
+    tasks = payload.get("tasks") or []
+    known = [task for task in tasks if task.get("test_total") is not None]
+    count = lambda field: sum(task.get(field) or 0 for task in known)
+    total = count('test_total')
+    passed, failed, skipped = count('test_passed'), count('test_failed'), count('test_skipped')
+    pending = max(0, total - passed - failed - skipped)
+    success_tasks = sum(task.get('status') == 'PASS' for task in tasks)
+    preview = bool(tasks) and all(task.get('status') == 'DRY-RUN' for task in tasks)
+    status = 'DRY-RUN' if preview else 'PASS' if payload.get('passed') and tasks else 'FAIL' if tasks else 'NOT_RUN'
+    heading = '运行仅预览' if preview else '本次测试全部通过' if status == 'PASS' else '本次运行存在失败或阻塞' if tasks else '本次没有测试任务'
+    stats = (("已识别用例", total if known else "未统计", f"{len(model['records'])} 条逐条明细"),
+             ("用例通过率", f"{passed / total * 100:.1f}%" if total else "—", f"通过 / 失败 / 跳过：{passed} / {failed} / {skipped}" if known else "用例数量未统计"),
+             ("通过任务", f"{success_tasks} / {len(tasks)}", f"测试文件 {sum(task.get('file_count') or 0 for task in tasks)} 个"),
+             ("运行耗时", report_duration(payload.get('durationSeconds')), "本次运行总耗时"))
+    cards = ''.join(f'<div class="metric-card"><div class="metric-label">{escape(label)}</div><div class="metric-value">{escape(value)}</div><div class="metric-note">{escape(note)}</div></div>' for label, value, note in stats)
+    body = f'<div class="hero"><div><div class="eyebrow">测试质量 / {escape(str(payload.get("command") or "测试").upper())}</div><h1>测试运行总览</h1><div class="hero-meta"><span>{escape(payload.get("generatedAt") or "时间未记录")}</span><span>{escape(heading)}</span></div></div>{report_badge(status, True)}</div><div class="metrics">{cards}</div>'
+    unknown = len(tasks) - len(known)
+    if unknown:
+        body += f'<p class="alert">统计范围：{unknown} 个任务未提供可靠用例数量；上方用例数字仅包含已识别结果。任务异常请查看“失败与阻塞”和原始日志。</p>'
+    if total and pending:
+        body += f'<p class="alert">另有 {pending} 条用例未执行或未归类为通过、失败、跳过；请查看场景明细。</p>'
+    segments = [passed, failed, skipped, pending]
+    colors = ['var(--pass)', 'var(--fail)', 'var(--skip)', 'var(--neutral)']
+    cursor, stops = 0.0, []
+    for value, color in zip(segments, colors):
+        start = cursor
+        cursor += value / total * 100 if total else 0
+        stops.append(f'{color} {start:.4f}% {cursor:.4f}%')
+    ring = f'conic-gradient({",".join(stops)})' if total else '#e8edf3'
+    legend = ''.join(f'<div class="legend-row"><span><i class="dot {tone}" aria-hidden="true"></i>{label}</span><strong>{value}</strong></div>' for label, value, tone in (("通过", passed, 'pass'), ("失败", failed, 'fail'), ("跳过", skipped, 'skip'), ("其他 / 未执行", pending, '')))
+    distribution = f'<section class="panel"><div class="panel-head"><h2>用例结果分布</h2><small>已识别用例</small></div><div class="panel-body distribution"><div class="donut" style="--ring:{ring}" role="img" aria-label="通过{passed}，失败{failed}，跳过{skipped}，其他{pending}"><div class="donut-hole"><strong>{total if known else "—"}</strong><small>用例总数</small></div></div><div class="legend">{legend}</div></div></section>'
+    task_rows = []
     for task in tasks:
-        name = escape(task.get("label") or "未命名任务")
-        task_total = task.get("test_total")
-        duration = task.get("duration_seconds")
-        duration_text = f"{duration:.2f} 秒" if isinstance(duration, (int, float)) else "未统计"
-        rows.append("<tr>" + "".join(f"<td>{item}</td>" for item in (
-            escape(task.get("status") or "未知"), name, escape(task.get("suite") or "—"),
-            escape(task.get("framework") or "—"), escape(task.get("file_count", "—")),
-            escape(task_total if task_total is not None else "未统计"), escape(duration_text), log_link(task),
-        )) + "</tr>")
-        for failure in task.get("failed_tests") or []:
-            failures.append(f"<li><strong>{name}</strong>：{escape(failure)} {log_link(task)}</li>")
-    elapsed = payload.get("durationSeconds")
-    elapsed_text = f"{elapsed:.2f} 秒" if isinstance(elapsed, (int, float)) else "未统计"
-    status = "通过" if passed else "失败"
-    cards = (
-        ("运行结论", status), ("任务成功", f"{success_tasks}/{len(tasks)}"),
-        ("测试文件", str(count("file_count"))), ("已识别用例", str(total)),
-        ("通过 / 失败 / 跳过", f"{count('test_passed')} / {count('test_failed')} / {count('test_skipped')}" if known_counts else "未统计"),
-        ("总耗时", elapsed_text),
-    )
-    card_html = "".join(f"<div class='card'><span>{escape(label)}</span><strong>{escape(value)}</strong></div>" for label, value in cards)
-    failure_html = "<ul>" + "".join(failures) + "</ul>" if failures else "<p>无失败项。</p>"
-    return f"""<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{escape(payload.get('command') or '测试')} 测试报告</title>
-<style>body{{font-family:system-ui,-apple-system,"Microsoft YaHei",sans-serif;background:#f5f7fa;color:#172337;margin:0}}main{{max-width:1120px;margin:40px auto;padding:0 24px}}h1{{font-size:2rem}}.meta{{color:#58677b}}.cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:12px;margin:24px 0}}.card,section{{background:white;border:1px solid #dbe2ea;border-radius:10px;padding:18px}}.card span{{display:block;color:#58677b;font-size:.85rem}}.card strong{{display:block;margin-top:8px;font-size:1.25rem}}section{{margin:18px 0;overflow-x:auto}}table{{border-collapse:collapse;width:100%;min-width:720px}}th,td{{text-align:left;padding:10px;border-bottom:1px solid #e7ecf1;vertical-align:top}}th{{color:#58677b}}li{{margin:10px 0;overflow-wrap:anywhere}}a{{color:#185f9f}}.status{{font-weight:700;color:{'#17683d' if passed else '#a12b28'}}}</style></head>
-<body><main><h1>{escape(payload.get('command') or '测试')} 测试报告</h1>
-<p class="meta">运行时间：{escape(payload.get('generatedAt') or '未记录')} · <span class="status">{status}</span></p>
-<div class="cards">{card_html}</div>
-<section><h2>任务结果</h2><table><thead><tr><th>状态</th><th>任务</th><th>分类</th><th>框架</th><th>文件</th><th>用例</th><th>耗时</th><th>明细</th></tr></thead><tbody>{''.join(rows)}</tbody></table></section>
-<section><h2>失败与阻塞</h2>{failure_html}</section>
-<section><h2>原始数据</h2><a href="details/report.json">查看 JSON 报告</a></section></main></body></html>
-"""
+        task_rows.append('<tr>' + ''.join(f'<td>{cell}</td>' for cell in (
+            report_badge(task.get('status', '')), f'<strong>{escape(task.get("label") or "未命名任务")}</strong><small>{escape(SCENE_LABELS.get(task.get("suite"), task.get("suite") or "—"))}</small>',
+            escape(task.get('framework') or '—'), escape(task.get('test_total') if task.get('test_total') is not None else '未统计'), escape(report_duration(task.get('duration_seconds'))), report_log_link(task))) + '</tr>')
+    failures = []
+    case_failures = [record for record in model['records'] if record['case'].get('status') in {'FAIL', 'TIMEOUT', 'INTERRUPTED'}]
+    for record in case_failures[:8]:
+        case = record['case']
+        failures.append(f'<li><div class="failure-title">{report_badge(case.get("status", "FAIL"))}<a href="{escape(record["href"])}">{escape(case.get("name") or "未命名用例")}</a></div><small>{escape(record["scene"])} · {escape(case.get("file") or record["task"].get("framework") or "")}</small></li>')
+    for task in tasks:
+        if task.get('status') in {'PASS', 'DRY-RUN'}:
+            continue
+        messages = task.get('failed_tests') or [CASE_STATUS_LABELS.get(task.get('status'), '异常任务')]
+        failures.append(f'<li><div class="failure-title">{report_badge(task.get("status", ""))}<strong>{escape(task.get("label") or "未命名任务")}</strong></div><p>{escape("；".join(messages))}</p>{report_log_link(task)}</li>')
+    fail_body = '<ul class="failure-list">' + ''.join(failures) + '</ul>' if failures else '<div class="empty">无失败项。<br><small>本次未记录失败用例或异常任务。</small></div>'
+    failure_panel = f'<section class="panel" id="failures"><div class="panel-head"><h2>失败与阻塞</h2><a href="#status=FAIL">筛选失败用例</a></div>{fail_body}</section>'
+    body += '<div class="grid">' + distribution + failure_panel + '</div>' + report_search()
+    scenes = []
+    for group in model['scenes'].values():
+        cases = group['records']
+        states = {state: sum(record['case'].get('status') == state for record in cases) for state in ('PASS', 'FAIL', 'SKIP', 'NOT_RUN')}
+        pass_pct = states['PASS'] / len(cases) * 100 if cases else 0
+        missing = sum(not task.get('cases') for task in group['tasks'])
+        scenes.append(f'<tr><td><a class="table-link" href="scenes/scene-{group["id"]}-1.html"><strong>{escape(group["label"])}</strong></a><small>{len(group["tasks"])} 个任务 · {group["pages"]} 页</small></td><td class="number">{len(cases)}</td><td class="number">{states["PASS"]}</td><td class="number {"fail-text" if states["FAIL"] else ""}">{states["FAIL"]}</td><td class="number">{states["SKIP"]}</td><td class="number">{states["NOT_RUN"]}</td><td>{pass_pct:.1f}%<div class="bar" aria-hidden="true"><span style="width:{pass_pct:.2f}%"></span></div></td><td>{missing}</td></tr>')
+    body += '<section class="panel" id="scenes"><div class="panel-head"><h2>测试场景</h2><small>按场景进入用例明细</small></div><div class="table-wrap"><table><thead><tr><th>场景</th><th class="number">明细用例</th><th class="number">通过</th><th class="number">失败</th><th class="number">跳过</th><th class="number">未执行</th><th>通过率</th><th>无明细任务</th></tr></thead><tbody>' + ''.join(scenes) + '</tbody></table></div></section>'
+    body += report_coverage(payload)
+    body += '<section class="panel" id="tasks"><div class="panel-head"><h2>任务结果</h2><small>框架执行结果与原始日志</small></div><div class="table-wrap"><table><thead><tr><th>状态</th><th>任务 / 场景</th><th>框架</th><th>用例</th><th>耗时</th><th>执行证据</th></tr></thead><tbody>' + ''.join(task_rows) + '</tbody></table></div></section>'
+    slow = sorted(tasks, key=lambda task: task.get('duration_seconds') or 0, reverse=True)[:5]
+    slow_rows = ''.join(f'<tr><td>{escape(task.get("label") or "未命名任务")}</td><td>{escape(report_duration(task.get("duration_seconds")))}</td><td>{report_badge(task.get("status", ""))}</td></tr>' for task in slow)
+    body += '<section class="panel"><div class="panel-head"><h2>耗时较长的任务</h2><small>按任务耗时降序 · 最多 5 项</small></div><div class="table-wrap"><table><thead><tr><th>任务</th><th>耗时</th><th>状态</th></tr></thead><tbody>' + slow_rows + '</tbody></table></div></section>'
+    body += f'<section class="panel"><div class="panel-head"><h2>运行信息与统计口径</h2></div><div class="panel-body"><h3>执行入口</h3><div class="command-line mono">python3 tests/run_tests.py {escape(payload.get("command") or "")}</div><p class="muted">任务状态与用例状态独立统计；没有逐条明细的任务不虚构为单条用例。仅预览不代表实际执行成功。</p><p class="muted">本次报告未提供历史趋势、重试记录和附件信息；不据此推断测试稳定性。</p><a class="table-link" href="details/report.json">查看 JSON 报告 ↗</a></div></section>'
+    return report_shell(payload, model, body, title=f'{payload.get("command") or "测试"} 测试报告')
 
 
-def write_html_report(run_dir: Path) -> Path:
-    payload = json.loads((run_dir / "details" / "report.json").read_text(encoding="utf-8"))
-    target = run_dir / "report.html"
-    target.write_text(render_html_report(payload), encoding="utf-8")
+def report_scene_page(payload: dict[str, Any], model: dict[str, Any], scene: str, group: dict[str, Any], page: int) -> str:
+    escape = report_escape
+    records = group['records']
+    size, pages = model['page_size'], group['pages']
+    start = (page - 1) * size
+    navigation = '<nav class="pagination" aria-label="用例分页"><small>' + (f'第 {start + 1}–{min(page * size, len(records))} 条 / 共 {len(records)} 条' if records else '暂无逐条明细') + f' · 第 {page}/{pages} 页</small><div class="page-links">'
+    # Bound the navigation DOM even for very large runs, while keeping every page reachable.
+    numbers = sorted({1, pages, *range(max(1, page - 2), min(pages, page + 2) + 1)})
+    previous = 0
+    if page > 1:
+        navigation += f'<a href="scene-{group["id"]}-{page - 1}.html" aria-label="上一页">上一页</a>'
+    for number in numbers:
+        if number > previous + 1:
+            navigation += '<span aria-hidden="true">…</span>'
+        navigation += f'<strong aria-current="page">第 {number} 页</strong>' if number == page else f'<a href="scene-{group["id"]}-{number}.html">第 {number} 页</a>'
+        previous = number
+    if page < pages:
+        navigation += f'<a href="scene-{group["id"]}-{page + 1}.html" aria-label="下一页">下一页</a>'
+    navigation += '</div></nav>'
+    rows = []
+    for record in records[start:start + size]:
+        case, task = record['case'], record['task']
+        detail = case.get('detail') or ''
+        details = f'<details><summary>查看详情 / 错误日志</summary><pre>{escape(detail)}</pre></details>' if detail else ''
+        rows.append(f'<tr class="case-row" id="{record["id"]}"><td>{report_badge(case.get("status", ""))}</td><td><a class="case-name" href="#{record["id"]}">{escape(case.get("name") or "未命名用例")}</a><small class="mono">{escape(case.get("file") or "文件未提供")}</small>{details}</td><td>{escape(task.get("framework") or "—")}</td><td>{report_duration(case.get("duration_seconds"), 3)}</td><td>{report_log_link(task, "../")}</td></tr>')
+    counts = {state: sum(record['case'].get('status') == state for record in records) for state in ('PASS','FAIL','SKIP','NOT_RUN')}
+    unknown = [task for task in group['tasks'] if not task.get('cases')]
+    body = f'<div class="hero"><div><div class="eyebrow">场景明细 / 第 {page} 页</div><h1>{escape(group["label"])}</h1><p class="muted">共 {len(records)} 条明细；通过 {counts["PASS"]}，失败 {counts["FAIL"]}，跳过 {counts["SKIP"]}，未执行 {counts["NOT_RUN"]}。</p></div><a href="../report.html">返回总览</a></div>'
+    body += report_search() + '<section class="panel"><div class="panel-head"><h2>用例结果</h2><small>每页最多 ' + str(size) + ' 条</small></div>' + navigation
+    body += '<div class="table-wrap"><table class="case-table"><thead><tr><th>状态</th><th>用例与详情</th><th>框架</th><th>耗时</th><th>执行证据</th></tr></thead><tbody>' + ''.join(rows) + '</tbody></table></div>' + ('' if rows else '<div class="empty">当前场景未提供逐条用例，请查看下方任务日志。</div>') + navigation + '</section>'
+    body += '<section class="panel"><div class="panel-head"><h2>未提供逐条明细的任务</h2><small>不计作单条用例</small></div>'
+    if unknown:
+        body += '<ul class="failure-list">' + ''.join(f'<li>{report_badge(task.get("status", ""))} <strong>{escape(task.get("label") or "未命名任务")}</strong><p>逐条用例未统计，请查看任务日志。{escape("；".join(task.get("failed_tests") or []))}</p>{report_log_link(task, "../")}</li>' for task in unknown) + '</ul>'
+    else:
+        body += '<div class="empty">无</div>'
+    return report_shell(payload, model, body + '</section>', title=f'{group["label"]} · 第 {page} 页', active=scene, prefix='../', subtitle=group['label'])
+
+
+def write_html_report(run_dir: Path, page_size: int = 50) -> Path:
+    if page_size < 1:
+        raise ValueError("每页用例数必须大于零")
+    payload = json.loads((run_dir / 'details/report.json').read_text(encoding='utf-8'))
+    if 'coverageTargets' not in payload:
+        payload['coverageTargets'] = json.loads(COVERAGE_TARGETS.read_text(encoding='utf-8'))
+    model = report_model(payload, page_size)
+    assets = run_dir / 'assets'
+    assets.mkdir(exist_ok=True)
+    for name in ('report.css', 'report.js'):
+        (assets / name).write_bytes((REPOSITORY_ROOT / 'tests/report_assets' / name).read_bytes())
+    index = [{"name": record['case'].get('name') or '', "status": record['case'].get('status') or '',
+              "file": record['case'].get('file') or '', "framework": record['task'].get('framework') or '',
+              "scene": record['scene'], "detail": (record['case'].get('detail') or '')[:4000], "href": record['href']} for record in model['records']]
+    (assets / 'case-index.js').write_text('globalThis.KC_REPORT_CASES = ' + json.dumps(index, ensure_ascii=False).replace('<', '\\u003c').replace('\u2028', '\\u2028').replace('\u2029', '\\u2029') + ';\n', encoding='utf-8')
+    pages_dir = run_dir / 'scenes'
+    pages_dir.mkdir(exist_ok=True)
+    for scene, group in model['scenes'].items():
+        for page in range(1, group['pages'] + 1):
+            (pages_dir / f'scene-{group["id"]}-{page}.html').write_text(report_scene_page(payload, model, scene, group, page), encoding='utf-8')
+    target = run_dir / 'report.html'
+    target.write_text(render_html_report(payload, model), encoding='utf-8')
     return target
 
 
@@ -1387,6 +1663,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="测试分类；all 是 full 的兼容别名",
     )
     parser.add_argument("--dry-run", action="store_true", help="只展示将执行的命令和文件")
+    parser.add_argument("--report-page-size", type=int, default=50, help="HTML 场景每页用例数，默认 50")
     parser.add_argument("--fail-fast", action="store_true", help="任一测试任务失败后停止")
     parser.add_argument(
         "--jobs", type=int,
@@ -1398,6 +1675,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--report", type=Path, help="兼容导出 JSON 汇总报告路径；正式报告仍写入 runtime/")
     parser.add_argument("--log", type=Path, help="兼容导出执行日志路径；正式明细仍写入本次运行目录")
     args = parser.parse_args(argv)
+    if args.report_page_size <= 0:
+        parser.error("--report-page-size 必须大于 0")
     if args.timeout <= 0:
         parser.error("--timeout 必须大于 0")
     if args.jobs <= 0:
@@ -1548,6 +1827,10 @@ def main(argv: list[str] | None = None) -> int:
         else:
             schedule(runnable)
         results.extend(task_results[index] for index in sorted(task_results))
+        if not args.dry_run:
+            results.extend(TaskResult(task.suite, task.label, task.framework, "NOT_RUN", 0.0, 0,
+                                      len(task.files), ("因前置失败或快速失败策略未执行",))
+                           for index, task in enumerate(tasks, 1) if index not in task_results)
         if args.coverage and not args.dry_run:
             coverage = run_jest_coverage(tasks, context, args.timeout)
             if coverage.status != "PASS":
@@ -1575,9 +1858,9 @@ def main(argv: list[str] | None = None) -> int:
             f"# {context.command} 测试报告\n\n最终结论：**{report_status(results, coverage)}**\n\n详细任务日志位于 `details/tasks/`。\n",
             encoding="utf-8",
         )
-        if context.command in HTML_REPORT_COMMANDS:
-            html_path = write_html_report(context.run_dir)
-            print(f"HTML 测试报告：{html_path}")
+    if not args.dry_run:
+        html_path = write_html_report(context.run_dir, args.report_page_size)
+        print(f"HTML 测试报告：{html_path}")
     if args.report:
         write_report(args.report, args.command, results, elapsed)
     if args.log:

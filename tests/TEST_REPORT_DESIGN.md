@@ -1,5 +1,165 @@
 # 统一测试入口 HTML 报告设计
 
+## 2026-11-11 Java 归档规则 HTTP 覆盖续作
+
+当前稳定完整采集 `runtime/coverage-goal/java-current-audit-20261111`：9 个产品文件，3476/3519 行、2069/2362 分支，source-stability=true。新增归档/恢复实现尚缺公开请求覆盖。扩展 `StorageGitLabHttpCheck` 的真实本地 HTTP 生命周期，验证不存在404、缺版本428、无幂等键400、过期版本409、草案/启用状态冲突409、条件更新失败409且不提交/不写审计，以及停用→归档→恢复后的状态、版本、列表分区和审计 actor。扩展共享 JDBC 状态机准确解释归档条件更新的绑定顺序及列表 SQL 的 ARCHIVED/DELETED 筛选；不修改产品源码、不连接共享库。伪代码：创建草案→非法归档矩阵→启用拒绝→停用→故障注入拒绝→归档→列表分区/编辑拒绝→恢复→列表与审计核对。验收为真实HTTP断言、完整9源码JaCoCo复采、输入SHA稳定；保留100%行/95%分支原目标，局部提升不代替全平台验收。
+
+验收：`runtime/coverage-goal/java-archive-http-20261111/` 的完整 9 源码采集退出 0，`source-stability.json` 为 stable=true、changedFiles=[]；行 3493/3519（99.26%），分支 2090/2362（88.48%）。相同分母比补测前增加 17 行、21 分支。剩余 26 条完全未覆盖行均在 `Main.java`，平台三端目标仍未达成。
+
+## 业界参考与本轮复验（2026-11-11）
+
+采用仓库 REA `app-capability-transfer` 与 `reverse-engineer-anything` Skill 完成能力迁移和运行态验收。参考 Allure 的聚合结果与失败诊断、Playwright HTML Reporter 的过滤和定位、ReportPortal 的运行总览、pytest-html 的可分享离线报告。官方来源、抓取哈希与受限页面记录见 `runtime/rea/professional-test-report/sources.json`、`official-repositories.json`；官网返回 403 的来源只记录限制，不声称已验证其页面内容。
+
+本轮使用 `python3 tests/run_tests.py smoke --report-page-size 2` 生成真实 HTML：报告 `runtime/test-results/smoke/20261111-033805-272636-smoke/report.html`，2 个任务、24 个已识别用例全部通过。统一入口回归 43/43 通过。REA Chromium 验收对新报告在 1440px 和 390px 各运行 10 次，P95 DOMContentLoaded 分别约 32ms、66ms；无横向溢出、脚本错误和外部请求。搜索返回 3 条并可深链到用例；禁用 JavaScript 时仍可从总览进入分页明细。原始验证结果、脚本和截图见 `runtime/rea/professional-test-report/`。
+
+内部评分维持 9.5/10（数据可信 2/2、失败定位 2/2、检索导航 2/2、视觉层级 1.5/1.5、无障碍/移动端 1/1、离线/性能 0.5/1、可追溯 0.5/0.5）。这是针对当前报告实现和上述 smoke 样本的内部量表，不是第三方认证，也不证明大规模报告性能。覆盖率是否达标以独立覆盖率数据和门禁为准；本轮 smoke 未开启覆盖率采集。
+
+2026-11-11T03:42:00+08:00 前端 provenance 空值分支补测设计：最近固定 Istanbul 快照中 `production-provenance.js` 行覆盖完整，33 个分支中仅剩 `metadata.provenance || []` 的空值回退。扩展固定 Chromium `exerciseProductionProvenance(page)`，传入其他元信息有效但 `provenance: null` 的公开输入，断言结果含空的 `<ol>`、保留任务标识且没有伪造来源项；与既有 `evidence: null` 场景分开，确保命中的是 provenance 集合本身的 fallback。只调用真实导入的渲染函数，不发业务 API 请求。验收保持固定 57 个产品源码文件、原场景计数及 source-stability 检查，完整固定前端采集后确认目标分支计数，不能以定向覆盖替代全量稳定证据。
+
+2026-11-11T03:53:34+08:00 前端 provenance 空值固定复采结果：执行 `KC_FRONTEND_ISTANBUL_OUTPUT=runtime/coverage-goal/frontend-provenance-null-followup node tools/repository/collect-frontend-istanbul-coverage.cjs`。57 个源码文件和既有场景均完整：导航45、API契约22、审核选择6、草稿输入8、团队HTTP10、写作31、任务页16、我的工作8、手册往返5、平台6、审核16。快照 `completed=true`、`stable=true`，`changedFiles=[]`、`changedInputs=[]`。前端总行8727/10374=84.12%，分支10070/14196=70.93%；`production-provenance.js` 分支33/33，目标空值 fallback 已命中。产品覆盖率目标仍未达成，需继续补齐前端总缺口并重新验收 Node、Java 与前端三端。
+
+2026-11-11T04:05:00+08:00 手册写作 GitLab 成功来源补测设计：在固定 Chromium `exerciseHandbookWritingEntry(page)` 中，为当前手册文档配置有效映射（`main` 分支、`docs` 根目录）、`canRead=true`、包含该文档 Markdown 的真实目录项及匹配路径/commit/blob 元数据的文件响应；同时为写作入口提供对应大纲文档。通过真实工作台生成按钮和写作页“生成候选”触发 `prepareOrigin`，断言映射、权限、分支、树和文件 API 均被调用，来源摘要计算成功，且成功来源检查后页面进入任务提交阶段并保留原文基线。AI jobs POST 在夹具中确定性拒绝并计入断言，避免产生业务写入。所有 fetch、应用状态和路由在 `finally` 恢复。验收为定向固定 Chromium 场景通过，并重跑完整固定 Istanbul 采集，确认57文件分母和其他场景计数不变、source-stability稳定；仅以全量复采评估覆盖率变化，不以该场景局部数字作平台验收。
+
+## 专业报告改进验收（2026-11-10）
+
+参考 Allure Report 的结果聚合与失败定位、Playwright HTML Report 的状态筛选与用例详情、ReportPortal 的质量总览、pytest-html 的离线报告和日志详情。使用仓库 REA Skill 的能力迁移流程形成“参考能力—证据—平台适配—验收”记录；参考源码和受控浏览器观测保存在 `runtime/rea/professional-test-report/`。
+
+本次报告改为离线数据产品布局：深色场景导航、运行结论和结果分布、失败/阻塞优先、场景汇总、覆盖率分子分母与目标缺口、任务耗时排序。静态分页仍保留；本地索引支持全场景关键词搜索、状态筛选、失败深链接和详情自动展开。所有 HTML 文本转义，日志路径限制在 `details/tasks/`，无 JavaScript 时仍可浏览全部静态页面。
+
+评分（10 分制）：数据可信 2.0、失败定位 2.0、检索导航 2.0、视觉层级 1.5、无障碍/移动端 1.0、离线/性能 1.0、可追溯 0.5；本轮证据评分 9.5 分。证据包括 `tests/unit/root/test_run_tests.py` 43 项通过、真实 smoke HTML、390px Chromium 无溢出/无脚本错误/搜索命中、REA 受控观测 `runtime/rea/professional-test-report/allure-runtime-evidence.json`。评分不代表第三方认证；报告不虚构未提供的趋势、重试、环境或附件。
+
+2026-11-10T09:48:56+08:00 前端导航状态补测设计：固定 Istanbul 报告中 `common/state/navigation.js` 仍有 3 行未覆盖，集中在平台页签查询参数解析，另有未知视图、非法页签和仓库详情尾斜杠分支。沿现有已认证 Chromium 页面动态导入真实模块，调用公开的 `pathForView`、`viewFromPath` 和 `platformTabFromSearch`，断言有效与非法页签、空查询、未知路由、仓库和手册路径的结果。场景只读页面内模块，不发送业务写请求；仍以固定 57 个产品脚本清单和完整采集结果验收。伪代码：`import(navigation); evaluate(paths,tabs); assert(publicResults); mergeFixedCoverage()`。
+
+2026-11-10T09:48:56+08:00 审核选区内联批注补测设计与复盘：真实已认证页面挂载候选正文及审核表单，创建 `Range` 并触发正文 `mouseup`，在同一 DOM 事件中确认选区气泡已显示，检查文档 ID、节点、路径和选中文本；点击添加批注后用隔离同源 HTTP 500 验证提交负载、错误反馈、按钮恢复和取消清理。首次尝试在事件之后才读取气泡，页面滚动监听已将其隐藏；夹具改为同步确认事件结果。完整报告为 `runtime/test-results/frontend-review-inline-20261110b/coverage-summary.json`：57 文件行 7711/9986（77.21%）、分支 9062/13744（65.93%），`app.js` 行 2277/4318、分支 1782/4135。相对上一固定大纲导入报告净增 77 行、55 分支；Node 与 Java 未在此阶段重采，三端目标未达成。
+
+2026-11-10T10:00:04+08:00 导航状态矩阵复采结果：固定报告确认 `common/state/navigation.js` 行 18/18、分支 21/22（95.45%）；最后未命中分支为根路径 `/` 的规范化长度条件。本次完整前端报告 `runtime/test-results/frontend-navigation-state-20261110/coverage-summary.json` 总行 7711/9986、分支 9055/13744；计数有既有页面时序波动，不作为整体增量证据。
+
+2026-11-10T07:47:52+08:00 手册写作来源检查与并发编辑保护固定复采通过：生成页目录加载完成后真实点击生成按钮，隔离映射 API 返回 `GITLAB_MAPPING_NOT_FOUND`；映射读取期间模拟工作台正文变化，产品按空白来源继续检查并在提交 AI 任务前提示正文已变化。断言确认没有 AI jobs POST，并关闭/清理嵌入页。固定前端 57 文件及 45 导航、30 写作、17 任务管理、8 我的工作、5 手册往返、6 平台、16 审核计数齐全；行 7463/9979（74.78%）、分支 8875/13738（64.60%），较 `frontend-handbook-generate-entry-20261110c` 增 13 行、6 分支。`app.js` 行语句 2343/5480、分支 1627/4135。报告 `runtime/test-results/frontend-handbook-origin-race-20261110/coverage-summary.json`。Node 最近固定行 14387/16028、分支 13493/18183；Java 最近固定行 3118/3360、分支 1731/2178。全平台目标未达到。
+
+2026-11-10T07:32:27+08:00 手册写作生成入口复采通过：真实文档按钮打开嵌入式写作页，隔离同源 fetch 仅返回模型、模板及只读 AI 目录数据，断言模型/模板请求并通过关闭按钮清理页面。固定采集完整，57 文件及 45 导航、30 写作、17 任务管理、8 我的工作、5 手册往返、6 平台、16 审核计数齐全；前端行 7450/9979（74.65%）、分支 8869/13738（64.55%），相较 `frontend-handbook-entry-20261110` 增 24 行、27 分支。`app.js` 行语句 2329/5480、分支 1618/4135；`openHandbookWriting` 计数 6。证据 `runtime/test-results/frontend-handbook-generate-entry-20261110c/coverage-summary.json`。Node 最近固定行为 14387/16028、分支 13493/18183；Java 最近固定行为 3118/3360、分支 1731/2178。全平台阈值未达到。
+
+2026-11-10T07:20:02+08:00 手册写作入口生成页挂载设计：沿已认证 Chromium 页面，保留真实 `data-handbook-ai-action="generate"` 点击；为隔离写作容器提供当前文档 ID，将模型目录、模板目录及 AI 历史/技能/来源读取替换为同源 JSON 响应。草稿状态置为 ready 后断言嵌入式 `.handbook-writing-page` 可见、模型与模板目录请求发生，并点击真实关闭按钮验证页面清理。场景停在页面初始化，不点击生成、质量检查或采用保存；`window.fetch`、host、路由、草稿和通知均在 `finally` 恢复。伪代码：`stub(readOnlyCatalogs); click(generate); assert(mounted, catalogsRequested); click(close); assert(cleaned); restore()`。固定 57 文件分母不变。
+
+2026-11-10 原生质量报告 `<dialog>` 关闭事件异步触发 DOM 清理，固定采集中 `setTimeout(0)` 后立即查节点发生时序失败。将夹具改为最多 1 秒轮询节点移除结果，继续验证真实 close 事件处理，不改变产品行为或放宽最终断言。
+
+生成页场景使用产品支持的 Markdown 编辑偏好，让入口不依赖 Vditor 资源时序；真实动态导入入口在按钮点击后最多等待 1 秒挂载，再验证可见页面和关闭清理。
+
+2026-11-10T07:38:09+08:00 手册写作入口来源检查补测设计：生成页目录就绪后点击真实“生成候选”按钮；隔离仓库映射读取返回 `GITLAB_MAPPING_NOT_FOUND`，并在 fetch 处理中更新工作台草稿以模拟并发人工编辑。断言产品 `prepareOrigin` 将未配置映射当作空白来源后，在提交生成任务前检测正文变化、显示保护提示，且没有 AI jobs POST。之后关闭写作页并恢复所有状态。覆盖来源准备、无映射回退及异步人工修改保护，不生成候选或写入后端。
+
+2026-11-10T07:49:42+08:00 手册写作 GitLab 授权恢复设计：在前述隔离写作页场景后重新打开入口，映射读取返回已配置仓库，access-status 返回 `canRead=false`、`nextAction=connect_gitlab`。点击生成候选后断言来源区显示授权提示及 OAuth 恢复链接，并确认没有 AI jobs POST；通过关闭按钮清理页面。只模拟同源读响应，不执行 OAuth 跳转或业务写入。
+
+2026-11-10T07:52:11+08:00 首次授权边界复采在前置嵌入页关闭断言处失败。产品通过宿主 `replaceChildren` 同步清除页面；夹具在点击后立即等待 0ms 观察全局 DOM，不能说明具体节点清理完成。两处关闭断言改为最多 1 秒轮询全局写作页节点清空，并在前一断言错误中附带残留节点摘要，以继续验证关闭契约。
+
+轮询后仍发现写作 section 残留；在保留真实按钮 click 的前提下，夹具包装其既有 `onclick` 以记录是否调用及是否抛出同步清理异常，并将诊断加入失败信息，继续定位产品关闭结果。
+
+2026-11-10T07:16:09+08:00 固定前端手册写作入口复采结果：真实 document click 场景通过，覆盖 `openHandbookWriting` 的未就绪、未保存、生成等待、重复打开和匹配修订打开质量报告路径。夹具补齐入口依赖的 `[data-handbook-current-document]`，使草稿状态按真实文档 ID 读取。固定 57 文件采集通过，45 导航、30 写作、17 任务管理、8 我的工作、5 手册往返、6 平台、16 审核计数齐全；前端行 7426/9979（74.41%）、分支 8842/13738（64.36%），较此前 `frontend-viewport-finalization-20261110` 增 25 行、31 分支。`app.js` 行 2304/5480 语句、分支 1598/4135；`openHandbookWriting` 函数计数 5。证据 `runtime/test-results/frontend-handbook-entry-20261110/coverage-summary.json`。Node 最近固定行 14387/16028、分支 13493/18183；Java 最近固定行 3118/3360、分支 1731/2178。平台目标仍未达到。
+
+2026-11-10 固定前端 `app.js` 手册写作入口设计：覆盖报告中 `openHandbookWriting`（251–362 行）未被固定浏览器页面触发。沿现有已认证 Chromium 页面，以真实 `data-handbook-ai-action` 文档点击事件调用入口，隔离保存/恢复 `appState.activeView`、history 地址和整份 `handbookProductionUi`。验证检查模式下草稿未就绪、已保存正文与当前正文不一致时均显示“需要先保存草稿”提示；生成模式草稿未就绪时显示等待共享草稿提示；写作页已存在时重复点击不再创建页面；最后提供匹配已保存修订的正文，断言质量报告 dialog 正常打开并关闭恢复。该场景不点击质量执行 API、不写入后端业务数据；测试结束恢复通知 DOM 状态、路由、应用视图和草稿状态。伪代码：`snapshot(state,url,notice); set(production,handbookRoute,fixtureDraft); click(check/generate); assert(notice/page/dialog); restore()`。计数仍由原固定 57 文件 Istanbul 白名单收集。
+
+2026-11-10 Node 文档任务审核读取降级固定复采结果：新增本地真实 HTTP 故障路径及完整路由套件 32/32 通过；固定 137 Jest 文件中 136 套件通过、1 条件跳过，1444 项通过、8 项跳过。总行 14387/16028（89.76%）、分支 13493/18183（74.20%）；`routes/document-tasks.js` 达到 407/407 行。报告 `runtime/test-results/full/20261110-064739-809978-full/details/coverage/coverage-summary.json`。固定 JaCoCo 独立复采仍为 9 源码行 3118/3360、分支 1731/2178。统一覆盖入口接续启动前端采集，本轮未等待该阶段完成；本轮目标仍未达成。
+
+2026-11-10 Node 文档任务审核降级行设计：固定 Node 报告中 `packages/agent-runner-core/routes/document-tasks.js` 仅第 129 行未执行，该行把审核服务读取异常转换为“关联审核不可读取”的待处理投影。扩展既有真实本地 HTTP Jest 夹具，先按正常流程导入工单、确认手册/文档范围并关联审核任务，再令审核服务 `get` 抛出带 `code` 的错误，重新 GET 工单并断言 HTTP 成功、文档完成状态仍为 pending、中文降级标签及错误码均存在。伪代码：`linkReviewThroughApi(); reviewService.get=throw(code); GET(task); assert(pending,label,code)`。不连接共享审核服务或写入外部数据；以固定 Node 全量复采核对目标行和总计数。
+
+2026-11-10 浏览器视口运行时收尾复采结果：完整固定采集通过，57 个产品脚本及 45 导航、30 写作、17 任务管理、8 我的工作、5 手册往返、6 平台和 16 审核计数齐全。隔离 iframe 补测原生 dvh 接管 measured token 的清理，以及存在待执行更新帧时 destroy 取消句柄。前端总行 7401/9979、分支 8811/13738；`common/viewport-runtime.js` 行 37/37、分支 35/35、函数 5/5。报告 `runtime/test-results/frontend-viewport-finalization-20261110/coverage-summary.json`。目标平台总覆盖仍未达成。
+
+2026-11-10 浏览器视口运行时剩余分支设计：固定前端覆盖报告中 `common/viewport-runtime.js` 行已全覆盖，剩余两处分支分别是原生 dvh 接管测量值后移除 CSS 回退 token，以及销毁时取消待执行的 animation frame。在固定采集器现有 Chromium iframe 隔离场景增加两份独立文档：第一份让原生高度先不匹配以建立 measured token，再令探针高度匹配并调用公开 `update()`，断言来源切换为 native 且 token 被清除；第二份替换 iframe 的 request/cancelAnimationFrame 为确定性句柄，派发 resize 后立即 destroy，断言待执行回调被取消。仅触发真实运行时逻辑，不修改业务状态或后端数据。伪代码：`runtime(measured); nativeHeight=viewportHeight; update(); assert(tokenRemoved); runtime(pendingFrame); dispatch(resize); destroy(); assert(cancelled(frameId))`。
+
+2026-11-10 Java `Main.main` probe 三态复采结果：真实一次性命令在隔离 JDBC 成功结果下正常输出并退出；空结果与错误值场景分别按预期抛出 SQL 异常，确认 JDBC 连接关闭。固定 Java 9 源码行 3118/3360、分支 1731/2178，相较 probe 前报告增加 12 行、6 分支。报告 `runtime/test-results/java-main-probe-results-20261110/coverage-summary.json`。Node 与浏览器前端未在本轮重采，平台目标仍未达成。
+
+2026-11-10 Java `Main.main` 一次性 probe 命令覆盖设计：新增独立 JVM JaCoCo 场景，注册仅接受 `jdbc:fixture:business` 的确定性 JDBC 驱动，使用代理 Connection/Statement/ResultSet 返回 `SELECT 1 FROM DUAL` 的成功结果，再调用真实 `Main.main(new String[]{"probe"})`。追加独立失败进程，分别模拟无结果行和结果值错误，断言产品抛出预期 SQL 错误并完成连接池清理。覆盖命令选择、驱动加载、连接池借还、成功退出和结果错误边界；不启动服务、不连接共享数据库、不执行数据库写入。伪代码：`for result in [one, empty, wrong]: registerFixtureDriver(result); Main.main([probe]); assert(exitOrExpectedSqlError);` 将各场景加入固定 JaCoCo 编译与执行清单。
+
+2026-11-10 Java Main 启动 HTTP 边界复采结果：隔离真实 HTTP 场景全部通过，覆盖质量/导出/技术领域/手册/大纲/团队/建设任务方法门禁、错误输入和幂等键校验。固定 9 源码行 3106/3360、分支 1725/2178；相较此前固定 JaCoCo 增加 5 分支，行数持平。证据 `runtime/test-results/java-main-http-boundaries-20261110/coverage-summary.json`。完整平台目标仍未达成。
+
+2026-11-10 Java Main 启动 HTTP 边界补测设计：在已有动态端口 `StorageBootstrapContractCheck.server-http` 真实服务场景中，扩展非数据库路径的请求矩阵，覆盖质量接口和只读/导出/技术领域/团队/大纲/建设任务的错误方法响应、记录 ID 与任务项路径校验、手册/大纲快照的损坏 JSON，以及团队创建缺少幂等键。断言状态、错误码和请求 ID；所有数据库分支在借用连接前结束，不执行业务写入，不连接共享数据库。伪代码：`startIsolatedMainHttp(); for request in invalidMethodOrInput: sendRealHttp(); assert(status, code, requestId); stopProcess()`。采集器保留 9 个 Java 产品源码文件固定分母并重出 JaCoCo 报告。
+
+2026-11-10 资产管理停用边界场景固定复采结果：真实 Chromium 场景覆盖高级操作展开、脏表单拦截、取消恢复管理框/焦点、dialog cancel 和忙碌阻止关闭，且无写请求。固定前端总行 7403/9979、分支 8810/13738；`app.js` 行 1991/4318、分支 1567/4135。完整计数见 `runtime/test-results/frontend-asset-management-20261110e/coverage-summary.json`。Node 与 Java 本轮未重采，整体目标未达成。
+
+2026-11-09T22:39:44+08:00 Agent 运行与手册往返完整复采结果：本地 Agent 浏览器用例普通、插桩模式均通过，真实后端 `/run-test`、`/agent-runs/:id/events`、`/cancel` 与状态 API 驱动取消、完成和断线恢复；仅执行器与一次 MCP 503 为隔离替身。手册返回未插桩 6 次 P95=28.9ms，继续满足 100ms 门槛；插桩版本 5 个非空计数和功能断言通过。固定 57 文件白名单及 29 写作、17 任务管理导航页、8 我的工作、5 手册往返、6 平台管理、16 审核计数完整通过。行 6958/9979（69.72%）、分支 8104/13738（58.98%），比上轮完整报告净增 277 行、273 分支；`app.js` 行 1905/4318、分支 1525/4135，`model-admin.js` 行 101/101、分支 87/116。报告 `runtime/test-results/frontend-handbook-agent-20261109/coverage-summary.json`。尚缺前端 3021 行、5634 分支，Node/Java 未本轮重采，不能宣称全平台达标。
+
+2026-11-09T22:27:21+08:00 手册返回功能与首帧性能双模式覆盖设计：`knowledge-center-my-work.node.test.cjs` 的现有手册返回测试使用本地隔离 HTTP 夹具，真实浏览器会进入完整 `app.js` 手册工作台，但固定前端采集此前为避免插桩开销污染 100ms 性能断言而排除。未插桩基线 6 次首帧 P95=30.7ms。保留原 6 次及 `<100ms` 断言；仅在 `KC_FRONTEND_ISTANBUL_CASE_DIR` 指定时为主、移动和直接进入三个页面插桩，功能往返 1 次，导航前及结束时保存计数，不拿插桩耗时与性能门槛比较。固定采集器只运行该独立插桩功能场景，校验计数来自原 57 文件白名单并合并；未插桩性能测试继续单独运行且门槛不变。伪代码：`performanceMode: repeat(6), assert(p95<100); coverageMode: instrument(threePages), navigateOnce(), captureBeforeHistoryAndClose(), assertFunctionalState(), mergeWhitelistedCounters`。
+
+2026-11-09T22:24:00+08:00 Agent MCP 摘要错误态补测设计：`model-admin.js` 经真实运行测试及 SSE 恢复后仅剩第 85 行。切换 Agent 时浏览器先向隔离产品后端实际请求 Agent MCP 配置；页面网络层在该次成功响应后模拟 503 JSON，断言模型管理摘要显示“读取失败，请打开配置重试”，MCP 配置区保留重新读取按钮。该模拟仅覆盖前端失败反馈，不能冒称产品后端故障测试。伪代码：`route(fetch(realAgentMcpApi) -> 503); selectAgent(); assert(summaryError, retryButton); unroute()`。
+
+2026-11-09T22:23:00+08:00 Agent 运行测试断线恢复补测设计：新增真实 HTTP/SSE 取消和完成场景后，`model-admin.js` 定向合并为 94/101 行，剩余未覆盖包括 SSE 断线时 GET 终态与运行中降级提示。隔离执行器使第三、四次运行的 SSE 第二次读取抛错，真实产品 SSE 路由关闭流，页面真实 `EventSource.onerror` 再经产品状态 API 回读；第三次返回已完成，第四次仍运行后允许用户取消。断言状态文案、请求与运行 ID，不依赖外部模型连接。伪代码：`start(); streamDisconnect(); GET->completed; assertSuccess(); start(); streamDisconnect(); GET->running; assertRecoveryNotice(); cancel()`。
+
+2026-11-09T22:21:38+08:00 Agent 管理运行测试浏览器覆盖设计：固定前端报告的 `model-admin.js` 仍有 29 行未执行，集中在运行测试、SSE 终态、取消及创建 Agent。现有 `platform-agent-management.test.cjs` 已通过真实本地 HTTP 保存 Codex Agent 和模型配置；向其隔离后端装配确定性 `codexRunner`，由真实 `/platform/agents/:id/run-test`、`/platform/agent-runs/:id/events`、`/cancel` 路由驱动页面。一次运行保持进行中并由取消返回终态，第二次立即完成；断言按钮、状态、配置选择和 API 调用。再由页面新建一套未启用的内置工作流 Agent，并经真实 API 回读。伪代码：`saveCodexAgentAndModel(); clickRunTest(); assertHttp202AndCancelVisible(); clickCancel(); assertSseCancelled(); clickRunTest(); assertSseCompleted(); createWorkflowAgent(); assertHttpReadback()`。仅在本地隔离 HTTP 与内存执行器中运行，不连接外部模型或共享配置。
+
+2026-11-09T22:17:35+08:00 平台管理补测完整结果：模型、Agent、MCP 三组普通基线中，Agent 通过；模型旧 `[data-ai-full]` 按钮和 MCP 旧独立标签夹具分别失败，按当前产品入口修正后普通与插桩定向测试通过。模型非安全测试域名的静态 JS 拦截经同一隔离 HTTP 服务的 127.0.0.1 地址抓取，页面域名及业务 API 请求保持原样。完整固定 57 文件清单、29 写作、17 任务管理导航页、8 我的工作、6 平台管理、16 审核计数通过；行 6681/9979（66.95%）、分支 7831/13738（57.00%），相对上一完整报告净增 115 行、245 分支，证据 `runtime/test-results/frontend-platform-controls-20261109/coverage-summary.json`。`mcp-admin.js` 与 `model-connection.js` 行完整覆盖，但分别仍缺 40、27 个分支；`app.js` 从上一轮 1695/4318 波动到 1685/4318，主要是平台菜单延迟渲染和资产统计异步回调，须后续稳定采集。Node/Java 未在本轮重采，三运行时目标均未完成。
+
+2026-11-09T22:06:44+08:00 平台管理剩余页面行补测设计：完整报告中 `mcp-admin.js` 为 117/125 行，未执行项集中于自定义请求头保存、未保存/已保存服务删除和知识库验证失败；`model-connection.js` 为 107/109 行，未执行项为折叠详情内无效字段的展开处理。沿现有本地真实 HTTP/Chromium 夹具，添加请求头并断言保存后的脱敏配置回读，验证知识库请求失败状态与服务删除；模型连接在折叠服务中提交空名称，断言错误项展开且未发生配置写入。仍由固定 57 产品脚本采集器复采。伪代码：`addHeader(); saveViaHttp(); assertRedactedReadback(); failKbVerify(); deleteDraftAndSaved(); submitInvalidCollapsedModel(); assertExpandedAndNoSave()`。
+
+2026-11-09T21:55:00+08:00 平台模型、Agent、MCP 隔离浏览器场景接入固定前端覆盖设计：三组现有测试均使用本地临时 HTTP 服务和隔离配置文件，验证真实平台 API 与页面交互；目前产品脚本执行未计入固定 57 文件前端报告。仅在 `KC_FRONTEND_ISTANBUL_CASE_DIR` 指定时拦截 `/knowledge-center/**/*.js`，按固定源码绝对路径插桩；模型和 MCP 页面重载前保存当前计数，三组用例结束时保存最终计数。固定采集器逐组运行，要求计数文件及快照非空，并核对每个源码路径属于原白名单，再合并到既有报告。普通运行和业务断言保持原样。伪代码：`isolatedHttpBrowser(); instrumentWhenRequested(); captureBeforeNavigation(); captureFinal(); assertTestsPassed(); validateFixedManifest(); mergeCounters()`。本轮不缩减产品分母，也不把隔离夹具结果描述为企业外部服务验收。
+
+2026-11-09T21:51:19+08:00 任务管理与我的工作浏览器计数完整复采结果：固定 57 产品源码、29 写作、17 任务管理导航页、8 我的工作页面、16 审核计数齐全；行 6566/9979、分支 7586/13738，证据 `runtime/test-results/frontend-my-work-integrated-20261109/coverage-summary.json`。任务管理视图由 48/211 行、99/416 分支增至 199/211、352/416；我的工作由 77/213 行、91/386 分支增至 193/213、283/386。两个独立真实 HTTP 功能场景先定向通过，手册返回性能场景未插桩运行 P95=32.4ms（6 次），保持 100ms 门槛。任务管理测试隔离文件根调整为 `runtime/test-results`，仍在 `finally` 清理。后续按覆盖清单继续补 `app.js`、平台管理及两个视图剩余分支。
+
+2026-11-09T21:39:21+08:00 我的工作真实 HTTP 浏览器测试接入固定前端覆盖设计：任务管理测试接入后 57 产品脚本、29 写作、17 任务管理页面、16 审核计数完整通过；前端行 6448/9979、分支 7392/13738，`document-tasks/view.js` 为 199/211 行、352/416 分支，证据 `runtime/test-results/frontend-document-tasks-integrated-20261109/coverage-summary.json`。下一高缺口 `modules/dashboard/my-tasks.js` 仅 77/213 行、91/386 分支，现有 `knowledge-center-my-work.node.test.cjs` 用真实本地 HTTP 夹具覆盖列表、筛选、同步、委派和窄屏交互。仅在固定采集环境中为前六个功能场景插桩产品 JS，在页面关闭或刷新前保存计数，校验原 57 源码白名单后合并；第七个手册返回首帧 100ms 性能场景保持原独立运行，不在插桩模式下用增量耗时误判或放宽性能阈值。伪代码：`instrument(productJs); functionalCases->capture(page); reload->capture(before); merge(whitelistedSnapshots); performanceCase unchanged`。普通测试和后端 HTTP 路由不变。
+
+2026-11-09T21:28:44+08:00 任务管理真实 HTTP 浏览器测试接入固定前端覆盖设计：现有 `document-tasks-frontend.test.cjs` 运行产品 `view.js`、日历与真实 `createDocumentTaskRouter`，覆盖导入、工单/手册两级范围、分派、新增文档、计划时间冲突、配置和 390px 页面；固定前端报告中 `document-tasks/view.js` 仍缺 163 行，因该独立浏览器场景未输出 Istanbul 计数。仅在 `KC_FRONTEND_ISTANBUL_CASE_DIR` 存在时拦截 `/frontend/knowledge-center/**/*.js` 并按固定源码路径插桩；每次 `page.goto` 前保存当前计数，结束时输出页面快照数组。固定采集器运行该真实 HTTP 场景并逐个校验计数源码在原 57 文件白名单中，再合并；普通测试仍保持原行为。伪代码：`instrument(productJs); beforeNavigate(capture); run(realHttpBrowserScenario); capture(final); validateSourceList; merge(allSnapshots); compareFixedDenominator`。不缩减分母、不替换真实后端 API。
+
+2026-11-09T21:26:26+08:00 模板控制器剩余行完整复采结果：一次性批量确认失败保留选择并重试，隔离第二页面阻断 Vditor 脚本后验证错误提示和 Markdown 回退；两页计数合并到固定前端源码清单。57 产品脚本、29 写作、16 审核计数齐全；前端行 6295/9979、分支 7136/13738；模板控制器行 319/319、分支 397/554，证据 `runtime/test-results/frontend-template-all-lines-fixed2-20261109/coverage-summary.json`。移动端历史焦点修复增加 3 个分支，跨轮总分母不能用旧值衡量分支增量。模板控制器分支仍缺 157 个；全前端尚缺 3684 行和 6602 分支，后续继续按产品高缺口模块推进。
+
+2026-11-09T21:14:06+08:00 模板错误矩阵完整复采与最后三行设计：隔离页面的分析失败/重试、刷新失败、规则 JSON 与发布失败、缺正文、手动改选缺理由、键盘焦点矩阵通过；固定 57 产品脚本、29 写作、16 审核计数汇总，行 6290/9979、分支 7133/13738，模板控制器 316/319 行、397/554 分支，证据 `runtime/test-results/frontend-template-errors-fixed2-20261109/coverage-summary.json`。产品修复移动端历史面板排除折叠 `<details>` 内按钮，真实焦点循环通过。控制器余下行 14、28 为编辑器脚本/实例加载异常，行 179 为批量确认单条失败。后续用一次性失败的隔离 API 验证批量确认失败保留选择后可重试；用受控编辑器构造失败验证 Markdown 回退。编辑器资源加载异常需确保实例隔离，避免双重全局监听器污染主页面。
+
+2026-11-09T21:03:37+08:00 移动端模板历史焦点局部缺陷：新增浏览器断言发现宽度 800px 时 Shift+Tab 未能从历史面板首个可见按钮循环到末尾。控制器直接选取 `.template-history button:not(:disabled)`，其中折叠 `<details>` 内按钮不可聚焦，导致末尾焦点目标隐藏。首次仅按 `getClientRects().length` 过滤仍失败；诊断显示折叠详情内按钮仍有布局矩形。修正为同时排除未展开 `<details>` 的后代，测试主动展开 v1 并验证首尾循环。范围仅为历史面板的键盘焦点选择，不修改模板业务数据或其他页面行为。
+
+2026-11-09T21:01:13+08:00 模板编辑交互完整复采及后续错误矩阵设计：固定 57 产品脚本、29 写作、16 审核计数通过；前端行 6256/9979、分支 7078/13735，模板控制器行 290/319、分支 353/551，证据 `runtime/test-results/frontend-template-interactions-20261109/coverage-summary.json`。剩余 29 行中，可由模板分析失败、批次轮询/刷新失败、规则 JSON 解析失败、手动决定缺少理由、详情缺正文，以及页签/弹层键盘焦点环覆盖。继续通过隔离 HTTP 响应和公开界面事件触发，断言错误反馈、当前数据不被误写及焦点位置；完整固定复采核对增量。伪代码：`failAnalyze; retry; failRefresh; invalidRuleJson; missingReason; missingDetail; key(Tab,Escape,Home,End); assert(errors,focus,state)`。
+
+2026-11-09T20:51:53+08:00 模板编辑与无障碍操作覆盖设计：固定报告显示模板控制器尚缺 59 行，集中在搜索 composition、元数据快照撤销、上传成功兼失败反馈、目录宽度指针/键盘控制和历史/映射抽屉按键。沿既有隔离 Chromium 页面，混合上传一个非法扩展名和一个有效 Markdown，断言上传请求只包含有效正文且页面同时显示成功和未保存；通过输入法事件、普通搜索、弹层取消/Escape、目录宽度 Home/End/指针移动和历史抽屉 Escape 核对 DOM 与本地状态。伪代码：`upload(valid,invalid); search(composition); editMetadata; discard; resize(key,pointer); closeHistory(Escape); assert(visible,state,requests)`。固定 57 源码和阈值不变，完整复采决定真实增量。
+
+2026-11-09T20:50:39+08:00 模板分析生命周期和历史恢复结果：完整固定前端采集通过，57 个产品脚本、29 个写作计数和 16 个审核计数齐全。行 6229/9979、分支 7021/13735；`modules/templates/controller.js` 行 260/319、分支 295/551。隔离 API 请求断言分析手册、批次读取、取消路径与恢复 v1 请求；历史恢复前服务端仍保持 v4，用户保存后才成为 v5。报告 `runtime/test-results/frontend-template-lifecycle-20261109/coverage-summary.json`。剩余模板控制器 59 行和 256 分支仍需逐项设计边界场景。
+
+2026-11-09T20:42:54+08:00 模板分析生命周期和历史恢复续测设计：固定采集报告中模板控制器仍缺 68 行，未执行映射分析、运行中刷新/取消和历史内容恢复。沿已隔离模板 API，分析返回运行批次，页面刷新读取同一批次，取消只清除当前批次；随后打开模板 v1 历史详情，点击恢复为草稿并断言正文未被直接保存，用户再保存才创建新版本。伪代码：`analyze -> running; refresh(batch); cancel(batch); openHistory(v1); restoreDraft(v1); assert(dirty,version); save; assert(newVersion)`。核对所有 API 路径、正文和版本基线，完整前端固定采集评估增量。
+
+2026-11-09T20:41:56+08:00 模板冲突及 Markdown 上传完整复采结果：沿既定设计执行旧版本冲突、远端对照、本地草稿保存与新版基线重试，并验证非法文件不发请求、未确认入库提示、两次合法上传及成功详情回读。固定前端源码 57 个，写作/审核计数 29/16 个齐全；行 6220/9979、分支 7001/13735；模板控制器 251/319 行、281/551 分支。报告 `runtime/test-results/frontend-template-conflict-upload-20261109/coverage-summary.json`。后续继续补模板映射分析、取消/刷新、历史恢复、键盘与草稿边界；不更改固定源码分母和目标阈值。
+
+2026-11-09T20:32:19+08:00 模板版本冲突和 Markdown 上传续测设计：固定复采后 `templates/controller.js` 仍缺 105 行，`showSaveConflict` 与 `importFiles` 完全未执行。沿同一浏览器内存模板 API，第一次旧版本保存返回 `TEMPLATE_VERSION_CONFLICT` 并提供远端新版本；核对页面保留本地草稿与远端对照，用户明确采用新版基线后重试，断言仅第二次请求产生新版本。文件输入依次使用非法扩展名、服务端未确认入库的合法 Markdown、成功入库的合法 Markdown，核对错误消息、请求次数、导入结果与详情正文回读；所有 API 响应仅在本次页面拦截。伪代码：`edit; save -> conflict; adoptBaseline; save -> success; upload(invalid, malformed, valid); assert(version, content, errors, requests)`。不写真实业务模板或缩减产品源码清单。
+
+2026-11-09T20:23:38+08:00 模板映射控制器续测设计：前一份完整报告的 `templates/controller.js` 为 181/319 行、216/551 分支，未执行函数集中在 `confirmMapping`、规则预览/保存与批量操作。复用已隔离的模板 API 内存夹具，设置一份已完成分析批次、两篇同手册文档和一条可选模板；通过公开模板页签及按钮执行批量确认、依据抽屉中的手动改选、添加规则、字段编辑、影响预览与规则发布。断言每篇决定的文档/模板/理由和基线版本、页面已生效数、规则预览摘要及发布后版本，不写真实后端。伪代码：`seed(batch,handbook,rules); click(mapping); select+confirm; openEvidence+manualDecide; addRule+preview+save; assert(requests, DOM, state)`。固定前端源码清单、行/分支阈值和业务规则保持不变。
+
+2026-11-09T20:12:28+08:00 前端模板控制器覆盖续测设计：固定报告中 `modules/templates/controller.js` 尚缺 233/319 行，导航采集仅切换页签，真实的创建、元数据编辑、Markdown 正文保存和回读未执行。固定 Chromium 页面在本次测试范围内拦截模板 API，以内存模板状态响应列表摘要、详情、创建、保存、历史版本和启停；页面仍通过产品 `platform-api.js` 发出 HTTP 请求。以管理员真实登录后的模板导航触发公开界面事件，断言空白创建、字段输入和保存请求体、版本/正文回读、编辑后新版本、历史查看及状态切换；拒绝或错误响应也必须在页面显示且不改变内存已保存数据。结束后撤销路由拦截，完整 57 前端源码固定采集并检查控制器增量。伪代码：`route(inMemoryTemplates); navigate(templates); create; edit; save; readback; history; toggle; assert(requests, DOM, state); unroute()`。不修改业务数据、产品规则、覆盖率分母或门槛。
+
+2026-11-09T20:08:58+08:00 固定前端完整复采结果：先修正导航前未保存 Istanbul 计数的问题，同一 57 源码分母下，前端从 5762/9979 行、6243/13735 分支升至 5946/9979、6455/13735；`outlines/view.js` 从 34/266 行、42/564 分支恢复到 171/266、221/564，证明原始计数确实丢失。再补已发布分工、团队配置、回收站和资源页后，该模块为 255/266 行、350/564 分支。最后补平铺目录节点、同层排序与业务版本标签，完整前端采集 57 个产品脚本、29 个写作计数文件、16 个审核计数文件通过；该模块达到 266/266 行（100%）、391/564 分支（69.33%），总前端为 6031/9979 行（60.43%）、6616/13735 分支（48.16%），证据 `runtime/test-results/frontend-outline-full-lines-20261109/coverage-summary.json`。与上一轮固定前端基线相比，总量新增 269 行、373 分支；最近两次复采 `app.js` 有 10 行、9 分支的事件时序波动（平台菜单延迟重绘及资产统计），未将这部分视为大纲测试回归。完整平台目标仍未达成。
+
+2026-11-09T20:00:16+08:00 大纲视图剩余行续测设计：前次固定报告的 11 个未覆盖行分别位于非空业务版本标签、同层文档排序、目录节点完整度/检查器、平铺 `parentId` 节点树重建。沿公开 `renderOutlines` 构造一份同父目录下有两篇页面的平铺节点和非空业务版本，选择目录节点；核对目录检查器显示子节点数、页面数与未完善计数，信息抽屉含业务版本，并确认两篇页面保留排序后的导航。伪代码：`render(detail(flatNodes, versions), selectedDirectory); assert(inspector, order, versionTags)`。场景只渲染本地 DOM，固定分母不变；完整采集后按行号核对是否真正达到该模块行 100%，不以场景通过代替计数。
+
+2026-11-09T19:51:31+08:00 大纲视图已发布人员分工续测设计：整页导航计数修正后 `outlines/view.js` 为 171/266 行，未执行部分集中于正式建设任务、领域成员、历史责任人和回收站。沿采集器现有隔离 DOM 调用公开 `renderOutlineAssignments` 与 `renderOutlines`：构造同手册同版本、含主责与协作领域的任务，核对待分派/已分派行、目录筛选、负责人选项、历史责任人和统计；再构造无团队负责人、有/无平台管理权限、无任务和不匹配任务，核对阻断及空态。回收站验证有记录时恢复/清除入口、无记录及服务失败重试；资源页验证模板说明。场景只渲染真实前端模块，不发送业务写请求，完整固定分母复采并核对该模块计数。伪代码：`render(publishedTasks); assert(rows, roles, options, stats); render(noLeader, empty, recycle, resources); assert(states)`。
+
+2026-11-09T19:42:37+08:00 前端整页导航计数完整性设计：固定 Istanbul 报告中 `modules/outlines/view.js` 的 `detail`、`renderOutlineAssignments` 等函数计数为零，但固定采集器在首次页面已调用并断言其 DOM，说明首次页面在 `/outlines/resources` 等连续 `page.goto` 前丢失。将页面计数校验和合并抽为单一采集函数，在每次整页导航前保存当前页面；导航失败应阻断采集，避免重复合并同一页面快照。仓库页面四种状态继续复用同一采集函数，最后页面只合并一次；写作与审核计数机制保持原样。伪代码：`capture(initial); for path: goto(path); capture(current); goto(root); exerciseViews(); capture(root); for state: goto(repository); capture(state); merge(last)`。以完整固定前端清单、源码白名单及大纲视图函数计数验证，而不是只核对退出码。
+
+2026-11-09T19:39:35+08:00 Java 固定 JaCoCo 复采结果：迁移摘要算法缺失、非法/严格校验策略、历史版本标识错误均通过实际 `SchemaMigrationManager` 入口执行。首次全量采集被在途 `Main.java` 第七列变更与旧六列 HTTP 夹具不匹配打断；更新夹具并核对 `domainRole=PRIMARY` 后完整 9 源码清单通过。最新 Java 行 2885/3360（85.86%）、分支 1588/2178（72.91%），相对上次完整结果增加 3 行、3 分支；证据 `runtime/test-results/java-migration-strict-20261109/coverage-summary.json`。`SchemaMigrationManager.java` 为 166/171 行、128/136 分支，余下未覆盖行 47、106–107、117–118；`Main.java` 仍缺 470 行。Node、前端未在本轮重采，三运行时整体目标仍未达成。
+
+2026-11-09T19:33:47+08:00 Java 迁移摘要异常覆盖设计：固定 JaCoCo 报告显示 `SchemaMigrationManager.sha256` 的算法不可用包装分支未执行。沿 `MigrationExecutionCheck` 的独立 Java 进程，保存当前安全 Provider 顺序，临时移除提供 SHA-256 摘要的 Provider，通过公开 `migrate` 触发 `NoSuchAlgorithmException` 并断言包装为 `IllegalStateException`；在 `finally` 按原顺序恢复 Provider。检查该路径未执行 SQL、未写迁移记录、未提交或回滚，并在完整固定 9 源码 JaCoCo 复采中确认对应行计数。伪代码：`saveProviders(); removeSha256Providers(); try { migrate(); assert(cause, noSql, noCommit); } finally { restoreProviders(); }`。隔离夹具不连接真实数据库，也不改变产品实现、分母或阈值。
+
+2026-11-09T19:36:00+08:00 Java 完整复采夹具适配：当前在途 `Main.projectOutlineDirectory` 查询的责任域行增加 `DOMAIN_ROLE` 第七列，固定真实 HTTP 夹具仍只返回六列，导致目录请求连接关闭，JaCoCo 采集提前中断。更新隔离 JDBC 行集返回 schema 允许的 `PRIMARY`，并断言 HTTP 目录投影含 `domainRole`；随后重跑完整固定 Java 清单。伪代码：`rows(query) -> [node, domain, name, owner, ownerName, status, PRIMARY]; GET(directory); assert(domainRole)`。不修改产品 SQL 或覆盖率门槛。
+
+2026-11-09T19:37:00+08:00 Java 迁移校验策略边界续测设计：`SchemaMigrationManager.checksumMismatchFatal()` 对 `strict`/`warn` 以外的环境变量值返回公开 SQL 错误，固定报告的该抛错行未覆盖。固定采集器以单独 Java 进程传入非法 `YASDB_MIGRATION_CHECKSUM_POLICY`，复用 `MigrationExecutionCheck` 创建的隔离迁移目录，通过 `verify` 断言错误消息与无 SQL/提交；不改变同进程其他场景的环境。伪代码：`env(policy=invalid); run(check, invalid-policy); verify(connection) -> SQLException; assert(noSql, noCommit)`。仍以 9 个产品源码和同一 JaCoCo 分母验收。
+
+2026-11-09T19:39:00+08:00 同一 JaCoCo 报告还显示 `strict` 校验策略返回真及非法历史版本标识拒绝未执行。`MigrationExecutionCheck` 的常规别名矩阵加入非 `NNN_name` 的历史版本；另在独立 `strict` 环境进程预置已应用但摘要不匹配的迁移，调用 `verify` 断言摘要冲突、无 SQL/提交。伪代码：`alias(001_init=broken) -> invalidVersion; env(strict), applied(wrongChecksum), verify() -> mismatch`。不改产品校验规则，测试失败即阻断固定采集。
+
+2026-11-09T19:02:00+08:00 `app.js` 大纲交互前端覆盖设计：最新固定前端原始计数中主脚本仅 1530/4318 行、1199/4135 分支，节点筛选、分工筛选、右键菜单与移动入口均为零计数。在现有 Chromium 采集器的独立 DOM 容器中构造小型节点表、分工表、文档按钮、上下文菜单及移动弹框，借由已注册的真实页面事件验证筛选结果/空态、批量选择计数与可提交状态、菜单定位与 Esc、目录节点展开和当前父目录禁选。状态夹具只注入前端 `appState` 内存，结束后恢复 URL、状态和 DOM；不发后端写请求或改变产品源码。伪代码：`mountOutlineFixture(); dispatch(input/change/contextmenu/click/keydown); assert(rows, selection, menu, dialog); restore()`。
+
+2026-11-09T19:10:00+08:00 `app.js` 仓库工作区覆盖设计：页面通过真实 `navigate` 进入 `/assets/HB-COVERAGE/repository`，请求层只对本次隔离 API 返回确定性 HTTP JSON。成功矩阵返回访问权限、分支、目录和 Markdown 文件，断言页面正文、树、分支语言投影和规范化 URL；错误矩阵依次返回 OAuth 要求、映射缺失和空分支，断言未授权/未映射/不可用状态。所有请求仍从浏览器页面发出，夹具不写业务数据；结束时移除路由拦截并恢复 URL。伪代码：`route(apiFixtures); goto(repository); assert(renderedProjection); route(error); reload(); assert(errorState)`。
+
+2026-11-09T19:30:44+08:00 完整前端采集确认仓库页面成功、OAuth、映射缺失和空分支场景。首次连续导航导致前一页 Istanbul 计数丢失，错误报告虽退出成功但总行为 4505；采集器现于每次导航前校验并合并页面计数，再用原有最后页面读数完成汇总。空分支按产品契约显示正常仓库页中的“目录为空”，测试断言已据此修正。最终固定分母复采行 5762/9979、分支 6243/13735；`app.js` 从 1616/4318 行、1273/4135 分支升至 1647/4318、1314/4135，证据 `runtime/test-results/frontend-repository-20261109d/coverage-summary.json`。未调整产品规则、源码清单或阈值；后续跨整页导航的新场景必须在销毁前合并计数。
+
+2026-11-09T19:08:48+08:00 大纲交互矩阵完整采集通过。`app.js` 同分母由 1530/4318 行、1199/4135 分支、187/547 函数提升至 1616/4318 行、1273/4135 分支、202/547 函数，新增 104 行、74 分支、15 函数覆盖。全前端为 5729/9979 行、6191/13735 分支；证据 `runtime/test-results/frontend-app-outline-20261109/coverage-summary.json`。未缩减源码清单、未放宽阈值；下一步仍需处理 `app.js` 的生产/仓库/平台管理路径及 Node/Java 缺口。
+
+2026-11-09T18:31:00+08:00 前端组合框 Istanbul 续测设计：`coverage-final.json` 显示公共 `searchable-combobox.js` 的增强函数已执行，但筛选、展开、选择、键盘、定位和同步回调未执行。沿现有 Chromium 采集器在页面内构造隔离原生表单和 `select[data-searchable-select]`，通过真实 DOM 事件验证搜索无结果、键盘 Home/End/上下/Enter/Escape/Tab、切换按钮、外部点击、第二组合框互斥、原生 change/reset、动态 option 和禁用状态、外部赋值同步、scroll/resize 后定位、移除后的清理。只使用页面本地表单，不发业务请求、不修改生产规则或固定产品源码清单。伪代码：`mountForm(); enhance(); dispatchUserEvents(); assert(nativeValue, visibleValue, aria, listbox); remove(); cleanup()`。
+
+2026-11-09T18:40:00+08:00 公共表格视图配置器前端续测设计：固定前端计数显示 `table-view-configurator.js` 仅 69/138 行，抽屉和变更提交路径基本未执行。采集器在独立 DOM 容器创建三列两行表格，通过点击触发器、复选框、上下移、重置、Esc/关闭按钮/遮罩验证列可见性、顺序、焦点和偏好持久化；再用隔离 localStorage 键验证旧列顺序迁移及变更回调后的抽屉恢复。清理 DOM 和测试键，保留产品源码分母。伪代码：`enhance(table); click(trigger); change(visible); move(column); reset(); assert(table, storage, drawer); remountOnChange(); cleanup()`。
+
+2026-11-09T18:48:14+08:00 首轮完整复采已将表格配置器从 69/138 行、44/117 分支提升至 136/138 行、96/117 分支。剩余两个未覆盖行是非法旧偏好 JSON 的降级路径与 `.outline-responsibility-table` 自动声明分支；续测加入同一隔离 DOM 夹具并再次完整复采，不改变产品逻辑。
+
+2026-11-09T18:57:24+08:00 第二轮复采修正了“旧偏好损坏应恢复初始列序”的错误测试预期：产品以当前 DOM 列序作为默认列序，降级时应验证列可见且未写入损坏偏好。补充非法 JSON 与自动声明后完整前端采集通过，表格配置器行 138/138、函数 57/57、分支 97/117；组合框行 182/182、分支 93/125。全前端行 5643/9979、分支 6119/13735；证据 `runtime/test-results/frontend-table-view-final2-20261109/coverage-summary.json`。同一固定采集器的前端源码内容在两次运行间变化，产品文件数同为 57，需按同分母模块计数评价本轮增量。后续仍需覆盖大体量 `app.js` 及其他模块，并达到完整门禁。
+
+2026-11-09T18:38:57+08:00 完整前端 Istanbul 采集通过，`searchable-combobox.js` 行 182/182（100%）、分支 93/125（74.40%）、函数 43/46；同一产品文件比前次增加 82 行、64 分支和 25 个函数。全前端行 5589/10001、分支 6079/14021，固定脚本数从 56 变为 57，源于工作区已有前端源码变化；本轮没有调整采集清单。证据 `runtime/test-results/frontend-combobox-20261109/coverage-summary.json`，完整命令日志 `runtime/test-results/frontend-combobox-20261109.log`。剩余零计数分支主要是缺省参数、视口定位和部分过滤边界，后续继续按行为补足；不得据单模块行 100% 宣称全平台目标达成。
+
+2026-11-09T18:22:16+08:00 固定 Node 续测设计：沿现有本地真实 HTTP 夹具验证 `GET /knowledge-center/api/production/generations` 的查询参数、当前会话和状态快照透传，以及服务异常、服务不可用的错误信封；沿 GitLab 认证夹具验证 OAuth 配置安全投影、断开个人连接后状态变化、缺少连接 ID 和非个人连接拒绝。只增加行为测试，不调整产品源码清单、统计口径或目标阈值。伪代码：`request(realHandler); assert(status, envelope, observedSessionAndParams); disconnect(personalConnection); assert(statusAfterDisconnect); reject(serviceConnection)`。
+
+2026-11-09T18:27:46+08:00 上述场景定向 6/6、16/16 通过，固定 Node 精确清单 135 套件通过、1 套件条件跳过，1410 项通过；行 14274/16000、分支 13343/18139。相对前次固定 Node 复采新增 23 行、17 分支，主路由 `knowledge-center.js` 从 1624/1855 行、1737/2490 分支升至 1647/1855 行、1754/2490 分支。证据 `runtime/test-results/node-generations-oauth-full/coverage-summary.json`。前端和 Java 仍以此前统一报告为准，三端门禁尚未达成。
+
+2026-11-09T18:22:16+08:00 上轮新增审核冻结图片真实 HTTP 测试的固定 Jest 清单复采：135 套件通过、1 套件条件跳过、1408 项通过；Node 行 14251/16000、分支 13326/18139，分别较统一报告增加 26 行、27 分支。证据 `runtime/test-results/node-review-resource-full/coverage-summary.json`；前端和 Java 未在该复采中运行，平台目标尚未达成。
+
 2026-11-05T23:20:12+08:00 全平台固定覆盖率复采：运行 `python3 tests/run_tests.py full --coverage --jobs 1 --timeout 1800`，固定 154 个 Node、56 个浏览器脚本和 9 个 Java 产品源码均纳入分母。Node 行 13765/15936（86.37%）、分支 12676/18043（70.25%）；浏览器脚本行 5320/9786（54.36%）、分支 5754/13460（42.74%）；Java 行 2882/3360（85.77%）、分支 1585/2178（72.77%）。统一回归 76/78 任务成功，两个真实 Playwright E2E 任务合计 19 个失败，故最终覆盖率门禁为 FAIL，不能宣称达标。完整证据位于 `runtime/test-reports/2026-11-05/20261105-232012-294204-full/`；后续按固定报告最低文件排序补充真实行为场景，保持源码清单和采集口径不变。
 
 2026-11-06T00:00:32+08:00 固定 Node 清单续作：在 `vector-and-graph-index.test.js` 中验证 `DocumentClassifier.classify`、`DocumentFilter.evaluate` 的抽象错误契约，以及 `classifyAll`/`evaluateAll` 的异步顺序委托和空输入。定向 Jest 9/9 通过，两份契约源码行和分支均达到 100%；固定 Node 源码总量未改变。隔离 E2E 定向执行手册工作台 spec，结果 13 通过、4 条条件跳过、0 最终失败；一个 Firefox 草稿保存场景首次等待超时、重试通过，报告 flaky，后续需继续定位。审核工作台优先级标记断言现在分别核对显示文本 `01` 和无障碍名称 `优先级 1`。本轮未重采全平台，原固定覆盖率总数仍是上一份报告，目标未达成。
@@ -60,13 +220,13 @@ GitLab OAuth 回调验证仍使用同一隔离同源前端与本地 GitLab：管
 
 应用级表单输入边界继续使用审核夹具的真实 Chromium 页面和产品 `submit` 监听器：空小组名称提交后显示必填反馈且不发出创建请求，未选择 Excel 文件的人员导入显示文件提示且不发出预检请求，缺失待更正上下文的 CAS 更正提交关闭对话框。每个 DOM 夹具在断言后移除；此矩阵只验证本地校验，不把未调用的后端算作接口验证，也不新增浏览器页面计数文件。
 
-`tests/run_tests.py` 的 `unit`、`e2e`、`smoke` 每次非 dry-run 运行在独立批次目录写入 `report.html`。浏览器直接打开该文件，无需服务或额外依赖。既有 `report.md`、`details/report.json`、任务日志和退出码保持原有契约。`full`、`gate` 的正式归档不新增 HTML。
+`tests/run_tests.py` 的所有实际测试运行每次在独立批次目录写入 `report.html`，包括 `full/all`、`gate` 正式归档；`list` 和 `--dry-run` 不生成报告。浏览器直接打开总览，场景明细按 `--report-page-size`（默认 50）静态分页，离线 CSS、JS 和用例索引位于 `assets/`。分享时保留完整批次目录。既有 `report.md`、`details/report.json`、任务日志和退出码保持原有契约。
 
 ## 数据与流程
 
 `details/report.json` 是 HTML 唯一数据源。测试执行结束后先保存 JSON，再将其读回渲染 HTML；测试失败也走同一路径。`--dry-run` 不生成报告。历史批次不补生成 HTML。
 
-渲染器使用标准库生成自包含中文页面：总览展示命令、结论、时间、耗时、任务成功数、测试文件数与用例通过/失败/跳过数；任务表展示状态、分类、框架、文件数、用例数、耗时及日志链接；失败项按任务归组。缺失用例统计显示“未统计”，不得推断为零。所有动态文本转义；日志链接仅接受批次内 `details/tasks/` 下的相对路径，异常路径退化为纯文本。
+渲染器使用标准库生成中文总览及场景分页：总览展示命令、结论、时间、耗时、任务成功数、测试文件数与用例通过/失败/跳过数；任务表展示状态、分类、框架、文件数、用例数、耗时及日志链接；失败项按任务归组。逐条结果提供失败详情、稳定锚点及跨场景搜索和状态筛选；启用覆盖率时展示各运行时分子、分母、目标缺口。缺失用例统计显示“未统计”，不得推断为零。所有动态文本转义；日志链接仅接受批次内 `details/tasks/` 下的相对路径，异常路径退化为纯文本。无 JavaScript 时仍可浏览静态分页。
 
 ## 验收
 
@@ -99,6 +259,12 @@ Node 质量门禁补充确定性单元测试：注入临时规则文件验证配
 已有审核浏览器小组件场景增加真实 `auth-controller.js` 返回地址矩阵：允许知识中心同源路径并删除 CAS `ticket`，拒绝外站及协议相对地址，保留片段和普通查询参数；通过 `history.replaceState` 验证当前目标、地址票据剔除、记忆目标的消费及清理。场景恢复原地址与存储键，仍归入原有 14 个页面计数文件。
 
 同一浏览器场景在其他业务请求结束后验证 `bootstrapAuth` 的普通会话成功、401 匿名、CAS 票据成功回调及失败清理；仅在页面内临时替换认证 `fetch` 响应并恢复，断言返回会话、状态通知和地址票据删除。此矩阵覆盖前端状态机，不代替后端身份鉴权测试。
+
+认证控制器续验复用同一隔离页面认证响应夹具，增加 CAS 回调成功但会话仍匿名、管理员登录直接返回完整会话/缺少会话时重新读取 session/凭证失败、统一认证禁用或缺少登录地址时拒绝跳转、本地退出清理认证状态和记忆目标、退出请求失败传播。所有请求仅由页面 fetch 夹具响应，不访问真实身份服务；完整场景结束恢复 fetch、URL 和 `authState`。伪代码：`for response in [casAnonymous, adminComplete, adminRefresh, adminError, logoutError, localLogout]: arrange(response); assert(returnValue || rejection, authState, storage, ticketCleanup)`。
+
+写作页面固定 Chromium 场景动态导入 `production-chat-evidence.js` 并构造真实 DOM/API 交互：历史状态与操作权限回退、来源快照和 provenance 引用区间校验、无效引用忽略/空态/远端加载失败、复制与评分成功失败、反馈空值/提交成功失败、删除取消/成功失败及当前消息错误投影。API 通过页面路由注入确定性响应，不写入业务服务；该测试随既有 `production-writing.test.cjs` 页面计数进入固定 Istanbul 合并。伪代码：`renderHistory(fixtures); showEvidence(valid/empty/remote/error); exercise(copy/rating/feedback/delete success+failure); renderCurrent(null/failed); assert(DOM, requests, callbacks, notifications)`。
+
+固定前端主 Chromium 场景新增真实 `app.js` 资产管理交互：经页面路由提供隔离资产目录和人员/连接只读投影，选择手册后打开管理框并展开默认收起的高级操作；修改名称时验证停用被阻止，恢复初始值后打开确认框，覆盖按钮取消和 dialog `cancel` 恢复管理框与触发焦点，并覆盖忙碌中的确认框拒绝取消。此矩阵不提交资产编辑、停用或状态变更；只调用真实页面事件处理器，API 路由仅满足读取投影。伪代码：`route(readProjections); navigate(assets); openManage(); expandAdvancedActions(); edit(); assert(archiveBlocked); restoreForm(); openArchive(); cancel(); assert(manageRestoredAndFocused); busy=true; dispatch(cancel); assert(confirmOpen); busy=false; cancel()`。
 
 Java 存储 HTTP 路由参数门禁补充真实本地 `HttpServer` 检查：复用产品 `Main.register` 和实际 handler，发送健康检查、非法记录路径与标识、超限请求体、非法 JSON/revision、方法不支持、人员编号和任务项路径错误、必需的 rowVersion/幂等键缺失等 33 个 HTTP 请求场景，断言 HTTP 状态、错误码与请求关联 ID；健康检查使用本地 JDBC proxy 验证产品连接池调用。该检查覆盖请求边界，不把模拟数据库失败当作业务成功。
 
@@ -250,3 +416,1123 @@ Node 错误中间件覆盖使用 `error-handler-coverage.test.js` 直接调用�
 ### 运行时环境解析覆盖续验（2026-11-06）
 
 `runtime-env.test.js` 使用真实临时文件和内置解析器覆盖引号、非法行、环境变量路径、默认路径、同路径复用及缺失文件错误；定向 Jest 4/4 通过。最新报告 `runtime/test-results/runtime-env-directed-20261106c/coverage-summary.json` 显示该模块行覆盖 24/24，分支覆盖 22/23（95.65%）；固定三端全量目标仍需继续补齐。
+
+### 固定全量复采判据（2026-11-06）
+
+完整入口为 `python3 tests/run_tests.py full --coverage --jobs 1 --timeout 1800`，分别以固定 Node、浏览器 JS、Java 产品源码清单判定行 100%、分支至少 95%，并要求性能及 E2E 门禁通过。2026-11-06 最新报告 `runtime/test-reports/2026-11-06/20261106-175514-830554-full/report.md` 显示三端均未达标：Node 87.69%/71.60%，浏览器 54.62%/42.97%，Java 85.77%/72.77%。当前仍有 20 个失败用例，后续补测需兼顾这些真实失败，不得通过缩小分母或降低阈值达成数字。
+
+### 工作台入口 E2E 契约纠偏（2026-11-09）
+
+`knowledge-center-entry.spec.js` 的三个失败断言仍指向旧“风险与阻塞”总览及无刷新按钮的入口。当前已确认的主入口为“我的工作”个人待办。测试改为通过真实浏览器、认证和后端 API 验证工作类别、处理状态、九列任务字段、个人工作刷新请求、数据变更后的平台投影请求，以及未知路由回退后显示“我的工作”。保留 `context` 不应随仅 `overview` 事件重读的断言。定向验证须由统一运行器创建隔离测试实例，不能对共享服务执行写入型 E2E。
+
+隔离 `test_hy` 实例上的定向 Playwright 复采已通过，Chromium 3/3、Firefox 3/3，共 6/6；测试后实例由运行器按所有权清理。启动前 `node --check` 和仓库 Node 语法检查通过。
+
+### AI 任务评价与历史删除覆盖矩阵（2026-11-09）
+
+在现有 Jest 服务测试中以隔离聚合存储覆盖评价缺失、非法等级、超长意见、非作者拒绝、成功评价及审计、运行中删除拒绝、删除后列表/详情不可见；该套件进入固定 Node Istanbul 分母。对应路由通过 `handbook-production-api.test.js` 的本地真实 HTTP 服务验证评价写入、列表回读和 DELETE 后 404。测试只写内存状态与隔离临时目录，不调用外部模型，不修改产品权限规则。伪代码：`POST start; GET job; POST feedback; GET list; DELETE job; GET job -> 404; assert audit and owner boundary`。
+
+定向 Jest 服务套件 34/34 通过，定向 Node 原生真实 HTTP 用例 1/1 通过。固定 Node 精确清单 135 个 Jest 文件复采为 134 套件通过、1 套件条件跳过，1365 用例通过、7 跳过；报告 `runtime/test-results/node-full-20261109/coverage-summary.json` 为行 14018/15981（87.71%）、分支 12967/18095（71.66%）。`production-ai-service.js` 为行 471/530、分支 547/705；与旧统一报告的产品源码分母已变化，不能仅凭总量差值归因于单项测试。
+
+### 大纲候选和治理 HTTP 覆盖矩阵（2026-11-09）
+
+沿用 `outline-route-boundaries-http.test.js` 的隔离文件仓库和真实 Express HTTP 服务。验证候选不存在、内容编辑后重读、预检失败与通过、版本发布的基线/编辑版本冲突及成功发布；验证治理读取、缺失大纲、无分工时发布拒绝、有效领域分工保存后发布成功，以及发布后重复发布的幂等结果。各拒绝操作断言状态码和错误码，关键成功操作重读持久化结果。伪代码：`createCandidate; edit; preflight; publishVersion; createCandidate; publishGovernance -> 422; saveAssignment; publishGovernance -> 200; readGovernance`。固定源码清单和覆盖率门禁不变。
+
+定向真实 HTTP Jest 10/10 通过。统一全量报告 `runtime/test-reports/2026-11-09/20261109-095753-972673-full/report.md`：75/78 任务通过；Node 行 14065/15981（88.01%）、分支 13028/18095（72.00%），Java 行 2882/3360（85.77%）、分支 1585/2178（72.77%）。前端采集器因写作浏览器用例 4 项失败未生成报告；性能门禁的知识资产就绪元素未出现，业务 E2E 另有失败。三端覆盖率门禁仍为 FAIL，不能以本次 Node 增量代表目标达成。
+
+### 前端写作采集恢复（2026-11-09）
+
+工作树中的对话界面已将历史项改为对话轮次，并加入默认关闭的反馈、删除弹窗。同步更新 `production-writing.test.cjs` 中四项浏览器场景的可见弹窗断言和历史轮次操作定位，保留生成、历史回读、编辑器复用及 MCP HTTP 验证。定向 4/4、完整写作套件 29 通过/2 条条件跳过；固定前端 Istanbul 采集器重新通过，57 个脚本行 5398/9878（54.64%）、分支 5801/13534（42.86%），报告 `runtime/test-results/frontend-goal-20261109b/coverage-summary.json`。Node、Java 数值仍采用上次完整复采；三端目标未达成。
+
+上次全量 E2E 的文档生产两处旧断言与现行页面不符：来源目录在打开参考资料入口时才加载，正常工作区的返回链接名为“返回进入位置”。`knowledge-center-handbook-production-p0p1.spec.js` 已调整触发顺序、返回链接及 MCP 预设策略提示的断言。隔离 `test_hy` 实例的 Chromium 定向复验：返回导航 1/1 通过，来源目录及真实 API 1/1 通过；每次实例均按所有权清理。完整 E2E 与覆盖率门禁仍待复采。
+# 检索策略覆盖矩阵（2026-11-09）
+
+`retrieval-strategy/index.js` 的定向回归采用临时知识目录和确定性 MCP 工具替身。MCP 分别验证空查询、无工具、批量成功与部分失败；设计文档分别验证无候选、摘要缺失或不相关、正文缺失、分块缺失与索引损坏后的旧目录回退。Oracle 索引验证标题、ID 和正文命中、文件缺失与索引缺失；目录扫描验证大小写、非 Markdown、缺失目录、源码五文件上限和截断。结果整合验证各来源优先级、结构化与文本 MCP 数据、失败呈现、长文截断；覆盖度验证空结果、部分覆盖和充分覆盖的三档建议。断言以返回值和来源内容为准，不更改产品评分规则或固定覆盖率分母。
+
+Oracle 表格索引的通用 ID 解析限定为字母开头的编号，纯数字 ID 交由已有数字表格分支解析；两种格式保留相同的 `id/file/title` 结果。目录扫描后文件消失时，各来源分别忽略该文件并保留检索响应。索引特性 ID、关键词与版本加分通过候选排序验收。
+
+全量 Jest 门禁中的审核导航静态断言按现行工作区契约校准：审核页导入并调用 `reviewNavigation`，导航返回“返回审核文档清单”；增量任务复用的 `stage=review` 回链仍存在。该断言只核对已实现页面，不改变审核导航行为。
+
+检索策略分支续验追加索引确认上限、空关键词和缺省字段、Oracle 标题足量时跳过正文扫描、MCP 缺省错误及无分数结果、五种来源的覆盖度摘要。通过返回项数量、来源、建议等级和格式化文本判定；原有索引及提示词规则不变。
+
+缺字段索引边界再核对：无摘要路径的候选跳过、仅靠版本命中的文档可返回空正文、无关键词时设计文档与分块不误命中，以及无 `results` 的 MCP 结构返回零条。使用公开执行入口和确定性临时索引判定。
+
+固定全量复采发现审核工作台浏览器覆盖套件新增第 16 个场景，采集器仍要求 15 个计数文件。同步数量断言为 16，仍逐个校验页面计数和固定产品源码清单，不改变分母或目标阈值。个人工作 E2E 表头按当前 `my-tasks.js` 的六列可见列表校准；子任务编号等细节在详情中保留。真实 API 刷新和工作流场景继续执行。
+
+模板管理 E2E 顺应已实现的新建流程：选择空白模板后先在模态“基本信息”面板填写名称、类型和描述，点“完成”关闭面板，再切换 Markdown 并编辑正文；保存后通过真实模板 API 列表、版本及刷新回读断言。伪代码：`createBlank(); fillMetadata(); done(); chooseMarkdown(); save(); reload(); assertVersionAndBody()`。不得用强制点击穿透面板，也不放宽页面的交互可达性要求。
+
+知识资产移动端 E2E 在点击第一本手册前等待真实资产列表 `data-asset-loaded=true`，与同文件桌面操作栏场景使用同一页面就绪契约。继续断言 URL 带手册 ID、全屏操作入口及返回后的列表；等待只消除初始化时序竞争，不允许跳过失败或替换为静态夹具。
+
+Node LLM 客户端补测沿用已有固定 Jest 套件，通过 OpenAI SDK 边界替身验证可观察的协议契约：401/403 认证、限流、超时和网络错误稳定分类；Responses 完成与未完成投影；Chat 流完成、非 stop 和意外结束；probe 首个有效 token 后中断、空流及 provider 错误；包裹 JSON 解析、禁用修复和 provider 更新查询。不得调用真实模型，不直接伪造 Istanbul 计数；最终以固定 Jest 产品清单复采判定。
+
+### 审核图片 HTTP 路由固定 Jest 覆盖（2026-11-09）
+
+`routes/knowledge-center.js` 的审核图片资源路径在现有 Node 原生全链路测试中已执行，但固定 Node Istanbul 只采集 Jest。新增 Jest 本地真实 HTTP 夹具，隔离 `runtime/test-results` 下的映射配置与测试图片，使用有效会话和一个受控本地 GitLab 文件服务。矩阵包括冻结新图成功（字节、MIME、私有缓存和 nosniff）、候选摘要变化、非所属图片、仓库映射身份变化、旧图缺少固定提交、旧图从固定提交读取、字节摘要/尺寸不符以及格式拒绝。每个拒绝检查实际 HTTP 状态和公开错误码，使用原服务入口，不直接调用内部私有函数；原 Node 原生全链路场景继续覆盖上传、送审和交付。伪代码：`GET /incremental-tasks/:id/resources; assert status, bytes, safe headers; vary frozen task and mapping; assert public error`。不改变产品源码或覆盖分母。
+
+### 存储记录客户端固定 Jest 覆盖（2026-11-09）
+
+`DatabaseRecordStore` 通过本地真实 HTTP 服务验证健康检查、名称空间与键的 URI 编码、读取投影、带与不带修订号的写入、删除和完整导出；请求端核对方法、正文及 `If-Match`。响应矩阵包括成功、服务端业务错误且有/无完整错误字段、空响应、无效 JSON、连接拒绝及请求超时。测试使用内存响应和随机本地端口，不访问共享存储或修改产品契约。伪代码：`startLocalStorage(); callPublicMethods(); assert(request, projection, errorCode); closeServer()`。该套件进入统一入口的固定 Jest 文件清单，再按原产品源码分母复采。
+
+### 网页引用原生契约纳入固定计数（2026-11-09）
+
+已有 `production-web-reference.test.cjs` 使用本地真实 HTTP、固定 DNS 解析和受限浏览器，验证私网地址拒绝、重定向、响应大小、压缩、HTML 提取、登录验证页以及 SPA 动态正文。统一入口仅发现 `*.test.js`，该 `.cjs` 文件原先未进入 Node Istanbul 计数。复用现有 `native-contract-coverage.test.js` 的 `node:test` 到 Jest 桥接，在同一进程加载原测试并执行原断言，不复制场景或调整产品网络限制；须先定向验证，再复采固定 137 文件及产品源码清单。
+
+### Java 存储服务启动 HTTP 覆盖（2026-11-09）
+
+`Main.start` 的真实路由注册尚未进入固定 JaCoCo 计数。扩展已有启动契约夹具，另以隔离进程和动态本地端口启动产品 `HttpServer`，通过真实 HTTP 核对健康检查在无可用 JDBC 时的 503 信封、请求 ID，以及非法记录路径的 400 响应。测试进程在请求回读后正常退出，确保 JaCoCo 写出执行数据；不连接共享数据库，不改变产品端口默认值或服务行为。伪代码：`reservePort(); runFixtureWithAgent(port); startProductServer(); GET /health; GET /v1/records; assert(status, error, headers); exit(0)`。采集器需保留原 9 个 Java 产品源文件清单并重新汇总。
+
+### Java 旧版层级大纲快照 HTTP 覆盖（2026-11-09）
+
+现有快照 HTTP 夹具只传入规范化 `nodes`，未执行兼容的 `parts/chapters/children` 层级路径。在同一隔离 JDBC 状态机中，于既有版本冲突和生命周期断言之后追加旧版结构快照：一个部分含直接文档、章节、嵌套小节和补充目录，每层有一篇文档。通过真实 `/v1/domain/outlines/snapshot` PUT 核对 200 回执、8 个节点的类型/标题/层级与父关系，以及仅一次事务提交；原有主流程计数在此之前保持不变。伪代码：`PUT legacyPartsSnapshot; assert response; assert insertedNodeHierarchy; assert commits == before + 1`。仅扩展夹具允许并记录本场景的节点写入，不更改产品持久化或统计口径。
+
+### Java 单篇草稿按键读取 HTTP 覆盖（2026-11-09）
+
+在现有 `StorageRecordHttpCheck` 隔离 JDBC 状态机中增加 `handbook-production/state` 草稿行，通过真实本地 HTTP 的 `draftKey` 查询验证空记录返回空草稿、聚合 revision 首次出现时返回带 `Retry-After` 的可重试 503、后台重建后仅返回指定上下文的当前修订、revision 变化时再次重建，以及软删除后返回空草稿。轮询只等待公开响应转为 200，不直接修改索引；断言旧修订和其他上下文内容不泄漏。伪代码：`GET empty; set aggregate r7; GET -> 503; poll GET -> current draft; set r8; GET -> 503; poll GET -> updated draft; mark deleted; GET -> null`。原记录 CRUD 与导出断言保持，产品源码、计数分母及门槛不变。
+
+### Java 大纲快照分工合并 HTTP 覆盖（2026-11-09）
+
+在既有规范化 `nodes` 快照中同时提供显式 `governance.assignments` 和文档节点的 `techDomainIds`，两处均指定同一有效领域；另给出一个不存在节点的显式分工，验证它不会产生持久化项。通过真实 `/v1/domain/outlines/snapshot` PUT 和隔离 JDBC 写入计数断言只建立一份有效责任项，并校验节点、领域与主责角色。伪代码：`PUT snapshot(explicit doc-1:7, content doc-1:7, unknown:7); assert 200; assert one responsibility insert(doc-1, 7, PRIMARY)`。保留原快照版本、目录和事务断言。
+
+### Java 未发布大纲说明更新 HTTP 覆盖（2026-11-09）
+
+在同一隔离治理夹具完成版本恢复后，将测试版本置于可编辑的 `READY` 状态，调用真实 `/v1/domain/outlines/:id/governance` PUT 更新现存文档节点说明。JDBC 夹具读取字符流并记录节点 ID、版本 ID 和操作者，响应及后续 GET 必须回读新说明；核对版本只增加一次且事务只提交一次。已发布内容锁定的原有拒绝测试保留。伪代码：`state=READY; PUT descriptions(doc-1, new text); assert one node update; GET governance -> new text`。
+
+### Java JSON 解析边界覆盖（2026-11-09）
+
+在现有 `StorageBootstrapContractCheck` 的隔离进程中反射调用产品内部 JSON 解析入口，验证负数、32 位边界、长整数、浮点、小数指数、正负指数、转义字符串、布尔/null、尾随字符、未结束字符串、非法数字和非法字面量。断言返回类型和值或公开 `JsonParseException`，不写数据库、不启动共享服务；仅补测试输入以覆盖解析器边界。
+
+### Java GitLab 配置路由编辑边界 HTTP 覆盖（2026-11-09）
+
+在现有 `StorageGitLabHttpCheck` 的真实本地 HTTP/JDBC 流程中补连接 PATCH、状态非法、过期行版本、映射缺少幂等键、映射过期行版本和非法 JSON 场景。每个请求核对 HTTP 状态和公开错误码，成功编辑后回读连接与映射版本；不改变仓库验证规则或共享配置。
+
+### Java 迁移 SQL 解析器引号与注释边界（2026-11-10）
+
+扩展 `MigrationSqlParserCheck` 的公开 SQL 分割契约：首字符为单引号且字符串内包含分号，验证下标为零时仍正确开始引号；字符串内的 `--` 与 `/*` 保持字面内容，不进入注释状态；块注释在尾随 `*` 后结束输入仍明确拒绝。场景经固定 JaCoCo Java 采集器在隔离进程执行，不改 SQL 解析实现及产品清单。
+
+### Java 人员管理 HTTP 错误映射与批量边界
+
+扩展 `StoragePrincipalHttpCheck` 的真实本地 HTTP/JDBC 场景，覆盖无效人员状态、CAS 登录名缺失、同名候选歧义、持有 CAS 登录记录后的直接换绑拦截、重复 CAS 登录名创建失败、超过 1000 项的批量导入。每项核对公开 HTTP 状态和错误码/消息，复用隔离人员数据库，不调用私有错误映射函数，不改变人员规则或产品源码。
+
+### Java 平台认证 HTTP 错误与角色边界
+
+扩展 `StorageAuthHttpCheck` 的本地真实 HTTP/JDBC 状态机：验证非法 CAS 主体 ID、不存在及停用人员、CAS 登录不匹配、角色列表为空或含未知角色、角色更新目标不存在、默认角色缺失。每个请求断言公开状态及错误码；缺少默认角色场景仅使用隔离内存数据库，不触碰共享身份数据。
+
+### 前端平台 API 公开方法浏览器覆盖
+
+在 `platform-model-management.test.cjs` 的隔离浏览器中动态导入真实 `common/api/platform-api.js`，替换该页面的 `fetch` 为可编排 `Response` 的请求记录器，依次调用导出的资产、团队、模板、平台数据、人员、权限和大纲 API。逐项核对 URL 编码、方法、正文、版本/幂等头与错误事件；大纲加载覆盖目录缓存命中、列表回退、空/不存在/权限/服务错误，变更 API 覆盖成功、结构化失败及网络拒绝。由固定前端采集器通过既有平台模型场景保存 Istanbul 浏览器计数，仍校验 57 脚本产品白名单。
+
+同一隔离浏览器动态导入真实 `modules/platform-admin/view.js`，通过公开 `renderPlatformAdmin` 入口构造治理、人员/团队、权限和 GitLab 的空数据、有效数据、不可用、只读与管理员变体；权限结果另外验证筛选/分页/角色可编辑性，GitLab 验证授权、验证状态、分页和编辑/新增表单。断言关键可见文案和结构，所有结果均由固定 Istanbul 浏览器计数采集，不改生产代码。
+
+### 独立 Node 契约固定 Jest 接入（2026-11-09）
+
+先验证可复用性：`production-web-reference-v2.test.cjs` 与 `production-web-reference-v3.test.cjs` 仍以回环地址作为网页来源，当前产品私网防护统一拒绝，v2 还引用已移除的 `contentCache.reset`，因此两套旧用例未纳入固定计数；未来应按现行安全契约更新夹具后独立复验。改用已独立通过的 `production-ai-mcp-retrieval.node.test.cjs` 与 `template-mapping-service.test.cjs`：前者以真实本地 HTTP 验证 MCP 路由标头、去重、失败及正文快照，后者验证规则冲突、AI 失败、取消、版本和跨手册预览。通过既有 `native-contract-coverage.test.js` 的 `node:test` 桥接复用原断言；性能预算用例保持原生独立执行，避免 Jest 插桩改变计时。先定向 Jest，再复采固定 Node 清单和产品源码分母。
+
+固定清单复采结果：137 个 Jest 文件中 136 套件通过、1 套件条件跳过，1430 项通过、8 项跳过；行 14352/16028、分支 13454/18183，报告 `runtime/test-results/node-native-bridge-full-20261109/coverage-summary.json`。相对上一固定 Node 报告同分母增加 4 行、20 分支；MCP 检索模块为 77/79 行、105/115 分支，模板映射模块为 122/122 行、169/201 分支。
+
+`handbook-demand-read.node.test.cjs` 的三条页面 VM 场景因产品工作区新增辅助模板映射请求而缺少夹具依赖，原生运行 5/8 通过。仅在 VM 沙箱加入返回空映射的 `loadTemplateMappings` 和无编辑器 DOM 的 `document`，保留真实目录、映射、草稿时序断言；先让原生套件全部通过，再评估其中 Node 服务 HTTP 场景是否能进入固定计数。不得将 VM 字符串截取视为浏览器入口覆盖率。
+
+夹具校准后原生 8/8 通过。接入现有 `native-contract-coverage.test.js` 桥接，服务端按键读取仍请求真实本地 HTTP，Java 子进程检查保持原断言；VM 源码截取只计为测试行为，不进入固定浏览器 57 脚本计数。先定向 Jest 再按精确 137 文件复采，以 `aggregate-store.js`、`handbook-production-service.js` 与总量的原始覆盖计数验收。
+
+同轮另有三套原生契约通过：`aggregate-store-async.node.test.cjs` 的并发读合并、304、跨进程修订和 CAS 重试（1/1）；`admin-delegated-review.node.test.cjs` 的本人身份代审、阻断评论和审计（1/1）；`workbench-numbering.node.test.cjs` 的编号回填、重审链、权限隐藏和冲突（3/3）。一并通过既有桥接纳入固定 Node 采集，不另写产品逻辑；所有服务使用随机回环端口或内存仓库。
+
+桥接需兼容 `require('node:test').test` 这种命名导入；第一次定向尝试显示注册函数缺少 `.test`，适配后定向 85 项通过、5 项条件跳过。精确固定 137 个 Jest 文件复采为 136 套件通过、1 套件条件跳过，1443 项通过、8 项跳过；Node 行 14386/16028（89.75%）、分支 13493/18183（74.20%），同分母增加 34 行、39 分支。报告 `runtime/test-results/node-native-bridge-full2-20261109/coverage-summary.json`。`aggregate-store.js` 行 136/154、分支 104/154；`handbook-production-service.js` 行 229/233、分支 187/246；`workbench-numbering.js` 行 76/76、分支 125/130。
+# 数据库连接抽屉脏表单交互覆盖（2026-11-10）
+
+固定前端 Istanbul 采集在真实平台管理页面进入系统治理后，打开数据库连接抽屉，修改用户名并展开高级设置；先拒绝关闭确认并断言抽屉仍打开，再确认关闭并断言抽屉收起。该流程只验证页面状态与事件分支，不调用测试连接或保存接口，不连接或修改数据库。采集仍校验计数来源属于原固定前端产品源码清单，并合并到 57 文件报告。伪代码：`open(governance); openDrawer(); editField(); toggleAdvanced(); confirm=false; assert(open); confirm=true; assert(closed)`。
+
+补充隔离测试连接失败：页面对 `/platform/database-connection/test` 注入本地 HTTP 500 JSON，点击“仅测试连接”后断言错误状态可见且按钮恢复可用，再继续脏表单关闭确认。该注入只模拟前端错误反馈，不连接数据库或改变后端契约。固定报告 `runtime/test-results/frontend-db-test-error-20261110/coverage-summary.json` 行 7186/9979、分支 8570/13738。
+
+再补充保存失败：对同源 PUT 注入隔离 HTTP 500，点击“验证并保存”后断言错误状态和按钮恢复。固定报告 `runtime/test-results/frontend-db-save-error-20261110/coverage-summary.json` 行 7196/9979、分支 8569/13738；分支总量相对上一报告有一次采集波动，未按波动宣称分支净增。
+
+成功矩阵补充：对测试连接返回隔离 HTTP 200 并断言成功反馈；对保存返回隔离 HTTP 200，断言成功状态、投影更新和保存后按钮状态，再次编辑字段验证脏表单关闭确认。固定报告 `runtime/test-results/frontend-db-success-20261110b/coverage-summary.json` 行 7203/9979、分支 8578/13738。
+
+最终复采报告：`runtime/test-results/frontend-db-success-final-20261110/coverage-summary.json`，57 个产品脚本、45 个导航页面、29 写作、17 任务管理、8 我的工作、5 手册往返、6 平台和 16 审核快照均齐全；行 7203/9979、分支 8583/13738。一次尝试在平台页重载后丢失重载前 Istanbul 计数，已移除该重载夹具，不作为验收证据。
+
+目录树公开交互矩阵（2026-11-10）：在浏览器页面内导入 `directory-tree.js`，构造嵌套目录和叶节点，验证初始层级、Arrow/Home/End/Enter/Space 键盘导航、搜索过滤及清空恢复。该夹具只操作隔离 DOM，不依赖业务数据。固定报告 `runtime/test-results/frontend-directory-tree-20261110/coverage-summary.json`：总行 7224/9979、分支 8606/13738；`directory-tree.js` 行 79/117、分支 67/156。
+
+目录树边界矩阵复采：补充隐藏空目录保留、`treeRole=false`、交互式目录标签、自定义节点键、空子节点和重复绑定幂等性。最终报告 `runtime/test-results/frontend-directory-tree-boundaries-20261110/coverage-summary.json`：总行 7247/9979、分支 8632/13738；`directory-tree.js` 行 102/117、分支 99/156。
+
+目录树键盘边界复采：补充关闭目录 ArrowRight、展开后首子项聚焦、ArrowLeft 返回父项和无搜索控件树。报告 `runtime/test-results/frontend-directory-tree-keyboard-20261110/coverage-summary.json` 中 `directory-tree.js` 语句 128/164、分支 100/156；总量行 7241/9979、分支 8631/13738，受既有页面时序波动低于上一份总量，按模块确定性增量验收。
+
+默认分支与重跑最终报告：补充默认渲染器、隐藏空目录和带搜索叶节点。首次审核用例有 1 项人员展示时序失败，未改产品或断言；同一固定采集重跑 16/16 审核通过。最终报告 `runtime/test-results/frontend-directory-tree-defaults-retry-20261110/coverage-summary.json`：总行 7254/9979、分支 8647/13738；`directory-tree.js` 行 109/117、函数 32/32、分支 111/156。
+
+导航面板交互矩阵（2026-11-10）：在浏览器页面内导入 `resizable-navigation-pane.js`，构造真实 DOM 面板，验证损坏本地偏好回退、鼠标拖拽提交/取消、双击恢复默认、Arrow/Home/End/Enter/Escape 键盘调整、折叠切换和重复绑定幂等性。固定报告 `runtime/test-results/frontend-navigation-pane-20261110/coverage-summary.json`：总行 7305/9979、分支 8697/13738；`resizable-navigation-pane.js` 行 102/102、函数 19/19、分支 79/105。
+
+滚动运行时 iframe 隔离矩阵：导入 `scroll-runtime.js`，构造主滚动所有者、局部滚动区域、固定障碍和焦点目标，验证所有者/区域契约检查、焦点自动滚动、resize 与 viewport 事件调度、契约刷新及 destroy 清理。首次夹具前置条件错误已修正为先设置 `scrollMode=main`，最终报告 `runtime/test-results/frontend-scroll-runtime-20261110b/coverage-summary.json`：总行 7310/9979、分支 8705/13738；`scroll-runtime.js` 行 119/121、函数 24/25、分支 173/208。
+
+滚动运行时边界复采：补充空区域、默认契约扫描、不可滚动局部区域诊断和待取消帧的 destroy 路径。最终报告 `runtime/test-results/frontend-scroll-boundaries-20261110/coverage-summary.json`：总行 7314/9979、分支 8717/13738；`scroll-runtime.js` 行 121/121、函数 25/25、分支 184/208。
+
+可关闭菜单矩阵（2026-11-10）：在独立 DOM 根中验证重复初始化复用、打开菜单互斥、菜单自身 pointerdown 保持打开、外部 pointerdown 关闭、Escape 关闭并恢复焦点、组合框 Escape 不冒泡关闭父菜单、对话框内菜单隔离及 destroy 清理。固定报告 `runtime/test-results/frontend-dismissible-menus-20261110/coverage-summary.json`：总行 7318/9979、分支 8724/13738；`dismissible-menu.js` 行 38/39、函数 13/14、分支 30/33。
+
+视口运行时双模式矩阵：隔离 iframe 覆盖不支持 `dvh` 的 measured token、visualViewport 缩放/无效高度回退、重复高度事件去重、原生 `dvh` 高度一致以及 destroy 清理。原生模式只在隔离 iframe 中为运行时创建的探针注入确定性矩形，不影响产品 DOM 或浏览器逻辑。固定报告 `runtime/test-results/frontend-viewport-runtime-20261110b/coverage-summary.json`：总行 7332/9979、分支 8737/13738；`viewport-runtime.js` 行 37/37、函数 5/5、分支 33/35。
+
+### 手册草稿保存交互矩阵（2026-11-10）
+
+沿用固定 Chromium 采集器的隔离手册路由、草稿状态和真实页面点击事件。验证共享草稿未就绪时禁止保存；就绪后对 PUT 草稿接口分别注入结构化失败和成功响应，检查请求携带手册/文档、基线摘要、编辑版本、Markdown、模板版本、附件 ID，以及失败提示和成功后的服务端版本、脏状态。保存期间再次修改正文时，检查本地后续修改仍为脏状态，且成功提示明确要求再次保存。只替换隔离页面的同源 `fetch` 响应，不触碰共享后端数据；后端保存契约仍由真实 HTTP 测试负责。伪代码：`set draft ready; click save; assert PUT body; return error; assert failure; click save; return saved revision; assert clean; click save and edit before response; assert dirty`。本场景仍纳入固定 57 文件分母，完整采集结果才可用于平台目标验收。
+
+完整复采 `runtime/test-results/frontend-handbook-save-20261110/coverage-summary.json` 通过：57 个产品脚本、45 导航、31 写作、17 任务管理、8 我的工作、5 手册往返、6 平台和 16 审核计数齐全；行 7756/9986（77.66%）、分支 9098/13744（66.19%）。相对前一份完整固定前端报告，增加 45 行和 43 分支；`app.js` 行 2319/4318、分支 1814/4135。采集器 `node --check` 与本轮改动文件 `git diff --check` 通过。Node 和 Java 未在本阶段重采，全平台阈值尚未达到。
+
+### 仓库映射目录读取交互矩阵（2026-11-10）
+
+固定 Chromium 页面中构造隔离的仓库映射表单，保留 `app.js` 的真实 `change` 和 `input` 事件处理。连接选择先返回两个分支和嵌套目录，验证默认分支、受保护标签、目录层级、请求路径与搜索过滤；切换分支时目录接口返回未授权，验证错误和 GitLab 授权入口；再切换连接使分支接口失败，验证分支错误提示。测试期间保存并恢复页面的 `fetch`、映射状态和表单节点；全部同源 API 响应均为确定性读模拟，不执行连接、映射或仓库写入。伪代码：`select connection; assert branches/tree; search; select branch -> 401; assert authorization; select other connection -> 500; assert branch failure`。采集仍保留固定 57 个产品脚本分母，以完整报告验收增量。
+
+目录选择增补：在默认分支目录树中展开 `docs`，先为中文选择目录，再切换到英文为嵌套目录选择路径；核对跨语言选中标记、中文和英文标签以及预览，随后分别通过标签移除路径并确认占位提示。使用实际目录按钮和语言按钮点击，覆盖状态与渲染的联动，不通过直接修改已选路径数组代替交互。
+
+完整复采 `runtime/test-results/frontend-mapping-selection-20261110/coverage-summary.json` 通过：固定 57 个产品脚本、45 导航、31 写作、17 任务管理、8 我的工作、5 手册往返、6 平台和 16 审核计数齐全。行 7826/9986（78.36%）、分支 9158/13744（66.63%）；相对手册草稿保存完整报告增加 70 行、60 分支，`app.js` 行 2389/4318、分支 1874/4135。目录读取是主要增量，选择增补相对目录读取报告仅增加 2 行、4 分支，说明主要选择路径已有覆盖。Node 和 Java 未在本阶段重采，平台阈值仍未达到。
+
+### 图片交付与源码稳定性验收（2026-11-10）
+
+通过 `createProductionResourceDelivery().prepare/readFrozen` 公开边界补充隔离文件系统测试：附件与来源图片的上下文、摘要、类型、逐项及总配额，Markdown/HTML 改写去重和冻结快照重读。期望以明确错误码、授权路径、输出正文和真实文件字节定义，不直接测试私有函数。运行产物置于 runtime；既有真实 HTTP 交付测试继续承担路由契约责任。
+
+完整覆盖率采集应记录执行前后产品源码及测试文件 SHA256。若源码变化，报告只作诊断，不作为同一版本的增量或达标证据；测试失败的报告同样不能作为通过门禁的证据。伪代码：`manifestBefore; runFixedSuite; manifestAfter; accept = exitCode === 0 && manifestsEqual`。
+
+上传解析 Worker 验收分成两层证据：真实 Worker 验证 HTML 净化和最小 OOXML 图片解析；Jest 隔离上下文复验同一解析结果，使子线程内代码进入插桩计数。资源故障和未发送结果就退出的事件使用 EventEmitter 作为 Worker 边界替身，断言公开 Promise 拒绝、只终止一次及迟到消息不重新结算。该替身不代替真实文档解析证据。定向14/14通过，模块56/56行、49/50分支（98%）。
+
+质量验证器真实文件矩阵定向20/20通过，模块124/129行、57/67分支。剩余行包括固定成功的分块检查所对应的失败分支；不通过篡改内部检查对象制造覆盖，不忽略这些产品源码，不据此宣称质量验证逻辑已完整实现。
+
+### 设计文档流水线与生产配置管理器边界（2026-11-10）
+
+新增 `preprocessing/design-doc-pipeline-boundaries.test.js`：真实 OOXML/Markdown、解析失败继续、过滤 hash、隔离文档与资产回读、显式保留严重失败、说明同步、输出兼容和清理错误、分块 metadata 回退，以及公开自定义适配器的扫描 hash 回退。结合原 pipeline-integration 共27项通过，模块183/183行、102/107分支（95.32%），函数和语句100%。
+
+新增 `config-manager-production-boundaries.test.js`：7项直接加载生产实现，真实原子 JSON 存储和 AES-GCM，覆盖递归加密、损坏密文、缓存、分区、同步读取、预设更新、JSON/写入异常。只有配置路径、环境、日志与 OS 监听事件源隔离；并非重写测试版 ConfigManager。模块133/133行、103/103分支，函数和语句100%。两份定向报告分别在 runtime/test-results/pipeline-boundaries-directed-20261110 和 config-manager-directed-20261110，固定全Node复采另计。
+
+固定142文件复采结果：139套件通过、2套件失败、1条件跳过；1579项通过、2项失败、8项跳过。源码监测发现 incremental-build-service.js、routes/knowledge-center.js 以及两个 CJS 测试在运行中被其他会话修改，stable=false。失败项分别是 closed MR 是否仍提供 sync_delivery，以及投影中文标签；不通过放宽断言或回退并行改动强行变绿。这份混合报告只诊断，不用于增量比较或达标判定。
+
+
+### 来源读取与压缩包公开边界（2026-11-10）
+
+2026-11-10 来源读取与压缩包边界：新增来源公开方法44项，以真实本机 PingCode/MCP HTTP、Worker上传和隔离存储验证，模块195/195行、227/236分支（96.18%）。压缩包结合原测试23项通过，模块164/164行、77/79分支（97.46%）；真实嵌套ZIP复现提前删除导致ENOENT，现延迟到外层parse完成统一清理；TAR/TGZ真实文件/目录冲突验证流销毁、及时拒绝与清理。定向报告为 `runtime/test-results/ai-sources-directed-20261110/coverage-summary.json`、`runtime/test-results/archive-boundaries-directed-20261110/coverage-summary.json`。平台总量另以固定清单和源码稳定性验收。
+
+来源测试保留真实上游HTTP参数、JSON-RPC初始化与工具调用、正文和传输独立限制、归属及版本冲突、图片授权回读和损坏拒绝。网页及自动检索只在外部模块接口使用替身；不替换本模块验证、摘要和图片托管。压缩包错误通过真实归档条目路径冲突触发，扫描EACCES/EIO仅在文件系统边界注入。首次来源失败是夹具未恢复大小上限，修正夹具；首次嵌套ZIP失败是产品生命周期缺陷，先记录设计再修复。
+
+
+2026-11-10 最新通过的固定 Node 复采：144 文件清单，143 套件、1638 项通过，1 套件及8项条件跳过，154 产品文件源码及测试前后 SHA256 一致。行14850/16071（92.40%）、分支14125/18309（77.14%）；证据 `runtime/test-results/node-sources-archive-stable-20261110/coverage-summary.json` 与 `source-stability.json`。前端最近7826/9986行（78.36%）、9158/13744分支（66.63%），Java3118/3360行（92.80%）、1731/2178分支（79.48%），本阶段未重采。目标仍未达到。
+
+这份是修复后稳定版本的通过证据。此前143文件报告测试虽通过，但包含本轮在途改动，仍只作诊断。当前Node距离100%行还差1221行，达到95%分支至少还需3269个分支；分母变化源于当前代码版本，不能将全量差值全部归因于本轮测试。
+
+
+### API入口与认证公开边界（2026-11-10）
+
+2026-11-10 API入口35项通过，135/135行、66/68分支（97.05%）；认证45项通过，364/364行、383/395分支（96.96%）。均使用真实本机HTTP；认证真实超限用例暴露并修复CAS响应超限竞态与Node22 Socket未处理异常。API入口公共CJS套件由两个显式describe入口引用，确保统一测试发现识别为Jest。定向证据 `runtime/test-results/api-entry-directed-20261110` 与 `runtime/test-results/auth-boundaries-directed-20261110`；固定147文件全量复采另计。
+
+验收包括真实Socket.IO订阅/退订、gzip解压回读、路由鉴权及信号关闭边界；认证包括CAS协议错误、限时/限量、重放、退出、角色权限与仓储状态。外部存储适配器可注入确定性结果，HTTP入口与被测模块必须真实执行。统一发现器按入口声明识别Jest，公共套件入口需要显式describe封装。
+
+
+2026-11-10 最新通过的固定 Node 复采：147 文件清单，146 套件、1706 项通过，1 套件及8项条件跳过，154 产品文件源码及测试前后 SHA256 一致。行14947/16074（92.98%）、分支14284/18311（78.00%）；证据 `runtime/test-results/node-api-auth-fixed-stable-20261110/coverage-summary.json` 与 `source-stability.json`。前端最近7826/9986行（78.36%）、9158/13744分支（66.63%），Java3118/3360行（92.80%）、1731/2178分支（79.48%），本阶段未重采。目标仍未达到。
+
+
+## 2026-11-10T18:47:27+08:00 专业HTML测试报告改进设计（REA）
+
+用户完整提示词：有哪些业界优秀的测试报告可以参考，然后使用rea skill来改进生成的html报告，需要的是专业的html测试报告，评分需要达到9分以上。
+
+路由：标准开发，职责为参考能力取证、设计适配、实现、确定性回归与浏览器验收，主执行者承担；用户已授权功能范围，无新增审批边界。实际加载.codex/plugins/rea/skills/app-capability-transfer/SKILL.md及同插件reverse-engineer-anything/SKILL.md、references/runtime-observation.md；使用本地rea.sh，不修改全局配置。同时使用全局ui-ux-pro-max辅助可访问性及视觉验收。
+
+参考：Allure Report结果分布/失败聚合、Playwright HTML Report状态筛选/用例定位、ReportPortal质量概览、pytest-html离线分享/日志详情。官网或官方仓库原始证据保存在runtime/rea/professional-test-report；403等访问限制单独保留，不伪称已观察交互。既有报告只有静态表格，缺少跨分页检索、失败直达、统一视觉和量化门禁。
+
+方案：统一浅色专业数据界面、深色侧栏、面包屑、运行摘要与状态文字、结果分布、分类结果表、失败及阻塞优先、最慢任务、覆盖率实际分子分母/目标/缺口。静态场景分页保留；生成独立本地case-index.js用于跨页搜索/状态筛选和稳定用例锚点，点击匹配可跳转并展开详情。所有文案中文、无CDN与网络字体、搜索使用textContent构建DOM、日志仅允许details/tasks内相对路径、所有数据HTML转义。无JS仍可浏览总览/所有分页；不生成不存在的历史趋势、重试、环境或附件。
+
+伪代码：保存JSON→建立场景/稳定用例ID及分页位置→渲染统一总览与分页→写本地CSS/JS/索引；检索全部索引→状态与关键词联合过滤→返回真实匹配数与分页深链接；覆盖率目标读取config/knowledge-center/coverage-targets.json并随报告冻结，不以展示四舍五入判定达标。页面打开目标100ms内，用本机离线Chromium报告DOM加载/渲染数据并说明测量范围。
+
+评分表（10分）：数据可信2、失败定位2、检索导航2、视觉层级1.5、无障碍/移动端1、离线/性能1、可追溯0.5。交付门槛≥9分，证据缺失不计满分；评分为本轮有证据的自评，不代表独立第三方认证。验收覆盖真实运行、混合失败/跳过/未执行、跨页搜索/过滤/深链接、长日志/XSS/路径逃逸、无JS、移动端、离线请求、性能及回归。
+
+
+### 2026-11-10T18:59:41+08:00 专业HTML报告实现与验收结果
+
+按确认范围完成统一入口报告升级。新增离线共享CSS/JS/用例索引，报告总览具备运行结论、结果分布、失败与阻塞、场景统计、覆盖率目标缺口、任务耗时和原始JSON；场景页保留静态分页，支持跨场景搜索、状态筛选、失败深链接和详情自动展开。HTML文本均转义，日志链接限制在details/tasks，未知统计不虚构，JS失效仍可浏览静态结果。
+
+行业参考与证据：Allure官方仓库README（结果详情/每日执行信息）、Playwright官方HTML reporter文档（筛选/详情）、ReportPortal官方仓库README（质量总览）、pytest-html官方仓库README（HTML报告/离线详情）；原文快照和SHA在runtime/rea/professional-test-report。使用REA app-capability-transfer与reverse-engineer-anything流程，REA受控Chromium观测Allure演示成功，Evidence完整，耗时18129ms，证据runtime/rea/professional-test-report/allure-runtime-evidence.json。
+
+验证：tests/unit/root/test_run_tests.py 43/43通过；python3 tests/run_tests.py smoke成功并生成runtime/test-results/smoke/20261110-185330-955292-smoke/report.html；离线Chromium 390px加载约117ms、搜索命中3条、无横向溢出、无脚本错误；报告资源无网络依赖。按数据可信2、失败定位2、检索导航2、视觉1.5、无障碍/移动端1、离线性能1、可追溯0.5的量表自评9.5/10。该评分是有证据的本轮验收，不代表第三方认证。
+### 2026-11-10 前端固定采集器复跑记录
+
+固定副本中的前端 Istanbul 采集器补充了只读账号下的清洗上传 DOM 覆盖场景，并将资产统计权限、错误和成功状态的断言改为等待真实 DOM 文案，避免异步渲染时序误报。复跑前补齐固定副本缺失的 Vditor CSS/JS 静态依赖后，清洗和资产统计场景均可继续执行；写作图片预览夹具仍分别出现 `page.addStyleTag: Event` 与 `page.evaluate: Resulting promise was garbage collected`，均发生在测试启动/浏览器运行时，未生成完整覆盖率汇总，不能作为前端覆盖率验收证据。源码稳定性清单保持 stable，报告输出保留在 `runtime/test-results/coverage-snapshots/20261110-183123/runtime/test-results/frontend-goal-final-20261110d/`。
+
+### 2026-11-10T19:29:25+08:00 专业 HTML 报告复核
+
+沿用已加载的仓库 REA 技能与业界参考证据，复核入口 unittest 43/43、真实 smoke 24/24。命令 `python3 tests/run_tests.py smoke --report-page-size 2` 生成 `runtime/test-results/smoke/20261110-192850-959829-smoke/report.html` 和12个场景分页。离线Chromium桌面/390px各10次，DOMContentLoaded最大45.7ms/77.4ms；跨页搜索、用例跳转、无JS浏览通过，脚本错误、HTTP请求及页面横向溢出均为0。原始测量、截图、可重跑脚本及9.5/10内部评分明细见 `runtime/rea/professional-test-report/ACCEPTANCE.md`；性能项仅0.5/1，未验收大型报告100ms，保留此前117ms样本。
+
+覆盖率采集附记：固定副本补齐完整Vditor dist资源，避免编辑器初始化依赖缺失；隔离写作HTTP夹具对显式generate使用确定模型目录，显式modelGovernance及真实模型路径仍沿原契约。完整写作未插桩回归结束，33项中29通过、2失败、2跳过，无仍运行进程；不可将失败运行当作前端覆盖率通过。三端100%行/95%分支目标保持active。
+
+### 2026-11-10T19:32:00+08:00 写作覆盖率夹具模型目录隔离
+
+局部维护走直接处理：完整写作回归中，沉浸式编辑和GitLab基线漂移两个用例未注入模型目录，意外读取本机加密配置，分别导致生成入口禁用和无法触发既有409对照。为这两个非真实模型用例注入会拒绝意外调用的生成器，沿共享HTTP夹具提供确定模型目录；保留原有启用、编辑回读、基线漂移和默认全文断言，真实模型用例仍使用显式开关。验收先定向两个用例，再完整插桩采集全部前端产品文件，保留原100%行/95%分支阈值。
+
+采集证据加固：前端产品源码清单继续独立核验；另外记录本次前端服务、后端产品模块、测试/夹具、配置、大纲资源、Vditor静态资源、依赖锁与采集器的运行前后SHA清单。任一输入变化均使本次采集失败，不修改产品覆盖分母。所有子测试无论成功失败都保存完整日志；成功采集同时导出Istanbul HTML和lcov，便于按未覆盖行/分支定位下一批测试。伪代码：`before=manifest(inputs); runAll(); write(json,html,lcov); after=manifest(inputs); assertEqual(before,after)`。
+
+### 2026-11-10T19:36:59+08:00 大纲公开 HTTP 边界补测设计
+
+范围：沿现有隔离真实 HTTP 服务补充只读来源的编辑/发布/删除拒绝、已发布版本恢复冲突、提案参数与重复文档拒绝、提示词旧文件解析/缺失/损坏、选择器兼容和文件导出回读。保持产品源码、覆盖率分母和100/95门禁。仅在fs边界将两个旧版硬编码资源路径精确映射到runtime临时目录；真实解析器、提示词组装和HTTP均执行产品实现，导出内容真实落盘并回读；异常边界恢复spy和元数据。验收比较同一产品SHA、同两套件的定向覆盖率前后结果，再与既有大纲测试合跑，不以定向比例宣称平台达标。
+
+### 2026-11-10T19:39:45+08:00 覆盖率夹具与大纲边界验证进展
+
+写作夹具隔离：两个非模型场景显式注入拒绝意外调用的生成器，使用共享夹具提供的确定模型目录，避免本机加密配置污染；两项定向2/2通过，原断言保留。前端采集器新增运行前后完整输入SHA清单，覆盖后端模块、浏览器夹具、配置、知识大纲、前端静态资源与依赖锁；保留原产品分母，输入变化即失败；各子测试无论成功失败都保存日志，完整成功时额外生成Istanbul HTML和lcov。完整固定副本采集尚在运行，未宣称通过。
+
+大纲新增7项真实HTTP测试，验证只读保护、恢复冲突、提案无效参数/重复文档、只读旧资源过滤与错误降级、旧版文件缺失/损坏、提示词导出真实回读和选择器兼容。旧版两个资源位置和导出位置在fs边界精确映射至runtime，保留真实产品解析器与组装器，无产品目录产物。两套件51/51通过；outline.js定向行489/528（92.61%）、分支532/668（79.64%），此前同两套件为457/528、487/668。模块仍未达100/95；全平台覆盖率另以稳定全量采集验收。证据runtime/test-results/outline-route-after-20261110。
+
+### 2026-11-10T19:41:36+08:00 大纲补测第二批
+
+依据7套件稳定结果剩余缺口，补充历史顶层parts/chapters的知识点计数、幂等回放、JSON正文字符串、预检失败状态、发布替代旧版本、缺失/非法手册配置与导出落盘错误。仍走真实HTTP，故障仅在精确fs导出边界注入，检查失败响应与后续恢复。
+
+### 2026-11-10T19:43:37+08:00 大纲剩余行边界
+
+最后5个未覆盖行对应首次上传目录初始化、旧上传入口410、提案与导入锁冲突、回收站损坏读取。通过runtime真实目录缺失、损坏XLSX和持有锁文件验证；不模拟路由返回或修改产品分支。锁冲突必须拒绝写入，解除锁后重试成功；失效旧入口明确返回410。
+
+### 2026-11-10T19:44:07+08:00 前端完整稳定采集结果
+
+固定副本frontend-goal-final-20261110f完整成功，退出0，completed/stable/inputsStable均true，changedFiles/changedInputs均为空。57个前端产品文件，主导航45文件、写作31份计数、任务管理16页、我的工作8份、手册往返5份、平台6份、审核16份，所有原有硬计数核验通过。行8558/10272（83.31%）、分支9743/14026（69.46%），仍未达到100/95。保留固定副本身份，不能当作当前工作区最终验收。证据：runtime/test-results/coverage-snapshots/20261110-183123/runtime/test-results/frontend-goal-final-20261110f/coverage-summary.json、source-stability.json、html/index.html、lcov.info及各子场景日志。此前source-stability=false结果继续仅诊断，不混合比较百分比。
+
+### 2026-11-10T19:44:26+08:00 大纲补测本轮验收
+
+新增16项测试，7套件160/160通过，产品与测试SHA前后一致，退出0。outline.js行528/528（100%）、分支581/668（86.97%）；模块行目标达成，模块分支及全平台目标仍未完成。覆盖真实首次上传目录初始化及坏XLSX清理、旧入口410、存储并发锁拒绝且不覆盖持有者锁、解除锁后重试、元数据损坏回收站失败、历史计数、幂等、版本替代、导出落盘失败与恢复。产品源码未修改；证据runtime/test-results/outline-combined-20261110，含HTML、lcov、原始JSON、完整日志和source-stability.json。后续须以包含这些测试的完整稳定Node采集评估平台分支缺口，不将单模块100%代替平台目标。
+
+## 2026-11-10T19:50:58+08:00 前端 GitLab API 真实 HTTP 契约补测
+
+固定前端报告显示 gitlab-api.js 行46/59、分支20/53，缺口集中于查询默认值、CAS、错误投影及验证响应。新增独立 Node test + Chromium 套件，动态端口 HTTP 服务提供真实产品 ES module 和可控 API 响应；逐项核对公开接口的路径编码、查询参数、写入方法/JSON、幂等键及 If-Match，验证验证结果不完整、HTTP失败、业务失败、坏JSON与恢复信息。只在随机端口夹具处理写请求，不接触共享业务数据；不替换 fetch，不修改产品逻辑。伪代码：`serve(module, apiFixture); importInBrowser(); call(publicMethod); assert(recordedRequest, resultOrError); captureIstanbul()`。采集器追加独立计数并检查固定产品源码归属，不改变原有场景计数或分母。定向覆盖只证明客户端契约；全平台仍需完整稳定三端门禁。
+
+2026-11-10T19:54:52+08:00 扩展手册生产 API 契约矩阵：核对草稿/修订/AI/质量/审核公开端点、上下文强制合并、显式及默认幂等键、401/403事件与来源限制例外、非JSON/坏JSON/错误请求ID。上传使用真实 File、XMLHttpRequest 和随机端口 HTTP，检查原始字节、文件名/类型、进度、业务失败、HTTP失败和真实连接断开恢复；不模拟XHR或fetch。新增3组浏览器计数，与GitLab共8组，采集器必须全部成功并核对计数。
+
+2026-11-10T19:58:25+08:00 当前完整前端采集暴露旧评论表单夹具漂移：产品已统一 data-review-comment-form 并读取 mentions.selectedOptions；采集器仍提交已移除的 data-incremental-comment-form，另缺少mentions控件。按当前真实表单补齐anchor/candidateDigest/mentions字段，检查空提及与选中手册提及序列化和用户提示；保留原有失败重试、相同幂等键和请求次数断言。仅修测试夹具，不恢复旧业务入口或改产品。采集失败副本输入稳定，completed=false，保留诊断，不合并为有效结果。
+
+
+### 2026-11-10T20:01:35+08:00 增量审核与文档任务客户端 HTTP 契约补测设计
+
+按标准开发由主执行者承担设计、实现和验证。沿现有随机端口 HTTP/Chromium 夹具增加增量审核全部端点、URL 编码与默认查询、默认命令正文、401/403 通知开关、HTTP/业务/坏 JSON 错误、失败重试及并发相同命令的幂等键生命周期。文档任务覆盖读取/配置/负责人/分解和真实 File multipart 导入、幂等键、HTTP/业务/坏 JSON 与断线、调用者主动 AbortSignal 中断、浏览器 UUID/随机数组/无 crypto 能力降级。不得替换 fetch/XHR 或直接操作覆盖率计数。伪代码：`browser.import(realModule); publicApi(); assert(server.requests, result, events); fail/retry/succeed; assert(keyReuseThenRenew); upload(File); assert(multipartBytes); abort(signal); assert(error)`。
+
+采集器按实际新增场景数核对每份非空计数并保持原 57 文件分母。运行中的 20261110-195532 固定副本不变；新测试先定向验证，再用新固定副本全量采集，不将旧结果混合成当前验收。
+
+
+### 2026-11-10T20:07:41+08:00 增量审核/文档任务 API 契约稳定复验
+
+`frontend-api-contracts.node.test.cjs` 由8组扩展至15组，全部通过且源码/测试/锁文件运行前后SHA一致。四模块行201/201、分支215/217；增量审核58/58行、80/80分支；文档任务19/19行、19/19分支；GitLab59/59行、53/53分支；手册生产65/65行、63/65分支。新用例验证全部公开读写端点、默认/编码参数、真实File上传字节、请求中断、通知开关、失败与断线后的同键重试、成功释放和并发相同命令键。浏览器crypto能力降级不替换fetch/XHR。采集器计数门槛同步15，原有其它场景门槛保持。
+
+证据：`runtime/test-results/frontend-task-contracts-20261110-final/`，含run.log、15份计数、source-stability.json、coverage-final.json、coverage-summary.json、html/index.html及lcov.info；复现包装脚本`runtime/test-results/run-frontend-task-contracts-20261110.py`。首跑因错误对象保留undefined属性导致3项严格比较失败，改为序列化错误投影后复验；SHA脚本误将以.js结尾的vendor目录当文件，在启动测试前失败，修为仅对文件哈希。失败产物保留。此为定向模块证据，三端平台100/95目标尚未达成。
+
+
+### 2026-11-10T20:08:49+08:00 固定前端全量采集与后续副本
+
+20261110-195532副本的frontend-api-full-20261110-v2退出0，completed/stable/inputsStable均true，changedFiles/changedInputs为空。57产品文件、45导航、8 API、31写作、16任务页、8我的工作、5手册往返、6平台、16审核计数完整。行8605/10374（82.94%）、分支9816/14196（69.14%），仍未达标；产品分母相对上一副本变化，不直接以百分比推断增减。证据位于该副本runtime/test-results/frontend-api-full-20261110-v2，包含HTML/lcov/原始JSON和稳定清单。评论夹具已按当前提及字段补齐，失败重试、幂等和正文断言均保留；首次旧夹具失败结果保留。
+
+新增7组API测试未混入旧结果。新固定副本20261110-200838复制4651文件，复制后SHA与主工作区一致，排除runtime、环境文件与依赖目录；依赖链接既有安装。指针runtime/test-results/frontend-task-contracts-20261110-final/snapshot.json。新副本开始15组API的完整前端采集，输出runtime/test-results/frontend-task-api-full-20261110，尚未完成；全平台目标保持active。
+
+
+### 2026-11-10T20:10:00+08:00 平台 API 客户端剩余契约补测设计
+
+当前完整前端报告中platform-api.js行199/212、分支209/329。沿随机端口真实HTTP和产品ES模块测试，增加平台聚合读取范围/单侧失败、模板/团队/数据库/人员/权限/资产全部公开端点、真实multipart、校验前不发送权限写请求、大纲目录快捷路径及历史列表回退/版本选择、错误码中文投影与服务断线。HTTP夹具增加按请求返回响应，以验证多步目录—手册—详情调用链；不替换浏览器fetch/XHR。伪代码：`replyByUrl(catalog,list,handbooks,detail); call(publicApi); assert(result,orderedRequests); fail(status,code); assert(authEvent,error); upload(File); assert(bytes)`。先定向稳定采集，再纳入固定57文件全量采集；不修改运行中的20261110-200838副本。按标准开发由主执行者完成设计、实现、验证，不启动子Agent。
+
+
+### 2026-11-10T20:15:51+08:00 平台 API 契约稳定复验
+
+新增7组平台客户端真实HTTP测试，与原15组一起22/22通过，运行前后源码/测试/锁文件SHA一致。platform-api.js行212/212、分支323/329（98.17%），相对此前固定完整报告该文件199/212、209/329，覆盖全部原缺失行及114分支；这是模块证据，不是平台全量结果。五模块定向总行413/413、分支538/546（98.53%）。采集器API硬计数由15同步22，仍核对每份非空计数和原57产品分母。
+
+覆盖模板/团队/数据库/人员/权限/资产公开端点；多步骤大纲目录快捷命中、旧字段兼容、发布版本优先、指定版本、手册失败降级；大纲错误码中文提示与真实socket断线；平台聚合单侧失败隔离；真实multipart字节及导入错误优先级；权限本地无效输入不发请求。夹具按HTTP请求路由响应，未声明请求立即断言失败，不替换fetch/XHR。首跑将null目录响应错误预期为ok，按真实strict响应契约修正为unavailable；产品未改，失败日志保留。
+
+证据：runtime/test-results/frontend-platform-contracts-20261110-final，含22份原始计数、源码稳定清单、日志、HTML、lcov、coverage-final及summary；可重跑包装脚本runtime/test-results/run-frontend-platform-contracts-20261110.py。语法与diff检查通过。运行中的20261110-200838副本未修改，仍只含原15 API场景；其全量结果不能冒充包含新7组测试。下一步以新稳定副本纳入22组全量，并继续app.js主要行为缺口。三端100/95目标尚未完成。
+
+
+## 2026-11-10T20:19:57+08:00 手册送审确认真实 HTTP 补测设计
+
+按标准开发，由主执行者完成设计、实现及验证。保留公开 DOM click 入口，不导出 app 内部函数。隔离随机端口 HTTP 服务返回共享草稿与审核人数据，浏览器请求经 route.fetch 转发后端响应，禁止业务写入。验证未选文档不发送请求、草稿不存在及送审权限拒绝恢复按钮、有效草稿填充默认/逐篇审核人和路径、审核人为空及 503 错误。每次恢复 UI、路由、DOM 和焦点。伪代码：`click(submit); GET(draft); validate(capabilities); GET(reviewers); assert(dialog, fields, status); close(); restore()`。新增场景纳入固定前端采集，原57产品分母和全部计数门禁保持。
+
+上一固定副本20261110-200838完整采集完成，completed/stable/inputsStable均true，57文件及15 API、45导航、31写作、16任务页、8我的工作、5手册往返、6平台、16审核计数齐全。行8611/10374（83.00%）、分支9845/14196（69.35%）；目标仍未达成。
+
+
+2026-11-10T20:22:52+08:00 送审确认6/6稳定通过，产品/测试/锁文件运行前后SHA一致，真实HTTP请求只含GET；新增覆盖openHandbookReviewDialog成功、空审核人和失败路径及送审确认事件。与上一固定副本app.js SHA一致：True。定向证据runtime/test-results/handbook-review-selection-stable，含原始计数、HTML、lcov和稳定清单；定向页面覆盖率不代表平台全量。已创建4652文件稳定副本20261110-202219，纳入22 API及6送审场景，完整采集中。保留57文件及原全部场景计数，不改阈值。
+
+
+2026-11-10T20:24:09+08:00 草稿输入与附件补测设计：真实 textarea input 事件验证本地Markdown、分支、dirty标记、送审选中清除与保存/送审按钮反馈；缺少documentId的输入不污染状态。真实 file input change 触发产品XHR，隔离HTTP后端验证图片、普通附件、503失败后下一文件继续、重复上传与空选择；核对请求原始正文、编码文件名、Content-Type及outlineVersionId/branch，不替换XHR或fetch。恢复DOM/UI/路由，不写共享资源。伪代码：`input(markdown); assert(ui, controls); selectFiles(); POST(isolatedAttachmentApi); assert(attachments, progress, clearedInput)`。
+
+
+2026-11-10T20:27:24+08:00 草稿输入与附件8/8定向复验通过，source-stability stable=true、exitCode=0。产品syncHandbookMarkdownInput执行3次，uploadFilesIntoHandbookDraft执行5次；真实HTTP记录5次POST，验证原始正文、编码中文文件名、Content-Type回退与分支/版本。证据runtime/test-results/handbook-draft-input-stable，含HTML、lcov、coverage-final、原始用例及SHA清单。语法及diff检查通过。主采集器已增加独立8项门禁；当前活副本只含送审6项，不能将本批定向数据冒充该副本全量。三端目标仍未完成。
+
+
+## 2026-11-10T20:29:00+08:00 Java GitLab版本映射真实HTTP补测设计
+
+固定Java报告显示PlatformGitLabRepository版本映射新增逻辑及Main对应路由尚未执行。按标准开发，在既有StorageGitLabHttpCheck真实HttpServer上验证创建/读取/列表/修改草稿/启用/禁用/修订替代/EXACT优先ALL解析、无匹配、缺少/非法参数、CAS/状态冲突、更新失败。扩展既有JDBC状态夹具处理新增SQL与绑定参数，并检查审计事件、行版本和父版本状态；不访问共享数据库、不修改产品行为。伪代码：`HTTP(create); HTTP(edit,CAS); HTTP(activate); HTTP(resolve); HTTP(revise); HTTP(activateRevision); assert(parentSuperseded, events); reject(stale, invalid)`。Java固定9产品源文件及100/95门禁保留，先定向真实HTTP再固定完整采集。
+
+
+### 2026-11-10T20:33:36+08:00 版本映射HTTP生命周期复验与前端完整采集结果
+
+Java StorageGitLabHttpCheck扩展版本映射创建/编辑/启用/禁用/修订替代、EXACT优先ALL解析、非法字段/长度、CAS及更新失败验证，真实本地HTTP复验退出0，核对5条映射和14条审计事件。首次无连接解析测试误预期422，依据connectionId实际查询及HTTP返回修为404 GITLAB_CONNECTION_NOT_FOUND，失败日志保留于runtime/test-results/java-version-mapping-directed/failed-first.log；成功日志run-v2.log。JDBC为内存状态夹具，不声明真实数据库约束验收。
+
+前端固定副本20261110-202219完整采集退出0，completed/stable/inputsStable均true，changedFiles/changedInputs均为空。57产品、45导航、22 API、6送审、31写作、16任务页、8我的工作、5手册往返、6平台、16审核计数齐全；行8647/10374（83.35%）、分支9984/14196（70.32%）。证据副本runtime/test-results/frontend-review-selection-full-20261110，HTML/lcov/原始计数齐全，仍未达100/95。
+
+新固定副本20261110-203258共5425文件稳定复制，分别启动Java版本映射全量和前端含8组草稿输入/附件全量采集，运行期间不修改副本；终态另行核验，不把定向或旧结果作为新全量。
+
+
+### 2026-11-10T20:35:46+08:00 写作入口采集时序修正
+
+新固定前端采集在已有来源并发编辑场景失败：Markdown页面先挂载，编辑器异步加载失败提示随后覆盖了场景状态；仅等待生成按钮启用不能证明编辑器初始化已结束。测试应先等待富文本模式可用或明确的Markdown回退提示，再触发来源检查，并保留人工修改保护、无AI写请求等断言。只修采集器夹具时序，不更改产品。失败副本20261110-203258保持原样，不作为有效全量；新固定副本复验。
+
+
+### 2026-11-10T20:36:46+08:00 Java版本映射完整稳定复采
+
+固定副本20261110-203258的java-version-mapping-full-20261110退出0，9产品源文件、source-stability stable=true及changedFiles=[]。行3453/3485（99.08%）、分支2037/2322（87.73%）；PlatformGitLabRepository行239/240、分支175/182，尚缺非法内部action路径；Main仍有31未覆盖行。保留HTML、java.xml、java.exec和源码清单，不缩减分母。此为Java独立全量，三端100/95仍未完成。专业HTML报告入口43项复核再次全部通过，日志runtime/rea/professional-test-report/runner-recheck.log。
+
+
+2026-11-10T20:37:34+08:00 写作入口时序修正定向真实Chromium复验退出0，日志runtime/test-results/handbook-writing-ready.log，原始计数runtime/test-results/handbook-writing-ready/cases。等待富文本按钮可用或明确回退后再触发来源检查，保留来源变更阻断、授权恢复、无AI生成写请求、关闭清理与草稿保存断言；脚本通过实际collector函数验证，不复制业务实现。失败固定副本不改写；含此修正及8附件场景的新前端全量尚待采集，最近有效前端结果仍为83.35%行/70.32%分支。
+
+
+## 2026-11-10T20:42:26+08:00 SQLState错误投影补测设计
+
+标准开发，由主执行者完成设计、实施及验证。既有StorageGitLabHttpCheck通过JDBC夹具注入SQLState 23505和08006，真实HTTP分别验证409 CONFIG_CONFLICT及503 STORAGE_UNAVAILABLE、中文消息、失败无commit、恢复后配置/行版本不变。不改变产品契约、不声明真实数据库约束验收。伪代码：`injectSQLException; HTTP(PATCH); assert(status, code, noCommit); clearFailure; HTTP(GET); assert(unchanged)`。保留原9个Java源码及100/95阈值。
+
+前端固定副本20261110-203841采集退出1，未插桩写作场景加载Vditor样式失败，保留失败日志，不计为有效全量。
+
+
+### 2026-11-10T20:43:12+08:00 固定副本资源完整性修正
+
+前端失败根因为快照脚本仅复制git可见文件，而.gitignore的dist/规则忽略了本地Vditor dist样式/脚本。主工作区资源存在，失败副本缺少index.css；不是产品编辑器时序问题。更新runtime副本工具，将实际vendor树全部纳入复制及SHA清单，运行前核对CSS/JS存在，保留原产品分母及旧失败副本。复制后先运行此前失败的真实浏览器场景，再完整采集。
+
+Java SQLState定向首跑错误地跨恢复GET共用commit基线；读事务也会commit，改为每次失败写请求前单独记录基线，继续严格验证失败请求无commit。保留原失败日志。
+
+
+## 2026-11-10T20:45:19+08:00 版本映射仓储边界契约补测设计
+
+对PlatformGitLabRepository契约补测：已有映射缺少expected拒绝，未知状态动作不得变更或记录审计，草稿修订父映射丢失时拒绝激活，已禁用修订可重新启用。使用既有状态JDBC夹具，断言错误代码、状态、版本和审计。新测试不改变正在运行副本，定向通过后另建固定副本采集。
+
+Java SQLState完整稳定复采通过：9产品文件，行3455/3485、分支2040/2322；证据副本20261110-204323/runtime/test-results/java-sqlstate-full-20261110。全平台目标仍未完成。
+
+
+### 2026-11-10T20:49:07+08:00 版本映射边界完整复采
+
+版本映射缺失CAS、未知action、修订父记录缺失拒绝及禁用修订重启定向通过。固定副本20261110-204657完整Java采集退出0，9产品源码，source-stability stable=true、changedFiles=[]；行3456/3485（99.17%）、分支2045/2322（88.07%）。报告runtime/test-results/java-version-boundaries-full-20261110，保留HTML、java.xml、java.exec。原目标尚未达成。
+
+前端资源完整副本预检1/1通过，完整采集遇route.fetch socket hang up退出1；旧失败日志保留。相同固定副本以未处理拒绝warn模式进行诊断，不能未核验就记为有效全量。
+
+
+## 2026-11-10T20:57:05+08:00 前端完整诊断复采与索引资源异常设计
+
+前端固定副本20261110-204323诊断采集退出0，completed/stable/inputsStable均true，changedFiles/changedInputs=[]。57产品、45导航、22API、6送审、8附件输入、31写作、16任务页、8我的工作、5手册返回、6平台、16审核计数齐全。行8673/10374（83.60%）、分支10008/14196（70.49%）。本次NODE_OPTIONS=--unhandled-rejections=warn，但日志无警告；不能据此证明默认严格模式稳定，保留此前socket hang up失败。HTML/lcov/原始计数位于frontend-vendor-complete-diagnostic-20261110。
+
+StorageSchemaDao剩余分支位于try资源关闭路径。扩展既有JDBC夹具，分别验证正常查询后result.close失败及query.close失败，保留原始异常并禁止DDL；验证DDL执行失败时statement.close异常作为suppressed保留。仅测试资源异常语义，不改产品、不改分母。伪代码：injectCloseFailure; createIndexIfMissing; assert(primary,suppressed,noDDL)。
+
+
+### 2026-11-10T21:08:16+08:00 前端默认严格模式完整复验
+
+固定副本20261110-205751默认Node模式采集退出0，57产品文件及全部场景门禁通过；completed/stable/inputsStable均true，changedFiles/changedInputs=[]。行8673/10374（83.6%）、分支10006/14196（70.48%）。采用本次实际较低计数，不拼接较高诊断结果。报告frontend-vendor-strict-full-20261110含HTML、lcov和原始计数。
+
+同副本Java索引资源异常完整复验退出0、SHA稳定，3456/3485行、2045/2322分支；新增资源异常断言通过但覆盖计数未增加。原目标100%行/95%分支仍未完成。
+
+
+## 2026-11-10T21:11:11+08:00 团队小组写交互补测设计
+
+标准开发，主执行者承担设计、实施和验证，未触及人工审批边界。沿用用户原目标：知识中心管理平台行覆盖率100%、分支覆盖率95%；专业HTML报告已完成的REA验收继续保留。新增隔离本地HTTP夹具，通过浏览器公开DOM事件调用真实platform-api请求；验证创建空名/服务失败/恢复成功、名册保存成功/409冲突/503失败/重试、列表重载失败及恢复、取消和导航。核对JSON、If-Match、幂等键、失败不变更及按钮恢复。不得向共享业务后端写入。伪代码：启动内存HTTP服务；route.fetch转发；装载真实视图和事件处理；点击/提交；断言状态与请求；恢复projection、URL、DOM并关闭服务。定向浏览器验证后纳入完整采集计数门禁，固定副本复采判定增量，不将定向计数视为全量覆盖率。
+
+
+### 2026-11-10T21:20:14+08:00 团队小组隔离HTTP补测与采集修正
+
+新增team-group-http.cjs，10组公开DOM交互验证名册409/503失败保持选择及版本、成功更新、取消、导航、列表失败/恢复、创建空名/失败/成功；真实本地HTTP断言If-Match、幂等键、JSON和列表参数。单独定向通过。首次固定副本20261110-211559全量失败，原日志保留；人员编辑后的异步列表刷新干扰新夹具状态。改为同浏览器上下文独立页签运行并合并实际产品覆盖计数，保留所有断言。人员编辑/成员维护后独立页签复验通过，日志runtime/test-results/team-group-isolated-v2.log。固定副本20261110-211914正在全量采集，终态未核验前不报告覆盖率增量。产品和原100/95目标未改变。
+
+
+### 2026-11-10T21:29:24+08:00 团队小组补测后的前端完整采集
+
+固定副本20261110-211914默认严格模式采集退出0，57产品文件，新增10组团队HTTP场景与全部原场景门禁通过；completed/stable/inputsStable均true、changedFiles/changedInputs为空。行8711/10374（83.96%）、分支10029/14196（70.64%），相较前次完整报告增加38行、23分支，分母不变。HTML、lcov、原始计数及稳定清单位于frontend-team-isolated-full-20261110。原100%行/95%分支目标仍未达成。
+
+
+## 2026-11-10T21:34:40+08:00 工作流数据库模式真实HTTP边界补测设计
+
+用户完整目标：知识中心管理平台的测试覆盖率，行覆盖率需要达到100%，分支覆盖率需要达到95%。
+
+标准开发，主执行者承担设计、实施与验证，未触及人工审批边界。核验Node d报告stable=false（三文件变化），不得作为稳定全量。原拟补的大纲领域形态已有测试，改补尚缺的工作流数据库模式。通过独立Worker启动有状态本地HTTP记录服务，让真实workflow路由、AggregateStore及DatabaseRecordStore完成两层HTTP；验证默认记录创建/保留/软删除恢复、初始化读失败后的写恢复、创建冲突、更新ID不可伪造、删除隐藏和重复删除拒绝、存储读写与导出失败响应及无误写。测试只写runtime隔离目录，禁止共享数据库。伪代码：启动记录HTTP服务→加载真实路由初始化→实际HTTP增删改查→断言持久状态/修订/无文件回退→关闭服务器并恢复环境。定向Istanbul验证后，固定副本全量采集；保持所有产品源码和100/95门槛。
+
+
+### 2026-11-10T21:45:53+08:00 工作流数据库HTTP定向结果与Node副本输入修正
+
+新增工作流双层真实HTTP及状态存储夹具，11/11定向通过，workflow.js行92/92、分支57/59（96.61%）。副本20261110-213732完整清单167套件得到17失败、149通过、1跳过（105失败、2182通过、8跳过）；Jest留有异步句柄，发送TERM后退出-15，stable=true、changedFiles=[]，不能算有效全量。主要缺少Git忽略的service.env，兼容测试缺少runtime元数据，另有系统检索、LibreOffice失败。修正runtime快照脚本，将实际service.env和只读历史metadata纳入副本SHA清单，不输出配置内容、不改产品或门槛。旧失败副本不改写。平台目标仍active。
+
+
+## 2026-11-10T21:57:49+08:00 渲染器边界补测与固定副本输入修复
+
+用户完整目标：知识中心管理平台的测试覆盖率，行覆盖率需要达到100%，分支覆盖率需要达到95%。
+
+本轮标准开发，由主执行者承担设计、实施和验证，无人工审批边界。第二轮固定Node采集终态退出1，164套件通过、2失败、1跳过，2283用例通过、4失败、8跳过；SHA稳定，但不能认定全量通过。LibreOffice失败已确认副本缺少被忽略的真实PPTX输入。快照工具增加该输入及SHA；不改旧失败副本。系统检索调用共享14110却在副本查中间产物，属于运行环境不匹配，保留失败，不重跑共享生成任务。
+
+扩展现有LibreOfficeRenderer测试：自定义命令/DPI/超时传递；依赖不可用；转换未产出PDF；PDF转图无页面；转换命令抛错；上述失败都清理工作目录，外部输出目录保持。通过注入命令执行器验证进程边界及文件产物，真实PPTX转换继续保留。伪代码：commandRunner记录调用并按阶段产出或失败 → render → 断言错误/参数/输出/清理。定向覆盖验证后纳入新固定副本采集，不以定向结果替代平台总覆盖率。
+
+
+### 2026-11-10T21:59:39+08:00 上下文组装兼容矩阵设计
+
+沿用全平台100%行/95%分支目标。LibreOffice定向10/10通过，真实PPTX成功，模块行和分支均100%。下一步补测context-assembler公开纯函数契约：必需/可选维度排序、缺失维度、未知标签、零相关度和字段缺省；四类来源name/title/file与summary/content/空值优先级及200字截断；空来源不生成章节、转换后来源和路径保留。使用真实模块与输出断言，不改产品规则；无后端行为无需HTTP替身。定向计数不可当成全平台结果。
+
+
+### 2026-11-10T22:04:23+08:00 渲染器与上下文固定采集结果
+
+固定副本20261110-220054，隔离Node分类164文件，产品154文件；进程退出0，completed/stable均true，changedFiles=[]。Test Suites: 1 skipped, 163 passed, 163 of 164 total；Tests:       6 skipped, 2259 passed, 2265 total。实际覆盖计数：{"lines": {"total": 16412, "covered": 15890, "skipped": 0, "pct": 96.81}, "statements": {"total": 20616, "covered": 19169, "skipped": 0, "pct": 92.98}, "functions": {"total": 3800, "covered": 3565, "skipped": 0, "pct": 93.81}, "branches": {"total": 18957, "covered": 15883, "skipped": 0, "pct": 83.78}, "branchesTrue": {"total": 0, "covered": 0, "skipped": 0, "pct": 100}}。真实PPTX输入纳入SHA；渲染器定向10/10、上下文定向9/9通过。system共享服务分类未纳入本次隔离采集，旧失败证据保留，不能声明所有测试通过。平台100%行/95%分支目标仍未完成，不降低门槛或缩产品分母。报告：runtime/test-results/coverage-snapshots/20261110-220054/runtime/test-results/node-render-context-isolated-20261110
+
+
+### 2026-11-10T22:04:51+08:00 工作流引擎失败生命周期补测设计
+
+沿用平台行100%、分支95%完整目标。标准开发，主执行者设计/实施/验证。隔离AgentManager及图执行边界，通过公开create/start/cancel/forceContinue/getWorkflow与事件验证并发拒绝、图异常、步骤失败、运行计数恢复、取消与无文档强制继续拒绝、已有文档恢复、步骤详情和输出预览。图替身主动调用真实引擎回调，不调用共享模型，不伪造覆盖计数；模板快照持久化边界隔离，既有真实HTTP契约保留。伪代码：创建任务→控制图回调/结果/异常→监听事件→断言公开状态及并发计数→恢复。定向后固定副本采集，不能当成全平台达标。
+
+
+### 2026-11-10T22:12:47+08:00 工作流引擎定向补测结果
+
+新增生命周期、并发拒绝、异常事件、无文档拒绝、强制恢复、回调详情、重试配置和预览边界测试。两套24/24通过，workflow-engine.js行157/157=100%，分支133/139=95.68%，语句/函数100%。证据runtime/test-results/workflow-engine-boundaries。不是平台全量结果；继续固定副本采集，保留154产品文件及原100/95门槛。
+
+
+### 2026-11-10T22:15:54+08:00 工作流引擎补测后固定采集
+
+固定副本20261110-221248隔离Node采集退出0，164套件通过、1跳过，2272用例通过、6跳过。154产品文件、165测试文件；completed/stable为true，changedFiles=[]。实际覆盖计数：{"lines": {"total": 16412, "covered": 15902, "skipped": 0, "pct": 96.89}, "statements": {"total": 20616, "covered": 19188, "skipped": 0, "pct": 93.07}, "functions": {"total": 3800, "covered": 3567, "skipped": 0, "pct": 93.86}, "branches": {"total": 18957, "covered": 15931, "skipped": 0, "pct": 84.03}, "branchesTrue": {"total": 0, "covered": 0, "skipped": 0, "pct": 100}}。system共享服务分类不属于本次隔离采集，历史失败保留，不能声明所有测试通过。HTML和lcov证据：runtime/test-results/coverage-snapshots/20261110-221248/runtime/test-results/node-workflow-engine-isolated-20261110。全平台行100%/分支95%目标仍active，未达成。
+
+
+### 2026-11-10T22:16:35+08:00 资料加工响应校验边界补测设计
+
+用户原目标：知识中心管理平台的测试覆盖率，行覆盖率需要达到100%，分支覆盖率需要达到95%。标准开发，主执行者设计、实施、验证。补测knowledge-center-runtime-contract成功及错误响应的非对象/数组/缺字段/字段类型/错误码格式，核验endpoint诊断信息及原始对象保持；校验兼容补data仅作用合法成功响应。纯函数契约使用真实模块，相关既有HTTP网关测试保留。定向测试后纳入固定副本采集；不得将模块结果当作平台达标。
+
+
+### 2026-11-10T22:17:35+08:00 资料加工响应校验定向结果
+
+两套28/28通过；knowledge-center-runtime-contract.js行、分支、语句、函数均100%。覆盖响应形态、成功/错误字段类型、错误码模式、endpoint诊断及补data不变性。证据runtime/test-results/runtime-contract-boundaries；未替代平台全量验收。下一轮固定副本采集包含此新增测试，原目标保持active。
+
+
+### 2026-11-10T22:20:41+08:00 响应契约补测后固定采集结果
+
+固定副本20261110-221735隔离Node采集退出0，165套件通过、1跳过，2292用例通过、6跳过。154产品文件，166测试文件，completed/stable均true，changedFiles=[]。实际覆盖计数：{"lines": {"total": 16412, "covered": 15904, "skipped": 0, "pct": 96.9}, "statements": {"total": 20616, "covered": 19200, "skipped": 0, "pct": 93.13}, "functions": {"total": 3800, "covered": 3567, "skipped": 0, "pct": 93.86}, "branches": {"total": 18957, "covered": 15966, "skipped": 0, "pct": 84.22}, "branchesTrue": {"total": 0, "covered": 0, "skipped": 0, "pct": 100}}。本次未执行system共享服务分类，旧失败证据保留，不声明所有测试通过。报告：runtime/test-results/coverage-snapshots/20261110-221735/runtime/test-results/node-runtime-contract-isolated-20261110。全平台行100%/分支95%目标仍未达成，保持active。
+
+
+## 2026-11-10T22:23:29+08:00 MCP管理响应与配置边界补测设计
+
+用户完整目标：知识中心管理平台的测试覆盖率，行覆盖率需要达到100%，分支覆盖率需要达到95%。
+
+标准开发，主执行者承担设计、实施、验证；未触及人工审批边界。扩展现有本地真实HTTP MCP服务，以结构化及文本结果矩阵验证搜索/文档读取成功、空响应、错误标志及错误脱敏；验证非法服务与知识库配置拒绝且文件无变化；验证未保存服务测试不持久化、删除默认服务不静默替换。伪代码：创建隔离配置→真实HTTP返回指定业务响应→调用公开治理方法→断言状态/错误/请求/持久化→清理。运行定向Istanbul后再固定副本采集；保持产品分母和100/95门槛，不能把模块结果当平台达标。
+
+
+### 2026-11-10T22:31:53+08:00 MCP管理边界补测与固定采集结果
+
+新增55项测试，套件79/79通过；MCP治理模块行200/200=100%、分支325/371=87.60%。首次参数化测试因可选第四列被Jest误判done回调而失败，已改为rest参数并复测通过；非产品失败。真实HTTP验证搜索/文档响应、未保存握手；断言非法配置无写入、默认服务删除不自动选择其他服务及兼容保存记录标识。固定副本20261110-222825隔离Node采集退出0，165套件通过、1跳过，2347用例通过、6跳过；154产品文件、166测试文件，completed/stable=true、changedFiles=[]。实际覆盖计数：{"lines": {"total": 16412, "covered": 15913, "skipped": 0, "pct": 96.95}, "statements": {"total": 20616, "covered": 19245, "skipped": 0, "pct": 93.34}, "functions": {"total": 3800, "covered": 3575, "skipped": 0, "pct": 94.07}, "branches": {"total": 18957, "covered": 16030, "skipped": 0, "pct": 84.55}, "branchesTrue": {"total": 0, "covered": 0, "skipped": 0, "pct": 100}}。本次不含system共享服务分类，旧失败保留；不能声明所有分类通过。报告：runtime/test-results/coverage-snapshots/20261110-222825/runtime/test-results/node-mcp-governance-isolated-20261110。平台行100%/分支95%目标仍active，未缩分母或降低阈值。
+
+
+### 2026-11-10T22:34:05+08:00 MCP凭据损坏与服务身份边界补测
+
+在同一设计矩阵内增加已删除服务404、缺失版本409、同一知识库记录重复引用拒绝、通用服务无读取适配拒绝，以及真实配置管理器读取损坏密文后的503与显式清除恢复。未修改产品代码。定向82/82通过，模块行200/200=100%，分支335/371=90.29%，函数100%；分支仍未达95%。证据runtime/test-results/mcp-governance-boundaries-final。前次固定副本只含79项，不能当作此82项全量结果；继续新副本采集。
+
+
+### 2026-11-10T22:37:32+08:00 MCP完整新增测试固定副本采集
+
+固定副本20261110-223405隔离Node采集退出0，completed/stable=true，changedFiles=[]；154产品文件、166测试文件。Test Suites: 1 skipped, 165 passed, 165 of 166 total
+Tests:       6 skipped, 2350 passed, 2356 total。覆盖计数：{"lines": {"total": 16412, "covered": 15913, "skipped": 0, "pct": 96.95}, "statements": {"total": 20616, "covered": 19250, "skipped": 0, "pct": 93.37}, "functions": {"total": 3800, "covered": 3575, "skipped": 0, "pct": 94.07}, "branches": {"total": 18957, "covered": 16040, "skipped": 0, "pct": 84.61}, "branchesTrue": {"total": 0, "covered": 0, "skipped": 0, "pct": 100}}。包含MCP管理82项定向已通过测试。报告：runtime/test-results/coverage-snapshots/20261110-223405/runtime/test-results/node-mcp-governance-isolated-20261110。system分类未执行，保留历史失败，不声明所有分类通过。全平台行100%/分支95%目标仍active；前端、Java本轮未重采。
+
+
+## 2026-11-10T22:38:39+08:00 增量构建HTTP拒绝路径设计
+
+继续用户全平台行100%、分支95%目标。标准开发，主执行者设计实施验证。复用现有真实HTTP审核服务夹具，补充审核不存在、候选失配、非法决定、未审核发布、发布摘要失配、未发布证据拒绝、非退回任务修订拒绝等路径。每次拒绝断言状态与审计完全不变；只写隔离内存仓库，不触达共享数据。伪代码：构造最小合法状态→实际HTTP请求→断言错误码/状态/存储不变。保留原产品分母及门槛，不以定向结果代替平台验收。
+
+
+### 2026-11-10T22:39:55+08:00 增量构建拒绝路径定向验证
+
+新增14个真实HTTP状态守卫场景，单套65/65通过，关联三套109/109通过。覆盖审核决定/终止、发布状态与摘要、外部证据和修订拒绝，均断言存储与审计无副作用。三套定向覆盖行83.52%、分支73.48%，仅为所选三套结果，不能与包含其他测试的全量混比。证据runtime/test-results/incremental-guards-directed及incremental-guards-coverage.log。随后固定副本采集衡量实际增量，原目标不变。
+
+
+### 2026-11-10T22:43:06+08:00 增量状态守卫补测后固定采集
+
+副本20261110-223955 Node隔离采集退出0，completed/stable=true，changedFiles=[]，154产品文件、166测试文件。Test Suites: 1 skipped, 165 passed, 165 of 166 total; Tests:       6 skipped, 2364 passed, 2370 total。覆盖计数：{"lines": {"total": 16412, "covered": 15913, "skipped": 0, "pct": 96.95}, "statements": {"total": 20616, "covered": 19263, "skipped": 0, "pct": 93.43}, "functions": {"total": 3800, "covered": 3575, "skipped": 0, "pct": 94.07}, "branches": {"total": 18957, "covered": 16054, "skipped": 0, "pct": 84.68}, "branchesTrue": {"total": 0, "covered": 0, "skipped": 0, "pct": 100}}。证据：runtime/test-results/coverage-snapshots/20261110-223955/runtime/test-results/node-incremental-guards-isolated-20261110。本轮累计MCP新增58项、增量守卫14项，真实HTTP及配置/存储无副作用断言通过。system分类未执行，历史失败保留；浏览器与Java本轮未重采，全平台行100%/分支95%仍未达成，保持active。
+
+
+## 2026-11-10T22:44:20+08:00 检索查询规划契约补测设计
+
+用户完整目标：知识中心管理平台的测试覆盖率，行覆盖率需要达到100%，分支覆盖率需要达到95%。标准开发，主执行者设计实施验证，未触及审批边界。为真实query-planner公开纯函数新增独立单元测试，覆盖全部知识点类型的必需/可选查询维度、默认类型与数据库、数量限制、核心术语归一化，以及括号碎片修复、短查询补全和丢弃。现有system检索测试含共享服务依赖，新增纯函数测试避免将其替代执行视为系统通过。不改产品规则；断言查询语义和输入不变。定向覆盖后纳入固定副本采集，保持全部产品分母及100/95门槛。
+
+
+### 2026-11-10T22:46:40+08:00 专业报告交付核对与查询规划收尾
+
+复用已完成的仓库REA报告验收证据，不重复开发：中文总览、场景静态分页、跨页搜索、状态筛选、失败日志和真实覆盖率；入口43/43、smoke24/24，内部量表9.5/10。实际报告runtime/test-results/smoke/20261110-192850-959829-smoke/report.html及runtime/rea/professional-test-report/ACCEPTANCE.md均存在。大型报告100ms尚未验收，不把报告评分当平台覆盖率达标。
+
+收尾上一批查询规划测试：更正短查询不足10字符时补核心术语的测试预期，保留产品行为。14/14通过，模块行100%、分支95.83%，证据runtime/test-results/query-planner-directed；尚未纳入新固定副本全量采集，不能替代最新Node96.95%/84.68%结果。用户全平台行100%、分支95%目标保持active。
+
+
+## 2026-11-10T22:47:27+08:00 语义分块与规划代理剩余契约设计
+
+用户完整目标：知识中心管理平台的测试覆盖率，行覆盖率需要达到100%，分支覆盖率需要达到95%。标准开发，主执行者承担设计、实施和验证。固定覆盖证据定位SemanticChunker的弱段落边界、空结构块、无可重叠句子/无前缀，以及PlannerAgent合并模式和畸形模型字段回退尚未验证。补测真实公开方法，不更改产品规则或分母。结构块接口允许相邻paragraph，验证弱边界拆分后正文顺序、token重算和章节路径独立；Markdown入口保留闭合/未闭合代码与开头表格测试。代理使用真实配置/查询生成，不请求真实模型，通过parseResponse验证非法JSON和非数组字段回退、既有结构保留、合并输出及任务固定模板优先。伪代码：输入合法结构块/模型响应→调用真实方法→断言完整内容、恢复结构和输入不变→定向覆盖→固定副本全量采集。纯计算方法不需要后端HTTP；既有真实HTTP套件继续纳入全量。
+
+
+### 2026-11-10T22:49:25+08:00 语义分块与规划代理定向验证结果
+
+SemanticChunker新增7项，24/24通过，行/分支/语句/函数均100%；公开结构块弱边界与Markdown入口边界分别验证，不声称前者来自parseBlocks输出。PlannerAgent新增11项，关联三套85/85通过，模块行100%、分支95.78%、语句/函数100%。验证合并提示词与输出、模型非JSON及字段类型回退、固定模板剔除浮动模板文件、哈希失配拒绝和有效字段保留。报告runtime/test-results/semantic-chunker-boundaries与planner-agent-boundaries。连同上批查询规划14项启动新的固定副本全量Node采集，保持154产品文件和100/95原门槛；定向结果不等于平台达标。
+
+
+## 2026-11-10T22:51:27+08:00 审核意见可信提及HTTP边界设计
+
+继续用户全平台行100%、分支95%目标。固定证据定位knowledge-center网关审核意见分支整段未执行。新增真实本地HTTP测试：代理服务不可用、缺幂等键、重复手册、非当前审核范围、无负责人、不可见手册、可信接收人覆盖客户端伪造值，以及当前文档范围纠偏阻止审核通过。只在runtime写隔离任务聚合，注入最小服务观察调用；实际网关鉴权/解析/范围判定均执行真实代码，不触达共享服务。伪代码：准备任务关联及session→POST意见/决定→核对状态、错误、可信服务参数、拒绝零调用及文件不变。前一固定副本正在采集，此后测试属于下一副本，不混充已启动版本结果。
+
+
+### 2026-11-10T22:53:37+08:00 规划与分块固定采集及审核意见HTTP结果
+
+固定副本20261110-224925退出0，completed/stable=true、changedFiles=[]，154产品文件、168Jest文件；167套件通过、1跳过，2395用例通过、6跳过。行15943/16412=97.14%，分支16089/18957=84.87%，较223955增加30行、35分支。报告runtime/test-results/coverage-snapshots/20261110-224925/runtime/test-results/node-planning-chunker-isolated-20261110。system分类未执行，旧失败保留，全平台目标仍未完成。
+
+随后新增审核意见网关16项真实HTTP全部通过，覆盖可信提及、范围/权限拒绝、服务不可用、幂等键及范围纠偏阻止决定/解除恢复；拒绝时服务零调用、隔离文件不变。首次夹具缺必需工作簿配置在初始化失败，补齐runtime路径后复测通过，未改产品。定向报告runtime/test-results/review-comment-gateway-directed仅覆盖所选路径（行10.41%、分支8.16%），不代表全模块。准备新副本全量纳入此16项。
+
+
+## 2026-11-10T22:56:54+08:00 版本映射领域适配器HTTP契约补测设计
+
+继续用户目标：知识中心管理平台的测试覆盖率，行覆盖率需要达到100%，分支覆盖率需要达到95%。标准开发，由主执行者承担设计、实现和验证。复用真实本地HTTP Worker补齐版本映射列表、解析、新建、更新和启停方法，验证URL编码、操作者、幂等键、乐观锁请求头及无data信封兼容；解析缺失data返回null，并验证不存在/冲突/无效三个业务错误的HTTP状态映射。新建不发送If-Match，更新保留版本号；仅测试隔离回显服务，不触达共享业务。伪代码：公开适配器方法→实际HTTP回显→断言请求与响应契约→定向覆盖→固定副本全量采集。不修改产品规则、覆盖率分母或门槛。专业HTML报告已交付，内部9.5分不代表平台覆盖率达标。
+
+
+### 2026-11-10T22:57:37+08:00 审核意见固定采集与版本映射定向结果
+
+副本20261110-225337 Node采集退出0，completed/stable=true、changedFiles=[]；154产品文件、169Jest文件，168套件通过、1跳过，2411用例通过、6跳过。行15973/16412=97.32%，分支16133/18957=85.10%。较224925增加30行、44分支。报告：runtime/test-results/coverage-snapshots/20261110-225337/runtime/test-results/node-review-comments-isolated-20261110。system分类未执行，旧失败保留，前端/Java未重采，全平台目标仍active。
+
+版本映射适配器新增9项真实本地HTTP测试，两套91/91通过，验证列表/解析、新建/更新、启停、查询特殊字符、可信actor覆盖、幂等键/版本请求头和三个错误状态；无data解析返回null，其余方法保留原始信封。定向模块覆盖：{"lines": {"total": 157, "covered": 157, "skipped": 0, "pct": 100}, "statements": {"total": 173, "covered": 173, "skipped": 0, "pct": 100}, "functions": {"total": 59, "covered": 59, "skipped": 0, "pct": 100}, "branches": {"total": 243, "covered": 234, "skipped": 0, "pct": 96.29}, "branchesTrue": {"total": 0, "covered": 0, "skipped": 0, "pct": "Unknown"}}。报告runtime/test-results/domain-store-version-mapping-directed；仅为该模块定向证据，准备新固定副本全量纳入。未修改产品代码或覆盖率分母。
+
+
+### 2026-11-10T23:01:02+08:00 版本映射补测后固定采集结果
+
+副本20261110-225737 Node全量隔离采集退出0，completed/stable=true、changedFiles=[]，154产品文件、169Jest文件，168套件通过、1跳过，2420用例通过、6跳过。覆盖实际计数：{"lines": {"total": 16412, "covered": 15983, "skipped": 0, "pct": 97.38}, "statements": {"total": 20616, "covered": 19350, "skipped": 0, "pct": 93.85}, "functions": {"total": 3800, "covered": 3598, "skipped": 0, "pct": 94.68}, "branches": {"total": 18957, "covered": 16150, "skipped": 0, "pct": 85.19}, "branchesTrue": {"total": 0, "covered": 0, "skipped": 0, "pct": 100}}。证据：runtime/test-results/coverage-snapshots/20261110-225737/runtime/test-results/node-version-mapping-isolated-20261110。本批只增加领域适配器真实HTTP契约测试，未改产品规则。system共享服务分类未执行，历史失败保留，不声明全部分类通过；前端及Java沿用上一有效证据，本轮未重采。全平台行100%、分支95%目标仍未达成，保持active。专业HTML报告及REA验收交付继续有效，内部量表9.5/10，大型报告100ms尚未验收。
+
+
+## 2026-11-10T23:02:27+08:00 文档任务范围纠偏与发布核对HTTP补测设计
+
+用户完整目标：知识中心管理平台的测试覆盖率，行覆盖率需要达到100%，分支覆盖率需要达到95%。上一轮新增9项真实HTTP契约并完成固定副本采集，属于progress。当前标准开发，requiredResponsibilities为设计、实现、真实HTTP验证及证据记录，由主执行者承担；未触及审批边界，不启动独立Agent。
+
+固定证据定位document-tasks路由70行及406分支未覆盖，集中于范围纠偏应用、取消及已发布核对。新增隔离runtime文件存储与真实本地HTTP服务，使用可控审核读取端口夹具，验证工单/手册层纠偏、文档恢复与序号、陈旧MR/依赖读取拒绝、取消权限、发布核对三种结论及证据守卫。成功断言持久范围/审计/状态及幂等重放；拒绝断言文件完全不变。伪代码：创建合法已确认任务与审核夹具→POST纠偏→预览影响→以当前摘要确认→GET和磁盘核对；修改版本或MR观测→验证拒绝无写入。通过HTTP验证真实路由/存储，不将注入审核读取夹具视为真实远端MR集成。不得删除覆盖产品、降低门槛或通过忽略指令凑数。
+
+
+### 2026-11-10T23:07:00+08:00 文档任务定向首轮及补充矩阵
+
+首轮两套88项中87通过、1失败；失败是测试要求JSON存在undefined属性，与JSON序列化契约不符，已删除该错误预期，未修改产品。定向路由行98.14%、分支83.57%。进一步补充范围纠偏输入/权限守卫、手册映射读取失败降级、旧范围版本阻止沿用审核、请求计时头及配置理由校验，均复用真实HTTP和拒绝文件不变验证。scopeSnapshot为未引用内部函数，暂不为覆盖率导出或直接删除，保持产品分母；需后续独立评估其实际用途。
+
+
+### 2026-11-10T23:07:57+08:00 文档任务纠偏与发布核对定向验证
+
+新增document-tasks-correction-http.test.js，隔离runtime文件和真实本地HTTP。与既有路由测试合计115/115通过（原有37项，本批新增78项），路由定向行641/648=98.91%、分支1167/1352=86.31%、函数273/279=97.84%。证据runtime/test-results/document-task-correction-directed与同名.log。成功断言范围历史/冻结/恢复、稳定编号、审核关联失效、三种发布核对结论及审计；拒绝断言持久文件字节不变。覆盖前述错误预期已修正，不改产品规则；仍有内部未引用scopeSnapshot行与分支未覆盖，不等于平台达标。启动新固定副本全量采集，保持154产品文件及行100%/分支95%原门槛。
+
+
+### 2026-11-10T23:11:15+08:00 文档任务补测后固定采集收尾
+
+用户完整目标：知识中心管理平台的测试覆盖率，行覆盖率需要达到100%，分支覆盖率需要达到95%。副本20261110-230757采集退出0，completed/stable=true，changedFiles=[]；154产品文件、170Jest文件，169套件通过、1跳过，2498用例通过、6跳过，151.493秒。行16052/16412=97.80%，分支16382/18957=86.41%，较上一有效副本增加69行、232分支。证据runtime/test-results/coverage-snapshots/20261110-230757/runtime/test-results/node-task-correction-isolated-20261110。system共享服务分类未执行，旧失败保留；前端与Java本批未重采。全平台100/95仍未完成，goal保持active。专业HTML报告REA改进及内部量表9.5分验收继续有效；大型报告100ms尚未验收。
+
+
+## 2026-11-10T23:12:24+08:00 增量构建并发读取与草稿拒绝契约设计
+
+用户完整目标：知识中心管理平台的测试覆盖率，行覆盖率需要达到100%，分支覆盖率需要达到95%。前轮固定采集有有效增量，分类progress。本轮标准开发，由主执行者承担设计、实现及真实HTTP验证；未触及人工审批边界。固定lcov显示IncrementalBuildService.readState异步分支未执行。复用隔离内存仓库及真实本地HTTP，增加可控readAsync与writeEpoch：两请求并发共用读取、读取期间写入使旧快照失效并重读、失败释放pending后可重试；断言响应快照独立且错误不泄露内部信息。补充已发布基线无正文拒绝在线评审、move变更集字段/节点/类型校验与草稿版本冲突。伪代码：发出HTTP→等待确定性读取屏障→更改epoch并释放旧读取→返回最新数据；注入拒绝→检查500→恢复读取→GET成功。拒绝写入场景比对仓库整体不变。不改变产品代码、分母或100/95门槛。
+
+
+### 2026-11-10T23:13:31+08:00 增量异步读取定向验证结果
+
+新增13项真实HTTP测试，增量审核辅助接口套件78/78通过：并发列表/详情仅一次readAsync、epoch变化丢弃旧快照、错误后重试；验证响应隔离和500隐藏内部错误。另覆盖三种基线正文缺失、六种非法操作字段及合法移动/陈旧草稿/幂等重试。拒绝写入时整体仓库不变。证据runtime/test-results/incremental-read-boundaries-directed；本次定向结果不代替平台全量覆盖。准备固定副本重新采集，不改产品与覆盖率门槛。
+
+
+### 2026-11-10T23:15:25+08:00 定向覆盖率路径纠正
+
+首次定向命令的collectCoverageFrom相对Jest配置根目录解析，生成零产品文件覆盖率；用例78/78通过有效，但零文件覆盖率不作任何达标证据。已将误写tests目录的报告移入runtime/test-results/incremental-read-boundaries-directed保留。改用../../../packages/...源码路径和绝对coverageDirectory重新采集，78/78仍通过，所选模块定向行419/783=53.51%、分支492/1173=41.94%，证据runtime/test-results/incremental-read-boundaries-directed-valid及.log；本套只执行所选服务路径，不代表模块全量。固定副本全量使用原有配置，不受该命令错误影响，进程仍活跃。
+
+
+### 2026-11-10T23:17:06+08:00 增量读取补测后固定全量结果
+
+副本20261110-231331退出0，completed/stable=true、changedFiles=[]，154产品文件、170Jest文件。Test Suites: 1 skipped, 169 passed, 169 of 170 total；Tests:       6 skipped, 2511 passed, 2517 total；Time:        175.276 s。行16063/16412=97.87%，分支16398/18957=86.5%。较上一有效副本增加11行、16分支。证据runtime/test-results/coverage-snapshots/20261110-231331/runtime/test-results/node-incremental-read-isolated-20261110。本批新增13项真实HTTP测试，未改变产品与覆盖率分母。system共享服务分类未执行，旧失败保留；前端/Java未重采。用户完整目标为知识中心管理平台行覆盖率100%、分支覆盖率95%，当前三个运行时仍有缺口，goal保持active。
+
+
+## 2026-11-10T23:17:43+08:00 审核范围与改派HTTP边界补测设计
+
+用户完整目标：知识中心管理平台的测试覆盖率，行覆盖率需要达到100%，分支覆盖率需要达到95%。上轮有效增量属于progress。标准开发，主执行者承担设计、实施、验证；未触及审批边界。复用review-workbench真实本地HTTP与隔离内存仓库，验证普通增量任务的目标文档/路径匹配，手册审核改派缺审核记录、已决定、陈旧候选、文档失配等拒绝，以及成功改派的去重、审计与幂等。伪代码：准备独立任务→GET bootstrap指定文档/路径或PUT改派→断言状态及错误→比对拒绝时仓库不变；成功则核对新审核人、历史人员、审计及重放。每项finally删除夹具，维持既有产品分母，不改业务规则。
+
+
+### 2026-11-10T23:19:56+08:00 审核人改派真实HTTP补测
+
+新增12项，review-workbench-contract整套35/35通过。覆盖缺审核/无手册来源、任务或审核已完成、请求或审核候选过期、文档缺失或无逐篇记录、空/非数组/非法审核人，拒绝后比对整体仓库不变；成功验证人员规范化、候选不变、审计及幂等重放。定向日志runtime/test-results/review-reassignment-directed.log。首次夹具将中文直接写入HTTP头被fetch拒绝，已编码幂等键后复测通过；不修改产品规则。普通任务文档/路径矩阵已有测试，未重复新增。准备固定副本全量采集。用户完整目标：知识中心管理平台行覆盖率100%、分支覆盖率95%，目标保持active。
+
+
+### 2026-11-10T23:22:38+08:00 审核改派补测后固定全量结果
+
+副本20261110-231956采集退出0，completed/stable=true，changedFiles=[]，154产品文件、170Jest文件。Test Suites: 1 skipped, 169 passed, 169 of 170 total；Tests:       6 skipped, 2523 passed, 2529 total；Time:        142.922 s。行16063/16412=97.87%，分支16405/18957=86.53%。证据runtime/test-results/coverage-snapshots/20261110-231956/runtime/test-results/node-reassignment-isolated-20261110。新增12项真实HTTP测试，不改变产品、分母或100/95门槛。system共享服务分类未执行，旧失败保留；前端与Java未重采。用户完整目标：知识中心管理平台行覆盖率100%、分支覆盖率95%，尚未达成，goal保持active。
+
+
+## 2026-11-10T23:24:35+08:00 Java记录存储故障响应契约设计
+
+用户完整目标：知识中心管理平台行覆盖率100%、分支覆盖率95%。上一轮为progress，新增12项真实HTTP、Node增加7个分支。本轮标准开发，主执行者设计、实施和验证，不触及审批边界。复用StorageRecordHttpCheck的随机端口真实HTTP与隔离JDBC状态机，注入数据库大纲生命周期拒绝及一般SQL故障。伪代码：记录持久状态/提交与回滚计数→PUT合法记录且JDBC抛指定错误→校验409或503及错误码、请求标识→核对状态不变并发生回滚→恢复驱动GET确认可重试。既有通用读取故障测试保留，不改产品代码、分母或覆盖门槛。
+
+
+### 2026-11-10T23:25:59+08:00 Java记录拒绝响应固定全量验证结果
+
+新增三种真实HTTP数据库故障场景，大纲已删除/不存在返回409，一般SQL故障返回503且不泄露内部详情；验证请求标识、回滚、记录正文/摘要/版本/删除标识不变及恢复后GET成功。固定副本20261110-232435全量采集退出0，9源文件，源码及测试稳定性见runtime/test-results/coverage-snapshots/20261110-232435/runtime/test-results/java-record-rejection-full-20261110/source-stability.json。行3457/3485=99.20%，分支2047/2322=88.16%，较前次增加1行、2分支。所有既有采集场景通过，未改变产品或分母。证据runtime/test-results/coverage-snapshots/20261110-232435/runtime/test-results/java-record-rejection-full-20261110/java.xml与html/index.html。用户完整目标：知识中心管理平台行覆盖率100%、分支覆盖率95%，当前仍未达成，goal保持active。Node最近行97.87%、分支86.53%，前端最近行83.96%、分支70.64%，本批未重采。
+
+
+## 2026-11-10T23:27:33+08:00 GitLab读取网关补测设计
+
+用户完整目标：知识中心管理平台行覆盖率100%、分支覆盖率95%。前轮Java新增三种HTTP故障场景，属于progress。本轮标准开发，主执行者负责设计、实施及验证，未触及审批边界。复用gitlab-api-http真实前端HTTP与随机端口上游GitLab夹具，补管理员直读tree/file的默认与显式路径、普通读者拒绝、手册commit投影、service-account访问状态及OAuth入口拒绝、未知路由404。上游记录请求，验证查询参数与token只在上游可见。伪代码：真实配置连接及映射→读取API→断言状态/数据/上游参数/凭据隐藏。保持全部产品分母与100/95门槛。
+
+
+### 2026-11-10T23:29:05+08:00 GitLab读取网关定向验证结果
+
+新增6项真实HTTP测试，gitlab-api-http整套22/22通过。覆盖管理员目录/文件默认和显式参数、读者403且不请求上游、提交历史字段投影、服务账号OAuth拒绝及状态凭据隐藏、未知路由404；另验证个人OAuth默认/显式returnTo重定向与连接禁用状态，finally恢复原手册映射。日志runtime/test-results/gitlab-read-gateway-directed.log。用户完整目标为知识中心管理平台行覆盖率100%、分支覆盖率95%，尚未达成；准备固定副本全量采集，保持产品分母及门槛。
+
+
+### 2026-11-10T23:30:14+08:00 文件读取工具边界测试设计
+
+用户完整目标：知识中心管理平台行覆盖率100%、分支覆盖率95%。标准开发由主执行者设计、实施及验证。针对FileReader现有缺口补充隔离临时目录内的递归列表、目录不存在、显式编码、空批次及默认运行目录/仓库回退路径解析。仅验证真实文件系统工具，无后端行为修改，不需新增API。伪代码：建立多层文件→递归扫描核对条目类型与路径→编码读取核对字节长度与mtime→缺目录拒绝→不存在主目录时解析已有仓库文件。保持产品分母及覆盖率门槛。
+
+
+### 2026-11-10T23:30:37+08:00 文件读取边界定向验证结果
+
+新增4项，tools.test整套26/26通过。真实文件系统验证递归目录与类型、普通列表过滤目录、目录缺失、空批次、UTF-16编码与字节大小/mtime、批次部分失败、默认运行路径及仓库回退读取。证据runtime/test-results/file-reader-boundaries-directed.log。产品未修改，当前运行中的GitLab固定副本不含这4项，后续单独采集。用户完整目标：行100%、分支95%，尚未达成。
+
+
+### 2026-11-10T23:32:00+08:00 GitLab补测后固定全量结果
+
+固定副本20261110-232905全量退出0，154产品文件、170Jest文件，169套件通过/1跳过，2529用例通过/6跳过，142.279秒。stable=true，changedFiles=[]。行16083/16412=97.99%，分支16428/18957=86.65%。证据runtime/test-results/coverage-snapshots/20261110-232905/runtime/test-results/node-gitlab-read-isolated-20261110。本次不含随后新增的4项文件读取边界测试；其所在套件定向26/26通过。system共享服务分类未执行，旧失败保留。未改变产品分母与门槛；用户完整目标为行100%、分支95%，尚未达成。
+
+
+### 2026-11-10T23:32:16+08:00 文件读取工具覆盖率验证
+
+定向执行tools.test.js，26/26通过，产品FileReader真实覆盖率行43/43=100%、分支21/21=100%、函数8/8=100%。证据runtime/test-results/file-reader-boundaries-coverage/coverage-summary.json及html/index.html。仅为单模块证据，不代替平台全量，不与不同运行时合并计算达标。最近Node固定全量行97.99%、分支86.65%；Java行99.20%、分支88.16%；前端行83.96%、分支70.64%，用户完整目标行100%、分支95%仍未达成，goal保持active。
+
+
+### 2026-11-10T23:33:11+08:00 数据库统一配置解析边界补测设计
+
+用户完整目标：知识中心管理平台行覆盖率100%、分支覆盖率95%。上一轮新增FileReader四项真实文件系统测试并达到模块双100%，本轮属于progress后续标准开发，主执行者设计、实施和验证。补测service.env必须存在、非法行拒绝、CRLF/注释/export/单双引号、环境空值覆盖规则、全部数值转换以及嵌套敏感字段拒绝；使用临时配置目录并finally清理，通过既有native-contract Jest桥执行。伪代码：写隔离配置→loadDatabaseConfig→比较完整输出→错误输入断言失败→清理。只修改测试，无后端行为变更。保持产品分母，未使用的私有merge函数不为覆盖率强行调用或删除。
+
+
+### 2026-11-10T23:34:45+08:00 数据库配置边界定向验证结果
+
+新增4项数据库配置测试，native-contract桥整套93通过/5跳过，80.639秒，退出0。覆盖配置必须存在、非法行拒绝、CRLF/注释/export/引号、完整字段映射、环境空值与数值0、嵌套数组和大小写敏感键。修复原有临时目录未清理的测试夹具，不修改产品。证据runtime/test-results/database-config-boundaries-directed.log。准备固定副本全量纳入本批与FileReader四项；用户完整目标：行100%、分支95%，尚未达成。
+
+
+### 2026-11-10T23:37:55+08:00 配置与文件读取补测固定全量结果
+
+固定副本20261110-233445完成，退出0，154产品文件、170Jest文件，stable=true、changedFiles=[]。Test Suites: 1 skipped, 169 passed, 169 of 170 total; Tests:       6 skipped, 2537 passed, 2543 total; Time:        170.469 s。行16090/16412=98.03%，分支16440/18957=86.72%。证据runtime/test-results/coverage-snapshots/20261110-233445/runtime/test-results/node-config-boundaries-isolated-20261110。本次纳入数据库配置4项及FileReader4项；未改产品或覆盖分母。system共享服务分类未执行，旧失败保留。用户完整目标行100%、分支95%，当前仍未达成，goal保持active。
+
+
+### 2026-11-10T23:38:14+08:00 资料加工网关白名单校验补测设计
+
+用户完整目标：知识中心管理平台行覆盖率100%、分支覆盖率95%。上一轮Node补测后全量行98.03%、分支86.72%，属于progress。本轮标准开发，主执行者设计实施及验证。针对版本化端点映射加载器补测无端点、非法/重复id、非法method/path/operation/action及expose=false；通过隔离模块和仅替换映射文件读取夹具注入配置，避免修改真实契约文件。伪代码：构造单端点最小契约→加载模块→非法声明应抛具体错误；合法声明冻结且隐藏端点不可匹配。后端验证复用cleaning API真实HTTP套件，产品不变，分母不变。
+
+
+### 2026-11-10T23:39:25+08:00 资料加工白名单定向覆盖验证
+
+新增15项，契约与客户端套件24/24通过。白名单模块行31/31=100%、分支39/39=100%，证据runtime/test-results/cleaning-mapping-boundaries。注意cleaning-api-contract仅静态契约检查，不能算真实HTTP；另执行frontend-gateway-http-coverage及knowledge-center-context-boundaries-http真实HTTP测试验证代理与路由拒绝。保持真实契约文件不变，所有读取替换finally恢复。用户完整目标行100%、分支95%，尚未完成，准备固定副本全量。
+
+
+### 2026-11-10T23:42:31+08:00 白名单校验补测固定全量结果
+
+新增15项，定向契约24/24及真实HTTP23/23通过。固定副本20261110-233925全量退出0，154产品文件、170Jest文件，stable=true、changedFiles=[]。Test Suites: 1 skipped, 169 passed, 169 of 170 total; Tests:       6 skipped, 2552 passed, 2558 total; Time:        167.594 s。行16096/16412=98.07%，分支16453/18957=86.79%。证据runtime/test-results/coverage-snapshots/20261110-233925/runtime/test-results/node-cleaning-mapping-isolated-20261110。白名单模块定向行31/31与分支39/39双100%。未改产品、真实契约文件或分母；system共享服务分类未执行，旧失败保留。用户完整目标：知识中心管理平台行100%、分支95%，尚未达成，goal保持active。
+
+
+### 2026-11-10T23:43:34+08:00 大纲仓储恢复与事务边界补测设计
+
+用户完整目标：知识中心管理平台行覆盖率100%、分支覆盖率95%。上一轮新增15项白名单测试并全量验证，属于progress。本轮标准开发，主执行者设计实施验证。使用隔离临时目录验证无文件、非数组outlines、损坏主文件恢复备份及无备份报错、写入备份、锁冲突拒绝、异常后解锁、append去重及幂等信息合并；数据库update使用领域存储边界夹具验证快照克隆及过滤，并复用真实HTTP大纲数据库投影套件。不得改变产品或分母。伪代码：建隔离仓储→写旧数据→触发损坏/冲突/失败→核对旧数据与锁→恢复后成功写入。
+
+
+### 2026-11-10T23:44:46+08:00 大纲仓储补测验证结果
+
+新增11项仓储/快照测试，与真实HTTP大纲数据库投影套件共38/38通过。定向模块行64/64=100%、分支51/52=98.07%，证据runtime/test-results/outline-repository-boundaries。覆盖恢复备份、损坏报错、锁冲突与失败解锁、旧快照备份、追加去重/幂等、数据库克隆及过滤、递归目录。首次test.each数组被Jest展开导致两项夹具断言错误，改为对象行后复测通过，未修改产品。用户完整目标行100%、分支95%，尚未达成，准备固定副本全量。
+
+
+### 2026-11-10T23:48:03+08:00 大纲仓储补测固定全量结果
+
+固定副本20261110-234446全量退出0，154产品文件、170Jest文件，stable=true、changedFiles=[]。Test Suites: 1 skipped, 169 passed, 169 of 170 total; Tests:       6 skipped, 2563 passed, 2569 total; Time:        175.216 s。行16103/16412=98.11%，分支16472/18957=86.89%。证据runtime/test-results/coverage-snapshots/20261110-234446/runtime/test-results/node-outline-recovery-isolated-20261110。新增11项大纲仓储测试，与真实HTTP投影套件定向38/38通过，模块行64/64=100%、分支51/52=98.07%。未修改产品或分母；system共享服务分类未执行，旧失败保留。用户完整目标：知识中心管理平台行100%、分支95%，尚未完成，goal保持active。
+
+
+### 2026-11-10T23:49:12+08:00 文档接口错误恢复补测设计
+
+用户完整目标：知识中心管理平台行覆盖率100%、分支覆盖率95%。上一轮大纲补测与完整采集属于progress。本轮标准开发，主执行者设计实施验证。复用document-route真实HTTP隔离服务，补评论结构非法、生成模型异常、预处理列表/删除/版本元数据访问错误、非法上传后恢复。通过针对隔离路径的文件系统故障注入或模型夹具，不改变产品。伪代码：记录隔离持久数据→注入故障→真实HTTP断言500/错误响应→恢复→请求成功并验证数据。保持全产品分母。
+
+
+### 2026-11-10T23:50:36+08:00 文档接口错误恢复验证结果
+
+用户完整目标：知识中心管理平台行覆盖率100%、分支覆盖率95%。新增6项真实HTTP测试，当前document-route套件27/27通过，证据runtime/test-results/document-error-recovery-directed.log。覆盖三种非法评论结构且保留原始字节、模型返回异常不落文件并可重试、版本索引损坏恢复、预处理删除失败保留元数据并恢复成功。元数据读取器会吞并文件错误返回空投影，故已移除无法命中路由异常的临时列表故障用例；本批未新增非法上传场景。未改产品与分母，准备固定副本全量采集，目标尚未达成。
+
+
+### 2026-11-10T23:53:32+08:00 文档错误恢复固定全量结果
+
+用户完整目标：知识中心管理平台行100%、分支95%。固定副本20261110-235036，154产品文件、170Jest文件，退出0，stable=true、changedFiles=[]。Test Suites: 1 skipped, 169 passed, 169 of 170 total
+Tests:       6 skipped, 2569 passed, 2575 total
+Time:        141.241 s。行16108/16412=98.14%，分支16475/18957=86.9%。新增6项文档真实HTTP场景，定向27/27通过。证据runtime/test-results/coverage-snapshots/20261110-235036/runtime/test-results/node-document-recovery-isolated-20261110。未改产品与分母；system共享服务分类未执行，旧失败保留。整体覆盖率目标尚未达成，goal保持active。
+
+
+### 2026-11-10T23:54:38+08:00 基础Agent执行契约补测设计
+
+用户完整目标：知识中心管理平台行覆盖率100%、分支覆盖率95%。上一轮文档错误恢复为有效进展。本轮标准开发，主执行者承担设计、实施、验证；不修改产品与分母。补基础Agent默认抽象契约、企业品牌及资源存在/缺失边界、实际LLM HTTP请求的Markdown与JSON路由、步骤参数覆盖、失败事件与重试恢复。使用隔离端口和runtime临时资源，finally恢复全局上下文。伪代码：创建本地模型HTTP服务→执行真实Agent流水线→断言请求参数/输出/事件→注入401→验证失败后恢复。
+
+
+### 2026-11-10T23:55:38+08:00 基础Agent执行契约补测结果
+
+用户完整目标：知识中心管理平台行100%、分支95%。新增base-agent-coverage.test.js五项全部通过，真实本地模型HTTP验证Markdown/JSON参数、认证失败分类及恢复；覆盖抽象契约、品牌回退、注册资源读取与缺失恢复。模块定向行56/56=100%、分支39/48=81.25%。证据runtime/test-results/base-agent-directed.log及base-agent-boundaries/coverage-summary.json。首次失败断言错误要求泄露上游错误原文，现按已有标准错误与providerCode契约修正。未修改产品。最新全量仍为文档恢复固定副本98.14%/86.90%，本批尚未采集全量，不据此宣称平台达标。
+
+
+### 2026-11-10T23:56:18+08:00 网页引用传输边界补测设计
+
+用户完整目标：知识中心管理平台行100%、分支95%。本轮标准开发，主执行者设计实施验证。新增真实本地HTTP传输测试，公共域DNS检查与已核验连接使用既有注入接口，验证压缩格式、编码拒绝、状态失败、重定向限额、字符集错误、正文空与超限、DNS空与超时。产品不改、分母不减。伪代码：启动隔离端口→不同响应→readWebReference真实HTTP→断言提取或错误码→恢复正常读取。
+
+
+### 2026-11-10T23:57:29+08:00 网页引用传输补测结果
+
+用户完整目标：知识中心管理平台行100%、分支95%。新增web-reference-transport.test.js共11项真实HTTP测试全部通过，证据runtime/test-results/web-reference-transport-directed.log。验证deflate/br/identity解码、503、未知传输编码及字符集、空HTML与缺失类型、缺重定向位置与零跳转限额、流式/原文/提取正文大小、无效URL/空DNS/解析超时与正常读取恢复。连接通过既有receive边界转到隔离HTTP服务，未连接外网、未修改产品与分母。本批尚待固定全量采集。
+
+
+### 2026-11-10T23:58:34+08:00 基础Agent固定全量结果
+
+用户完整目标：知识中心管理平台行100%、分支95%。固定副本20261110-235538退出0，154产品、171Jest文件，stable=true、changedFiles=[]。Test Suites: 1 skipped, 170 passed, 170 of 171 total; Tests:       6 skipped, 2574 passed, 2580 total; Time:        146.732 s。行16115/16412=98.19%，分支16484/18957=86.95%。证据runtime/test-results/coverage-snapshots/20261110-235538/runtime/test-results/node-base-agent-isolated-20261110。未改变产品或分母；system共享服务分类未执行，旧失败保留。网页传输新增11项未包含在本副本。整体目标尚未达成，goal保持active。
+
+
+### 2026-11-11T00:00:09+08:00 模板存储列表与恢复边界补测设计
+
+用户完整目标：知识中心管理平台行100%、分支95%。本轮标准开发，主执行者设计实施验证。针对模板存储同步/异步列表筛选、摘要缓存隔离与失效、缺失历史/恢复草稿/导入默认值、错误版本拒绝后状态不变补领域测试，复用template-persistence-http真实后端API验证文件持久化。使用事务快照夹具，禁止减少产品分母或改业务规则。伪代码：构造快照→筛选及读取→修改返回副本→验证缓存不污染→写入失效→版本拒绝与恢复→真实HTTP回归。
+
+
+### 2026-11-11T00:02:25+08:00 网页传输全量与模板存储定向结果
+
+用户完整目标：知识中心管理平台行100%、分支95%。网页传输固定副本20261110-235834全量退出0，154产品、172Jest文件，stable=true、changedFiles=[]；171套件通过、1跳过，2585测试通过、6跳过，170.261秒。行16117/16412=98.2%，分支16495/18957=87.01%。证据runtime/test-results/coverage-snapshots/20261110-235834/runtime/test-results/node-web-transport-isolated-20261110。本轮模板存储新增8项，与真实HTTP文件持久化共10/10通过；定向模块行109/109=100%，分支182/190=95.78%。证据runtime/test-results/template-store-directed.log及template-store-boundaries。未修改产品或分母；system共享服务分类未执行，旧失败保留。模板新增尚待固定全量，整体目标未达到，goal保持active。
+
+
+### 2026-11-11T00:03:47+08:00 聚合存储读写投影补测设计
+
+用户完整目标：知识中心管理平台行100%、分支95%。本轮标准开发，主执行者实施验证，新增真实HTTP验证草稿旧版投影、删除快照、缺失记录、错误响应默认与详细信息、异步事务成功、文件原子写失败临时文件清理与重试恢复。保持产品与分母不变，运行集中runtime。伪代码：隔离存储→响应成功/删除/错误→验证快照与状态→恢复正常→重试。
+
+
+### 2026-11-11T00:05:19+08:00 聚合存储投影补测结果
+
+用户完整目标：知识中心管理平台行100%、分支95%。新增4项测试，aggregate-store-boundaries-http共13/13通过，证据runtime/test-results/aggregate-projections-directed.log。真实HTTP覆盖草稿旧聚合/新投影、缺失草稿、删除/缺失记录空快照、默认与详细错误映射、异步事务版本条件；文件注入rename失败验证原子清理、旧数据保留与恢复。未改产品或分母，待下一固定全量采集。
+
+
+### 2026-11-11T00:05:53+08:00 模板存储固定全量结果
+
+用户完整目标：知识中心管理平台行100%、分支95%。固定副本20261111-000225退出0，154产品、173Jest文件，stable=true、changedFiles=[]。Test Suites: 1 skipped, 172 passed, 172 of 173 total; Tests:       6 skipped, 2593 passed, 2599 total; Time:        175.812 s。行16121/16412=98.22%，分支16542/18957=87.26%。证据runtime/test-results/coverage-snapshots/20261111-000225/runtime/test-results/node-template-store-isolated-20261111。未改产品或分母，system共享服务分类未执行，旧失败保留。聚合存储新增4项未包含于该固定副本。整体目标尚未达到，goal保持active。
+
+
+### 2026-11-11T00:07:13+08:00 增量审核自动选中补测设计
+
+用户完整目标：知识中心管理平台行100%、分支95%。本轮标准开发，主执行者验证审核bootstrap在有待审核任务时默认选择可读任务、显式view保留列表、无任务时返回发布基线及未知文档拒绝；沿用真实HTTP任务创建审核闭环与同快照服务投影，产品与分母不变。
+
+
+### 2026-11-11T00:08:34+08:00 增量审核自动选中补测结果
+
+用户完整目标：知识中心管理平台行100%、分支95%。incremental-build-api定向22/22通过，新用例通过真实HTTP创建及审核候选后，验证同快照reviewBootstrap默认选中已批准可读任务、显式列表保留基线、未知文档拒绝和正确文档读取。证据runtime/test-results/incremental-bootstrap-directed.log。产品及覆盖率分母未变，尚待固定全量采集，整体目标仍未完成。
+
+
+### 2026-11-11T00:08:57+08:00 聚合存储固定全量结果
+
+用户完整目标：知识中心管理平台行100%、分支95%。固定副本20261111-000553退出0，154产品、173Jest文件，stable=true、changedFiles=[]；172套件通过、1跳过，2597用例通过、6跳过，149.565秒。行16124/16412=98.24%，分支16557/18957=87.33%。证据runtime/test-results/coverage-snapshots/20261111-000553/runtime/test-results/node-aggregate-projections-isolated-20261111。system共享服务分类未执行，旧失败保留；未改变产品和分母，整体目标仍未达成。
+
+
+### 2026-11-11T00:11:58+08:00 增量审核固定全量结果
+
+用户完整目标：知识中心管理平台行100%、分支95%。固定副本20261111-000834退出0，154产品、173Jest文件，stable=true、changedFiles=[]；172套件通过、1跳过，2598用例通过、6跳过，160.583秒。行16127/16412=98.26%，分支16561/18957=87.36%。证据runtime/test-results/coverage-snapshots/20261111-000834/runtime/test-results/node-incremental-bootstrap-isolated-20261111。system共享服务分类未执行，旧失败保留；未改变产品和分母，整体目标仍未达成。
+
+
+### 2026-11-11T00:12:58+08:00 平台配置Schema边界补测设计
+
+用户完整目标：知识中心管理平台行100%、分支95%。本批标准开发，由主执行者设计实施验证，针对既有Schema校验器补充有限数值、布尔类型、Unicode长度、唯一数组项、附加字段Schema与JSON Pointer转义的正反例；不扩展Schema支持范围或修改产品规则。验收以明确错误码、路径、恢复后空错误列表为准。伪代码：定义局部契约→校验有效/无效数据→断言精确错误列表→复用同契约验证修正输入。
+
+
+### 2026-11-11T00:13:50+08:00 AI流式预览边界补测设计
+
+用户完整目标：知识中心管理平台行100%、分支95%。补充纯转换函数previewMarkdown的JSON分片、Unicode转义、截断转义、非法转义、嵌套字段与代码围栏场景，保证仅提取顶层markdown且不泄露provenance。验收以明确预览字符串断言，纯函数无需后端请求；不修改产品规则。
+
+
+### 2026-11-11T00:14:10+08:00 Schema与流式预览定向结果
+
+用户完整目标：知识中心管理平台行100%、分支95%。新增schema-validator-boundaries共6项，与既有平台契约共19/19通过；模块行48/48=100%、分支88/90=97.77%。新增production-ai-preview-boundaries共13/13通过，模块行36/36=100%、分支42/42=100%。分别验证类型/Unicode长度/唯一数组/附加字段与路径转义，以及顶层正文/嵌套来源隔离/完整与截断转义/损坏输入。证据runtime/test-results/schema-validator-directed.log和production-preview-directed.log及对应coverage-summary.json。纯函数校验无需后端请求，未改产品与分母，尚待固定全量；整体目标仍未达成。
+
+
+### 2026-11-11T00:15:20+08:00 步骤执行器异常与输入边界补测设计
+
+用户完整目标：知识中心管理平台行100%、分支95%。针对步骤执行器新增不存在Agent、执行异常传播与重试恢复、详情回调传递、旧别名、缺少步骤标识和空前序值的输入转换测试；使用局部Agent接口对象，避免全局模拟污染。模块不涉及后端API，纯执行协议验证。产品和覆盖率分母不变。
+
+
+### 2026-11-11T00:15:46+08:00 步骤执行器定向结果
+
+用户完整目标：知识中心管理平台行100%、分支95%。step-executor新增3项，13/13通过，模块行34/34=100%、分支35/35=100%。验证缺失Agent拒绝与恢复、详情回调、旧别名、执行错误原样传播、空及非包装前序值；局部接口对象不污染全局，纯执行协议无需后端API。证据runtime/test-results/step-executor-directed.log及step-executor-directed/coverage-summary.json。当前固定副本20261111-001410未包含本次新增，待下一固定全量，目标仍未完成。
+
+
+### 2026-11-11T00:17:33+08:00 Schema与预览固定全量结果
+
+用户完整目标：知识中心管理平台行100%、分支95%。固定副本20261111-001410退出0，154产品、175Jest文件，stable=true、changedFiles=[]。Test Suites: 1 skipped, 174 passed, 174 of 175 total；Tests:       6 skipped, 2617 passed, 2623 total；Time:        166.462 s。行16136/16412=98.31%，分支16598/18957=87.55%。证据runtime/test-results/coverage-snapshots/20261111-001410/runtime/test-results/node-schema-preview-isolated-20261111。步骤执行器新增3项尚未包含；system共享服务分类未执行，旧失败保留；未改变产品及分母。整体目标仍未完成。
+
+
+### 2026-11-11T00:21:33+08:00 步骤执行器固定全量结果
+
+用户完整目标：知识中心管理平台行100%、分支95%。固定副本20261111-001733退出0，154产品、175Jest文件，stable=true、changedFiles=[]。Test Suites: 1 skipped, 174 passed, 174 of 175 total；Tests:       6 skipped, 2620 passed, 2626 total；Time:        173.914 s。行16140/16412=98.34%，分支16603/18957=87.58%。证据runtime/test-results/coverage-snapshots/20261111-001733/runtime/test-results/node-step-executor-isolated-20261111。system共享服务分类未执行，旧失败保留；未改变产品及分母。Java与前端本批未重新采集，整体目标仍未完成，goal保持active。
+
+
+### 2026-11-11T00:24:32+08:00 审核范围阻断与大纲导入边界补测设计
+
+用户完整目标：知识中心管理平台的测试覆盖率，行覆盖率需要达到100%，分支覆盖率需要达到95%。本批采用标准开发，由主执行者补测和验证。沿用已补充的审核决定真实HTTP用例，验证reported范围阻断409、不调用审核服务，以及取消范围变更后恢复转发；大纲导入补充多余列、仅说明无路径、超长名称、Markdown作为父目录及空模板，断言结构化错误定位和恢复后合法输入。产品规则和覆盖率分母不变。验收：定向测试通过，固定副本全量复采并核查源码稳定性。
+
+
+### 2026-11-11T00:25:04+08:00 审核范围阻断与大纲导入定向结果
+
+用户完整目标：知识中心管理平台行100%、分支95%。两套件39/39通过（新增大纲6项，审核决定阻断/解除恢复1项），真实HTTP验证reported范围拒绝409且不转发、取消后恢复200。大纲模块行82/82=100%，分支80/83=96.38%。证据runtime/test-results/review-outline-directed.log及review-outline-directed/coverage-summary.json。产品与分母未变，接下来固定全量复采；定向主路由覆盖率不代表全量结果，整体目标尚未完成。
+
+
+### 2026-11-11T00:28:26+08:00 审核与大纲固定全量结果
+
+用户完整目标：知识中心管理平台行100%、分支95%。固定副本20261111-002504退出0，154产品、175Jest文件，stable=true、changedFiles=[]。174套件通过、1跳过；2626用例通过、6跳过，147.712秒。行16144/16412=98.36%，分支16609/18957=87.61%；相比上一固定结果增加4行、6分支。证据runtime/test-results/coverage-snapshots/20261111-002504/runtime/test-results/node-review-outline-isolated-20261111，含HTML index.html、LCOV、汇总与稳定性清单。审核阻断用例已在上次固定结果中包含，实际全量用例增量为大纲6项。system共享服务分类未执行，历史失败保留，Java和前端本批未复采。未改变产品及分母，整体目标仍未达到，goal保持active。
+
+
+### 2026-11-11T00:29:07+08:00 认证网关传输与转发补测设计
+
+用户完整目标：知识中心管理平台的测试覆盖率，行覆盖率需要达到100%，分支覆盖率需要达到95%。上一轮属于有效进展。本轮标准开发，由主执行者验证已有网关契约，不修改产品与覆盖率分母。启动本机临时认证上游和真实网关HTTP服务器，覆盖会话有效/非200/空正文/错误JSON/断连/超时，以及插件缺失时认证和权限代理分流、插件URL重写恢复和异步错误输出。伪代码：临时文件配置→启动上游→真实请求网关→核对状态、上下文ID及下游调用→恢复上游成功→关闭连接并移除runtime夹具。验收以定向HTTP断言和固定全量采集为准。
+
+
+### 2026-11-11T00:30:17+08:00 认证网关传输定向结果
+
+用户完整目标：知识中心管理平台行100%、分支95%。新增knowledge-center-auth-transport-http共14/14通过。真实HTTP验证有效会话Cookie转发、上游非200/空正文/null/错误JSON/断连/超时拒绝业务及恢复成功，无插件代理分流，权限插件重写URL后恢复，异步失败结构化输出及非法状态回退。夹具均在runtime隔离且关闭连接后清理。证据runtime/test-results/auth-transport-directed.log。未改产品与分母，准备固定副本全量复采，整体目标仍未完成。
+
+
+### 2026-11-11T00:33:25+08:00 认证网关固定全量结果
+
+用户完整目标：知识中心管理平台行100%、分支95%。固定副本20261111-003017退出0，154产品、176Jest文件，stable=true、changedFiles=[]。175套件通过、1跳过；2640用例通过、6跳过，167.275秒。行16149/16412=98.39%，分支16617/18957=87.65%，比上一固定全量增加5行、8分支。证据runtime/test-results/coverage-snapshots/20261111-003017/runtime/test-results/node-auth-transport-isolated-20261111，包含HTML index.html、LCOV、汇总、测试日志和稳定性清单。system共享服务分类未运行，历史失败保留，Java和前端本批未重采。未改产品和分母，整体目标仍未达到，goal保持active。
+
+
+### 2026-11-11T00:34:33+08:00 代理响应契约异常补测设计
+
+用户完整目标：知识中心管理平台的测试覆盖率，行覆盖率需要达到100%，分支覆盖率需要达到95%。主执行者采用标准开发，针对createProxy既有校验失败502、transform返回undefined原样透传、错误规范化与请求上下文传递补真实HTTP用例。独立本机上游和网关，保留状态/头/正文及关联ID断言。无需产品改动，不改变覆盖率分母。验收：与流式代理既有用例联合运行并采集模块覆盖率。
+
+
+### 2026-11-11T00:35:30+08:00 代理响应边界定向结果
+
+用户完整目标：知识中心管理平台行100%、分支95%。新增proxy-response-boundaries-http共8项，与已有流式2项共10/10通过。真实HTTP覆盖转换空值透传、契约校验失败502、上下文定位、中文正文长度、路径与请求头映射、上游断连及三类错误载荷。proxy-utils模块行52/52=100%，分支43/50=86%；尚未全量复采，不替代平台全量指标。初次断连测试因Node原生Error跨Jest上下文导致instanceof断言失败，改为断言真实ECONNRESET及message后通过，产品未变。证据runtime/test-results/proxy-response-directed.log与proxy-response-directed/coverage-summary.json、lcov.info。整体目标仍未完成。
+
+
+### 2026-11-11T00:36:11+08:00 配置接口异常恢复补测设计
+
+用户完整目标：知识中心管理平台的测试覆盖率，行覆盖率需要达到100%，分支覆盖率需要达到95%。标准开发，主执行者扩展既有真实HTTP配置路由测试，对模型/MCP/Agent预设读失败、更新前读取失败、持久化失败进行一次性依赖错误注入；断言500统一错误且随后正常请求恢复。隔离的config-manager对象仅替代存储接口，实际Express路由通过HTTP调用，不触碰真实配置。产品和分母不变。验收为联合代理边界与配置路由定向覆盖率，然后固定全量复采。
+
+
+### 2026-11-11T00:36:51+08:00 配置接口异常与缺省边界定向结果
+
+用户完整目标：知识中心管理平台行100%、分支95%。config-route-http-coverage新增9项（8类读写失败恢复、1项不完整配置默认值），与代理两套件联合23/23通过。真实Express HTTP验证模型/MCP/Agent读取与保存错误进入统一处理器、失败不产生持久化调用结果且下一次请求恢复。config路由行85/85=100%、分支44/44=100%；proxy-utils行52/52=100%、分支43/50=86%。证据runtime/test-results/config-proxy-directed.log及config-proxy-directed/coverage-summary.json。产品和分母未变，尚待固定全量复采，平台全量最新基线仍为Node行98.39%、分支87.65%，Java与前端未重采，整体目标未达成。
+
+
+### 2026-11-11T00:37:34+08:00 源文档适配器契约补测设计
+
+用户完整目标：知识中心管理平台的测试覆盖率，行覆盖率需要达到100%，分支覆盖率需要达到95%。主执行者标准开发补充SourceAdapter未实现接口错误、扩展名大小写、真实文件SHA256与缺失文件错误；NormalizedDocument验证空值默认、完整元数据保留、序列化及行数。该模块为文件/纯数据协议，无后端HTTP行为。产品和分母不变，验收以定向模块覆盖率和语义断言为准。
+
+
+### 2026-11-11T00:37:45+08:00 源文档适配器定向结果
+
+用户完整目标：知识中心管理平台行100%、分支95%。新增source-adapter-contract共5/5通过，模块行18/18=100%、分支38/38=100%。验证抽象接口拒绝、扩展名大小写、真实文件SHA256及ENOENT、标准化文档默认值与完整元数据序列化。纯文件协议，无需后端HTTP。证据runtime/test-results/source-adapter-directed.log及source-adapter-directed/coverage-summary.json。产品和分母未改，尚待固定全量复采；平台目标仍未完成，goal保持active。
+
+
+### 2026-11-11T00:41:11+08:00 配置、代理与源适配器固定全量结果
+
+用户完整目标：知识中心管理平台行覆盖率100%、分支覆盖率95%。固定副本20261111-003800；稳定性{"stable": true, "changedFiles": [], "jestExit": 0, "completed": true, "productFiles": 154, "jestFiles": 178}。测试汇总：Test Suites: 1 skipped, 177 passed, 177 of 178 total
+Tests:       6 skipped, 2662 passed, 2668 total
+Time:        181.062 s。行16165/16412=98.49%；分支16633/18957=87.74%。证据：runtime/test-results/coverage-snapshots/20261111-003800/runtime/test-results/node-config-source-isolated-20261111。产品与分母未变；system共享服务分类未执行，Java及前端本轮未复采，平台整体目标仍未达成。
+
+
+### 2026-11-11T00:42:01+08:00 快照持久化边界补测设计
+
+用户完整目标：知识中心管理平台的测试覆盖率，行覆盖率需要达到100%，分支覆盖率需要达到95%。标准开发，主执行者补测SnapshotTracker已有文件协议：损坏JSON读取拒绝、列表跳过损坏项与缺省元数据、非目录错误传播、latest为目录时保存失败、保留策略缺失目录与删除错误。使用runtime隔离真实文件，不修改产品与分母。伪代码：创建临时目录→构造文件/目录边界→调用公开方法→断言返回值或原始错误→清理本用例目录。验收为联合既有快照测试的定向覆盖率；平台结果须另行全量采集。
+
+
+### 2026-11-11T00:42:27+08:00 快照文件边界定向结果
+
+用户完整目标：知识中心管理平台行100%、分支95%。新增snapshot-tracker-boundaries共6项，联合已有快照测试17/17通过。真实文件验证损坏JSON拒绝及修复恢复、缺省统计和前序关联、列表过滤/时间排序、ENOTDIR传播、latest目录冲突与修复、清理目录错误及保留最新文件。模块行60/60=100%，分支37/37=100%。证据runtime/test-results/snapshot-boundaries-directed.log与snapshot-boundaries-directed/coverage-summary.json。产品与分母未改，平台目标仍未完成，全量最新基线为Node行98.49%、分支87.74%；本批尚未全量复采。Jest相对覆盖率路径按配置目录解析，首次落入tests内runtime，已将本批产物移回根runtime；后续使用绝对路径。
+
+
+### 2026-11-11T00:43:04+08:00 PDF适配器纯协议与扫描边界设计
+
+用户完整目标：知识中心管理平台的测试覆盖率，行覆盖率需要达到100%，分支覆盖率需要达到95%。标准开发，补已有PDF适配器标题优先级/空白/长度上限、日期缺省、关键词去重/数量上限/特性来源、类型枚举；真实文件验证缺失目录、非目录错误与符号链接忽略，不生成或修改PDF，不改产品和分母。验收为联合既有真实PDF解析测试定向采集，平台仍需全量验收。
+
+
+### 2026-11-11T00:43:17+08:00 PDF适配器边界定向结果
+
+用户完整目标：知识中心管理平台行100%、分支95%。新增PDF协议边界12项，联合既有真实PDF解析共25/25通过。覆盖标题优先级及99/100字符边界、日期缺省、六类路径、关键词过滤去重与15项上限、真实目录扫描缺失/符号链接/ENOTDIR。模块行55/55=100%，分支40/44=90.9%。证据runtime/test-results/pdf-boundaries-directed.log及pdf-boundaries-directed/coverage-summary.json。产品与分母不变；尚未全量复采，平台目标仍未完成，Node最新固定全量行98.49%、分支87.74%。
+
+
+### 2026-11-11T00:43:35+08:00 PDF解析元数据缺省补测设计
+
+用户完整目标：知识中心管理平台的测试覆盖率，行覆盖率需要达到100%，分支覆盖率需要达到95%。上一轮有有效进展，本轮标准开发补充pdf-parse依赖返回无info、空info和完整info时公开parse方法的标准化契约。替代外部解析依赖输出，但使用runtime真实文件读取与SHA256；已有真实PDF解析仍联合验证。断言作者/日期/producer/creator默认值和完整值、清洗正文与哈希，不改产品和分母。
+
+
+### 2026-11-11T00:44:08+08:00 PDF元数据缺省定向结果
+
+用户完整目标：知识中心管理平台行100%、分支95%。新增3种解析依赖元数据返回契约，联合真实PDF解析及已有边界共28/28通过。缺失info、空info和完整info均验证默认值/完整值、清洗正文、页数/行数和真实文件SHA256。PDF适配器行55/55=100%，分支44/44=100%。证据runtime/test-results/pdf-metadata-directed.log与pdf-metadata-directed/coverage-summary.json。外部解析返回在新增套件受控替代，既有真实PDF解析单独套件联合通过。产品与分母不变，尚未全量复采；平台目标仍未完成。
+
+
+### 2026-11-11T00:45:03+08:00 配置校验边界设计
+
+用户完整目标：知识中心管理平台的测试覆盖率，行覆盖率需要达到100%，分支覆盖率需要达到95%。质量校验器未覆盖代码包含固定成功检查的不可达失败循环，不伪造内部数据覆盖。本轮转向ConfigValidator公开纯校验协议：数值类型与边界、MCP缓存和加密头错误/有效值、预设缺少字段。无需HTTP，未改后端行为。主执行者标准开发，断言具体错误和合法边界，不改产品与分母。
+
+
+### 2026-11-11T00:45:14+08:00 配置校验边界定向结果
+
+用户完整目标：知识中心管理平台行100%、分支95%。新增config-validator-boundaries共22项，联合已有测试39/39通过。验证数值类型/下限/温度端点、缓存缺省与有效值、加密头明文/密文/缺失字段及预设缺失agent等具体错误。模块行53/53=100%，分支77/77=100%。证据runtime/test-results/config-validator-directed.log及config-validator-directed/coverage-summary.json。产品及分母未改；平台目标仍未完成，本批尚未全量复采。
+
+
+### 2026-11-11T00:46:05+08:00 模板上传解析HTTP边界设计
+
+用户完整目标：知识中心管理平台的测试覆盖率，行覆盖率需要达到100%，分支覆盖率需要达到95%。标准开发，主执行者以本机临时HTTP服务器调用readTemplateUpload，验证非multipart头、损坏报文、字段数量/合法性、空上传和40MB总请求限制；断言结构化错误及随后合法请求恢复。不改产品与分母，不写真实模板库。
+
+
+### 2026-11-11T00:46:53+08:00 模板上传异常修复及定向结果
+
+用户完整目标：知识中心管理平台行100%、分支95%。新增template-upload-parser-http共7/7通过，真实HTTP覆盖非法multipart、损坏报文、字段截断/数量/名称、无文件、41MiB请求和正常上传恢复。发现Busboy文件流在报文损坏及主动destroy时发出未捕获error，局部修复为注册文件流error监听并归一化400；保留首次envelope错误，40MiB上限仍返回413。首次测试有多余括号已修正；原未处理错误和归一化前500失败保留于过程记录。模块单套件行47/48=97.91%，分支22/29=75.86%，不替代全量联合指标。证据runtime/test-results/template-upload-directed.log及template-upload-directed/coverage-summary.json。产品新增错误监听使源码分母变化，下一次固定全量应使用实际新分母，不沿用旧计数。平台整体目标仍未完成。
+
+
+### 2026-11-11T00:47:29+08:00 上传编码与批量边界设计
+
+用户完整目标：知识中心管理平台的测试覆盖率，行覆盖率需要达到100%，分支覆盖率需要达到95%。标准开发扩展真实HTTP上传解析用例，二进制非法UTF8应返回文件级422诊断，批量files保留索引及元数据，非法文件字段拒绝。检查客户端中断需使用明确服务端观察，不以连接关闭推断解析结果；本批先完成编码与批量场景。不改产品及分母。
+
+
+### 2026-11-11T00:47:41+08:00 上传编码和批量定向结果
+
+用户完整目标：知识中心管理平台行100%、分支95%。新增3项真实HTTP上传编码/批量/非法文件字段测试，套件10/10通过。非法UTF8以文件级TEMPLATE_ENCODING_INVALID/422记录且无content；批量files保留顺序、公共元数据与默认标题。模块行48/48=100%，分支24/29=82.75%。证据runtime/test-results/template-upload-encoding-directed.log及template-upload-encoding-directed/coverage-summary.json。客户端中断尚未补测，不将其记录为通过。产品和分母本批未改，平台全量待复采且目标仍未完成。
+
+
+### 2026-11-11T00:48:09+08:00 上传连接中断及全量复采设计
+
+用户完整目标：知识中心管理平台的测试覆盖率，行覆盖率需要达到100%，分支覆盖率需要达到95%。上一轮有效进展。本轮标准开发，以真实HTTP连接写入部分multipart，等待服务端收到正文后主动断开，直接观察readTemplateUpload拒绝的TEMPLATE_UPLOAD_ABORTED/400，再验证正常上传恢复。若文件流错误抢先覆盖中断错误，局部保留原始envelope错误。之后用固定副本完整采集Node产品154文件及实际Jest清单，记录新分母与稳定性。Java和前端仍在平台目标内，不以Node结果替代全平台验收。
+
+
+### 2026-11-11T00:48:33+08:00 上传连接中断定向结果
+
+用户完整目标：知识中心管理平台行100%、分支95%。新增真实客户端中断用例，上传套件11/11通过；等待服务器收到部分正文后断开，观察解析Promise错误并验证后续上传恢复。初次观察TEMPLATE_INVALID_UPLOAD覆盖中断原因，局部修复为aborted事件先保留TEMPLATE_UPLOAD_ABORTED再destroy；先前请求超限仍保留413。模块行50/50=100%，分支24/29=82.75%。证据runtime/test-results/template-upload-aborted-directed.log与template-upload-aborted-directed/coverage-summary.json。产品错误传播修复增加实际分母，准备固定副本全量采集。平台整体目标仍未完成。
+
+### 2026-11-11T00:52:14+08:00 上传及预处理固定全量结果
+
+用户完整目标：知识中心管理平台行100%、分支95%。固定副本20261111-004833，产品154文件、Jest182文件，稳定性stable=true、changedFiles=[]、jestExit=0。181套件通过、1跳过；2716用例通过、6跳过，耗时187.194秒。行16185/16415=98.59%，分支16671/18957=87.94%。证据runtime/test-results/coverage-snapshots/20261111-004833/runtime/test-results/node-upload-preprocessing-isolated-20261111。Node仍缺230行、2286分支；system共享服务分类未执行，Java与前端仍需单独验收，平台目标未完成。
+
+### 2026-11-11T00:52:14+08:00 图片说明接口边界设计
+
+用户完整目标：知识中心管理平台的测试覆盖率，行覆盖率需要达到100%，分支覆盖率需要达到95%。标准开发，主执行者扩展图片说明提供者的公开构造和caption契约。以本机HTTP服务验证实际OpenAI兼容请求与响应，覆盖无凭据、环境配置、模型、图片MIME、上下文缺省、请求选项、空响应和错误响应；断言实际请求体和返回/错误，不接触外部付费API，不改产品逻辑。定向测试后复查模块覆盖率，并保留全平台未达标事实。
+
+### 2026-11-11 工作台责任人投影补测
+
+覆盖率目标仍为行100%、分支95%。基于最新 LCOV，`routes/knowledge-center.js` 的工作台责任人查询存在审核文档投影和审核服务异常降级未命中路径。本批沿用真实 HTTP handler 和隔离内存服务，补充审核文档加入工作台及审核服务异常时 `completeness=partial/unavailable` 两个场景；不修改产品逻辑、不改变覆盖率分母。验收标准为公开响应中的任务类型、状态、来源和降级标记准确，且既有工作台套件不回归。
+
+同批继续覆盖 MR 外链边界：通过真实工作台查询传入格式非法、非 HTTPS、携带凭据的 webUrl，确认它们不进入外部合入待办；有效 HTTPS 链接继续显示。此验证锁定现有安全过滤行为，不改变产品逻辑或数据范围。
+
+### 2026-11-11T00:54:20+08:00 图片说明接口定向结果
+
+用户完整目标：知识中心管理平台行100%、分支95%。图片说明提供者现有及新增测试合计8/8通过。本机真实HTTP覆盖兼容接口请求体、句末标点、空响应后恢复及400错误传播；公开构造契约覆盖无凭据、环境变量模型/端点/API Key、MIME和请求选项。模块行32/32=100%，分支66/67=98.5%。证据runtime/test-results/image-caption-directed.log及image-caption-directed/coverage-summary.json。未改产品及分母；此项未纳入上次全量快照，平台目标仍未完成。
+
+### 2026-11-11T00:57:51+08:00 三端 full 覆盖采集结果
+
+用户完整目标：知识中心管理平台行100%、分支95%。执行 `python3 tests/run_tests.py full --coverage --jobs 1`，HTML报告为 `runtime/test-reports/2026-11-11/20261111-005751-612440-full/report.html`。全量任务74/79成功，3434通过、1失败、34跳过；Playwright前置迁移因工作树含未提交迁移变更拒绝，另有1个Python性能用例失败。Node覆盖率16200/16415行=98.69%、16692/18957分支=88.05%；Java覆盖率3457/3485行=99.20%、2047/2322分支=88.16%。前端Istanbul采集在审核工作台16项中15项通过、1项因工作台数据残留断言失败，未生成可验收的前端摘要；失败日志在 `details/coverage/frontend/review-cases/1794331360238-2025763/review-test.log`。全平台目标仍未达成，不能用缺失前端报告推断通过。
+### 2026-11-11T02:00:00+08:00 MR 参与人解析边界补测设计
+
+用户完整目标：知识中心管理平台行100%、分支95%。最新固定 Node LCOV 显示 `gitlab-participants.js` 行覆盖完整但分支仅 55.8%。本轮沿公开 `resolveMRParticipants` 契约补充真实本地 HTTP GitLab 响应：非数组响应、分页上限、无审核列表、身份无匹配/重复、缺少登录账号、统一登录账号重复、无唯一活跃项目成员，以及仅有无效审核人时的提交门禁。测试只调用公开函数和本机 HTTP，不修改产品逻辑、覆盖率分母或门槛；完成后将该原生契约接入既有 Jest bridge，保证固定 Node 采集能够计数。
+### 2026-11-11T02:15:00+08:00 前端固定 Istanbul 复采
+
+执行 `KC_FRONTEND_ISTANBUL_OUTPUT=runtime/coverage-goal/frontend-current node tools/repository/collect-frontend-istanbul-coverage.cjs` 完成 57 个固定产品脚本、45 个导航页及真实浏览器场景采集；`source-stability.json` 为 `stable=true`、`changedFiles=[]`。前端行覆盖 8717/10374（84.02%），分支覆盖 10036/14196（70.69%），摘要见 `runtime/coverage-goal/frontend-current/coverage-summary.json`。该结果补齐了此前全量报告缺失的前端证据，但距离平台行100%、分支95%目标仍有明显缺口；专业 HTML 报告的9.5/10内部评分不作为覆盖率通过依据。
+
+### 2026-11-11T02:19:42+08:00 最新 smoke HTML 报告复验
+
+重新执行 `python3 tests/run_tests.py smoke --report-page-size 2`，2 个任务、24 个用例全部通过（Jest 22、unittest 2），报告为 `runtime/test-results/smoke/20261111-021942-616420-smoke/report.html`，生成12个场景分页。验收脚本支持传入报告目录，并对该最新报告执行离线 Chromium 1440px/390px 各10次导航：桌面最大 DOMContentLoaded 85.9ms、移动端17.8ms；无脚本错误、无外部请求、无横向溢出；跨页搜索命中3条并可深链接到用例，无 JavaScript 时可从总览进入场景页。大型 full 报告的100ms性能仍未声明通过。
+
+### 2026-11-11T02:33:00+08:00 报告字距规范复核
+
+截图复核发现标题和指标数值使用负字距，已按项目视觉规范改为 `letter-spacing: 0`。本次仅调整报告资源样式，不改变测试数据、分页或报告契约；最新 smoke 报告及既有离线 Chromium 验收继续作为证据。内部评分保持9.5/10，评分不是第三方认证。
+
+### 2026-11-11T02:30:00+08:00 资料加工上传 API 补测设计
+
+用户目标仍为平台固定源码清单行覆盖率100%、分支覆盖率95%。当前前端全量证据中 `common/api/cleaning-api.js` 存在3条未覆盖行及10个未覆盖分支。本轮在固定 Chromium 页面通过公开 API 调用创建上传会话、追加文件、上传分片、完成文件/会话、创建批次；隔离本机 HTTP 回显并断言编码路径、HTTP 方法、JSON/二进制正文、幂等键及请求头。增加结构化服务错误、无错误消息错误、非法 JSON 错误和无 `data` 信封回退场景。测试结束清理 HTTP 服务与路由。不得改产品规则或缩小57脚本固定清单；定向测试后执行完整前端采集并校验源码稳定性。
+2026-11-11T02:53:54+08:00 前端审核覆盖补充：在现有真实审核 Chromium 的仓库阅读器场景中，通过公开 `enhanceDirectoryTrees` DOM 契约验证目录搜索、键盘下移/End 导航和清除筛选；通过 `observeRepositoryImages` 验证相对图片 srcset 改写、危险/外部 src 变更后的原值恢复与 observer 清理。定向 Playwright 1/1 通过；不修改产品源码、固定源码清单或覆盖率阈值。下一次完整采集需确认 `source-stability.json` 后再计入平台证据。
+
+### 2026-11-11T04:18:00+08:00 专业 HTML 报告交付复核
+
+用户完整提示词：
+
+> 有哪些业界优秀的测试报告可以参考，然后使用rea skill来改进生成的html报告，需要的是专业的html测试报告，评分需要达到9分以上。
+
+沿用并完整读取仓库 REA app-capability-transfer、reverse-engineer-anything Skill，核对已保存官方来源、REA 证据、功能映射和内部评分。统一入口回归43/43通过；重新运行 `python3 tests/run_tests.py smoke --report-page-size 2`，24/24通过，生成 `runtime/test-results/smoke/20261111-041717-255609-smoke/report.html` 和12个场景分页。现有确定性 Playwright 验收脚本对该新报告在1440px/390px各导航10次，P95 DOMContentLoaded为83.5ms/63.1ms；无横向溢出、脚本错误或外部请求；搜索、深链接、无JavaScript静态分页通过。本轮浏览器复验属于普通Playwright证据，未冒充新的REA Evidence ID。内部评分维持9.5/10，保留大型报告性能未验收限制；覆盖率目标另行验收。
+
+覆盖率续作新增GitLab成功来源夹具，首次漏模型目录导致按钮禁用；修正后发现方法识别忽略字符串URL的fetch options，补正后真实入口已形成包含路径/commit/blob/摘要的来源快照并在夹具内拦截AI任务POST。诊断完整运行各场景通过，但运行中补了大纲状态恢复，source-stability正确拒绝该报告；计数84.35%/71.19%只供诊断，不作为最新正式覆盖率。已启动输入固定的全量复采。复盘：运行期间必须冻结采集输入，状态恢复应在启动采集前完善。
+
+
+### 2026-11-11T04:27:52+08:00 GitLab成功来源场景稳定复采结果
+
+固定前端完整复采 `runtime/coverage-goal/frontend-gitlab-success-stable/` 已成功结束；57个产品源码、45个导航、22个API契约、31个写作页面、16个任务页面和16个审核页面等既定采集齐全。`source-stability.json` 的 completed/stable/inputsStable 均为 true，changedFiles/changedInputs 均为空。行覆盖8753/10374（84.37%），分支10108/14196（71.20%）；相对上一正式 frontend-provenance-null-followup 结果增加26行、38分支。本轮保留固定分母，未混用诊断运行最优值；平台行100%、分支95%目标仍未完成。HTML报告内部9.5/10评分与覆盖率验收分别记录。
+
+
+### 2026-11-11T04:29:47+08:00 资料上传页面HTTP契约补测设计
+
+用户完整提示词：
+
+> /goal 知识中心管理平台的测试覆盖率，行覆盖率需要达到100%，分支覆盖率需要达到95%。
+
+标准开发；责任由主执行者及确定性Chromium/HTTP工具承担。沿既有公开页面表单、按钮与API边界，补充资料清洗上传：无文件拒绝、分块失败保留输入并可重试、成功按Content-Range传递所有字节并顺序完成文件/会话/批次、零字节及默认块大小、上传后刷新工作区。使用真实本机HTTP服务，不向共享后端写入；检查请求头、二进制正文、幂等键及页面结果。独立夹具接入既有固定前端采集，保留57源码分母，运行期间冻结输入。范围不改变产品逻辑或覆盖率门槛；本次局部测试不代替三端全平台验收。
+
+
+### 2026-11-11T04:36:36+08:00 上传夹具契约校准
+
+定向7场景已通过。审查发现零字节文件当前页面生成非有效Content-Range，不能用隔离服务接受该请求来声明零字节上传成功；已调整为隔离服务422拒绝并断言页面保留文件、停止完成/建批请求和显示错误。真实资料加工服务不属于本机隔离验收范围。中止原完整采集后修正夹具，再启动冻结输入采集；未使用被中止的计数。后续待办：依据资料加工服务的正式空文件契约决定页面预校验或空文件完成协议，不能因覆盖率目标自行改变业务规则。
+
+
+### 2026-11-11T04:38:01+08:00 资料上传页面定向验收
+
+新增 `tests/e2e/agent-runner/fixtures/cleaning-upload-http.cjs` 并接入固定前端采集。真实Chromium+本机HTTP共7场景通过，零页面脚本错误；日志 `runtime/coverage-goal/cleaning-upload-directed/verification.log`。覆盖对话框开关、无文件拦截、分块失败/批次失败后保留与恢复、空文件拒绝、多块及默认块大小上传、成功后重载。全量稳定复采正在运行，输出 `runtime/coverage-goal/frontend-cleaning-upload-verified/`，尚不声明新增覆盖率；上一正式前端仍为8753/10374行、10108/14196分支。平台100%/95%目标仍未完成。
+
+
+### 2026-11-11T04:42:02+08:00 写作候选采用与并发编辑补测设计
+
+沿用户已授权的页面与HTTP公开边界，补充嵌入式写作历史候选的采用流程。以真实Chromium点击历史记录与采用按钮，通过本机HTTP服务验证提交正文、修订版本、附件与基线摘要；正常响应后检查保存提示与正文。另在采用HTTP响应返回前触发真实编辑事件，验证后续人工正文保留、提示再次保存，避免迟到响应覆盖用户修改。只增加测试，不改变业务规则、产品分母或阈值。当前固定采集运行中，先在runtime准备夹具，待稳定采集终止后接入，再定向与完整验证。
+
+
+2026-11-11T04:42:32+08:00 范围校准：实际写作页在采用请求期间禁用原文与富文本编辑器。不能用向禁用控件强制派发input来冒充用户并发编辑。先验证正常采用、服务失败后保留候选并重试，以及采用前通过原文编辑保持人工正文；并发回调防御分支只在发现合法可达入口后补测。本轮不通过私有回调或状态突变制造覆盖。
+
+
+### 2026-11-11T04:48:07+08:00 上传完整复采与写作采用定向验证
+
+上传7项HTTP场景完整固定复采成功，`runtime/coverage-goal/frontend-cleaning-upload-verified/` 保持57个产品源码、10374行/14196分支分母；行8777/10374=84.60%、分支10138/14196=71.41%，较上一正式报告增加24行、30分支。completed/stable/inputsStable均为true，changedFiles/changedInputs为空。
+
+新夹具 `tests/e2e/agent-runner/fixtures/writing-adoption-http.cjs` 定向Chromium+本机HTTP验证3项通过、零页面脚本错误（日志 `runtime/coverage-goal/cleaning-upload-directed/adoption-verification.log`）：真实原文编辑同步到工作台；采用503保留候选和原文；再次采用成功，重新打开写作页看到已采用正文。请求验证修订4、附件、main分支、空基线标准SHA256及候选正文。初始化必须等待Vditor就绪，避免构造器返回而Lute尚未可用的夹具竞态；不修改产品代码。已接入固定采集并断言3项计数；新的覆盖率增益待稳定完整复采确认。平台行100%/分支95%目标仍未达成。
+
+
+### 2026-11-11T04:49:56+08:00 人员导入页面HTTP补测设计
+
+沿既定公开页面/HTTP边界补测人员Excel导入：打开/取消导入弹窗；冲突预检展示明细并隐藏确认；无冲突预检允许确认；预检HTTP失败后可重试；应用失败保留候选文件并恢复按钮；成功后显示新增/更新人数并刷新管理投影。真实XLSX由测试生成；本机HTTP接收浏览器multipart字节并返回确定性服务边界响应，不修改共享后端。验证中文与HTML特殊字符转义、请求mode、文件名/MIME与原始文件字节一致。当前完整复采输入冻结，先在runtime准备与定向验证，采集结束后再接入固定57源码清单，不降低分母或阈值。
+
+
+### 2026-11-11T04:53:28+08:00 人员导入定向验证已通过，等待固定采集结束
+
+`runtime/coverage-goal/cleaning-upload-directed/principal-import-http.cjs` 已通过6项真实Chromium+本机HTTP定向场景，页面脚本错误为空；日志 `runtime/coverage-goal/cleaning-upload-directed/import-verification.log`。实际生成含冲突行的XLSX与修正后的XLSX，分别验证multipart中的文件字节/文件名/MIME；三次预检、两次应用，应用成功后核对7类管理GET刷新路径，重新打开导入弹窗确认文件和预览清空。冲突姓名/说明含HTML特殊字符，页面以文本显示且未创建img/执行脚本。该夹具只验证前端与HTTP边界，不等同真实数据库Excel解析验收。
+
+输入冻结中的完整固定采集session35345/PID2188514已再次核实存活，不重启、不修改采集输入；待终止后再接入人员导入夹具。当前正式前端仍8777/10374行、10138/14196分支；本次定向结果不作为完整平台覆盖率结果。
+
+
+### 2026-11-11T04:59:15+08:00 写作采用稳定复采与人员导入接入
+
+固定完整采集 `runtime/coverage-goal/frontend-writing-adoption-verified/` 成功结束，57产品源码/45导航及所有既定场景计数齐全，写作采用HTTP为3项。行8795/10374（84.77%）、分支10158/14196（71.55%），较上一正式上传结果增加18行、20分支；completed/stable/inputsStable均为true，changedFiles/changedInputs为空。
+
+将已定向通过的人员导入HTTP夹具接入固定采集，预期6项。最终夹具再次定向通过6项、零脚本错误，并明确验证multipart的XLSX MIME；日志 `runtime/coverage-goal/cleaning-upload-directed/import-verification.log`。覆盖打开取消、预检失败保留、冲突转义、修正预检、应用失败恢复、重试成功刷新和重开清空。沿既有真实页面/HTTP边界与此前设计，不修改产品代码、业务规则或分母。下一次固定全量输出 `runtime/coverage-goal/frontend-principal-import-verified/`；启动后冻结输入，覆盖率增量待终止且稳定后确认。平台行100%/分支95%目标仍未达成。
+
+
+### 2026-11-11T05:00:31+08:00 GitLab版本映射页面HTTP补测设计
+
+固定前端报告最大缺口仍为app.js。沿已授权页面与HTTP公开边界，在独立已登录Chromium页面点击平台导航、GitLab页签和版本映射，真实填写表单并提交：预览无匹配、精确命中、所有版本、分支不可用、503；草案保存失败保留输入后重试、新增成功；启用规则的修订保存、激活与停用（含取消确认、服务失败重试）。隔离本机HTTP接收请求，验证JSON字段、If-Match版本、幂等键和成功后刷新展示。只准备runtime夹具；当前人员导入完整采集输入冻结，终止前不修改产品、tests、config或collector。不得通过私有函数、强制禁用控件事件或回调突变制造覆盖率。
+
+
+### 2026-11-11T05:02:36+08:00 GitLab版本映射13项定向验证
+
+`runtime/coverage-goal/cleaning-upload-directed/gitlab-mapping-http.cjs` 在专用已登录Chromium页面通过13项真实点击/表单+本机HTTP场景，零页面脚本错误。五类预览、新建失败保留与重试、启用规则修订、激活失败重试、停用取消与失败重试均通过。隔离服务遵循修订语义：保存active规则创建新draft，旧规则继续active；激活新修订后旧规则superseded。验证请求版本4/1/2、幂等键、JSON和预览查询。调用方必须持有并关闭专用页面；夹具不修改共享后端。定向日志mapping-verification.log；当前人员导入采集仍运行，未接入或计作正式覆盖率增益。
+
+
+### 2026-11-11T05:05:03+08:00 GitLab仓库连接表单HTTP补测设计
+
+沿既定公开页面和HTTP边界，在专用Chromium页面补测仓库连接创建503后保留输入并重试、服务账号创建后自动验证成功/失败、编辑503重试、手动验证失败重试、停用取消/失败/成功与重新启用失败/成功。另验证未配置OAuth时本人授权连接保存后的待授权提示，不进行外部OAuth跳转。真实本机HTTP接收请求，断言trim后字段、凭证引用省略/提供、编辑If-Match和幂等键；结束关闭专用页面并清理本机服务。只在runtime准备；当前人员导入采集结束前冻结产品和固定采集输入。
+
+
+### 2026-11-11T05:05:41+08:00 GitLab仓库连接14项定向通过
+
+`runtime/coverage-goal/cleaning-upload-directed/gitlab-connection-http.cjs` 真实Chromium+本机HTTP通过14项，零页面脚本错误。覆盖新增取消/503保留重试/自动验证、编辑取消/503重试、手动验证503重试、停用取消/503重试、启用503重试、OAuth未配置时待授权。实际请求验证trim字段、服务凭证引用、OAuth/编辑省略凭证、编辑If-Match=1及所有写入幂等键。日志connection-verification.log。夹具使用独立已登录页面，调用方负责关闭；未写入共享后端，未宣称真实GitLab访问或数据库集成。当前完整采集session18137/PID2198649仍存活，采集输入继续冻结。
+
+
+### 2026-11-11T05:07:23+08:00 Node网关静态入口HTTP补测设计
+
+依据最新现存Node报告，knowledge-center.js剩余行集中在路由边界，静态文件/SPA回退和未知API尚缺公开HTTP证据。准备真实动态端口网关HTTP测试：入口与index相同内容、深层无扩展名回退首页、带扩展名文件读取与缺失文件、编码路径逃逸400、未知API稳定JSON404/禁止缓存、其他前缀交还父路由。仅临时目录生成文件并注入真实文件发送适配器；不调用私有路径函数、不以直接响应mock代替路由结果。当前固定前端复采冻结，仅在runtime准备，之后接入tests并验证。
+
+
+### 2026-11-11T05:46:38+08:00 大报告首次打开性能优化设计
+
+真实历史全量3469用例/75分页离线复验功能通过，但桌面/390px首开DOMContentLoaded为116ms/102.8ms，未满足100ms约束。当前每页defer加载约1.2MB搜索索引，改为首次输入关键词或状态筛选时按需加载本地脚本；首屏仅加载小型交互脚本，搜索显示加载状态、读取失败提供重试提示，静态分页/无JS和原始证据保持可用。搜索总数由渲染模型写入data属性，不提前读取索引。验收：43入口回归、真实smoke、3469用例离线桌面/移动端首次及重复导航、跨分页搜索/状态筛选/深链接/无JS，原样记录性能。
+
+
+### 2026-11-11T05:48:21+08:00 大规模真实报告补验结果
+
+当前渲染器重建真实历史full报告（79任务、3469逐条用例、75场景分页），原运行失败保留，不作为当前产品全量通过证据。修正浏览器验收脚本原先假定第一场景必有逐条用例的问题，改为选择实际有用例的场景，未修改报告数据。搜索索引已改为首次搜索/筛选加载；浏览器断言首屏未加载索引、跨页搜索配置匹配335项、失败筛选匹配1项、清除恢复、深链接、无JS分页均通过。桌面/390px各10次离线导航，无外部请求/页面脚本错误/横向溢出。DOMContentLoaded P95为121.3ms/99ms；桌面首次导航仍超过100ms，不能宣称整体性能达标。保留内部量表9.5/10、性能维度0.5/1，非第三方认证。证据runtime/rea/professional-test-report/large-actual/report-verification.json与截图。43项入口回归、最新真实smoke24/24通过，报告runtime/test-results/smoke/20261111-054716-191031-smoke/report.html。
+
+前端权限/资产完整采集终止退出0，completed/stable/inputsStable=true，changedFiles/changedInputs=[]；9078/10374行87.50%、10382/14196分支73.13%。证据runtime/coverage-goal/frontend-asset-permissions-verified。Node最近有效98.81%/88.37%，Java99.20%/88.16%；行100%/分支95%目标保持active。runtime准备的38项资产生产HTTP测试和12项大纲回收站场景尚未接入正式清单，不计入正式覆盖增益。
+
+### 2026-11-11T11:43:00+08:00 资产仓库映射弹窗补测与稳定性判定
+
+现有资产管理隔离 HTTP/Chromium 夹具增加手册“配置仓库映射”路径：返回已有映射、连接、分支和目录，经公开按钮打开弹窗，断言连接、默认分支、中英文路径回填及实际 GET 请求，关闭后继续原有资产创建/编辑/状态/归档断言。场景数由 8 增至 9；不写共享业务库。伪代码：创建手册 -> 打开映射 -> 读取映射/分支/目录 -> 核对表单及请求 -> 关闭 -> 完成资产写入断言。完整前端采集必须保持 57 个产品文件和固定场景，通过 `source-stability.json` 的 completed、stable、inputsStable 及变化清单后才能计入覆盖率。
+
+本轮 `runtime/coverage-goal/frontend-asset-mapping-retry-20261111/` 的 9 项资产场景及其余固定场景完成，采集器退出 1：运行期间 `app.js`、`app-state.js`、平台管理视图与样式发生变化，`completed=true`、`stable=false`、`inputsStable=false`。输出的 10404/11054 行、12222/17034 分支仅供诊断，不能与前一稳定分母比较，也不作为平台目标验收。最近有效前端基线为 `runtime/coverage-goal/frontend-mapping-draft-20261111/` 的 9448/10414 行、10781/14307 分支。
+### 预处理索引结构异常的 HTTP 恢复验收（2026-11-11）
+
+在隔离文档路由服务中，将预处理索引暂时写为合法 JSON `null`，通过真实 GET `/api/document/preprocess` 验证返回 500 且不泄露已有文档；还原原始索引后再次 GET，验证列表恢复。该场景补足语法损坏回退之外的结构异常路径，不改变当前接口语义或覆盖率分母。
+
+### 固定 Node 清单失败项修复验收（2026-11-11）
+
+完整 192 文件采集输入稳定，但 AI 服务套件误将隔离阶段产物写向外部数据库，滚动门禁发现仓库详情抽屉直接使用 `100dvh`。AI 测试沿已有 `FileAggregateStore` 注入阶段产物存储，避免外部服务依赖；抽屉复用 `--kc-viewport-height`，保持既有视口语义。先分别运行两套失败测试，再用同一固定清单及源码哈希门禁复采，不删除失败测试或缩小产品文件分母。

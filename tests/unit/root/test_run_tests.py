@@ -491,5 +491,86 @@ class RepositoryTestRunnerTests(unittest.TestCase):
         self.assertEqual([], offenders)
 
 
+class HtmlCaseReportIntegrationTests(unittest.TestCase):
+    def test_real_node_and_unittest_cases_and_static_pagination(self):
+        runtime = REPOSITORY_ROOT / "runtime" / "test-results"
+        runtime.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=runtime) as directory:
+            root = Path(directory)
+            (root / "details" / "tasks").mkdir(parents=True)
+            node = root / "cases.test.js"
+            node.write_text("const {test,describe}=require('node:test'); describe('suite',()=>{test('success',()=>{});test('failure <script>',()=>{throw Error('expected failure')});test.skip('skipped',()=>{});});", encoding="utf-8")
+            python = root / "test_cases.py"
+            python.write_text("import unittest\nclass Cases(unittest.TestCase):\n def test_ok(self): pass\n def test_failure(self): self.fail('failure detail')\n @unittest.skip('fixture skip')\n def test_skip(self): pass\n", encoding="utf-8")
+            context = RUNNER.RunContext("unit", "fixture", root, root / "details", root / "details/tasks", root / "details/artifacts", False)
+            results = []
+            for framework, file in (("node-test", node), ("unittest", python)):
+                task = RUNNER.TestTask("unit", framework, framework, (file,))
+                result = RUNNER.run_task(task, dry_run=False, timeout=30, run_context=context,
+                                         log_path=context.tasks_dir / (framework + ".log"), emit_output=False)
+                self.assertEqual((3, 1, 1, 1), (result.test_total, result.test_passed, result.test_failed, result.test_skipped))
+                self.assertEqual("FAIL", result.status)
+                self.assertTrue(any(case["detail"] for case in result.cases if case["status"] == "FAIL"))
+                results.append(result)
+            payload = RUNNER.report_payload("unit", results, 1.0)
+            (root / "details/report.json").write_text(json.dumps(payload), encoding="utf-8")
+            report = RUNNER.write_html_report(root, page_size=2)
+            self.assertIn("2 / 2 / 2", report.read_text())
+            pages = sorted((root / "scenes").glob("*.html"))
+            self.assertEqual(3, len(pages))
+            self.assertIn('href="scene-1-2.html"', pages[0].read_text())
+            self.assertIn('&lt;script&gt;', pages[0].read_text())
+            self.assertNotIn('<script>', pages[0].read_text())
+            self.assertIn('href="../report.html"', pages[-1].read_text())
+
+    def test_fail_fast_still_writes_formal_html_with_unexecuted_tasks(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory(dir=REPOSITORY_ROOT / "runtime/test-results") as directory:
+            root = Path(directory)
+            (root / "details/tasks").mkdir(parents=True)
+            failing, pending = root / "fail.js", root / "pending.js"
+            failing.write_text("process.exit(1)")
+            pending.write_text("throw Error('must not execute')")
+            context = RUNNER.RunContext("gate", "fixture", root, root / "details", root / "details/tasks", root / "details/artifacts", True)
+            tasks = [RUNNER.TestTask("gate", "node-script", "失败任务", (failing,)),
+                     RUNNER.TestTask("gate", "node-script", "后续任务", (pending,))]
+            with patch.object(RUNNER, "build_tasks", return_value=tasks), patch.object(RUNNER, "create_run_context", return_value=context), patch.object(RUNNER, "write_index"):
+                code = RUNNER.main(["gate", "--fail-fast", "--report-page-size", "1"])
+            self.assertEqual(1, code)
+            self.assertTrue((root / "report.html").is_file())
+            payload = json.loads((root / "details/report.json").read_text())
+            self.assertEqual(["FAIL", "NOT_RUN"], [task["status"] for task in payload["tasks"]])
+            self.assertIn("后续任务", (root / "report.html").read_text())
+
+    def test_real_jest_structured_results(self):
+        with tempfile.TemporaryDirectory(dir=REPOSITORY_ROOT / "runtime/test-results") as directory:
+            root = Path(directory)
+            file = root / "report-fixture.test.js"
+            file.write_text("test('pass',()=>expect(1).toBe(1));test('fail',()=>expect(1).toBe(2));test.skip('skip',()=>{});", encoding="utf-8")
+            config = root / "jest.config.json"
+            config.write_text(json.dumps({"rootDir": str(root), "testEnvironment": "node"}), encoding="utf-8")
+            result_path = root / "result.json"
+            result = subprocess.run([*RUNNER.node_tool("jest"), "--config", str(config), "--runInBand", "--json", "--outputFile", str(result_path)], cwd=REPOSITORY_ROOT, capture_output=True, text=True, timeout=30)
+            self.assertEqual(1, result.returncode)
+            cases = RUNNER.collect_case_results("jest", result.stdout + result.stderr, result_path)
+            self.assertEqual(["PASS", "FAIL", "SKIP"], [case["status"] for case in cases])
+            self.assertIn("Expected", cases[1]["detail"])
+
+    def test_structured_pytest_and_playwright_records(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "results.xml"
+            path.write_text('<testsuites><testsuite><testcase name="pass" time="0.2"/><testcase name="fail"><failure message="bad">stack</failure></testcase><testcase name="skip"><skipped message="reason"/></testcase></testsuite></testsuites>')
+            cases = RUNNER.collect_case_results("pytest", "", path)
+            self.assertEqual(["PASS", "FAIL", "SKIP"], [case["status"] for case in cases])
+            self.assertEqual("stack", cases[1]["detail"])
+            path.write_text(json.dumps({"suites": [{"specs": [{"title": "case", "tests": [
+                {"status": "flaky", "results": [{"duration": 10, "errors": [{"message": "first attempt"}]}, {"duration": 20}]},
+                {"status": "unexpected", "results": [{"errors": [{"message": "failure"}]}]},
+                {"status": "skipped", "results": []}]}]}]}))
+            cases = RUNNER.collect_case_results("playwright", "", path)
+            self.assertEqual(["PASS", "FAIL", "SKIP"], [case["status"] for case in cases])
+            self.assertEqual(0.03, cases[0]["duration_seconds"])
+
+
 if __name__ == "__main__":
     unittest.main()
