@@ -26,8 +26,8 @@ function createProductionAISources({ store, context, contextKey, actor, requireC
     }));
     return {
       items: [{ sourceType: 'url', name: '网页来源', available: !!settings().allowPublicWeb || settings().urlOrigins.length > 0 },
-        { sourceType: 'pingcode-design', name: 'Pingcode设计文档', available: !!pingcodeBaseURL && !!settings().pingcodeSpaces?.length },
-        { sourceType: 'pingcode-test', name: 'Pingcode测试文档', available: !!pingcodeBaseURL && !!settings().pingcodeSpaces?.length },
+        { sourceType: 'pingcode-design', name: 'Pingcode设计文档', available: !!pingcodeBaseURL },
+        { sourceType: 'pingcode-test', name: 'Pingcode测试文档', available: !!pingcodeBaseURL },
         { sourceType: 'knowledge-mcp', name: '知识库（MCP）', automatic: true, available: services.some(service => service.adapter === 'yashandb' && (service.knowledgeBases.length || !Array.isArray(config.services))) },
         { sourceType: 'test-case-library', name: '测试用例集', available: testCaseRoot() !== null },
         { sourceType: 'local-document', name: '本地文档', available: true }],
@@ -98,8 +98,6 @@ function createProductionAISources({ store, context, contextKey, actor, requireC
       fail('AI_SOURCE_LOCATOR_INVALID', 'PingCode 资料请填写页面网址或“空间标识/页面ID”');
     }
     const [spaceKey, pageId] = parts;
-    diagnostic.stage = 'pingcode_scope';
-    if (!settings().pingcodeSpaces?.includes(spaceKey)) fail('AI_SOURCE_SCOPE_DENIED', '该 PingCode 空间不在已配置的引用范围内', 403);
     if (!pingcodeBaseURL) fail('AI_SOURCE_NOT_CONFIGURED', '请先配置 PingCode 资料服务', 503);
     const url = new URL(`/api/pingcode/spaces/${encodeURIComponent(spaceKey)}/pages/${encodeURIComponent(pageId)}/reference`, pingcodeBaseURL);
     url.searchParams.set('include_images', 'true');
@@ -137,7 +135,7 @@ function createProductionAISources({ store, context, contextKey, actor, requireC
     url.hash = '';
     if (config.pingcodeOrigins?.includes(url.origin)) {
       const match = url.pathname.match(/^\/wiki\/spaces\/([A-Za-z0-9_-]+)\/pages\/([A-Za-z0-9_-]+)\/?$/);
-      if (!match || url.search) fail('AI_SOURCE_URL_DENIED', '请填写已授权空间内的单篇 PingCode 文档网址', 403);
+      if (!match || url.search) fail('AI_SOURCE_URL_DENIED', '请填写 PingCode 单篇文档网址', 403);
       const document = await readPingCode(`${match[1]}/${match[2]}`, diagnostic);
       return { ...document, locator: url.href, originalUrl: url.href };
     }

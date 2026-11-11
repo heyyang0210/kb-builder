@@ -38,10 +38,13 @@ test('模板管理员可新建模板、保存 v1 并在刷新后回读正文', a
   const name = `E2E 模板 ${Date.now()}`;
   await page.getByRole('button', { name: '新建模板' }).click();
   await page.getByRole('button', { name: '空白创建' }).click();
+  const metadata = page.getByRole('dialog', { name: '基本信息' });
+  await metadata.getByRole('textbox', { name: '模板名称' }).fill(name);
+  await metadata.getByRole('textbox', { name: '类型' }).fill('E2E 回归');
+  await metadata.getByRole('textbox', { name: '描述' }).fill('E2E 创建与刷新回读');
+  await metadata.getByRole('button', { name: '完成' }).click();
+  await expect(metadata).toBeHidden();
   await page.locator('[data-template-format="markdown"]').click();
-  await page.locator('[data-template-field="name"]').fill(name);
-  await page.locator('[data-template-field="type"]').fill('E2E 回归');
-  await page.locator('[data-template-field="description"]').fill('E2E 创建与刷新回读');
   await page.locator('[data-template-content]').fill('# E2E 模板正文\n\n刷新后仍应保留。');
   await page.getByRole('button', { name: '保存', exact: true }).click();
 

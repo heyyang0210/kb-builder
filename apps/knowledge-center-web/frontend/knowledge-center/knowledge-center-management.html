@@ -5,6 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <base href="/knowledge-center/">
   <title>知识中心管理</title>
+  <script>
+    if (location.pathname === '/knowledge-center/platform' && new URLSearchParams(location.search).get('tab') === 'gitlab') {
+      window.__gitlabConnectionsPrefetch = fetch('/knowledge-center/api/gitlab/connections', { credentials: 'same-origin', priority: 'high' }).then(async response => {
+        if (!response.ok) throw new Error(`连接读取失败：${response.status}`);
+        const payload = await response.json();
+        if (payload.success === false) throw new Error(payload.error?.message || '连接读取失败');
+        return payload.data || payload;
+      }).catch(error => ({ error }));
+    }
+  </script>
   <script type="module" src="./common/api/review-bootstrap-prefetch.js"></script>
   <!-- Preload the existing startup module graph to avoid serial ESM discovery. -->
   <link rel="modulepreload" href="./app.js">
@@ -41,7 +51,8 @@
   <link rel="stylesheet" href="./common/base.css">
   <link rel="stylesheet" href="./common/components.css">
   <link rel="stylesheet" href="./common/table-view-configurator.css">
-  <link rel="stylesheet" href="./styles.css">
+  <link rel="stylesheet" href="./styles.css" id="knowledge-center-main-style" media="not all" onload="this.media='all'">
+  <script>document.getElementById('knowledge-center-main-style').media = location.pathname === '/knowledge-center/platform' && new URLSearchParams(location.search).get('tab') === 'gitlab' ? 'print' : 'all';</script>
   <link rel="stylesheet" data-href="./modules/dashboard/dashboard.css" data-route-style="dashboard" media="not all">
   <link rel="stylesheet" data-href="./modules/outlines/outlines.css" data-route-style="outlines" media="not all">
   <link rel="stylesheet" data-href="./modules/production/production.css" data-route-style="production stages" media="not all">
@@ -50,6 +61,27 @@
   <link rel="stylesheet" data-href="./modules/platform-admin/platform-admin.css" data-route-style="platform" media="not all">
   <link rel="stylesheet" data-href="./common/vendor/katex.min.css" data-route-style="production repository" media="not all">
   <link rel="stylesheet" href="./common/appearance.css">
+  <style>
+    .gitlab-boot-route .auth-loading { display: block; min-height: 100vh; padding: 28px; background: #f4f7f9; }
+    .gitlab-boot-route .auth-loading[hidden] { display: none; }
+    .gitlab-boot-route .auth-loading > .auth-loading-mark,
+    .gitlab-boot-route .auth-loading > p { display: none; }
+    .gitlab-early-shell { display: none; }
+    .gitlab-boot-route .gitlab-early-shell { display: block; max-width: 1440px; margin: 0 auto; color: #20282c; font: 14px system-ui, sans-serif; }
+    .gitlab-early-shell h1 { margin: 0 0 22px; font-size: 24px; }
+    .gitlab-early-tabs { display: flex; gap: 28px; padding: 14px 0; border-block: 1px solid #dce2e6; color: #58666c; }
+    .gitlab-early-tabs strong { color: #08668b; }
+    .gitlab-early-shell h2 { margin: 28px 0 16px; font-size: 18px; }
+    .gitlab-early-table { border: 1px solid #dce2e6; border-radius: 6px; background: #fff; overflow: hidden; }
+    .gitlab-early-toolbar { height: 68px; border-bottom: 1px solid #dce2e6; }
+    .gitlab-early-toolbar::before { content: ''; display: block; width: min(340px, 65%); height: 36px; margin: 16px; border-radius: 4px; background: #eef2f4; }
+    .gitlab-early-columns { display: grid; grid-template-columns: repeat(6, 1fr); gap: 20px; padding: 14px 18px; background: #f7f9fa; }
+    .gitlab-early-columns span { font-size: 12px; font-weight: 600; white-space: nowrap; }
+    .gitlab-early-row { display: grid; grid-template-columns: repeat(6, 1fr); align-items: center; gap: 20px; min-height: 68px; padding: 12px 18px; border-top: 1px solid #e6eaed; overflow-wrap: anywhere; }
+    .gitlab-early-row:empty { background: linear-gradient(90deg, #fff 4%, #f4f7f8 42%, #fff 80%); }
+    .gitlab-early-row span { min-width: 0; }
+    @media (max-width: 700px) { .gitlab-boot-route .auth-loading { padding: 20px 16px; } .gitlab-early-tabs { gap: 16px; font-size: 12px; } .gitlab-early-columns { display: none; } .gitlab-early-row { grid-template-columns: 1fr; gap: 4px; min-height: 82px; } .gitlab-early-row span:nth-child(n+3) { display: none; } }
+  </style>
   <script>
     (() => {
       const segment = location.pathname.split('/').filter(Boolean)[1] || 'dashboard';
@@ -63,7 +95,10 @@
   </script>
 </head>
 <body>
-  <script>if (location.pathname === '/knowledge-center/review' || location.pathname.startsWith('/knowledge-center/review/')) document.body.classList.add('review-boot-route');</script>
+  <script>
+    if (location.pathname === '/knowledge-center/review' || location.pathname.startsWith('/knowledge-center/review/')) document.body.classList.add('review-boot-route');
+    if (location.pathname === '/knowledge-center/platform' && new URLSearchParams(location.search).get('tab') === 'gitlab') document.body.classList.add('gitlab-boot-route');
+  </script>
   <section id="auth-loading" class="auth-loading" aria-live="polite">
     <span class="auth-loading-mark" aria-hidden="true"></span>
     <p>正在检查登录状态</p>
@@ -71,6 +106,35 @@
       <div class="review-early-head"></div>
       <div class="review-early-grid"><i></i><i></i><i></i></div>
     </div>
+    <div class="gitlab-early-shell" data-gitlab-static-shell role="status" aria-label="GitLab 仓库连接正在加载">
+      <h1>平台管理</h1>
+      <div class="gitlab-early-tabs"><span>系统治理</span><span>人员管理</span><span>用户权限</span><strong>GitLab 仓库</strong></div>
+      <h2>仓库连接</h2>
+      <div class="gitlab-early-table"><div class="gitlab-early-toolbar"></div><div class="gitlab-early-columns"><span>连接名称</span><span>项目路径</span><span>认证方式</span><span>配置访问能力</span><span>平台最近读取验证</span><span>启停状态</span></div><div data-gitlab-early-rows><div class="gitlab-early-row"></div><div class="gitlab-early-row"></div><div class="gitlab-early-row"></div></div></div>
+    </div>
+    <script>
+      if (document.body.classList.contains('gitlab-boot-route')) {
+        requestAnimationFrame(() => performance.mark('gitlab-static-shell-painted'));
+        window.__gitlabConnectionsPrefetch = window.__gitlabConnectionsPrefetch.then(result => {
+          const rows = document.querySelector('[data-gitlab-early-rows]');
+          if (rows && Array.isArray(result.items)) {
+            rows.replaceChildren();
+            for (const connection of result.items.slice(0, 20)) {
+              const row = document.createElement('div'); row.className = 'gitlab-early-row';
+              const verification = connection.lastVerification;
+              const time = verification?.verifiedAt ? new Date(verification.verifiedAt) : null;
+              const verifiedAt = time && !Number.isNaN(time.getTime()) ? time.toLocaleString('zh-CN', { hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—';
+              for (const value of [connection.name || '-', connection.projectPath || '-', connection.authMode === 'user_oauth' ? '个人授权' : '平台凭证', connection.purpose === 'read_write' ? '读写' : '只读', `${verification?.status === 'verified' ? '通过' : verification?.status === 'failed' ? '失败' : '待验证'} · ${verifiedAt}`, connection.managementStatus === 'disabled' ? '已停用' : '已启用']) {
+                const cell = document.createElement('span'); cell.textContent = value; row.append(cell);
+              }
+              rows.append(row);
+            }
+            performance.mark('gitlab-early-data-ready');
+          }
+          return result;
+        });
+      }
+    </script>
     <script>if (document.body.classList.contains('review-boot-route')) requestAnimationFrame(() => performance.mark('review-static-shell-painted'));</script>
     <div id="auth-bootstrap-fallback" class="auth-bootstrap-fallback" hidden role="alert">
       <p>页面初始化未完成，请重新加载。</p>

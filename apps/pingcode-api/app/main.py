@@ -173,6 +173,7 @@ async def lifespan(_: FastAPI):
     tasks.reconcile_interrupted()
     preprocess.reconcile_interrupted_scans()
     training.reconcile_interrupted()
+    pingcode.prewarm()
     yield
     pingcode.close()
 

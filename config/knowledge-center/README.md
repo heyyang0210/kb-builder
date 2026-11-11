@@ -53,9 +53,9 @@
 `product.json#/skills` 登记 `continue-technical-document` 资源；`content-rules.json#/productionAI.skills` 配置中文说明和适用操作，`maxSelectedSkills` 限制选用数量，`skillPrompt` 配置基础约束。新增 Skill 按既有能力包流程加载后可选；生成请求使用 ID 和预览摘要，内容变化要求重新确认。指令来自 knowledge，不执行任意脚本；既有生成策略不变。
 
 
-`content-rules.json#/productionAI.sources.pingcodeSpaces` 为可引用 PingCode 空间标识列表，默认空列表。设计文档与测试文档共用既有资料服务，后端地址由现有 `PINGCODE_API_HOST/PORT` 内部配置注入，不接受浏览器传入服务地址或凭证。作者输入 `空间标识/页面ID`，预览并确认后引用；两种来源表示作者选择的用途，不表示平台已自动识别远端文档类型。`content-rules.json#/productionAI.sources.testCaseRoot` 指定仓库内测试用例目录，默认 `knowledge/references/test-cases`，仅读取 Markdown、SQL 和文本条目，预览确认后才冻结来源。
+PingCode 设计文档与测试文档共用既有资料服务，不以空间标识列表限制引用；可读取范围由 PingCode 账号权限决定。后端地址由现有 `PINGCODE_API_HOST/PORT` 内部配置注入，不接受浏览器传入服务地址或凭证。作者输入页面网址或 `空间标识/页面ID`，预览并确认后引用；两种来源表示作者选择的用途，不表示平台已自动识别远端文档类型。旧 `pingcodeSpaces` 目录字段仅为兼容保留，不参与校验。`content-rules.json#/productionAI.sources.testCaseRoot` 指定仓库内测试用例目录，默认 `knowledge/references/test-cases`，仅读取 Markdown、SQL 和文本条目，预览确认后才冻结来源。
 
-当前开发环境已将 `pingcodeSpaces` 配置为 `YASSTORAGE`、`YASDOC`，并将已验证可读取的页面定位符维护在 `config/pingcode/credentials.json`；授权范围以配置空间列表为准。用户已授权 YASDOC 全空间引用，`urlOrigins` 和 `pingcodeOrigins` 配置为 `https://pingcode.yasdb.com`，页面 URL 复用资料服务读取正文。
+已验证可读取的页面定位符维护在 `config/pingcode/credentials.json`；`urlOrigins` 和 `pingcodeOrigins` 配置为 `https://pingcode.yasdb.com`，该域名的页面 URL 复用资料服务读取正文。空间是否可访问以 PingCode 连接账号和远端页面权限为准。
 
 `productionAI.provenancePrompt` 配置结构化正文与来源区间协议，`maxProvenanceSegments` 同时限制声明及每项证据数量。规则 v3 要求引用对应已确认快照；逐字匹配不表示事实或数据库验证通过。协议随任务冻结，旧 Markdown 输出保守记为模型推理。
 
@@ -70,7 +70,7 @@
 
 `template-mapping.json` 配置模板适用范围分析：规则按优先级确定性匹配手册、栏目路径、文档类型或标题；仅未命中/冲突项调用默认 Agent。提示词、超时、证据上限和并发度均可配置。AI 结果是待确认建议，不能自动覆盖规则或已有映射。修改规则需提供当前版本号；生产映射记录保存操作者决定、规则版本、AI 运行标识和理由；确认时还会核对分析批次与当前发布大纲版本。Codex 与普通 LLM 均受同一超时和取消信号控制。不要将手册名称、模板名称和业务关键词硬编码在服务中。
 
-`productionAI.sources.pingcodeOrigins` 将 PingCode 页面网址转交既有资料服务，仍受 `pingcodeSpaces` 限制；其他公开网址通过通用网页正文读取。参考资料可多选，作者确定的引用优先级随任务快照保留，数值 1 为最高。
+`productionAI.sources.pingcodeOrigins` 将 PingCode 页面网址转交既有资料服务；其他公开网址通过通用网页正文读取。参考资料可多选，作者确定的引用优先级随任务快照保留，数值 1 为最高。
 
 真实网关内容检查使用 `productionQuality.timeoutMs=120000`，超过期限仍按未执行返回，不能降级为通过。
 

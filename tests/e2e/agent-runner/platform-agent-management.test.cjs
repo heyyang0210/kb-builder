@@ -12,11 +12,39 @@ const registry = require(registryPath);
 require.cache[registryPath].exports = { ...registry, CONFIG_PATHS: { ...registry.CONFIG_PATHS, service: file } };
 const manager = require('../../../packages/agent-runner-core/lib/config-manager');
 const { setup } = require('./fixtures/production-writing.cjs');
+const { instrumentFrontend } = require('./fixtures/frontend-coverage.cjs');
 
 test('Agent 管理真实 HTTP：迁移、配置隔离、加密、版本冲突、权限与界面', async t => {
   t.after(() => { manager.watcher?.close(); fs.rmSync(directory, { recursive: true, force: true }); });
   const session = { authenticated: true, user: { id: 'agent-admin', roles: ['PLATFORM_ADMIN'] }, allowedActions: ['knowledge:read', 'knowledge:write'] };
-  const api = await setup(t, { browser: true, session });
+  const runs = new Map();
+  const runReads = new Map();
+  let runCount = 0;
+  let testedModel;
+  const codexRunner = {
+    start(_messages, config) {
+      testedModel = config.model;
+      const id = `isolated-agent-run-${++runCount}`;
+      const complete = runCount === 2 || runCount === 3;
+      const run = { id, status: complete ? 'completed' : 'running', events: runCount > 2 ? [] : [{ seq: 1, kind: complete ? 'completed' : 'started' }] };
+      runs.set(id, run);
+      return run;
+    },
+    get(id) {
+      const reads = (runReads.get(id) || 0) + 1;
+      runReads.set(id, reads);
+      if ((id === 'isolated-agent-run-3' || id === 'isolated-agent-run-4') && reads === 2) throw new Error('isolated stream disconnect');
+      return runs.get(id);
+    },
+    cancel(id) {
+      const run = runs.get(id);
+      run.status = 'cancelled';
+      run.events.push({ seq: run.events.length + 1, kind: 'cancelled' });
+      return run;
+    },
+  };
+  const dshRunner = { readiness: () => ({ ready: false, blockers: ['缺少任务级隔离验证'] }), start: () => { throw new Error('DSH 不应在未就绪时启动'); } };
+  const api = await setup(t, { browser: true, session, codexRunner, dshRunner });
   async function call(suffix = '', body, version, method) {
     const res = await fetch(api.origin + '/knowledge-center/api/platform/agents' + suffix, { method: method || (body ? 'PUT' : 'GET'), headers: { 'Content-Type': 'application/json', ...(version ? { 'If-Match': version } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
     return { status: res.status, ...(await res.json()) };
@@ -26,7 +54,8 @@ test('Agent 管理真实 HTTP：迁移、配置隔离、加密、版本冲突、
   assert.equal(missing.status, 404);
   assert.match(missing.headers.get('content-type'), /application\/json/);
   assert.equal((await missing.json()).error.code, 'API_NOT_FOUND');
-  assert.equal(c.agents[0].executor, 'workflow'); assert(!JSON.parse(fs.readFileSync(file)).agentServices);
+  assert.equal(c.agents[0].executor, 'workflow');
+  assert.equal(JSON.parse(fs.readFileSync(file)).agentServices.agents.find(a => a.executor === 'deepseek').enabled, false);
   const stale = c.rowVersion;
   c = (await call('', { agents: [...c.agents, { name: 'Codex 文档生成', executor: 'codex', enabled: true, reasoningEffort: 'low' }], defaultAgentId: c.defaultAgentId }, c.rowVersion)).data;
   assert.equal((await call('', { agents: c.agents, defaultAgentId: c.defaultAgentId }, stale)).status, 409);
@@ -51,6 +80,7 @@ test('Agent 管理真实 HTTP：迁移、配置隔离、加密、版本冲突、
   const browser = await chromium.launch({ headless: true }); t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 1440, height: 1080 } });
   const errors = []; page.on('pageerror', e => errors.push(e.message));
+  const captureCoverage = await instrumentFrontend(page, 'platform-agent');
   await page.goto(api.origin + '/browser-fixture');
   await page.addStyleTag({ url: '/knowledge-center/modules/platform-admin/platform-admin.css' });
   const agentsUrl = api.origin + '/knowledge-center/api/platform/agents';
@@ -82,6 +112,8 @@ test('Agent 管理真实 HTTP：迁移、配置隔离、加密、版本冲突、
     shell.querySelector('#platform-status').textContent = '平台管理';
   }, sidebar);
   await page.waitForFunction(() => document.querySelector('[data-agent-mcp-summary]')?.textContent === '未配置');
+  assert.equal(await page.locator('[data-agent-run-overview] strong').textContent(), '尚未运行测试');
+  assert.equal(await page.locator('.agent-section-head h3').count(), 0, '页签下不重复显示 Agent 配置标题');
   for (const [width, height] of [[1366, 768], [1440, 900], [1920, 1080]]) {
     await page.setViewportSize({ width, height });
     const layout = await page.evaluate(() => ({
@@ -136,11 +168,92 @@ test('Agent 管理真实 HTTP：迁移、配置隔离、加密、版本冲突、
   await page.locator('[data-agent-save]').click();
   await page.waitForFunction(() => document.querySelector('[data-agent-status]')?.textContent === '已保存');
   assert.equal((await call()).data.agents.find(a => a.id === id).reasoningEffort, 'high');
+  const runStarted = page.waitForResponse(r => r.url().endsWith(`/${id}/run-test`) && r.request().method() === 'POST');
+  await page.locator('[data-agent-test]').click();
+  assert.equal((await runStarted).status(), 202);
+  assert.equal(testedModel, 'doc-model');
+  await page.locator('[data-agent-cancel]').waitFor({ state: 'visible' });
+  const cancelled = page.waitForResponse(r => r.url().endsWith('/isolated-agent-run-1/cancel') && r.request().method() === 'POST');
+  await page.locator('[data-agent-cancel]').click();
+  assert.equal((await cancelled).status(), 200);
+  await page.waitForFunction(() => document.querySelector('[data-agent-status]')?.textContent === '已取消');
+  assert.equal(runs.get('isolated-agent-run-1').status, 'cancelled');
+  const completed = page.waitForResponse(r => r.url().endsWith(`/${id}/run-test`) && r.request().method() === 'POST');
+  await page.locator('[data-agent-test]').click();
+  assert.equal((await completed).status(), 202);
+  await page.waitForFunction(() => document.querySelector('[data-agent-status]')?.textContent === '运行成功，已校验文档文件');
+  assert.equal(await page.locator('[data-agent-run-overview] strong').textContent(), '运行通过');
+  assert.equal(await page.locator('[data-agent-run-overview] span').textContent(), '文档文件已校验');
+  assert.equal(runs.get('isolated-agent-run-2').status, 'completed');
   await page.setViewportSize({ width: 390, height: 844 });
   await page.waitForFunction(() => document.querySelector('.sidebar').getBoundingClientRect().right <= 0);
   assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  assert(await page.locator('[data-platform-tab=models]').evaluate(node => node.getBoundingClientRect().right <= innerWidth));
   await page.screenshot({ path: path.join(root, 'agents-mobile.png'), fullPage: true });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const recovered = page.waitForResponse(r => r.url().endsWith(`/${id}/run-test`) && r.request().method() === 'POST');
+  await page.locator('[data-agent-test]').click();
+  assert.equal((await recovered).status(), 202);
+  await page.waitForFunction(() => document.querySelector('[data-agent-status]')?.textContent === '运行成功，已校验文档文件');
+  assert(runReads.get('isolated-agent-run-3') >= 3, 'SSE 中断后应通过真实状态 API 回读');
+  const interrupted = page.waitForResponse(r => r.url().endsWith(`/${id}/run-test`) && r.request().method() === 'POST');
+  await page.locator('[data-agent-test]').click();
+  assert.equal((await interrupted).status(), 202);
+  await page.waitForFunction(() => document.querySelector('[data-agent-status]')?.textContent === '连接中断，可取消后重新运行');
+  assert.equal(await page.locator('[data-agent-run-overview] strong').textContent(), '连接中断');
+  assert(runReads.get('isolated-agent-run-4') >= 3, '运行中断线应查询当前状态');
+  const stopInterrupted = page.waitForResponse(r => r.url().endsWith('/isolated-agent-run-4/cancel') && r.request().method() === 'POST');
+  await page.locator('[data-agent-cancel]').click();
+  assert.equal((await stopInterrupted).status(), 200);
+  const agentCount = (await call()).data.agents.length;
+  await page.locator('[data-agent-add]').click();
+  await page.locator('[data-new-executor]').selectOption('workflow');
+  await page.locator('[data-new-save]').click();
+  await page.waitForFunction(count => document.querySelectorAll('[data-agent-select]').length === count, agentCount + 1);
+  assert.equal((await call()).data.agents.length, agentCount + 1);
+  assert.equal((await call()).data.agents.at(-1).executor, 'workflow');
+  const agents = (await call()).data;
+  const dsh = agents.agents.find(a => a.executor === 'deepseek');
+  assert(dsh, 'DSH 应随平台 Agent 默认初始化，无需手工新建');
+  assert.deepEqual(dsh.readiness, { ready: false, blockers: ['尚未配置可用于试运行的模型', '缺少任务级隔离验证'] });
+  const blockedRun = await call(`/${dsh.id}/run-test`, {}, undefined, 'POST');
+  assert.equal(blockedRun.status, 409);
+  assert.equal(blockedRun.error.code, 'DSH_NOT_READY');
+  assert.equal(blockedRun.error.message, '尚未配置可用于试运行的模型；缺少任务级隔离验证');
+  await page.locator(`[data-agent-select="${dsh.id}"]`).click();
+  await page.waitForSelector('[data-agent-readiness]');
+  assert.equal(await page.locator('[data-agent-add]').count(), 1);
+  assert.equal(await page.locator('[data-new-executor] option[value="deepseek"]').count(), 0);
+  assert.equal(await page.locator('[data-agent-test]').isDisabled(), true);
+  assert.equal(await page.locator('[data-agent-default]').count(), 0);
+  assert((await page.locator('[data-agent-readiness]').innerText()).includes('试运行未就绪'));
+  assert.equal(await page.locator('[data-agent-run-overview] strong').textContent(), '尚未运行测试');
+  await page.locator('[data-agent-readiness] details summary').click();
+  assert((await page.locator('[data-agent-readiness]').innerText()).includes('尚未配置可用于试运行的模型'));
+  assert((await page.locator('[data-agent-readiness]').innerText()).includes('缺少任务级隔离验证'));
+  await page.screenshot({ path: path.join(root, 'agents-dsh-desktop.png'), fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForFunction(() => document.querySelector('.sidebar').getBoundingClientRect().right <= 0);
+  assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  assert((await page.locator(`[data-agent-select="${dsh.id}"]`).innerText()).includes('未就绪'));
+  await page.screenshot({ path: path.join(root, 'agents-dsh-mobile.png'), fullPage: true });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const mcpPath = '**/knowledge-center/api/platform/agents/*/mcp';
+  let realMcpReads = 0;
+  await page.route(mcpPath, async route => {
+    const response = await route.fetch();
+    assert.equal(response.status(), 200);
+    realMcpReads += 1;
+    await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ success: false, error: { message: '隔离 MCP 读取失败' } }) });
+  });
+  await page.locator(`[data-agent-select="${id}"]`).click();
+  await page.waitForFunction(() => document.querySelector('[data-agent-mcp-summary]')?.textContent === '读取失败，请打开配置重试');
+  assert(realMcpReads > 0);
+  assert(await page.locator('[data-mcp-retry]').count());
+  await page.unroute(mcpPath);
   assert.deepEqual(errors, []);
+  await captureCoverage();
   session.user.roles = ['KNOWLEDGE_EDITOR'];
   assert.equal((await call()).status, 403);
+  assert.equal((await call(`/${dsh.id}/run-test`, {}, undefined, 'POST')).status, 403);
 });

@@ -34,12 +34,13 @@ const initialState = () => ({
 
 function startApi() {
   const repository = new MemoryIncrementalBuildRepository(initialState());
-  const handler = createIncrementalBuildHandler({ service: new IncrementalBuildService(repository) });
+  const service = new IncrementalBuildService(repository);
+  const handler = createIncrementalBuildHandler({ service });
   const server = http.createServer((req, res) => {
     const session = req.headers['x-test-actor'] === 'reviewer' ? reviewer : req.headers['x-test-actor'] === 'other' ? otherEditor : editor;
     handler(req, res, session);
   });
-  return new Promise(resolve => server.listen(0, '127.0.0.1', () => resolve({ server, repository, baseUrl: `http://127.0.0.1:${server.address().port}` })));
+  return new Promise(resolve => server.listen(0, '127.0.0.1', () => resolve({ server, repository, service, baseUrl: `http://127.0.0.1:${server.address().port}` })));
 }
 
 async function request(baseUrl, method, pathname, body, key, who = 'editor') {
@@ -283,6 +284,13 @@ describe('P0 平台内增量构建 API', () => {
     expect(anchored.body.data).toMatchObject({ mode: 'anchored', body: '参数值需要核对', candidateDigest: candidate.body.data.digest, anchor: { nodeId: 'node-1' } });
     const global = await request(api.baseUrl, 'POST', `/knowledge-center/api/incremental-tasks/${id}/reviews/${reviewId}/comments`, { comment: '全局意见' }, 'global-comment', 'reviewer');
     expect(global.body.data).toMatchObject({ mode: 'global', content: '全局意见' });
+    const forged = await request(api.baseUrl, 'POST', `/knowledge-center/api/incremental-tasks/${id}/reviews/${reviewId}/comments`, { comment: '伪造收件人不可生效', mentions: [{ handbookId: 'DB-001', recipientId: 'attacker' }] }, 'forged-mention', 'reviewer');
+    expect(forged.body.data.mentions).toEqual([]);
+    const notified = api.service.commentOnReview(reviewer, id, reviewId, 'trusted-mention', { comment: '通知负责人' }, {
+      mentions: [{ handbookId: 'DB-001', handbookName: '安装手册', recipientId: 'book-owner' }],
+    });
+    expect(notified).toMatchObject({ mentions: [{ handbookId: 'DB-001', recipientId: 'book-owner' }], notificationStatus: 'pending_configuration' });
+    expect(notified.notificationEvents).toEqual([expect.objectContaining({ recipientId: 'book-owner', status: 'pending_configuration', channels: { inApp: 'not_configured', wecom: 'not_configured', email: 'not_configured' } })]);
     const listed = await request(api.baseUrl, 'GET', `/knowledge-center/api/incremental-tasks/${id}/reviews/${reviewId}/comments?mode=anchored`, undefined, undefined, 'reviewer');
     expect(listed.body.data).toHaveLength(1);
     const invalid = await request(api.baseUrl, 'POST', `/knowledge-center/api/incremental-tasks/${id}/reviews/${reviewId}/comments`, { comment: '漂移', candidateDigest: 'stale', anchor: { documentId: 'doc-1', nodeId: 'node-1', anchorKind: 'after_operation' } }, 'anchor-stale', 'reviewer');
@@ -367,6 +375,20 @@ describe('P0 平台内增量构建 API', () => {
     expect((await request(api.baseUrl, 'POST', `/knowledge-center/api/incremental-tasks/${current.taskId}/publish`, { expectedCandidateDigest: current.candidate.digest }, 'publish-current', 'reviewer')).status).toBe(200);
     const conflict = await request(api.baseUrl, 'POST', `/knowledge-center/api/incremental-tasks/${stale.taskId}/publish`, { expectedCandidateDigest: stale.candidate.digest }, 'publish-stale', 'reviewer');
     expect(conflict).toMatchObject({ status: 409, body: { error: { code: 'BASELINE_CONFLICT' } } });
+  });
+
+  test('审核启动默认选择当前可读任务，显式列表模式保留基线与文档边界', async () => {
+    const { taskId } = await buildApprovedCandidate(api.baseUrl, 'bootstrap');
+    const automatic = api.service.reviewBootstrap(editor, { handbookId: 'DB-001' });
+    expect(automatic.detail).toMatchObject({ id: taskId, state: 'approved' });
+    expect(automatic.readerHandbookId).toBe('DB-001');
+    expect(automatic.baselines).toEqual([]);
+    const list = api.service.reviewBootstrap(editor, { handbookId: 'DB-001', view: 'all' });
+    expect(list.detail).toBeNull();
+    expect(list.items.some(item => item.id === taskId)).toBe(true);
+    expect(list.baselines.some(item => item.id === 'baseline-v1')).toBe(true);
+    expect(() => api.service.reviewBootstrap(editor, { taskId, documentId: 'unknown' })).toThrow(expect.objectContaining({ code: 'REVIEW_DOCUMENT_MISMATCH' }));
+    expect(api.service.reviewBootstrap(editor, { taskId, documentId: 'doc-install' }).detail.id).toBe(taskId);
   });
 
   test('按手册汇总审核事项，并提供真实的前后全文与变更统计', async () => {

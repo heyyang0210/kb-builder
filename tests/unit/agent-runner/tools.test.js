@@ -58,6 +58,42 @@ describe('FileReader', () => {
     const absPath = '/absolute/path/file.txt';
     expect(reader.resolvePath(absPath)).toBe(absPath);
   });
+
+  test('递归目录包含嵌套文件及目录类型，普通列表只返回文件', async () => {
+    const entries = await reader.listDir('.', { recursive: true });
+    expect(entries).toEqual(expect.arrayContaining([
+      { name: 'subdir', path: 'subdir', isDirectory: true, isFile: false },
+      { name: 'nested.txt', path: path.join('subdir', 'nested.txt'), isDirectory: false, isFile: true }
+    ]));
+    expect(entries.filter(e => e.name === 'nested.txt')).toHaveLength(1);
+    expect((await reader.listDir('.')).every(e => e.isFile && !e.isDirectory)).toBe(true);
+  });
+
+  test('目录不存在时拒绝，空批次保留空结果', async () => {
+    await expect(reader.listDir('missing-directory')).rejects.toThrow('Directory not found: missing-directory');
+    await expect(reader.readBatch([])).resolves.toEqual([]);
+  });
+
+  test('显式编码读取保留字节大小和修改时间，批次继续报告缺失文件', async () => {
+    const name = 'utf16.txt';
+    const content = '知识中心';
+    const target = path.join(TEST_DIR, name);
+    fs.writeFileSync(target, content, 'utf16le');
+    const results = await reader.readBatch([name, 'missing-encoded.txt'], { encoding: 'utf16le' });
+    expect(results[0]).toMatchObject({ success: true, path: name, fullPath: target, content, size: Buffer.byteLength(content, 'utf16le') });
+    expect(results[0].modified.getTime()).toBe(fs.statSync(target).mtime.getTime());
+    expect(results[1]).toEqual({ path: 'missing-encoded.txt', success: false, error: 'File not found: missing-encoded.txt' });
+  });
+
+  test('默认运行目录与仓库回退路径可解析真实文件', async () => {
+    const { AGENT_RUNNER_RUNTIME_ROOT } = require('../../../packages/agent-runner-core/lib/repo-paths');
+    expect(new FileReader().basePath).toBe(AGENT_RUNNER_RUNTIME_ROOT);
+    const target = require.resolve('../../../packages/agent-runner-core/lib/tools/file-reader');
+    const relative = path.relative(path.resolve(AGENT_RUNNER_RUNTIME_ROOT, '..'), target);
+    const isolatedReader = new FileReader(path.join(TEST_DIR, 'absent-base'));
+    expect(isolatedReader.resolvePath(relative)).toBe(target);
+    expect((await isolatedReader.read(relative)).content).toBe(fs.readFileSync(target, 'utf8'));
+  });
 });
 
 describe('FileWriter', () => {

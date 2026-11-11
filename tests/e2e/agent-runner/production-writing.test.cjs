@@ -169,10 +169,18 @@ test('网页资料多选按作者调整的引用优先级进入生成任务', as
     request.on('error', reject);
   });
   const calls = [];
-  const { api, page, errors } = await launch(t, { rules, generate: async messages => {
+  const selection = { serviceId: 'fixture', model: 'fixture', configVersion: 'v1' };
+  const { api, page, errors } = await launch(t, {
+    rules,
+    modelGovernance: {
+      available: () => ({ options: [selection], defaultSelection: selection }),
+      resolve: () => ({ selection, config: { executor: 'fixture', model: 'fixture' } }),
+    },
+    generate: async messages => {
     calls.push(JSON.parse(messages.at(-1).content));
     return { content: '整理后的正文', model: 'deterministic-e2e' };
-  } });
+    },
+  });
   let jobId;
   page.on('response', async response => {
     if (response.request().method() === 'POST' && response.url().includes('/ai-jobs')) {
@@ -440,11 +448,11 @@ test('真实配置模型：选文润色 → 候选 → 采用 → HTTP 草稿回
 
 
 test('沉浸式富文本编辑、单一资料入口与浏览器返回保留正文', async t => {
-  const { page, errors } = await launch(t);
+  const { page, errors } = await launch(t, { generate: async () => { assert.fail('该场景不应调用模型'); } });
   await page.evaluate(() => window.openWriting({ loadEditor: async () => window.Vditor }));
   const rich = page.locator('[data-ai-rich-editor] .vditor-wysiwyg [contenteditable="true"]');
   await rich.waitFor();
-  assert.equal(await page.locator('dialog').count(), 0);
+  assert.equal(await page.locator('dialog:visible').count(), 0);
   assert.equal(await page.locator('[data-ai-source-preview]').count(), 1);
   await rich.click(); await page.keyboard.press('Control+End'); await page.keyboard.type('新增人工说明。');
   await page.waitForFunction(() => window.editor.getValue().includes('新增人工说明。'));
@@ -457,7 +465,7 @@ test('沉浸式富文本编辑、单一资料入口与浏览器返回保留正�
 });
 
 test('GitLab 基线漂移显示对照，载入新基线后默认修订全文', async t => {
-  const { page, errors } = await launch(t);
+  const { page, errors } = await launch(t, { generate: async () => { assert.fail('该场景不应调用模型'); } });
   await page.route('**/ai-jobs', route => route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ success: false, error: { code: 'AI_ORIGIN_BASELINE_CHANGED', message: '基线已更新' } }) }));
   await page.evaluate(() => window.openWriting({
     initialRange: { start: 0, end: window.editor.getValue().length },
@@ -677,12 +685,13 @@ test('内容修订可不使用模板，续写不携带继承模板', async t => 
 });
 
 
-test('PingCode 页面网址与短标识兼容，来源受限不误报账号权限', async t => {
+test('PingCode 页面网址与短标识兼容，任意空间交给上游权限核验', async t => {
   const calls = [];
   const upstream = http.createServer((req, res) => {
     calls.push(req.url);
     const [, spaceKey, pageId] = req.url.match(/spaces\/([^/]+)\/pages\/([^/]+)\/reference/) || [];
     res.setHeader('Content-Type', 'application/json');
+    if (spaceKey === 'DENIED') { res.statusCode = 403; res.end(JSON.stringify({ error: { code: 'FORBIDDEN' } })); return; }
     res.end(JSON.stringify({ spaceKey, pageId, title: '设计依据', content: '# 设计依据\n已确认的事实。' }));
   });
   await new Promise(resolve => upstream.listen(0, '127.0.0.1', resolve));
@@ -699,6 +708,10 @@ test('PingCode 页面网址与短标识兼容，来源受限不误报账号权�
     assert.equal((await preview(sourceType, full)).status, 201);
   }
   assert.equal((await preview('pingcode-test', 'YASDOC/page-1')).status, 201);
+  const positive = 'https://pingcode.yasdb.com/wiki/spaces/POSITIVE/pages/bKnkt-Sx';
+  const positiveResult = await preview('pingcode-design', positive);
+  assert.equal(positiveResult.status, 201, JSON.stringify(positiveResult.body));
+  assert.equal(positiveResult.body.data.locator, 'POSITIVE/bKnkt-Sx');
   const pagePath = await preview('pingcode-design', 'YASDOC/pages/page-1');
   assert.equal(pagePath.status, 201, JSON.stringify(pagePath.body));
   assert.equal(pagePath.body.data.locator, 'YASDOC/page-1');
@@ -707,10 +720,10 @@ test('PingCode 页面网址与短标识兼容，来源受限不误报账号权�
   }
   const beforeDenied = calls.length;
   const denied = await preview('pingcode-design', 'DENIED/page-1');
-  assert.equal(denied.status, 403);
-  assert.equal(denied.body.error.code, 'AI_SOURCE_SCOPE_DENIED');
+  assert.equal(denied.status, 502);
+  assert.equal(denied.body.error.code, 'AI_SOURCE_UNAVAILABLE');
   assert.match(denied.body.error.details.requestId, /^[a-f0-9-]{36}$/);
-  assert.equal(calls.length, beforeDenied);
+  assert.equal(calls.length, beforeDenied + 1);
   await page.evaluate(() => {
     window.permissionNotices = 0;
     window.addEventListener('knowledge-center:permission-denied', () => window.permissionNotices++);
@@ -723,7 +736,7 @@ test('PingCode 页面网址与短标识兼容，来源受限不误报账号权�
   assert.match(await page.locator('[data-ai-source-info]').textContent(), /页面网址/);
   await page.locator('[data-ai-source-locator]').fill('DENIED/page-1');
   await page.locator('[data-ai-source-preview]').click();
-  await page.waitForFunction(() => document.querySelector('[data-ai-source-info]').textContent.includes('不在已配置'));
+  await page.waitForFunction(() => document.querySelector('[data-ai-source-info]').textContent.includes('PingCode 文档读取失败'));
   assert.equal(await page.evaluate(() => window.permissionNotices), 0);
   assert.match(await page.locator('[data-ai-source-info]').textContent(), /诊断编号：[a-f0-9-]{36}/);
   await page.locator('[data-reference-type=\"url\"]').click();
@@ -1166,6 +1179,35 @@ test('IMA打开：编辑器准备前保持原页面，准备后一次切换；�
   assert.deepEqual(errors, []);
 });
 
+test('写作页初始化期间关闭后在 Vditor 就绪时销毁实例', async t => {
+  const { page, errors } = await launch(t);
+  await page.evaluate(() => {
+    class DelayedEditor {
+      constructor(element, options) {
+        this.element = element;
+        this.options = options;
+        this.ready = false;
+        window.delayedEditor = this;
+      }
+      destroy() {
+        if (!this.ready) throw new Error('Vditor 尚未完成初始化');
+        window.delayedEditorDestroyed = true;
+      }
+      finish() {
+        this.ready = true;
+        this.options.after();
+      }
+    }
+    window.openWriting({ initialRange: null, loadEditor: async () => DelayedEditor });
+  });
+  await page.waitForFunction(() => !!window.delayedEditor);
+  await page.evaluate(() => document.querySelector('[data-ai-close]').click());
+  assert.equal(await page.locator('.handbook-writing-page').count(), 0);
+  await page.evaluate(() => window.delayedEditor.finish());
+  assert.equal(await page.evaluate(() => window.delayedEditorDestroyed), true);
+  assert.deepEqual(errors, []);
+});
+
 test('双滚动：正文与历史对话互不带动，输入固定且关闭恢复工作台', async t => {
   const { page, errors } = await launch(t, { generate: async () => ({ content: '修订候选正文', model: 'fixture' }) });
   await page.evaluate(() => {
@@ -1179,7 +1221,7 @@ test('双滚动：正文与历史对话互不带动，输入固定且关闭恢�
   await page.locator('[data-ai-start]').click(); await waitCandidate(page);
   await page.locator('[data-ai-close]').click();
   await page.evaluate(() => window.openWriting({ embedded: true, loadEditor: async () => window.Vditor }));
-  await page.locator('.handbook-writing-history-turn').first().waitFor();
+  await page.locator('.handbook-writing-chat-turn').first().waitFor();
   assert.equal(await page.locator('.handbook-writing-document [data-ai-history]').count(), 0);
   assert.match(await page.locator('.handbook-writing-conversation [data-ai-history]').textContent(), /保留章节结构，优化段落表达/);
   // Repeat visual turns only to exercise a long transcript; first turn was loaded through real HTTP.
@@ -1211,7 +1253,7 @@ test('双滚动：正文与历史对话互不带动，输入固定且关闭恢�
   assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.handbook-writing-layout')).display), 'grid');
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
   await page.screenshot({ path: path.join(artifacts, 'dual-scroll-1024.png') });
-  await page.locator('.handbook-writing-history-item').first().click(); await waitCandidate(page);
+  await page.locator('.handbook-writing-chat-open').first().click(); await waitCandidate(page);
   await page.locator('[data-ai-close]').click();
   assert.equal(await page.locator('.has-writing-assistant').count(), 0); assert.equal(await page.locator('[data-handbook-vditor]').isVisible(), true);
   assert.deepEqual(errors, []);
@@ -1239,7 +1281,10 @@ test('复用工作台编辑器：打开无 Markdown 中间态，关闭后仍为�
   await page.screenshot({ path: path.join(artifacts, 'reused-editor-opening.png') });
   assert.deepEqual(requested, [], '未打开配置时不预取技能和参考来源');
   await page.locator('[data-ai-skills-open]').click();
-  await page.waitForFunction(() => document.querySelector('[data-ai-skill-info]')?.textContent !== '正在读取可选能力…');
+  await page.waitForFunction(() => {
+    const info = document.querySelector('[data-ai-skill-info]');
+    return info && info.textContent !== '正在读取可选能力…';
+  });
   assert.equal(requested.filter(path => path.endsWith('/ai-skills')).length, 1);
   await finishConfiguration(page);
   const changed = initial + '\n人工补充的说明。\n';
@@ -1254,8 +1299,8 @@ test('复用工作台编辑器：打开无 Markdown 中间态，关闭后仍为�
   await page.evaluate(() => window.openWriting({ embedded: true, reuseEditor: window.editor,
     reuseEditorElement: window.originalEditorTarget, initialMarkdown: window.editor.getValue(),
     observeEditorInput: listener => { window.reusedInput = listener; return () => { window.reusedInput = null; }; } }));
-  await page.waitForFunction(() => document.querySelector('.handbook-writing-history-item'));
-  await page.locator('.handbook-writing-history-item').first().click(); await waitCandidate(page);
+  await page.waitForFunction(() => document.querySelector('.handbook-writing-chat-open'));
+  await page.locator('.handbook-writing-chat-open').first().click(); await waitCandidate(page);
   assert.equal(await page.evaluate(() => window.editor.getValue()), changed, '查看历史候选不改正文');
   await page.locator('[data-ai-adopt]').click(); await page.waitForFunction(() => !!window.saved);
   assert.equal((await page.evaluate(() => window.editor.getValue())).trim(), '修订候选');
@@ -1357,8 +1402,8 @@ test('知识库可移除：延迟目录不回填、空引用真实生成、历�
   assert.equal(mcpReads, 0); assert.deepEqual(payloads[0].sources, []);
   await page.locator('[data-ai-close]').click();
   await page.locator('#open-writing').click();
-  await page.locator('.handbook-writing-history-item').first().waitFor();
-  await page.locator('.handbook-writing-history-item').first().click(); await waitCandidate(page);
+  await page.locator('.handbook-writing-chat-open').first().waitFor();
+  await page.locator('.handbook-writing-chat-open').first().click(); await waitCandidate(page);
   await openReferences(page);
   assert.equal(await page.locator('[data-ai-source-list] section').count(), 0, '恢复显式空引用不重加知识库');
   await page.locator('[data-reference-type="knowledge-mcp"]').click();
@@ -1425,5 +1470,154 @@ test('长引用列表：固定工具栏、全局序号筛选、直接移除和�
   assert.equal(await rows.first().locator('[data-source-priority]').textContent(), '01');
   await page.locator('[data-ai-references-toggle]').click();
   assert.equal(await page.locator('[data-ai-source-list] section:visible').count(), 4);
+  assert.deepEqual(errors, []);
+});
+
+test('AI 对话来源与回复操作的边界和错误状态', async t => {
+  const { page, errors } = await launch(t, { generate: async () => ({ content: 'unused' }) });
+  await page.route('**/ai-jobs/**', route => {
+    const request = route.request(); const url = new URL(request.url());
+    const failed = url.pathname.includes('job-failed') || url.pathname.includes('job-feedback-error') || url.pathname.includes('job-delete-error');
+    if (request.method() === 'GET') return route.fulfill({ status: failed ? 503 : 200, contentType: 'application/json',
+      body: JSON.stringify(failed ? { success: false, error: { message: '读取服务不可用' } } : {
+        success: true, data: { jobId: 'job-remote', candidateMarkdown: '远端候选', metadata: { sourceSnapshots: [], provenance: [] } },
+      }) });
+    const actionFailed = url.pathname.includes('job-feedback-error') || url.pathname.includes('job-delete-error');
+    return route.fulfill({ status: actionFailed ? 503 : 200, contentType: 'application/json',
+      body: JSON.stringify(actionFailed ? { success: false, error: { message: '操作服务不可用' } } : { success: true, data: {} }) });
+  });
+  await page.evaluate(async () => {
+    const { createAIConversationTools } = await import('/knowledge-center/modules/production/production-chat-evidence.js');
+    const host = document.createElement('section'); document.body.append(host);
+    const conversation = document.createElement('section'); host.append(conversation);
+    const notifications = []; const deleted = []; const opened = []; let current = null; let copied = ''; let clipboardFails = false;
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async value => {
+      if (clipboardFails) throw new Error('clipboard unavailable'); copied = value;
+    } } });
+    const tools = createAIConversationTools({ host, conversation,
+      context: { handbookId: 'HB-1', documentId: 'doc-1', outlineVersionId: 'outline-v1', branch: 'main' },
+      getCurrentJob: () => current, openHistory: id => opened.push(id), onDeleted: id => deleted.push(id), notify: text => notifications.push(text),
+    });
+    const history = document.createElement('div'); host.append(history);
+    tools.renderHistory([
+      { jobId: 'job-ok', operation: 'rewrite', status: 'completed', feedback: 'positive' },
+      { jobId: 'job-feedback-error', operation: 'polish', status: 'completed' },
+      { jobId: 'job-delete-error', operation: 'polish', status: 'completed' },
+      { jobId: 'job-preview-copy', operation: 'polish', status: 'completed' },
+      { jobId: 'job-empty-copy', operation: 'polish', status: 'completed' },
+      { jobId: 'job-active', operation: 'unknown', status: 'running' },
+      { jobId: 'job-other', operation: 'unknown', status: 'unknown', createdAt: 'invalid' },
+    ], history);
+    if (!history.textContent.includes('内容修订 · 候选已生成') || !history.textContent.includes('AI 写作 · unknown') ||
+        !history.querySelector('[data-chat-job="job-active"] .danger').disabled ||
+        history.querySelector('[data-chat-job="job-ok"] [data-feedback-rating="positive"]').getAttribute('aria-pressed') !== 'true')
+      throw new Error('历史对话回退或运行中删除权限错误');
+    history.querySelector('[data-chat-job="job-other"] .handbook-writing-chat-open').click();
+    if (opened[0] !== 'job-other') throw new Error('历史打开回调未传 jobId');
+    const drawer = host.querySelector('.handbook-ai-evidence-drawer');
+    current = { jobId: 'job-ok', operation: 'polish', status: 'completed', candidateMarkdown: '候选正文', metadata: {
+      sourceSnapshots: [{ sourceId: 1, title: '<不可信标题>', sourceType: '网页', sourceVersion: 'v3', content: '可信原文' }],
+      provenance: [{ start: 0, end: 2, evidence: [
+        { sourceId: '1', start: 0, end: 4 }, { sourceId: 'missing', start: 0, end: 1 },
+        { sourceId: 1, start: -1, end: 2 }, { sourceId: 1, start: 0, end: 99 },
+        { sourceId: 1, start: 0.5, end: 2 }, { sourceId: 1, start: 2 }, { sourceId: 1, start: 3, end: 2 },
+        { sourceId: 'empty', start: 0, end: 1 },
+      ] }],
+    } };
+    history.querySelector('[data-chat-job="job-ok"] .handbook-ai-evidence-link').click();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    if (drawer.hidden || drawer.querySelector('[data-evidence-count]').textContent !== '(1)' ||
+        !drawer.textContent.includes('可信原文') || !drawer.textContent.includes('对应候选：候选') || drawer.querySelector('script'))
+      throw new Error('引用来源只应展示范围合法的实际引用');
+    drawer.querySelector('[data-evidence-close]').click();
+    current = null; await tools.showEvidence('job-remote');
+    if (!drawer.textContent.includes('没有可定位的引用原文')) throw new Error('远端无证据 job 应显示空态');
+    current = { jobId: 'job-fallback', fragment: '', sourceSnapshots: [
+      { sourceId: 'archive', locator: '归档文件', fetchedAt: '昨日', content: '档案原文' },
+      { sourceId: 'untitled', sourceType: '文件', content: '另一段原文' },
+    ], metadata: { provenance: [
+      { start: 0, end: 1, evidence: [{ sourceId: 'archive', start: 0, end: 2 }] },
+      { start: 0, end: 1, evidence: [{ sourceId: 'untitled', start: 0, end: 2 }] },
+      { evidence: [] },
+    ] } };
+    await tools.showEvidence('job-fallback');
+    if (!drawer.textContent.includes('归档文件') || !drawer.textContent.includes('未命名资料') ||
+        !drawer.textContent.includes('资料 · 拉取于 昨日') || !drawer.textContent.includes('文件 · 拉取于 时间未知') ||
+        drawer.querySelectorAll('.handbook-ai-evidence-card').length !== 2)
+      throw new Error('旧版来源快照、标题与资料时间回退错误');
+    current = { jobId: 'job-legacy', sourceSnapshots: [{ sourceId: 'legacy', content: '旧资料' }] };
+    await tools.showEvidence('job-legacy');
+    if (!drawer.textContent.includes('没有可定位的引用原文')) throw new Error('旧版无元数据 job 应回退到空引用');
+    current = { jobId: 'job-no-sources', metadata: { provenance: [] } };
+    await tools.showEvidence('job-no-sources');
+    if (!drawer.textContent.includes('没有可定位的引用原文')) throw new Error('缺少来源快照时应稳定回退为空引用');
+    current = { jobId: 'job-empty', sourceSnapshots: [{ sourceId: 'empty', content: '' }], metadata: { provenance: [
+      { evidence: [{ sourceId: 'empty', start: 0, end: 1 }] }, {},
+    ] } };
+    await tools.showEvidence('job-empty');
+    if (!drawer.textContent.includes('没有可定位的引用原文')) throw new Error('缺失正文或 evidence 的来源应被忽略');
+    await tools.showEvidence('job-failed');
+    if (!notifications.some(item => item.includes('引用来源读取失败'))) throw new Error('引用读取失败未通知');
+
+    current = { jobId: 'job-ok', candidateMarkdown: '候选正文' };
+    const bar = history.querySelector('[data-chat-job="job-ok"] .handbook-ai-message-actions');
+    bar.querySelector('[aria-label="复制本次回复"]').click(); await new Promise(resolve => setTimeout(resolve, 20));
+    if (copied !== '候选正文' || !notifications.includes('已复制本次回复')) throw new Error('复制候选成功状态错误');
+    clipboardFails = true; bar.querySelector('[aria-label="复制本次回复"]').click(); await new Promise(resolve => setTimeout(resolve, 20));
+    if (!notifications.some(item => item.includes('复制失败'))) throw new Error('剪贴板失败未通知');
+    clipboardFails = false;
+    current = { jobId: 'job-ok', fragment: '修订片段' };
+    history.querySelector('[data-chat-job="job-ok"] [aria-label="复制本次回复"]').click(); await new Promise(resolve => setTimeout(resolve, 20));
+    if (copied !== '修订片段') throw new Error('历史回复 fragment 回退复制错误');
+    current = { jobId: 'job-preview-copy', executionPreview: { text: '执行预览' } };
+    history.querySelector('[data-chat-job="job-preview-copy"] [aria-label="复制本次回复"]').click(); await new Promise(resolve => setTimeout(resolve, 20));
+    if (copied !== '执行预览') throw new Error('历史执行预览回退复制错误');
+    current = { jobId: 'job-empty-copy', candidateMarkdown: '', fragment: '' };
+    history.querySelector('[data-chat-job="job-empty-copy"] [aria-label="复制本次回复"]').click(); await new Promise(resolve => setTimeout(resolve, 20));
+    if (copied !== '') throw new Error('空候选复制回退错误');
+    const errorBar = history.querySelector('[data-chat-job="job-feedback-error"] .handbook-ai-message-actions');
+    const negative = errorBar.querySelector('[data-feedback-rating="negative"]');
+    negative.click(); await new Promise(resolve => setTimeout(resolve, 20));
+    if (!notifications.some(item => item.includes('评价失败'))) throw new Error('评价失败未通知');
+    const goodRating = bar.querySelector('[data-feedback-rating="negative"]');
+    goodRating.click(); await new Promise(resolve => setTimeout(resolve, 20));
+    if (goodRating.getAttribute('aria-pressed') !== 'true' || !notifications.includes('评价已记录')) throw new Error('评价成功状态未更新');
+
+    const errorMenu = errorBar.querySelector('details'); errorMenu.querySelector('button').click();
+    const feedback = host.querySelector('dialog');
+    feedback.querySelector('[data-feedback-submit]').click();
+    if (!feedback.open || !notifications.includes('请先填写反馈内容')) throw new Error('空反馈应阻止提交');
+    feedback.querySelector('textarea').value = '请核对引用';
+    feedback.querySelector('[data-feedback-submit]').click(); await new Promise(resolve => setTimeout(resolve, 20));
+    if (!feedback.open || !notifications.some(item => item.includes('反馈提交失败'))) throw new Error('反馈失败应保留对话框');
+    feedback.querySelector('[data-feedback-cancel]').click();
+    const menu = bar.querySelector('details'); menu.querySelector('button').click();
+    const successfulFeedback = host.querySelector('dialog'); successfulFeedback.querySelector('textarea').value = '请核对引用';
+    successfulFeedback.querySelector('[data-feedback-submit]').click(); await new Promise(resolve => setTimeout(resolve, 20));
+    if (successfulFeedback.open || !notifications.includes('意见反馈已提交')) throw new Error('反馈成功未关闭对话框');
+
+    errorMenu.querySelector('.danger').click();
+    const errorConfirm = host.querySelectorAll('dialog')[1]; errorConfirm.querySelector('[data-delete-confirm]').click(); await new Promise(resolve => setTimeout(resolve, 20));
+    if (!errorConfirm.open || !notifications.some(item => item.includes('删除失败'))) throw new Error('删除失败应保留确认框');
+    errorConfirm.querySelector('[data-delete-cancel]').click();
+    const remove = menu.querySelector('.danger'); remove.click();
+    const confirm = host.querySelectorAll('dialog')[1]; confirm.querySelector('[data-delete-cancel]').click();
+    if (confirm.open) throw new Error('取消删除未关闭确认框');
+    remove.click(); confirm.querySelector('[data-delete-confirm]').click(); await new Promise(resolve => setTimeout(resolve, 20));
+    if (confirm.open || deleted[0] !== 'job-ok' || !notifications.includes('对话已删除')) throw new Error('删除成功未清理并回调');
+    const currentView = document.createElement('div'); host.append(currentView);
+    tools.renderCurrent(null, currentView);
+    if (!currentView.hidden) throw new Error('空当前消息应隐藏');
+    tools.renderCurrent({ jobId: 'complete', operation: 'generate', status: 'completed' }, currentView);
+    if (!currentView.textContent.includes('文档生成 · 候选已生成') || !currentView.textContent.includes('本次候选已生成'))
+      throw new Error('当前已完成消息未展示候选状态');
+    tools.renderCurrent({ jobId: 'failed', operation: 'continue', status: 'failed', error: { message: '执行中断' } }, currentView);
+    if (currentView.hidden || !currentView.textContent.includes('内容续写 · 生成失败') || !currentView.textContent.includes('执行中断'))
+      throw new Error('失败当前消息未显示状态与错误');
+    tools.renderCurrent({ jobId: 'unknown', operation: 'other', status: 'unknown' }, currentView);
+    if (!currentView.textContent.includes('AI 写作 · unknown') || !currentView.textContent.includes('执行过程正在更新'))
+      throw new Error('未知当前消息应使用稳定回退文案');
+    host.remove();
+  });
   assert.deepEqual(errors, []);
 });

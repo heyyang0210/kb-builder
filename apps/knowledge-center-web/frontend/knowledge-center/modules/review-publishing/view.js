@@ -47,6 +47,54 @@ function reviewMetrics(task) {
 
 function statusLabel(task) { return labels[rawStatus(task)] || '状态异常'; }
 
+function defaultReviewStep(task, review) {
+  if (rawStatus(task) === 'mr_submitted' && task?.deliveryObservation?.state === 'closed') return 'read';
+  return review?.status === 'pending' && reviewMetrics(task).operations.length ? 'diff' : 'read';
+}
+
+function reviewFlow(task, review, reviewerName, editHref, ui = {}) {
+  const state = rawStatus(task);
+  const delivery = task?.deliveryObservation?.state;
+  const completion = task?.completion?.status;
+  const closed = state === 'mr_submitted' && delivery === 'closed';
+  const mayReturnToWriting = ui.canWrite === true && (ui.canManage === true || String(task?.createdBy?.id || '') === String(ui.currentUserId || ''));
+  const phase = state === 'under_review' && review?.status === 'pending' ? '待审核' : state === 'mr_submitted' ? '审核已通过' : statusLabel(task);
+  const result = completion === 'completed' ? '文档已完成' : closed ? 'MR 已关闭，交付未完成'
+    : state === 'mr_submitted' && delivery === 'merged' ? '已合并，待正文和图片回读'
+      : state === 'mr_submitted' ? '等待人工合并' : state === 'approved' || state === 'pending_publish' ? '待创建 MR' : '尚未进入交付';
+  let title = '查看当前审核内容';
+  let note = '可在阅读、修改和意见之间切换';
+  let action = '';
+  if (closed) {
+    title = result;
+    note = '请先核对 MR 关闭原因；重新交付需修订文档并再次送审';
+    if (mayReturnToWriting) action = `<a class="button primary" href="${esc(editHref)}">返回文档修订</a>`;
+  } else if (review?.status === 'pending') {
+    title = reviewerName && reviewerName !== '人员未匹配' ? `待${reviewerName}审核` : '待审核人处理';
+    note = reviewMetrics(task).operations.length ? `先核对 ${reviewMetrics(task).operations.length} 处修改，再提出意见或作出决定` : '阅读冻结正文后提出意见或作出决定';
+    const step = defaultReviewStep(task, review);
+    action = `<button class="button primary" type="button" data-review-step="${step}">${step === 'diff' ? '查看修改' : '阅读文档'}</button>`;
+  } else if (state === 'approved' || state === 'pending_publish') {
+    title = '审核已通过，待创建 MR';
+    note = '由具有交付权限的人员继续处理';
+  } else if (state === 'mr_submitted' && task?.deliveryFailure) {
+    title = '交付回读失败';
+    note = `最近核验失败（${task.deliveryFailure.code || 'DELIVERY_READBACK_FAILED'}），交付尚未完成。请核对目标正文和图片后重新读取。`;
+    if (task?.capabilities?.canRefreshDelivery === true) action = `<button class="button primary" type="button" data-review-delivery-refresh="${esc(idOf(task))}">重新回读</button>`;
+  } else if (state === 'mr_submitted' && delivery === 'merged' && completion !== 'completed') {
+    title = result;
+    note = '待服务端核对目标正文与图片';
+  } else if (completion === 'completed') {
+    title = result;
+    note = '交付结果已由服务端确认';
+  } else if (state === 'rejected') {
+    title = '已退回，待文档负责人修订';
+    note = '原审核意见与冻结快照仍可查看';
+    if (task?.capabilities?.canRevise === true || mayReturnToWriting && task.handbookSource) action = `<a class="button primary" href="${esc(editHref)}">返回文档修订</a>`;
+  }
+  return { phase, result, title, note, action, closed };
+}
+
 function taskIssues(task) {
   if (!task || typeof task !== 'object' || !idOf(task)) return ['任务详情'];
   const values = { ...task, id: idOf(task), candidateDigest: candidateDigest(task) };
@@ -154,7 +202,7 @@ function repositoryConnectionState(projection, task) {
 function commentForm(task, reviewId, scope = 'review') {
   if (!reviewId || task?.capabilities?.canComment !== true) return '';
   const readerMarker = scope === 'reader' ? 'data-review-reader-comment-form' : '';
-  return `<form class="review-comment-form" data-review-comment-form ${readerMarker} data-task-id="${esc(idOf(task))}" data-review-id="${esc(reviewId)}"><input type="hidden" name="anchor"><input type="hidden" name="candidateDigest" value="${esc(candidateDigest(task))}"><input type="hidden" name="commentType" value="issue"><input type="hidden" name="severity" value="normal"><p data-review-anchor-status>选中文字可精准定位；不选中则为全文意见。</p><label class="review-comment-body">意见内容<textarea name="comment" required placeholder="在此描述你的意见…"></textarea></label><button class="button primary" type="submit">提交意见</button></form>`;
+  return `<form class="review-comment-form" data-review-comment-form ${readerMarker} data-task-id="${esc(idOf(task))}" data-review-id="${esc(reviewId)}"><input type="hidden" name="anchor"><input type="hidden" name="candidateDigest" value="${esc(candidateDigest(task))}"><input type="hidden" name="commentType" value="issue"><input type="hidden" name="severity" value="normal"><p data-review-anchor-status>选中文字可精准定位；不选中则为全文意见。</p><label class="review-comment-body">意见内容<textarea name="comment" required placeholder="在此描述你的意见…"></textarea></label><label class="review-comment-mentions">通知手册负责人（可选）<select name="mentions" multiple size="2" data-review-mention-select data-review-id="${esc(reviewId)}"><option value="">聚焦此处加载当前关联手册</option></select><small data-review-mention-status>未选择手册时仅保存普通审核意见</small></label><button class="button primary" type="submit">提交意见</button></form>`;
 }
 
 function contextConflict(projection) {
@@ -204,7 +252,7 @@ function reader(projection, task, ui = {}) {
   const isWaitingForReview = !idOf(task) && !task?.candidate && !task?.draft && !task?.reviewMode;
   if (task?.handbookSource) {
     content = frozenDocument && typeof frozenDocument.markdown === 'string'
-      ? `<div class="review-reader-snapshot"><strong>当前显示已保存的手册审核快照 · ${esc(frozenDocument.draftRevisionId)}</strong>${renderDb(frozenDocument.markdown, frozenDocument.filePath)}</div>`
+      ? `<div class="review-reader-snapshot"><strong>当前显示已保存的手册审核快照</strong>${renderDb(frozenDocument.markdown, frozenDocument.filePath)}</div>`
       : '<section class="review-reader-state" role="alert"><h3>审核文档快照缺失或不匹配</h3><p>请返回清单重新选择文档，当前不会用仓库正文代替审核内容。</p></section>';
   }
   else if (onlineReviewSnapshot) {
@@ -315,7 +363,9 @@ function opinions(task, review) {
     const location = comment.anchor ? `<button class="button link" type="button" data-review-comment-locate="${esc(comment.id)}" data-document-id="${esc(comment.anchor.documentId || comment.anchor.path || '')}" data-review-node-id="${esc(comment.anchor.nodeId || '')}" data-review-anchor-kind="${esc(comment.anchor.anchorKind || '')}" data-review-line="${esc(comment.anchor.lineRange?.startLine ?? comment.anchor.lineRange?.start ?? '')}">查看文档位置</button>` : '';
     const replyFormId = `review-reply-${String(comment.id).replace(/[^a-zA-Z0-9_-]/g, '-')}`;
     const lifecycle = canManageThread ? `<div class="review-opinion-actions">${location}<button class="button secondary compact" type="button" data-review-reply-toggle="${esc(comment.id)}" aria-expanded="false" aria-controls="${replyFormId}">回复</button>${comment.resolved === true ? `<button class="button secondary compact" type="button" data-review-comment-reopen="${esc(comment.id)}" data-task-id="${esc(idOf(task))}" data-review-id="${esc(review?.id || '')}">重新打开</button>` : `<button class="button secondary compact" type="button" data-review-comment-resolve="${esc(comment.id)}" data-task-id="${esc(idOf(task))}" data-review-id="${esc(review?.id || '')}">标记已处理</button>`}</div><form id="${replyFormId}" class="review-reply-form" hidden data-review-reply-form data-task-id="${esc(idOf(task))}" data-review-id="${esc(review?.id || '')}" data-comment-id="${esc(comment.id)}"><label for="${replyFormId}-content">回复内容</label><textarea id="${replyFormId}-content" name="comment" required placeholder="补充处理结论或需要确认的事实"></textarea><div><button class="button secondary compact" type="submit">发送回复</button><button class="button link compact" type="button" data-review-reply-cancel="${esc(comment.id)}">取消</button></div></form>` : location;
-    return `<article class="review-opinion ${comment.severity === 'blocker' && comment.resolved !== true ? 'blocker' : ''}" tabindex="-1" data-review-opinion data-review-comment-id="${esc(comment.id)}" data-severity="${esc(comment.severity || 'normal')}" data-resolved="${comment.resolved === true}"><header><strong>${esc(comment.author?.displayName || '审核成员')}</strong><span class="review-opinion-state">${esc(comment.resolved === true ? '已处理' : '待处理')}</span></header><div class="review-opinion-meta"><span>${esc(severityLabel(comment.severity))}</span><span>${esc(locationLabel(comment))}</span></div><p>${esc(comment.content || comment.body || comment.comment || '')}</p>${replies.length ? `<ol class="review-replies">${replies.map(reply => `<li><strong>${esc(reply.author?.displayName || '审核成员')}</strong><span>${esc(reply.content || reply.body || '')}</span></li>`).join('')}</ol>` : ''}${lifecycle}</article>`;
+    const mentions = list(comment.mentions);
+    const noticeLabel = comment.notificationStatus === 'pending_configuration' ? '通知未投递：通知渠道尚未配置' : comment.notificationStatus === 'delivered' ? '已通知手册负责人' : '';
+    return `<article class="review-opinion ${comment.severity === 'blocker' && comment.resolved !== true ? 'blocker' : ''}" tabindex="-1" data-review-opinion data-review-comment-id="${esc(comment.id)}" data-severity="${esc(comment.severity || 'normal')}" data-resolved="${comment.resolved === true}"><header><strong>${esc(comment.author?.displayName || '审核成员')}</strong><span class="review-opinion-state">${esc(comment.resolved === true ? '已处理' : '待处理')}</span></header><div class="review-opinion-meta"><span>${esc(severityLabel(comment.severity))}</span><span>${esc(locationLabel(comment))}</span></div><p>${esc(comment.content || comment.body || comment.comment || '')}</p>${mentions.length ? `<p class="review-opinion-mentions">提及：${mentions.map(item => `@${esc(item.handbookName)}（${esc(item.recipientName || item.recipientId)}）`).join('、')}</p>` : ''}${noticeLabel ? `<small class="review-notification-state">${esc(noticeLabel)}</small>` : ''}${replies.length ? `<ol class="review-replies">${replies.map(reply => `<li><strong>${esc(reply.author?.displayName || '审核成员')}</strong><span>${esc(reply.content || reply.body || '')}</span></li>`).join('')}</ol>` : ''}${lifecycle}</article>`;
   }).join('') : `<section class="review-opinion-empty"><h4>当前没有审核意见</h4><p>请先在“阅读文档”选择文字，或在“查看修改”选择具体行后提出意见。</p><div><button class="button secondary" type="button" data-review-step="read">阅读文档并添加意见</button><button class="button primary" type="button" data-review-step="diff">查看修改并添加意见</button></div></section>`;
   const threadPermission = canManageThread
     ? '当前账号可以回复、标记已处理和重新打开意见。'
@@ -324,14 +374,7 @@ function opinions(task, review) {
 }
 
 function reviewActionPanel(task, review) {
-  if (task.mergeRequest && rawStatus(task) === 'mr_submitted') {
-    const completed = task.completion?.status === 'completed';
-    const merged = task.deliveryObservation?.state === 'merged';
-    const closed = task.deliveryObservation?.state === 'closed';
-    const message = completed ? '已完成' : closed ? 'MR 已关闭，交付未完成' : merged ? '已合并，待正文和图片回读' : '等待人工合并';
-    const recovery = closed ? '<p class="review-delivery-recovery">请在 GitLab 核对关闭原因；如需重新交付，返回文档写作并重新提交审核。</p>' : '';
-    return `<section class="review-evidence-card review-action-card" aria-label="交付进度"><h3>交付进度</h3><strong class="review-delivery-state" role="status">${message}</strong>${recovery}<p class="incremental-form-status" role="alert"></p></section>`;
-  }
+  if (task.mergeRequest && rawStatus(task) === 'mr_submitted') return '';
   const metrics = reviewMetrics(task);
   const blockers = metrics.blockers;
   const canReview = task?.capabilities?.canReview === true && review?.status === 'pending';
@@ -352,15 +395,15 @@ function detail(task, tasks, allTasks, step, projection, diffData, ui) {
   const params = new URLSearchParams(window.location.search);
   const currentDocument = task.handbookSource?.documents?.find(item => item.documentId === params.get('documentId') || item.filePath === params.get('path'));
   const review = list(task.reviews).find(item => !currentDocument || String(item.documentId || '') === String(currentDocument.documentId || '')) || list(task.reviews)[0];
-  const current = ['read', 'diff', 'opinions'].includes(step) ? step : 'read';
-  const body = projection?.contextConflict && current !== 'read' ? contextConflict(projection) : current === 'read' ? reader(projection, task, ui) : current === 'diff' ? diff(task, diffData, review) : opinions(task, review);
+  const current = ['read', 'diff', 'opinions'].includes(step) ? step : defaultReviewStep(task, review);
+  let body = projection?.contextConflict && current !== 'read' ? contextConflict(projection) : current === 'read' ? reader(projection, task, ui) : current === 'diff' ? diff(task, diffData, review) : opinions(task, review);
   const affected = task.handbookSource?.documents || [];
   const scopeHint = review?.documentId ? `本次仅审核当前文档：${esc(currentDocument?.filePath || review.documentId)}；范围内每篇通过才可交付。` : '本次决定适用于该历史审核记录的全部文档。';
   const scopeNotice = affected.length ? `<details class="review-scope-notice"><summary><strong>审核范围 · ${affected.length} 篇文档</strong><span>查看范围</span></summary><div><p>${scopeHint}</p><ul>${affected.map(item => `<li>${esc(item.filePath)}</li>`).join('')}</ul></div></details>` : '';
   const baseline = task.baselineVersionLabel || task.baselineVersionName || task.baselineVersionId;
   const metrics = reviewMetrics(task); const unresolved = metrics.unresolved;
   const productName = task.productName || 'YashanDB';
-  const handbookName = task.handbookName || task.name || task.title || '产品描述手册';
+  const handbookName = task.handbookName || ui.workbench?.handbooks?.find(item => String(item.handbookId) === String(task.handbookId))?.name || task.name || task.title || '未命名手册';
   const documentPath = currentDocument?.filePath || params.get('path') || (task.target?.scope === 'handbook' ? '整本手册' : '未指定文档');
   const documentName = documentPath.split('/').pop();
   const sourceName = task.handbookSource ? '已保存修订 · 冻结审核快照' : task.reviewMode === 'online_review' ? '正式版本评审快照' : '候选快照';
@@ -379,15 +422,24 @@ function detail(task, tasks, allTasks, step, projection, diffData, ui) {
         ? `<div class="review-drawer-fulltext-form"><p class="review-drawer-hint">全文意见（兼容模式）：</p>${commentForm(task, review.id, 'reader')}</div>`
     : '';
   const commentDrawer = (review?.id)
-    ? `<section class="review-evidence-card review-comment-drawer"><details data-review-comment-drawer><summary title="提出意见" aria-label="提出意见"><h3>提出意见</h3><small>${drawerComments.length ? `${drawerComments.length} 条已有意见` : '选中文字精准定位'}</small></summary><button type="button" class="icon-button review-panel-close" data-review-panel-close aria-label="关闭意见侧栏" title="关闭意见侧栏"><i data-lucide="x" aria-hidden="true"></i></button>${drawerCommentsList}${drawerForm}</details></section>`
+    ? `<section class="review-evidence-card review-comment-drawer"><details data-review-comment-drawer><summary title="提出意见" aria-label="提出意见"><i data-lucide="messages-square" aria-hidden="true"></i><h3>审核意见</h3><small>${drawerComments.length} 条</small></summary><button type="button" class="icon-button review-panel-close" data-review-panel-close aria-label="关闭意见侧栏" title="关闭意见侧栏"><i data-lucide="x" aria-hidden="true"></i></button>${drawerCommentsList}${drawerForm}</details></section>`
     : '';
   const evidenceCards = evidence(task, current);
-  const evidenceDrawer = `<details class="review-evidence-drawer"><summary title="审核依据" aria-label="审核依据"><span>审核依据</span><small>角色 · 检查 · 血缘</small></summary><button type="button" class="icon-button review-panel-close" data-review-panel-close aria-label="关闭审核依据侧栏" title="关闭审核依据侧栏"><i data-lucide="x" aria-hidden="true"></i></button><div class="review-evidence-content">${evidenceCards}</div></details>`;
+  const evidenceDrawer = `<details class="review-evidence-drawer"><summary title="审核依据" aria-label="审核依据"><i data-lucide="list-checks" aria-hidden="true"></i><span>审核依据</span><small>角色 · 检查 · 血缘</small></summary><button type="button" class="icon-button review-panel-close" data-review-panel-close aria-label="关闭审核依据侧栏" title="关闭审核依据侧栏"><i data-lucide="x" aria-hidden="true"></i></button><div class="review-evidence-content">${evidenceCards}</div></details>`;
   const editHref = task.handbookSource
     ? productionEditorUrl(task.handbookId, currentDocument?.filePath || task.handbookSource.documents?.[0]?.filePath || '', task.handbookSource.branch)
     : task.reviewMode === 'online_review' ? productionEditorUrl(task.handbookId, params.get('path') || '', '')
       : `/knowledge-center/production?taskId=${encodeURIComponent(idOf(task))}&stage=review`;
-  return `<article class="review-workspace review-workbench-detail"><header class="review-detail-head"><div class="review-heading-group"><a class="review-production-return" href="${esc(editHref)}"><i data-lucide="arrow-left" aria-hidden="true"></i>${task.handbookSource || task.reviewMode === 'online_review' ? '编辑文档并提交审核' : '返回增量任务'}</a><h2>${esc(task.name || task.title || '审核事项')}</h2>${tasks.length > 1 ? taskSelector(tasks, idOf(task)) : ''}${history(allTasks, idOf(task))}</div><div class="review-detail-actions"><span class="review-status" data-review-status>${esc(statusLabel(task))}</span>${task.mergeRequest?.webUrl || task.capabilities?.canRefreshDelivery === true && rawStatus(task) === 'mr_submitted' ? `<details class="review-more-menu" data-dismissible-menu><summary class="button tertiary compact" aria-label="审核更多操作" title="审核更多操作"><span class="review-more-dots" aria-hidden="true">⋯</span></summary><div class="review-more-menu-panel">${task.mergeRequest?.webUrl ? `<a href="${esc(task.mergeRequest.webUrl)}" target="_blank" rel="noopener noreferrer"><i data-lucide="external-link" aria-hidden="true"></i><span>查看 GitLab MR !${esc(task.mergeRequest.iid)}</span></a>` : ''}${task.capabilities?.canRefreshDelivery === true && rawStatus(task) === 'mr_submitted' ? `<button type="button" data-review-delivery-refresh="${esc(idOf(task))}"><i data-lucide="refresh-cw" aria-hidden="true"></i><span>状态刷新</span></button>` : ''}</div></details>` : ''}</div></header><div class="review-context-strip" aria-label="当前审核上下文"><span>手册 <strong>${esc(handbookName)}</strong></span><span>版本 <strong>${esc(task.businessVersion || '未关联')}</strong></span><span title="${esc(documentPath)}">文档 <strong>${esc(documentName)}</strong></span><details class="review-context-more"><summary>更多信息</summary><div><span>产品 <strong>${esc(productName)}</strong></span><span>候选 <code>${esc(candidateDigest(task).slice(0, 8))}</code></span><span>来源 <strong>${esc(sourceName)}</strong></span><span>未解决意见 <strong>${unresolved}</strong></span></div></details></div>${scopeNotice}<nav class="review-steps" aria-label="审核步骤"><button class="${current === 'read' ? 'active' : ''}" data-review-step="read">阅读文档</button><button class="${current === 'diff' ? 'active' : ''}" data-review-step="diff">查看修改（${metrics.operations.length}）</button><button class="${current === 'opinions' ? 'active' : ''}" data-review-step="opinions">审核意见（${unresolved}）</button></nav><div class="review-main-grid"><div class="review-stage">${body}</div><aside class="review-evidence-column" data-scroll-region="panel">${reviewActionPanel(task, review)}${commentDrawer}${evidenceDrawer}</aside></div></article>`;
+  const reviewRow = ui.workbench?.documents?.find(row => String(row.taskId) === String(idOf(task)) && (!currentDocument || String(row.documentId) === String(currentDocument.documentId)));
+  let reviewerName = reviewRow?.reviewerDisplay && reviewRow.reviewerDisplay !== '未明确指派' ? reviewRow.reviewerDisplay : '';
+  const flow = reviewFlow(task, review, reviewerName, editHref, ui);
+  const responsibleName = flow.closed || rawStatus(task) === 'rejected'
+    ? (task.createdBy?.displayName && task.createdBy.displayName !== '未知用户' ? task.createdBy.displayName : task.createdBy?.name || '文档提交者')
+    : review?.status === 'pending' ? reviewerName || '未明确指派' : '按交付权限处理';
+  reviewerName = responsibleName;
+  const nextStep = `<section class="review-next-step ${flow.closed ? 'delivery-failed' : ''}" aria-label="当前阶段与下一步"><div><strong>${esc(flow.title)}</strong><span>${esc(flow.note)}</span></div>${flow.action}</section>`;
+  if (current === 'read') body = `<div class="review-reading-tools"><strong>${esc(documentName)}</strong><div><button class="icon-button" type="button" data-review-reader-refresh aria-label="刷新阅读" title="刷新阅读"><i data-lucide="refresh-cw" aria-hidden="true"></i></button><button class="icon-button" type="button" data-review-focus-toggle aria-label="${ui.focusMode ? '退出专注阅读' : '专注阅读'}" title="${ui.focusMode ? '退出专注阅读' : '专注阅读'}" aria-pressed="${ui.focusMode === true}"><i data-lucide="scan" aria-hidden="true"></i></button></div></div>${body}`;
+  return `<article class="review-workspace review-workbench-detail"><header class="review-detail-head"><div class="review-heading-group"><h2>${esc(task.name || task.title || '审核事项')}</h2>${tasks.length > 1 ? taskSelector(tasks, idOf(task)) : ''}${history(allTasks, idOf(task))}</div><div class="review-detail-actions"><span class="review-status" data-review-status>${esc(flow.phase)}</span>${task.mergeRequest?.webUrl || task.capabilities?.canRefreshDelivery === true && rawStatus(task) === 'mr_submitted' ? `<details class="review-more-menu" data-dismissible-menu><summary class="button tertiary compact" aria-label="审核更多操作" title="审核更多操作"><i data-lucide="ellipsis" aria-hidden="true"></i></summary><div class="review-more-menu-panel">${task.mergeRequest?.webUrl ? `<a href="${esc(task.mergeRequest.webUrl)}" target="_blank" rel="noopener noreferrer"><i data-lucide="external-link" aria-hidden="true"></i><span>查看 GitLab MR !${esc(task.mergeRequest.iid)}</span></a>` : ''}${task.capabilities?.canRefreshDelivery === true && rawStatus(task) === 'mr_submitted' ? `<button type="button" data-review-delivery-refresh="${esc(idOf(task))}"><i data-lucide="refresh-cw" aria-hidden="true"></i><span>状态刷新</span></button>` : ''}</div></details>` : ''}</div></header><div class="review-context-strip" aria-label="当前审核上下文"><span>手册 <strong>${esc(handbookName)}</strong></span><span title="${esc(documentPath)}">文档 <strong>${esc(documentName)}</strong></span><span>版本 <strong>${esc(task.businessVersion || '未关联')}</strong></span><span>当前责任人 <strong>${esc(reviewerName || '未明确指派')}</strong></span><details class="review-context-more"><summary>更多信息</summary><div><span>产品 <strong>${esc(productName)}</strong></span><span>路径 <code>${esc(documentPath)}</code></span><span>分支 <code>${esc(task.handbookSource?.branch || projection?.branch || '未关联')}</code></span><span>候选 <code>${esc(candidateDigest(task).slice(0, 8))}</code></span><span>来源 <strong>${esc(sourceName)}</strong></span></div></details></div>${nextStep}${scopeNotice}<nav class="review-steps" aria-label="审核步骤"><button class="${current === 'diff' ? 'active' : ''}" data-review-step="diff">查看修改（${metrics.operations.length}）</button><button class="${current === 'read' ? 'active' : ''}" data-review-step="read">阅读文档</button><button class="${current === 'opinions' ? 'active' : ''}" data-review-step="opinions">审核意见（${unresolved}）</button></nav><div class="review-main-grid"><div class="review-stage">${body}</div><aside class="review-evidence-column" data-scroll-region="panel"><section class="review-evidence-card review-delivery-summary"><h3>审核与交付</h3><dl><dt>审核阶段</dt><dd>${esc(flow.phase)}</dd><dt>交付结果</dt><dd>${esc(flow.result)}</dd></dl></section>${reviewActionPanel(task, review)}${commentDrawer}${evidenceDrawer}</aside></div></article>`;
 }
 
 export function renderReviewPublishing({ reviewProjection, gitlabProjection, reviewUi }) {
@@ -401,7 +453,7 @@ export function renderReviewPublishing({ reviewProjection, gitlabProjection, rev
     const task = projection.detail?.task;
     const navigation = reviewNavigation(projection.workbench, task, params);
     return navigation + (task
-      ? detail(task, list(projection.items), list(projection.allItems), params.get('step') || 'read', gitlabProjection || {}, projection.diff, ui)
+      ? detail(task, list(projection.items), list(projection.allItems), params.get('step') || '', gitlabProjection || {}, projection.diff, ui)
       : handbookWaitingState(projection.handbookId, gitlabProjection || {}, list(projection.reviewHandbooks), ui, projection.onlineReviewBaselines, projection.onlineReviewBaselineError, projection.onlineReviewCommits || []));
   }
   const tasks = list(projection.items || projection.tasks || projection.data);
@@ -412,7 +464,7 @@ export function renderReviewPublishing({ reviewProjection, gitlabProjection, rev
   const requested = new URLSearchParams(window.location.search).get('taskId');
   const selected = idOf(detailTask) || requested || idOf(tasks[0]);
   const task = detailTask && String(idOf(detailTask)) === String(selected) ? detailTask : tasks.find(item => String(idOf(item)) === String(selected));
-  const step = new URLSearchParams(window.location.search).get('step') || 'read';
+  const step = new URLSearchParams(window.location.search).get('step') || '';
   return detail(task, tasks, list(projection.allItems), step, gitlabProjection || {}, projection.diff, reviewUi || {});
 }
 

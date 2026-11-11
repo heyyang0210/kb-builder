@@ -94,4 +94,37 @@ describe('StepExecutor', () => {
     const result = executor.transformInput({ agent: 'unknown' }, prevOutput, {});
     expect(result).toBe(prevOutput);
   });
+
+  test('不存在的Agent明确失败，注册后可使用旧方法名恢复执行', async () => {
+    const manager = { getAgent: jest.fn().mockReturnValue(null) };
+    const local = new StepExecutor(manager);
+    await expect(local.execute({ name: 'missing' }, {})).rejects.toThrow('Agent not found: missing');
+    const execute = jest.fn().mockResolvedValue({ document: '恢复正文' });
+    manager.getAgent.mockReturnValue({ execute });
+    await expect(local.executeStep({ name: 'missing' }, { retry: true })).resolves.toEqual({ document: '恢复正文' });
+    expect(execute).toHaveBeenCalledWith({ retry: true }, {});
+  });
+
+  test('详情回调传给Agent，执行错误原样传播且允许后续重试', async () => {
+    const failure = new Error('执行失败');
+    const agent = { setOnDetail: jest.fn(), execute: jest.fn().mockRejectedValueOnce(failure).mockResolvedValueOnce('完成') };
+    const local = new StepExecutor({ getAgent: () => agent });
+    const detail = jest.fn();
+    const config = { option: 1 };
+    await expect(local.execute({ name: 'writer', config }, { value: 1 }, detail)).rejects.toBe(failure);
+    expect(agent.setOnDetail).toHaveBeenCalledWith(detail);
+    expect(agent.execute).toHaveBeenCalledWith({ value: 1 }, config);
+    await expect(local.executeStep({ name: 'writer' }, {}, detail)).resolves.toBe('完成');
+  });
+
+  test('缺步骤标识保持前序对象，生成和校验兼容非包装的前序值', () => {
+    const previous = { content: '正文' };
+    expect(executor.transformInput({}, previous, {})).toBe(previous);
+    const generated = executor.transformInput({ name: 'generator' }, previous, { steps: [] });
+    expect(generated.references).toBe(previous);
+    expect(generated.executionPlan).toBe(previous);
+    expect(executor.transformInput({ name: 'validator' }, null, {})).toMatchObject({ document: null, executionPlan: undefined });
+    expect(executor.transformInput({ name: 'validator' }, '纯正文', { steps: [{ agent: 'planner', output: '计划' }] }))
+      .toMatchObject({ document: '纯正文', executionPlan: '计划' });
+  });
 });

@@ -85,7 +85,7 @@ function labelForState(state, columns) {
   return `显示字段 ${visible}/${columns.length}`;
 }
 function createTrigger(table, state, columns) {
-  const host = table.closest('[data-table-view-host]') || table.parentElement;
+  const host = document.querySelector(`[data-table-view-trigger-host="${CSS.escape(table.dataset.tableViewId)}"]`) || table.closest('[data-table-view-host]') || table.parentElement;
   if (!host || host.querySelector(`[data-table-view-trigger="${CSS.escape(table.dataset.tableViewId)}"]`)) return;
   const trigger = document.createElement('button');
   trigger.type = 'button'; trigger.className = 'table-view-trigger button tertiary compact';
@@ -93,7 +93,8 @@ function createTrigger(table, state, columns) {
   trigger.setAttribute('aria-label', `配置${table.dataset.tableViewLabel || '表格'}显示字段`);
   trigger.innerHTML = `<i data-lucide="columns-3" aria-hidden="true"></i><span>${labelForState(state, columns)}</span>`;
   host.classList.add('table-view-host');
-  host.insertBefore(trigger, table);
+  if (host.contains(table)) host.insertBefore(trigger, table);
+  else host.appendChild(trigger);
 }
 function drawerItemsHtml(columns, state) {
   return state.order.map(key => columns.find(column => column.key === key)).filter(Boolean).map((column, index, ordered) => `<li data-table-drawer-item="${column.key}"><div class="table-view-order"><button type="button" data-table-view-move="up" data-table-view-column="${column.key}" aria-label="上移${column.label}"${index === 0 ? ' disabled' : ''}><i data-lucide="chevron-up" aria-hidden="true"></i></button><button type="button" data-table-view-move="down" data-table-view-column="${column.key}" aria-label="下移${column.label}"${index === ordered.length - 1 ? ' disabled' : ''}><i data-lucide="chevron-down" aria-hidden="true"></i></button></div><label><input type="checkbox" data-table-drawer-visible="${column.key}"${state.visible[column.key] ? ' checked' : ''}${column.required ? ' disabled' : ''}><span>${column.label}</span>${column.required ? '<small>必选</small>' : ''}</label></li>`).join('');

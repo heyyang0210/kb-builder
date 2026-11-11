@@ -73,6 +73,25 @@ describe('文档路由真实 HTTP 契约', () => {
     if (root) fs.rmSync(root, { recursive: true, force: true });
   });
 
+  test('预处理拒绝不支持的文件类型后仍可处理合法文档', async () => {
+    const before = (await request('GET', '/api/document/preprocess')).body.data;
+    const rejected = new FormData();
+    rejected.append('file', new Blob(['unsupported']), 'unsupported.pdf');
+    const response = await fetch(`${base}/api/document/preprocess`, { method: 'POST', body: rejected });
+    expect(response.status).toBe(500);
+    expect(await response.text()).toContain('当前仅支持 Markdown');
+    expect((await request('GET', '/api/document/preprocess')).body.data).toEqual(before);
+
+    const accepted = new FormData();
+    accepted.append('file', new Blob(['# 可处理文档\n正文']), 'valid.md');
+    const success = await fetch(`${base}/api/document/preprocess`, { method: 'POST', body: accepted });
+    expect(success.status).toBe(200);
+    const document = (await success.json()).data;
+    expect(document).toMatchObject({ original_name: 'valid.md', status: 'processed' });
+    expect((await request('DELETE', `/api/document/preprocess/${document.id}`)).status).toBe(200);
+    expect((await request('GET', '/api/document/preprocess')).body.data).toEqual(before);
+  });
+
   test('文档树、列表、统计和搜索基于配置根目录，并排除未命中项', async () => {
     const paths = await request('GET', '/api/document/paths');
     expect(paths.status).toBe(200);
@@ -398,4 +417,201 @@ describe('文档路由真实 HTTP 契约', () => {
     }
     expect((await request('GET', '/api/document/preprocess')).status).toBe(200);
   });
+
+  test('预处理索引为合法 JSON 空值时返回错误，恢复后可继续列出文档', async () => {
+    const metadataFile = path.join(root, 'agent-runner', 'tmp', 'doc-processed', 'metadata.json');
+    const original = fs.readFileSync(metadataFile, 'utf8');
+    try {
+      fs.writeFileSync(metadataFile, 'null');
+      const failed = await request('GET', '/api/document/preprocess');
+      expect(failed.status).toBe(500);
+      expect(failed.body.success).toBe(false);
+    } finally {
+      fs.writeFileSync(metadataFile, original);
+    }
+    const recovered = await request('GET', '/api/document/preprocess');
+    expect(recovered.status).toBe(200);
+    expect(recovered.body.data).toEqual(JSON.parse(original).documents);
+  });
+
+  test('旧版无前缀和未知前缀标识通过配置首根目录解析', async () => {
+    const output = path.join(root, 'output');
+    fs.writeFileSync(path.join(output, 'legacy.md'), '# 旧文档');
+    fs.writeFileSync(path.join(output, 'unknown:legacy.md'), '# 冒号文档');
+    for (const name of ['legacy.md', 'unknown:legacy.md']) {
+      const id = encodeURIComponent(Buffer.from(name).toString('base64'));
+      expect((await request('GET', `/api/document/${id}/content`)).status).toBe(200);
+    }
+    const saved = await request('POST', '/api/document/save', { path: 'output:legacy.md', content: '# 更新旧文档' });
+    expect(saved.status).toBe(200);
+    expect(fs.readFileSync(path.join(output, 'legacy.md'), 'utf8')).toBe('# 更新旧文档');
+  });
+
+  test('根目录缺失返回空树，错误配置返回可诊断500且可恢复', async () => {
+    const configFile = path.join(root, 'service.json');
+    const original = fs.readFileSync(configFile, 'utf8');
+    try {
+      fs.writeFileSync(configFile, JSON.stringify({ documentPaths: [
+        { id: 'missing', name: '缺失目录', path: path.join(root, 'missing-root') }
+      ] }));
+      const tree = await request('GET', '/api/document/tree');
+      expect(tree.status).toBe(200);
+      expect(tree.body.data).toEqual([expect.objectContaining({ root_id: 'missing', children: [], exists: false })]);
+      fs.writeFileSync(configFile, '{"documentPaths":{}}');
+      for (const [method, route, body] of [
+        ['GET', '/paths'], ['GET', '/tree'], ['GET', '/list'], ['GET', '/stats'],
+        ['POST', '/search', { keyword: '文档' }]
+      ]) {
+        const response = await request(method, `/api/document${route}`, body);
+        expect(response.status).toBe(500);
+        expect(response.body.success).toBe(false);
+      }
+    } finally { fs.writeFileSync(configFile, original); }
+    expect((await request('GET', '/api/document/paths')).status).toBe(200);
+  });
+
+  test('磁盘元数据写失败释放保存锁，下一次真实HTTP保存成功', async () => {
+    const metadata = path.join(root, 'output', 'metadata.json');
+    const doc = path.join(root, 'output', 'write-failure.md');
+    fs.writeFileSync(doc, '# 初始内容');
+    const originalWrite = fs.writeFileSync;
+    const spy = jest.spyOn(fs, 'writeFileSync').mockImplementation((filename, ...args) => {
+      if (String(filename) === metadata) throw new Error('隔离元数据写入失败');
+      return originalWrite(filename, ...args);
+    });
+    try {
+      const response = await request('POST', '/api/document/save', { id: docId('write-failure.md'), content: '# 更新' });
+      expect(response.status).toBe(500);
+      expect(response.body.message).toContain('隔离元数据写入失败');
+    } finally { spy.mockRestore(); }
+    const retry = await request('POST', '/api/document/save', { id: docId('write-failure.md'), content: '# 重试成功' });
+    expect(retry.status).toBe(200);
+    expect(fs.readFileSync(doc, 'utf8')).toBe('# 重试成功');
+  });
+
+  test.each(['detail', 'content', 'download', 'delete'])('文档%s文件访问错误通过HTTP返回500', async operation => {
+    const filename = path.join(root, 'output', 'io-failure.md');
+    fs.writeFileSync(filename, '# 文件访问故障');
+    const id = encodeURIComponent(docId('io-failure.md'));
+    // Fail only this document's existence probe, leaving config and logging IO real.
+    const originalExists = fs.existsSync;
+    const spy = jest.spyOn(fs, 'existsSync').mockImplementation(target => {
+      if (String(target) === filename) throw new Error('隔离文件访问失败');
+      return originalExists(target);
+    });
+    try {
+      const route = `/api/document/${id}${['content', 'download'].includes(operation) ? `/${operation}` : ''}`;
+      const response = await request(operation === 'delete' ? 'DELETE' : 'GET', route);
+      expect(response.status).toBe(500);
+      expect(response.body.message).toContain('隔离文件访问失败');
+    } finally { spy.mockRestore(); }
+  });
+
+  test('预处理JSON损坏与写入失败返回错误，恢复后上传可继续', async () => {
+    const processed = path.join(root, 'agent-runner', 'tmp', 'doc-processed');
+    fs.mkdirSync(processed, { recursive: true });
+    const malformed = path.join(processed, 'malformed.json');
+    fs.writeFileSync(malformed, '{');
+    expect((await request('GET', '/api/document/preprocess/malformed')).status).toBe(500);
+    const originalWrite = fs.writeFileSync;
+    const spy = jest.spyOn(fs, 'writeFileSync').mockImplementation((filename, ...args) => {
+      if (String(filename) === path.join(processed, 'metadata.json')) throw new Error('隔离预处理写入失败');
+      return originalWrite(filename, ...args);
+    });
+    const upload = async () => {
+      const form = new FormData();
+      form.append('file', new Blob(['# 隔离上传\n正文'], { type: 'text/markdown' }), 'recovery.md');
+      return fetch(`${base}/api/document/preprocess`, { method: 'POST', body: form });
+    };
+    try {
+      const response = await upload();
+      expect(response.status).toBe(500);
+      expect((await response.json()).message).toContain('隔离预处理写入失败');
+    } finally { spy.mockRestore(); }
+    const retry = await upload();
+    expect(retry.status).toBe(200);
+    const payload = await retry.json();
+    expect(payload.success).toBe(true);
+    expect((await request('DELETE', `/api/document/preprocess/${payload.data.id}`)).status).toBe(200);
+  });
+
+  test('不存在文档拒绝评论新增和删除；多条评论按创建时间排序', async () => {
+    const missing = encodeURIComponent(docId('no-comment-target.md'));
+    expect((await request('POST', `/api/document/${missing}/comments`, { content: '评论' })).status).toBe(404);
+    expect((await request('DELETE', `/api/document/${missing}/comments/any`)).status).toBe(404);
+    const filename = 'comment-sort.md';
+    fs.writeFileSync(path.join(root, 'output', filename), '# 评论排序');
+    const id = encodeURIComponent(docId(filename));
+    for (const content of ['第一条', '第二条']) {
+      expect((await request('POST', `/api/document/${id}/comments`, { content })).status).toBe(201);
+    }
+    expect((await request('GET', `/api/document/${id}/comments`)).body.data.map(item => item.content)).toEqual(['第一条', '第二条']);
+  });
+
+  test.each([null, { version: 2, comments: [] }, { version: 1, comments: {} }])('评论结构非法时拒绝读写且保留原始数据：%j', async invalid => {
+    const comments = path.join(root, 'comments.json');
+    const original = fs.readFileSync(comments, 'utf8');
+    const id = encodeURIComponent(docId('docs/other.md'));
+    const payload = JSON.stringify(invalid);
+    try {
+      fs.writeFileSync(comments, payload);
+      expect(await request('GET', `/api/document/${id}/comments`)).toMatchObject({ status: 500, body: { success: false, message: '评论读取失败' } });
+      expect(await request('POST', `/api/document/${id}/comments`, { content: '无效存储不写入' })).toMatchObject({ status: 500, body: { message: '评论保存失败' } });
+      expect(fs.readFileSync(comments, 'utf8')).toBe(payload);
+    } finally { fs.writeFileSync(comments, original); }
+    expect((await request('GET', `/api/document/${id}/comments`)).status).toBe(200);
+  });
+
+  test('模型返回异常时生成失败不创建文件，恢复后可重试', async () => {
+    const original = modelResponse;
+    modelConfig = { model: 'isolated-model', api_key: 'fixture-key' };
+    modelResponse = null;
+    try {
+      const failed = await request('POST', '/api/document/generate', { prompt: '测试失败恢复', filename: 'model-recovery.md' });
+      expect(failed.status).toBe(500);
+      expect(failed.body.message).toContain('文档生成失败');
+      expect(fs.existsSync(path.join(root, 'output', 'model-recovery.md'))).toBe(false);
+    } finally { modelResponse = original; }
+    modelResponse = { content: '# 恢复成功' };
+    expect((await request('POST', '/api/document/generate', { prompt: '重试', filename: 'model-recovery.md' })).status).toBe(200);
+    expect(fs.readFileSync(path.join(root, 'output', 'model-recovery.md'), 'utf8')).toBe('# 恢复成功');
+  });
+
+  test('版本索引结构损坏返回500，恢复后版本读取成功', async () => {
+    const metadata = path.join(root, 'output', 'metadata.json');
+    const original = fs.readFileSync(metadata, 'utf8');
+    const route = `/api/document/${encodeURIComponent(docId('docs/other.md'))}/versions`;
+    try {
+      fs.writeFileSync(metadata, JSON.stringify({ documents: [], versions: null }));
+      expect(await request('GET', route)).toMatchObject({ status: 500, body: { success: false } });
+    } finally { fs.writeFileSync(metadata, original); }
+    expect((await request('GET', route)).status).toBe(200);
+  });
+
+  test('预处理文件删除故障保留元数据，恢复后可再次删除', async () => {
+    const form = new FormData();
+    form.append('file', new Blob(['# 删除恢复\n正文'], { type: 'text/markdown' }), 'delete-recovery.md');
+    const upload = await fetch(`${base}/api/document/preprocess`, { method: 'POST', body: form });
+    expect(upload.status).toBe(200);
+    const doc = (await upload.json()).data;
+    const directory = path.join(root, 'agent-runner', 'tmp', 'doc-processed');
+    const metadata = path.join(directory, 'metadata.json');
+    const before = fs.readFileSync(metadata, 'utf8');
+    const target = path.join(directory, doc.stored_file);
+    const unlink = fs.unlinkSync;
+    const spy = jest.spyOn(fs, 'unlinkSync').mockImplementation(filename => {
+      if (String(filename) === target) throw new Error('隔离删除故障');
+      return unlink(filename);
+    });
+    try {
+      expect(await request('DELETE', `/api/document/preprocess/${doc.id}`)).toMatchObject({
+        status: 500, body: { success: false, message: '隔离删除故障' }
+      });
+      expect(fs.readFileSync(metadata, 'utf8')).toBe(before);
+      expect(fs.existsSync(target)).toBe(true);
+    } finally { spy.mockRestore(); }
+    expect((await request('DELETE', `/api/document/preprocess/${doc.id}`)).status).toBe(200);
+    expect(fs.existsSync(target)).toBe(false);
+  });
+
 });

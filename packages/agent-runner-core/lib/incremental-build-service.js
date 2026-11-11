@@ -256,12 +256,17 @@ class IncrementalBuildService {
         previous = this.task(state, body.revisionOfTaskId);
         this.requireReadable(session, previous);
         this.requireOwner(session, previous);
-        if (previous.state !== 'rejected' || !previous.handbookSource || !previous.candidate) {
-          throw new IncrementalBuildError('REJECTED_TASK_REQUIRED', '只能接续已退回的手册审核任务', 409);
+        const closedMr = previous.state === 'mr_submitted' && previous.deliveryObservation?.state === 'closed';
+        if (!(previous.state === 'rejected' || closedMr) || !previous.handbookSource || !previous.candidate) {
+          throw new IncrementalBuildError('REVIEW_RECOVERY_REQUIRED', '只能接续已退回或 MR 已关闭的手册审核任务', 409);
         }
         if (handbookReviewScope(previous.handbookSource) !== handbookReviewScope(body)) {
           throw new IncrementalBuildError('REVIEW_REVISION_SCOPE_CHANGED', '重新送审须保留原手册、版本、仓库、分支及完整文档范围', 409);
         }
+        if (closedMr && body.documents.every(document => {
+          const prior = previous.handbookSource.documents.find(item => item.documentId === document.documentId);
+          return prior?.markdown === document.markdown;
+        })) throw new IncrementalBuildError('MR_CLOSED_REVISION_REQUIRED', 'MR 已关闭，请先修订文档再重新送审', 409);
         if (state.tasks.some(item => item.revisionOf === previous.id)) {
           throw new IncrementalBuildError('REVIEW_REVISION_ALREADY_CREATED', '该退回任务已有后续修订，请从后续任务继续', 409);
         }
@@ -301,7 +306,7 @@ class IncrementalBuildService {
           const prior = priorReviews.length === 1 ? priorReviews[0] : null;
           if (!before || prior?.status !== 'approved' || prior.decision?.value !== 'approve'
             || !(review.reviewerIds || []).includes(String(principalId(prior.decision.decidedBy)))
-            || (prior.comments || []).some(item => item.severity === 'blocker' && item.resolved !== true)
+            || (prior.comments || []).some(item => item.resolved !== true)
             || !body.repositoryIdentity || !body.commitSha || previous.handbookSource.commitSha !== body.commitSha
             || handbookDocumentReviewDigest(before) !== handbookDocumentReviewDigest(document)) continue;
           review.status = 'approved';
@@ -328,6 +333,7 @@ class IncrementalBuildService {
       if (!task.handbookSource || task.state !== 'approved' || body.expectedCandidateDigest !== task.candidate?.digest) {
         throw new IncrementalBuildError('APPROVAL_REQUIRED', '必须提交已审核的同一手册候选版本', 409);
       }
+      this.requireResolvedReviewComments(task);
       task.mergeRequest = body.mergeRequest;
       // 创建 MR 后立即记录一个可投影的“已打开”交付事实。后续回读会覆盖
       // deliveryObservation，统一完成状态因此不会把“已创建 MR”误报为已完成。
@@ -345,6 +351,12 @@ class IncrementalBuildService {
     });
   }
 
+  requireResolvedReviewComments(task) {
+    const pending = (task.reviews || []).filter(review => review.candidateDigest === task.candidate?.digest)
+      .flatMap(review => (review.comments || []).filter(comment => comment.resolved !== true).map(comment => comment.id));
+    if (pending.length) throw new IncrementalBuildError('REVIEW_BLOCKED_BY_COMMENTS', '请先处理全部审核意见，再创建 MR', 409, { commentIds: pending });
+  }
+
   recordMergeRequestDelivery(session, taskId, key, body) {
     requireAction(session, 'publish:manage');
     return this.withIdempotency(session, key, `merge-request-delivery:${taskId}`, body, state => {
@@ -353,8 +365,10 @@ class IncrementalBuildService {
       if (task.state !== 'mr_submitted' || !task.mergeRequest) throw new IncrementalBuildError('MR_NOT_SUBMITTED', '任务尚未登记 GitLab MR', 409);
       const delivery = body.delivery;
       if (!delivery || delivery.iid !== task.mergeRequest.iid || !['opened', 'closed', 'merged'].includes(delivery.state)) throw new IncrementalBuildError('MR_DELIVERY_INVALID', 'GitLab MR 状态回读结果无效', 409);
+      if (task.deliveryObservation?.state === 'closed' && delivery.state !== 'closed') throw new IncrementalBuildError('MR_CLOSED_RECOVERY_REQUIRED', '已关闭的 MR 不能继续交付，请修订并重新送审', 409);
       if (delivery.state === 'merged' && (delivery.readback?.status !== 'consistent' || delivery.readback?.resources !== 'repository_relative_images_verified')) throw new IncrementalBuildError('MR_READBACK_REQUIRED', '合并后的正文与仓库图片回读未通过', 409);
       task.deliveryObservation = { ...structuredClone(delivery), observedAt: now() };
+      task.deliveryFailure = null;
       if (delivery.state === 'merged') {
         for (const evidence of [
           { type: 'gitlab_merge_readback', note: '目标分支正文回读一致' },
@@ -368,6 +382,22 @@ class IncrementalBuildService {
       task.updatedAt = now();
       this.audit(state, 'GITLAB_MR_DELIVERY_REFRESHED', taskId, session, { state: delivery.state, iid: delivery.iid, targetCommitSha: delivery.targetCommitSha || null });
       return task.mergeRequest;
+    });
+  }
+
+  recordDeliveryFailure(session, taskId, key, error) {
+    requireAction(session, 'publish:manage');
+    return this.withIdempotency(session, key, `merge-request-failure:${taskId}`, { code: error.code }, state => {
+      const task = this.task(state, taskId);
+      this.requireReadable(session, task);
+      if (task.state !== 'mr_submitted' || !task.mergeRequest || task.deliveryObservation?.state === 'closed'
+        || task.deliveryObservation?.state === 'merged'
+        && task.deliveryObservation?.readback?.status === 'consistent'
+        && task.deliveryObservation?.readback?.resources === 'repository_relative_images_verified') return null;
+      task.deliveryFailure = { code: String(error.code || 'DELIVERY_READBACK_FAILED'), at: now(), iid: task.mergeRequest.iid };
+      task.updatedAt = task.deliveryFailure.at;
+      this.audit(state, 'GITLAB_MR_DELIVERY_FAILED', taskId, session, task.deliveryFailure);
+      return task.deliveryFailure;
     });
   }
 
@@ -916,7 +946,7 @@ class IncrementalBuildService {
     return structuredClone(task.aiFixProposals || []);
   }
 
-  commentOnReview(session, taskId, reviewId, key, body) {
+  commentOnReview(session, taskId, reviewId, key, body, trusted = {}) {
     requireAnyAction(session, ['knowledge:write', 'review:manage']);
     this.task(this.repository.read(), taskId);
     const content = body.comment ?? body.body;
@@ -967,6 +997,14 @@ class IncrementalBuildService {
           throw new IncrementalBuildError('COMMENT_ANCHOR_NOT_FOUND', '锚点不属于当前候选版本的变更范围', 422, { documentId: anchor.documentId, nodeId: anchor.nodeId });
         }
       }
+      const mentions = (trusted.mentions || []).map(item => ({
+        handbookId: String(item.handbookId), handbookName: String(item.handbookName), recipientId: String(item.recipientId), recipientName: String(item.recipientName || item.recipientId),
+      }));
+      const notificationEvents = mentions.map(mention => ({
+        id: identifier('notice'), type: 'review_handbook_mention', recipientId: mention.recipientId,
+        handbookId: mention.handbookId, reviewId, commentId: null, status: 'pending_configuration',
+        channels: { inApp: 'not_configured', wecom: 'not_configured', email: 'not_configured' }, createdAt: now(),
+      }));
       const comment = {
         id: identifier('comment'), content: String(content).trim(), body: String(content).trim(), author: actor(session), at: now(), createdAt: now(), updatedAt: now(),
         commentType, severity, mode: anchor ? 'anchored' : 'global',
@@ -974,7 +1012,11 @@ class IncrementalBuildService {
         candidateDigest: body.candidateDigest || task.candidate?.digest || null,
         anchor: anchor ? structuredClone(anchor) : null, diffView: body.diffView ? structuredClone(body.diffView) : null,
         resolved: false, resolvedBy: null, resolvedAt: null,
+        mentions,
+        notificationEvents: notificationEvents.map(event => ({ ...event, commentId: null })),
+        notificationStatus: notificationEvents.length ? 'pending_configuration' : 'not_requested',
       };
+      comment.notificationEvents.forEach(event => { event.commentId = comment.id; });
       review.comments.push(comment); task.updatedAt = comment.at;
       this.audit(state, 'REVIEW_COMMENT_ADDED', taskId, session, { reviewId, commentId: comment.id, mode: comment.mode, candidateDigest: comment.candidateDigest, anchor: comment.anchor });
       return comment;
@@ -1110,9 +1152,10 @@ class IncrementalBuildService {
       if (Object.prototype.hasOwnProperty.call(body, 'candidateDigest') && body.candidateDigest !== task.candidate.digest) {
         throw new IncrementalBuildError('REVIEW_CANDIDATE_CONFLICT', '页面中的候选版本已变化，请重新读取后审核', 409);
       }
-      const blockingComments = (review.comments || []).filter(comment => comment.resolved !== true && comment.severity === 'blocker');
-      if (body.decision === 'approve' && blockingComments.length) {
-        throw new IncrementalBuildError('REVIEW_BLOCKED_BY_COMMENTS', '存在未解决的阻断意见，无法通过审核', 409, { blockerCommentIds: blockingComments.map(comment => comment.id) });
+      const pendingComments = task.reviews.filter(item => item.candidateDigest === task.candidate.digest)
+        .flatMap(item => (item.comments || []).filter(comment => comment.resolved !== true));
+      if (body.decision === 'approve' && pendingComments.length) {
+        throw new IncrementalBuildError('REVIEW_BLOCKED_BY_COMMENTS', '存在未处理的审核意见，无法通过审核', 409, { commentIds: pendingComments.map(comment => comment.id) });
       }
       const reviewer = actor(session);
       review.status = body.decision === 'approve' ? 'approved' : 'rejected';
@@ -1202,7 +1245,7 @@ class IncrementalBuildService {
       canEdit: owner && hasAction(session, 'knowledge:write') && EDITABLE_STATES.has(task.state),
       canReview: hasAction(session, 'review:manage') && task.state === 'under_review' && hasPendingReview && (!task.handbookSource || hasAction(session, 'platform:manage') || task.reviews.some(review => review.status === 'pending' && isAssignedReviewer(session, review.reviewerIds))),
       canPublish: hasAction(session, 'publish:manage') && task.state === 'approved',
-      canRefreshDelivery: hasAction(session, 'publish:manage') && Boolean(task.handbookSource && task.mergeRequest) && task.state === 'mr_submitted',
+      canRefreshDelivery: hasAction(session, 'publish:manage') && Boolean(task.handbookSource && task.mergeRequest) && task.state === 'mr_submitted' && task.deliveryObservation?.state !== 'closed',
       canComment: this.canComment(session, task),
       canRevise: owner && !task.handbookSource && hasAction(session, 'knowledge:write') && task.state === 'rejected',
       canRecordEvidence: hasAction(session, 'publish:manage') && task.state === 'published',
@@ -1213,7 +1256,7 @@ class IncrementalBuildService {
       ? structuredClone(Object.fromEntries([
         'id', 'name', 'title', 'handbookId', 'handbookName', 'productName',
         'businessVersion', 'baselineVersionId', 'baselineVersionLabel',
-        'baselineVersionName', 'state', 'status', 'createdAt', 'updatedAt', 'mergeRequest', 'deliveryObservation',
+        'baselineVersionName', 'state', 'status', 'createdAt', 'updatedAt', 'mergeRequest', 'deliveryObservation', 'deliveryFailure',
       ].filter(key => Object.prototype.hasOwnProperty.call(task, key)).map(key => [key, task[key]])))
       : structuredClone(task);
     const delivery = task.deliveryObservation;
@@ -1222,7 +1265,7 @@ class IncrementalBuildService {
       && delivery?.readback?.resources === 'repository_relative_images_verified';
     projection.completion = {
       status: completed ? 'completed' : 'pending',
-      label: completed ? '已完成' : delivery?.state === 'closed' ? 'MR已关闭，待处理' : '待合并回读',
+      label: completed ? '已完成' : delivery?.state === 'closed' ? 'MR已关闭，需修订并重新审核' : task.deliveryFailure ? '交付回读失败，待重试' : '待合并回读',
       completedAt: completed ? (delivery.observedAt || null) : null,
       criteria: ['gitlab_merged', 'target_branch_markdown_readback', 'repository_relative_images_readback'],
       facts: {

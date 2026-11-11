@@ -32,7 +32,7 @@ function input(url = 'http://127.0.0.1:12345/mcp') {
   return { server_url: url, timeout: 1000, api_key: 'fixture-api-secret', headers: [{ name: 'X-Test-Token', value: 'fixture-header-secret', description: '测试凭据' }], cache: { enabled: true, ttl: 0, max_size: 10 } };
 }
 
-let upstream, baseURL, methods, mode, observedKnowledgeBases;
+let upstream, baseURL, methods, mode, observedKnowledgeBases, toolResult;
 beforeAll(async () => {
   upstream = http.createServer(async (req, res) => {
     let text = ''; for await (const chunk of req) text += chunk;
@@ -47,6 +47,7 @@ beforeAll(async () => {
       content: [{ type: 'text', text: '搜索结果' }]
     } : { content: [{ type: 'text', text: '# 配置复用验证\n来自同一 MCP 服务。' }] };
     const payload = mode === 'rpcError' || (mode === 'fail24' && body.method === 'tools/call' && knowledgeBaseId === '24') ? { error: { code: -32603, message: 'fixture-api-secret' } } : { result: mode === 'badTools' && body.method === 'tools/list' ? {} : result };
+    if (body.method === 'tools/call' && toolResult !== undefined) payload.result = toolResult;
     res.writeHead(200, { 'Content-Type': mode === 'sse' ? 'text/event-stream' : 'application/json', 'Mcp-Session-Id': 'fixture-session' });
     const reply = JSON.stringify({ jsonrpc: '2.0', id: mode === 'badId' ? -1 : body.id, ...payload });
     res.end(mode === 'sse' ? `event: message\ndata: ${reply}\n\n` : reply);
@@ -54,7 +55,140 @@ beforeAll(async () => {
   await listen(upstream); baseURL = `http://127.0.0.1:${upstream.address().port}/mcp`;
 });
 afterAll(() => close(upstream));
-beforeEach(() => { methods = []; observedKnowledgeBases = []; mode = 'json'; });
+beforeEach(() => { methods = []; observedKnowledgeBases = []; mode = 'json'; toolResult = undefined; });
+
+function serviceInput() {
+  return { ...input(baseURL), name: '边界测试服务', enabled: true, adapter: 'yashandb',
+    knowledgeBases: [{ name: '测试知识库', locator: '42', enabled: true }] };
+}
+
+test.each([
+  { name: '' }, { name: 1 }, { name: '   ' }, { enabled: 'yes' }, { adapter: 'unknown' },
+  { knowledgeBases: null },
+  { adapter: 'generic', knowledgeBases: [{ name: '库', locator: '1', enabled: true }] },
+  { knowledgeBases: [null] },
+  { knowledgeBases: [{ name: '库', locator: '1', enabled: 'yes' }] },
+  { knowledgeBases: [{ name: '库', locator: '1', enabled: true }, { name: '另一库', locator: ' 1 ', enabled: false }] },
+  { knowledgeBases: [{ id: 'unknown', name: '库', locator: '1', enabled: true }] },
+  { headers: [{ name: 'X-KsaCraft-KB-ID', value: '1', description: '' }] },
+])('非法服务配置拒绝且不写入 %#', async patch => {
+  const f = fixture();
+  try {
+    const before = fs.readFileSync(f.file, 'utf8');
+    await expect(f.service.saveService({ service: { ...serviceInput(), ...patch } }, (await f.service.get()).rowVersion, 'admin')).rejects.toMatchObject({ code: 'MCP_CONFIG_INVALID', status: 422 });
+    expect(fs.readFileSync(f.file, 'utf8')).toBe(before);
+    expect(methods).toEqual([]);
+  } finally { f.cleanup(); }
+});
+
+test('未保存服务真实握手不保存，删除默认服务不自动切换', async () => {
+  const f = fixture();
+  try {
+    const before = fs.readFileSync(f.file, 'utf8');
+    await expect(f.service.testService({ service: serviceInput() }, (await f.service.get()).rowVersion)).resolves.toMatchObject({ status: 'verified' });
+    expect(fs.readFileSync(f.file, 'utf8')).toBe(before);
+    const first = await savedService(f);
+    await f.service.saveService({ service: { ...serviceInput(), name: '第二服务' } }, (await f.service.get()).rowVersion, 'admin');
+    const current = (await f.service.get()).services.find(s => s.id === first.id);
+    const deleted = await f.service.deleteService({ serviceId: first.id }, current.rowVersion);
+    expect(deleted.defaultServiceId).toBeNull();
+    expect(deleted.server_url).toBe('');
+    expect(deleted.services).toHaveLength(1);
+    expect(deleted.services[0].isDefault).toBe(false);
+    await expect(f.service.save(input(baseURL), deleted.rowVersion, 'admin')).rejects.toMatchObject({ code: 'MCP_CONFIG_INVALID' });
+  } finally { f.cleanup(); }
+});
+async function savedService(f) {
+  const saved = await f.service.saveService({ service: serviceInput(), makeDefault: true }, (await f.service.get()).rowVersion, 'admin');
+  return saved.services.find(s => s.name === '边界测试服务');
+}
+
+test('已删除服务、缺版本、重复知识库记录和通用服务读取均拒绝', async () => {
+  const f = fixture();
+  try {
+    const service = await savedService(f);
+    const before = fs.readFileSync(f.file, 'utf8');
+    await expect(f.service.deleteService({ serviceId: 'missing' }, service.rowVersion)).rejects.toMatchObject({ code: 'MCP_SERVICE_NOT_FOUND', status: 404 });
+    await expect(f.service.deleteService({ serviceId: service.id })).rejects.toMatchObject({ code: 'MCP_CONFIG_CONFLICT', status: 409 });
+    await expect(f.service.save(input(baseURL), undefined, 'admin')).rejects.toMatchObject({ code: 'MCP_CONFIG_CONFLICT', status: 409 });
+    await expect(f.service.saveService({ service: { ...service, knowledgeBases: [service.knowledgeBases[0], { ...service.knowledgeBases[0], locator: '43' }] } }, service.rowVersion, 'admin')).rejects.toMatchObject({ code: 'MCP_CONFIG_INVALID' });
+    expect(fs.readFileSync(f.file, 'utf8')).toBe(before);
+    const updated = await f.service.saveService({ service: { ...service, adapter: 'generic', knowledgeBases: [] } }, service.rowVersion, 'admin');
+    const generic = updated.services[0];
+    await expect(f.service.verifyKnowledgeBase({ serviceId: generic.id }, generic.rowVersion)).rejects.toMatchObject({ code: 'MCP_CONFIG_INVALID', status: 422 });
+    expect(methods).toEqual([]);
+  } finally { f.cleanup(); }
+});
+
+test.each(['api', 'header'])('无法解密的历史凭据必须重填或移除：%s', async field => {
+  const f = fixture();
+  try {
+    const mcp = { server_url: baseURL, ...(field === 'api' ? { api_key_encrypted: 'invalid-cipher' } : { headers: [{ name: 'X-Test-Token', encrypted: true, value_encrypted: 'invalid-cipher' }] }) };
+    fs.writeFileSync(f.file, JSON.stringify({ mcp }));
+    const current = await f.service.get();
+    const value = { ...input(baseURL), api_key: '', headers: field === 'header' ? [{ name: 'X-Test-Token', value: '', description: '' }] : [] };
+    const before = fs.readFileSync(f.file, 'utf8');
+    await expect(f.service.save(value, current.rowVersion, 'admin')).rejects.toMatchObject({ code: 'MCP_SECRET_UNAVAILABLE', status: 503 });
+    expect(fs.readFileSync(f.file, 'utf8')).toBe(before);
+    const saved = await f.service.save({ ...value, clearApiKey: true, headers: [] }, current.rowVersion, 'admin');
+    expect(saved.api_key_configured).toBe(false);
+    expect(saved.headers).toEqual([]);
+  } finally { f.cleanup(); }
+});
+
+test.each([
+  ['空结果', {}, false],
+  ['空文本', { content: [{ type: 'text', text: '  ' }] }, false],
+  ['工具错误', { isError: true, content: [{ type: 'text', text: 'fixture-api-secret' }] }, false],
+  ['错误对象', { error: 'fixture-api-secret' }, false],
+  ['结构化错误', { structuredContent: { error: 'fixture-api-secret' } }, false],
+  ['结构化错误标记', { structuredContent: { isError: true } }, false],
+  ['结构化失败', { structuredContent: { success: false } }, false],
+  ...[{ error: 'fixture-api-secret' }, { isError: true }, { success: false }].map((value, i) => [`文本错误${i}`, { content: [{ type: 'text', text: JSON.stringify(value) }] }, false]),
+  ['普通文本', { content: [{ type: 'text', text: '搜索结果正文' }] }, true],
+  ['文本结构结果', { content: [{ type: 'image' }, { type: 'text', text: JSON.stringify({ results: [{}, {}] }) }] }, true, 2],
+  ['结构化空结果', { structuredContent: { results: [] } }, true, 0],
+])('知识库搜索真实HTTP响应：%s', async (...args) => {
+  const [_name, response, succeeds, count] = args;
+  const f = fixture();
+  try {
+    const service = await savedService(f);
+    const before = fs.readFileSync(f.file, 'utf8');
+    toolResult = response;
+    const action = f.service.verifyKnowledgeBase({ serviceId: service.id, knowledgeBaseId: service.knowledgeBases[0].id }, service.rowVersion);
+    if (succeeds) {
+      const result = await action;
+      expect(result).toMatchObject({ status: 'verified', tool: 'search_ku' });
+      if (count === undefined) expect(result).not.toHaveProperty('matchedCount');
+      else expect(result.matchedCount).toBe(count);
+    } else {
+      await expect(action).rejects.toMatchObject({ code: 'MCP_READ_FAILED', status: 502 });
+    }
+    expect(methods).toContain('tools/call');
+    expect(observedKnowledgeBases.at(-1)).toBe('42');
+    expect(fs.readFileSync(f.file, 'utf8')).toBe(before);
+  } finally { f.cleanup(); }
+});
+
+test.each([
+  ['正文JSON', { content: [{ type: 'text', text: JSON.stringify({ content: '有效正文' }) }] }, true],
+  ['纯文本', { content: [{ type: 'text', text: '有效正文' }] }, true],
+  ['多块正文', { content: [{ type: 'image' }, { type: 'text' }, { type: 'text', text: '有效正文' }] }, true],
+  ...[{ content: '  ' }, { content: '正文', error: 'secret' }, { content: '正文', isError: true }].map((value, i) => [`错误正文${i}`, { content: [{ type: 'text', text: JSON.stringify(value) }] }, false]),
+  ['非文本正文', { content: [{ type: 'image' }] }, false],
+  ['无正文', {}, false],
+  ['工具失败', { isError: true, content: [{ type: 'text', text: 'secret' }] }, false],
+])('知识库文档真实HTTP响应：%s', async (_name, response, succeeds) => {
+  const f = fixture();
+  try {
+    const service = await savedService(f);
+    toolResult = response;
+    const action = f.service.verifyKnowledgeBase({ serviceId: service.id, knowledgeBaseId: service.knowledgeBases[0].id, document: '  测试文档  ' }, service.rowVersion);
+    if (succeeds) await expect(action).resolves.toMatchObject({ status: 'verified', message: '知识库读取成功' });
+    else await expect(action).rejects.toMatchObject({ code: 'MCP_READ_FAILED', status: 502 });
+    expect(methods).toContain('tools/call');
+  } finally { f.cleanup(); }
+});
 
 test('真实配置管理器加密保存、脱敏回读、留空保留、显式清除及跨进程读取', async () => {
   const f = fixture();
@@ -362,5 +496,40 @@ test('平台保存后原生成器客户端与 AI 来源读取同一配置', asyn
     const snapshot = await sources.preview({ sourceType: 'knowledge-mcp', locator: 'test-doc' }, {});
     expect(snapshot.content).toContain('来自同一 MCP 服务');
     expect(methods.filter(method => method === 'tools/call')).toHaveLength(2);
+  } finally { f.cleanup(); }
+});
+
+test('兼容保存映射默认知识库并保留既有记录标识', async () => {
+  const f = fixture();
+  try {
+    const service = await savedService(f);
+    const policy = (await f.service.get()).limits;
+    const legacy = { ...input(baseURL), headers: [{ name: policy.multiSearchHeaderName, value: '42', description: '' }, { name: policy.multiSearchHeaderName, value: '43', description: '' }] };
+    const saved = await f.service.save(legacy, (await f.service.get()).rowVersion, 'admin');
+    const selected = saved.services.find(s => s.id === service.id);
+    expect(selected.knowledgeBases).toEqual([expect.objectContaining({ id: service.knowledgeBases[0].id, locator: '42' }), expect.objectContaining({ locator: '43', enabled: true })]);
+    expect((await f.manager.getMCPConfig()).search_knowledge_bases).toEqual(['42', '43']);
+    await f.service.save({ ...input(baseURL), headers: [] }, saved.rowVersion, 'admin');
+    expect((await f.service.get()).services[0].knowledgeBases).toEqual([]);
+  } finally { f.cleanup(); }
+});
+
+test.each([null, [], { server_url: 'invalid' }, { cache: { enabled: 'yes' } }, { clearApiKey: 'yes' }, { clearApiKey: true }, { api_key: 123 }, { headers: null }, { headers: [null] }, { headers: [{ name: 'bad name' }] }, { headers: [{ name: 'X-New', value: '', description: '' }] }, { headers: [{ name: 'X-New', value: 'v', description: null }] }, { timeout: 1.5 }, { cache: { enabled: true, ttl: -1, max_size: 10 } }, { cache: { enabled: true, ttl: 0, max_size: 0 } }])('完整配置边界拒绝且无写入 %#', async patch => {
+  const f = fixture();
+  try {
+    const before = fs.readFileSync(f.file, 'utf8');
+    const value = patch === null || Array.isArray(patch) ? patch : { ...input(baseURL), ...patch };
+    await expect(f.service.save(value, (await f.service.get()).rowVersion, 'admin')).rejects.toMatchObject({ code: 'MCP_CONFIG_INVALID', status: 422 });
+    expect(fs.readFileSync(f.file, 'utf8')).toBe(before);
+    expect(methods).toEqual([]);
+  } finally { f.cleanup(); }
+});
+
+test.each([null, '', '  ', 123])('无效文档参数不发送HTTP %#', async document => {
+  const f = fixture();
+  try {
+    const service = await savedService(f);
+    await expect(f.service.verifyKnowledgeBase({ serviceId: service.id, knowledgeBaseId: service.knowledgeBases[0].id, document }, service.rowVersion)).rejects.toMatchObject({ code: 'MCP_CONFIG_INVALID', status: 422 });
+    expect(methods).toEqual([]);
   } finally { f.cleanup(); }
 });

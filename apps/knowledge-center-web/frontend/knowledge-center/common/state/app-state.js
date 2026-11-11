@@ -35,7 +35,7 @@ export const appState = {
   databaseConnectionStatus: null,
   gitlabAddingConnection: false,
   gitlabEditingConnection: null,
-  gitlabListState: { search: '', page: 1, pageSize: 20, selectedConnectionId: null },
+  gitlabListState: { search: '', status: '', verificationStatus: '', page: 1, pageSize: 20, selectedConnectionId: null, drawerOpen: false },
   gitlabVerification: null,
   reviewUi: { directoryCollapsed: false, directoryWidth: 260, focusMode: false, readingDensity: 'comfortable' },
   handbookProductionUi: { drafts: {}, draftHtml: {}, draftBranchByDocument: {}, serverDrafts: {}, draftLoadState: {}, draftSaveState: {}, attachments: {}, references: {}, dirtyDocuments: [], savedDocuments: [], selectedForReview: [], modeByDocument: {}, editorFormatByDocument: {}, markdownPreviewByDocument: {}, directoryOpen: {}, directoryDrawerOpen: false, directoryWidth: 260, directoryCollapsed: false, templateByDocument: {}, templateDetails: {}, templateStatus: '', focusMode: false, assistantOpen: false, assistantTab: 'ai', assistantStatus: '', reviewers: [], reviewState: null, history: null, conflict: null },

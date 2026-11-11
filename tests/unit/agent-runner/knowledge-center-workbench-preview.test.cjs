@@ -64,7 +64,7 @@ describe('工作台责任人目录、正式代办和兼容预览 HTTP 契约', (
     assert.equal(body.data.items.length, 1);
     assert.equal(body.data.items[0].id, 'ticket:WB-100:scope');
     assert.equal(body.data.items[0].url, undefined);
-    assert.equal(body.data.items[0].title, '确认 WB-100 的工单范围');
+    assert.equal(body.data.items[0].title, '确认 WB-100 的手册范围');
   });
   test('正式代办返回来源链接且仍使用管理员会话', async () => {
     const url = `${base}/knowledge-center/api/workbench/delegated?responsibleId=`;

@@ -3,7 +3,7 @@ const path = require('path');
 const { QualityValidator } = require('../../../../packages/agent-runner-core/lib/preprocessing/quality-validator');
 const { PipelineReport } = require('../../../../packages/agent-runner-core/lib/preprocessing/pipeline');
 
-const TEST_DIR = path.join(process.env.YASDB_TEST_TMP_DIR || require('os').tmpdir(), 'test-quality-' + Date.now());
+const TEST_DIR = path.join(process.env.YASDB_TEST_TMP_DIR || path.resolve(__dirname, '../../../../runtime/test-tmp'), 'test-quality-' + Date.now());
 
 describe('QualityValidator', () => {
   let validator;
@@ -114,5 +114,66 @@ describe('QualityValidator', () => {
       const blocks = validator.extractCodeBlocks('纯文本');
       expect(blocks).toEqual([]);
     });
+  });
+});
+
+describe('QualityValidator 真实文件异常边界', () => {
+  let root;
+  beforeEach(async () => {
+    const parent = path.resolve(__dirname, '../../../../runtime/test-tmp');
+    await fs.mkdir(parent, { recursive: true });
+    root = await fs.mkdtemp(path.join(parent, 'quality-validator-'));
+  });
+  afterEach(() => fs.rm(root, { recursive: true, force: true }));
+  const report = { phases: { clean: {}, chunk: {}, index: {} } };
+  async function indexFiles({ l1 = true, l2 = true, stats = true } = {}) {
+    const index = path.join(root, 'index');
+    await fs.mkdir(index, { recursive: true });
+    if (l1) await fs.writeFile(path.join(index, 'l1-global-index.json'), l1 === 'corrupt' ? '{' : '{"total_entries":2}');
+    if (l2) await fs.mkdir(path.join(index, 'l2-summaries'));
+    if (stats) await fs.writeFile(path.join(index, '_stats.json'), stats === 'corrupt' ? '{' : '{"documents":2}');
+  }
+  test('字典缺失、损坏与合法条目均按公开接口回读', async () => {
+    const validator = new QualityValidator();
+    expect(await validator.loadTermDictionary()).toEqual([]);
+    expect(await validator.loadTermDictionary(path.join(root, 'missing'))).toEqual([]);
+    const file = path.join(root, 'terms.json');
+    await fs.writeFile(file, '{');
+    expect(await validator.loadTermDictionary(file)).toEqual([]);
+    await fs.writeFile(file, '[{"term":"事务","canonical":"transaction"}]');
+    expect(await validator.loadTermDictionary(file)).toEqual([{ term: '事务', canonical: 'transaction' }]);
+  });
+  test('无阶段和已跳过的分块无需检查点', async () => {
+    const validator = new QualityValidator();
+    expect(await validator.validateAll({}, {})).toEqual({ passed: true, checks: {}, critical_failures: [] });
+    expect(await validator.validateAll({ phases: { chunk: { data: { skipped: true } } } }, {})).toEqual({ passed: true, checks: {}, critical_failures: [] });
+  });
+  test('源文本保真失败归入清洗严重失败并保留文档诊断', async () => {
+    const validator = new QualityValidator();
+    const result = await validator.validateAll({ phases: { clean: {} } }, {}, [{ content: '保留', metadata: { docId: 'lost-text', sourceMetrics: { sourceText: '完全缺失正文' } } }]);
+    expect(result).toMatchObject({ passed: false, critical_failures: ['cleaning'], checks: { cleaning: { passed: false, has_critical: true, checks: { office_fidelity: { passed: false, documents: [{ docId: 'lost-text', passed: false, textRecall: 0 }] } } } } });
+  });
+  test.each([
+    ['缺少全部索引', { l1: false, l2: false, stats: false }],
+    ['损坏 L1', { l1: 'corrupt' }],
+    ['缺少 L2', { l2: false }],
+  ])('%s归入索引严重失败', async (_, options) => {
+    await indexFiles(options);
+    const result = await new QualityValidator().validateAll(report, { output: { baseDir: root } });
+    expect(result.passed).toBe(false);
+    expect(result.critical_failures).toEqual(['indexing']);
+    expect(result.checks.indexing.has_critical).toBe(true);
+    expect(result.checks.chunking).toMatchObject({ passed: true, has_critical: false });
+  });
+  test.each([false, 'corrupt'])('统计文件异常 %s 只产生非严重失败', async stats => {
+    await indexFiles({ stats });
+    const result = await new QualityValidator().validateAll(report, { output: { baseDir: root } });
+    expect(result).toMatchObject({ passed: false, critical_failures: [], checks: { indexing: { passed: false, has_critical: false, checks: { l1_exists: { passed: true, entries: 2 }, l2_exists: { passed: true, files: 0 }, stats_exists: { passed: false } } } } });
+  });
+  test('完整索引保留 L1 条目数量、L2 文件数与原始统计', async () => {
+    await indexFiles();
+    await fs.writeFile(path.join(root, 'index/l2-summaries/doc.json'), '{}');
+    const result = await new QualityValidator().validateAll(report, { output: { baseDir: root } });
+    expect(result).toMatchObject({ passed: true, critical_failures: [], checks: { indexing: { passed: true, checks: { l1_exists: { entries: 2 }, l2_exists: { files: 1 }, stats_exists: { stats: { documents: 2 } } } } } });
   });
 });

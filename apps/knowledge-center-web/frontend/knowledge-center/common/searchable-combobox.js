@@ -114,6 +114,7 @@ function enhance(select) {
     select.value = option.value;
     input.value = text(option.textContent);
     input.setCustomValidity('');
+    select.dispatchEvent(new Event('input', { bubbles: true }));
     select.dispatchEvent(new Event('change', { bubbles: true }));
     close(false);
   };
@@ -232,6 +233,15 @@ export function markDynamicSelects(root = document) {
     '[data-outline-batch-assignee]', '[data-team-member-candidate]', '[data-permission-role]',
     '[data-repository-branch]', 'select[name="handbookId"]', 'select[name="templateId"]',
     'select[name="version"]', 'select[name="nodeId"]', 'select[name="operationDocumentId"]',
+    '.document-task-page select[name="ownerId"]', '.document-task-page select[name="product"]',
+    '.document-task-page select[name="targetVersion"]',
+    '.document-task-page select[name="parentId"]', '.document-task-page select[name="reviewTaskId"]',
+    '.document-task-page select[name="createdDocumentId"]',
+    '[data-map-handbook]', '[data-map-manual-template]', '[data-map-rule-field="templateId"]',
+    '[data-map-rule-condition="handbookId"]', '[data-my-task-responsible]',
+    '[data-review-online-reviewer]', '[data-review-assignment-dialog] select[name="reviewerIds"]',
+    '[data-agent-model-choice]', '[data-agent-model] select[name="testModel"]',
+    '[data-model-default]',
     'select[name="baselineVersionId"]', '[data-review-task-select]', '[data-review-handbook-select]',
     '[data-review-branch]', '[data-review-online-baseline]', '[data-team-group-form] select[name="leaderPrincipalId"]',
   ];

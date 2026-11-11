@@ -1,8 +1,20 @@
 const fs = require('fs').promises;
 const path = require('path');
+const AdmZip = require('adm-zip');
 const { DocxAdapter } = require('../../../../packages/agent-runner-core/lib/preprocessing/cleaners/docx-adapter');
+const { buildAsset } = require('../../../../packages/agent-runner-core/lib/preprocessing/asset-utils');
 
-const TEST_DIR = path.join(process.env.YASDB_TEST_TMP_DIR || require('os').tmpdir(), 'test-docx-adapter-' + Date.now());
+const TEST_DIR = path.join(process.env.YASDB_TEST_TMP_DIR || path.resolve(__dirname, '../../../../runtime/test-tmp'), 'test-docx-adapter-' + Date.now());
+
+function createDocx(filePath, { body = '<w:p><w:r><w:t>正文</w:t></w:r></w:p>', media } = {}) {
+  const zip = new AdmZip();
+  zip.addFile('[Content_Types].xml', Buffer.from('<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="png" ContentType="image/png"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>'));
+  zip.addFile('_rels/.rels', Buffer.from('<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>'));
+  zip.addFile('word/document.xml', Buffer.from(`<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><w:body>${body}</w:body></w:document>`));
+  zip.addFile('word/_rels/document.xml.rels', Buffer.from(`<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${media ? '<Relationship Id="rIdImage" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/>' : ''}</Relationships>`));
+  if (media) zip.addFile('word/media/image1.png', media);
+  zip.writeZip(filePath);
+}
 
 describe('DocxAdapter', () => {
   let adapter;
@@ -125,6 +137,35 @@ describe('DocxAdapter', () => {
   });
 
   describe('parse with real DOCX', () => {
+    test('解析真实 OOXML 的标题、正文、来源指标和版本元数据', async () => {
+      const filePath = path.join(TEST_DIR, 'YashanDB v23.4', '特性设计', 'YDBRD-42 连接能力.docx');
+      await fs.mkdir(path.dirname(filePath), { recursive: true });
+      createDocx(filePath, { body: '<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>连接能力</w:t></w:r></w:p><w:p><w:r><w:t>正文内容</w:t></w:r></w:p>' });
+
+      const document = await adapter.parse(filePath);
+      expect(document.title).toBe('连接能力');
+      expect(document.content).toContain('# 连接能力');
+      expect(document.content).toContain('正文内容');
+      expect(document.metadata).toMatchObject({ sourceFormat: 'docx', version: 'v23.4', docType: '特性设计', sourceName: 'YDBRD-42 连接能力.docx', officeRendering: { enabled: false, status: 'disabled', pageCount: 0 } });
+      expect(document.metadata.keywords).toEqual(expect.arrayContaining(['YDBRD-42', '连接能力']));
+      expect(document.metadata.sourceMetrics).toMatchObject({ sourceText: '连接能力正文内容', mediaCount: 0, exportedMediaCount: 0 });
+      expect(document.metadata.extra).toMatchObject({ lineCount: expect.any(Number), warnings: [expect.stringContaining('Heading1')] });
+      expect(document.metadata.hash).toMatch(/^[a-f0-9]{64}$/);
+    });
+
+    test('解析真实 DOCX 图片并与包内媒体去重', async () => {
+      const media = Buffer.from('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000b49444154789c636000020000050001a5f645400000000049454e44ae426082', 'hex');
+      const filePath = path.join(TEST_DIR, 'embedded-image.docx');
+      const image = '<w:p><w:r><w:drawing><wp:inline><wp:docPr id="1" name="image" descr="架构图"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:blipFill><a:blip r:embed="rIdImage"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>';
+      createDocx(filePath, { body: `<w:p><w:r><w:t>图片正文</w:t></w:r></w:p>${image}`, media });
+
+      const document = await adapter.parse(filePath);
+      expect(document.metadata.assets).toHaveLength(1);
+      expect(document.metadata.assets[0]).toMatchObject({ sourcePart: 'word/media/image1.png', originalName: 'image1.png', mimeType: 'image/png' });
+      expect(document.content).toContain(`](${document.metadata.assets[0].relativePath})`);
+      expect(document.metadata.sourceMetrics).toMatchObject({ mediaCount: 1, exportedMediaCount: 1 });
+    });
+
     test('应导出 DOCX 包中未定位的原始媒体', async () => {
       const AdmZip = require('adm-zip');
       const zip = new AdmZip();
@@ -143,10 +184,27 @@ describe('DocxAdapter', () => {
       expect(markdown).toContain('图片说明：');
     });
 
-    test('应能解析由 mammoth 生成的简单 DOCX', async () => {
-      // 使用 mammoth 创建一个简单的 docx 进行测试
-      // 由于 mammoth 不能创建 docx，我们跳过真实文件测试
-      // 但测试 convertTables 方法
+    test('媒体去重、已定位资产和缺失正文指标均可回读', () => {
+      const filePath = path.join(TEST_DIR, 'duplicate-media.docx');
+      const media = Buffer.from('shared-media');
+      const zip = new AdmZip();
+      zip.addFile('word/media/image1.png', media);
+      zip.writeZip(filePath);
+      const assets = [buildAsset({ data: media, mimeType: 'image/png', index: 1, title: '文档' })];
+      adapter.appendPackageMedia(filePath, assets, '文档');
+      expect(assets).toHaveLength(1);
+      expect(assets[0]).toMatchObject({ sourcePart: 'word/media/image1.png', originalName: 'image1.png' });
+      expect(adapter.appendUnplacedAssets(`![图](${assets[0].relativePath})`, assets)).toBe(`![图](${assets[0].relativePath})`);
+      expect(adapter.extractSourceMetrics(filePath, assets.length)).toMatchObject({ sourceText: '', sourceTextChars: 0, mediaCount: 1, exportedMediaCount: 1 });
+    });
+
+    test('格式损坏时解析错误直接传播', async () => {
+      const filePath = path.join(TEST_DIR, 'invalid.docx');
+      await fs.writeFile(filePath, 'invalid zip');
+      await expect(adapter.parse(filePath)).rejects.toThrow();
+    });
+
+    test('表格转换保留多行数据和竖线转义', () => {
       const html = `<table>
         <tr><th>Col1</th><th>Col2</th></tr>
         <tr><td>A</td><td>B</td></tr>
@@ -156,5 +214,28 @@ describe('DocxAdapter', () => {
       expect(result).toContain('| Col1 | Col2 |');
       expect(result).toContain('| C\\|D | E |');
     });
+  });
+
+  test('扫描缺失目录和受限目录；其他 I/O 错误传播', async () => {
+    expect(await adapter.scan(path.join(TEST_DIR, 'missing'))).toEqual([]);
+    const spy = jest.spyOn(fs, 'readdir');
+    try {
+      spy.mockRejectedValueOnce(Object.assign(new Error('denied'), { code: 'EACCES' }));
+      expect(await adapter.scan('blocked')).toEqual([]);
+      spy.mockRejectedValueOnce(Object.assign(new Error('failed'), { code: 'EIO' }));
+      await expect(adapter.scan('failed')).rejects.toMatchObject({ code: 'EIO' });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test('标题、表格、版本和关键词边界保留确定性结果', () => {
+    expect(adapter.extractTitle('<title><b>备用标题</b></title>', 'fallback.docx')).toBe('备用标题');
+    expect(adapter.extractVersion('/other/document.docx')).toBe('');
+    expect(adapter.extractVersion('/YashanDB v23.4/document.docx')).toBe('v23.4');
+    expect(adapter.extractKeywords('123 连接-能力', '/YDBRD-42/file.docx')).toEqual(['连接', '能力', 'YDBRD-42']);
+    expect(adapter.convertTables('<table><tr></tr></table>')).toBe('');
+    expect(adapter.convertTables('<table><tr><td>A</td><td>B</td></tr><tr><td>C</td></tr></table>')).toContain('| C |  |');
+    expect(adapter.htmlToMarkdown('<img alt="说明">')).toContain('[图片: 说明]');
   });
 });

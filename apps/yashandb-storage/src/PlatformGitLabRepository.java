@@ -16,6 +16,196 @@ import java.util.UUID;
 
 /** GitLab 连接与手册映射当前业务配置 Repository。 */
 final class PlatformGitLabRepository {
+    private static final String VERSION_COLUMNS = "V.MAPPING_ID,V.REVISION_OF_ID,C.CONNECTION_KEY,V.PINGCODE_PRODUCT_CODE," +
+        "V.MATCH_KIND,V.PINGCODE_VERSION,V.BRANCH_NAME,V.STATE,V.ROW_VERSION,V.CREATED_AT,V.UPDATED_AT";
+
+    Map<String, Object> listVersionMappings(Connection connection) throws SQLException {
+        List<Map<String, Object>> items = new ArrayList<>();
+        List<Map<String, Object>> archivedItems = new ArrayList<>();
+        try (PreparedStatement query = connection.prepareStatement("SELECT " + VERSION_COLUMNS +
+            " FROM KC_GITLAB_VERSION_MAPPING V JOIN KC_GITLAB_CONNECTION C ON C.GITLAB_CONNECTION_ID=V.GITLAB_CONNECTION_ID WHERE V.STATE NOT IN ('DELETED','ARCHIVED')" +
+            " ORDER BY V.UPDATED_AT DESC,V.MAPPING_ID DESC"); ResultSet rows = query.executeQuery()) {
+            while (rows.next()) items.add(projectVersionMapping(rows));
+        }
+        try (PreparedStatement query = connection.prepareStatement("SELECT " + VERSION_COLUMNS +
+            " FROM KC_GITLAB_VERSION_MAPPING V JOIN KC_GITLAB_CONNECTION C ON C.GITLAB_CONNECTION_ID=V.GITLAB_CONNECTION_ID WHERE V.STATE='ARCHIVED'" +
+            " ORDER BY V.UPDATED_AT DESC,V.MAPPING_ID DESC"); ResultSet rows = query.executeQuery()) {
+            while (rows.next()) archivedItems.add(projectVersionMapping(rows));
+        }
+        return Map.of("items", items, "archivedItems", archivedItems, "total", items.size());
+    }
+
+    Map<String, Object> findVersionMapping(Connection connection, long id) throws SQLException {
+        try (PreparedStatement query = connection.prepareStatement("SELECT " + VERSION_COLUMNS +
+            " FROM KC_GITLAB_VERSION_MAPPING V JOIN KC_GITLAB_CONNECTION C ON C.GITLAB_CONNECTION_ID=V.GITLAB_CONNECTION_ID WHERE V.MAPPING_ID=? AND V.STATE<>'DELETED'")) {
+            query.setLong(1, id);
+            try (ResultSet rows = query.executeQuery()) { return rows.next() ? projectVersionMapping(rows) : null; }
+        }
+    }
+
+    Map<String, Object> saveVersionMapping(Connection connection, Long id, Map<String, Object> input,
+                                            Long expected, String actor) throws SQLException {
+        Map<String, Object> source = id == null ? null : findVersionMapping(connection, id);
+        if (id != null && source == null) throw new SQLException("VERSION_MAPPING_NOT_FOUND");
+        if (source != null && (expected == null || expected != ((Number) source.get("rowVersion")).longValue()))
+            throw new SQLException("ROW_VERSION_CONFLICT");
+        if (source != null && ("superseded".equals(source.get("state")) || "archived".equals(source.get("state"))))
+            throw new SQLException("VERSION_MAPPING_CONFLICT");
+        String connectionKey = required(input.get("connectionId"), "GITLAB_CONNECTION_REQUIRED");
+        long connectionId = connectionId(connection, connectionKey);
+        String product = required(input.get("productCode"), "VERSION_MAPPING_INVALID");
+        String kind = enumValue(input.get("matchKind"), Set.of("EXACT", "ALL"), "VERSION_MAPPING_INVALID");
+        String version = "ALL".equals(kind) ? null : required(input.get("version"), "VERSION_MAPPING_INVALID");
+        String branch = required(input.get("branch"), "VERSION_MAPPING_INVALID");
+        if (product.length() > 64 || (version != null && version.length() > 128) || branch.length() > 255)
+            throw new SQLException("VERSION_MAPPING_INVALID");
+        if (source != null && "draft".equals(source.get("state"))) {
+            try (PreparedStatement update = connection.prepareStatement("UPDATE KC_GITLAB_VERSION_MAPPING SET GITLAB_CONNECTION_ID=?," +
+                "PINGCODE_PRODUCT_CODE=?,MATCH_KIND=?,PINGCODE_VERSION=?,VERSION_KEY=?,BRANCH_NAME=?,ROW_VERSION=ROW_VERSION+1," +
+                "UPDATED_BY=?,UPDATED_AT=CURRENT_TIMESTAMP WHERE MAPPING_ID=? AND ROW_VERSION=? AND STATE='DRAFT'")) {
+                int i = 1; update.setLong(i++, connectionId); update.setString(i++, product); update.setString(i++, kind);
+                update.setString(i++, version); update.setString(i++, version == null ? "@ALL@" : version);
+                update.setString(i++, branch); update.setString(i++, actor); update.setLong(i++, id); update.setLong(i, expected);
+                if (update.executeUpdate() != 1) throw new SQLException("ROW_VERSION_CONFLICT");
+            }
+            recordVersionEvent(connection, id, "EDIT", "DRAFT", "DRAFT", actor);
+            return findVersionMapping(connection, id);
+        }
+        String slot = UUID.randomUUID().toString();
+        try (PreparedStatement insert = connection.prepareStatement("INSERT INTO KC_GITLAB_VERSION_MAPPING " +
+            "(REVISION_OF_ID,GITLAB_CONNECTION_ID,PINGCODE_PRODUCT_CODE,MATCH_KIND,PINGCODE_VERSION,VERSION_KEY," +
+            "BRANCH_NAME,ACTIVE_SLOT,CREATED_BY,UPDATED_BY) VALUES (?,?,?,?,?,?,?,?,?,?)")) {
+            if (source == null) insert.setNull(1, java.sql.Types.BIGINT); else insert.setLong(1, id);
+            insert.setLong(2, connectionId); insert.setString(3, product); insert.setString(4, kind);
+            insert.setString(5, version); insert.setString(6, version == null ? "@ALL@" : version);
+            insert.setString(7, branch); insert.setString(8, slot);
+            insert.setString(9, actor); insert.setString(10, actor); insert.executeUpdate();
+        }
+        try (PreparedStatement query = connection.prepareStatement("SELECT MAPPING_ID FROM KC_GITLAB_VERSION_MAPPING WHERE ACTIVE_SLOT=?")) {
+            query.setString(1, slot);
+            try (ResultSet rows = query.executeQuery()) {
+                rows.next(); long createdId = rows.getLong(1);
+                recordVersionEvent(connection, createdId, source == null ? "CREATE" : "REVISE", null, "DRAFT", actor);
+                return findVersionMapping(connection, createdId);
+            }
+        }
+    }
+
+    Map<String, Object> setVersionMappingState(Connection connection, long id, long expected,
+                                                String action, String actor) throws SQLException {
+        Map<String, Object> item = findVersionMapping(connection, id);
+        if (item == null) throw new SQLException("VERSION_MAPPING_NOT_FOUND");
+        if (((Number) item.get("rowVersion")).longValue() != expected) throw new SQLException("ROW_VERSION_CONFLICT");
+        if ("activate".equals(action)) {
+            if (!"draft".equals(item.get("state")) && !"disabled".equals(item.get("state"))) throw new SQLException("VERSION_MAPPING_CONFLICT");
+            Object parent = item.get("revisionOfId");
+            Map<String, Object> parentRow = parent == null ? null : findVersionMapping(connection, ((Number) parent).longValue());
+            if (parent != null && "draft".equals(item.get("state")) &&
+                (parentRow == null || "superseded".equals(parentRow.get("state")))) throw new SQLException("VERSION_MAPPING_CONFLICT");
+            if (parentRow != null && "draft".equals(item.get("state")) && "active".equals(parentRow.get("state"))) {
+                try (PreparedStatement update = connection.prepareStatement("UPDATE KC_GITLAB_VERSION_MAPPING SET STATE='SUPERSEDED'," +
+                    "ACTIVE_SLOT=?,ROW_VERSION=ROW_VERSION+1,UPDATED_BY=?,UPDATED_AT=CURRENT_TIMESTAMP WHERE MAPPING_ID=? AND STATE='ACTIVE'")) {
+                    update.setString(1, UUID.randomUUID().toString()); update.setString(2, actor);
+                    update.setLong(3, ((Number) parent).longValue());
+                    if (update.executeUpdate() != 1) throw new SQLException("VERSION_MAPPING_CONFLICT");
+                }
+                recordVersionEvent(connection, ((Number) parent).longValue(), "REVISE", "ACTIVE", "SUPERSEDED", actor);
+            }
+            updateVersionState(connection, id, expected, "ACTIVE", "ACTIVE", actor);
+            recordVersionEvent(connection, id, "ACTIVATE", String.valueOf(item.get("state")).toUpperCase(), "ACTIVE", actor);
+        } else if ("disable".equals(action)) {
+            if (!"active".equals(item.get("state"))) throw new SQLException("VERSION_MAPPING_CONFLICT");
+            updateVersionState(connection, id, expected, "DISABLED", UUID.randomUUID().toString(), actor);
+            recordVersionEvent(connection, id, "DISABLE", "ACTIVE", "DISABLED", actor);
+        } else throw new SQLException("VERSION_MAPPING_INVALID");
+        return findVersionMapping(connection, id);
+    }
+
+    Map<String, Object> retractVersionMappingDraft(Connection connection, long id, long expected,
+                                                     String actor) throws SQLException {
+        Map<String, Object> item = findVersionMapping(connection, id);
+        if (item == null) throw new SQLException("VERSION_MAPPING_NOT_FOUND");
+        if (((Number) item.get("rowVersion")).longValue() != expected) throw new SQLException("ROW_VERSION_CONFLICT");
+        if (!"draft".equals(item.get("state"))) throw new SQLException("VERSION_MAPPING_CONFLICT");
+        try (PreparedStatement update = connection.prepareStatement(
+            "UPDATE KC_GITLAB_VERSION_MAPPING SET STATE='DELETED',ROW_VERSION=ROW_VERSION+1," +
+                "UPDATED_BY=?,UPDATED_AT=CURRENT_TIMESTAMP WHERE MAPPING_ID=? AND ROW_VERSION=? AND STATE='DRAFT'" +
+                " AND NOT EXISTS (SELECT 1 FROM KC_GITLAB_VERSION_MAPPING CHILD WHERE CHILD.REVISION_OF_ID=? AND CHILD.STATE<>'DELETED')")) {
+            update.setString(1, actor); update.setLong(2, id); update.setLong(3, expected); update.setLong(4, id);
+            if (update.executeUpdate() != 1) throw new SQLException("VERSION_MAPPING_CONFLICT");
+        }
+        recordVersionEvent(connection, id, "DELETE", "DRAFT", "DELETED", actor);
+        return Map.of("id", id, "state", "deleted");
+    }
+
+    Map<String, Object> archiveVersionMapping(Connection connection, long id, long expected,
+                                               String action, String actor) throws SQLException {
+        Map<String, Object> item = findArchivedVersionMapping(connection, id);
+        String sourceState = "restore".equals(action) ? "archived" : "disabled";
+        String targetState = "restore".equals(action) ? "DISABLED" : "ARCHIVED";
+        if (item == null) throw new SQLException("VERSION_MAPPING_NOT_FOUND");
+        if (((Number) item.get("rowVersion")).longValue() != expected) throw new SQLException("ROW_VERSION_CONFLICT");
+        if (!sourceState.equals(item.get("state"))) throw new SQLException("VERSION_MAPPING_CONFLICT");
+        try (PreparedStatement update = connection.prepareStatement(
+            "UPDATE KC_GITLAB_VERSION_MAPPING SET STATE=?,ROW_VERSION=ROW_VERSION+1,UPDATED_BY=?,UPDATED_AT=CURRENT_TIMESTAMP WHERE MAPPING_ID=? AND ROW_VERSION=? AND STATE=?")) {
+            update.setString(1, targetState); update.setString(2, actor); update.setLong(3, id);
+            update.setLong(4, expected); update.setString(5, sourceState.toUpperCase());
+            if (update.executeUpdate() != 1) throw new SQLException("ROW_VERSION_CONFLICT");
+        }
+        recordVersionEvent(connection, id, "restore".equals(action) ? "RESTORE" : "ARCHIVE",
+            sourceState.toUpperCase(), targetState, actor);
+        return Map.of("id", id, "state", targetState.toLowerCase());
+    }
+
+    private Map<String, Object> findArchivedVersionMapping(Connection connection, long id) throws SQLException {
+        try (PreparedStatement query = connection.prepareStatement("SELECT " + VERSION_COLUMNS +
+            " FROM KC_GITLAB_VERSION_MAPPING V JOIN KC_GITLAB_CONNECTION C ON C.GITLAB_CONNECTION_ID=V.GITLAB_CONNECTION_ID WHERE V.MAPPING_ID=? AND V.STATE<>'DELETED'")) {
+            query.setLong(1, id);
+            try (ResultSet rows = query.executeQuery()) { return rows.next() ? projectVersionMapping(rows) : null; }
+        }
+    }
+
+    Map<String, Object> resolveVersionMapping(Connection connection, String connectionKey, String product,
+                                               String version) throws SQLException {
+        long connectionId = connectionId(connection, connectionKey);
+        try (PreparedStatement query = connection.prepareStatement("SELECT " + VERSION_COLUMNS +
+            " FROM KC_GITLAB_VERSION_MAPPING V JOIN KC_GITLAB_CONNECTION C ON C.GITLAB_CONNECTION_ID=V.GITLAB_CONNECTION_ID" +
+            " WHERE V.GITLAB_CONNECTION_ID=? AND V.PINGCODE_PRODUCT_CODE=? AND V.STATE='ACTIVE'" +
+            " AND ((V.MATCH_KIND='EXACT' AND V.PINGCODE_VERSION=?) OR V.MATCH_KIND='ALL')" +
+            " ORDER BY CASE WHEN V.MATCH_KIND='EXACT' THEN 0 ELSE 1 END")) {
+            query.setLong(1, connectionId); query.setString(2, product); query.setString(3, version);
+            try (ResultSet rows = query.executeQuery()) { return rows.next() ? projectVersionMapping(rows) : null; }
+        }
+    }
+
+    private static void updateVersionState(Connection connection, long id, long expected, String state,
+                                           String slot, String actor) throws SQLException {
+        try (PreparedStatement update = connection.prepareStatement("UPDATE KC_GITLAB_VERSION_MAPPING SET STATE=?,ACTIVE_SLOT=?," +
+            "ROW_VERSION=ROW_VERSION+1,UPDATED_BY=?,UPDATED_AT=CURRENT_TIMESTAMP WHERE MAPPING_ID=? AND ROW_VERSION=?")) {
+            update.setString(1, state); update.setString(2, slot); update.setString(3, actor);
+            update.setLong(4, id); update.setLong(5, expected);
+            if (update.executeUpdate() != 1) throw new SQLException("ROW_VERSION_CONFLICT");
+        }
+    }
+
+    private static void recordVersionEvent(Connection connection, long id, String action,
+                                           String oldState, String newState, String actor) throws SQLException {
+        try (PreparedStatement insert = connection.prepareStatement("INSERT INTO KC_GITLAB_VERSION_MAPPING_EVENT " +
+            "(MAPPING_ID,EVENT_ACTION,OLD_STATE,NEW_STATE,ACTOR) VALUES (?,?,?,?,?)")) {
+            insert.setLong(1, id); insert.setString(2, action); insert.setString(3, oldState);
+            insert.setString(4, newState); insert.setString(5, actor); insert.executeUpdate();
+        }
+    }
+
+    private static Map<String, Object> projectVersionMapping(ResultSet row) throws SQLException {
+        Map<String, Object> item = new LinkedHashMap<>();
+        item.put("id", row.getLong(1)); item.put("revisionOfId", row.getObject(2));
+        item.put("connectionId", row.getString(3)); item.put("productCode", row.getString(4));
+        item.put("matchKind", row.getString(5)); item.put("version", row.getString(6));
+        item.put("branch", row.getString(7)); item.put("state", row.getString(8).toLowerCase());
+        item.put("rowVersion", row.getLong(9)); item.put("createdAt", row.getTimestamp(10).toInstant().toString());
+        item.put("updatedAt", row.getTimestamp(11).toInstant().toString()); return item;
+    }
     Map<String, Object> listConnections(Connection connection) throws SQLException {
         List<Map<String, Object>> items = new ArrayList<>();
         try (PreparedStatement query = connection.prepareStatement(

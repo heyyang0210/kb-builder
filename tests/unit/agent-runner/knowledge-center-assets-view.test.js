@@ -52,9 +52,11 @@ describe('知识资产工作台前端契约', () => {
     expect(actionPanel).not.toContain('B：');
   });
 
-  test('操作入口同级展示，关闭使用 Lucide 图标', () => {
+  test('侧栏按主操作、工作和管理分组，关闭使用 Lucide 图标', () => {
     expect(view()).not.toContain('>文档工作<');
-    expect((view().match(/class="asset-action-row"/g) || []).length).toBeGreaterThanOrEqual(5);
+    expect(view()).toContain('asset-action-primary');
+    expect(view()).toContain('<h3>工作入口</h3>');
+    expect(view()).toContain('<h3>管理设置</h3>');
     expect(view()).toContain('class="asset-name"');
     expect(view()).toContain('data-lucide="x"');
     expect(view()).not.toContain('asset-detail-close" type="button" data-asset-detail-close aria-label="关闭手册操作" title="关闭手册操作">×');
@@ -180,7 +182,7 @@ describe('知识资产工作台前端契约', () => {
 
   test('桌面操作栏吸顶且窄屏恢复普通文档流', () => {
     const css = read('apps/knowledge-center-web/frontend/knowledge-center/styles.css');
-    expect(css).toContain('@media (min-width: 1101px)');
+    expect(css).toContain('@media (min-width: 1301px)');
     expect(css).toContain('.asset-workspace-detail { position: sticky; top: 14px;');
     expect(css).toContain('max-height: calc(var(--kc-viewport-height) - 28px)');
     expect(css).toContain('.asset-workspace.asset-detail-open .asset-workspace-detail { position: static;');

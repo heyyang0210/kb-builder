@@ -90,3 +90,8 @@ npm run build
 最终检查：相关单元测试53/53通过；配置/写作/运行控制HTTP与浏览器用例4/4通过，真实Codex联调另已通过；统一构建通过（379个Node文件语法检查）。有效drawio XML及历史符号链接检查通过，git diff --check通过。代码和本地配置已更新，未重启共享平台服务、未提交代码或发布业务内容。
 
 2026-10-29实际使用纠偏：上一轮未重启网关导致新前端调用旧API并收到首页HTML。本次已补API回退/前端解析保护，构建并仅重启Web网关；实际管理员API与页面读取通过，平台4/4服务正常。证据见 runtime/diagnostics/agent-admin-fix-20261029/verification.json。
+
+
+## 2026-11-10 Worker退出与IPC终态顺序修复
+
+固定全量复现：Worker已发送业务错误且退出码0，父进程先处理exit，导致丢失业务错误并返回通用中断。exit仅表明进程结束，IPC尚可能有末尾消息；运行器改在close（通信通道关闭后）补记缺失终态。result/error先到则沿用现有幂等finish；close前收到的末尾消息优先，未收到终态仍按原中断错误收束。取消与超时逻辑保持原契约。伪代码：on(message) -> finish(result/error)；on(close) -> finish(interrupted)；finish仅首调用生效。以确定性exit→message→close序列和真实Worker/HTTP回归验收。

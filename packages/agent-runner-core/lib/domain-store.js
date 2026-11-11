@@ -99,6 +99,9 @@ class DomainStore {
   }
 
   statusForCode(code) {
+    if (code === 'VERSION_MAPPING_NOT_FOUND') return 404;
+    if (code === 'VERSION_MAPPING_CONFLICT') return 409;
+    if (code === 'VERSION_MAPPING_INVALID') return 422;
     if (['OUTLINE_DELETED', 'OUTLINE_RESTORE_CONFLICT', 'OUTLINE_PURGE_REFERENCED', 'OUTLINE_PURGE_UNAVAILABLE'].includes(code)) return 409;
     if (code === 'OUTLINE_PURGE_CONFIRM_REQUIRED') return 422;
     if (code === 'OUTLINE_NOT_FOUND' || code === 'ASSET_NOT_FOUND') return 404;
@@ -306,6 +309,31 @@ class DomainStore {
 
   readPlatformGitLabConnections() {
     const result = this.request('GET', '/v1/platform/gitlab/connections');
+    return result.data || result;
+  }
+
+  async readGitLabVersionMappings() {
+    const result = await this.requestAsync('GET', '/v1/platform/gitlab/version-mappings');
+    return result.data || result;
+  }
+
+  async resolveGitLabVersionMapping(connectionId, productCode, version) {
+    const query = new URLSearchParams({ connectionId, productCode, version });
+    const result = await this.requestAsync('GET', `/v1/platform/gitlab/version-mappings/resolve?${query}`);
+    return result.data ?? null;
+  }
+
+  async saveGitLabVersionMapping(id, payload, rowVersion, idempotencyKey, actor) {
+    const target = id == null ? '/v1/platform/gitlab/version-mappings' : `/v1/platform/gitlab/version-mappings/${encodeURIComponent(id)}`;
+    const result = await this.requestAsync(id == null ? 'POST' : 'PUT', target, { ...payload, actor }, {
+      'Idempotency-Key': idempotencyKey, ...(id == null ? {} : { 'If-Match': String(rowVersion) }),
+    });
+    return result.data || result;
+  }
+
+  async setGitLabVersionMappingState(id, action, rowVersion, idempotencyKey, actor) {
+    const result = await this.requestAsync('POST', `/v1/platform/gitlab/version-mappings/${encodeURIComponent(id)}/${action}`,
+      { actor }, { 'If-Match': String(rowVersion), 'Idempotency-Key': idempotencyKey });
     return result.data || result;
   }
 

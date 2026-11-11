@@ -18,7 +18,10 @@ async function readTemplateUpload(req) {
       }
     };
     req.on('data', count);
-    req.once('aborted', () => parser.destroy(uploadError('TEMPLATE_UPLOAD_ABORTED', '上传已中断', 400)));
+    req.once('aborted', () => {
+      fail(uploadError('TEMPLATE_UPLOAD_ABORTED', '上传已中断', 400));
+      parser.destroy(envelopeError);
+    });
     parser.on('field', (name, value, info) => {
       if (!['name', 'type', 'description'].includes(name) || info.valueTruncated) fail(uploadError('TEMPLATE_INVALID_UPLOAD', '上传字段不合法或过长', 400));
       else fields[name] = value;
@@ -30,6 +33,7 @@ async function readTemplateUpload(req) {
       const decodedFilename = /[ÃÂ]/.test(rawFilename) ? Buffer.from(rawFilename, 'latin1').toString('utf8') : rawFilename;
       const sourceFilename = path.basename(decodedFilename.replace(/\\/g, '/'));
       const item = { clientIndex: files.length, sourceFilename }; files.push(item);
+      stream.on('error', () => fail(uploadError('TEMPLATE_INVALID_UPLOAD', '上传请求不完整或格式错误', 400)));
       const ext = path.extname(sourceFilename).toLowerCase();
       let chunks = []; let size = 0;
       if (!['.md', '.markdown'].includes(ext)) item.error = uploadError('TEMPLATE_FORMAT_UNSUPPORTED', '仅支持 Markdown（.md/.markdown）文件', 415);

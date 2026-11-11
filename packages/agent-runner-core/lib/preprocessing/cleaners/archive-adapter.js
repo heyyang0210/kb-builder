@@ -199,12 +199,13 @@ class ArchiveAdapter extends SourceAdapter {
             const writeStream = fsSync.createWriteStream(entryPath);
             stream.pipe(writeStream);
             writeStream.on('finish', next);
-            writeStream.on('error', reject);
+            writeStream.on('error', err => extract.destroy(err));
           } else {
             stream.resume();
             next();
           }
         } catch (err) {
+          extract.destroy(err);
           reject(err);
         }
       });
@@ -213,8 +214,7 @@ class ArchiveAdapter extends SourceAdapter {
       extract.on('error', reject);
     });
 
-    await pipeline(input, gunzip, extract);
-    await extractPromise;
+    await Promise.all([pipeline(input, gunzip, extract), extractPromise]);
   }
 
   /**
@@ -246,12 +246,13 @@ class ArchiveAdapter extends SourceAdapter {
             const writeStream = fsSync.createWriteStream(entryPath);
             stream.pipe(writeStream);
             writeStream.on('finish', next);
-            writeStream.on('error', reject);
+            writeStream.on('error', err => extract.destroy(err));
           } else {
             stream.resume();
             next();
           }
         } catch (err) {
+          extract.destroy(err);
           reject(err);
         }
       });
@@ -260,8 +261,7 @@ class ArchiveAdapter extends SourceAdapter {
       extract.on('error', reject);
     });
 
-    await pipeline(input, extract);
-    await extractPromise;
+    await Promise.all([pipeline(input, extract), extractPromise]);
   }
 
   /**
@@ -292,9 +292,9 @@ class ArchiveAdapter extends SourceAdapter {
               await this.scanExtractedRecursive(nestedDir, files, depth + 1);
             } catch (err) {
               // 无法解压则跳过
-            } finally {
-              await fs.rm(nestedDir, { recursive: true, force: true }).catch(() => {});
             }
+            // Keep extracted paths alive until parse() finishes consuming them.
+            // The enclosing extraction directory is removed in parse() finally.
           } else if (this.chain && this.chain.canHandle(entry.name)) {
             files.push(fullPath);
           } else if (!this.chain) {

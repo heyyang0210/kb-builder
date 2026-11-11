@@ -73,6 +73,21 @@ describe('自然路径模板', () => {
     expect(errors).toEqual(expect.arrayContaining([expect.objectContaining({ code, row: expect.any(Number), column: expect.any(String), suggestion: expect.any(String) })]));
   });
 
+  test.each([
+    [[intro, ['extra.md', '', '', '', '', '', '越界']], 'EXTRA_COLUMNS', 3, '表格'],
+    [[intro, ['', '', '', '', '缺少路径']], 'PATH_REQUIRED', 3, rules.headers[0]],
+    [[intro, ['a'.repeat(253) + '.md']], 'NAME_TOO_LONG', 3, rules.headers[0]],
+    [[intro, ['parent.md', 'child.md']], 'DOCUMENT_AS_PARENT', 3, rules.headers[0]],
+    [[intro, ['.md']], 'DOCUMENT_EXTENSION', 3, rules.headers[0]],
+    [[[]], 'OUTLINE_DOCUMENT_REQUIRED', 2, rules.headers[0]],
+  ])('导入边界返回明确行列 %s', (input, code, row, column) => {
+    expect(errorDetails(input)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code, row, column, suggestion: expect.any(String) })
+    ]));
+    expect(parseNaturalPathRows([intro, ['恢复.md']], title).nodes.map(node => node.path))
+      .toEqual(['00SQL参考手册.md', '恢复.md']);
+  });
+
   test('汇总多行错误、合并单元格和未知领域', () => {
     expect(errorDetails([intro, ['A', '', 'x.md'], ['bad.txt']]).filter(e => ['PATH_GAP', 'DOCUMENT_EXTENSION'].includes(e.code))).toHaveLength(2);
     expect(() => parseNaturalPathRows([intro], title, [{ s: { r: 1, c: 0 }, e: { r: 2, c: 0 } }])).toThrow('合并');

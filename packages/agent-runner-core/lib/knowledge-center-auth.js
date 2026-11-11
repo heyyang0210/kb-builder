@@ -446,11 +446,14 @@ function requestJson(target, timeoutMs, maxBytes) {
       response.on('data', chunk => {
         size += chunk.length;
         if (size > maxBytes) {
-          request.destroy(new AuthError('CAS_RESPONSE_TOO_LARGE', '统一认证响应超过限制', 502));
+          const error = new AuthError('CAS_RESPONSE_TOO_LARGE', '统一认证响应超过限制', 502);
+          reject(error);
+          request.destroy();
           return;
         }
         chunks.push(chunk);
       });
+      response.on('error', error => reject(error instanceof AuthError ? error : new AuthError('CAS_UNAVAILABLE', '统一认证暂时不可用', 502, true)));
       response.on('end', () => {
         if (response.statusCode < 200 || response.statusCode >= 300) {
           reject(new AuthError('CAS_UNAVAILABLE', `统一认证返回 HTTP ${response.statusCode}`, 502, true));

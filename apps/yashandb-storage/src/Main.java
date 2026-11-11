@@ -964,6 +964,51 @@ public final class Main {
     private void platformGitLab(HttpExchange exchange) throws IOException {
         String path = exchange.getRequestURI().getRawPath();
         try (Connection connection = connection()) {
+            if ("GET".equals(exchange.getRequestMethod()) && "/v1/platform/gitlab/version-mappings".equals(path)) {
+                sendJson(exchange, 200, mapOf("success", true, "data", platformGitLabRepository.listVersionMappings(connection)));
+                connection.commit(); return;
+            }
+            if ("POST".equals(exchange.getRequestMethod()) && "/v1/platform/gitlab/version-mappings".equals(path)) {
+                if (!requireIdempotencyKey(exchange)) return;
+                Map<String, Object> payload = readJsonObject(exchange);
+                Map<String, Object> item = platformGitLabRepository.saveVersionMapping(connection, null, payload, null,
+                    coalesce(payload.get("actor"), "system:api"));
+                connection.commit(); sendJson(exchange, 200, mapOf("success", true, "data", item)); return;
+            }
+            if ("GET".equals(exchange.getRequestMethod()) && "/v1/platform/gitlab/version-mappings/resolve".equals(path)) {
+                Map<String, String> query = queryParameters(exchange.getRequestURI().getRawQuery());
+                Map<String, Object> item = platformGitLabRepository.resolveVersionMapping(connection,
+                    query.getOrDefault("connectionId", ""), query.getOrDefault("productCode", ""), query.getOrDefault("version", ""));
+                connection.commit(); sendJson(exchange, 200, mapOf("success", true, "data", item)); return;
+            }
+            if (path.startsWith("/v1/platform/gitlab/version-mappings/") && !path.endsWith("/resolve")) {
+                String suffix = path.substring("/v1/platform/gitlab/version-mappings/".length());
+                String[] parts = suffix.split("/");
+                long id = Long.parseLong(parts[0]);
+                if ("GET".equals(exchange.getRequestMethod()) && parts.length == 1) {
+                    Map<String, Object> item = platformGitLabRepository.findVersionMapping(connection, id);
+                    if (item == null) failure(exchange, 404, "VERSION_MAPPING_NOT_FOUND", "版本映射不存在");
+                    else sendJson(exchange, 200, mapOf("success", true, "data", item));
+                    connection.commit(); return;
+                }
+                if (("PUT".equals(exchange.getRequestMethod()) && parts.length == 1) ||
+                    ("POST".equals(exchange.getRequestMethod()) && parts.length == 2 &&
+                     ("activate".equals(parts[1]) || "disable".equals(parts[1]) || "delete".equals(parts[1]) ||
+                      "archive".equals(parts[1]) || "restore".equals(parts[1])))) {
+                    long expected = requiredRowVersion(exchange); if (expected == Long.MIN_VALUE) return;
+                    if (!requireIdempotencyKey(exchange)) return;
+                    Map<String, Object> payload = readJsonObject(exchange);
+                    String actor = coalesce(payload.get("actor"), "system:api");
+                    Map<String, Object> item = parts.length == 1
+                        ? platformGitLabRepository.saveVersionMapping(connection, id, payload, expected, actor)
+                        : ("archive".equals(parts[1]) || "restore".equals(parts[1]))
+                            ? platformGitLabRepository.archiveVersionMapping(connection, id, expected, parts[1], actor)
+                        : "delete".equals(parts[1])
+                            ? platformGitLabRepository.retractVersionMappingDraft(connection, id, expected, actor)
+                            : platformGitLabRepository.setVersionMappingState(connection, id, expected, parts[1], actor);
+                    connection.commit(); sendJson(exchange, 200, mapOf("success", true, "data", item)); return;
+                }
+            }
             if ("GET".equals(exchange.getRequestMethod()) && "/v1/platform/gitlab/connections".equals(path)) {
                 sendJson(exchange, 200, mapOf("success", true, "data", platformGitLabRepository.listConnections(connection)));
                 connection.commit(); return;
@@ -1022,7 +1067,7 @@ public final class Main {
                 }
             }
             methodNotAllowed(exchange);
-        } catch (JsonParseException error) {
+        } catch (JsonParseException | NumberFormatException error) {
             failure(exchange, 400, "INVALID_JSON", error.getMessage());
         } catch (SQLException error) {
             platformFailure(exchange, error);
@@ -1413,7 +1458,7 @@ public final class Main {
         timings.put("nodes", (System.nanoTime()-started)/1e6);
         started = System.nanoTime();
         Map<String, List<Map<String, Object>>> owners = new LinkedHashMap<>();
-        String sql = "SELECT N.NODE_KEY, I.TECH_DOMAIN_ID, D.DOMAIN_NAME, I.OWNER_PRINCIPAL_ID, P.DISPLAY_NAME, I.BINDING_STATUS "
+        String sql = "SELECT N.NODE_KEY, I.TECH_DOMAIN_ID, D.DOMAIN_NAME, I.OWNER_PRINCIPAL_ID, P.DISPLAY_NAME, I.BINDING_STATUS, I.DOMAIN_ROLE "
             + "FROM KC_MANUAL_OUTLINE_RESP_ITEM I JOIN KC_MANUAL_OUTLINE_NODE N ON N.OUTLINE_NODE_ID=I.OUTLINE_NODE_ID "
             + "JOIN KC_MANUAL_OUTLINE_VERSION V ON V.CURRENT_RESP_VERSION_ID=I.RESP_VERSION_ID "
             + "LEFT JOIN KC_TECH_DOMAIN D ON D.TECH_DOMAIN_ID=I.TECH_DOMAIN_ID "
@@ -1423,7 +1468,7 @@ public final class Main {
             try (ResultSet row = query.executeQuery()) {
                 while (row.next()) owners.computeIfAbsent(row.getString(1), ignored -> new ArrayList<>()).add(mapOf(
                     "techDomainId", row.getString(2), "techDomainName", row.getString(3),
-                    "assigneeId", row.getString(4), "assigneeName", row.getString(5), "status", row.getString(6)));
+                    "assigneeId", row.getString(4), "assigneeName", row.getString(5), "status", row.getString(6), "domainRole", row.getString(7)));
             }
         }
         timings.put("owners", (System.nanoTime()-started)/1e6);
@@ -3160,19 +3205,25 @@ public final class Main {
     }
 
     private static void platformFailure(HttpExchange exchange, SQLException error) throws IOException {
+        if (error.getSQLState() != null && error.getSQLState().startsWith("23")) {
+            failure(exchange, 409, "CONFIG_CONFLICT", "配置与现有记录冲突，请刷新后重试");
+            return;
+        }
         String code = error.getMessage() == null ? "STORAGE_UNAVAILABLE" : error.getMessage();
         int status = switch (code) {
-            case "AUTH_USER_NOT_FOUND", "GITLAB_CONNECTION_NOT_FOUND", "GITLAB_MAPPING_NOT_FOUND", "ASSET_NOT_FOUND" -> 404;
-            case "ROW_VERSION_CONFLICT", "CAS_LOGIN_BIND_CONFLICT", "CAS_PRINCIPAL_INACTIVE" -> 409;
+            case "AUTH_USER_NOT_FOUND", "GITLAB_CONNECTION_NOT_FOUND", "GITLAB_MAPPING_NOT_FOUND", "ASSET_NOT_FOUND", "VERSION_MAPPING_NOT_FOUND" -> 404;
+            case "ROW_VERSION_CONFLICT", "CAS_LOGIN_BIND_CONFLICT", "CAS_PRINCIPAL_INACTIVE", "VERSION_MAPPING_CONFLICT" -> 409;
             case "ROLE_REQUIRED", "ROLE_INVALID", "GITLAB_CONNECTION_NAME_REQUIRED", "GITLAB_BASE_URL_REQUIRED",
                 "GITLAB_PROJECT_REQUIRED", "GITLAB_DEFAULT_BRANCH_REQUIRED", "GITLAB_RUN_MODE_INVALID",
                 "GITLAB_AUTH_MODE_INVALID", "GITLAB_PURPOSE_INVALID", "GITLAB_STATE_INVALID", "GITLAB_MAPPING_REQUIRED",
-                "GITLAB_CONNECTION_REQUIRED", "MAPPING_VALIDATION_FAILED" -> 422;
+                "GITLAB_CONNECTION_REQUIRED", "MAPPING_VALIDATION_FAILED", "VERSION_MAPPING_INVALID" -> 422;
             default -> 503;
         };
         String message = switch (code) {
             case "ROW_VERSION_CONFLICT" -> "配置已被其他操作修改，请刷新后重试";
             case "MAPPING_VALIDATION_FAILED" -> "手册映射必须包含合法的分支和中英文路径";
+            case "VERSION_MAPPING_CONFLICT" -> "映射已被修改或目标版本已有启用规则，请刷新后重试";
+            case "VERSION_MAPPING_INVALID" -> "请填写有效的产品、业务版本和仓库分支";
             case "STORAGE_UNAVAILABLE" -> "平台数据库暂时不可用";
             default -> code;
         };

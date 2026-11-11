@@ -91,11 +91,27 @@ function createKnowledgeCenterHandler(options) {
   const { knowledgeAssetsStore, manualStatusStore, brandIconStore, domainStore } = stores;
   const databasePlatformMode = String(process.env.KNOWLEDGE_PLATFORM_CONFIG_MODE || process.env.KNOWLEDGE_STORAGE_MODE || '').toLowerCase() === 'database';
   const handleDocumentTasks = createDocumentTaskHandler(options.documentTasksOptions || {});
+  async function requireDocumentTaskScopeClear(reviewTaskId) {
+    const state = await handleDocumentTasks.readState();
+    for (const task of state.tasks || []) for (const book of task.decomposition?.handbooks || []) for (const doc of book.documents || []) {
+      if (String(doc.reviewTaskId || '') !== String(reviewTaskId)) continue;
+      const documentId = String(doc.createdDocumentId || doc.id);
+      const blocked = (task.scopeChanges || []).some(change => change.status === 'reported'
+        && (change.affectedDocuments || []).some(item => item.handbookId === book.id && item.documentId === documentId));
+      if (blocked) throw Object.assign(new Error('该文档正在进行范围纠偏，确认新范围或取消纠偏前不能审核通过或创建 MR'), { status: 409, code: 'SCOPE_BLOCKED' });
+    }
+  }
   // Share only overlapping raw directory reads; each request still filters its own session.
   let documentTaskContextInFlight = null;
+  let documentTaskContextTiming = null;
   function readDocumentTaskContext() {
     if (!documentTaskContextInFlight) {
-      documentTaskContextInFlight = Promise.all([domainStore.readPrincipalsAsync(), readKnowledgeAssetsAsync()])
+      const started = performance.now();
+      documentTaskContextInFlight = Promise.all([
+        domainStore.readPrincipalsAsync().then(value => { if (process.env.KC_DOCUMENT_TASK_TIMING === '1') documentTaskContextTiming = { ...(documentTaskContextTiming || {}), principals: performance.now() - started }; return value; }),
+        Promise.resolve(knowledgeAssetsStore.readAsync ? knowledgeAssetsStore.readAsync() : knowledgeAssetsStore.read())
+          .then(value => { if (process.env.KC_DOCUMENT_TASK_TIMING === '1') documentTaskContextTiming = { ...(documentTaskContextTiming || {}), assets: performance.now() - started }; return value; }),
+      ])
         .finally(() => { documentTaskContextInFlight = null; });
     }
     return documentTaskContextInFlight;
@@ -180,6 +196,26 @@ function createKnowledgeCenterHandler(options) {
   const mcpGovernance = options.mcpGovernance || require('../lib/platform-management/mcp-governance').createMcpGovernance();
   const agentGovernance = options.agentGovernance || require('../lib/platform-management/agent-governance').createAgentGovernance({ legacyModels: modelGovernance, legacyMcp: mcpGovernance });
   const codexRunner = options.codexRunner || require('../lib/agent-runtime/codex-runner').createCodexRunner();
+  const dshRunner = options.dshRunner || require('../lib/agent-runtime/dsh-runner').createDshRunner();
+  const agentRunRunner = id => dshRunner.owns?.(id) ? dshRunner : codexRunner;
+  const dshTrialModel = id => {
+    const own = agentGovernance.models(id);
+    const selected = own.available().defaultSelection ? own : modelGovernance;
+    const available = selected.available();
+    if (!available.defaultSelection) return null;
+    const resolved = selected.resolve({ ...available.defaultSelection, configVersion: available.configVersion });
+    return resolved.config.protocol === 'chat_completions'
+      ? { config: resolved.config, source: selected === own ? 'agent' : 'platform' } : null;
+  };
+  const dshReadiness = id => {
+    const runtime = dshRunner.readiness();
+    let trialModel = null;
+    try { trialModel = dshTrialModel(id); } catch (_) {}
+    const blockers = [...runtime.blockers];
+    if (!trialModel) blockers.unshift('尚未配置可用于试运行的模型');
+    return { ...runtime, ready: runtime.ready && Boolean(trialModel), blockers,
+      ...(trialModel ? { modelName: trialModel.config.model, modelSource: trialModel.source } : {}) };
+  };
   const templateMapping = options.templateMappingService || createTemplateMappingService({ templateStore,
     analyzeAI: async ({ document, templates, prompt, timeoutMs, signal }) => {
       const selection = (await agentGovernance.available()).defaultSelection;
@@ -938,7 +974,7 @@ function createKnowledgeCenterHandler(options) {
       sendProductionData(res, source, 201);
       return true;
     }
-    const aiMatch = pathname.match(/^\/knowledge-center\/api\/production\/handbooks\/([^/]+)\/documents\/([^/]+)\/ai-jobs(?:\/([^/]+)(?:\/(cancel|adopt|retry|recover))?)?$/);
+    const aiMatch = pathname.match(/^\/knowledge-center\/api\/production\/handbooks\/([^/]+)\/documents\/([^/]+)\/ai-jobs(?:\/([^/]+)(?:\/(cancel|adopt|retry|recover|feedback))?)?$/);
     if (aiMatch) {
       const handbookId = decodeURIComponent(aiMatch[1]);
       const documentId = decodeURIComponent(aiMatch[2]);
@@ -951,9 +987,12 @@ function createKnowledgeCenterHandler(options) {
       } else if (req.method === 'GET' && jobId && !action) {
         const params = new URL(req.url, 'http://localhost').searchParams;
         sendProductionData(res, handbookProductionService.ai.get({ ...productionContext(handbookId, documentId, params), jobId }, session));
+      } else if (req.method === 'DELETE' && jobId && !action) {
+        const params = new URL(req.url, 'http://localhost').searchParams;
+        sendProductionData(res, handbookProductionService.ai.removeHistory({ ...productionContext(handbookId, documentId, params), jobId }, session));
       } else if (req.method === 'POST' && (!jobId || action)) {
         const body = await readJsonBody(req);
-        await assertActiveProductionOutline(body);
+        if (action !== 'feedback') await assertActiveProductionOutline(body);
         let input = { ...body, handbookId, documentId, jobId };
         if (!jobId) {
           if (!input.templateId) {
@@ -969,9 +1008,10 @@ function createKnowledgeCenterHandler(options) {
         else if (action === 'cancel') sendProductionData(res, handbookProductionService.ai.cancel(input, session));
         else if (action === 'retry') sendProductionData(res, handbookProductionService.ai.retry(input, session, req.headers['idempotency-key']), 202);
         else if (action === 'recover') sendProductionData(res, handbookProductionService.ai.recover(input, session), 202);
+        else if (action === 'feedback') sendProductionData(res, handbookProductionService.ai.feedback(input, session));
         else sendProductionData(res, handbookProductionService.ai.adopt(input, session));
       } else {
-        res.writeHead(405, { Allow: 'GET, POST' }); res.end();
+        res.writeHead(405, { Allow: 'GET, POST, DELETE' }); res.end();
       }
       return true;
     }
@@ -1016,7 +1056,7 @@ function createKnowledgeCenterHandler(options) {
       if (!key) throw Object.assign(new Error('提交评审需要幂等键'), { status: 400 });
       const body = await readJsonBody(req);
       if (body.reviewMode && body.reviewMode !== 'online_review') throw Object.assign(new Error('不支持的评审模式'), { status: 422 });
-      if (body.revisionOfTaskId !== undefined && (typeof body.revisionOfTaskId !== 'string' || !body.revisionOfTaskId.trim())) throw Object.assign(new Error('请提供有效的原退回任务标识'), { status: 422, code: 'REVIEW_REVISION_TASK_INVALID' });
+      if (body.revisionOfTaskId !== undefined && (typeof body.revisionOfTaskId !== 'string' || !body.revisionOfTaskId.trim())) throw Object.assign(new Error('请提供有效的原审核任务标识'), { status: 422, code: 'REVIEW_REVISION_TASK_INVALID' });
       await assertActiveProductionOutline(body);
       if (!Array.isArray(body.documents) || !body.documents.length) throw Object.assign(new Error('至少选择一篇已保存文档'), { status: 422 });
       if (body.reviewMode === 'online_review' && (!['document', 'handbook'].includes(body.scope) || (body.scope === 'document' && body.documents.length !== 1))) throw Object.assign(new Error('在线评审范围与所选文档不一致'), { status: 422, code: 'ONLINE_REVIEW_SCOPE_INVALID' });
@@ -1601,6 +1641,55 @@ function createKnowledgeCenterHandler(options) {
         const authorizationUrl = startGitLabOAuth({ userId: session?.user?.id, connectionId: connection.id, host: connection.host, returnTo: params.get('returnTo') || fallback });
         res.writeHead(302, { Location: authorizationUrl, 'Cache-Control': 'no-store' }); res.end(); return;
       }
+      if (pathname === '/knowledge-center/api/gitlab/version-mappings' || pathname.startsWith('/knowledge-center/api/gitlab/version-mappings/')) {
+        if (forbidUnlessPlatformAdmin(res, session)) return;
+        if (!databasePlatformMode) throw new GitLabConnectorError('VERSION_MAPPING_STORAGE_REQUIRED', '请先启用平台数据库存储', 503);
+        const base = '/knowledge-center/api/gitlab/version-mappings';
+        const suffix = pathname.slice(base.length);
+        let data;
+        if (req.method === 'GET' && !suffix) {
+          data = await domainStore.readGitLabVersionMappings();
+        } else if (req.method === 'GET' && suffix === '/resolve-preview') {
+          const params = new URL(req.url, 'http://localhost').searchParams;
+          const connectionId = params.get('connectionId') || '';
+          const productCode = params.get('productCode') || '';
+          const version = params.get('version')?.trim() || '';
+          if (!connectionId || !productCode || !version) throw new GitLabConnectorError('VERSION_MAPPING_INVALID', '请选择仓库、产品并填写业务版本', 422);
+          data = await domainStore.resolveGitLabVersionMapping(connectionId, productCode, version);
+          if (data) {
+            const connection = findConnection(connectionId, GITLAB_CONFIG_PATH);
+            const branches = await gitLabRequestForUser(session, connection, options => listBranches(connection, options));
+            data = { ...data, branchAvailable: connection.status === 'active' && branches.some(branch => branch.name === data.branch) };
+          }
+        } else {
+          const match = suffix.match(/^\/(\d+)(?:\/(activate|disable|delete|archive|restore))?$/);
+          if ((!match && !(req.method === 'POST' && !suffix)) ||
+              (match && (match[2] ? req.method !== 'POST' : req.method !== 'PUT'))) {
+            res.writeHead(405); res.end(); return;
+          }
+          const idempotencyKey = String(req.headers['idempotency-key'] || '').trim();
+          if (!idempotencyKey) throw new GitLabConnectorError('IDEMPOTENCY_KEY_REQUIRED', '配置更新必须携带 Idempotency-Key', 400);
+          const rowVersion = req.headers['if-match'] == null ? null : Number(String(req.headers['if-match']).replace(/"/g, ''));
+          if (match && (!Number.isInteger(rowVersion) || rowVersion < 1)) throw new GitLabConnectorError('ROW_VERSION_REQUIRED', '请刷新映射后重试', 400);
+          const body = await readJsonBody(req);
+          if (match?.[2]) {
+            if (match[2] === 'activate') {
+              const all = await domainStore.readGitLabVersionMappings();
+              const rule = all.items?.find(item => String(item.id) === match[1]);
+              if (!rule) throw new GitLabConnectorError('VERSION_MAPPING_NOT_FOUND', '版本映射不存在', 404);
+              const connection = findConnection(rule.connectionId, GITLAB_CONFIG_PATH);
+              if (connection.status !== 'active') throw new GitLabConnectorError('GITLAB_CONNECTION_DISABLED', '仓库连接已停用', 409);
+              const branches = await gitLabRequestForUser(session, connection, options => listBranches(connection, options));
+              if (!branches.some(branch => branch.name === rule.branch)) throw new GitLabConnectorError('GITLAB_BRANCH_NOT_FOUND', '目标分支不存在', 422);
+            }
+            data = await domainStore.setGitLabVersionMappingState(match[1], match[2], rowVersion, idempotencyKey, session?.user?.id);
+          } else {
+            data = await domainStore.saveGitLabVersionMapping(match?.[1] || null, body, rowVersion, idempotencyKey, session?.user?.id);
+          }
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify({ success: true, data })); return;
+      }
       if (req.method === 'GET' && pathname === '/knowledge-center/api/gitlab/connections') {
         if (forbidUnlessPlatformAdmin(res, session)) return;
         const cfg = readGitLabConfig(GITLAB_CONFIG_PATH);
@@ -1997,20 +2086,20 @@ function createKnowledgeCenterHandler(options) {
           const match = pathname.match(/\/agent-runs\/([^/]+)(?:\/(events|cancel))?$/);
           if (!match) { res.writeHead(404); res.end(); return; }
           const [, id, action] = match;
-          if (action === 'cancel' && req.method === 'POST') { sendProductionData(res, codexRunner.cancel(id)); return; }
+          if (action === 'cancel' && req.method === 'POST') { sendProductionData(res, agentRunRunner(id).cancel(id)); return; }
           if (req.method !== 'GET' || action === 'cancel') { res.writeHead(405); res.end(); return; }
           if (action === 'events') {
             let after = Number(req.headers['last-event-id'] || new URL(req.url, 'http://localhost').searchParams.get('after') || 0);
-            codexRunner.get(id);
+            agentRunRunner(id).get(id);
             res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
             const emit = () => {
-              try { const run = codexRunner.get(id); for (const event of run.events.filter(e => e.seq > after)) { res.write(`id: ${event.seq}\ndata: ${JSON.stringify(event)}\n\n`); after = event.seq; }
+              try { const run = agentRunRunner(id).get(id); for (const event of run.events.filter(e => e.seq > after)) { res.write(`id: ${event.seq}\ndata: ${JSON.stringify(event)}\n\n`); after = event.seq; }
                 if (!['running', 'queued', 'cancelling'].includes(run.status)) { clearInterval(timer); res.end(); }
               } catch (_) { clearInterval(timer); res.end(); }
             };
             const timer = setInterval(emit, 500); req.on('close', () => clearInterval(timer)); emit(); return;
           }
-          sendProductionData(res, codexRunner.get(id));
+          sendProductionData(res, agentRunRunner(id).get(id));
         } catch (error) { res.writeHead(error.status || 503, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ success: false, error: { message: error.message } })); }
       }); return;
     }
@@ -2022,7 +2111,10 @@ function createKnowledgeCenterHandler(options) {
           const suffix = pathname.slice('/knowledge-center/api/platform/agents'.length);
           const match = suffix.match(/^\/([^/]+)\/(models|mcp|run-test)(.*)$/);
           if (!suffix) {
-            if (req.method === 'GET') { reply(200, { success: true, data: await agentGovernance.get() }); return; }
+            if (req.method === 'GET') {
+              const data = await agentGovernance.get();
+              reply(200, { success: true, data: { ...data, agents: data.agents.map(agent => agent.executor === 'deepseek' ? { ...agent, readiness: dshReadiness(agent.id) } : agent) } }); return;
+            }
             if (req.method !== 'PUT') { res.writeHead(405, { Allow: 'GET, PUT' }); res.end(); return; }
             const input = await readJsonBody(req);
             reply(200, { success: true, data: await agentGovernance.save(input, req.headers['if-match'], session.user?.id) }); return;
@@ -2032,8 +2124,17 @@ function createKnowledgeCenterHandler(options) {
           const selected = await agentGovernance.agent(id);
           if (kind === 'run-test') {
             if (req.method !== 'POST') { res.writeHead(405, { Allow: 'POST' }); res.end(); return; }
+            if (selected.executor === 'deepseek') {
+              const readiness = dshReadiness(id);
+              if (!readiness.ready) { reply(409, { success: false, error: { code: 'DSH_NOT_READY', message: readiness.blockers.join('；'), details: readiness.blockers } }); return; }
+              const trialModel = dshTrialModel(id);
+              if (!trialModel) { reply(422, { success: false, error: { code: 'DSH_MODEL_UNAVAILABLE', message: '请先配置可用的 Chat Completions 模型' } }); return; }
+              const prompt = require('../lib/json-config').readJson(require('../lib/config-registry').CONFIG_PATHS.contentRules).agentRuntime.testPrompt;
+              const result = dshRunner.start({ agentId: id, modelConfig: trialModel.config, prompt });
+              reply(202, { success: true, data: result }); return;
+            }
+            if (selected.executor !== 'codex') { reply(422, { success: false, error: { code: 'AGENT_TEST_UNSUPPORTED', message: '请在文档生产中验证内置工作流' } }); return; }
             const resolved = agentGovernance.resolve({ ...agentGovernance.models(id).available().defaultSelection, agentId: id, configVersion: agentGovernance.models(id).available().configVersion });
-            if (selected.executor !== 'codex') { reply(422, { success: false, error: { code: 'AGENT_TEST_UNSUPPORTED', message: selected.executor === 'deepseek' ? 'DeepSeek Harness 尚未部署' : '请在文档生产中验证内置工作流' } }); return; }
             const result = codexRunner.start([{ role: 'user', content: require('../lib/json-config').readJson(require('../lib/config-registry').CONFIG_PATHS.contentRules).agentRuntime.testPrompt }], resolved.config);
             reply(202, { success: true, data: result }); return;
           }
@@ -2045,7 +2146,7 @@ function createKnowledgeCenterHandler(options) {
           const methods = { '/services/save': 'saveService', '/services/delete': 'deleteService', '/services/test': 'testService', '/services/verify': 'verifyKnowledgeBase', '/test': 'test', '': 'save' };
           reply(200, { success: true, data: await governance[methods[action]](input, req.headers['if-match'] || input.rowVersion, session.user?.id) });
         } catch (error) {
-          const known = /^(AGENT|MODEL|MCP)_/.test(error.code || '');
+          const known = /^(AGENT|MODEL|MCP|DSH)_/.test(error.code || '');
           reply(known ? error.status || 422 : 503, { success: false, error: { code: known ? error.code : 'AGENT_RUN_FAILED', message: known ? error.message : 'Agent 运行失败，请检查执行器和模型连接' } });
         }
       }); return;
@@ -2347,8 +2448,12 @@ function createKnowledgeCenterHandler(options) {
             } catch (error) { taskSourceFailed = true; }
           }
           const delegated = pathname.endsWith('/delegated') || isQuery;
-          const items = taskProjection.items.map(item => delegated ? item : Object.fromEntries(['id', 'kind', 'title', 'context', 'status', 'state', 'version', 'source', 'updatedAt', 'number', 'subtaskNumber', 'taskType', 'plannedStartTime', 'plannedEndTime'].map(key => [key, item[key]])));
-          const following = taskProjection.following.map(item => delegated ? item : Object.fromEntries(['number', 'subtaskNumber', 'taskType', 'title', 'status', 'plannedStartTime', 'plannedEndTime', 'updatedAt', 'handbooks'].map(key => [key, item[key]])));
+          const items = taskProjection.items.map(item => delegated ? ({ ...item, primaryAction: {
+            code: item.id.includes(':scope') ? 'confirm_scope' : item.id.includes(':complete') ? 'complete_scope' : item.id.includes(':new-document') || item.actionLabel?.startsWith('创建/') ? 'create_document' : item.status === '需修订' ? 'revise_document' : 'write_document',
+            label: item.actionLabel?.startsWith('创建/') ? '创建文档' : item.actionLabel === '进入文档生产' ? '编写文档' : item.actionLabel || '查看任务',
+            url: item.url,
+          } }) : Object.fromEntries(['id', 'kind', 'title', 'context', 'status', 'state', 'version', 'source', 'updatedAt', 'number', 'subtaskNumber', 'taskType', 'plannedStartTime', 'plannedEndTime'].map(key => [key, item[key]])));
+          const following = taskProjection.following.map(item => delegated ? ({ ...item, primaryAction: { code: 'view_progress', label: '查看进度', url: item.url } }) : Object.fromEntries(['number', 'subtaskNumber', 'taskType', 'title', 'status', 'plannedStartTime', 'plannedEndTime', 'updatedAt', 'handbooks'].map(key => [key, item[key]])));
           const unavailable = taskSourceFailed ? ['任务管理'] : [];
           try {
             const service = handleIncrementalBuild?.service;
@@ -2356,18 +2461,39 @@ function createKnowledgeCenterHandler(options) {
             const [snapshot, reviewAssets] = await Promise.all([service.readState(targetSession), readReviewAssetsAsync()]);
             const review = service.reviewBootstrap(targetSession, { view: 'mine' }, snapshot);
             const visibleIds = new Set(reviewAssets.handbooks.filter(item => !Array.isArray(visible) || visible.map(String).includes(String(item.handbookId))).map(item => String(item.handbookId)));
-            for (const item of review.documents.filter(item => item.assignedToMe && visibleIds.has(String(item.handbookId)))) items.push({ id: `review:${item.taskId}:${item.reviewId}:${item.documentId || 'handbook'}`, kind: 'review', taskType: '文档审核', ...numberForReview(taskState, snapshot, item.taskId, item.documentId, visibleIds), title: `审核 ${item.title || item.documentId || '手册文档'}`, context: `${item.handbookId || '手册'} · ${item.documentId || '整本手册'} · ${item.taskId}`, lineage: { handbookId: item.handbookId, documentId: item.documentId, documentName: item.title }, status: '待审核', state: 'pending', version: item.businessVersion || '', source: '审核与发布', updatedAt: item.updatedAt || item.submittedAt, ...(delegated ? { url: `/knowledge-center/review?taskId=${encodeURIComponent(item.taskId)}&documentId=${encodeURIComponent(item.documentId || '')}`, actionLabel: '开始审核' } : {}) });
+            for (const item of review.documents.filter(item => item.assignedToMe && visibleIds.has(String(item.handbookId)))) {
+              const url = `/knowledge-center/review?taskId=${encodeURIComponent(item.taskId)}&documentId=${encodeURIComponent(item.documentId || '')}`;
+              items.push({ id: `review:${item.taskId}:${item.reviewId}:${item.documentId || 'handbook'}`, kind: 'review', taskType: '文档审核', ...numberForReview(taskState, snapshot, item.taskId, item.documentId, visibleIds), title: `审核 ${item.title || item.documentId || '手册文档'}`, context: `${item.handbookId || '手册'} · ${item.documentId || '整本手册'} · ${item.taskId}`, lineage: { handbookId: item.handbookId, documentId: item.documentId, documentName: item.title }, status: '待审核', state: 'pending', version: item.businessVersion || '', source: '审核与发布', updatedAt: item.updatedAt || item.submittedAt, url, primaryAction: { code: 'review_document', label: '审核文档', url } });
+            }
             for (const task of snapshot.tasks || []) {
               if (!visibleIds.has(String(task.handbookId))) continue;
-              if (String(task.createdBy?.id || '') === String(target.id) || String(task.createdBy?.id || '') === targetId) {
+              if (task.handbookSource && (String(task.createdBy?.id || '') === String(target.id) || String(task.createdBy?.id || '') === targetId)) {
                 const projection = service.project(task, targetSession, true);
-                const label = projection.capabilities.canPublish ? '创建 GitLab MR'
-                  : projection.capabilities.canRefreshDelivery ? '刷新交付状态' : null;
-                if (label) for (const document of task.handbookSource.documents || []) items.push({ id: `delivery:${task.id}:${document.documentId}`, kind: 'merge', taskType: '文档发布', ...numberForReview(taskState, snapshot, task.id, document.documentId, visibleIds), title: document.title || document.filePath || task.name || '文档交付', context: `${task.handbookId} · ${task.id}`, lineage: { handbookId: task.handbookId, documentId: document.documentId, documentName: document.title || document.filePath }, status: label === '创建 GitLab MR' ? '审核已通过' : '待回读', state: 'pending', version: task.businessVersion || '', source: '审核与发布', updatedAt: task.updatedAt || task.createdAt, actionLabel: label, ...(delegated ? { url: `/knowledge-center/review?taskId=${encodeURIComponent(task.id)}&documentId=${encodeURIComponent(document.documentId)}` } : {}) });
+                const action = task.deliveryObservation?.state === 'closed' ? 'revise_document'
+                  : projection.capabilities.canPublish ? 'create_mr'
+                    : projection.capabilities.canRefreshDelivery ? 'sync_delivery' : null;
+                if (action) {
+                  const documents = task.handbookSource.documents || [];
+                  const first = documents[0];
+                  const numbering = numberForReview(taskState, snapshot, task.id, first?.documentId, visibleIds);
+                  if (documents.length !== 1) numbering.subtaskNumber = null;
+                  const url = `/knowledge-center/review?taskId=${encodeURIComponent(task.id)}${first ? `&documentId=${encodeURIComponent(first.documentId)}` : ''}`;
+                  const subject = task.name || (documents.length === 1 ? first.title || first.filePath : `${documents.length} 篇文档`) || '文档';
+                  items.push({ id: `delivery:${task.id}`, kind: action === 'revise_document' ? 'document' : 'merge', taskType: action === 'revise_document' ? '文档生产' : '文档发布', ...numbering, title: `${action === 'create_mr' ? '交付' : action === 'revise_document' ? '修订' : '同步交付'} ${subject}`, context: `${task.handbookId} · ${task.id}`, lineage: { handbookId: task.handbookId, documentId: documents.length === 1 ? first.documentId : null, documentName: documents.length === 1 ? first.title || first.filePath : null }, status: projection.completion.label, state: task.deliveryObservation?.state === 'closed' ? 'risk' : 'pending', version: task.businessVersion || '', source: '审核与发布', updatedAt: task.updatedAt || task.createdAt, url, delivery: { mergeState: projection.completion.facts.mergeState, markdownReadback: projection.completion.facts.markdownReadback, resourceReadback: projection.completion.facts.resourceReadback }, primaryAction: { code: action, label: action === 'create_mr' ? '创建MR' : action === 'revise_document' ? '修订文档' : '同步状态', url, enabled: action === 'revise_document' ? hasAction(session, 'knowledge:write') : hasAction(session, 'publish:manage'), ...(action === 'sync_delivery' ? { taskId: task.id, candidateDigest: task.candidate?.digest || '' } : {}) } });
+                }
               }
               if (task.state !== 'mr_submitted' || !task.mergeRequest || !task.handbookSource) continue;
               const assignees = task.mergeRequest.participants?.assignees || [];
-              if (assignees.some(person => [person.platformId, person.id, person.userId].filter(value => value != null).map(String).includes(targetId)) && service.project(task, targetSession, true).completion.status !== 'completed') for (const document of task.handbookSource.documents || []) items.push({ id: `merge:${task.id}:${document.documentId}:${task.mergeRequest.iid}`, kind: 'merge', taskType: '文档发布', ...numberForReview(taskState, snapshot, task.id, document.documentId, visibleIds), title: document.title || document.filePath || task.name || `GitLab MR !${task.mergeRequest.iid}`, context: `${task.handbookId} · ${document.title || document.filePath || document.documentId}`, lineage: { handbookId: task.handbookId, documentId: document.documentId, documentName: document.title || document.filePath }, status: task.deliveryObservation?.state === 'closed' ? 'MR 已关闭' : '待在 GitLab 合入', state: task.deliveryObservation?.state === 'closed' ? 'risk' : 'pending', version: task.businessVersion || '', source: 'GitLab 交付', updatedAt: task.updatedAt || task.createdAt, ...(delegated ? { url: task.mergeRequest.webUrl, external: true, actionLabel: '查看 GitLab MR' } : {}) });
+              if (assignees.some(person => [person.platformId, person.id, person.userId].filter(value => value != null).map(String).includes(targetId)) && (task.deliveryObservation?.state || task.mergeRequest.state || 'opened') === 'opened') {
+                let mrUrl;
+                try { mrUrl = new URL(task.mergeRequest.webUrl); } catch (_) { continue; }
+                if (mrUrl.protocol !== 'https:' || mrUrl.username || mrUrl.password) continue;
+                const documents = task.handbookSource.documents || [];
+                const first = documents[0];
+                const numbering = numberForReview(taskState, snapshot, task.id, first?.documentId, visibleIds);
+                if (documents.length !== 1) numbering.subtaskNumber = null;
+                items.push({ id: `merge:${task.id}:${task.mergeRequest.iid}`, kind: 'merge', taskType: '文档发布', ...numbering, title: `合入 ${task.name || (documents.length === 1 ? first.title || first.filePath : `${documents.length} 篇文档`) || `GitLab MR !${task.mergeRequest.iid}`}`, context: `${task.handbookId} · MR !${task.mergeRequest.iid}`, lineage: { handbookId: task.handbookId, documentId: documents.length === 1 ? first.documentId : null, documentName: documents.length === 1 ? first.title || first.filePath : null }, status: '待合入', state: 'pending', version: task.businessVersion || '', source: 'GitLab 交付', updatedAt: task.updatedAt || task.createdAt, url: mrUrl.href, external: true, primaryAction: { code: 'merge_mr', label: '合入MR', url: mrUrl.href, external: true, enabled: targetId === callerId } });
+              }
             }
           } catch (_) { unavailable.push('审核与发布'); }
           items.sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
@@ -2376,7 +2502,9 @@ function createKnowledgeCenterHandler(options) {
             send(200, { success: true, data: { ...result, responsible: { id: targetId, displayName: target.displayName || target.name || target.loginName || targetId }, operator: { id: callerId, displayName: session.user?.displayName || session.user?.loginName || '管理员' } } });
             return;
           }
-          send(200, { success: true, data: { responsible: { id: targetId, displayName: target.displayName || target.name || target.loginName || targetId }, operator: { id: String(session.user?.principalId || session.user?.id || ''), displayName: session.user?.displayName || session.user?.loginName || '管理员' }, items, following, unavailable, completeness: unavailable.length ? 'partial' : 'complete', readOnly: !delegated, asOf: new Date().toISOString() } });
+          const visibleItems = delegated ? items : items.map(({ url, primaryAction, external, ...item }) => item);
+          const visibleFollowing = delegated ? following : following.map(({ url, primaryAction, external, ...item }) => item);
+          send(200, { success: true, data: { responsible: { id: targetId, displayName: target.displayName || target.name || target.loginName || targetId }, operator: { id: String(session.user?.principalId || session.user?.id || ''), displayName: session.user?.displayName || session.user?.loginName || '管理员' }, items: visibleItems, following: visibleFollowing, unavailable, completeness: unavailable.length ? 'partial' : 'complete', readOnly: !delegated, asOf: new Date().toISOString() } });
         } catch (error) { send(error.status || 503, { success: false, error: { code: error.code || 'LOCAL_PREVIEW_UNAVAILABLE', message: error.message || '责任人预览暂不可用' } }); }
       }); return;
     }
@@ -2408,13 +2536,30 @@ function createKnowledgeCenterHandler(options) {
       }); return;
     }
     if (pathname === '/knowledge-center/api/document-tasks' || pathname.startsWith('/knowledge-center/api/document-tasks/')) {
+      const taskRequestStarted = performance.now();
       requireSession(req, res, async session => {
         try {
-          const [directory, assets] = await readDocumentTaskContext();
+          const contextStarted = performance.now();
+          const suffix = pathname.slice('/knowledge-center/api/document-tasks/'.length);
+          const detailRead = req.method === 'GET' && !suffix.includes('/') && suffix && !['context', 'catalog', 'config', 'mine', 'import'].includes(suffix);
+          let contextDoneAt, taskReadDoneAt;
+          const contextPromise = readDocumentTaskContext().then(value => { contextDoneAt = performance.now(); return value; });
+          const statePromise = detailRead ? handleDocumentTasks.readState().then(value => { taskReadDoneAt = performance.now(); return value; }) : Promise.resolve(null);
+          const [[directory, assets], preloadedTaskState] = await Promise.all([contextPromise, statePromise]);
+          if (process.env.KC_DOCUMENT_TASK_TIMING === '1') res.setHeader('Server-Timing', `session;dur=${(contextStarted - taskRequestStarted).toFixed(1)}, context;dur=${(contextDoneAt - contextStarted).toFixed(1)}, principals;dur=${(documentTaskContextTiming?.principals || 0).toFixed(1)}, assets;dur=${(documentTaskContextTiming?.assets || 0).toFixed(1)}${detailRead ? `, task-preload;dur=${(taskReadDoneAt - contextStarted).toFixed(1)}` : ''}`);
           const allowed = session.visibleHandbookIds || session.user?.visibleHandbookIds;
           const people = (directory.items || []).filter(p => String(p.state || 'active').toLowerCase() === 'active').map(p => ({ id: String(p.id || p.principalId), displayName: p.displayName || p.name || p.loginName || p.id }));
-          const handbooks = (assets.handbooks || []).filter(b => !b.archivedAt && (!Array.isArray(allowed) || allowed.includes(b.handbookId))).map(b => ({ id: b.handbookId, name: b.name }));
-          handleDocumentTasks(req, res, { session, people, handbooks, reviewService: handleIncrementalBuild?.service, createDocument: (id, proposal) => options.documentTaskCreateDocument(id, proposal, session), catalog: async id => {
+          const handbooks = (assets.handbooks || []).filter(b => !b.archivedAt && (!Array.isArray(allowed) || allowed.includes(b.handbookId))).map(b => ({ id: b.handbookId, name: b.name, ownerId: b.ownerA?.principalId == null ? null : String(b.ownerA.principalId) }));
+          handleDocumentTasks(req, res, { session, people, handbooks, preloadedTaskState, reviewService: handleIncrementalBuild?.service, createDocument: (id, proposal) => options.documentTaskCreateDocument(id, proposal, session), resolveVersionMapping: databasePlatformMode ? async (id, product, version) => {
+            if (!product || !version) throw new GitLabConnectorError('BUSINESS_VERSION_MISSING', '工单缺少 PingCode 产品或业务版本', 422);
+            const { mapping, connection } = await findMappingAsync(id);
+            if (connection.status !== 'active') throw new GitLabConnectorError('GITLAB_CONNECTION_DISABLED', '仓库连接已停用', 409);
+            const rule = await domainStore.resolveGitLabVersionMapping(mapping.connectionId, product, version);
+            if (!rule) throw new GitLabConnectorError('VERSION_MAPPING_MISSING', `产品 ${product} 的业务版本 ${version} 尚无映射，请联系平台管理员配置`, 409);
+            const branches = await gitLabRequestForUser(session, connection, options => listBranches(connection, options));
+            if (!branches.some(branch => branch.name === rule.branch)) throw new GitLabConnectorError('GITLAB_BRANCH_NOT_FOUND', '映射目标分支不存在或当前用户不可读取', 409);
+            return rule;
+          } : null, catalog: async id => {
             const catalog = await options.documentTaskCatalog(id, session);
             try { const { mapping } = findMapping(id, GITLAB_CONFIG_PATH); catalog.versions = [...new Set([...catalog.versions, mapping.defaultBranch, ...(mapping.enabledBranches || [])].filter(Boolean))]; } catch (error) { if (error.code !== 'GITLAB_MAPPING_NOT_FOUND') throw error; }
             return catalog;
@@ -2563,6 +2708,7 @@ function createKnowledgeCenterHandler(options) {
         return serializePublication(decodeURIComponent(mrPublish[1]), async () => {
         const service = handleIncrementalBuild?.service;
         const task = service?.get(session, decodeURIComponent(mrPublish[1]));
+        await requireDocumentTaskScopeClear(decodeURIComponent(mrPublish[1]));
         if (!task?.handbookSource) {
           if (task?.reviewMode === 'online_review') throw Object.assign(new Error('候选正文与 GitLab 内容完全一致，没有可提交的变更；请在文档生产修改并重新送审'), { status: 422, code: 'GITLAB_NO_CHANGES' });
           return handleIncrementalBuild(req, res, session);
@@ -2574,21 +2720,29 @@ function createKnowledgeCenterHandler(options) {
         if (!key) throw Object.assign(new Error('发布需要幂等键'), { status: 400 });
         if (body.expectedCandidateDigest !== task.candidate?.digest) throw Object.assign(new Error('候选版本已变化'), { status: 409 });
         if (task.state === 'mr_submitted') {
-          const { mapping, connection } = findMapping(task.handbookId, GITLAB_CONFIG_PATH);
-          const identity = { connectionId: connection.id, host: connection.host, project: connection.projectPath || connection.project };
-          if (JSON.stringify(identity) !== JSON.stringify(task.handbookSource.repositoryIdentity)) throw Object.assign(new Error('仓库映射已变化，请重新发起评审'), { status: 409 });
-          task.handbookSource.documents.forEach(item => {
-            authorizeMappedRequest(mapping, task.handbookSource.branch, 'zh', item.filePath);
-            extractMarkdownResources(item.markdown, item.filePath).forEach(resource => authorizeMappedRequest(mapping, task.handbookSource.branch, 'zh', resource.path));
-          });
-          const delivery = await gitLabRequestForUser(session, connection, options => readMergeRequestDelivery(connection, {
-            branch: task.handbookSource.branch,
-            documents: task.handbookSource.documents,
-            mergeRequest: task.mergeRequest,
-          }, options));
-          return sendProductionData(res, service.recordMergeRequestDelivery(session, task.id, key, { delivery }));
+          if (task.deliveryObservation?.state === 'closed') throw Object.assign(new Error('已关闭的 MR 不能继续交付，请修订并重新送审'), { status: 409, code: 'MR_CLOSED_RECOVERY_REQUIRED' });
+          try {
+            const { mapping, connection } = findMapping(task.handbookId, GITLAB_CONFIG_PATH);
+            const identity = { connectionId: connection.id, host: connection.host, project: connection.projectPath || connection.project };
+            if (JSON.stringify(identity) !== JSON.stringify(task.handbookSource.repositoryIdentity)) throw Object.assign(new Error('仓库映射已变化，请重新发起评审'), { status: 409, code: 'GITLAB_MAPPING_CHANGED' });
+            task.handbookSource.documents.forEach(item => {
+              authorizeMappedRequest(mapping, task.handbookSource.branch, 'zh', item.filePath);
+              extractMarkdownResources(item.markdown, item.filePath).forEach(resource => authorizeMappedRequest(mapping, task.handbookSource.branch, 'zh', resource.path));
+            });
+            const delivery = await gitLabRequestForUser(session, connection, options => readMergeRequestDelivery(connection, {
+              branch: task.handbookSource.branch,
+              documents: task.handbookSource.documents,
+              mergeRequest: task.mergeRequest,
+            }, options));
+            return sendProductionData(res, service.recordMergeRequestDelivery(session, task.id, key, { delivery }));
+          } catch (error) {
+            try { service.recordDeliveryFailure(session, task.id, `${key}:failure`, { code: error.code || 'DELIVERY_READBACK_FAILED' }); }
+            catch (_) { /* Preserve the original delivery error; the next read still reports an incomplete task. */ }
+            throw error;
+          }
         }
         if (task.state !== 'approved' || !task.reviews.some(item => item.status === 'approved' && item.candidateDigest === task.candidate.digest)) throw Object.assign(new Error('候选必须通过审核'), { status: 409 });
+        service.requireResolvedReviewComments(task);
         const { mapping, connection } = findMapping(task.handbookId, GITLAB_CONFIG_PATH);
         const identity = { connectionId: connection.id, host: connection.host, project: connection.projectPath || connection.project };
         if (JSON.stringify(identity) !== JSON.stringify(task.handbookSource.repositoryIdentity)) throw Object.assign(new Error('仓库映射已变化，请重新发起评审'), { status: 409 });
@@ -2611,8 +2765,44 @@ function createKnowledgeCenterHandler(options) {
         });
       }); return;
     }
+    const reviewComments = pathname.match(/^\/knowledge-center\/api\/incremental-tasks\/([^/]+)\/reviews\/([^/]+)\/comments$/);
+    if (reviewComments && req.method === 'POST') {
+      requireSession(req, res, async session => {
+        const service = handleIncrementalBuild?.service;
+        if (!service?.commentOnReview) throw Object.assign(new Error('审核服务暂不可用'), { status: 503 });
+        const body = await readJsonBody(req);
+        const requested = Array.isArray(body.mentions) ? body.mentions.map(item => String(item?.handbookId || '')) : [];
+        if (new Set(requested).size !== requested.length) throw Object.assign(new Error('提及的手册不能重复'), { status: 422, code: 'MENTION_DUPLICATE' });
+        const trustedMentions = [];
+        if (requested.length) {
+          const state = await handleDocumentTasks.readState();
+          for (const handbookId of requested) {
+            const matches = (state.tasks || []).flatMap(task => (task.decomposition?.handbooks || [])
+              .filter(book => book.id === handbookId && book.confirmed && book.impact === 'involved'
+                && (book.documents || []).some(doc => String(doc.reviewTaskId || '') === decodeURIComponent(reviewComments[2])))
+              .map(book => ({ task, book })));
+            if (matches.length !== 1) throw Object.assign(new Error('所选手册不属于当前审核关联的有效工单范围'), { status: 422, code: 'MENTION_SCOPE_INVALID' });
+            const { book } = matches[0];
+            await requireHandbookReadAsync(session, book.id);
+            if (!book.ownerId) throw Object.assign(new Error(`手册“${book.name}”尚未指派负责人，无法提及`), { status: 422, code: 'MENTION_RECIPIENT_MISSING' });
+            trustedMentions.push({ handbookId: book.id, handbookName: book.name, recipientId: String(book.ownerId) });
+          }
+        }
+        const key = req.headers['idempotency-key'];
+        if (!key) throw Object.assign(new Error('提交审核意见需要幂等键'), { status: 400, code: 'IDEMPOTENCY_KEY_REQUIRED' });
+        const result = service.commentOnReview(session, decodeURIComponent(reviewComments[1]), decodeURIComponent(reviewComments[2]), key, body, { mentions: trustedMentions });
+        sendProductionData(res, result);
+      }); return;
+    }
     if (pathname === '/knowledge-center/api/incremental-tasks' || pathname.startsWith('/knowledge-center/api/incremental-tasks/')) {
-      requireSession(req, res, session => handleIncrementalBuild(req, res, session)); return;
+      requireSession(req, res, async session => {
+        const decision = pathname.match(/^\/knowledge-center\/api\/incremental-tasks\/([^/]+)\/reviews\/[^/]+\/decision$/);
+        if (req.method === 'POST' && decision) {
+          try { await requireDocumentTaskScopeClear(decodeURIComponent(decision[1])); }
+          catch (error) { res.writeHead(error.status || 409, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify({ success: false, error: { code: error.code || 'SCOPE_BLOCKED', message: error.message } })); return; }
+        }
+        handleIncrementalBuild(req, res, session);
+      }); return;
     }
     if (pathname.startsWith('/knowledge-center/api/gitlab/')) {
       requireSession(req, res, session => handleGitLabApi(req, res, session)); return;

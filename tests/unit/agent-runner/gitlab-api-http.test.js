@@ -14,6 +14,7 @@ describe('GitLab same-origin HTTP API', () => {
   let insufficientScope = false;
   let oauthBranchFailure = false;
   let oauthTokenExchanges = 0;
+  const upstreamRequests = [];
 
   beforeAll(async () => {
     tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gitlab-http-'));
@@ -36,6 +37,7 @@ describe('GitLab same-origin HTTP API', () => {
     process.env.KNOWLEDGE_STORAGE_MODE = 'file';
     process.env.GITLAB_TOKEN_local_read = 'test-only-token';
     gitlabServer = http.createServer((req, res) => {
+      upstreamRequests.push(req.url);
       if (req.url === '/oauth/token' && req.method === 'POST') { oauthTokenExchanges++; res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ access_token: 'oauth-local-token', expires_in: 3600 })); return; }
       if (req.headers['private-token'] !== 'test-only-token' && req.headers.authorization !== 'Bearer oauth-local-token') { res.writeHead(401); res.end(JSON.stringify({ message: 'unauthorized' })); return; }
       if (insufficientScope) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'insufficient_scope', error_description: 'Higher privileges required' })); return; }
@@ -43,7 +45,9 @@ describe('GitLab same-origin HTTP API', () => {
       if (req.url.includes('/repository/files/') && req.url.includes('missing.md')) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ message: 'File Not Found' })); return; }
       res.writeHead(200, { 'Content-Type': 'application/json' });
       if (req.url.includes('/repository/branches')) { res.end(JSON.stringify([{ name: 'master', protected: true, commit: { id: 'abcdef123456' } }])); return; }
+      if (req.url.includes('/repository/commits')) { res.end(JSON.stringify([{ id: 'commit-full-sha', short_id: 'commit1', title: '修订文档', message: '修订正文与目录', author_name: '测试作者', authored_date: '2026-01-01T00:00:00Z', web_url: 'https://example.test/commit/1' }])); return; }
       if (req.url.includes('/repository/tree')) { res.end(JSON.stringify([{ name: '基础概念', path: 'doc/产品文档/基础概念', type: 'tree' }, { name: '_index.md', path: 'doc/产品文档/_index.md', type: 'blob' }, { name: 'intro.md', path: 'doc/产品文档/基础概念/intro.md', type: 'blob' }, { name: 'guide.pdf', path: 'doc/产品文档/guide.pdf', type: 'blob' }, { name: 'cover.png', path: 'doc/产品文档/cover.png', type: 'blob' }])); return; }
+      if (req.url.includes('/repository/files/') && req.url.includes('cover.png')) { res.end(JSON.stringify({ file_path: 'doc/产品文档/cover.png', encoding: 'base64', content: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 1, 2, 3]).toString('base64'), commit_id: 'abcdef123456' })); return; }
       res.end(JSON.stringify({ file_path: 'doc/产品文档/_index.md', encoding: 'base64', content: Buffer.from('# 产品文档').toString('base64'), commit_id: 'abcdef123456' }));
     });
     await new Promise(resolve => gitlabServer.listen(0, '127.0.0.1', resolve));
@@ -116,6 +120,56 @@ describe('GitLab same-origin HTTP API', () => {
     expect(new URL(start.headers.get('location')).pathname).toBe('/oauth/authorize');
   });
 
+  test('OAuth configuration is projected safely and only personal connections can be disconnected', async () => {
+    const config = await fetch(`${baseUrl}/knowledge-center/api/gitlab/oauth/config`, { headers: { cookie: readerCookie } });
+    expect(config.status).toBe(200);
+    await expect(config.json()).resolves.toMatchObject({ data: { configured: true, devHttp: true } });
+
+    const missing = await fetch(`${baseUrl}/knowledge-center/api/gitlab/oauth/disconnect`, {
+      method: 'POST', headers: { cookie: readerCookie },
+    });
+    expect(missing.status).toBe(400);
+    await expect(missing.json()).resolves.toMatchObject({ error: { code: 'GITLAB_CONNECTION_REQUIRED' } });
+
+    const personalResponse = await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections`, {
+      method: 'POST', headers: { cookie: adminCookie, 'content-type': 'application/json', 'idempotency-key': 'http-oauth-disconnect' },
+      body: JSON.stringify({ name: 'oauth-disconnect', host: gitlabUrl, project: 'cod-doc/disconnect', mode: 'sandbox', authMode: 'user_oauth', purpose: 'read' }),
+    });
+    expect(personalResponse.status).toBe(200);
+    const personal = (await personalResponse.json()).data;
+    const start = await fetch(`${baseUrl}/knowledge-center/api/gitlab/oauth/start?connectionId=${personal.id}`, {
+      headers: { cookie: readerCookie }, redirect: 'manual',
+    });
+    const state = new URL(start.headers.get('location')).searchParams.get('state');
+    const callback = await fetch(`${baseUrl}/knowledge-center/api/gitlab/oauth/callback?code=local-code&state=${state}`, {
+      headers: { cookie: readerCookie }, redirect: 'manual',
+    });
+    expect(callback.status).toBe(302);
+    const endpoint = `${baseUrl}/knowledge-center/api/gitlab/oauth/status?connectionId=${personal.id}`;
+    const connected = await fetch(endpoint, { headers: { cookie: readerCookie } });
+    await expect(connected.json()).resolves.toMatchObject({ data: { connected: true } });
+
+    const disconnected = await fetch(`${baseUrl}/knowledge-center/api/gitlab/oauth/disconnect?connectionId=${personal.id}`, {
+      method: 'POST', headers: { cookie: readerCookie },
+    });
+    expect(disconnected.status).toBe(200);
+    await expect(disconnected.json()).resolves.toMatchObject({ data: { connectionId: personal.id, connected: false, status: 'disconnected' } });
+    const after = await fetch(endpoint, { headers: { cookie: readerCookie } });
+    await expect(after.json()).resolves.toMatchObject({ data: { connected: false } });
+
+    const serviceResponse = await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections`, {
+      method: 'POST', headers: { cookie: adminCookie, 'content-type': 'application/json', 'idempotency-key': 'http-oauth-service-disconnect' },
+      body: JSON.stringify({ name: 'service-disconnect', host: gitlabUrl, project: 'cod-doc/service', mode: 'sandbox', authMode: 'service_account', credentialRef: 'local_read', purpose: 'read' }),
+    });
+    expect(serviceResponse.status).toBe(200);
+    const service = (await serviceResponse.json()).data;
+    const rejected = await fetch(`${baseUrl}/knowledge-center/api/gitlab/oauth/disconnect?connectionId=${service.id}`, {
+      method: 'POST', headers: { cookie: readerCookie },
+    });
+    expect(rejected.status).toBe(409);
+    await expect(rejected.json()).resolves.toMatchObject({ error: { code: 'GITLAB_OAUTH_NOT_REQUIRED' } });
+  });
+
   test('OAuth callback exchanges a local token, verifies branches and preserves the return target', async () => {
     const configured = await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections`, {
       method: 'POST', headers: { cookie: adminCookie, 'content-type': 'application/json', 'idempotency-key': 'http-oauth-callback' },
@@ -173,11 +227,20 @@ describe('GitLab same-origin HTTP API', () => {
       body: JSON.stringify({ name: 'oauth-access', host: gitlabUrl, project: 'cod-doc/access', mode: 'sandbox', authMode: 'user_oauth', purpose: 'read' })
     });
     const connection = (await configured.json()).data;
+    const readAccount = async () => {
+      const response = await fetch(`${baseUrl}/knowledge-center/api/gitlab/oauth/accounts`, { headers: { cookie: readerCookie } });
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(JSON.stringify(body)).not.toContain('http-secret');
+      return body.data.items.find(item => item.connectionId === connection.id);
+    };
+    expect(await readAccount()).toMatchObject({ linkedHandbookCount: 0, status: 'disconnected', connected: false });
     const mapped = await fetch(`${baseUrl}/knowledge-center/api/gitlab/mappings/DB-001`, {
       method: 'PUT', headers: { cookie: adminCookie, 'content-type': 'application/json', 'idempotency-key': 'http-access-mapping' },
       body: JSON.stringify({ connectionId: connection.id, defaultBranch: 'master', enabledBranches: ['master'], zhPaths: ['doc/产品文档'], enPaths: [] })
     });
     expect(mapped.status).toBe(200);
+    expect(await readAccount()).toMatchObject({ linkedHandbookCount: 1, status: 'disconnected', connected: false });
     const management = await fetch(`${baseUrl}/knowledge-center/api/gitlab/mappings/DB-001`, { headers: { cookie: readerCookie } });
     expect(management.status).toBe(403);
     const production = await fetch(`${baseUrl}/knowledge-center/api/gitlab/mappings/DB-001?view=production`, { headers: { cookie: readerCookie } });
@@ -192,6 +255,11 @@ describe('GitLab same-origin HTTP API', () => {
     await expect(access.json()).resolves.toMatchObject({ data: { authMode: 'user_oauth', connected: false, canRead: false, nextAction: 'connect_gitlab' } });
     const connections = await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections`, { headers: { cookie: readerCookie } });
     expect(connections.status).toBe(403);
+    const disabled = await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections/${encodeURIComponent(connection.id)}/disable`, {
+      method: 'POST', headers: { cookie: adminCookie, 'idempotency-key': 'http-access-disable' },
+    });
+    expect(disabled.status).toBe(200);
+    expect(await readAccount()).toMatchObject({ linkedHandbookCount: 1, status: 'platform_disabled', connected: false });
   });
 
   test('handbook GitLab APIs require an authenticated session', async () => {
@@ -267,8 +335,111 @@ describe('GitLab same-origin HTTP API', () => {
     expect((await tree.json()).data).toEqual(expect.arrayContaining([expect.objectContaining({ path: 'doc/产品文档/_index.md' })]));
     const file = await fetch(`${baseUrl}/knowledge-center/api/gitlab/handbooks/DB-001/file?ref=master&language=zh&path=${encodeURIComponent('doc/产品文档/_index.md')}`, { headers: { cookie: readerCookie } });
     await expect(file.json()).resolves.toMatchObject({ data: { content: '# 产品文档', commitId: 'abcdef123456' } });
+    const imageEndpoint = `${baseUrl}/knowledge-center/api/gitlab/handbooks/DB-001/file?ref=master&language=zh&path=${encodeURIComponent('doc/产品文档/cover.png')}`;
+    const imageJson = await fetch(imageEndpoint, { headers: { cookie: readerCookie } });
+    expect(imageJson.status).toBe(200);
+    await expect(imageJson.json()).resolves.toMatchObject({ data: { encoding: 'base64', size: 8 } });
+    const image = await fetch(`${imageEndpoint}&raw=1`, { headers: { cookie: readerCookie } });
+    expect(image.status).toBe(200);
+    expect(image.headers.get('content-type')).toBe('image/png');
+    expect(image.headers.get('cache-control')).toBe('private, max-age=60');
+    expect(Buffer.from(await image.arrayBuffer())).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 1, 2, 3]));
+    const beforeDenied = upstreamRequests.length;
+    const anonymous = await fetch(`${imageEndpoint}&raw=1`);
+    expect(anonymous.status).toBe(401);
+    const outside = await fetch(`${baseUrl}/knowledge-center/api/gitlab/handbooks/DB-001/file?ref=master&language=zh&path=${encodeURIComponent('outside/cover.png')}&raw=1`, { headers: { cookie: readerCookie } });
+    expect(outside.status).toBe(403);
+    expect(upstreamRequests).toHaveLength(beforeDenied);
     const statistics = await fetch(`${baseUrl}/knowledge-center/api/gitlab/handbooks/DB-001/statistics?ref=master&language=zh`, { headers: { cookie: readerCookie } });
     await expect(statistics.json()).resolves.toMatchObject({ data: { branch: 'master', chapterCount: 1, documentCount: 2, headSha: 'abcdef123456' } });
+  });
+
+  test.each([
+    ['tree', '', 'master', ''],
+    ['tree', '?ref=release&path=doc%2Fmanual', 'release', 'doc/manual'],
+    ['file', '?ref=master&path=doc%2F%E4%BA%A7%E5%93%81%E6%96%87%E6%A1%A3%2F_index.md', 'master', 'doc/产品文档/_index.md'],
+  ])('真实 HTTP：管理员直读%s使用正确分支和路径 %s', async (kind, query, ref, requestedPath) => {
+    const list = await (await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections`, { headers: { cookie: adminCookie } })).json();
+    const connection = list.data.items.find(item => item.name === 'local-yasdoc');
+    expect(connection).toBeTruthy();
+    const endpoint = `${baseUrl}/knowledge-center/api/gitlab/connections/${connection.id}/${kind}${query}`;
+    const before = upstreamRequests.length;
+    const denied = await fetch(endpoint, { headers: { cookie: readerCookie } });
+    expect(denied.status).toBe(403);
+    expect(upstreamRequests).toHaveLength(before);
+    const response = await fetch(endpoint, { headers: { cookie: adminCookie } });
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    if (kind === 'tree') expect(body.data).toEqual(expect.arrayContaining([expect.objectContaining({ path: 'doc/产品文档/_index.md' })]));
+    else expect(body.data).toMatchObject({ content: '# 产品文档', commitId: 'abcdef123456' });
+    expect(JSON.stringify(body)).not.toContain('test-only-token');
+    const upstream = new URL(upstreamRequests.at(-1), gitlabUrl);
+    expect(upstream.searchParams.get('ref')).toBe(ref);
+    if (kind === 'tree') expect(upstream.searchParams.get('path')).toBe(requestedPath || null);
+    else expect(decodeURIComponent(upstream.pathname)).toContain(requestedPath);
+  });
+
+  test('真实 HTTP：手册提交历史与服务账号访问投影不暴露凭据，个人授权入口明确拒绝', async () => {
+    const response = await fetch(`${baseUrl}/knowledge-center/api/gitlab/handbooks/DB-001/commits?ref=master`, { headers: { cookie: readerCookie } });
+    expect(response.status).toBe(200);
+    expect((await response.json()).data).toEqual([{ sha: 'commit-full-sha', shortSha: 'commit1', title: '修订文档', message: '修订正文与目录', authorName: '测试作者', authoredDate: '2026-01-01T00:00:00Z', webUrl: 'https://example.test/commit/1' }]);
+    const upstream = new URL(upstreamRequests.at(-1), gitlabUrl);
+    expect(upstream.searchParams.get('ref_name')).toBe('master');
+    expect(upstream.searchParams.get('page')).toBe('1');
+    const status = await fetch(`${baseUrl}/knowledge-center/api/gitlab/handbooks/DB-001/access-status`, { headers: { cookie: readerCookie } });
+    expect(status.status).toBe(200);
+    const projection = await status.json();
+    expect(projection.data).toMatchObject({ authMode: 'service_account', connected: true, canRead: true, nextAction: null });
+    expect(JSON.stringify(projection)).not.toMatch(/test-only-token|local_read|credentialRef/);
+    const start = await fetch(`${baseUrl}/knowledge-center/api/gitlab/handbooks/DB-001/oauth/start`, { headers: { cookie: readerCookie }, redirect: 'manual' });
+    expect(start.status).toBe(409);
+    expect((await start.json()).error.code).toBe('GITLAB_OAUTH_NOT_REQUIRED');
+  });
+
+  test('真实 HTTP：未知GitLab读取路由返回明确404且不访问上游', async () => {
+    const before = upstreamRequests.length;
+    const response = await fetch(`${baseUrl}/knowledge-center/api/gitlab/unknown-read`, { headers: { cookie: readerCookie } });
+    expect(response.status).toBe(404);
+    expect((await response.json()).error.code).toBe('GITLAB_ROUTE_NOT_FOUND');
+    expect(upstreamRequests).toHaveLength(before);
+  });
+
+  test('真实 HTTP：手册个人OAuth入口支持默认与指定返回路径，停用后访问投影不可读', async () => {
+    const mappingUrl = `${baseUrl}/knowledge-center/api/gitlab/mappings/DB-001`;
+    const original = (await (await fetch(mappingUrl, { headers: { cookie: adminCookie } })).json()).data;
+    const configured = await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections`, {
+      method: 'POST', headers: { cookie: adminCookie, 'content-type': 'application/json', 'idempotency-key': 'handbook-oauth-route' },
+      body: JSON.stringify({ name: 'handbook-personal-route', host: gitlabUrl, project: 'cod-doc/personal-route', mode: 'sandbox', authMode: 'user_oauth', purpose: 'read' }),
+    });
+    expect(configured.status).toBe(200);
+    const connection = (await configured.json()).data;
+    const saveMapping = async (mapping, key) => {
+      const response = await fetch(mappingUrl, { method: 'PUT', headers: { cookie: adminCookie, 'content-type': 'application/json', 'idempotency-key': key }, body: JSON.stringify(mapping) });
+      expect(response.status).toBe(200);
+    };
+    try {
+      await saveMapping({ ...original, connectionId: connection.id }, 'handbook-oauth-map');
+      for (const query of ['', '?returnTo=%2Fknowledge-center%2Fplatform%3Ftab%3Dgitlab']) {
+        const start = await fetch(`${baseUrl}/knowledge-center/api/gitlab/handbooks/DB-001/oauth/start${query}`, { headers: { cookie: readerCookie }, redirect: 'manual' });
+        expect(start.status).toBe(302);
+        const target = new URL(start.headers.get('location'));
+        expect(target.origin).toBe(gitlabUrl);
+        expect(target.pathname).toBe('/oauth/authorize');
+        expect(target.searchParams.get('state')).toBeTruthy();
+        expect(target.searchParams.get('client_id')).toBe('http-client');
+        expect(target.searchParams.get('response_type')).toBe('code');
+        expect(target.toString()).not.toContain('http-secret');
+      }
+      const disabled = await fetch(`${baseUrl}/knowledge-center/api/gitlab/connections/${connection.id}/disable`, {
+        method: 'POST', headers: { cookie: adminCookie, 'idempotency-key': 'handbook-oauth-disable' },
+      });
+      expect(disabled.status).toBe(200);
+      const response = await fetch(`${baseUrl}/knowledge-center/api/gitlab/handbooks/DB-001/access-status`, { headers: { cookie: readerCookie } });
+      expect(response.status).toBe(200);
+      expect((await response.json()).data).toMatchObject({ connected: false, canRead: false, nextAction: 'contact_admin' });
+    } finally {
+      await saveMapping(original, 'handbook-oauth-restore');
+    }
   });
 
   test('review repository context returns mapped tree, Markdown and staged timing through HTTP', async () => {

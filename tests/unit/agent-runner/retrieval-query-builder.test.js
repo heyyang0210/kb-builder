@@ -5,7 +5,10 @@ const {
   splitQueryList,
   getSynonymGroups
 } = require('../../../packages/agent-runner-core/lib/retrieval-query-builder');
-const { extractDirectReferences, extractKeywordsFromKnowledgePoint, smartSplit } = require('../../../packages/agent-runner-core/lib/direct-generate/prompt-parser');
+const {
+  extractDirectReferences, extractKeywordsFromKnowledgePoint, smartSplit,
+  unique, sanitizeFilenameBase, extractYamlTitle, resolveOutputFilename, standardizePrompt
+} = require('../../../packages/agent-runner-core/lib/direct-generate/prompt-parser');
 const PlannerAgent = require('../../../packages/agent-runner-core/lib/agents/planner-agent');
 
 // Mock LLM client to return predictable synonym expansions
@@ -144,5 +147,68 @@ describe('PlannerAgent MCP 查询词兜底', () => {
     expect(result.retrieval_plan.mcp_queries).toContain('主备切换');
     expect(result.retrieval_plan.mcp_queries).toContain('高可用切换');
     expect(result.retrieval_plan.mcp_queries.join(' ')).not.toMatch(/YashanDB/i);
+  });
+});
+
+describe('直写解析器边界', () => {
+  test('YAML 标题按优先级决定安全文件名', () => {
+    expect(extractYamlTitle()).toBe('');
+    expect(extractYamlTitle('普通提示词')).toBe('');
+    expect(extractYamlTitle('```yaml\nauthor: tester\n```')).toBe('');
+    expect(extractYamlTitle('```yml\n标题：连接说明 # 备注\n```')).toBe('连接说明');
+    expect(extractYamlTitle('```yaml\ntitle: "连接说明"\n```')).toBe('连接说明');
+    expect(resolveOutputFilename({ prompt: '```yaml\ntitle: "连接说明"\n```', filename: '备用', knowledge_point: { name: '知识点' } })).toBe('连接说明.md');
+    expect(resolveOutputFilename({ filename: 'folder/name.markdown' })).toBe('folder_name.md');
+    expect(resolveOutputFilename({ knowledge_point: { name: '知识点' } })).toBe('知识点.md');
+    expect(resolveOutputFilename()).toBe('document.md');
+    expect(sanitizeFilenameBase(' \t ')).toBe('document');
+    expect(sanitizeFilenameBase()).toBe('document');
+    expect(sanitizeFilenameBase('A\\B:C*D?E"F<G>H|I`J.md')).toBe('A_B_C_D_E_F_G_H_I_J');
+  });
+
+  test('去重、知识点序号和描述不引入空关键词', () => {
+    expect(unique()).toEqual([]);
+    expect(unique([' A ', 'A', '', 42])).toEqual(['A', '42']);
+    expect(extractKeywordsFromKnowledgePoint({})).toEqual([]);
+    expect(extractKeywordsFromKnowledgePoint({ name: '1.2.3 连接 → 认证', description: '`权限`、连接' })).toEqual(['连接', '认证', '权限']);
+  });
+
+  test('引号、转义、括号和自定义分隔符保持短语', () => {
+    expect(smartSplit('"Alpha,Beta"、\'Gamma Delta\'、`Theta,Iota`')).toEqual(['"Alpha,Beta"', "'Gamma Delta'", '`Theta,Iota`']);
+    expect(smartSplit('"Alpha\' Beta"、Gamma')).toEqual(['"Alpha\' Beta"', 'Gamma']);
+    expect(smartSplit('Alpha\\"Beta、Gamma')).toEqual(['Alpha\\"Beta', 'Gamma']);
+    expect(smartSplit('Func([x,y],{a,b})、尾部）')).toEqual(['Func([x,y],{a,b})', '尾部）']);
+    expect(smartSplit('A、Beta、x')).toEqual(['Beta']);
+    expect(smartSplit('')).toEqual([]);
+    expect(smartSplit('Alpha||Beta', /\|+/)).toEqual(['Alpha', 'Beta']);
+  });
+
+  test('在知识点信息前注入关键词及当前日期；其他位置追加', () => {
+    const date = new Date().toISOString().split('T')[0];
+    const beforeSection = standardizePrompt('前言\n## 知识点信息\n正文', { name: '连接 认证' });
+    expect(beforeSection).toContain(`关键词：连接、认证\n\n## 当前日期\n${date}`);
+    expect(beforeSection.indexOf('## 关键词')).toBeLessThan(beforeSection.indexOf('## 知识点信息'));
+    const appended = standardizePrompt('生成说明', { name: '连接' });
+    expect(appended).toContain(`生成说明\n\n## 关键词\n关键词：连接\n\n## 当前日期\n${date}`);
+  });
+
+  test('已有关键词只补日期；已有日期保持原文；无关键词仍补日期', () => {
+    const date = new Date().toISOString().split('T')[0];
+    for (const keyword of ['关键词：连接', '关键词:连接']) {
+      expect(standardizePrompt(keyword, { name: '其他' })).toBe(`${keyword}\n\n## 当前日期\n${date}\n`);
+      const complete = `${keyword}\n当前日期：固定日期`;
+      expect(standardizePrompt(complete, { name: '其他' })).toBe(complete);
+    }
+    expect(standardizePrompt('正文', {})).toBe(`正文\n\n## 当前日期\n${date}\n`);
+  });
+
+  test('参考路径去重并保留配置、来源和预检脚本', async () => {
+    const result = await extractDirectReferences('参考 ../skills/guide.md templates/base.md config/rules.md references/oracle-kb/install.md ../scripts/pre-check-references.sh scripts/pre-check-references.sh', '../skills/guide.md', {});
+    expect(result.referenceFiles).toEqual([
+      'knowledge/skills/guide.md', 'knowledge/templates/base.md', 'config/rules.md',
+      'references/oracle-kb/install.md', 'scripts/pre-check-references.sh'
+    ]);
+    const empty = await extractDirectReferences('没有引用文件', null, {});
+    expect(empty.referenceFiles).toEqual([]);
   });
 });

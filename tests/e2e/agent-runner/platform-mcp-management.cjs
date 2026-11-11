@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const http = require('node:http');
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '../../../runtime/agent-runner/node_modules/playwright');
+const { instrumentFrontend } = require('./fixtures/frontend-coverage.cjs');
 const repo = path.resolve(__dirname, '../../..');
 const output = path.join(repo, 'runtime/test-results/platform-mcp');
 fs.mkdirSync(output, { recursive: true });
@@ -50,7 +51,7 @@ const server = http.createServer((req, res) => {
   if (req.url.startsWith('/knowledge-center/api/')) return handler(req, res);
   if (req.url === '/' || req.url.startsWith('/knowledge-center/platform')) {
     res.writeHead(200, { 'Content-Type': 'text/html' });
-    res.end(`<!doctype html><html lang="zh-CN"><head><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/knowledge-center/modules/platform-admin/platform-admin.css"><style>body{font:14px sans-serif;margin:16px}.button{padding:10px 16px}button:disabled{opacity:.6}</style></head><body><main id="view"></main><script type="module">import {renderPlatformAdmin} from '/knowledge-center/modules/platform-admin/view.js';import {mountMcpAdmin,confirmLeavingMcp} from '/knowledge-center/modules/platform-admin/mcp-admin.js';import {pathForView,platformTabFromSearch} from '/knowledge-center/common/state/navigation.js';document.querySelector('#view').innerHTML=renderPlatformAdmin({platformTab:platformTabFromSearch('?tab=mcp'),platformAdmin:true});mountMcpAdmin(document.querySelector('[data-mcp-admin]'));window.confirmLeavingMcp=confirmLeavingMcp;window.mcpPath=pathForView('platform',{tab:'mcp'});</script></body></html>`); return;
+    res.end(`<!doctype html><html lang="zh-CN"><head><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/knowledge-center/modules/platform-admin/platform-admin.css"><style>body{font:14px sans-serif;margin:16px}.button{padding:10px 16px}button:disabled{opacity:.6}</style></head><body><main class="mcp-admin" data-mcp-admin></main><script type="module">import {mountMcpAdmin,confirmLeavingMcp} from '/knowledge-center/modules/platform-admin/mcp-admin.js';import {pathForView} from '/knowledge-center/common/state/navigation.js';mountMcpAdmin(document.querySelector('[data-mcp-admin]'));window.confirmLeavingMcp=confirmLeavingMcp;window.mcpPath=pathForView('platform',{tab:'mcp'});</script></body></html>`); return;
   }
   const file = path.resolve(frontend, '.' + new URL(req.url, 'http://localhost').pathname.replace('/knowledge-center', ''));
   if (!file.startsWith(frontend + path.sep) || !fs.existsSync(file)) { res.writeHead(404); res.end(); return; }
@@ -64,6 +65,7 @@ const server = http.createServer((req, res) => {
     browser = await chromium.launch({ headless: true });
     const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
     const errors = []; page.on('pageerror', error => errors.push(error.message));
+    const captureCoverage = await instrumentFrontend(page, 'platform-mcp');
     await page.goto(`http://127.0.0.1:${server.address().port}/knowledge-center/platform?tab=mcp`);
     await page.locator('[data-mcp-add]').waitFor();
     const rows = page.locator('[data-mcp-service]');
@@ -131,16 +133,47 @@ const server = http.createServer((req, res) => {
     await page.locator('[data-mcp-search]').fill('运维知识库'); assert.equal(await page.locator('[data-mcp-service]:visible').count(), 1);
     await page.locator('[data-mcp-search]').fill(''); checks.push('按服务及知识库搜索');
     await page.locator('[data-mcp-collapse]').click();
+    await captureCoverage();
     await page.reload(); await page.locator('[data-mcp-service]').first().waitFor();
     assert.equal(await page.locator('.mcp-service-editor[open]').count(), 0); checks.push('整页重载默认折叠');
     await rows.first().locator('.mcp-service-summary').click();
     await page.screenshot({ path: path.join(output, 'expanded.png'), fullPage: true });
     await rows.first().locator('[data-service-settings]').first().click();
     await page.screenshot({ path: path.join(output, 'settings.png'), fullPage: true });
+    await rows.first().locator('.mcp-advanced > summary').click();
+    await rows.first().locator('[data-header-add]').click();
+    await rows.first().locator('[name=header_name]').fill('X-Coverage-Test');
+    await rows.first().locator('[name=header_value]').fill('fixture-header-secret');
+    await rows.first().locator('[name=header_description]').fill('隔离测试请求头');
+    const headerSaved = page.waitForResponse(r => r.url().endsWith('/services/save') && r.request().method() === 'POST');
+    await rows.first().locator('button[type=submit]').click();
+    assert.equal((await headerSaved).status(), 200);
+    await page.waitForFunction(() => document.querySelector('[data-mcp-service]')?.dataset.dirty === 'false');
+    const storedHeader = (await governance.get()).services[0].headers[0];
+    assert.equal(storedHeader.name, 'X-Coverage-Test');
+    assert.equal(storedHeader.valueConfigured, true);
+    assert(!fs.readFileSync(configFile, 'utf8').includes('fixture-header-secret'));
+    checks.push('自定义请求头真实保存与密钥脱敏');
+    await rows.first().locator('.mcp-service-summary').click();
+    mode = 'fail';
+    await rows.first().locator('[data-kb-verify]').click();
+    await page.waitForFunction(() => document.querySelector('[data-kb-status]')?.textContent === '测试失败');
+    mode = 'ok';
+    checks.push('知识库验证失败显示错误状态');
+    await page.locator('[data-mcp-add]').click();
+    page.once('dialog', dialog => dialog.accept());
+    await rows.last().locator('[data-service-delete]').click();
+    assert.equal(await rows.count(), 2);
+    page.once('dialog', dialog => dialog.accept());
+    await rows.last().locator('[data-service-delete]').click();
+    await page.waitForFunction(() => document.querySelectorAll('[data-mcp-service]').length === 1);
+    assert.equal((await governance.get()).services.length, 1);
+    checks.push('未保存及已保存服务删除');
     await page.setViewportSize({ width: 360, height: 800 });
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)); checks.push('360px窄屏无横向溢出');
     await page.screenshot({ path: path.join(output, 'mobile.png'), fullPage: true });
     assert.equal(errors.length, 0, errors.join('\n'));
+    await captureCoverage();
     fs.writeFileSync(path.join(output, 'browser-results.json'), JSON.stringify({ status: 'passed', checkedAt: new Date().toISOString(), checks, pageErrors: errors, protocolMethods: methods, scope: '隔离配置、真实平台HTTP路由、真实MCP协议fixture；不代表企业服务验收' }, null, 2));
     console.log(JSON.stringify({ status: 'passed', checks }));
   } finally { await browser?.close(); await close(server); await close(upstream); manager.watcher?.close(); fs.rmSync(root, { recursive: true, force: true }); }

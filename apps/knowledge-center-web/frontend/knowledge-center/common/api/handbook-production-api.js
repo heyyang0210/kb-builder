@@ -47,6 +47,10 @@ export const startHandbookAI = (context, body, key = idempotencyKey()) => reques
 });
 export const loadHandbookAI = (context, jobId) => request(`${aiPath(context, `/${encodeURIComponent(jobId)}`)}?${query(context)}`);
 export const loadHandbookAIHistory = context => request(`${aiPath(context)}?${query(context)}`);
+export const deleteHandbookAIHistory = (context, jobId) => request(`${aiPath(context, `/${encodeURIComponent(jobId)}`)}?${query(context)}`, { method: 'DELETE' });
+export const saveHandbookAIFeedback = (context, jobId, feedback) => request(aiPath(context, `/${encodeURIComponent(jobId)}/feedback`), {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...feedback, outlineVersionId: context.outlineVersionId, branch: context.branch }),
+});
 export const loadHandbookAISkills = context => request(`${aiPath(context).replace(/ai-jobs$/, 'ai-skills')}?${query(context)}`);
 const sourcePath = context => aiPath(context).replace(/ai-jobs$/, 'ai-sources');
 export const loadHandbookAISources = context => request(`${sourcePath(context)}?${query(context)}`);

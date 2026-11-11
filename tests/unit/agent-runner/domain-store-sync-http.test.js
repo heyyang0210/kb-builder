@@ -125,6 +125,11 @@ describe('领域存储同步 HTTP 适配器', () => {
     ['replacePlatformUserRolesAsync', ['u /1', ['ADMIN'], 4, 'role-key', 'operator'], 'PATCH', '/v1/platform/auth/users/u%20%2F1/roles', { roles: ['ADMIN'], actor: 'operator' }, { 'if-match': '4', 'idempotency-key': 'role-key' }],
     ['readPlatformGitLabConnectionAsync', ['conn /1'], 'GET', '/v1/platform/gitlab/connections/conn%20%2F1'],
     ['readPlatformGitLabMappingAsync', ['manual /1'], 'GET', '/v1/platform/gitlab/mappings/manual%20%2F1'],
+    ['readGitLabVersionMappings', [], 'GET', '/v1/platform/gitlab/version-mappings'],
+    ['saveGitLabVersionMapping', [null, { version: '23.1', actor: 'forged' }, 99, 'create-version', 'operator'], 'POST', '/v1/platform/gitlab/version-mappings', { version: '23.1', actor: 'operator' }, { 'idempotency-key': 'create-version' }],
+    ['saveGitLabVersionMapping', ['map /1', { version: '23.2' }, 7, 'update-version', 'operator'], 'PUT', '/v1/platform/gitlab/version-mappings/map%20%2F1', { version: '23.2', actor: 'operator' }, { 'if-match': '7', 'idempotency-key': 'update-version' }],
+    ['setGitLabVersionMappingState', ['map /1', 'disable', 8, 'disable-version', 'operator'], 'POST', '/v1/platform/gitlab/version-mappings/map%20%2F1/disable', { actor: 'operator' }, { 'if-match': '8', 'idempotency-key': 'disable-version' }],
+    ['setGitLabVersionMappingState', ['map /1', 'enable', 9, 'enable-version', 'operator'], 'POST', '/v1/platform/gitlab/version-mappings/map%20%2F1/enable', { actor: 'operator' }, { 'if-match': '9', 'idempotency-key': 'enable-version' }],
   ];
 
   test.each(asyncCases)('%s 经异步 HTTP 传递请求契约 %#', async (...entry) => {
@@ -133,6 +138,24 @@ describe('领域存储同步 HTTP 适配器', () => {
     expect(result).toMatchObject({ method, url, body: body === undefined ? null : body });
     for (const [key, value] of Object.entries(headers)) expect(result.headers[key]).toBe(value);
     if (body !== undefined) expect(result.headers['content-type']).toMatch(/^application\/json/);
+    if (name === 'saveGitLabVersionMapping' && args[0] == null) {
+      expect(result.headers['if-match']).toBeUndefined();
+    }
+  });
+
+  test('版本映射解析保留查询值，缺失 data 返回 null', async () => {
+    const values = { connectionId: 'conn /1&x', productCode: '崖山 DB+', version: '23.1/#?' };
+    const result = await store.resolveGitLabVersionMapping(...Object.values(values));
+    expect(result.method).toBe('GET');
+    const url = new URL(result.url, 'http://127.0.0.1');
+    expect(url.pathname).toBe('/v1/platform/gitlab/version-mappings/resolve');
+    expect(Object.fromEntries(url.searchParams)).toEqual(values);
+    await setRawResponses(true);
+    try {
+      await expect(store.resolveGitLabVersionMapping(...Object.values(values))).resolves.toBeNull();
+    } finally {
+      await setRawResponses(false);
+    }
   });
 
   async function setRawResponses(enabled) {
@@ -185,6 +208,8 @@ describe('领域存储同步 HTTP 适配器', () => {
     ['CAS_PRINCIPAL_NOT_FOUND', 409], ['CAS_PRINCIPAL_AMBIGUOUS', 409],
     ['OUTLINE_RESPONSIBILITY_REQUIRED', 422], ['PUBLISHED_ASSIGNMENT_REQUIRED', 422],
     ['BUILD_TASK_ASSIGNEE_INVALID', 422], ['DOMAIN_UPSTREAM_FAILED', 503],
+    ['VERSION_MAPPING_NOT_FOUND', 404], ['VERSION_MAPPING_CONFLICT', 409],
+    ['VERSION_MAPPING_INVALID', 422],
   ])('后端 %s 错误经 HTTP 映射为 %i', async (code, status) => {
     const route = `/mapped-error?code=${encodeURIComponent(code)}`;
     await expect(store.requestAsync('GET', route)).rejects.toMatchObject({ code, status, message: `后端拒绝 ${code}` });

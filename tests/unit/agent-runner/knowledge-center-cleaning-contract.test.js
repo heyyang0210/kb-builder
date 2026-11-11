@@ -84,4 +84,57 @@ describe('知识中心资料加工契约适配层', () => {
     expect(matchCleaningEndpoint('DELETE', '/knowledge-center/api/cleaning/datasets/ds-1')).toBeNull();
     expect(matchCleaningEndpoint('GET', '/knowledge-center/api/cleaning/internal/debug')).toBeNull();
   });
+
+  const validEndpoint = { id: 'fixture-read', method: 'GET', path: '/fixture/:id', operation: 'query', action: 'knowledge:read' };
+
+  function loadMapping(mapping) {
+    const readFile = fs.readFileSync;
+    const mappingPath = path.resolve(__dirname, '../../../packages/platform-contracts/knowledge-center/v1/endpoint-mapping.json');
+    const spy = jest.spyOn(fs, 'readFileSync').mockImplementation((file, ...args) =>
+      String(file) === mappingPath ? JSON.stringify(mapping) : readFile.call(fs, file, ...args));
+    let contract;
+    try {
+      jest.isolateModules(() => {
+        contract = require('../../../packages/agent-runner-core/lib/knowledge-center-cleaning-contract');
+      });
+      return contract;
+    } finally {
+      spy.mockRestore();
+    }
+  }
+
+  test.each([
+    ['缺失端点', {}, 'must declare endpoints'],
+    ['非数组端点', { endpoints: {} }, 'must declare endpoints'],
+    ['空端点', { endpoints: [] }, 'must declare endpoints'],
+    ['空声明', { endpoints: [null] }, 'invalid id'],
+    ['非字符串标识', { endpoints: [{ ...validEndpoint, id: 1 }] }, 'invalid id'],
+    ['非法标识', { endpoints: [{ ...validEndpoint, id: 'Bad_ID' }] }, 'invalid id'],
+    ['重复标识', { endpoints: [validEndpoint, validEndpoint] }, 'duplicate id: fixture-read'],
+    ['非法方法', { endpoints: [{ ...validEndpoint, method: 'TRACE' }] }, 'invalid method'],
+    ['非字符串路径', { endpoints: [{ ...validEndpoint, path: null }] }, 'invalid path'],
+    ['相对路径', { endpoints: [{ ...validEndpoint, path: 'fixture' }] }, 'invalid path'],
+    ['非法操作', { endpoints: [{ ...validEndpoint, operation: 'internal' }] }, 'invalid operation'],
+    ['读取误配写权限', { endpoints: [{ ...validEndpoint, action: 'knowledge:write' }] }, 'invalid action'],
+    ['命令误配读权限', { endpoints: [{ ...validEndpoint, operation: 'command' }] }, 'invalid action']
+  ])('拒绝无效契约：%s', (_name, mapping, message) => {
+    expect(() => loadMapping(mapping)).toThrow(message);
+  });
+
+  test('隐藏端点不暴露，公开声明冻结且参数只匹配单个路径片段', () => {
+    const contract = loadMapping({ endpoints: [validEndpoint, { ...validEndpoint, id: 'fixture-hidden', path: '/private', expose: false }] });
+    expect(contract.CLEANING_ENDPOINTS).toEqual([validEndpoint]);
+    expect(Object.isFrozen(contract.CLEANING_ENDPOINTS)).toBe(true);
+    expect(Object.isFrozen(contract.CLEANING_ENDPOINTS[0])).toBe(true);
+    expect(contract.matchCleaningEndpoint('get', '/fixture/doc-1')).toMatchObject(validEndpoint);
+    expect(contract.matchCleaningEndpoint('GET', '/fixture/doc-1/child')).toBeNull();
+    expect(contract.matchCleaningEndpoint('GET', '/private')).toBeNull();
+    expect(contract.matchCleaningEndpoint(null, null)).toBeNull();
+    expect(contract.matchCleaningEndpoint('GET', '/knowledge-center/api/cleaning/fixture/doc-1')).toMatchObject(validEndpoint);
+  });
+
+  test('网关根路径默认指向工作台总览，空路径不匹配', () => {
+    expect(matchCleaningEndpoint('get', '/knowledge-center/api/cleaning')).toMatchObject({ path: '/workbench/summary' });
+    expect(matchCleaningEndpoint('GET')).toBeNull();
+  });
 });

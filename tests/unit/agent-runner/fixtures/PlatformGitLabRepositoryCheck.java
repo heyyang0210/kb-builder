@@ -46,6 +46,10 @@ public final class PlatformGitLabRepositoryCheck {
 
     static final class Database {
         final Map<String, Link> links = new LinkedHashMap<>();
+        final Map<Long, Object[]> versionMappings = new LinkedHashMap<>();
+        final Map<Long, String> versionSlots = new HashMap<>();
+        final List<List<Object>> versionEvents = new ArrayList<>();
+        long nextVersionId = 1000;
         Mapping mapping;
         long nextLinkId = 1;
         boolean failUpdate;
@@ -81,6 +85,26 @@ public final class PlatformGitLabRepositoryCheck {
         }
 
         List<Object[]> select(String sql, Map<Integer, Object> binds) {
+            if (sql.startsWith("SELECT V.MAPPING_ID")) {
+                if (sql.contains("WHERE V.MAPPING_ID=?")) {
+                    Object[] row = versionMappings.get(((Number) binds.get(1)).longValue());
+                    return row == null || "DELETED".equals(row[7]) ? List.of() : List.<Object[]>of(row.clone());
+                }
+                if (sql.contains("WHERE V.GITLAB_CONNECTION_ID=?")) {
+                    Link connection = links.values().stream().filter(item -> item.id == ((Number) binds.get(1)).longValue()).findFirst().orElseThrow();
+                    return versionMappings.values().stream().filter(row -> connection.key.equals(row[2]) && binds.get(2).equals(row[3]) && "ACTIVE".equals(row[7])
+                        && ("ALL".equals(row[4]) || binds.get(3).equals(row[5])))
+                        .sorted(java.util.Comparator.comparingInt(row -> "EXACT".equals(row[4]) ? 0 : 1))
+                        .map(Object[]::clone).toList();
+                }
+                return versionMappings.values().stream().filter(row -> sql.contains("WHERE V.STATE='ARCHIVED'")
+                    ? "ARCHIVED".equals(row[7]) : !"DELETED".equals(row[7]) && !"ARCHIVED".equals(row[7]))
+                    .sorted((left, right) -> Long.compare((Long) right[0], (Long) left[0])).map(Object[]::clone).toList();
+            }
+            if (sql.startsWith("SELECT MAPPING_ID FROM KC_GITLAB_VERSION_MAPPING")) {
+                return versionSlots.entrySet().stream().filter(entry -> entry.getValue().equals(binds.get(1)))
+                    .map(entry -> new Object[]{entry.getKey()}).toList();
+            }
             if (sql.startsWith("SELECT C.GITLAB_CONNECTION_ID")) {
                 if (sql.contains("WHERE C.CONNECTION_KEY")) {
                     Link item = link(binds.get(1));
@@ -110,6 +134,50 @@ public final class PlatformGitLabRepositoryCheck {
         }
 
         int mutate(String sql, Map<Integer, Object> binds) {
+            if (sql.startsWith("INSERT INTO KC_GITLAB_VERSION_MAPPING_EVENT")) {
+                List<Object> event = new ArrayList<>();
+                for (int i = 1; i <= 5; i++) event.add(binds.get(i));
+                versionEvents.add(event); return 1;
+            }
+            if (sql.startsWith("INSERT INTO KC_GITLAB_VERSION_MAPPING ")) {
+                long id = nextVersionId++;
+                Link connection = links.values().stream().filter(item -> item.id == ((Number) binds.get(2)).longValue()).findFirst().orElseThrow();
+                Timestamp now = Timestamp.from(Instant.now());
+                versionMappings.put(id, new Object[]{id, binds.get(1), connection.key, binds.get(3), binds.get(4), binds.get(5), binds.get(7), "DRAFT", 1L, now, now});
+                versionSlots.put(id, (String) binds.get(8)); return 1;
+            }
+            if (sql.startsWith("UPDATE KC_GITLAB_VERSION_MAPPING")) {
+                if (failUpdate) { failUpdate = false; return 0; }
+                if (sql.contains("WHERE MAPPING_ID=? AND ROW_VERSION=? AND STATE=?")) {
+                    Object[] row = versionMappings.get(((Number) binds.get(3)).longValue());
+                    if (row == null || !row[8].equals(binds.get(4)) || !row[7].equals(binds.get(5))) return 0;
+                    row[7] = binds.get(1); row[8] = (Long) row[8] + 1;
+                    row[10] = Timestamp.from(Instant.now()); return 1;
+                }
+                if (sql.contains("SET STATE='DELETED'")) {
+                    long id = ((Number) binds.get(2)).longValue();
+                    Object[] row = versionMappings.get(id);
+                    if (row == null || !"DRAFT".equals(row[7]) || !row[8].equals(binds.get(3)) ||
+                        versionMappings.values().stream().anyMatch(child -> child[1] != null && id == ((Number) child[1]).longValue() && !"DELETED".equals(child[7]))) return 0;
+                    row[7] = "DELETED"; row[8] = (Long) row[8] + 1;
+                    row[10] = Timestamp.from(Instant.now()); return 1;
+                }
+                if (sql.contains("SET GITLAB_CONNECTION_ID=?")) {
+                    Object[] row = versionMappings.get(((Number) binds.get(8)).longValue());
+                    if (row == null || !row[8].equals(binds.get(9)) || !"DRAFT".equals(row[7])) return 0;
+                    Link connection = links.values().stream().filter(item -> item.id == ((Number) binds.get(1)).longValue()).findFirst().orElseThrow();
+                    row[2] = connection.key; row[3] = binds.get(2); row[4] = binds.get(3);
+                    row[5] = binds.get(4); row[6] = binds.get(6); row[8] = (Long) row[8] + 1;
+                    row[10] = Timestamp.from(Instant.now()); return 1;
+                }
+                boolean supersede = sql.contains("SET STATE='SUPERSEDED'");
+                long id = ((Number) binds.get(supersede ? 3 : 4)).longValue();
+                Object[] row = versionMappings.get(id);
+                if (row == null || (supersede ? !"ACTIVE".equals(row[7]) : !row[8].equals(binds.get(5)))) return 0;
+                row[7] = supersede ? "SUPERSEDED" : binds.get(1);
+                row[8] = (Long) row[8] + 1; row[10] = Timestamp.from(Instant.now());
+                versionSlots.put(id, (String) binds.get(supersede ? 1 : 2)); return 1;
+            }
             if (sql.startsWith("INSERT INTO KC_GITLAB_CONNECTION")) {
                 Link item = new Link();
                 item.id = nextLinkId++;
@@ -313,6 +381,47 @@ public final class PlatformGitLabRepositoryCheck {
             throw new AssertionError("mapping replacement failed: " + changed);
         database.failUpdate = true;
         rejected("ROW_VERSION_CONFLICT", () -> repository.replaceMapping(connection, "HB-1", nextMapping, 2L, "tester"));
+        Map<String, Object> prefixedInput = new LinkedHashMap<>(editedInput);
+        prefixedInput.put("pathPrefix", "docs/product");
+        Map<String, Object> prefixed = repository.upsertConnection(connection, prefixedInput, 3L, "tester");
+        if (!"docs/product".equals(prefixed.get("pathPrefix")) ||
+                ((Number) prefixed.get("rowVersion")).longValue() != 4)
+            throw new AssertionError("existing connection prefix update was not persisted");
+        Map<String, Object> englishOnly = new LinkedHashMap<>(nextMapping);
+        englishOnly.put("zhPaths", List.of()); englishOnly.put("enPaths", List.of("docs/english"));
+        Map<String, Object> englishMapping = repository.replaceMapping(connection, "HB-1", englishOnly, 2L, "tester");
+        if (!List.of().equals(englishMapping.get("zhPaths")) ||
+                !List.of("docs/english").equals(englishMapping.get("enPaths")) ||
+                ((Number) englishMapping.get("rowVersion")).longValue() != 3)
+            throw new AssertionError("English-only mapping retained old paths or lost its version");
+        Map<String, Object> versionInput = Map.of("connectionId", "conn-1", "productCode", "DB",
+            "matchKind", "EXACT", "version", "23.4", "branch", "release");
+        Map<String, Object> version = repository.saveVersionMapping(connection, null, versionInput, null, "tester");
+        long versionId = ((Number) version.get("id")).longValue();
+        int eventsBeforeRejection = database.versionEvents.size();
+        rejected("ROW_VERSION_CONFLICT", () -> repository.saveVersionMapping(connection, versionId, versionInput, null, "tester"));
+        rejected("VERSION_MAPPING_INVALID", () -> repository.setVersionMappingState(connection, versionId, 1L, "unknown", "tester"));
+        if (database.versionEvents.size() != eventsBeforeRejection ||
+                !"draft".equals(repository.findVersionMapping(connection, versionId).get("state")))
+            throw new AssertionError("rejected version commands changed state or audit history");
+        repository.setVersionMappingState(connection, versionId, 1L, "activate", "tester");
+        Map<String, Object> revision = repository.saveVersionMapping(connection, versionId, versionInput, 2L, "tester");
+        long revisionId = ((Number) revision.get("id")).longValue();
+        Object[] parentRow = database.versionMappings.remove(versionId);
+        int eventsBeforeMissingParent = database.versionEvents.size();
+        try {
+            rejected("VERSION_MAPPING_CONFLICT", () -> repository.setVersionMappingState(connection, revisionId, 1L, "activate", "tester"));
+            if (database.versionEvents.size() != eventsBeforeMissingParent ||
+                    !"draft".equals(repository.findVersionMapping(connection, revisionId).get("state")))
+                throw new AssertionError("orphan revision activation changed state or audit history");
+        } finally { database.versionMappings.put(versionId, parentRow); }
+        repository.setVersionMappingState(connection, revisionId, 1L, "activate", "tester");
+        repository.setVersionMappingState(connection, revisionId, 2L, "disable", "tester");
+        Map<String, Object> reactivated = repository.setVersionMappingState(connection, revisionId, 3L, "activate", "tester");
+        if (!"active".equals(reactivated.get("state")) ||
+                ((Number) reactivated.get("rowVersion")).longValue() != 4L ||
+                !"superseded".equals(repository.findVersionMapping(connection, versionId).get("state")))
+            throw new AssertionError("disabled revision did not reactivate without altering superseded parent");
         Provider[] providers = Security.getProviders();
         try {
             for (Provider provider : providers) Security.removeProvider(provider.getName());

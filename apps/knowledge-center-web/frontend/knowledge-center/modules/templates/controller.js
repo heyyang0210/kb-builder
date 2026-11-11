@@ -392,7 +392,7 @@ export function createTemplateController({ appState, render, canPerform }) {
     if (appState.activeView !== 'templates' || !ui.historyOpen) return;
     if (event.key === 'Escape') { ui.historyOpen = false; render(); document.querySelector('[data-template-history]')?.focus(); }
     if (event.key === 'Tab' && window.matchMedia('(max-width: 900px)').matches) {
-      const buttons = [...document.querySelectorAll('.template-history button:not(:disabled)')]; const first = buttons[0]; const last = buttons.at(-1);
+      const buttons = [...document.querySelectorAll('.template-history button:not(:disabled)')].filter(button => button.getClientRects().length && (!button.closest('details') || button.closest('details').open)); const first = buttons[0]; const last = buttons.at(-1);
       if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
       else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
     }

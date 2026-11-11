@@ -47,7 +47,9 @@ describe('增量构建前端契约', () => {
     expect(view()).toContain('此处只汇总各文档状态');
     expect(view()).toContain('进入审核工作区');
     expect(view()).toContain('/knowledge-center/review?taskId=');
-    expect(review).toContain('返回增量任务');
+    expect(review).toContain('reviewNavigation(projection.workbench, task, params)');
+    expect(read('apps/knowledge-center-web/frontend/knowledge-center/modules/review-publishing/workbench.js'))
+      .toContain('返回审核文档清单');
     expect(review).toContain('stage=review');
   });
 

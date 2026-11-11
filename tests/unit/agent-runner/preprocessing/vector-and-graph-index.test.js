@@ -17,6 +17,148 @@ const { parseTemplateMappingModelOutput } = require('../../../../packages/agent-
 
 const TEST_DIR = path.join(process.env.YASDB_TEST_TMP_DIR || require('os').tmpdir(), `test-indexes-${Date.now()}`);
 
+describe('索引增量生命周期与持久化回读', () => {
+  let directory;
+  beforeEach(async () => {
+    const base = path.resolve(__dirname, '../../../../runtime/test-results');
+    await fs.mkdir(base, { recursive: true });
+    directory = await fs.mkdtemp(path.join(base, 'index-lifecycle-'));
+  });
+  afterEach(async () => fs.rm(directory, { recursive: true, force: true }));
+  const chunk = (id, sourcePath, content = '事务提交') => ({
+    chunkId: `${id}-chunk-0`, content, metadata: { sourcePath }
+  });
+
+  test('向量增量替换修改文件、删除旧文件并保留未变更记录，重建清空旧记录', async () => {
+    const indexer = new VectorIndexer();
+    await indexer.build([chunk('changed', 'a.md'), chunk('deleted', 'b.md'), chunk('kept', 'c.md')], { outputDir: directory });
+    const updated = await indexer.build([chunk('replacement', 'a.md', '新事务流程')], {
+      outputDir: directory, delta: { modified: [{ filePath: 'a.md' }], deleted: [{ filePath: 'b.md' }] }
+    });
+    expect(updated.statistics.recordCount).toBe(2);
+    const recordsPath = path.join(directory, 'vector/records.json');
+    const persisted = new JsonVectorStore({ filePath: recordsPath });
+    expect((await persisted.list()).map(item => item.id).sort()).toEqual(['kept-chunk-0', 'replacement-chunk-0']);
+    expect((await new VectorIndexer().search('新事务流程', { store: persisted, topK: 1 }))[0]).toMatchObject({ id: 'replacement-chunk-0', document: '新事务流程' });
+    for (const delta of [{}, { modified: [{ filePath: 'absent.md' }] }, { deleted: [{ filePath: 'absent.md' }] }]) {
+      expect((await indexer.build([], { delta })).statistics.recordCount).toBe(2);
+    }
+    await indexer.build([chunk('fresh', 'new.md')], { outputDir: directory, delta: { full: true } });
+    expect((await new JsonVectorStore({ filePath: recordsPath }).list()).map(item => item.id)).toEqual(['fresh-chunk-0']);
+    const manifest = JSON.parse(await fs.readFile(path.join(directory, 'vector/manifest.json'), 'utf8'));
+    expect(manifest.records.map(item => item.id)).toEqual(['fresh-chunk-0']);
+    expect(JSON.parse(await fs.readFile(path.join(directory, 'vector/statistics.json'), 'utf8')).recordCount).toBe(1);
+    await indexer.build([], { delta: { full: true } });
+    expect((await indexer.build([], { delta: { full: true } })).statistics.recordCount).toBe(0);
+  });
+
+  test('图谱增量清理修改和删除文件的节点与边，重建结果可由新实例查询', async () => {
+    const indexer = new KnowledgeGraphIndexer();
+    await indexer.build([chunk('changed', 'a.md'), chunk('deleted', 'b.md'), chunk('kept', 'c.md')], { outputDir: directory });
+    const updated = await indexer.build([chunk('replacement', 'a.md')], {
+      outputDir: directory, delta: { modified: [{ filePath: 'a.md' }], deleted: [{ filePath: 'b.md' }] }
+    });
+    expect(updated.statistics).toMatchObject({ nodeCount: 4, edgeCount: 2 });
+    const persisted = new JsonGraphStore({ directory: path.join(directory, 'graph') });
+    expect((await persisted.listNodes()).map(item => item.id).sort()).toEqual([
+      'chunk:kept-chunk-0', 'chunk:replacement-chunk-0', 'document:kept', 'document:replacement'
+    ]);
+    const subgraph = await new KnowledgeGraphIndexer().search('document:replacement', { store: persisted });
+    expect(subgraph.nodes.map(item => item.id).sort()).toEqual(['chunk:replacement-chunk-0', 'document:replacement']);
+    expect(subgraph.edges).toHaveLength(1);
+    for (const delta of [{}, { modified: [{ filePath: 'absent.md' }] }, { deleted: [{ filePath: 'absent.md' }] }]) {
+      expect((await indexer.build([], { delta })).statistics).toMatchObject({ nodeCount: 4, edgeCount: 2 });
+    }
+    await indexer.build([chunk('fresh', 'new.md')], { outputDir: directory, delta: { full: true } });
+    const reloaded = new JsonGraphStore({ directory: path.join(directory, 'graph') });
+    expect((await reloaded.listNodes()).map(item => item.id).sort()).toEqual(['chunk:fresh-chunk-0', 'document:fresh']);
+    expect(JSON.parse(await fs.readFile(path.join(directory, 'graph/statistics.json'), 'utf8'))).toMatchObject({ nodeCount: 2, edgeCount: 1 });
+    await indexer.build([], { delta: { full: true } });
+    expect((await indexer.build([], { delta: { full: true } })).statistics).toMatchObject({ nodeCount: 0, edgeCount: 0 });
+  });
+
+  test('禁用构建不初始化存储，无存储搜索明确拒绝', async () => {
+    for (const Indexer of [VectorIndexer, KnowledgeGraphIndexer]) {
+      expect(await new Indexer({ enabled: false }).build([chunk('ignored', 'a.md')])).toEqual({ skipped: true });
+      await expect(new Indexer().search('事务')).rejects.toThrow('requires a');
+    }
+    expect(await fs.readdir(directory)).toEqual([]);
+  });
+
+  test('向量忽略缺少标识或正文的输入，最小输入使用兼容元数据', async () => {
+    const indexer = new VectorIndexer();
+    const result = await indexer.build([
+      { content: '无标识' }, { chunkId: 'empty' }, { chunkId: 'blank', content: '  ' },
+      { chunkId: 'minimal-chunk-0', content: '数据库事务' },
+      { chunkId: 'original-chunk-0', bodyContent: '优先正文', content: '旧正文', metadata: { originalFile: 'original.md' } }
+    ], { outputDir: directory, delta: { full: true } });
+    expect(result.statistics.recordCount).toBe(2);
+    const records = await indexer.store.list();
+    expect(records[0].metadata).toMatchObject({ docId: 'minimal', title: '', feature: '', subFeature: '', version: '', docType: '', sourcePath: '' });
+    expect(records[1]).toMatchObject({ document: '优先正文', metadata: { sourcePath: 'original.md' } });
+  });
+
+  test('向量存储拒绝非有限数值且保留已写入记录', async () => {
+    const filePath = path.join(directory, 'vector', 'records.json');
+    const store = new JsonVectorStore({ filePath });
+    await store.upsert([{ id: 'valid', vector: [1, 0], document: '有效正文' }]);
+    for (const value of [NaN, Infinity, -Infinity]) {
+      await expect(store.upsert([{ id: 'valid', vector: [value, 0], document: '污染正文' }]))
+        .rejects.toThrow('Vector record valid contains invalid values');
+    }
+    const reloaded = new JsonVectorStore({ filePath });
+    expect(await reloaded.list()).toEqual([{ id: 'valid', vector: [1, 0], document: '有效正文' }]);
+    const results = await reloaded.query([1, 0]);
+    expect(results).toMatchObject([{ id: 'valid', score: 1, document: '有效正文' }]);
+  });
+
+  test('图谱忽略缺少标识的输入并保留最小分块、关键词和特性证据', async () => {
+    const indexer = new KnowledgeGraphIndexer();
+    const result = await indexer.build([
+      {}, { chunkId: 'minimal-chunk-0' },
+      { chunkId: 'feature-chunk-0', metadata: { title: '事务', originalFile: 'original.md', feature: '日志', keywords: ['事务'] } }
+    ], { outputDir: directory, delta: { full: true } });
+    expect(result.statistics).toMatchObject({ nodeCount: 6, edgeCount: 4 });
+    const subgraph = await indexer.search('chunk:feature-chunk-0');
+    expect(subgraph.nodes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'feature:日志', label: '日志' }),
+      expect.objectContaining({ id: 'term:事务', label: '事务' }),
+      expect.objectContaining({ id: 'chunk:feature-chunk-0', properties: expect.objectContaining({ sourcePath: 'original.md', tokens: 0 }) })
+    ]));
+    expect(subgraph.edges.find(edge => edge.type === 'BELONGS_TO')).toMatchObject({ weight: 0.8, evidence: { reason: '特性分类' } });
+    expect((await indexer.search('document:minimal')).nodes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'chunk:minimal-chunk-0', label: 'minimal-chunk-0' })
+    ]));
+  });
+
+  test('图谱拒绝越界边权重且不会持久化非法边', async () => {
+    const graphDirectory = path.join(directory, 'graph');
+    const store = new JsonGraphStore({ directory: graphDirectory });
+    await store.upsertNodes([{ id: 'a', type: 'Document' }, { id: 'b', type: 'Document' }]);
+    for (const weight of [-0.01, 1.01]) {
+      await expect(store.upsertEdges([{ from: 'a', to: 'b', type: 'RELATED', weight }]))
+        .rejects.toThrow('Graph edge weight must be between 0 and 1');
+    }
+    expect(await new JsonGraphStore({ directory: graphDirectory }).listEdges()).toEqual([]);
+    await store.upsertEdges([{ from: 'a', to: 'b', type: 'RELATED', weight: 0 }]);
+    expect(await new JsonGraphStore({ directory: graphDirectory }).listEdges()).toMatchObject([
+      { from: 'a', to: 'b', type: 'RELATED', weight: 0 }
+    ]);
+  });
+
+  test('损坏的图谱 JSON 必须报错，修复后可正常回读', async () => {
+    const graphDirectory = path.join(directory, 'graph');
+    await fs.mkdir(graphDirectory, { recursive: true });
+    const nodesPath = path.join(graphDirectory, 'nodes.json');
+    await fs.writeFile(nodesPath, '{');
+    await expect(new JsonGraphStore({ directory: graphDirectory }).listNodes()).rejects.toThrow(SyntaxError);
+    await fs.writeFile(nodesPath, '[{"id":"recovered","type":"Document"}]');
+    expect(await new JsonGraphStore({ directory: graphDirectory }).listNodes()).toEqual([
+      { id: 'recovered', type: 'Document' }
+    ]);
+  });
+});
+
 describe('本地向量和知识图谱索引', () => {
   let vectorStore;
   let graphStore;

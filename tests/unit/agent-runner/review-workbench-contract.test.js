@@ -35,7 +35,7 @@ describe('审核工作台文档投影契约', () => {
     expect(publisher.completion.status).toBe('pending');
     source.deliveryObservation = { state: 'closed' };
     const closed = service.project(source, session());
-    expect(closed.completion).toMatchObject({ status: 'pending', label: 'MR已关闭，待处理', completedAt: null });
+    expect(closed.completion).toMatchObject({ status: 'pending', label: 'MR已关闭，需修订并重新审核', completedAt: null });
     expect(service.project(source, session(), true).completion).toEqual(closed.completion);
     source.deliveryObservation = { state: 'merged', readback: { status: 'consistent', resources: 'repository_relative_images_verified' } };
     expect(service.project(source, session()).completion.status).toBe('completed');
@@ -177,6 +177,75 @@ describe('审核工作台真实 HTTP 契约与规模边界', () => {
       expect((await command(cancelUrl, 'POST', { candidateDigest: source.candidate.digest, reason: '再次终止' }, { 'x-user': 'usr_reviewer', 'x-principal': '179' })).status).toBe(409);
     } finally {
       repository.transaction(state => { state.tasks = state.tasks.filter(item => item.id !== source.id); });
+    }
+  });
+
+  test.each([
+    ['缺少审核记录', source => { source.reviews = []; }, {}, {}, 404, 'REVIEW_NOT_FOUND'],
+    ['普通增量任务', source => { source.handbookSource = null; }, {}, {}, 404, 'REVIEW_NOT_FOUND'],
+    ['任务已完成', source => { source.state = 'approved'; }, {}, {}, 409, 'REVIEW_ALREADY_DECIDED'],
+    ['审核已决定', source => { source.reviews[0].status = 'approved'; }, {}, {}, 409, 'REVIEW_ALREADY_DECIDED'],
+    ['请求候选过期', () => {}, { candidateDigest: 'stale' }, {}, 409, 'REVIEW_CANDIDATE_CONFLICT'],
+    ['审核候选过期', source => { source.reviews[0].candidateDigest = 'stale'; }, {}, {}, 409, 'REVIEW_CANDIDATE_CONFLICT'],
+    ['文档不存在', () => {}, { documentId: 'missing' }, {}, 409, 'REVIEW_DOCUMENT_MISMATCH'],
+    ['文档缺逐篇审核', source => { delete source.reviews[0].documentId; }, {}, {}, 409, 'REVIEW_DOCUMENT_MISMATCH'],
+    ['审核人为空', () => {}, { reviewerIds: [] }, {}, 422, 'REVIEWER_INVALID'],
+    ['审核人非数组', () => {}, { reviewerIds: '179' }, {}, 422, 'REVIEWER_INVALID'],
+    ['混入无权限审核人', () => {}, { reviewerIds: ['179', '999'] }, {}, 422, 'REVIEWER_INVALID'],
+  ])('真实 HTTP：改派拒绝%s且仓库整体不变', async (_label, alter, override, headers, status, code) => {
+    const source = task('reassign-guard');
+    source.reviews[0].documentId = 'a';
+    const reviewId = source.reviews[0].id;
+    alter(source);
+    repository.transaction(state => state.tasks.push(source));
+    try {
+      const before = repository.read();
+      const response = await fetch(base.replace('/review/bootstrap', `/review/tasks/${source.id}/reviews/${reviewId}/reviewers`), {
+        method: 'PUT', headers: { 'content-type': 'application/json', 'idempotency-key': `guard-${encodeURIComponent(_label)}`, ...headers },
+        body: JSON.stringify({ documentId: 'a', candidateDigest: source.candidate.digest, reviewerIds: ['179'], ...override }),
+      });
+      expect(response.status).toBe(status);
+      expect((await response.json()).error.code).toBe(code);
+      expect(repository.read()).toEqual(before);
+    } finally {
+      repository.transaction(state => { state.tasks = state.tasks.filter(item => item.id !== source.id); });
+    }
+  });
+
+  test('真实 HTTP：改派规范化人员、记录审计且幂等重放不重复写入', async () => {
+    const source = task('reassign-idempotent');
+    source.reviews[0].documentId = 'a';
+    delete source.handbookSource.documents[0].reviewerIds;
+    repository.transaction(state => state.tasks.push(source));
+    const key = 'reassign-normalized-once';
+    const request = () => fetch(base.replace('/review/bootstrap', `/review/tasks/${source.id}/reviews/${source.reviews[0].id}/reviewers`), {
+      method: 'PUT', headers: { 'content-type': 'application/json', 'idempotency-key': key },
+      body: JSON.stringify({ documentId: 'a', candidateDigest: source.candidate.digest, reviewerIds: [179, '179', '178'] }),
+    });
+    try {
+      const first = await request();
+      expect(first.status).toBe(200);
+      const result = await first.json();
+      expect(result.data.reviewerIds).toEqual(['179', '178']);
+      const state = repository.read();
+      const current = state.tasks.find(item => item.id === source.id);
+      expect(current.candidate).toEqual(source.candidate);
+      expect(current.handbookSource.documents[0].reviewerIds).toEqual(['179', '178']);
+      expect(current.reviews[0].reviewerIds).toEqual(['179', '178']);
+      expect(current.reviews[0].assignment.updatedBy.id).toBe('author');
+      expect(state.audits.filter(item => item.taskId === source.id)).toEqual([
+        expect.objectContaining({ action: 'REVIEWERS_REASSIGNED' }),
+      ]);
+      const replay = await request();
+      expect(replay.status).toBe(200);
+      expect(await replay.json()).toEqual(result);
+      expect(repository.read()).toEqual(state);
+    } finally {
+      repository.transaction(state => {
+        state.tasks = state.tasks.filter(item => item.id !== source.id);
+        state.audits = state.audits.filter(item => item.taskId !== source.id);
+        for (const entry of Object.keys(state.idempotency)) if (entry.includes(key)) delete state.idempotency[entry];
+      });
     }
   });
 

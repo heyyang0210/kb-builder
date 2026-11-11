@@ -59,3 +59,70 @@ run.json 保存不含凭据的清单：执行器版本、Agent/模型版本、�
 布局通过Agent区域局部变量控制列表宽、行距、内边距；不靠全局缩放或小字号压缩。桌面1366×768、1440×900、1920×1080默认态名称、模型、MCP摘要、保存按钮须进入首屏，无横向溢出；390px窄屏重排。展开面板覆盖长内容滚动、Esc及焦点返回、保留草稿、局部保存、Agent保存与真实HTTP回读。大量服务摘要只展示总数与首个服务，不无限扩展主页面。
 
 实施验收：Agent管理与原模型管理真实HTTP浏览器回归通过，包含模型/MCP保存回读及推理强度保存；统一构建通过。实际13510已加载新静态资源，三种桌面尺寸首屏几何断言、模型/MCP面板打开关闭、390px窄屏均通过，脚本错误0。实际平台仅登录读取与查看，未写共享配置、未执行模型。证据：runtime/diagnostics/agent-settings-vscode-20261029/verification.json、actual-1440.png、actual-model-panel.png、actual-mcp-panel.png、actual-mobile.png。
+
+## 配置存储覆盖率回归边界（2026-11-10）
+
+直接加载生产 `config-manager`，只隔离公开配置路径、运行环境加载、日志及文件监听事件源。配置文件、原子写入和 AES-GCM 加解密均使用真实实现，运行数据位于 runtime。覆盖服务配置分区与独立文件、缓存与监听失效、同步读取、预设增改查、递归敏感字段和 Headers、损坏密文降级、JSON 解析和写入错误传播。监听器使用确定性事件源验证 service.json 全量失效、其他 JSON 定向失效、空/非 JSON 名称忽略及监听失败，避免依赖 OS 事件时序。后端 HTTP 配置契约继续由固定 Node API 套件验证；本矩阵不改变配置协议。
+
+
+## API 服务入口边界覆盖矩阵（2026-11-10）
+
+采用真实 Express、HTTP、Socket.IO 与本机动态端口验证 server.js 入口；只隔离配置加载、工具管理器及下游业务路由，使 HTTP 门禁、压缩、请求上下文和生命周期仍使用生产实现。隔离目录集中 runtime，测试进程注册的信号/异常处理器单独捕获与调用，退出使用边界替身，不能终止 Jest 或污染全局监听器。默认绑定和显式绑定、内部令牌配置/缺失使用独立 Jest 文件隔离冻结全局上下文。
+
+| 路径 | 验收方式 |
+|---|---|
+| 启动与读取 | 自动创建logs/tmp，已有目录复用；健康/平台上下文真实GET及请求ID回显；预览存在时真实读取，缺失时404 |
+| 大纲写入网关 | POST导入/手册/治理命令、PUT治理、PATCH构建项、DELETE、GET删除预检：缺配置503，错误/缺失令牌403，合法令牌进入隔离下游；普通读取不受影响 |
+| 压缩 | 大JSON协商gzip并可正确解压；identity、已有编码、非JSON、小正文、空正文和字符串正文；压缩故障回退原文并记录告警 |
+| Socket.IO | 真实客户端订阅/退订，检查房间成员及ack；无task_id不加入，无ack不报错，断开清理 |
+| 生命周期 | 捕获入口注册的未捕获异常/拒绝处理器检查日志；服务错误记录退出、端口占用专用提示；SIGINT真实关闭、SIGTERM超时使用可控计时与关闭边界替身验证强制退出 |
+
+伪代码：`create isolated runtime; load server with boundary dependencies; await listening; request real HTTP; connect real socket; assert responses and room state; exercise registered lifecycle handlers; close and restore`。不改业务权限、生产监听端口和压缩阈值，定向覆盖率不能代替整个平台验收。
+
+## DeepSeek Harness SDK 试运行设计（2026-11-11）
+
+### 范围
+
+首期以官方完整 `sdk` profile 接入 DeepSeek Harness（DSH），复用平台 Agent 配置、模型连接和运行事件界面。DSH 配置与真实试运行只允许平台管理员操作；DSH 不进入普通文档生成模型选项，不可成为默认 Agent。已有 Codex 与内置工作流行为不变。管理员试运行通过且安全、运行、产物验收完成后，若要开放文档生产，须另行确认晋级范围和运行环境，不由试运行结果自动开放。
+
+### 运行契约
+
+- 使用锁定版本 `0.2.2-rc.1` 的 `@deepseek-ai/dsh-sdk-client` 与 `@deepseek-ai/dsh`，`profile: sdk`，每个运行独立创建工作区和 `DSH_HOME`，不得读取用户级 DSH 配置、历史会话或凭据。升级时需一起升级并复测，不允许混用 SDK 与运行时版本。
+- 通过任务级 Cordis overlay 配置单次模型路由和凭据引用；API Key 只存在于当前任务的受限凭据通道，禁止写入运行清单、profile、通用日志或页面。若当前 SDK/运行环境无法提供任务级凭据隔离，则运行预检失败，不回退到修改服务进程全局环境。
+- `approval/request` 一律拒绝；不提供人工批准 UI。禁用插件管理、计划任务、Web/网络搜索、MCP 和非必要外发遥测。工具和文件系统边界只允许该任务工作区；SDK 与 DSH 本身报告的沙箱仍不视为容器安全保证。
+- 管理员测试提示词从既有 `agentRuntime.testPrompt` 读取，结果只用于验证模型响应，不产生正式文档、草稿或业务副作用。SSE 运行事件经过字段白名单、长度限制和凭据脱敏后持久化；取消通过关闭该次 SDK 独占的运行进程实现，超时或子进程失联进入终态，禁止自动重放。
+- 任何需要访问工作区外文件、MCP、内部网段或用户账号配置的需求均不属于试运行契约。运行环境未达到隔离前置条件时，配置可以读取/保存，但运行入口显示未就绪并由后端拒绝。
+
+### Codex 对照实现与 DSH 任务隔离
+
+- 运行入口使用锁定版 `@deepseek-ai/dsh-sdk-client` 的 `DeepSeekHarness`；由平台 adapter 负责任务记录、事件投影、取消、超时和进程回收，不由浏览器直接调用 DSH。
+- SDK 由专用 Node 24.9 进程运行；平台主进程的 Node 22 不满足 DSH 要求。任务运行器使用 user systemd 瞬态单元的 `PrivateUsers`、`PrivateNetwork`、`ProtectSystem=strict`、`ProtectHome=tmpfs`、`InaccessiblePaths=/data` 与任务目录 bind，并在单元内通过 `unshare --pid --mount-proc` 创建独立 PID 视图。每次启动前的预检探测任务工作区、宿主文件、宿主用户 socket、PID 视图和公网连通性，失败时保持运行入口关闭。
+- 模型 API Key 只由平台进程内的任务级代理持有；DSH runtime 只接收无权限占位 key。每任务 Unix socket 在 `PrivateNetwork=yes` 下作为模型代理通道。代理限制方法、路径、请求次数、模型、请求体大小和超时，并阻断重定向；模型请求只由平台进程注入解密后的 key。取消或终止时中断在途代理请求。不得把真实 key 写入 DSH_HOME、Cordis overlay、SDK 子进程环境、参数、日志或事件。
+- 若 DSH 自身未选模型，管理员试运行临时解析平台默认 Chat Completions 连接，不复制其密钥或更改其配置；仅当该连接有解密后凭据且协议匹配时算模型就绪。此回退只用于管理员试运行，DSH 仍不进入文档生产。若无兼容模型，则服务端返回具体阻断原因。
+- 沙箱探针必须验证：可写任务 workspace、不可读取宿主哨兵文件/用户配置、看不到沙箱外进程、无法直接访问公网；凭据探针须确认 DSH 和其工具只能看到占位值且无法从宿主凭据代理读取密钥。仅检查命令存在或 DSH 自报 sandbox ready 不算通过。
+
+### 接口与页面
+
+保留 `POST /platform/agents/:id/run-test` 与现有查询、SSE、取消路由。服务端按 runId 对应的 executor 找回运行；非管理员仍由既有平台管理员门禁拒绝。DSH 测试使用 SDK 的真实会话事件，映射为平台统一 `started/progress/tool-started/tool-completed/completed/failed/cancelled/interrupted` 事件。错误返回中文安全摘要，具体敏感 stderr 仅允许写入 runtime 中受权限保护的诊断文件。
+
+Agent 列表明确显示“DeepSeek Harness（管理员试运行）”。DSH 可编辑模型连接，但不能勾选“用于文档生成”；详情展示试运行是否就绪及阻断原因。保存成功只代表配置持久化，不代表 SDK、沙箱、模型或运行链路已通过。
+
+首次读取 Agent 配置时，平台自动补入唯一的 `dsh-admin-trial`；旧配置只追加这条 Agent，不替换现有默认项，也不复制模型连接、密钥或 MCP 配置。该项初始停用，不能设为默认或删除；Agent 新建菜单不重复提供 DSH 类型。设置页初次进入选中当前默认 Agent，侧栏对 DSH 显示“管理员试运行 / 未就绪”，详情顶部显示运行预检条件；未配置可用模型也属于阻断条件。DSH 页面不提供 MCP 配置入口。
+
+### 当前实施状态
+
+DSH 管理员配置、服务端预检和 SDK 运行适配器已接入。2026-11-11 本机实测：SDK Client 与 Runtime 均为 `0.2.2-rc.1`，专用 Node 为 `24.9.0`；隔离探针确认宿主仓库、home、用户 D-Bus 不可见，PID 私有、无直接公网，任务代理 socket 可用且 Worker 环境无密钥变量。真实共享 Chat Completions 模型短提示词已返回“DSH试运行成功。”；隔离 HTTP 测试使用真实 SDK，覆盖完成、SSE 回读、取消、工具清单约束和运行产物无密钥明文。该结果只证明本机管理员试运行；共享 13510 实例是否装载新构建需部署回读，普通文档生产尚未开放。
+
+默认 DSH 初始化策略和名称目前由 Agent 治理模块固定管理；若平台未来允许动态增加通用 Agent 执行器，应把执行器目录及初始化策略迁入平台配置并提供受控升级。
+
+### 验收边界
+
+测试覆盖 Agent 角色门禁、配置隔离与不回显、DSH 运行预检、SDK Client 生命周期/事件/拒绝审批/取消/超时、事件断线回读、最终状态持久化及管理员页面操作。SDK 完成、SSE 回读和取消已用真实 HTTP 与真实 SDK 验证；真实模型短提示词调用已成功。超时、故障注入和共享实例部署回读仍须分别验收；不能以本机成功代替共享实例已更新。普通文档生产接入、GitLab 写入和默认 Agent 晋级不在本次试运行授权内。
+
+## 2026-11-11 Agent 设置页信息层级调整
+
+平台页签已标识“Agent&模型服务”，内容区不再重复页面标题或“Agent 配置”。工作区保留新建操作与 Agent 列表；详情顶部显示当前名称、执行器、默认/启用状态和保存、运行测试。中间依次呈现模型与推理强度、知识库工具、运行范围、基本信息，字段使用可读字号；删除与字段值重复的用途及权限说明，但保留默认 Agent 控件、DSH 试运行边界和权限查看入口。
+
+右侧仅展示当前页面中由真实运行事件确认的测试状态，初始为“尚未运行测试”。运行中、成功、失败、取消分别来自现有 `run-test`、SSE 与断线后的运行状态回读；成功时仅陈述已有终态可证实的产物校验，不虚构模型连接、MCP、工作区逐项通过，也不称其为跨会话“最近运行”。修改配置后原测试结果标记为需要重新测试。DSH 未就绪条件继续从服务端 `readiness.blockers` 展示，禁止发起试运行。手机端先展示当前 Agent 与测试状态，再展示配置字段。
+
+伪代码：`selectAgent -> readCatalogAndModel -> showSessionRunStateOrUntested; startTest -> running; terminalEventOrReadback -> terminalState; editOrSaveConfiguration -> stale; dshReadiness -> renderBlockersAndDisableTest`。验收使用隔离真实 HTTP 浏览器流程，检查状态与终态一致、未就绪阻断、保存和连接配置、桌面与 390px 无横向溢出。

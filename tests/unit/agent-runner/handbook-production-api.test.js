@@ -547,6 +547,28 @@ test('停用模板的旧映射不会自动填入新生成任务', async t => {
   assert.equal(result.body.error.code, 'AI_TEMPLATE_REQUIRED');
 });
 
+test('AI 任务评价和历史删除经真实 HTTP 保留作者边界', async t => {
+  const api = await setup(t, { ai: { generate: async () => ({ content: '新句', model: 'isolated-http-model' }) } });
+  const aiPath = '/handbooks/HB-1/documents/doc-1/ai-jobs';
+  const payload = { outlineVersionId: 'outline-v1', branch: 'main', operation: 'polish', markdown: '前文旧句后文', editVersion: 0, range: { start: 2, end: 4 } };
+  const created = await api.request('POST', aiPath, json(payload, 'feedback-http').body, json(payload, 'feedback-http').headers);
+  assert.equal(created.status, 202, JSON.stringify(created.body));
+  const jobId = created.body.data.jobId;
+  const jobPath = `${aiPath}/${jobId}`;
+  const saved = await api.request('POST', `${jobPath}/feedback`, JSON.stringify({ outlineVersionId: 'outline-v1', branch: 'main', rating: 'positive', comment: '可用' }), { 'content-type': 'application/json' });
+  assert.equal(saved.status, 200, JSON.stringify(saved.body));
+  assert.equal(saved.body.data.rating, 'positive');
+  const list = await api.request('GET', `${aiPath}${query}`);
+  assert.equal(list.status, 200);
+  assert.equal(list.body.data.find(item => item.jobId === jobId)?.feedback, 'positive');
+  const removed = await api.request('DELETE', `${jobPath}${query}`);
+  assert.equal(removed.status, 200, JSON.stringify(removed.body));
+  assert.equal(removed.body.data.jobId, jobId);
+  assert.equal((await api.request('GET', `${jobPath}${query}`)).status, 404);
+  assert.equal((await api.request('GET', `${aiPath}${query}`)).body.data.some(item => item.jobId === jobId), false);
+  assert.deepEqual(api.store.read().audits.slice(-2).map(item => item.action), ['AI_FEEDBACK_UPDATED', 'AI_HISTORY_DELETED']);
+});
+
 test('AI HTTP creates isolated candidates and explicitly adopts once into the shared draft', async t => {
   let calls = 0;
   const api = await setup(t, { ai: { generate: async () => { calls++; return { content: '新句', model: 'isolated-http-model' }; } } });
@@ -1256,17 +1278,19 @@ test('AI Skill browser selection reaches backend execution and persists frozen c
   fs.writeFileSync(path.join(evidenceDir, 'result.json'), JSON.stringify({ realHTTP: true, browser: 'Chromium', skill: metadata.skillVersions[0], savedMarkdown: saved.body.data.draft.revision.markdown, realModel: false, fullPlatformAcceptance: false }, null, 2));
 });
 
-test('PingCode design and test sources use fixed service, allowed spaces and confirmed snapshots', async t => {
+test('PingCode design and test sources use fixed service, accessible spaces and confirmed snapshots', async t => {
   const paths = [];
   const sourceServer = http.createServer((req, res) => {
     paths.push(req.url);
     res.setHeader('content-type', 'application/json');
     const pageId = req.url.split('/')[6];
+    const spaceKey = req.url.split('/')[4];
+    if (spaceKey === 'denied') { res.writeHead(403); res.end('secret-provider-detail'); return; }
     if (pageId === 'missing') { res.writeHead(404); res.end('secret-provider-detail'); return; }
     res.end(JSON.stringify({
       content: pageId === 'large' ? '字'.repeat(600) : `# ${pageId}\n已授权的文档正文。`,
-      title: `文档 ${pageId}`, spaceKey: 'space1', pageId: pageId === 'wrong' ? 'other' : pageId,
-      sourceVersion: 'v7', originalUrl: `https://pingcode.example/wiki/spaces/space1/pages/${pageId}`,
+      title: `文档 ${pageId}`, spaceKey, pageId: pageId === 'wrong' ? 'other' : pageId,
+      sourceVersion: 'v7', originalUrl: `https://pingcode.example/wiki/spaces/${spaceKey}/pages/${pageId}`,
     }));
   });
   await new Promise(resolve => sourceServer.listen(0, '127.0.0.1', resolve));
@@ -1294,13 +1318,20 @@ test('PingCode design and test sources use fixed service, allowed spaces and con
   assert.equal(urlDoc.status, 201);
   assert.equal(urlDoc.body.data.sourceType, 'url');
   assert.equal(urlDoc.body.data.content, design.body.data.content);
-  assert.equal((await post({ sourceType: 'url', locator: 'https://pingcode.example/wiki/spaces/other/pages/design1' })).status, 403);
+  const otherUrl = await post({ sourceType: 'url', locator: 'https://pingcode.example/wiki/spaces/other/pages/design1' });
+  assert.equal(otherUrl.status, 201, JSON.stringify(otherUrl.body));
+  assert.equal(otherUrl.body.data.spaceKey, 'other');
+  const otherDesign = await post({ sourceType: 'pingcode-design', locator: 'other/design1' });
+  assert.equal(otherDesign.status, 201, JSON.stringify(otherDesign.body));
+  assert.equal(otherDesign.body.data.spaceKey, 'other');
   assert.equal((await post({ sourceType: 'url', locator: 'https://pingcode.example/other' })).status, 403);
   assert.equal((await post({ sourceType: 'url', locator: 'https://pingcode.example/wiki/spaces/space1/pages/design1?ticket=x' })).status, 403);
   const before = paths.length;
-  assert.equal((await post({ sourceType: 'pingcode-design', locator: 'other/design1' })).status, 403);
   assert.equal((await post({ sourceType: 'pingcode-design', locator: 'space1/../page' })).status, 400);
-  assert.equal(paths.length, before, '越界请求不能进入资料服务');
+  assert.equal(paths.length, before, '非法路径不能进入资料服务');
+  const denied = await post({ sourceType: 'pingcode-design', locator: 'denied/design1' });
+  assert.equal(denied.status, 502);
+  assert.ok(!JSON.stringify(denied.body).includes('secret-provider-detail'));
   for (const [pageId, status] of [['missing', 502], ['wrong', 502], ['large', 413]]) {
     const result = await post({ sourceType: 'pingcode-design', locator: `space1/${pageId}` });
     assert.equal(result.status, status, JSON.stringify(result.body));
@@ -1311,7 +1342,7 @@ test('PingCode design and test sources use fixed service, allowed spaces and con
   assert.equal(created.status, 202, JSON.stringify(created.body));
   assert.deepEqual(modelPayload.sources.map(item => item.sourceType), ['pingcode-design', 'pingcode-test']);
   assert.equal(modelPayload.sources[0].content, design.body.data.content);
-  assert.ok(paths.every(value => /^\/api\/pingcode\/spaces\/space1\/pages\/[A-Za-z0-9_-]+\/reference\?include_images=true$/.test(value)));
+  assert.ok(paths.every(value => /^\/api\/pingcode\/spaces\/(space1|other|denied)\/pages\/[A-Za-z0-9_-]+\/reference\?include_images=true$/.test(value)));
   const browser = await require('playwright').chromium.launch({ headless: true });
   t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
@@ -1329,16 +1360,16 @@ test('PingCode design and test sources use fixed service, allowed spaces and con
     window.addEventListener('knowledge-center:permission-denied', () => window.permissionDeniedCount++);
   });
   assert.equal(await page.locator('[data-ai-source-locator]').getAttribute('placeholder'), 'PingCode 页面网址或空间标识/页面ID');
-  assert.match(await page.locator('[data-ai-source-info]').textContent(), /space1/);
+  assert.match(await page.locator('[data-ai-source-info]').textContent(), /当前账号有权访问的空间页面/);
   await page.locator('[data-ai-source-locator]').fill('design1');
   await page.locator('[data-ai-source-preview]').click();
   await page.waitForFunction(() => document.querySelector('[data-ai-source-info]').textContent.includes('资料读取失败'));
   assert.match(await page.locator('[data-ai-source-info]').textContent(), /空间标识\/页面ID/);
   assert.equal(await page.locator('[data-ai-execution]').isVisible(), false);
-  await page.locator('[data-ai-source-locator]').fill('other/design1');
+  await page.locator('[data-ai-source-locator]').fill('denied/design1');
   await page.locator('[data-ai-source-preview]').click();
-  await page.waitForFunction(() => document.querySelector('[data-ai-source-info]').textContent.includes('引用范围'));
-  assert.equal(await page.evaluate(() => window.permissionDeniedCount), 0, '资料范围限制不能误报账号权限');
+  await page.waitForFunction(() => document.querySelector('[data-ai-source-info]').textContent.includes('资料读取失败'));
+  assert.equal(await page.evaluate(() => window.permissionDeniedCount), 0, '远端资料拒绝不能误报平台账号权限');
   assert.equal(await page.locator('[data-ai-execution]').isVisible(), false);
   await page.locator('[data-ai-source-locator]').fill('space1/design1');
   await page.locator('[data-ai-source-preview]').click();
@@ -1363,7 +1394,7 @@ test('PingCode design and test sources use fixed service, allowed spaces and con
   fs.mkdirSync(reportRoot, { recursive: true });
   await page.screenshot({ path: path.join(reportRoot, 'source-preview.png'), fullPage: true });
   fs.writeFileSync(path.join(reportRoot, 'result.json'), JSON.stringify({ realHTTP: true, realBrowser: true, realExternalPingCode: false,
-    sourceTypes: ['pingcode-design', 'pingcode-test'], checked: ['fixed service path', 'space allowlist', 'invalid locator', 'failed read', 'page mismatch', 'content size limit', 'frozen model sources', 'browser preview and explicit confirmation'],
+    sourceTypes: ['pingcode-design', 'pingcode-test'], checked: ['fixed service path', 'accessible spaces', 'remote access denied', 'invalid locator', 'failed read', 'page mismatch', 'content size limit', 'frozen model sources', 'browser preview and explicit confirmation'],
   }, null, 2));
 });
 

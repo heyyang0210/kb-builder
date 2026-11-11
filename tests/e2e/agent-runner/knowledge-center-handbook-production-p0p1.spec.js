@@ -49,18 +49,18 @@ test.describe('手册级文档生成页面 P0/P1', () => {
     if (!outline) return;
     const names = ['网页来源', 'Pingcode设计文档', 'Pingcode测试文档', '知识库（MCP）', '测试用例集', '本地文档'];
     await page.goto(`${baseUrl}/knowledge-center/production/handbook/${encodeURIComponent(outline.handbookId)}`, { waitUntil: 'domcontentloaded' });
-    const sourceResponse = page.waitForResponse(response => response.url().includes('/ai-sources?') && response.request().method() === 'GET');
     await page.getByRole('button', { name: 'AI 辅助写作', exact: true }).click();
+    await page.locator('[data-ai-settings-open]').click();
+    await expect(page.locator('[data-ai-settings-panel]')).toBeVisible();
+    await page.locator('[data-ai-settings-apply]').click();
+    await expect(page.locator('[data-ai-settings-panel]')).toBeHidden();
+    const sourceResponse = page.waitForResponse(response => response.url().includes('/ai-sources?') && response.request().method() === 'GET');
+    await page.locator('[data-ai-source-add]').click();
     const response = await sourceResponse;
     expect(response.ok()).toBeTruthy();
     const catalog = (await response.json()).data;
     expect(catalog.items.map(item => item.name)).toEqual(names);
     expect(catalog.items.find(item => item.sourceType === 'knowledge-mcp').automatic).toBe(true);
-    await page.locator('[data-ai-settings-open]').click();
-    await expect(page.locator('[data-ai-settings-panel]')).toBeVisible();
-    await page.locator('[data-ai-settings-apply]').click();
-    await expect(page.locator('[data-ai-settings-panel]')).toBeHidden();
-    await page.locator('[data-ai-source-add]').click();
     await expect(page.locator('[data-ai-reference-panel]')).toBeVisible();
     await expect(page.locator('[data-ai-reference-panel] [data-reference-type]')).toHaveText([
       'Pingcode设计文档', 'Pingcode测试文档', '测试用例集', '网页来源', '知识库（MCP）', '本地文档',
@@ -68,7 +68,7 @@ test.describe('手册级文档生成页面 P0/P1', () => {
     await page.locator('[data-reference-type="knowledge-mcp"]').click();
     await expect(page.locator('[data-ai-reference-panel] [data-ai-source-locator]')).toBeHidden();
     await expect(page.locator('[data-ai-reference-panel] [data-ai-source-preview]')).toBeDisabled();
-    await expect(page.locator('[data-ai-reference-panel] [data-ai-mcp-status]')).toContainText('默认');
+    await expect(page.locator('[data-ai-reference-panel] [data-ai-mcp-status]')).toContainText('按预设策略检索');
   });
 
   test('P0：局域网 HTTP 缺少 Web Crypto 时仍可生成正确基线摘要', async ({ page }) => {
@@ -426,7 +426,7 @@ test.describe('手册级文档生成页面 P0/P1', () => {
     await page.locator('.handbook-more-menu > summary').click();
     await page.keyboard.press('Escape');
     expect(await canvas.evaluate(element => element === window.__handbookCanvasBeforeDrawer)).toBeTruthy();
-    await page.getByRole('link', { name: '返回知识资产', exact: true }).click();
+    await page.getByRole('link', { name: '返回进入位置', exact: true }).first().click();
     await expect(page.locator('#app-shell')).not.toHaveClass(/sidebar-collapsed/);
   });
 

@@ -24,13 +24,27 @@ function createAgentGovernance(options = {}) {
       reasoningEffort: 'medium', model: manager.getModelConfigSync() || {}, mcp: await manager.getMCPConfig() || {} }],
     defaultAgentId: 'builtin-default' };
   }
+  function newDshAgent() {
+    return { id: 'dsh-admin-trial', name: 'DeepSeek Harness', executor: 'deepseek', enabled: false,
+      reasoningEffort: 'medium', model: { services: [], defaultSelection: null }, mcp: { services: [] } };
+  }
+  async function ensureDshAgent() {
+    return serialized(async () => {
+      const config = await current();
+      if (config.agents.some(agent => agent.executor === 'deepseek')) return config;
+      if (config.agents.length >= limits().maxAgents) fail('AGENT_CONFIG_CAPACITY', 'Agent 数量已达上限，无法自动加入 DSH 试运行项', 409);
+      const migrated = { ...config, agents: [...config.agents, newDshAgent()] };
+      await manager.save('agent-services', migrated);
+      return stable(migrated);
+    });
+  }
   function metadata(agent) {
     return { id: agent.id, name: agent.name, executor: agent.executor, enabled: agent.enabled !== false,
       reasoningEffort: agent.reasoningEffort || 'medium', modelCount: (agent.model?.services || []).reduce((n, service) => n + (service.models?.length || 0), 0),
       mcpCount: agent.mcp?.services?.length || (agent.mcp?.server_url ? 1 : 0) };
   }
   async function get() {
-    const config = await current();
+    const config = await ensureDshAgent();
     return { agents: config.agents.map(metadata), defaultAgentId: config.defaultAgentId, rowVersion: digest(config) };
   }
   function validate(input, old) {
@@ -48,9 +62,15 @@ function createAgentGovernance(options = {}) {
       const id = previous?.id || `agent-${crypto.randomUUID()}`;
       if (ids.has(id) || names.has(item.name.trim())) fail('AGENT_CONFIG_INVALID', 'Agent 名称或标识不能重复');
       ids.add(id); names.add(item.name.trim());
-      return { ...previous, id, name: item.name.trim(), executor: item.executor, enabled: item.enabled !== false,
-        reasoningEffort: item.reasoningEffort || 'medium', model: structuredClone(previous?.model || inherited?.model || { services: [], defaultSelection: null }), mcp: structuredClone(previous?.mcp || inherited?.mcp || { services: [] }) };
+      const emptyDshModel = { services: [], defaultSelection: null };
+      const emptyDshMcp = { services: [] };
+      return { ...previous, id, name: item.name.trim(), executor: item.executor, enabled: item.executor === 'deepseek' ? false : item.enabled !== false,
+        reasoningEffort: item.reasoningEffort || 'medium', model: structuredClone(previous?.model || (item.executor === 'deepseek' ? emptyDshModel : inherited?.model || emptyDshModel)),
+        mcp: structuredClone(previous?.mcp || (item.executor === 'deepseek' ? emptyDshMcp : inherited?.mcp || emptyDshMcp)) };
     });
+    const existingDsh = old.agents.find(agent => agent.executor === 'deepseek');
+    if (existingDsh && !agents.some(agent => agent.executor === 'deepseek')) agents.push(structuredClone(existingDsh));
+    if (agents.filter(agent => agent.executor === 'deepseek').length > 1) fail('AGENT_DSH_DUPLICATE', '管理员试运行列表中只能保留一套 DSH Agent');
     const defaultAgentId = input.defaultAgentId && agents.find(a => a.id === input.defaultAgentId && a.enabled && a.executor !== 'deepseek')?.id;
     if (!defaultAgentId) fail('AGENT_DEFAULT_INVALID', '请选择已启用的默认 Agent');
     return { agents, defaultAgentId };
@@ -61,15 +81,17 @@ function createAgentGovernance(options = {}) {
     return task;
   }
   async function save(input, expected, actorId) {
-    return serialized(async () => {
+    await ensureDshAgent();
+    await serialized(async () => {
       const config = await current();
       if (String(expected || '').replace(/^"|"$/g, '') !== digest(config)) fail('AGENT_CONFIG_CONFLICT', 'Agent 配置已变化，请重新加载', 409);
       const next = validate(input, config);
       await manager.save('agent-services', { ...config, ...next, updatedAt: new Date().toISOString(), updatedBy: actorId });
-      return get();
     });
+    return get();
   }
   async function agent(id) {
+    await ensureDshAgent();
     const config = await current();
     const selected = config.agents.find(item => item.id === id);
     if (!selected) fail('AGENT_NOT_FOUND', 'Agent 不存在', 404);
@@ -107,7 +129,7 @@ function createAgentGovernance(options = {}) {
     return mcpCache.get(id);
   }
   async function available() {
-    const config = await current();
+    const config = await ensureDshAgent();
     const options = config.agents.filter(a => a.enabled && a.executor !== 'deepseek').flatMap(a => models(a.id).available().options.map(option => ({ ...option, agentId: a.id, executor: a.executor, agentName: a.name, agentConfigVersion: digest(a) })));
     const defaultAgent = config.agents.find(a => a.id === config.defaultAgentId);
     const preferred = defaultAgent && models(defaultAgent.id).available().defaultSelection;

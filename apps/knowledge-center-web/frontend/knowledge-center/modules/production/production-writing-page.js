@@ -3,6 +3,7 @@ import { enhanceSearchableSelects, syncSearchableSelect, cleanupSearchableSelect
 import { writingChanges, assembleWritingChanges } from './writing-changes.js';
 import { retainWritingSelection } from './writing-selection.js';
 import { loadProductionModels, startHandbookAI, loadHandbookAI, loadHandbookAIHistory, actHandbookAI, loadHandbookAISources, previewHandbookAISource, uploadHandbookAISource, loadHandbookAISkills, runHandbookQuality } from '../../common/api/handbook-production-api.js';
+import { createAIConversationTools } from './production-chat-evidence.js';
 import { renderProductionProvenance } from './production-provenance.js';
 import { Marked } from '../../common/vendor/marked.esm.js';
 import { observeRepositoryImages, repositoryImageURL } from '../../common/markdown/repository-images.js';
@@ -337,7 +338,12 @@ export function openProductionWritingPage(options) {
   viewCandidate.onclick = () => { find('candidate').focus({ preventScroll: true }); find('candidate').scrollIntoView({ block: 'start' }); };
   conversation.dataset.scrollRegion = 'panel';
   conversation.tabIndex = 0;
-  conversation.append(recommendation, find('history'), requestMessage, find('execution'), viewCandidate);
+  const currentAnswer = document.createElement('article'); currentAnswer.className = 'handbook-writing-current-answer'; currentAnswer.hidden = true;
+  conversation.append(recommendation, find('history'), requestMessage, find('execution'), currentAnswer, viewCandidate);
+  const chatTools = createAIConversationTools({ host: dialog.querySelector('.handbook-writing-layout'), conversation, context,
+    getCurrentJob: () => job, openHistory: id => openHistoryItem(id),
+    onDeleted: id => { if (job?.jobId === id) { resetCandidate(); currentAnswer.hidden = true; } void refreshHistory(); },
+    notify: message => status(message), });
   const documentSurface = dialog.querySelector('.handbook-writing-document');
   const documentScroll = document.createElement('div');
   documentScroll.className = 'handbook-writing-document-scroll';
@@ -760,18 +766,8 @@ export function openProductionWritingPage(options) {
   const historyStatusNames = { queued: '等待执行', running: '生成中', completed: '已完成', failed: '生成失败', cancelled: '已中断', interrupted: '已中断' };
   function renderHistory(items = []) {
     const panel = find('history'); const list = find('history-list');
-    panel.hidden = !items.length; list.replaceChildren();
-    if (!items.length) { const empty = document.createElement('p'); empty.className = 'handbook-writing-history-empty'; empty.textContent = '本篇文档还没有生成记录'; list.append(empty); return; }
-    for (const item of [...items].sort((a, b) => String(a.createdAt || '').localeCompare(String(b.createdAt || '')))) {
-      const turn = document.createElement('article'); turn.className = 'handbook-writing-history-turn';
-      const prompt = document.createElement('p'); prompt.className = 'handbook-writing-request'; prompt.textContent = item.requirements || historyOperationNames[item.operation] || 'AI 写作';
-      turn.append(prompt);
-      const button = document.createElement('button'); button.type = 'button'; button.className = 'handbook-writing-history-item'; button.dataset.jobId = item.jobId;
-      const title = document.createElement('strong'); title.textContent = historyOperationNames[item.operation] || 'AI 写作';
-      const meta = document.createElement('span'); meta.textContent = `${historyStatusNames[item.status] || item.status} · ${item.createdAt ? new Date(item.createdAt).toLocaleString('zh-CN') : '时间未知'}`;
-      const detail = document.createElement('small'); detail.textContent = '查看本次结果与执行过程';
-      button.append(title, meta, detail); button.onclick = () => openHistoryItem(item.jobId); turn.append(button); list.append(turn);
-    }
+    const older = items.filter(item => item.jobId !== job?.jobId);
+    panel.hidden = !older.length; chatTools.renderHistory(older, list);
   }
   async function refreshHistory() {
     try { renderHistory(await loadHandbookAIHistory(context)); } catch (_) { /* 历史记录不应阻断当前写作 */ }
@@ -784,7 +780,7 @@ export function openProductionWritingPage(options) {
       original = value.originalMarkdown; editVersion = value.editVersion; range = value.range || { start: 0, end: original.length };
       find('original').value = original; if (!reuseEditor) writingEditor?.setValue(original); find('operation').value = normalizeOperation(value.operation); find('requirements').value = value.requirements || '';
       restoreReferences(value);
-      rangeLabel(); showJob(value); status(`已打开 ${historyOperationNames[value.operation] || 'AI 写作'}历史记录`);
+      rangeLabel(); showJob(value); void refreshHistory(); status(`已打开 ${historyOperationNames[value.operation] || 'AI 写作'}历史记录`);
     } catch (error) { status(`历史记录打开失败：${error.message}`); }
     finally { busy = false; controls(); }
   }
@@ -797,6 +793,9 @@ export function openProductionWritingPage(options) {
     }
     const newlyCompleted = value.status === 'completed' && (job?.jobId !== value.jobId || job?.status !== 'completed');
     job = value;
+    requestMessage.textContent = value.requirements || historyOperationNames[value.operation] || 'AI 写作';
+    requestMessage.hidden = false;
+    chatTools.renderCurrent(value, currentAnswer);
     renderExecution(value);
     const selection = value.modelSelection || value.metadata?.modelSelection;
     find('used-skills').textContent = value.skillSnapshots?.length
@@ -973,7 +972,7 @@ export function openProductionWritingPage(options) {
     find('source-locator').placeholder = pingcode ? 'PingCode 页面网址或空间标识/页面ID' : type === 'url' ? '输入 HTTP(S) 网页地址' : '输入文档标识或文件名';
     find('source-locator').setAttribute('aria-describedby', 'writing-source-info');
     find('source-info').id = 'writing-source-info';
-    sourceStatus(pingcode ? `请填写 PingCode 页面网址或“空间标识/页面ID”。可引用空间：${sourceCatalog?.pingcodeSpaces?.join('、') || '尚未配置'}`
+    sourceStatus(pingcode ? '请填写 PingCode 页面网址或“空间标识/页面ID”。可读取当前账号有权访问的空间页面。'
       : type === 'url' ? (sourceCatalog?.allowPublicWeb ? '支持公开网页、Markdown 和纯文本地址；读取后预览并确认引用。' : '支持管理员配置的网页文献来源。')
         : type === 'local-document' ? '上传后解析正文并加入引用列表；扫描PDF需先转换为可提取文字的文档。' : type === 'test-case-library' ? '请填写测试用例库内的 Markdown、SQL 或文本文件名。' : '按写作要求检索知识库，无需填写地址。可移除本次引用，也可重新添加。');
   }
@@ -1044,8 +1043,9 @@ export function openProductionWritingPage(options) {
       reusedToolbarPlaceholder?.replaceWith(reusedToolbar);
       if (reusedFormat) reusedFormat.hidden = reusedFormatHidden;
       reusedEditorPlaceholder?.replaceWith(options.reuseEditorElement);
-    } else writingEditor?.destroy();
-    writingEditor = null; writingEditorReady = false;
+    } else if (writingEditorReady) writingEditor?.destroy();
+    if (reuseEditor || writingEditorReady) writingEditor = null;
+    writingEditorReady = false;
     document.removeEventListener('selectionchange', trackSelection); richSelection.dispose();
     window.removeEventListener('popstate', onHistory, true);
     window.removeEventListener('resize', resizeOriginal); window.removeEventListener('resize', sizeWorkspace);
@@ -1120,7 +1120,7 @@ export function openProductionWritingPage(options) {
   }
   for (const event of ['select', 'keyup', 'pointerup']) find('original').addEventListener(event, trackMarkdownSelection);
   document.addEventListener('selectionchange', trackSelection);
-  function resetCandidate() { clearInterval(feedbackTimer); feedbackJob = null; job = null; fallbackCandidate = null; pendingStart = null; remember(null); find('candidate').hidden = true; dialog.classList.remove('is-reviewing'); find('format').hidden = false; setWritingMode(writingMode, false); reviewSegments = []; qualityReportId = null; find('quality-result').textContent = ''; controls(); }
+  function resetCandidate() { clearInterval(feedbackTimer); feedbackJob = null; job = null; fallbackCandidate = null; pendingStart = null; remember(null); find('candidate').hidden = true; currentAnswer.hidden = true; requestMessage.hidden = true; dialog.classList.remove('is-reviewing'); find('format').hidden = false; setWritingMode(writingMode, false); reviewSegments = []; qualityReportId = null; find('quality-result').textContent = ''; controls(); }
   find('operation').onchange = () => {
     resetCandidate();
     pendingStart = null;
@@ -1421,7 +1421,15 @@ export function openProductionWritingPage(options) {
       mode: 'wysiwyg', lang: 'zh_CN', value: original, minHeight: 450,
       cache: { enable: false }, toolbar: ['headings', 'bold', 'italic', '|', 'list', 'ordered-list', 'check', '|', 'link', 'table', '|', 'undo', 'redo'],
       input: value => editOriginal(value),
-      after: () => { if (!closed) { writingEditorReady = true; const toolbar = find('rich-editor').querySelector('.vditor-toolbar'); if (embedded && toolbar) documentSurface.prepend(toolbar); if (writingEditor.getValue() !== original) writingEditor.setValue(original); setWritingMode(preferredWritingMode, false); mountWritingPage(); options.trigger?.removeAttribute('aria-busy'); controls(); } },
+      after: () => {
+        if (closed) { writingEditor?.destroy(); writingEditor = null; return; }
+        writingEditorReady = true;
+        const toolbar = find('rich-editor').querySelector('.vditor-toolbar');
+        if (embedded && toolbar) documentSurface.prepend(toolbar);
+        if (writingEditor.getValue() !== original) writingEditor.setValue(original);
+        setWritingMode(preferredWritingMode, false); mountWritingPage();
+        options.trigger?.removeAttribute('aria-busy'); controls();
+      },
     });
   }).catch(() => { if (!closed) { options.trigger?.removeAttribute('aria-busy'); writingMode = 'markdown'; mountWritingPage(); status('富文本编辑器暂不可用，可继续使用 Markdown 正文。'); } });
   if (!options.loadEditor && !reuseEditor) { writingMode = 'markdown'; mountWritingPage(); }

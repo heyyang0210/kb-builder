@@ -106,7 +106,8 @@ function createCodexRunner(options = {}) {
         if (message.type === 'result') finish(null, message.value);
         if (message.type === 'error') finish(new Error(message.message));
       });
-      worker.on('exit', code => finish(new Error(`Codex Worker 中断（${code}）`)));
+      // Wait for IPC to drain before treating a missing terminal message as interruption.
+      worker.on('close', code => finish(new Error(`Codex Worker 中断（${code}）`)));
       worker.send({ type: 'run', task: { messages, workspace: path.join(directory, 'workspace'), home: path.join(directory, 'codex-home'),
         config: { ...modelConfig, api_key: modelConfig.api_key }, rules } });
     });

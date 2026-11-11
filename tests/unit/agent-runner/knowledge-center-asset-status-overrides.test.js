@@ -44,7 +44,7 @@ describe('数据库模式知识资产状态覆盖', () => {
     fs.rmSync(fixtureRoot, { recursive: true, force: true });
   });
 
-  async function startHandler(stores) {
+  async function startHandler(stores, session = { user: { id: 'admin' }, roles: ['PLATFORM_ADMIN'], allowedActions: ['platform:manage', 'knowledge:read'] }, authUsers = []) {
     const templatePath = path.join(fixtureRoot, 'template.xlsx');
     const samplePath = path.join(fixtureRoot, 'sample.xlsx');
     fs.writeFileSync(templatePath, 'template');
@@ -66,7 +66,7 @@ describe('数据库模式知识资产状态覆盖', () => {
         brandIconStore: {},
         domainStore: { readTechDomains: () => ({ techDomains: [] }), readPlatformGitLabMappingAsync: async () => null, ...stores.domainStore },
       },
-      moduleRegistry: { get: () => ({ authorize: async () => ({ user: { id: 'admin' }, roles: ['PLATFORM_ADMIN'], allowedActions: ['platform:manage', 'knowledge:read'] }) }) },
+      moduleRegistry: { get: () => ({ authorize: async () => session, repository: { listUsers: async () => authUsers } }) },
       sendFile(_file, res) { res.writeHead(404); res.end(); },
       proxyAuth() {},
       proxyCleaning() {},
@@ -242,4 +242,186 @@ describe('数据库模式知识资产状态覆盖', () => {
     expect(knowledgeAssetsStore.value().handbooks[0].archivedAt).toBeNull();
     expect(knowledgeAssetsStore.value().audits.map(entry => entry.action)).toEqual(['ASSET_UPDATED', 'ASSET_ARCHIVED', 'ASSET_RESTORED']);
   });
+  function editableAssets() {
+    return jsonStore({ version: 1, handbooks: [{
+      handbookId: 'DB-001', productId: 'db', productName: 'DB', name: '公开接口手册',
+      assetVersion: 4, ownerA: { principalId: 2, displayName: '甲' },
+      ownerB: { principalId: 3, displayName: '乙' },
+      manualStatus: { value: 'content_building', reason: '原人工判断' },
+      outline: { bindingStatus: 'not_created' }, documentSummary: { runningTasks: 0 },
+    }], audits: [] });
+  }
+
+  async function sendAsset(pathname, method, body) {
+    return fetch(`${baseUrl}/knowledge-center/api/assets/${pathname}`, {
+      method, headers: { 'content-type': 'application/json' },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+  }
+
+  test.each([
+    ['handbooks', 'DELETE'],
+    ['handbooks/DB-001', 'POST'],
+    ['handbooks/DB-001', 'DELETE'],
+    ['handbooks/DB-001/archive', 'PATCH'],
+    ['handbooks/DB-001/restore', 'GET'],
+    ['handbooks/DB-001/status', 'GET'],
+    ['handbooks/DB-001/status/resolve', 'PUT'],
+  ])('%s 拒绝未支持的 %s 且不写入', async (pathname, method) => {
+    process.env.KNOWLEDGE_STORAGE_MODE = 'file';
+    const store = editableAssets();
+    await startHandler({ knowledgeAssetsStore: store });
+    const before = structuredClone(store.value());
+    const response = await sendAsset(pathname, method);
+    expect(response.status).toBe(405);
+    expect(await response.text()).toBe('');
+    expect(store.value()).toEqual(before);
+    expect(store.write).not.toHaveBeenCalled();
+  });
+
+  test.each([
+    ['handbooks', 'POST'],
+    ['handbooks/DB-001', 'PATCH'],
+    ['handbooks/DB-001/status', 'POST'],
+    ['handbooks/DB-001/status/resolve', 'POST'],
+    ['catalog/DB-001', 'PATCH'],
+  ])('普通阅读用户不能通过 %s %s 修改资产', async (pathname, method) => {
+    process.env.KNOWLEDGE_STORAGE_MODE = 'file';
+    const store = editableAssets();
+    await startHandler({ knowledgeAssetsStore: store }, {
+      user: { id: 'reader' }, roles: ['KNOWLEDGE_READER'], allowedActions: ['knowledge:read'],
+    });
+    const response = await sendAsset(pathname, method, { expectedVersion: 4 });
+    expect(response.status).toBe(403);
+    expect((await response.json()).success).toBe(false);
+    expect(store.write).not.toHaveBeenCalled();
+    expect(store.value().handbooks[0].assetVersion).toBe(4);
+  });
+
+  test.each([
+    [null, 'A 角为必填项'],
+    ['', 'A 角为必填项'],
+    ['手工输入的责任人', '责任人必须从人员列表中选择'],
+    [{ id: 2, displayName: ' ' }, '责任人信息不完整，请重新选择'],
+    [{ id: 1.5, displayName: '甲' }, '责任人信息不完整，请重新选择'],
+  ])('创建拒绝无效 A 角 %j，保留原资产与审计', async (ownerA, message) => {
+    process.env.KNOWLEDGE_STORAGE_MODE = 'file';
+    const store = editableAssets();
+    await startHandler({ knowledgeAssetsStore: store });
+    const response = await sendAsset('handbooks', 'POST', { productId: 'db', name: '新建', ownerA });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: { code: 'ASSET_CREATE_FAILED', message } });
+    expect(store.write).not.toHaveBeenCalled();
+    expect(store.value().handbooks).toHaveLength(1);
+    expect(store.value().audits).toEqual([]);
+  });
+
+  test('旧 catalog PATCH 兼容 userId 责任人并允许清空可选 B 角', async () => {
+    process.env.KNOWLEDGE_STORAGE_MODE = 'file';
+    const store = editableAssets();
+    await startHandler({ knowledgeAssetsStore: store });
+    const response = await sendAsset('catalog/DB-001', 'PATCH', {
+      expectedVersion: 4, name: ' 兼容更新 ', ownerA: { userId: 8, displayName: ' 新甲 ' }, ownerB: '',
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ data: {
+      name: '兼容更新', assetVersion: 5, ownerA: { principalId: 8, displayName: '新甲' }, ownerB: null,
+    } });
+    expect(store.value().audits).toEqual([expect.objectContaining({
+      action: 'ASSET_UPDATED', handbookId: 'DB-001', operatorId: 'admin',
+      details: expect.objectContaining({ after: expect.objectContaining({ ownerB: null }) }),
+    })]);
+    const listed = await sendAsset('handbooks', 'GET');
+    expect((await listed.json()).data.items[0]).toMatchObject({ name: '兼容更新', assetVersion: 5, ownerB: null });
+  });
+
+  test.each([
+    [{ expectedVersion: 3, action: 'keep_manual', reason: '仍采用人工判断' }, 409, 'ASSET_VERSION_CONFLICT'],
+    [{ expectedVersion: 4, action: 'unknown' }, 400, 'ASSET_STATUS_RESOLUTION_INVALID'],
+    [{ expectedVersion: 4 }, 400, 'ASSET_STATUS_RESOLUTION_INVALID'],
+    [{ expectedVersion: 4, action: 'keep_manual', reason: '  ' }, 400, 'STATUS_REASON_REQUIRED'],
+  ])('冲突处理拒绝 %j 后允许使用当前版本重试', async (body, status, code) => {
+    process.env.KNOWLEDGE_STORAGE_MODE = 'file';
+    const store = editableAssets();
+    await startHandler({ knowledgeAssetsStore: store });
+    const response = await sendAsset('handbooks/DB-001/status/resolve', 'POST', body);
+    expect(response.status).toBe(status);
+    expect(await response.json()).toMatchObject({ error: { code } });
+    expect(store.write).not.toHaveBeenCalled();
+    const retry = await sendAsset('handbooks/DB-001/status/resolve', 'POST', {
+      expectedVersion: 4, action: 'keep_manual', reason: '  经核实保留人工状态  ',
+    });
+    expect(retry.status).toBe(200);
+    expect(await retry.json()).toMatchObject({ data: { status: 'content_building', manualStatus: 'content_building', assetVersion: 5 } });
+    expect(store.value().handbooks[0].manualStatus).toMatchObject({
+      value: 'content_building', reason: '经核实保留人工状态', updatedBy: 'admin', acknowledgedSystemStatus: 'asset_created',
+    });
+    expect(store.value().audits).toEqual([expect.objectContaining({
+      action: 'ASSET_STATUS_CONFLICT_RESOLVED', details: expect.objectContaining({ action: 'keep_manual', before: 'content_building', after: 'content_building' }),
+    })]);
+    const listed = await sendAsset('handbooks', 'GET');
+    expect((await listed.json()).data.items[0]).toMatchObject({ status: 'content_building', assetVersion: 5 });
+  });
+
+  test('不存在的手册不能执行状态冲突处理或归档', async () => {
+    process.env.KNOWLEDGE_STORAGE_MODE = 'file';
+    const store = editableAssets();
+    await startHandler({ knowledgeAssetsStore: store });
+    for (const pathname of ['handbooks/missing/status/resolve', 'handbooks/missing/archive']) {
+      const response = await sendAsset(pathname, 'POST', { expectedVersion: 4, action: 'accept_system' });
+      expect(response.status).toBe(404);
+      expect(await response.json()).toMatchObject({ error: { code: 'ASSET_NOT_FOUND' } });
+    }
+    expect(store.write).not.toHaveBeenCalled();
+  });
+
+  test.each([
+    ['documents/doc/quality', 'PUT', 'GET, POST'],
+    ['documents/doc/quality/report-1', 'POST', 'GET, POST'],
+    [`documents/doc/ai-sources/images/${'a'.repeat(64)}`, 'DELETE', 'GET'],
+    ['documents/doc/ai-sources', 'PATCH', 'GET, POST'],
+    ['documents/doc/ai-sources/uploads', 'GET', 'POST'],
+    ['documents/doc/ai-jobs', 'PUT', 'GET, POST, DELETE'],
+    ['documents/doc/ai-jobs/job-1/cancel', 'GET', 'GET, POST, DELETE'],
+    ['documents/doc/draft', 'DELETE', 'GET, PUT, POST'],
+    ['documents/doc/draft/revisions', 'POST', 'GET, PUT, POST'],
+    ['documents/doc/draft/restore', 'GET', 'GET, PUT, POST'],
+    ['documents/doc/draft-attachments', 'GET', 'GET, PUT, POST'],
+    ['reviewers', 'DELETE', 'GET, PUT, POST'],
+    ['incremental-reviews', 'GET', 'GET, PUT, POST'],
+    ['review-drafts', 'POST', 'GET, PUT, POST'],
+  ])('文档生产 %s 拒绝 %s 并声明允许方法', async (suffix, method, allow) => {
+    process.env.KNOWLEDGE_STORAGE_MODE = 'file';
+    const store = editableAssets();
+    await startHandler({ knowledgeAssetsStore: store });
+    const response = await fetch(`${baseUrl}/knowledge-center/api/production/handbooks/DB-001/${suffix}`, { method });
+    expect(response.status).toBe(405);
+    expect(response.headers.get('allow')).toBe(allow);
+    expect(await response.text()).toBe('');
+    expect(store.write).not.toHaveBeenCalled();
+  });
+
+  test('审核人投影按权限与可见手册筛选并兼容人员标识和名称', async () => {
+    process.env.KNOWLEDGE_STORAGE_MODE = 'file';
+    const users = [
+      { principalId: 11, displayName: '具名审核人', roles: ['REVIEWER'], visibleHandbookIds: ['DB-001'] },
+      { id: 'admin-2', name: '平台管理员', roles: ['PLATFORM_ADMIN'] },
+      { userId: 'review-manager', loginName: 'manager', allowedActions: ['review:manage'] },
+      { id: 'unnamed', roles: ['REVIEWER'] },
+      { id: 'hidden', roles: ['REVIEWER'], visibleHandbookIds: ['DB-002'] },
+      { id: 'reader', roles: ['KNOWLEDGE_READER'], visibleHandbookIds: ['DB-001'] },
+      { id: 'no-access' },
+    ];
+    await startHandler({ knowledgeAssetsStore: editableAssets() }, undefined, users);
+    const response = await fetch(`${baseUrl}/knowledge-center/api/production/handbooks/DB-001/reviewers`);
+    expect(response.status).toBe(200);
+    const { data } = await response.json();
+    expect(data.items).toEqual([
+      { id: '11', displayName: '具名审核人', roles: ['REVIEWER'], handbookId: 'DB-001', disabled: false, disabledReason: null },
+      { id: 'admin-2', displayName: '平台管理员', roles: ['PLATFORM_ADMIN'], handbookId: 'DB-001', disabled: false, disabledReason: null },
+      { id: 'review-manager', displayName: 'manager', roles: [], handbookId: 'DB-001', disabled: false, disabledReason: null },
+      { id: 'unnamed', displayName: '未命名审核人', roles: ['REVIEWER'], handbookId: 'DB-001', disabled: false, disabledReason: null },
+    ]);
+  });
+
 });

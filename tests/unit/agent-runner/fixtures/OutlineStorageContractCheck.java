@@ -189,6 +189,13 @@ public final class OutlineStorageContractCheck {
             snapshotNode("child", "子项", "document", "doc", 2, 2));
         invalidNodes("INVALID_OUTLINE_ORDER_OR_LEVEL", snapshotNode("doc", "文档", "document", null, 0, 1));
         invalidNodes("INVALID_OUTLINE_ORDER_OR_LEVEL", snapshotNode("doc", "文档", "document", null, 1, 2));
+        for (String field : List.of("order", "level")) {
+            Map<String, Object> missingNumeric = snapshotNode("doc", "文档", "document", null, 1, 1);
+            missingNumeric.remove(field);
+            invalidNodes("INVALID_OUTLINE_ORDER_OR_LEVEL", missingNumeric);
+            missingNumeric.put(field, "1");
+            invalidNodes("INVALID_OUTLINE_ORDER_OR_LEVEL", missingNumeric);
+        }
         invalidNodes("INVALID_OUTLINE_ORDER_OR_LEVEL", directory, snapshotNode("doc", "文档", "document", "dir", 1, 2));
         invalidNodes("DUPLICATE_OUTLINE_PATH", directory, snapshotNode("other", "目录", "directory", null, 2, 1));
         invalidNodes("OUTLINE_DOCUMENT_REQUIRED", directory);

@@ -111,23 +111,23 @@ test('审核与发布默认入口读取真实手册工作台并支持我的审�
   await expect(root).not.toContainText('示例数据');
 });
 
-test('工作台采用风险优先的负责人信息层级', async ({ page }) => {
+test('工作台以个人待办、处理状态和任务字段组织工作', async ({ page }) => {
   await page.goto(`${baseUrl}/knowledge-center/`);
   const root = page.locator('#view-root');
-  await expect(root.getByRole('heading', { name: '风险与阻塞' })).toBeVisible();
-  await expect(root.getByRole('heading', { name: '生产完成度' })).toBeVisible();
-  await expect(root.getByRole('heading', { name: '手册完整度矩阵' })).toBeVisible();
-  await expect(root.getByRole('heading', { name: '关键状态泳道' })).toBeVisible();
-  await expect(root.getByRole('heading', { name: '最近活动' })).toBeVisible();
+  await expect(root.getByRole('heading', { name: '我的工作' })).toBeVisible();
+  await expect(root.getByRole('navigation', { name: '工作类别' })).toBeVisible();
+  await expect(root.getByRole('group', { name: '处理状态' })).toBeVisible();
+  await expect(root.getByRole('button', { name: /待我处理/ })).toBeVisible();
+  await expect(root.getByRole('button', { name: /等待他人/ })).toBeVisible();
   await expect(root.getByRole('button', { name: '打印汇报' })).toHaveCount(0);
   await expect(root.getByRole('button', { name: '导出待确认' })).toHaveCount(0);
-  const headings = await root.locator('h2').evaluateAll(nodes => nodes.map(node => node.textContent.trim()));
-  expect(headings.slice(1, 6)).toEqual(['风险与阻塞', '生产完成度', '手册完整度矩阵', '关键状态泳道', '最近活动']);
+  await expect(root.getByRole('columnheader')).toHaveText(['编号', '工作项', '关联范围', '计划截止', '下一步', '详情']);
 });
 
-test('常驻刷新入口已移除且数据变更事件触发投影重读', async ({ page }) => {
+test('个人工作刷新读取真实待办且数据变更事件触发平台投影重读', async ({ page }) => {
   let overviewRequests = 0;
   let contextRequests = 0;
+  let myTaskRequests = 0;
   await page.route('**/knowledge-center/api/platform/overview', async route => {
     overviewRequests += 1;
     await route.continue();
@@ -136,9 +136,15 @@ test('常驻刷新入口已移除且数据变更事件触发投影重读', async
     contextRequests += 1;
     await route.continue();
   });
+  await page.route('**/knowledge-center/api/workbench/my-tasks/query', async route => {
+    myTaskRequests += 1;
+    await route.continue();
+  });
   await page.goto(`${baseUrl}/knowledge-center/`);
   await expect.poll(() => contextRequests).toBeGreaterThan(0);
-  await expect(page.getByRole('button', { name: '刷新', exact: true })).toHaveCount(0);
+  await expect.poll(() => myTaskRequests).toBeGreaterThan(0);
+  await page.locator('#view-root').getByRole('button', { name: '刷新', exact: true }).click();
+  await expect.poll(() => myTaskRequests).toBeGreaterThan(1);
   const initialRequests = overviewRequests;
   const initialContextRequests = contextRequests;
   await page.evaluate(async () => {
@@ -162,7 +168,7 @@ test('模块路由支持深链、刷新恢复和浏览器后退', async ({ page 
   await expect(page.locator('#view-root').getByRole('heading', { name: '知识资产' })).toBeVisible();
   await page.goto(`${baseUrl}/knowledge-center/unknown-module`);
   await expect(page).toHaveURL(`${baseUrl}/knowledge-center/`);
-  await expect(page.locator('#view-root').getByRole('heading', { name: '工作台' })).toBeVisible();
+  await expect(page.locator('#view-root').getByRole('heading', { name: '我的工作' })).toBeVisible();
 });
 
 test('全部数据不可用时显示可恢复错误且不冒充实时数据', async ({ page }) => {

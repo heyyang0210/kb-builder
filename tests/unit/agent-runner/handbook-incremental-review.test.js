@@ -196,8 +196,7 @@ test('真实 HTTP：保存 → 增量评审 → 本人审核 → 创建 MR，失
   const nextSaved = await call('PUT', draftPath, { ...context, editVersion: 1, baselineDigest: hash(oldContent), markdown: '# 后续修改', htmlSnapshot: '', attachmentIds: [] });
   assert.equal(nextSaved.status, 200); assert.equal(service.get(session, task.id).candidate.content, markdown);
   assert.equal((await call('POST', submitPath, input)).status, 409);
-  // 浏览器场景必须从真实的“已退回”任务开始，只有退回任务允许携带
-  // revisionOfTaskId 接续；已通过或已提交 MR 的任务应继续被拒绝接续。
+  // 浏览器场景从已退回任务接续；MR 关闭后的修订接续在下方独立验证。
   const browserRejectedInput = {
     ...input,
     documents: [{ ...input.documents[0], draftRevisionId: nextSaved.data.draft.currentRevisionId }],
@@ -643,7 +642,7 @@ test('真实 HTTP：保存 → 增量评审 → 本人审核 → 创建 MR，失
     assert.equal(await page.locator('[data-review-publish]').count(), 0);
     const closedTaskResponse = await call('GET', `/incremental-tasks/${revisedBatchId}`);
     assert.equal(closedTaskResponse.status, 200);
-    assert.equal(closedTaskResponse.data.completion.label, 'MR已关闭，待处理');
+    assert.equal(closedTaskResponse.data.completion.label, 'MR已关闭，需修订并重新审核');
     await page.goto(`${base}/knowledge-center/production/handbook/${context.handbookId}?documentId=browser-batch-b&branch=main`);
     await page.locator('.handbook-review-submission-status').filter({ hasText: closedTaskResponse.data.completion.label }).waitFor();
     await page.goto(`${base}/knowledge-center/production?view=tasks&taskId=${encodeURIComponent(revisedBatchId)}`);
@@ -1127,6 +1126,17 @@ test('真实 HTTP：保存 → 增量评审 → 本人审核 → 创建 MR，失
   const duplicateChild = await call('POST', submitPath, { ...revisionInput, documents: [approvedInput, furtherInput] });
   assert.equal(duplicateChild.status, 409, JSON.stringify(duplicateChild));
   assert.equal(duplicateChild.error.code, 'REVIEW_REVISION_ALREADY_CREATED');
+  service.recordMergeRequest(session, revised.id, 'closed-mr', { expectedCandidateDigest: revised.candidate.digest,
+    mergeRequest: { iid: 71, webUrl: 'https://gitlab.example.test/group/docs/-/merge_requests/71' } });
+  service.recordMergeRequestDelivery(session, revised.id, 'closed-mr-observed', { delivery: { iid: 71, state: 'closed' } });
+  const unchangedCurrent = await saveReviewDocument('revision-b', '# 已根据意见修改', 3);
+  const unchangedClosed = await call('POST', submitPath, { ...revisionInput, revisionOfTaskId: revised.id, documents: [approvedInput, unchangedCurrent] });
+  assert.equal(unchangedClosed.error.code, 'MR_CLOSED_REVISION_REQUIRED');
+  const correctedInput = await saveReviewDocument('revision-b', '# 再次编辑并补充关闭原因', 4);
+  const closedRecovery = await call('POST', submitPath, { ...revisionInput, revisionOfTaskId: revised.id, documents: [approvedInput, correctedInput] });
+  assert.equal(closedRecovery.status, 201, JSON.stringify(closedRecovery));
+  assert.equal(closedRecovery.data.tasks[0].revisionOf, revised.id);
+  assert.equal(service.get(session, revised.id).deliveryObservation.state, 'closed');
   const invalidParent = await call('POST', submitPath, { ...revisionInput, revisionOfTaskId: '' });
   assert.equal(invalidParent.status, 422);
   if (databaseCheck) {

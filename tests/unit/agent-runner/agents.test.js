@@ -201,6 +201,107 @@ describe('ValidatorAgent', () => {
 
   test('validateInput 验证 document', () => {
     expect(() => agent.validateInput({})).toThrow('document is required');
+    expect(agent.validateInput({ document: '正文' })).toBe(true);
+  });
+
+  test('质量检查消息保留冻结提示词和上下文', () => {
+    expect(agent.buildPrompt({ document: '正文', qualityReview: { prompt: '冻结规则', context: { template: '模板' } } })).toEqual([
+      { role: 'system', content: '冻结规则' },
+      { role: 'user', content: JSON.stringify({ document: '正文', template: '模板' }) }
+    ]);
+  });
+
+  test('旧验证提示词覆盖默认和显式检查标准', () => {
+    jest.spyOn(agent, 'loadPromptTemplate').mockReturnValue('');
+    const defaults = agent.buildPrompt({ document: '正文' });
+    expect(defaults[0].content).toContain(agent.getEnterpriseName());
+    expect(defaults[1].content).toContain('请验证文档质量并生成验证报告 JSON。');
+    expect(defaults[1].content).toContain('必须章节: 无特殊要求');
+    expect(defaults[1].content).toContain('SQL 验证: 否');
+    expect(defaults[1].content).toContain('最大长度: 不限');
+    agent.loadPromptTemplate.mockReturnValue('配置化提示词');
+    const explicit = agent.buildPrompt({ document: '正文', validationCriteria: { required_sections: ['概述', '示例'], sql_verification: true, min_length: 50, max_length: 1000 } });
+    expect(explicit[1].content).toContain('配置化提示词');
+    expect(explicit[1].content).toContain('必须章节: 概述, 示例');
+    expect(explicit[1].content).toContain('SQL 验证: 是');
+    expect(explicit[1].content).toContain('最小长度: 50 字');
+    expect(explicit[1].content).toContain('最大长度: 1000 字');
+  });
+
+  test('旧报告接受预解析对象和 JSON 正文，并保留最终正文', () => {
+    const input = { document: '原始正文' };
+    expect(agent.parseResponse(mockValidatorResponse, input)).toMatchObject({ passed: true, score: 95, final_document: mockValidatorResponse.parsed.final_document });
+    expect(agent.parseResponse({ content: JSON.stringify({ score: 0, passed: false, checks: [{ passed: false }], warnings: ['需修改'] }) }, input)).toMatchObject({ score: 0, passed: false, final_document: '原始正文' });
+    expect(agent.parseResponse({ parsed: { score: 99, passed: true } }, input)).toEqual({ score: 99, passed: true, final_document: '原始正文' });
+  });
+
+  test.each([
+    ['解析失败', { content: 'invalid JSON' }],
+    ['非对象', { content: 'null' }],
+    ['缺分数', { parsed: { passed: true } }],
+    ['缺结论', { parsed: { score: 100 } }],
+    ['空响应', {}],
+  ])('旧报告%s时显式返回基础检查', (_, response) => {
+    const document = '普通短文';
+    const report = agent.parseResponse(response, { document });
+    expect(report).toMatchObject({ passed: false, score: 0, final_document: document, suggestions: [] });
+    expect(report.checks).toEqual([
+      { name: 'YAML 元数据', passed: false, details: '缺少 YAML 元数据头' },
+      { name: '标题结构', passed: false, details: '共 0 个标题' },
+      { name: '代码示例', passed: false, details: '共 0 个 SQL 代码块' },
+      { name: '内容长度', passed: false, details: '文档长度 4 字' },
+    ]);
+    expect(report.warnings).toHaveLength(4);
+  });
+
+  test('生产质量调用冻结 JSON 参数；旧入口沿用基类调用', async () => {
+    const messages = [{ role: 'user', content: '正文' }];
+    await agent.callLLM(messages, { productionQuality: true, timeoutMs: 1234, maxTokens: 800 });
+    expect(agent.llmClient.chatJSON).toHaveBeenLastCalledWith(messages, { timeout_ms: 1234, max_tokens: 800, max_retries: 0, json_repair: false, temperature: 0.2 });
+    await agent.callLLM(messages);
+    expect(agent.llmClient.chatJSON).toHaveBeenCalledTimes(2);
+  });
+
+  const qualityReport = () => ({ checks: ['structure', 'template', 'expression', 'sources'].map(check => ({ check, status: 'passed', details: '已核对' })), issues: [] });
+  const qualityIssue = () => ({ check: 'expression', severity: 'warning', start: 0, end: 1, message: '问题', requirement: '修订要求' });
+
+  test.each([
+    ['缺报告', () => null],
+    ['缺检查列表', report => ({ ...report, checks: null })],
+    ['缺检查项', report => ({ ...report, checks: report.checks.slice(1) })],
+    ['缺问题列表', report => ({ ...report, issues: null })],
+    ['空检查项', report => { report.checks[0] = null; return report; }],
+    ['未知检查项', report => { report.checks[0].check = 'unknown'; return report; }],
+    ['非法状态', report => { report.checks[0].status = 'pending'; return report; }],
+    ['说明非文本', report => { report.checks[0].details = null; return report; }],
+    ['说明空白', report => { report.checks[0].details = ' '; return report; }],
+    ['失败项无问题', report => { report.checks[0].status = 'failed'; return report; }],
+  ])('生产协议拒绝%s', (_, transform) => {
+    expect(() => agent.parseResponse({ parsed: transform(qualityReport()) }, { document: 'A😀B', qualityReview: {} })).toThrow(/格式无效/);
+  });
+
+  test.each([
+    ['未知类别', { check: 'unknown' }], ['非法级别', { severity: 'error' }],
+    ['非整数起点', { start: 0.5 }], ['非整数终点', { end: 1.5 }],
+    ['负起点', { start: -1 }], ['逆向范围', { start: 3, end: 1 }],
+    ['超出正文', { end: 5 }], ['消息非文本', { message: null }], ['消息空白', { message: ' ' }],
+    ['要求非文本', { requirement: null }], ['要求空白', { requirement: ' ' }],
+    ['起点拆开代理对', { start: 2, end: 3 }], ['终点拆开代理对', { start: 0, end: 2 }],
+  ])('生产问题拒绝%s', (_, patch) => {
+    const report = qualityReport();
+    report.issues = [{ ...qualityIssue(), ...patch }];
+    expect(() => agent.parseResponse({ parsed: report }, { document: 'A😀B', qualityReview: {} })).toThrow(/格式无效/);
+  });
+
+  test('生产协议接受正文边界、空范围和失败项，并丢弃模型替换正文', () => {
+    const report = qualityReport();
+    report.checks[2].status = 'failed';
+    report.checks[3].status = 'not_executed';
+    report.issues = [{ ...qualityIssue(), severity: 'blocking', start: 0, end: 4 }, { ...qualityIssue(), start: 1, end: 3 }, { ...qualityIssue(), start: 4, end: 4 }];
+    const parsed = agent.parseResponse({ content: JSON.stringify({ ...report, final_document: '模型替换', passed: true }) }, { document: 'A😀B', qualityReview: {} });
+    expect(parsed).toEqual(report);
+    expect(parsed).not.toHaveProperty('final_document');
+    expect(parsed).not.toHaveProperty('passed');
   });
 
   test('_generateBasicReport 生成基础验证报告', () => {

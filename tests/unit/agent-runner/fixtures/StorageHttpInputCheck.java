@@ -150,13 +150,23 @@ public final class StorageHttpInputCheck {
             expect(client, base, "PUT", "/v1/records/namespace/key", "{}", Map.of("If-Match", "abc"), 400, "INVALID_REVISION");
             expect(client, base, "POST", "/v1/domain/handbooks", "{}", 405, "METHOD_NOT_ALLOWED");
             expect(client, base, "PUT", "/v1/domain/handbooks/snapshot", "[]", 400, "INVALID_JSON");
+            for (String malformed : new String[]{"[", "{\"x\":@}", "\"" + "\\", "\"\\u0\"", "\"\\q\"", "{\"x\":1e}", "{\"x\":true false}"}) {
+                expect(client, base, "PUT", "/v1/domain/handbooks/snapshot", malformed, 400, "INVALID_JSON");
+            }
             expect(client, base, "POST", "/v1/domain/principals/unsupported", "{}", 405, "METHOD_NOT_ALLOWED");
+            expect(client, base, "POST", "/v1/domain/principals", "[]", 400, "INVALID_JSON");
+            expect(client, base, "POST", "/v1/domain/principals", "  ", 422, "PERSONNEL_NAME_REQUIRED");
+            expect(client, base, "POST", "/v1/domain/principals", " ".repeat(16 * 1024 * 1024 + 1), 503, "INTERNAL_ERROR");
             expect(client, base, "POST", "/v1/domain/principals", "[]", 400, "INVALID_JSON");
             expect(client, base, "PATCH", "/v1/domain/principals/not-a-number", "{}", 404, "PERSONNEL_NOT_FOUND");
             expect(client, base, "GET", "/v1/domain/outlines/unsupported", null, 405, "METHOD_NOT_ALLOWED");
             expect(client, base, "POST", "/v1/domain/tech-domains", "{}", 405, "METHOD_NOT_ALLOWED");
             expect(client, base, "GET", "/v1/domain/build-tasks/task/items/", null, 400, "INVALID_TASK_ITEM_PATH");
             expect(client, base, "GET", "/v1/domain/build-tasks/task/items/item", null, 405, "METHOD_NOT_ALLOWED");
+            expect(client, base, "PATCH", "/v1/domain/build-tasks/task/items/item", "[", 400, "INVALID_JSON");
+            expect(client, base, "PATCH", "/v1/domain/build-tasks/task/items/item", "[]", 400, "INVALID_JSON");
+            expect(client, base, "PATCH", "/v1/domain/build-tasks//items/item", "{}", 400, "INVALID_TASK_ITEM_PATH");
+            expect(client, base, "PATCH", "/v1/domain/build-tasks/task/items/item/items/extra", "{}", 400, "INVALID_TASK_ITEM_PATH");
             expect(client, base, "POST", "/v1/domain/build-tasks/unknown", "{}", 405, "METHOD_NOT_ALLOWED");
             expect(client, base, "GET", "/v1/platform/team-groups/unknown", null, 400, "TEAM_GROUP_ID_INVALID");
             expect(client, base, "POST", "/v1/platform/team-groups", "{}", 400, "IDEMPOTENCY_KEY_REQUIRED");
@@ -178,6 +188,6 @@ public final class StorageHttpInputCheck {
             closeAll.setAccessible(true);
             closeAll.invoke(pool);
         }
-        System.out.println("PASS: 33 production storage HTTP input and routing requests");
+        System.out.println("PASS: production storage HTTP input and routing requests");
     }
 }

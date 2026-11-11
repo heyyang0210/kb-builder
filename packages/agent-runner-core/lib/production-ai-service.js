@@ -50,7 +50,7 @@ function createProductionAIService(options) {
   function getOwned(state, input, session, edit = false) {
     requireCapability(session, edit ? 'canEdit' : 'canRead');
     const job = state.aiJobs?.[String(input.jobId)];
-    if (!job || job.contextKey !== contextKey(input) || job.createdBy.id !== actor(session).id) {
+    if (!job || job.deletedAt || job.contextKey !== contextKey(input) || job.createdBy.id !== actor(session).id) {
       fail('AI_JOB_NOT_FOUND', '当前文档下不存在可访问的 AI 任务', 404);
     }
     return job;
@@ -78,14 +78,43 @@ function createProductionAIService(options) {
     const key = contextKey(input);
     const limit = Math.max(1, Number(rules().historyLimit || 30));
     return Object.values(store.read().aiJobs || {})
-      .filter(job => job.contextKey === key && job.createdBy?.id === actor(session).id)
+      .filter(job => !job.deletedAt && job.contextKey === key && job.createdBy?.id === actor(session).id)
       .sort((a, b) => Date.parse(b.createdAt || 0) - Date.parse(a.createdAt || 0))
       .slice(0, limit)
       .map(job => ({
         jobId: job.jobId, status: ['queued', 'running'].includes(job.status) && job.leaseUntil <= now() ? 'interrupted' : job.status, operation: job.operation,
         requirements: job.requirements, createdAt: job.createdAt, updatedAt: job.updatedAt,
-        adopted: !!job.adopted, eventCount: Array.isArray(job.agentEvents) ? job.agentEvents.length : 0,
+        adopted: !!job.adopted, feedback: job.userFeedback?.rating || null, eventCount: Array.isArray(job.agentEvents) ? job.agentEvents.length : 0,
       }));
+  }
+
+  function submitFeedback(input, session) {
+    const rating = input.rating == null ? null : String(input.rating);
+    const comment = String(input.comment || '').trim();
+    if (rating && !['positive', 'negative'].includes(rating)) fail('AI_FEEDBACK_INVALID', '请选择有效的评价', 422);
+    if (!rating && !comment) fail('AI_FEEDBACK_REQUIRED', '请选择评价或填写意见', 422);
+    if (comment.length > 1000) fail('AI_FEEDBACK_TOO_LONG', '意见不能超过 1000 字', 422);
+    return store.transaction(state => {
+      const job = getOwned(state, input, session, true);
+      const at = new Date(now()).toISOString();
+      job.userFeedback = { rating, comment, updatedAt: at };
+      state.audits ||= [];
+      state.audits.push({ action: 'AI_FEEDBACK_UPDATED', jobId: job.jobId, actor: actor(session), at, rating });
+      return structuredClone(job.userFeedback);
+    });
+  }
+
+  function removeHistory(input, session) {
+    return store.transaction(state => {
+      const job = getOwned(state, input, session, true);
+      if (['queued', 'running'].includes(job.status)) fail('AI_JOB_RUNNING', '请先中断正在执行的任务', 409);
+      const at = new Date(now()).toISOString();
+      job.deletedAt = at;
+      job.updatedAt = at;
+      state.audits ||= [];
+      state.audits.push({ action: 'AI_HISTORY_DELETED', jobId: job.jobId, actor: actor(session), at, adopted: !!job.adopted });
+      return { jobId: job.jobId, deletedAt: at };
+    });
   }
 
   function validate(input, config) {
@@ -759,7 +788,7 @@ function createProductionAIService(options) {
     return artifactStore.sweep(referenced, options);
   }
 
-  return { start, get, list, cancel, retry, recover, recoverOnStartup, cleanupArtifacts, adopt, sources, skills };
+  return { start, get, list, feedback: submitFeedback, removeHistory, cancel, retry, recover, recoverOnStartup, cleanupArtifacts, adopt, sources, skills };
 }
 
 module.exports = { createProductionAIService };

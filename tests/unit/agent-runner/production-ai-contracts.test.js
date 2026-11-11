@@ -1,4 +1,4 @@
-const { artifactRecord, CONTRACT_VERSION, verifyArtifactRecord, validateArtifact } = require('../../../packages/agent-runner-core/lib/production-ai-contracts');
+const { artifactRecord, CONTRACT_VERSION, envelope, verifyArtifactRecord, validateArtifact } = require('../../../packages/agent-runner-core/lib/production-ai-contracts');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -31,6 +31,51 @@ describe('文档生产阶段契约', () => {
       .toThrow(expect.objectContaining({ code: 'AI_STAGE_CONTRACT_INVALID' }));
     expect(() => validateArtifact('reviewer', { status: 'contract_valid', candidateDigest: 'bad', provenanceSegments: 0 }, job))
       .toThrow(expect.objectContaining({ code: 'AI_STAGE_CONTRACT_INVALID' }));
+  });
+
+  test('空白候选片段不能写入或恢复', () => {
+    const invalid = { fragment: ' \n\t ', provenance: [] };
+    expect(() => validateArtifact('writer', invalid, job)).toThrow(/候选片段或来源标注无效/);
+    const record = artifactRecord('writer', invalid);
+    expect(verifyArtifactRecord(record, 'writer', record.digest, job)).toBe(false);
+
+    const valid = artifactRecord('writer', { fragment: '正文', provenance: [] });
+    expect(verifyArtifactRecord(valid, 'writer', valid.digest, job)).toBe(true);
+  });
+
+  test('格式正确但不属于当前候选的审阅摘要不能恢复', () => {
+    const invalid = { status: 'contract_valid', candidateDigest: 'd'.repeat(64), provenanceSegments: 0 };
+    expect(() => validateArtifact('reviewer', invalid, job)).toThrow(/审阅产物与候选不匹配/);
+    const record = artifactRecord('reviewer', invalid);
+    expect(verifyArtifactRecord(record, 'reviewer', record.digest, job)).toBe(false);
+
+    const valid = artifactRecord('reviewer', { ...invalid, candidateDigest: job.candidateDigest });
+    expect(verifyArtifactRecord(valid, 'reviewer', valid.digest, job)).toBe(true);
+  });
+
+  test('阶段信封冻结任务、来源和技能快照，并保留缺省值', () => {
+    const source = { sourceId: 's1', locator: 'doc/1', contentDigest: 'a'.repeat(64), fetchedAt: '2026-01-01T00:00:00.000Z', ignored: 'private' };
+    const skill = { skillId: 'rewrite', version: '1', contentDigest: 'b'.repeat(64), ignored: 'private' };
+    const full = envelope({
+      ...job, contextKey: 'ctx-1', document: { documentId: 'doc-1' }, originalDigest: 'o'.repeat(64),
+      ruleVersion: 'rules-1', templateSnapshot: { templateId: 't1' }, modelSelection: { modelId: 'm1' },
+      sourceSnapshots: [source], skillSnapshots: [skill],
+    }, 'writer', 2, '2026-01-02T00:00:00.000Z');
+    expect(full).toEqual({
+      contractVersion: CONTRACT_VERSION,
+      task: { jobId: 'job-1', contextKey: 'ctx-1', operation: 'polish' },
+      document: { documentId: 'doc-1', range: job.range, originalDigest: 'o'.repeat(64) },
+      frozen: { ruleVersion: 'rules-1', template: { templateId: 't1' }, modelSelection: { modelId: 'm1' } },
+      sources: [{ sourceId: source.sourceId, locator: source.locator, contentDigest: source.contentDigest, fetchedAt: source.fetchedAt }],
+      skills: [{ skillId: skill.skillId, version: skill.version, contentDigest: skill.contentDigest }],
+      trace: { stageId: 'writer', attempt: 2, at: '2026-01-02T00:00:00.000Z' },
+    });
+    expect(envelope({ ...job, document: {} }, 'planner', 1, '2026-01-02T00:00:00.000Z')).toEqual(expect.objectContaining({
+      frozen: { ruleVersion: undefined, template: null, modelSelection: null },
+      sources: [{ sourceId: 's1', locator: undefined, contentDigest: 'a'.repeat(64), fetchedAt: undefined }],
+      skills: [],
+    }));
+    expect(() => envelope(job, 'unknown', 1)).toThrow(/未知阶段/);
   });
 
   test('产物清理保留 Job 引用并删除无引用旧产物', () => {

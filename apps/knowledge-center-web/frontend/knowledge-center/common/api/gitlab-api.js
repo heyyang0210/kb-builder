@@ -1,5 +1,6 @@
 const endpoint = '/knowledge-center/api/gitlab/connections';
 const handbookEndpoint = '/knowledge-center/api/gitlab/handbooks';
+const versionMappingEndpoint = '/knowledge-center/api/gitlab/version-mappings';
 
 function idempotencyKey(prefix) {
   const suffix = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -23,6 +24,16 @@ export const loadGitLabConnections = (params = new URLSearchParams()) => {
   const query = params instanceof URLSearchParams ? params.toString() : new URLSearchParams(params).toString();
   return request(`${endpoint}${query ? `?${query}` : ''}`);
 };
+export const loadGitLabVersionMappings = () => request(versionMappingEndpoint);
+export const previewGitLabVersionMapping = values => request(`${versionMappingEndpoint}/resolve-preview?${new URLSearchParams(values)}`);
+export const saveGitLabVersionMapping = (values, existing = null) => request(existing ? `${versionMappingEndpoint}/${encodeURIComponent(existing.id)}` : versionMappingEndpoint, {
+  method: existing ? 'PUT' : 'POST',
+  headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'Idempotency-Key': idempotencyKey('gitlab-version-mapping'), ...(existing ? { 'If-Match': String(existing.rowVersion) } : {}) },
+  body: JSON.stringify(values),
+});
+export const setGitLabVersionMappingState = (item, action) => request(`${versionMappingEndpoint}/${encodeURIComponent(item.id)}/${action}`, {
+  method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'Idempotency-Key': idempotencyKey(`gitlab-version-${action}`), 'If-Match': String(item.rowVersion) }, body: '{}',
+});
 export const loadGitLabOAuthStatus = () => request('/knowledge-center/api/gitlab/oauth/status');
 export const loadGitLabOAuthAccounts = () => request('/knowledge-center/api/gitlab/oauth/accounts');
 export const loadGitLabOAuthConfig = () => request('/knowledge-center/api/gitlab/oauth/config');

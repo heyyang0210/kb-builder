@@ -170,6 +170,7 @@ test.describe('审核与发布多角色 E2E', () => {
     await page.keyboard.press('Escape');
     await expect(handle).toHaveAttribute('aria-valuenow', String(committed));
 
+    await page.locator('.review-reader-controls .review-more-menu > summary').click();
     await page.getByRole('button', { name: '刷新阅读' }).click();
     layout = page.locator('[data-navigation-layout-id="review"]');
     handle = layout.locator('[data-navigation-pane-resizer]');
@@ -273,7 +274,7 @@ test.describe('审核与发布多角色 E2E', () => {
     await page.goto(`${baseUrl}/knowledge-center/review?taskId=${encodeURIComponent(seeded.task.id)}&handbookId=DB-001&step=read&showAll=1`);
 
     await expect(page.locator('#view-root').getByRole('heading', { name: seeded.task.name })).toBeVisible();
-    await expect(page.getByText('待审核版本：修改稿')).toBeVisible();
+    await expect(page.locator('.review-reading-layout')).toBeVisible();
     await expect(page.getByText('安装手册')).toBeVisible();
     await expect(page.getByText('YAS_PORT')).toBeVisible();
     await expect(page.locator('code').filter({ hasText: 'SELECT 1' })).toBeVisible();
@@ -306,11 +307,11 @@ test.describe('审核与发布多角色 E2E', () => {
     await expect(page.locator('[data-role-card="reviewer"]')).toContainText('可用');
     await expect(page.locator('[data-role-card="publisher"]')).toContainText('不可用');
 
-    await page.getByRole('button', { name: /3 处理审核意见/ }).click();
+    await page.locator('.review-steps [data-review-step="opinions"]').click();
     await expect(page.getByRole('heading', { name: '当前没有审核意见' })).toBeVisible();
     await expect(page.getByRole('button', { name: '查看修改并添加意见' })).toBeVisible();
 
-    await page.getByRole('button', { name: '2 查看修改' }).click();
+    await page.locator('.review-steps [data-review-step="diff"]').click();
     await expect(page.getByText('修改前后全文对照')).toBeVisible();
     await page.keyboard.press('j');
     await expect(page.locator('[data-review-line].keyboard-current')).toHaveCount(1);
@@ -319,7 +320,7 @@ test.describe('审核与发布多角色 E2E', () => {
     const activeCommentForm = page.locator('[data-review-comment-form]:visible').first();
     await activeCommentForm.locator('textarea').fill('请核对 23.4 参数依赖');
     await activeCommentForm.getByRole('button', { name: '提交意见' }).click();
-    await page.getByRole('button', { name: '3 处理审核意见' }).click();
+    await page.locator('.review-steps [data-review-step="opinions"]').click();
     const opinion = page.locator('[data-review-opinion]').filter({ hasText: '请核对 23.4 参数依赖' });
     await expect(opinion).toBeVisible();
     await expect(opinion.getByRole('button', { name: '回复' })).toBeVisible();
@@ -362,7 +363,7 @@ test.describe('审核与发布多角色 E2E', () => {
     await page.goto(`${baseUrl}/knowledge-center/review?taskId=${encodeURIComponent(seeded.task.id)}&handbookId=DB-001&showAll=1`);
     await expect(page.locator('[data-role-card="reviewer"]')).toContainText('不可用');
     await expect(page.locator('[data-role-card="publisher"]')).toContainText('不可用');
-    await page.getByRole('button', { name: '3 处理审核意见' }).click();
+    await page.locator('.review-steps [data-review-step="opinions"]').click();
     await expect(page.getByRole('button', { name: '审核通过' })).toHaveCount(0);
     await expect(page.getByRole('button', { name: '确认发布' })).toHaveCount(0);
     for (const viewport of [{ width: 1440, height: 900 }, { width: 1024, height: 768 }, { width: 768, height: 1024 }, { width: 375, height: 812 }]) {

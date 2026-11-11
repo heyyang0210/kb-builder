@@ -1,5 +1,6 @@
 import threading
 import base64
+import time
 import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -10,6 +11,40 @@ from app.pingcode_service import PingCodeService
 
 
 class PingCodeReferenceTest(unittest.TestCase):
+    def test_prewarm_initializes_browser_in_background_and_keeps_requests_available(self):
+        service = PingCodeService()
+        service._isolate_asyncio = lambda callback, *args: callback(*args)
+        entered = threading.Event()
+        release = threading.Event()
+
+        def initialize():
+            entered.set()
+            release.wait(1)
+
+        service._ensure_api = Mock(side_effect=initialize)
+        try:
+            started = time.monotonic()
+            service.prewarm()
+            self.assertLess(time.monotonic() - started, 0.2)
+            self.assertTrue(entered.wait(1))
+            release.set()
+            self.assertEqual("ready", service._submit(lambda: "ready"))
+            service._ensure_api.assert_called_once_with()
+        finally:
+            release.set()
+            service.close()
+
+    def test_prewarm_failure_does_not_block_later_requests(self):
+        service = PingCodeService()
+        service._isolate_asyncio = lambda callback, *args: callback(*args)
+        service._ensure_api = Mock(side_effect=RuntimeError("temporary failure"))
+        try:
+            service.prewarm()
+            self.assertEqual("ready", service._submit(lambda: "ready"))
+            service._ensure_api.assert_called_once_with()
+        finally:
+            service.close()
+
     def service(self):
         service = PingCodeService.__new__(PingCodeService)
         service._lock = threading.RLock()

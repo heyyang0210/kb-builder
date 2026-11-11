@@ -1,5 +1,5 @@
 const http = require('node:http');
-const { parentPort } = require('node:worker_threads');
+const { parentPort, workerData } = require('node:worker_threads');
 let rawResponses = false;
 
 const server = http.createServer(async (req, res) => {
@@ -28,6 +28,11 @@ const server = http.createServer(async (req, res) => {
     return;
   }
   const observed = { method: req.method, url: req.url, body: body ? JSON.parse(body) : null, headers: req.headers };
+  const responseKey = `${req.method} ${req.url}`;
+  if (workerData?.responses && Object.hasOwn(workerData.responses, responseKey)) {
+    res.end(JSON.stringify({ success: true, data: workerData.responses[responseKey] }));
+    return;
+  }
   if (req.url === '/raw') res.end(JSON.stringify({ success: true, observed }));
   else res.end(JSON.stringify(rawResponses ? { success: true, observed } : { success: true, data: observed }));
 });

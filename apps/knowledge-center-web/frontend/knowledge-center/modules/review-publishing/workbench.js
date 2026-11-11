@@ -22,7 +22,8 @@ export function reviewTabs(workbench, selected) {
 export function reviewNavigation(workbench, task, params) {
   const next = workbench.mine.find(row => row.taskId !== task?.id);
   const back = reviewReturnUrl(params);
-  return `<nav class="review-workbench-nav" aria-label="审核导航">${reviewTabs(workbench, '')}<div><a class="button secondary" href="${esc(back)}">${new URL(back, 'http://localhost').searchParams.get('view') === 'mine' ? '返回我的审核' : '返回审核文档清单'}</a>${next ? `<a class="button primary" href="${esc(reviewDocumentUrl(next, back))}">下一篇待我审核</a>` : '<span>没有其他待我审核文档</span>'}</div></nav>`;
+  const returnToTask = task && !task.handbookSource ? `<a class="button secondary" href="/knowledge-center/production?taskId=${encodeURIComponent(task.id)}&stage=review">返回增量任务</a>` : '';
+  return `<nav class="review-workbench-nav" aria-label="审核导航">${reviewTabs(workbench, '')}<div>${returnToTask}<a class="button secondary" href="${esc(back)}">${new URL(back, 'http://localhost').searchParams.get('view') === 'mine' ? '返回我的审核' : '返回审核文档清单'}</a>${next ? `<a class="button primary" href="${esc(reviewDocumentUrl(next, back))}">下一篇待我审核</a>` : '<span>没有其他待我审核文档</span>'}</div></nav>`;
 }
 export function renderReviewWorkbench(projection, params) {
   const data = projection.workbench;

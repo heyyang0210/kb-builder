@@ -13,10 +13,19 @@ const ROLE_DISPLAY_NAMES = {
 const CONNECTION_STATUS_LABELS = {
   unconfigured: '未配置',
   pending: '待验证',
-  verified: '最近读取验证通过',
-  failed: '验证失败',
+  verifying: '验证中',
+  verified: '通过',
+  failed: '失败',
   disabled: '已停用',
 };
+
+const VERSION_MAPPING_CANDIDATES = [
+  { productCode: 'DB', matchKind: 'EXACT', version: '23.4.7', branch: 'br23.4.7' },
+  { productCode: 'DB', matchKind: 'EXACT', version: '23.4.18.0', branch: 'br23.4' },
+  { productCode: 'DB', matchKind: 'EXACT', version: '27.1.1.0', branch: 'master' },
+  { productCode: 'YCM', matchKind: 'ALL', version: '', branch: 'dev' },
+  { productCode: 'YDC', matchKind: 'ALL', version: '', branch: 'dev' },
+];
 
 const TAB_LABELS = {
   governance: '系统治理',
@@ -27,6 +36,19 @@ const TAB_LABELS = {
   models: 'Agent&模型服务',
 };
 
+const TAB_ICONS = {
+  governance: 'settings-2',
+  principals: 'users-round',
+  permissions: 'shield-check',
+  gitlab: 'git-branch',
+  mcp: 'plug',
+  models: 'bot',
+};
+
+function platformTabLabel(tab, label = TAB_LABELS[tab]) {
+  return `<i class="platform-tab-icon" data-lucide="${TAB_ICONS[tab]}" aria-hidden="true"></i><span>${label}</span>`;
+}
+
 /* ---- 标签页导航 ---- */
 function renderTabs(activeTab, teamGroupView = 'people') {
   const tabButton = tab => `<button class="platform-tab" type="button"
@@ -34,12 +56,12 @@ function renderTabs(activeTab, teamGroupView = 'people') {
       aria-current="${tab === activeTab ? 'page' : 'false'}"
       aria-controls="platform-panel-${tab}"
       id="platform-tab-${tab}"
-    >${TAB_LABELS[tab]}</button>`;
+    >${platformTabLabel(tab)}</button>`;
   return `<nav class="platform-tabs" aria-label="平台管理分区">
     ${tabButton('governance')}
     <div class="platform-tab-menu" ${activeTab === 'principals' ? 'data-active' : ''}>
       <details data-dismissible-menu>
-        <summary class="platform-tab platform-tab-summary" id="platform-tab-principals" aria-haspopup="menu" aria-current="${activeTab === 'principals' ? 'page' : 'false'}">${activeTab === 'principals' && teamGroupView === 'groups' ? '人员管理 · 团队小组' : '人员管理'}<span aria-hidden="true" class="platform-nav-chevron">⌄</span></summary>
+        <summary class="platform-tab platform-tab-summary" id="platform-tab-principals" aria-haspopup="menu" aria-current="${activeTab === 'principals' ? 'page' : 'false'}">${platformTabLabel('principals', activeTab === 'principals' && teamGroupView === 'groups' ? '人员管理 · 团队小组' : '人员管理')}<i class="platform-nav-chevron" data-lucide="chevron-down" aria-hidden="true"></i></summary>
         <div class="platform-submenu" role="menu" aria-label="人员管理子页面">
           <button type="button" role="menuitem" data-team-group-view="people" aria-current="${teamGroupView === 'people' ? 'page' : 'false'}">人员管理</button>
           <button type="button" role="menuitem" data-team-group-view="groups" aria-current="${teamGroupView === 'groups' ? 'page' : 'false'}">团队小组</button>
@@ -53,7 +75,7 @@ function renderTabs(activeTab, teamGroupView = 'people') {
 }
 
 /* ---- 系统治理标签页 ---- */
-function renderDatabaseConnection(projection = null, drawerOpen = false, formState = null, status = null, advancedOpen = false) {
+function renderDatabaseConnection(projection = null, drawerOpen = false, formState = null, status = null, advancedOpen = false, drawerOnly = false) {
   const loading = !projection || projection.healthStatus === 'loading';
   projection = projection || {};
   const conn = projection.connection || {};
@@ -80,76 +102,38 @@ function renderDatabaseConnection(projection = null, drawerOpen = false, formSta
     ? '<div class="database-connection-note"><strong>配置已保存，等待重启</strong><p>配置已写入 service.env；当前进程仍使用启动时连接，重启服务后生效。</p></div>' : '';
   const statusClass = unavailable ? 'error' : healthy ? 'ok' : 'warning';
   const statusHtml = loading ? '<span class="database-status-skeleton" aria-hidden="true"></span>' : `<span class="status-badge ${statusClass}">${escapeHtml(healthText)}</span>`;
-  const configHtml = loading ? '<span class="database-summary-skeleton" aria-hidden="true"></span>' : `<small>${escapeHtml(configStateText)}${verificationText ? ` · ${escapeHtml(verificationText)}` : ''}</small>`;
+  const needsConfigNote = projection.environmentOverride || projection.restartRequired || unavailable || (healthStatus !== 'healthy' && healthStatus !== 'loading');
+  const configHtml = loading ? '<span class="database-summary-skeleton" aria-hidden="true"></span>' : needsConfigNote ? `<small>${escapeHtml(configStateText)}${verificationText ? ` · ${escapeHtml(verificationText)}` : ''}</small>` : verificationText ? `<small>${escapeHtml(verificationText)}</small>` : '';
   const jdbcHtml = loading
     ? '<span class="database-summary-skeleton database-summary-skeleton-jdbc" aria-hidden="true"></span>'
     : `<code>${escapeHtml(runtime.jdbcUrl || conn.jdbcUrl || '尚未配置 JDBC 连接串')}</code>`;
-  const card = `<section class="database-connection-panel ${unavailable ? 'is-error' : ''}" ${loading ? 'aria-busy="true"' : ''}><div class="database-connection-summary"><div><div class="database-connection-title-row"><strong>数据库连接</strong>${statusHtml}</div>${configHtml}${jdbcHtml}</div><button class="button secondary" type="button" data-database-open>管理数据库连接</button></div></section>`;
+  const card = `<section class="database-connection-panel ${unavailable ? 'is-error' : ''}" aria-label="数据库连接" ${loading ? 'aria-busy="true"' : ''}><div class="database-connection-summary"><div><div class="database-connection-title-row"><strong>数据库连接</strong>${statusHtml}</div>${jdbcHtml}${configHtml}</div><button class="button secondary" type="button" data-database-open>管理数据库连接</button></div></section>`;
   const dialog = `<dialog class="database-connection-drawer" data-database-dialog aria-labelledby="database-connection-title" data-scroll-region="dialog"><div class="database-connection-drawer-shell"><header class="database-connection-drawer-header"><div><span class="eyebrow">系统治理</span><h2 id="database-connection-title">管理数据库连接</h2></div><button class="icon-button" type="button" data-database-close aria-label="关闭数据库连接配置" title="关闭"><i data-lucide="x" aria-hidden="true"></i></button></header><div class="database-connection-drawer-content" data-scroll-region="panel"><section class="database-runtime-card" aria-label="当前运行连接"><div class="database-runtime-heading"><div><span>当前运行连接</span><strong>${escapeHtml(healthText)}</strong></div><span class="status-badge ${statusClass}">${healthy ? '正常' : escapeHtml(healthText)}</span></div><code>${escapeHtml(runtime.jdbcUrl || '尚无运行连接')}</code>${runtime.username ? `<small>用户：${escapeHtml(runtime.username)}</small>` : ''}${unavailable ? `<p class="database-runtime-error">${escapeHtml(projection.healthError?.message || projection.error || '数据库连接状态暂不可用')}</p>` : ''}</section>${connectionNote}<section class="database-connection-form" aria-labelledby="database-config-title"><div class="database-config-heading"><h3 id="database-config-title">页面连接配置</h3><p>验证通过后保存，密码不会回显。</p></div><label>JDBC 连接串<input class="database-jdbc-input" name="jdbcUrl" value="${escapeHtml(current.jdbcUrl || '')}" placeholder="jdbc:yasdb://db.example.internal:1688/yashandb" data-database-field="jdbcUrl" spellcheck="false"><small>已包含数据库地址、端口和数据库名。连接串使用等宽字体，便于核对地址、端口和连接参数。示例：jdbc:yasdb://db.example.internal:1688/yashandb</small></label><div class="database-credential-grid"><label>用户名<input name="username" value="${escapeHtml(current.username || '')}" data-database-field="username" autocomplete="username"></label><label>密码<input type="password" name="password" value="" autocomplete="new-password" placeholder="${conn.passwordConfigured ? '留空表示保留当前密码' : '请输入数据库密码'}" data-database-field="password"><small>留空表示保留当前密码。</small></label></div><details class="database-connection-advanced" data-database-advanced ${advancedOpen ? 'open' : ''}><summary>高级设置</summary><div><label>连接名称<input name="name" value="${escapeHtml(current.name || '知识中心主数据库')}" data-database-field="name"></label><label>连接超时<select name="timeoutMs" data-database-field="timeoutMs">${timeoutOptions}</select></label></div></details></section></div><footer class="database-connection-drawer-footer"><div class="database-connection-feedback form-status ${status?.kind || ''}" role="status" aria-live="polite" aria-atomic="true">${escapeHtml(status?.message || '')}</div><div class="database-connection-actions"><button class="button tertiary" type="button" data-database-close ${busy ? 'disabled' : ''}>取消</button><button class="button secondary" type="button" data-database-test ${busy ? 'disabled' : ''}>${busy ? '处理中…' : '仅测试连接'}</button><button class="button primary" type="button" data-database-save ${busy ? 'disabled' : ''}>验证并保存</button></div></footer></div></dialog>`;
-  return `${card}${drawerOpen ? dialog : ''}`;
+  return `${drawerOnly ? '' : card}${drawerOpen ? dialog : ''}`;
 }
 
 function renderGovernanceTab(governanceProjection = {}, projection = {}, databaseProjection = {}, databaseDrawerOpen = false, databaseForm = null, databaseStatus = null, databaseAdvancedOpen = false) {
   const gov = governanceProjection || {};
-  const services = Array.isArray(gov.services) ? gov.services : [
-    { name: '认证服务', status: 'ok' },
-    { name: '文档服务', status: 'ok' },
-  ];
+  const services = Array.isArray(gov.services) ? gov.services : [];
   const pendingItems = Array.isArray(gov.pendingItems) ? gov.pendingItems : [];
   const recentOps = Array.isArray(gov.recentOperations) ? gov.recentOperations : [];
-  const databaseHealthStatus = databaseProjection.healthStatus === null ? 'loading' : databaseProjection.healthStatus || (databaseProjection.status === 'unavailable' ? 'unavailable' : databaseProjection.status === 'configured' ? 'configured' : databaseProjection.status === 'unconfigured' ? 'unconfigured' : 'loading');
-  const databaseSummaryValue = databaseHealthStatus === 'healthy'
-    ? '正常'
-    : databaseHealthStatus === 'unavailable'
-      ? '暂不可用'
-      : databaseHealthStatus === 'configured'
-        ? '已配置，尚未验证'
-        : databaseHealthStatus === 'unconfigured'
-          ? '未配置'
-          : databaseProjection.status === 'pending_restart' ? '待重启生效' : '';
-  const databaseSummaryMeta = databaseProjection.environmentOverride && databaseProjection.restartRequired
-    ? '页面配置待生效'
-    : databaseProjection.environmentOverride
-      ? '服务启动时已指定连接'
-      : databaseProjection.restartRequired ? '页面配置待重启' : databaseProjection.configured ? '页面配置已就绪' : '';
-
-  const summaryItems = [
-    { label: '服务状态', value: services.every(s => s.status === 'ok') ? '正常' : '存在异常', status: services.every(s => s.status === 'ok') ? 'ok' : 'warning' },
-    { label: '数据库状态', value: databaseSummaryValue, loading: databaseHealthStatus === 'loading', meta: databaseSummaryMeta, status: databaseHealthStatus === 'healthy' ? 'ok' : databaseHealthStatus === 'unavailable' ? 'error' : 'warning' },
-    { label: '外部连接', value: gov.externalConnectionSummary || `${pendingItems.length} 个需处理`, status: pendingItems.length ? 'warning' : 'ok' },
-  ];
-
-  const summaryHtml = `<div class="governance-summary">
-    ${summaryItems.map(item => `<div class="governance-summary-item">
-      <span class="status-dot ${item.status}" aria-hidden="true"></span>
-      <div>
-        <div class="governance-summary-label">${item.label}</div>
-            <div class="governance-summary-value">${item.loading ? '<span class="database-summary-skeleton database-summary-skeleton-card" aria-hidden="true"></span>' : escapeHtml(item.value)}</div>
-        ${item.meta ? `<div class="governance-summary-meta">${item.label === '数据库状态' ? '连接配置见下方' : escapeHtml(item.meta)}</div>` : ''}
-      </div>
-    </div>`).join('')}
-  </div>`;
-
-  const healthHtml = `<div>
-    <h3 style="margin:0 0 var(--space-3);font-size:15px;font-weight:700">服务健康</h3>
-    <div class="governance-health-list">
-      ${services.map(s => `<div class="governance-row">
-        <span>${escapeHtml(s.name)}</span>
-        <span class="status-badge ${s.status === 'ok' ? 'ok' : s.status === 'warning' ? 'warning' : 'error'}">${escapeHtml(s.status === 'ok' ? '正常' : s.status === 'warning' ? '警告' : '异常')}</span>
-      </div>`).join('')}
-    </div>
-  </div>`;
-
-  const pendingHtml = `<div>
-    <h3 style="margin:0 0 var(--space-3);font-size:15px;font-weight:700">待处理事项</h3>
-    <div class="governance-pending-list">
-      ${pendingItems.length ? pendingItems.map(item => `<div class="governance-pending-item">
-        <strong>${escapeHtml(item.title || item.name || '待处理')}</strong>
-        ${item.description ? `<span style="font-size:13px;color:var(--color-text-secondary)">${escapeHtml(item.description)}</span>` : ''}
-        ${item.actionUrl ? `<a href="${escapeHtml(item.actionUrl)}">查看处理</a>` : ''}
-      </div>`).join('') : '<div class="empty-state" style="padding:var(--space-4)"><span>暂无待处理事项</span></div>'}
-    </div>
-  </div>`;
+  const db = databaseProjection || {};
+  const dbHealth = db.healthStatus === 'healthy' ? 'ok' : db.healthStatus === 'unavailable' ? 'error' : 'unknown';
+  const externalStatus = gov.externalConnectionStatus === 'warning' ? 'warning' : gov.externalConnectionStatus === 'ok' ? 'ok' : 'unknown';
+  const issueCount = services.filter(service => service.status === 'warning').length + Number(dbHealth === 'error') + Number(externalStatus === 'warning');
+  const unknownCount = services.filter(service => service.status === 'unknown').length + Number(services.length === 0) + Number(dbHealth === 'unknown') + Number(externalStatus === 'unknown');
+  const conclusion = issueCount ? `当前有 ${issueCount} 项需关注` : unknownCount ? '部分状态待确认' : pendingItems.length ? `有 ${pendingItems.length} 项待处理事项` : '当前运行状态正常';
+  const conclusionDetail = issueCount
+    ? [services.some(service => service.status === 'warning') && '服务告警', dbHealth === 'error' && '数据库连接不可用', externalStatus === 'warning' && '外部连接需检查'].filter(Boolean).join('、')
+    : unknownCount ? `${unknownCount} 项状态尚未确认` : pendingItems.length ? '请查看下方待处理事项' : '各项服务和连接状态已读取';
+  const state = (kind, label) => `<span class="governance-state ${kind}">${label}</span>`;
+  const rows = services.map(service => `<tr><td><span class="governance-service"><i data-lucide="${service.name === '资料加工服务' ? 'filter' : 'file-text'}" aria-hidden="true"></i>${escapeHtml(service.name)}</span></td><td>${state(service.status === 'ok' ? 'ok' : service.status === 'warning' ? 'warning' : 'unknown', service.status === 'ok' ? '正常' : service.status === 'warning' ? '告警' : '待确认')}</td><td class="governance-detail ${service.status === 'ok' ? 'is-empty' : ''}">${service.status === 'ok' ? '—' : service.status === 'warning' ? '请检查对应服务' : '服务状态暂不可用'}</td><td></td></tr>`).join('');
+  const dbRuntime = db.effectiveConnection || db.connection || {};
+  const dbDetail = dbHealth === 'error' ? db.healthError?.message || '连接状态读取失败' : db.restartRequired ? '页面配置待重启生效' : dbHealth === 'unknown' ? '运行状态待确认' : '—';
+  const dbRow = `<tr><td><span class="governance-service"><i data-lucide="database" aria-hidden="true"></i>数据库连接</span></td><td>${state(dbHealth, dbHealth === 'ok' ? '正常' : dbHealth === 'error' ? '不可用' : '待确认')}</td><td class="governance-detail ${dbDetail === '—' ? 'is-empty' : ''}">${escapeHtml(dbDetail)}${dbHealth === 'error' && dbRuntime.jdbcUrl ? ` · ${escapeHtml(dbRuntime.jdbcUrl)}` : ''}</td><td><button type="button" class="governance-row-action" data-database-open>管理连接<i data-lucide="arrow-up-right" aria-hidden="true"></i></button></td></tr>`;
+  const externalRow = `<tr><td><span class="governance-service"><i data-lucide="git-branch" aria-hidden="true"></i>GitLab 外部连接</span></td><td>${state(externalStatus, externalStatus === 'ok' ? '已验证' : externalStatus === 'warning' ? '需关注' : '待确认')}</td><td class="governance-detail">${escapeHtml(gov.externalConnectionSummary || '连接状态待加载')}</td><td><a class="governance-row-action" href="/knowledge-center/platform?tab=gitlab">查看连接<i data-lucide="arrow-up-right" aria-hidden="true"></i></a></td></tr>`;
+  const healthHtml = `<section class="governance-runtime" aria-labelledby="governance-runtime-title"><header class="governance-section-head"><h3 id="governance-runtime-title">运行状态</h3><span>${services.length + 2} 项检查</span></header><div class="governance-table-wrap"><table class="governance-status-table"><thead><tr><th>对象</th><th>状态</th><th>当前信息</th><th>操作</th></tr></thead><tbody>${rows}${dbRow}${externalRow}</tbody></table></div></section>`;
+  const pendingHtml = `<section class="governance-action-panel" aria-labelledby="governance-pending-title"><header class="governance-section-head"><h3 id="governance-pending-title">待处理事项</h3><span>${pendingItems.length} 项</span></header>${pendingItems.length ? `<div class="governance-pending-list">${pendingItems.map(item => `<div class="governance-pending-item"><span class="governance-pending-level">需要处理</span><div><strong>${escapeHtml(item.title || item.name || '待处理')}</strong>${item.description ? `<span class="governance-pending-description">${escapeHtml(item.description)}</span>` : ''}</div>${item.actionUrl ? `<a href="${escapeHtml(item.actionUrl)}">查看处理<i data-lucide="arrow-up-right" aria-hidden="true"></i></a>` : ''}</div>`).join('')}</div>` : '<div class="governance-pending-empty"><i data-lucide="circle-check" aria-hidden="true"></i><span>暂无待处理事项</span></div>'}</section>`;
 
   const recentOpsHtml = recentOps.length ? `<div class="governance-recent-ops">
     <h3 style="margin:0 0 var(--space-3);font-size:15px;font-weight:700">最近治理操作</h3>
@@ -167,16 +151,7 @@ function renderGovernanceTab(governanceProjection = {}, projection = {}, databas
     </table>
   </div>` : '';
 
-  return `<div role="tabpanel" id="platform-panel-governance" aria-labelledby="platform-tab-governance">
-    ${summaryHtml}
-    ${renderDatabaseConnection(databaseProjection, databaseDrawerOpen, databaseForm, databaseStatus, databaseAdvancedOpen)}
-    <div class="governance-columns">
-      ${healthHtml}
-      ${pendingHtml}
-    </div>
-    ${recentOpsHtml}
-    ${dataNote(projection)}
-  </div>`;
+  return `<div role="tabpanel" id="platform-panel-governance" aria-labelledby="platform-tab-governance"><h2 class="governance-page-title">运行概览</h2><div class="governance-conclusion ${issueCount || pendingItems.length ? 'has-issues' : unknownCount ? 'is-unknown' : 'is-healthy'}" role="status"><i data-lucide="${issueCount || pendingItems.length ? 'triangle-alert' : unknownCount ? 'circle-help' : 'circle-check'}" aria-hidden="true"></i><div><strong>${conclusion}</strong><span>${escapeHtml(conclusionDetail)}</span></div><div class="governance-conclusion-count"><b>${pendingItems.length}</b><span>待处理事项</span></div></div>${pendingHtml}${healthHtml}${recentOpsHtml}${renderDatabaseConnection(databaseProjection, databaseDrawerOpen, databaseForm, databaseStatus, databaseAdvancedOpen, true)}</div>`;
 }
 
 /* ---- 用户权限标签页 ---- */
@@ -412,71 +387,114 @@ export function renderPermissionsTab(permissionProjection = {}, selectedUserId =
 function renderGitLabTab(gitlabProjection = {}, platformAdmin = false, listState = {}, transientVerification = null) {
   gitlabProjection = gitlabProjection || {};
   const connections = Array.isArray(gitlabProjection.connections) ? gitlabProjection.connections : [];
+  if (listState.mappingView) return renderVersionMappingTab(gitlabProjection, platformAdmin, listState);
   const search = listState.search || '';
-  const page = listState.page || 1;
   const pageSize = listState.pageSize || 20;
-  const selectedId = listState.selectedConnectionId;
-
-  const filtered = search
-    ? connections.filter(c => {
-        const term = search.toLowerCase();
-        return (c.name || '').toLowerCase().includes(term)
-          || (c.projectPath || c.project || '').toLowerCase().includes(term);
-      })
-    : connections;
+  const isDisabled = c => c.status === 'inactive' || c.managementStatus === 'disabled';
+  const verificationStatus = c => transientVerification?.connectionId === c.id
+    ? transientVerification.status : (c.verificationStatus || c.lastVerification?.status || (c.verified ? 'verified' : 'pending'));
+  const filtered = connections.filter(c => {
+    const term = search.trim().toLowerCase();
+    return (!term || [c.name, c.projectPath, c.project].some(value => String(value || '').toLowerCase().includes(term)))
+      && (!listState.status || (isDisabled(c) ? 'disabled' : 'active') === listState.status)
+      && (!listState.verificationStatus || verificationStatus(c) === listState.verificationStatus);
+  });
 
   const total = filtered.length;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const page = Math.min(totalPages, Math.max(1, Number(listState.page) || 1));
   const paged = filtered.slice((page - 1) * pageSize, page * pageSize);
-  const selected = selectedId ? connections.find(c => c.id === selectedId) : (connections[0] || null);
-
-  const listHtml = `<div class="gitlab-list-panel">
-    <div class="gitlab-list-search">
-      <i data-lucide="search" class="search-icon" aria-hidden="true"></i>
-      <input type="search" placeholder="搜索连接…" value="${escapeHtml(search)}" data-gitlab-list-search aria-label="搜索 GitLab 连接">
+  const selected = listState.drawerOpen ? connections.find(c => c.id === listState.selectedConnectionId) : null;
+  const rows = paged.map(c => {
+    const status = verificationStatus(c);
+    const disabled = isDisabled(c);
+    const name = escapeHtml(c.name || c.projectPath || c.project || '未命名');
+    const verification = verificationFor(c, transientVerification);
+    const verifiedAt = formatVerificationTime(verification?.verifiedAt);
+    return `<tr data-gitlab-row="${escapeHtml(c.id)}">
+      <td data-label="连接名称"><strong>${name}</strong></td>
+      <td data-label="项目路径" class="gitlab-connection-path">${escapeHtml(c.projectPath || c.project || '-')}</td>
+      <td data-label="认证方式">${c.authMode === 'user_oauth' ? '个人授权' : c.authMode === 'service_account' ? '平台凭证' : escapeHtml(c.authMode || '-')}</td>
+      <td data-label="配置访问能力">${c.purpose === 'read_write' ? '读写' : '只读'}</td>
+      <td data-label="平台最近读取验证"><div class="gitlab-verification-summary"><span class="conn-status ${escapeHtml(status)}">${escapeHtml(CONNECTION_STATUS_LABELS[status] || '待验证')}</span>${verifiedAt ? `<time datetime="${escapeHtml(verification.verifiedAt)}">${escapeHtml(verifiedAt)}</time>` : '<span class="gitlab-verification-time">—</span>'}</div></td>
+      <td data-label="关联手册">${c.linkedHandbookCount == null ? '-' : escapeHtml(String(c.linkedHandbookCount))}</td>
+      <td data-label="启停状态"><span class="gitlab-state ${disabled ? 'disabled' : 'active'}">${disabled ? '已停用' : '已启用'}</span></td>
+      <td data-label="操作"><button class="icon-button gitlab-row-action" type="button" data-gitlab-connection="${escapeHtml(c.id)}" aria-label="查看 ${name} 详情" title="查看详情"><i data-lucide="panel-right-open" aria-hidden="true"></i></button></td>
+    </tr>`;
+  }).join('');
+  const listHtml = `<div class="gitlab-connection-workspace">
+    <div class="gitlab-connection-toolbar">
+      <div class="gitlab-list-search"><i data-lucide="search" class="search-icon" aria-hidden="true"></i><input type="search" placeholder="搜索连接或项目路径" value="${escapeHtml(search)}" data-gitlab-list-search aria-label="搜索 GitLab 连接"></div>
+      <select data-gitlab-status-filter aria-label="按启停状态筛选"><option value="">全部状态</option><option value="active" ${listState.status === 'active' ? 'selected' : ''}>已启用</option><option value="disabled" ${listState.status === 'disabled' ? 'selected' : ''}>已停用</option></select>
+      <select data-gitlab-verification-filter aria-label="按读取验证筛选"><option value="">全部验证</option><option value="verified" ${listState.verificationStatus === 'verified' ? 'selected' : ''}>通过</option><option value="failed" ${listState.verificationStatus === 'failed' ? 'selected' : ''}>失败</option><option value="pending" ${listState.verificationStatus === 'pending' ? 'selected' : ''}>待验证</option></select>
+      ${platformAdmin ? '<button class="button primary gitlab-add-connection" type="button" data-gitlab-add-connection><i data-lucide="plus" aria-hidden="true"></i><span>添加仓库连接</span></button>' : ''}
     </div>
-    <ul class="gitlab-connection-list" role="listbox" aria-label="GitLab 连接列表">
-      ${paged.length ? paged.map(c => {
-        const status = c.status === 'inactive' || c.managementStatus === 'disabled'
-          ? 'disabled'
-          : (c.verificationStatus || (c.lastVerification?.status) || (c.verified ? 'verified' : 'unverified'));
-        const isSelected = selected && c.id === selected.id;
-        const isDisabled = c.managementStatus === 'disabled';
-        return `<li class="gitlab-connection-item${isSelected ? ' selected' : ''}${isDisabled ? ' disabled' : ''}" role="option" aria-selected="${isSelected}" data-gitlab-connection="${escapeHtml(c.id)}" tabindex="0">
-          <div class="gitlab-connection-name">
-            ${escapeHtml(c.name || c.projectPath || c.project || '未命名')}
-            ${isDisabled ? '<small style="color:var(--color-text-tertiary);font-weight:400">（已停用）</small>' : ''}
-          </div>
-          <div class="gitlab-connection-path">${escapeHtml(c.projectPath || c.project || '')}</div>
-          <div class="gitlab-connection-meta">
-            <span class="conn-status ${status}">${escapeHtml(CONNECTION_STATUS_LABELS[status] || status)}</span>
-            ${c.linkedHandbookCount != null ? `<span>· ${c.linkedHandbookCount} 本手册引用</span>` : ''}
-          </div>
-        </li>`;
-      }).join('') : '<li style="padding:16px;text-align:center;color:var(--color-text-secondary);font-size:13px">无匹配连接</li>'}
-    </ul>
-    ${total > pageSize ? `<div class="gitlab-list-pagination">
+    <div class="gitlab-connection-table-wrap"><table class="gitlab-connection-table"><thead><tr><th>连接名称</th><th>项目路径</th><th>认证方式</th><th>配置访问能力</th><th>平台最近读取验证</th><th>关联手册</th><th>启停状态</th><th>操作</th></tr></thead><tbody>${rows || `<tr><td colspan="8" class="gitlab-connection-empty" role="status">${gitlabProjection.connectionLoadStatus === 'loading' ? '正在加载连接…' : gitlabProjection.connectionLoadStatus === 'error' ? escapeHtml(gitlabProjection.adminError || '连接读取失败，请重试。') : connections.length ? '无匹配连接' : '暂无 GitLab 连接'}</td></tr>`}</tbody></table></div>
+    <div class="gitlab-connection-footer"><span>共 ${total} 条连接</span>${total > pageSize ? `<div class="gitlab-list-pagination">
       <button data-gitlab-page="prev" ${page <= 1 ? 'disabled' : ''}>上一页</button>
       <span>第 ${page} / ${totalPages} 页</span>
       <button data-gitlab-page="next" ${page >= totalPages ? 'disabled' : ''}>下一页</button>
-    </div>` : ''}
+    </div>` : ''}</div>
   </div>`;
-
-  const detailHtml = selected ? renderGitLabDetail(selected, platformAdmin, transientVerification, gitlabProjection.oauthStatus, gitlabProjection.oauthConfig) : renderGitLabEmpty(platformAdmin);
+  const detailHtml = selected ? `<div class="gitlab-connection-backdrop" data-gitlab-drawer-close></div><aside class="gitlab-detail-panel gitlab-connection-drawer" id="gitlab-detail-container" role="dialog" aria-modal="true" aria-label="${escapeHtml(selected.name || '仓库连接')}详情"><button class="icon-button gitlab-drawer-close" type="button" data-gitlab-drawer-close aria-label="关闭详情" title="关闭详情"><i data-lucide="x" aria-hidden="true"></i></button>${renderGitLabDetail(selected, platformAdmin, transientVerification, gitlabProjection.oauthStatus, gitlabProjection.oauthConfig)}</aside>` : '';
 
   return `<div role="tabpanel" id="platform-panel-gitlab" aria-labelledby="platform-tab-gitlab">
-    <header class="platform-section-heading"><h3>GitLab 仓库</h3>${platformAdmin ? '<button class="button primary" type="button" data-gitlab-add-connection>＋ 添加仓库连接</button>' : ''}</header>
-    <div class="gitlab-layout">
-      ${listHtml}
-      <div class="gitlab-detail-panel" id="gitlab-detail-container">
-        ${detailHtml}
-      </div>
-    </div>
+    <nav class="gitlab-workspace-tabs" aria-label="GitLab 管理视图"><button class="active" type="button" data-gitlab-view="connections" aria-current="page">仓库连接</button><button type="button" data-gitlab-view="mappings">版本映射</button></nav>
+    ${listHtml}${detailHtml}
   </div>`;
+}
+
+function renderVersionMappingTab(projection, platformAdmin, state) {
+  const connections = projection.connections || [];
+  const rules = projection.versionMappings || [];
+  const archived = projection.archivedVersionMappings || [];
+  const items = rules;
+  const q = (state.mappingSearch || '').trim().toLowerCase();
+  const filtered = items.filter(item => (!state.mappingStatus || item.state === state.mappingStatus) && (!q || [item.productCode, item.version, item.branch,
+    connections.find(connection => connection.id === item.connectionId)?.name].some(value => String(value || '').toLowerCase().includes(q))));
+  const pageSize = 20;
+  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const page = Math.min(pageCount, Math.max(1, Number(state.mappingPage) || 1));
+  const edit = rules.find(item => String(item.id) === String(state.mappingEditId));
+  const candidate = state.mappingCandidateIndex == null ? null : VERSION_MAPPING_CANDIDATES[state.mappingCandidateIndex];
+  const form = state.mappingEditing ? `<form class="gitlab-version-form" data-version-mapping-form>
+    <div class="gitlab-version-form-head"><h4>${edit ? '修改版本映射' : '新增版本映射'}</h4><button class="icon-button" type="button" data-version-mapping-cancel aria-label="关闭编辑"><i data-lucide="x" aria-hidden="true"></i></button></div>
+    ${edit ? '' : `<label class="gitlab-version-preset">参考候选<select data-version-mapping-preset aria-label="选择参考候选"><option value="">自定义映射</option>${VERSION_MAPPING_CANDIDATES.map((item, index) => `<option value="${index}" data-product="${escapeHtml(item.productCode)}" data-kind="${item.matchKind}" data-version="${escapeHtml(item.version)}" data-branch="${escapeHtml(item.branch)}" ${state.mappingCandidateIndex === index ? 'selected' : ''}>${escapeHtml(item.productCode)} / ${escapeHtml(item.matchKind === 'ALL' ? '所有版本' : item.version)} → ${escapeHtml(item.branch)}</option>`).join('')}</select></label>`}
+    ${edit?.state === 'active' ? '<p class="gitlab-version-note">保存后生成草案；当前启用规则持续生效，直到新草案验证并启用。</p>' : ''}
+    <div class="gitlab-version-fields"><label>PingCode 产品代码<input name="productCode" required maxlength="64" value="${escapeHtml(edit?.productCode || candidate?.productCode || '')}" autocomplete="off"></label>
+    <label>匹配方式<select name="matchKind" data-version-kind><option value="EXACT" ${(edit?.matchKind || candidate?.matchKind) !== 'ALL' ? 'selected' : ''}>精确版本</option><option value="ALL" ${(edit?.matchKind || candidate?.matchKind) === 'ALL' ? 'selected' : ''}>所有版本</option></select></label>
+    <label data-version-field ${(edit?.matchKind || candidate?.matchKind) === 'ALL' ? 'hidden' : ''}>业务版本<input name="version" maxlength="128" value="${escapeHtml(edit?.version || candidate?.version || '')}" ${(edit?.matchKind || candidate?.matchKind) === 'ALL' ? '' : 'required'}></label>
+    <label>GitLab 仓库连接<select name="connectionId" required data-version-connection><option value="">选择仓库</option>${connections.map(connection => `<option value="${escapeHtml(connection.id)}" ${connection.id === edit?.connectionId ? 'selected' : ''}>${escapeHtml(connection.name)}</option>`).join('')}</select></label>
+    <label>目标分支<input name="branch" required maxlength="255" list="version-branch-options" value="${escapeHtml(edit?.branch || candidate?.branch || '')}" autocomplete="off"></label><datalist id="version-branch-options">${(projection.mappingBranches || []).map(branch => `<option value="${escapeHtml(branch.name)}"></option>`).join('')}</datalist></div>
+    <div class="gitlab-version-form-actions"><button class="button secondary" type="button" data-version-mapping-cancel>取消</button><button class="button primary" type="submit">保存草案</button></div></form>` : '';
+  const rows = filtered.slice((page - 1) * pageSize, page * pageSize).map(item => {
+    const connection = connections.find(value => value.id === item.connectionId);
+    const stateLabel = { active: '已启用', draft: '草案', disabled: '已停用', superseded: '历史修订' }[item.state] || item.state;
+    const action = platformAdmin && item.state !== 'superseded' ? `<button type="button" class="icon-button" data-version-mapping-edit="${item.id}" title="编辑映射" aria-label="编辑 ${escapeHtml(item.productCode)} 映射"><i data-lucide="pencil" aria-hidden="true"></i></button>${item.state === 'active' ? `<button type="button" class="icon-button" data-version-mapping-action="disable" data-version-mapping-id="${item.id}" title="停用映射" aria-label="停用 ${escapeHtml(item.productCode)} 映射"><i data-lucide="power-off" aria-hidden="true"></i></button>` : `<button type="button" class="icon-button" data-version-mapping-action="activate" data-version-mapping-id="${item.id}" title="验证并启用" aria-label="验证并启用 ${escapeHtml(item.productCode)} 映射"><i data-lucide="badge-check" aria-hidden="true"></i></button>`}${item.state === 'draft' ? `<button type="button" class="icon-button gitlab-version-delete" data-version-mapping-delete-open="${item.id}" title="删除草案" aria-label="删除 ${escapeHtml(item.productCode)} ${escapeHtml(item.matchKind === 'ALL' ? '所有版本' : item.version)} 草案"><i data-lucide="trash-2" aria-hidden="true"></i></button>` : ''}${item.state === 'disabled' ? `<button type="button" class="icon-button" data-version-mapping-action="archive" data-version-mapping-id="${item.id}" title="归档映射" aria-label="归档 ${escapeHtml(item.productCode)} 映射"><i data-lucide="archive" aria-hidden="true"></i></button>` : ''}` : '';
+    return `<tr><td data-label="产品"><strong>${escapeHtml(item.productCode)}</strong></td><td data-label="PingCode 版本">${item.matchKind === 'ALL' ? '所有版本' : escapeHtml(item.version)}</td><td data-label="GitLab 仓库">${escapeHtml(item.state === 'pending' ? '未关联' : connection?.name || '连接已失效')}</td><td data-label="目标分支"><code>${escapeHtml(item.branch)}</code></td><td data-label="状态"><span class="gitlab-version-state ${escapeHtml(item.state)}">${stateLabel}</span></td><td data-label="操作"><div class="gitlab-version-actions">${action}</div></td></tr>`;
+  }).join('');
+  return `<div role="tabpanel" id="platform-panel-gitlab" aria-labelledby="platform-tab-gitlab">
+    <nav class="gitlab-workspace-tabs" aria-label="GitLab 管理视图"><button type="button" data-gitlab-view="connections">仓库连接</button><button class="active" type="button" data-gitlab-view="mappings" aria-current="page">版本映射</button></nav>
+    <section class="gitlab-version-workspace" aria-label="版本映射列表">
+      <div class="gitlab-version-toolbar"><label><i data-lucide="search" aria-hidden="true"></i><input type="search" value="${escapeHtml(state.mappingSearch || '')}" data-version-mapping-search placeholder="搜索产品、版本、仓库或分支" aria-label="搜索版本映射"></label><select data-version-mapping-status aria-label="筛选映射状态"><option value="">全部状态</option>${[['active', '已启用'], ['draft', '草案'], ['disabled', '已停用'], ['superseded', '历史修订']].map(([value, label]) => `<option value="${value}" ${state.mappingStatus === value ? 'selected' : ''}>${label}</option>`).join('')}</select><span>${filtered.length} / ${items.length} 条映射</span>${platformAdmin ? '<button class="icon-button" type="button" data-version-mapping-add title="新增映射" aria-label="新增映射"><i data-lucide="plus" aria-hidden="true"></i></button>' : ''}</div>
+      <p class="gitlab-version-feedback" role="status" aria-live="polite">${escapeHtml(state.mappingFeedback || projection.mappingError || '')}</p>${form}
+      <div class="gitlab-version-table-wrap"><table class="gitlab-version-table"><thead><tr><th>产品</th><th>PingCode 版本</th><th>GitLab 仓库</th><th>目标分支</th><th>状态</th><th>操作</th></tr></thead><tbody>${rows || `<tr><td colspan="6" class="gitlab-version-empty">${projection.mappingError ? '映射读取失败，请检查数据库迁移和服务状态。' : '暂无映射'}</td></tr>`}</tbody></table></div>
+      <div class="gitlab-version-footer"><span>共 ${items.length} 条映射</span>${pageCount > 1 ? `<nav class="gitlab-version-pagination" aria-label="版本映射分页"><button class="button secondary" type="button" data-version-mapping-page="${page - 1}" ${page === 1 ? 'disabled' : ''}>上一页</button><span>第 ${page} / ${pageCount} 页</span><button class="button secondary" type="button" data-version-mapping-page="${page + 1}" ${page === pageCount ? 'disabled' : ''}>下一页</button></nav>` : `<span>第 ${page} 页</span>`}</div>
+      ${archived.length ? `<details class="gitlab-version-archive"><summary><i data-lucide="archive" aria-hidden="true"></i>已归档（${archived.length}）<i data-lucide="chevron-down" aria-hidden="true"></i></summary><div class="gitlab-version-archive-list">${archived.map(item => { const connection = connections.find(value => value.id === item.connectionId); return `<div class="gitlab-version-archive-row"><span><strong>${escapeHtml(item.productCode)}</strong> · ${escapeHtml(item.matchKind === 'ALL' ? '所有版本' : item.version)} · ${escapeHtml(connection?.name || '连接已失效')} / ${escapeHtml(item.branch)}</span>${platformAdmin ? `<button type="button" class="icon-button" data-version-mapping-action="restore" data-version-mapping-id="${item.id}" title="恢复为已停用" aria-label="恢复 ${escapeHtml(item.productCode)} 映射为已停用"><i data-lucide="rotate-ccw" aria-hidden="true"></i></button>` : ''}</div>`; }).join('')}</div></details>` : ''}
+    </section>
+    <dialog class="gitlab-version-delete-dialog" data-version-mapping-delete-dialog aria-labelledby="version-mapping-delete-title"><h4 id="version-mapping-delete-title">删除草案？</h4><p>删除后，这条草案将不再出现在版本映射列表中。</p><div class="gitlab-version-delete-target" data-version-mapping-delete-target></div><div class="gitlab-version-form-actions"><button class="button secondary" type="button" data-version-mapping-delete-cancel>取消</button><button class="button danger" type="button" data-version-mapping-action="delete">删除草案</button></div></dialog>
+    </div>`;
 }
 
 function verificationFor(connection, transientVerification) {
   return transientVerification?.connectionId === connection.id ? transientVerification : connection.lastVerification;
+}
+
+function formatVerificationTime(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleString('zh-CN', { hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 
 function renderVerificationStatus(connection, transientVerification) {
@@ -486,36 +504,30 @@ function renderVerificationStatus(connection, transientVerification) {
   if (verification.status === 'pending_auth') return `<div class="gitlab-verification pending" role="status"><strong>连接已保存，待完成 GitLab 授权</strong><span>${escapeHtml(verification.message || '请先完成平台 OAuth 配置。')}</span></div>`;
   const verifiedAt = verification.verifiedAt ? new Date(verification.verifiedAt).toLocaleString('zh-CN', { hour12: false }) : '-';
   if (verification.status === 'verified') {
-    return `<div class="gitlab-verification success" role="status" aria-live="polite"><strong>平台最近验证：读取验证成功</strong><span>${escapeHtml(String(verification.branchCount ?? 0))} 个分支 · ${escapeHtml(verifiedAt)}；此为最近一次结果，不代表当前用户已授权。</span></div>`;
+    return `<div class="gitlab-verification success" role="status" aria-live="polite"><strong>读取验证成功</strong><span>${escapeHtml(verifiedAt)}</span></div>`;
   }
   return `<div class="gitlab-verification failure" role="alert"><strong>验证失败</strong><span>${escapeHtml(verification.error?.message || '连接暂时不可用，请重试。')} · ${escapeHtml(verifiedAt)}</span><span>修复建议：${escapeHtml(verification.error?.recovery || '检查连接配置和平台服务日志，修复后重新验证。')}</span></div>`;
 }
 
 function renderGitLabDetail(connection, platformAdmin, transientVerification, oauthStatus = {}, oauthConfig = {}) {
   const verification = verificationFor(connection, transientVerification);
-  const status = transientVerification?.connectionId === connection.id ? transientVerification.status : (connection.status === 'inactive' || connection.managementStatus === 'disabled' ? 'disabled' : (connection.verificationStatus || verification?.status || 'pending'));
   const isDisabled = connection.status === 'inactive' || connection.managementStatus === 'disabled';
   const fields = [
-    { label: '连接地址', value: connection.baseUrl || connection.host || '-' },
-    { label: '项目路径', value: connection.projectPath || connection.project || '-' },
-    { label: 'GitLab 身份', value: connection.authMode === 'user_oauth' ? '使用者本人授权' : connection.authMode === 'service_account' ? '平台预置服务凭证' : connection.authMode || '-' },
-    { label: connection.authMode === 'user_oauth' ? '当前管理员授权' : '认证状态', value: connection.authMode === 'user_oauth' ? (oauthStatus?.connected ? '已连接，可验证平台配置' : '尚未连接') : (connection.credentialConfigured ? '服务凭证已配置' : '服务凭证未配置') },
+    { label: 'GitLab 地址', value: connection.baseUrl || connection.host || '-' },
     { label: '运行模式', value: connection.mode === 'production' ? '生产连接' : connection.mode === 'sandbox' ? '隔离验证' : '已禁用' },
+    { label: '默认分支', value: connection.defaultBranch || '-' },
+    { label: '认证方式', value: connection.authMode === 'user_oauth' ? '使用者本人授权' : connection.authMode === 'service_account' ? '平台预置服务凭证' : connection.authMode || '-' },
   ];
-  if (connection.linkedHandbookCount != null) {
-    fields.push({ label: '关联手册', value: `${connection.linkedHandbookCount}（只读）` });
-  }
   const purposeLabel = connection.purpose === 'read_write' ? '读写' : '只读';
-  const readLabel = verification?.status === 'verified' ? '已验证' : verification?.status === 'failed' ? '验证失败' : '待验证';
   const writeLabel = connection.purpose === 'read_write' ? '未验证' : '未配置';
-  const needsOAuth = connection.authMode === 'user_oauth' && !oauthStatus?.connected;
+  const oauthChecking = connection.authMode === 'user_oauth' && oauthStatus?.loading;
+  const needsOAuth = connection.authMode === 'user_oauth' && !oauthStatus?.connected && !oauthChecking;
   const oauthHref = `/knowledge-center/api/gitlab/oauth/start?connectionId=${encodeURIComponent(connection.id)}&returnTo=${encodeURIComponent('/knowledge-center/platform?tab=gitlab')}`;
 
   return `<div class="gitlab-detail-header">
       <h3>${escapeHtml(connection.name || connection.project || '未命名连接')}</h3>
-      <div class="gitlab-detail-status">
-        <span class="conn-status ${status}">${escapeHtml(CONNECTION_STATUS_LABELS[status] || status)}</span>
-      </div>
+      <div class="gitlab-connection-path">${escapeHtml(connection.projectPath || connection.project || '-')}</div>
+      <span class="gitlab-state ${isDisabled ? 'disabled' : 'active'}">${isDisabled ? '已停用' : '已启用'}</span>
     </div>
     <div class="gitlab-detail-body">
       <div class="gitlab-detail-fields">
@@ -525,21 +537,21 @@ function renderGitLabDetail(connection, platformAdmin, transientVerification, oa
         </div>`).join('')}
       </div>
       <section class="gitlab-access" aria-labelledby="gitlab-access-title">
-        <h4 id="gitlab-access-title">访问能力</h4>
-        <div><span>配置模式</span><strong>${escapeHtml(purposeLabel)}</strong></div>
-        <div><span>读取验证</span><strong>${escapeHtml(readLabel)}</strong></div>
+        <h4 id="gitlab-access-title">访问与授权</h4>
+        <div><span>配置访问能力</span><strong>${escapeHtml(purposeLabel)}</strong></div>
         <div><span>写入验证</span><strong>${escapeHtml(writeLabel)}</strong></div>
+        <div><span>${connection.authMode === 'user_oauth' ? '当前管理员授权' : '平台凭证'}</span><strong>${connection.authMode === 'user_oauth' ? (oauthChecking ? '检查中' : oauthStatus?.connected ? '已连接' : '尚未连接') : (connection.credentialConfigured ? '已配置' : '未配置')}</strong></div>
       </section>
+      <h4 class="gitlab-verification-title">平台最近读取验证</h4>
       ${needsOAuth ? `<div class="gitlab-oauth-prompt" role="status"><strong>我的 GitLab 账号尚未连接</strong><span>重新验证前需连接当前管理员账号；平台最近验证结果保留，业务用户仍需各自授权。</span>${oauthConfig?.configured ? `<a class="button secondary" href="${escapeHtml(oauthHref)}">连接我的 GitLab 账号</a>` : '<span>GitLab OAuth 尚未配置，请先完成平台配置。</span>'}</div>` : ''}
       ${renderVerificationStatus(connection, transientVerification)}
       ${platformAdmin ? `<div class="gitlab-detail-actions">
-        <button class="button secondary" type="button" data-gitlab-verify="${escapeHtml(connection.id)}" ${isDisabled || needsOAuth || verification?.status === 'verifying' ? 'disabled' : ''} ${needsOAuth ? 'title="请先用当前管理员的 GitLab 账号验证连接"' : ''}>${verification ? '重新验证' : '验证连接'}</button>
-        <button class="button secondary" type="button" data-gitlab-edit="${escapeHtml(connection.id)}" ${isDisabled ? 'disabled' : ''}>编辑</button>
         ${isDisabled
-          ? `<button class="button secondary" type="button" data-gitlab-enable="${escapeHtml(connection.id)}">重新启用</button>`
-          : `<button class="button secondary" type="button" data-gitlab-disable="${escapeHtml(connection.id)}">停用</button>`}
+          ? `<button class="button secondary" type="button" data-gitlab-enable="${escapeHtml(connection.id)}"><i data-lucide="power" aria-hidden="true"></i>重新启用</button>`
+          : `<button class="button secondary" type="button" data-gitlab-disable="${escapeHtml(connection.id)}"><i data-lucide="power-off" aria-hidden="true"></i>停用</button>`}
+        <button class="button secondary" type="button" data-gitlab-verify="${escapeHtml(connection.id)}" ${isDisabled || needsOAuth || oauthChecking || verification?.status === 'verifying' ? 'disabled' : ''} ${needsOAuth ? 'title="请先用当前管理员的 GitLab 账号验证连接"' : ''}><i data-lucide="refresh-cw" aria-hidden="true"></i>${verification ? '重新验证' : '验证连接'}</button>
+        <button class="button secondary" type="button" data-gitlab-edit="${escapeHtml(connection.id)}" ${isDisabled ? 'disabled' : ''}><i data-lucide="pencil" aria-hidden="true"></i>编辑连接</button>
       </div>` : ''}
-      <div class="gitlab-detail-note">手册映射请到“知识资产”配置；业务用户在阅读具体手册时连接自己的 GitLab 账号。</div>
     </div>`;
 }
 
@@ -730,7 +742,7 @@ export function renderPlatformAdmin({
       break;
   }
 
-  return `<div class="platform-admin-page"><div class="page-intro">
+  return `<div class="platform-admin-page ${activeTab === 'models' ? 'agent-tab-active' : ''}"><div class="page-intro">
     <h2>平台管理</h2>
     <span class="platform-header-meta">${projection?.asOf ? `更新于 ${new Date(projection.asOf).toLocaleString('zh-CN', { hour12: false })}` : ''}</span>
   </div>

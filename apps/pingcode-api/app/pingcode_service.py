@@ -95,6 +95,23 @@ class PingCodeService:
             self._api = None
             self._login_space_key = None
 
+    def prewarm(self) -> None:
+        """启动时异步建立账号会话，不阻塞 API 启动或读取空间目录。"""
+        with self._lock:
+            if not self._closed and self._executor is not None:
+                self._executor.submit(self._isolate_asyncio, self._prewarm_sync)
+
+    def _prewarm_sync(self) -> None:
+        try:
+            with self._lock:
+                self._ensure_api()
+        except Exception:
+            logger.warning("PingCode 账号会话预热失败，首次请求将重新初始化")
+            try:
+                self._close_sync()
+            except Exception:
+                self._invalidate_client()
+
     def close(self) -> None:
         executor = self._executor
         if executor is None:

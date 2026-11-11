@@ -20,6 +20,8 @@
 
 ## 启动与检查
 
+独立的 DeepSeek Harness 使用根目录单脚本管理：`./deepseek-harness.sh start|status|url|stop`。浏览器须打开 `url` 命令输出的完整地址；首次安装和访问令牌说明见 [部署工具说明](tools/deployment/README.md)。
+
 ```bash
 ./knowledge-center.sh doctor
 ./knowledge-center.sh doctor --commands

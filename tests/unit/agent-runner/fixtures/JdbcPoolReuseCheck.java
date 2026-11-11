@@ -11,7 +11,10 @@ public class JdbcPoolReuseCheck {
     static final AtomicInteger failures = new AtomicInteger();
     static final AtomicInteger initialization = new AtomicInteger(), closed = new AtomicInteger();
     static final CopyOnWriteArrayList<ConnectionState> states = new CopyOnWriteArrayList<>();
-    static class ConnectionState { boolean closed, disconnected, rollbackFailure; }
+    static class ConnectionState {
+        boolean closed, disconnected, rollbackFailure, emptyValidation, resultCloseFailure, statementCloseFailure;
+        int resultsClosed, statementsClosed;
+    }
     public static void main(String[] args) throws Exception {
         AtomicInteger connections = new AtomicInteger();
         DriverManager.registerDriver(new Driver() {
@@ -36,10 +39,21 @@ public class JdbcPoolReuseCheck {
                         if (method.getName().equals("createStatement")) {
                             if (state.disconnected) throw new SQLException("This socket has been closed.");
                             return Proxy.newProxyInstance(Statement.class.getClassLoader(), new Class[]{Statement.class}, (s, m, a) -> {
+                                if (m.getName().equals("close")) {
+                                    state.statementsClosed++;
+                                    if (state.statementCloseFailure) throw new SQLException("statement close failed");
+                                }
                                 if (m.getName().equals("executeQuery")) {
                                     AtomicInteger rows = new AtomicInteger();
                                     return Proxy.newProxyInstance(ResultSet.class.getClassLoader(), new Class[]{ResultSet.class},
-                                        (r, rm, ra) -> rm.getName().equals("next") ? rows.getAndIncrement() == 0 : null);
+                                        (r, rm, ra) -> {
+                                            if (rm.getName().equals("next")) return !state.emptyValidation && rows.getAndIncrement() == 0;
+                                            if (rm.getName().equals("close")) {
+                                                state.resultsClosed++;
+                                                if (state.resultCloseFailure) throw new SQLException("result close failed");
+                                            }
+                                            return null;
+                                        });
                                 }
                                 return null;
                             });
@@ -118,6 +132,32 @@ public class JdbcPoolReuseCheck {
             System.out.println("PASS: failed creation releases capacity");
         } finally {
             Method close = type.getDeclaredMethod("closeAll"); close.setAccessible(true); close.invoke(failed);
+        }
+        for (String scenario : new String[]{"empty", "result-close", "statement-close", "validation-rollback", "closed"}) {
+            Object validation = constructor.newInstance("jdbc:pool-reuse:validation", "test", "test", 1, 0);
+            try {
+                Connection lease = (Connection) borrow.invoke(validation);
+                ConnectionState invalid = states.get(states.size() - 1);
+                lease.close();
+                invalid.emptyValidation = scenario.equals("empty");
+                invalid.resultCloseFailure = scenario.equals("result-close");
+                invalid.statementCloseFailure = scenario.equals("statement-close");
+                invalid.rollbackFailure = scenario.equals("validation-rollback");
+                invalid.closed = scenario.equals("closed");
+                int before = connections.get();
+                Connection replacement = (Connection) borrow.invoke(validation);
+                if (!invalid.closed || connections.get() != before + 1)
+                    throw new AssertionError("invalid validation connection not replaced: " + scenario);
+                if (!scenario.equals("closed") && (invalid.resultsClosed != 1 || invalid.statementsClosed != 1))
+                    throw new AssertionError("validation resources leaked: " + scenario);
+                replacement.close();
+                ((Connection) borrow.invoke(validation)).close();
+                if (connections.get() != before + 1)
+                    throw new AssertionError("replacement was not reused: " + scenario);
+                System.out.println("PASS: validation failure cleanup and recovery: " + scenario);
+            } finally {
+                Method close = type.getDeclaredMethod("closeAll"); close.setAccessible(true); close.invoke(validation);
+            }
         }
         Object recovery = constructor.newInstance("jdbc:pool-reuse:recovery", "test", "test", 1, 0);
         try {

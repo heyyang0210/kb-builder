@@ -15,6 +15,8 @@ describe('AI 候选事务和范围保护', () => {
   function setup(ai = {}, extras = {}) {
     return createHandbookProductionService({
       store: new FileAggregateStore(path.join(root, 'state.json'), { drafts: {}, idempotency: {}, audits: [] }),
+      aiArtifactStore: require('../../../packages/agent-runner-core/lib/production-ai-artifact-store')
+        .createProductionAIArtifactStore({ store: new FileAggregateStore(path.join(root, 'artifacts.json'), { schemaVersion: 1, artifacts: {} }) }),
       ai: { loadMCPConfig: async () => ({}), generate: async () => ({ content: '新句', model: 'isolated-test-model' }), ...ai },
       ...extras,
     });
@@ -72,6 +74,36 @@ describe('AI 候选事务和范围保护', () => {
     expect(service.ai.list(ctx, editor)).toEqual([expect.objectContaining({ jobId: job.jobId, status: 'interrupted' })]);
     expect(writes).toBe(before);
     expect(store.read().aiJobs[job.jobId].status).not.toBe('interrupted');
+  });
+
+  test('AI 任务评价校验归属并记录审计，已删除历史不再可见', async () => {
+    const store = new FileAggregateStore(path.join(root, 'state.json'), { drafts: {}, idempotency: {}, audits: [] });
+    const service = setup({}, { store });
+    const job = service.ai.start(base, editor, 'feedback-and-history');
+    await tick();
+    const input = { ...ctx, jobId: job.jobId };
+    expect(() => service.ai.feedback(input, editor)).toThrow(expect.objectContaining({ code: 'AI_FEEDBACK_REQUIRED', status: 422 }));
+    expect(() => service.ai.feedback({ ...input, rating: 'neutral' }, editor)).toThrow(expect.objectContaining({ code: 'AI_FEEDBACK_INVALID', status: 422 }));
+    expect(() => service.ai.feedback({ ...input, comment: 'x'.repeat(1001) }, editor)).toThrow(expect.objectContaining({ code: 'AI_FEEDBACK_TOO_LONG', status: 422 }));
+    expect(() => service.ai.feedback({ ...input, rating: 'positive' }, { ...editor, user: { id: 'other' } })).toThrow(expect.objectContaining({ status: 404 }));
+
+    const feedback = service.ai.feedback({ ...input, rating: 'positive', comment: '结果可用' }, editor);
+    expect(feedback).toMatchObject({ rating: 'positive', comment: '结果可用' });
+    expect(service.ai.list(ctx, editor)).toEqual([expect.objectContaining({ jobId: job.jobId, feedback: 'positive' })]);
+
+    const removed = service.ai.removeHistory(input, editor);
+    expect(removed).toMatchObject({ jobId: job.jobId, deletedAt: expect.any(String) });
+    expect(service.ai.list(ctx, editor)).toEqual([]);
+    expect(() => service.ai.get(input, editor)).toThrow(expect.objectContaining({ status: 404 }));
+    expect(store.read().audits.map(audit => audit.action)).toEqual(['AI_FEEDBACK_UPDATED', 'AI_HISTORY_DELETED']);
+  });
+
+  test('运行中的 AI 任务不能删除历史', async () => {
+    const service = setup({ generate: () => new Promise(() => {}) });
+    const job = service.ai.start(base, editor, 'running-history');
+    await tick();
+    expect(() => service.ai.removeHistory({ ...ctx, jobId: job.jobId }, editor))
+      .toThrow(expect.objectContaining({ code: 'AI_JOB_RUNNING', status: 409 }));
   });
 
   test('候选不写草稿；显式采用原子保存且保留范围外正文，重试只采用一次', async () => {

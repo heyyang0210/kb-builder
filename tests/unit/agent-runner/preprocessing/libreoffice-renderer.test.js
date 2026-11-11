@@ -49,6 +49,62 @@ describe('LibreOfficeRenderer', () => {
     expect(result.assets).toEqual([]);
     expect(result.status.status).toBe('unavailable');
   });
+
+  test('渲染失败时保留错误并返回零资产', async () => {
+    const renderer = { isAvailable: async () => true, render: async () => { throw new Error('页面转换失败'); } };
+    const result = await renderOfficeAssets(renderer, '/tmp/a.pptx', '测试');
+    expect(result).toEqual({ assets: [], status: { enabled: true, status: 'failed', pageCount: 0, error: '页面转换失败' } });
+  });
+});
+
+describe('LibreOfficeRenderer process boundaries', () => {
+  test('依赖检查失败时拒绝转换', async () => {
+    const commandRunner = jest.fn().mockRejectedValue(new Error('missing command'));
+    const renderer = new LibreOfficeRenderer({ commandRunner });
+    await expect(renderer.isAvailable()).resolves.toBe(false);
+    await expect(renderer.render('/tmp/source.pptx')).rejects.toThrow('Office 渲染依赖不可用');
+    expect(commandRunner.mock.calls.every(([, args]) => args[0] === '--version')).toBe(true);
+  });
+
+  test.each(['missing-pdf', 'missing-png', 'convert-error', 'image-error'])(
+    '%s 失败保留外部目录并清理临时文件', async failure => {
+      const outputDir = await fs.mkdtemp(path.join(os.tmpdir(), 'office-boundary-'));
+      let workingDir;
+      const commandRunner = jest.fn(async (command, args, options) => {
+        expect(options.timeout).toBe(4321);
+        if (args.includes('--convert-to')) {
+          const convertedDir = args[args.indexOf('--outdir') + 1];
+          workingDir = path.dirname(convertedDir);
+          expect(command).toBe('custom-office');
+          expect(args[args.length - 1]).toBe('/tmp/source.pptx');
+          if (failure === 'convert-error') throw new Error('conversion failed');
+          if (failure !== 'missing-pdf') await fs.writeFile(path.join(convertedDir, 'source.PDF'), 'pdf');
+        }
+        if (args[0] === '-png') {
+          expect(command).toBe('custom-image');
+          expect(args.slice(0, 3)).toEqual(['-png', '-r', '96']);
+          if (failure === 'image-error') throw new Error('image failed');
+        }
+      });
+      try {
+        await fs.writeFile(path.join(outputDir, 'keep.txt'), 'keep');
+        const renderer = new LibreOfficeRenderer({ command: 'custom-office', pdfToImageCommand: 'custom-image', dpi: 96, timeoutMs: 4321, commandRunner });
+        const expected = { 'missing-pdf': 'LibreOffice 未生成 PDF 文件', 'missing-png': 'PDF 转图未生成 PNG 页面', 'convert-error': 'conversion failed', 'image-error': 'image failed' };
+        await expect(renderer.render('/tmp/source.pptx', outputDir)).rejects.toThrow(expected[failure]);
+        expect(workingDir).toBeTruthy();
+        await expect(fs.stat(workingDir)).rejects.toMatchObject({ code: 'ENOENT' });
+        await expect(fs.readFile(path.join(outputDir, 'keep.txt'), 'utf8')).resolves.toBe('keep');
+      } finally {
+        await fs.rm(outputDir, { recursive: true, force: true });
+      }
+    }
+  );
+
+  test('无页码文件名返回零且目录URL编码特殊字符', () => {
+    const renderer = new LibreOfficeRenderer();
+    expect(renderer.pageNumber('unrelated.png')).toBe(0);
+    expect(renderer.fileUrl('/tmp/中文 profile')).toBe('file:///tmp/%E4%B8%AD%E6%96%87%20profile');
+  });
 });
 
 describe('LibreOfficeRenderer real integration', () => {

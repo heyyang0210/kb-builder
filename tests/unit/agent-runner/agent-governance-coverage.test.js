@@ -24,7 +24,10 @@ const initial = () => ({
 test('Agent 列表、默认回退和详情使用当前配置', async () => {
   const { governance, manager } = fixture(initial());
   const listed = await governance.get();
-  expect(listed.agents).toEqual([expect.objectContaining({ id: 'builtin-default', enabled: true, modelCount: 0, mcpCount: 0 })]);
+  expect(listed.agents).toEqual(expect.arrayContaining([
+    expect.objectContaining({ id: 'builtin-default', enabled: true, modelCount: 0, mcpCount: 0 }),
+    expect.objectContaining({ id: 'dsh-admin-trial', executor: 'deepseek', enabled: false, modelCount: 0, mcpCount: 0 }),
+  ]));
   expect(listed.rowVersion).toMatch(/^[a-f0-9]{64}$/);
   expect((await governance.agent('builtin-default')).name).toBe('默认');
   await expect(governance.agent('missing')).rejects.toMatchObject({ code: 'AGENT_NOT_FOUND', status: 404 });
@@ -40,6 +43,7 @@ test('Agent 列表、默认回退和详情使用当前配置', async () => {
 test('Agent 保存校验版本、默认项和字段，成功时保留已有模型配置', async () => {
   const { governance, manager } = fixture(initial());
   const version = (await governance.get()).rowVersion;
+  manager.save.mockClear();
   const valid = initial();
   await expect(governance.save(valid, 'stale', 'tester')).rejects.toMatchObject({ code: 'AGENT_CONFIG_CONFLICT', status: 409 });
   const invalid = [
@@ -63,6 +67,7 @@ test('Agent 保存校验版本、默认项和字段，成功时保留已有模�
   const result = await governance.save({ ...valid, agents: [{ ...valid.agents[0], name: ' 更新后 ' }] }, `"${version}"`, 'tester');
   expect(result.agents[0].name).toBe('更新后');
   expect(manager.save).toHaveBeenCalledWith('agent-services', expect.objectContaining({ updatedBy: 'tester', defaultAgentId: 'builtin-default' }));
+  expect((await governance.get()).agents.filter(agent => agent.executor === 'deepseek')).toHaveLength(1);
   expect((await governance.agent('builtin-default')).model).toEqual({ services: [] });
 });
 
@@ -99,7 +104,7 @@ test('模型可用项绑定 Agent 版本，生成解析只使用该 Agent 的配
   const modelVersion = modelGovernance.get().rowVersion;
   await modelGovernance.save({ services: [], defaultSelection: null }, modelVersion, 'tester');
   expect(manager.save).toHaveBeenCalledWith('agent-services', expect.objectContaining({
-    agents: [expect.objectContaining({ model: expect.objectContaining({ services: [] }) })],
+    agents: expect.arrayContaining([expect.objectContaining({ id: 'builtin-default', model: expect.objectContaining({ services: [] }) })]),
   }));
   const currentVersion = modelGovernance.get().rowVersion;
   manager.load.mockResolvedValue({ agents: [], defaultAgentId: 'missing' });

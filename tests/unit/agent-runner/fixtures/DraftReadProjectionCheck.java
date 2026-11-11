@@ -18,6 +18,22 @@ public class DraftReadProjectionCheck {
         if (projection.snapshot().revision() != 3) throw new AssertionError("late snapshot overwrite");
         projection.publish(4, Map.of());
         if (!projection.snapshot().drafts().isEmpty()) throw new AssertionError("deleted state retained");
+        projection.publish(5, Map.of("drafts", Map.of(
+            "invalid", "damaged aggregate entry",
+            "missing-history", Map.of("draftId", "missing"),
+            "non-list-history", Map.of("revisions", "damaged history"),
+            "empty-history", Map.of("revisions", List.of()),
+            "missing-current", Map.of("currentRevisionId", "absent", "revisions",
+                List.of("invalid revision", Map.of("revisionId", "old", "markdown", "private history"))))));
+        if (projection.snapshot().drafts().size() != 4 || projection.snapshot().drafts().containsKey("invalid"))
+            throw new AssertionError("malformed draft was projected or valid draft lost");
+        for (Object value : projection.snapshot().drafts().values()) {
+            if (!List.of().equals(((Map<?, ?>) value).get("revisions")))
+                throw new AssertionError("unselected or malformed history leaked");
+        }
+        projection.publish(5, Map.of("drafts", Map.of("replacement", Map.of("draftId", "new"))));
+        if (!projection.snapshot().drafts().keySet().equals(java.util.Set.of("replacement")))
+            throw new AssertionError("same revision refresh retained stale draft data");
         System.out.println("PASS: current revision, no global data, monotonic publish, deletion");
     }
 }

@@ -669,7 +669,7 @@ class RetrievalStrategy {
     
     for (const line of lines) {
       // 匹配 Markdown 表格行：| P1-01-01 | \`P1-01-01-基本概念.md\` | 数据库基本概念 |
-      const tableMatch = line.match(/\|\s*([A-Z0-9-]+)\s*\|\s*\`([^`]+)\`\s*\|\s*(.+?)\s*\|/);
+      const tableMatch = line.match(/\|\s*([A-Z][A-Z0-9-]*)\s*\|\s*\`([^`]+)\`\s*\|\s*(.+?)\s*\|/);
       if (tableMatch) {
         entries.push({
           id: tableMatch[1],

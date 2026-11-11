@@ -21,15 +21,18 @@ test('管理员看到必要字段、单一更新时间和真实服务端分页',
   const root = page.locator('#view-root');
   await expect(root.getByRole('heading', { name: '知识资产' })).toBeVisible();
   await expect(root.getByRole('columnheader', { name: '手册名称' })).toBeVisible();
+  await expect(root.getByRole('columnheader', { name: '产品' })).toBeVisible();
   await expect(root.getByRole('columnheader', { name: '责任人' })).toBeVisible();
   await expect(root.getByRole('columnheader', { name: '仓库版本' })).toBeVisible();
   await expect(root.getByRole('columnheader', { name: '内容规模' })).toBeVisible();
+  await expect(root.getByRole('columnheader', { name: '下一步' })).toHaveCount(0);
   await expect(root.getByText('A：', { exact: false }).first()).toBeVisible();
   await expect(root.getByText('B：', { exact: false }).first()).toBeVisible();
   await expect(root.getByRole('button', { name: '新增手册' })).toBeVisible();
   await expect(root.locator('.asset-page-intro .asset-context-label')).toHaveCount(0);
   await expect(root.getByRole('button', { name: '新增手册' })).toHaveCSS('color', 'rgb(3, 105, 161)');
   await expect(root.locator('[data-asset-more-menu] summary')).toBeVisible();
+  await expect(root.getByRole('navigation', { name: '手册阶段筛选' }).getByRole('link', { name: /全部手册/ })).toHaveAttribute('aria-current', 'page');
   await expect(root.getByRole('link', { name: /查看已停用资产/ })).not.toBeVisible();
   await expect(root.getByRole('columnheader', { name: '操作' })).toHaveCount(0);
   await expect(root.locator('tbody .asset-name').first()).toBeVisible();
@@ -44,6 +47,16 @@ test('管理员看到必要字段、单一更新时间和真实服务端分页',
   await expect(page).toHaveURL(/status=asset_created/);
   await expect.poll(() => assetRequests).toBeGreaterThan(before);
   await expect(root.getByText('目录条目')).toHaveCount(0);
+});
+
+test('切换阶段后立即搜索仍保留阶段条件', async ({ page }) => {
+  await page.goto(`${baseUrl}/knowledge-center/assets`);
+  await expect(page.locator('.asset-workspace')).toHaveAttribute('data-asset-loaded', 'true');
+  await page.locator('[data-asset-stage="content_building"]').click();
+  await page.locator('[data-asset-filter] input[name="q"]').fill('SQL');
+  await page.locator('[data-asset-filter] button[type="submit"]').click();
+  await expect(page).toHaveURL(/status=content_building/);
+  await expect(page).toHaveURL(/q=SQL/);
 });
 
 test('新增对话框展示必要字段且取消不会提交', async ({ page }) => {
@@ -74,6 +87,7 @@ test('新增对话框展示必要字段且取消不会提交', async ({ page }) 
 
 for (const viewport of [
   { name: '桌面', width: 1440, height: 900 },
+  { name: '紧凑桌面', width: 1100, height: 900 },
   { name: '平板', width: 768, height: 1024 },
   { name: '移动', width: 375, height: 812 },
 ]) {
@@ -81,12 +95,17 @@ for (const viewport of [
     await page.setViewportSize(viewport);
     await page.goto(`${baseUrl}/knowledge-center/assets`);
     expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+    if (viewport.width === 1100) {
+      await expect(page.locator('.asset-workspace')).toHaveAttribute('data-asset-loaded', 'true');
+      expect(await page.locator('.asset-table-wrap').evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
+    }
   });
 }
 
 test('移动端从列表进入全屏操作视图并可返回', async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 812 });
   await page.goto(`${baseUrl}/knowledge-center/assets`);
+  await expect(page.locator('.asset-workspace')).toHaveAttribute('data-asset-loaded', 'true');
   const firstManual = page.locator('[data-asset-id]').first();
   await firstManual.click();
   await expect(page).toHaveURL(/handbookId=/);
@@ -117,8 +136,13 @@ test('默认列表全宽，点击手册名称后打开并可关闭弹性操作�
   await expect(actionPanel.locator('.asset-context-label')).toHaveCount(0);
   const actions = actionPanel.locator('.asset-action-row');
   expect(await actions.count()).toBeGreaterThanOrEqual(5);
-  await expect(actionPanel.getByText('文档工作', { exact: true })).toHaveCount(0);
-  await expect(actionPanel.getByText('手册管理', { exact: true })).toHaveCount(0);
+  await expect(actionPanel.getByRole('heading', { name: '下一步' })).toBeVisible();
+  await expect(actionPanel.getByRole('heading', { name: '工作入口' })).toBeVisible();
+  await expect(actionPanel.getByRole('heading', { name: '管理设置' })).toBeVisible();
+  await expect(actionPanel.locator('.asset-action-primary')).toHaveCount(1);
+  await expect(actionPanel.getByText('产品', { exact: true })).toHaveCount(0);
+  await expect(actionPanel.getByText('仓库版本', { exact: true })).toHaveCount(0);
+  await expect(actionPanel.getByText('内容规模', { exact: true })).toHaveCount(0);
   await expect(actionPanel.getByRole('button', { name: /管理手册/ })).toBeVisible();
   await expect(actionPanel.getByText('配置仓库映射', { exact: true }).or(actionPanel.getByText('维护仓库映射', { exact: true }))).toBeVisible();
   await expect(actionPanel.getByText('仓库内容', { exact: true })).toHaveCount(0);

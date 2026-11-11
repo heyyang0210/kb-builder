@@ -29,8 +29,13 @@
 }
 .platform-admin-page .platform-status.is-success { color: var(--color-success); background: var(--color-success-subtle); }
 .platform-admin-page .platform-status.is-neutral { color: var(--color-text-secondary); background: var(--color-surface-subtle); }
-.platform-nav-chevron { margin-left: 8px; }
-.platform-admin-page .database-connection-panel { margin-bottom: var(--space-6); }
+.platform-tab { display: inline-flex; align-items: center; gap: 8px; }
+.platform-tab-icon { width: 20px; height: 20px; flex: none; stroke-width: 1.8; }
+.platform-nav-chevron { width: 16px; height: 16px; flex: none; margin-left: auto; transition: transform var(--motion-fast); }
+.platform-tab-menu details[open] .platform-nav-chevron { transform: rotate(180deg); }
+.platform-admin-page .button > svg { width: 16px; height: 16px; flex: none; stroke-width: 1.8; }
+.gitlab-version-toolbar label > svg { width: 18px; height: 18px; flex: none; stroke-width: 1.8; }
+.platform-admin-page .database-connection-panel { margin-bottom: 0; }
 .platform-admin-page .team-group-workspace { border-radius: var(--radius-md); }
 .platform-admin-page .gitlab-access,
 .platform-admin-page .gitlab-verification {
@@ -156,88 +161,60 @@
 .platform-submenu button[aria-current="page"] { color: var(--color-brand); background: var(--color-brand-subtle); font-weight: 700; }
 
 /* ---- 系统治理标签页 ---- */
-.governance-summary {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: var(--space-4);
-  margin-bottom: var(--space-6);
-}
-.governance-summary-item {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-4);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-surface);
-}
-.governance-summary-item .status-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-.governance-summary-item .status-dot.ok { background: var(--color-success); }
-.governance-summary-item .status-dot.warning { background: var(--color-warning); }
-.governance-summary-item .status-dot.error { background: var(--color-danger); }
-.governance-summary-item .status-dot.unknown { background: var(--color-text-tertiary); }
-.governance-summary-label {
-  font-size: 13px;
-  color: var(--color-text-secondary);
-}
-.governance-summary-value {
-  font-weight: 600;
-  font-size: 14px;
-}
-
-.governance-columns {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--space-6);
-  align-items: start;
-}
-
-.governance-health-list,
-.governance-pending-list {
-  display: grid;
-  gap: 0;
-}
-.governance-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: var(--space-3) 0;
-  border-bottom: 1px solid var(--color-border);
-  font-size: 14px;
-}
-.governance-row:last-child { border-bottom: 0; }
-.governance-row .status-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  padding: 2px 10px;
-  border-radius: 999px;
-}
-.governance-row .status-badge.ok { background: var(--color-success-subtle); color: var(--color-success); }
-.governance-row .status-badge.warning { background: var(--color-warning-subtle); color: var(--color-warning); }
-.governance-row .status-badge.error { background: var(--color-danger-subtle); color: var(--color-danger); }
-
-.governance-pending-item {
-  padding: var(--space-3) 0;
-  border-bottom: 1px solid var(--color-border);
-}
-.governance-pending-item:last-child { border-bottom: 0; }
-.governance-pending-item strong { display: block; font-size: 14px; margin-bottom: 4px; }
-.governance-pending-item a {
-  color: var(--color-brand);
-  font-size: 13px;
-  text-decoration: none;
-}
-.governance-pending-item a:hover { text-decoration: underline; }
+.platform-admin-page #platform-panel-governance { width: 100%; max-width: 1320px; margin: 0 auto; box-sizing: border-box; }
+.governance-page-title { margin: 28px 0 18px; font-size: 21px; line-height: 1.35; }
+.governance-conclusion { display: flex; align-items: center; gap: 18px; min-height: 100px; padding: 18px 24px; border: 1px solid var(--color-border); border-left: 4px solid var(--color-success); border-radius: var(--radius-sm); background: var(--color-success-subtle); }
+.governance-conclusion.has-issues { border-color: color-mix(in srgb, var(--color-danger) 28%, var(--color-border)); border-left-color: var(--color-danger); background: var(--color-danger-subtle); }
+.governance-conclusion.is-unknown { border-left-color: var(--color-warning); background: var(--color-warning-subtle); }
+.governance-conclusion > svg { width: 40px; height: 40px; padding: 10px; border-radius: 50%; background: var(--color-surface); color: var(--color-success); flex: none; }
+.governance-conclusion.has-issues > svg { color: var(--color-danger); }
+.governance-conclusion.is-unknown > svg { color: var(--color-warning); }
+.governance-conclusion > div:nth-child(2) { display: grid; gap: 4px; min-width: 0; }
+.governance-conclusion strong { font-size: 18px; }
+.governance-conclusion span { font-size: 13px; color: var(--color-text-secondary); line-height: 1.45; }
+.governance-conclusion-count { display: grid; gap: 2px; min-width: 90px; margin-left: auto; padding-left: 20px; border-left: 1px solid var(--color-border-strong); text-align: right; }
+.governance-conclusion-count b { color: var(--color-danger); font-size: 21px; }
+.governance-conclusion-count span { white-space: nowrap; font-size: 11px; }
+.governance-action-panel, .governance-runtime { margin-top: 30px; }
+.governance-section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 13px; }
+.governance-section-head h3 { margin: 0; font-size: 16px; }
+.governance-section-head > span { color: var(--color-text-secondary); font-size: 12px; white-space: nowrap; }
+.governance-pending-list { display: grid; gap: 8px; }
+.governance-pending-item { display: grid; grid-template-columns: 94px minmax(0, 1fr) auto; align-items: center; gap: 18px; min-height: 82px; padding: 14px 20px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); }
+.governance-pending-level { display: inline-flex; align-items: center; gap: 7px; color: var(--color-danger); font-size: 12px; font-weight: 700; white-space: nowrap; }
+.governance-pending-level::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.governance-pending-item strong { display: block; font-size: 14px; }
+.governance-pending-description { display: block; margin-top: 4px; color: var(--color-text-secondary); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.governance-pending-item a { display: inline-flex; align-items: center; gap: 5px; min-height: 36px; padding: 0 10px; border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm); color: var(--color-brand); font-size: 12px; font-weight: 700; text-decoration: none; white-space: nowrap; }
+.governance-pending-item a svg { width: 14px; height: 14px; }
+.governance-pending-item a:hover { border-color: var(--color-brand); }
+.governance-pending-empty { display: flex; align-items: center; gap: 9px; min-height: 50px; padding: 0 16px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text-secondary); font-size: 13px; }
+.governance-pending-empty svg { width: 17px; height: 17px; color: var(--color-success); }
+.governance-table-wrap { overflow: hidden; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); }
+.governance-status-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.governance-status-table th { padding: 11px 18px; background: var(--color-surface-subtle); color: var(--color-text-secondary); font-size: 12px; font-weight: 600; text-align: left; }
+.governance-status-table th:first-child { width: 34%; }
+.governance-status-table th:nth-child(2) { width: 17%; }
+.governance-status-table th:nth-child(3) { width: 34%; }
+.governance-status-table th:last-child { width: 15%; text-align: right; }
+.governance-status-table td { min-height: 60px; padding: 14px 18px; border-top: 1px solid var(--color-border); font-size: 13px; vertical-align: middle; }
+.governance-status-table td:last-child { text-align: right; }
+.governance-service { display: inline-flex; align-items: center; gap: 9px; font-weight: 650; }
+.governance-service svg { width: 16px; height: 16px; color: var(--color-icon-muted); flex: none; }
+.governance-state { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 700; white-space: nowrap; }
+.governance-state::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.governance-state.ok { color: var(--color-success); }
+.governance-state.warning { color: var(--color-warning); }
+.governance-state.error { color: var(--color-danger); }
+.governance-state.unknown { color: var(--color-text-secondary); }
+.governance-detail { color: var(--color-text-secondary); font-size: 12px !important; overflow-wrap: anywhere; }
+.governance-row-action { display: inline-flex; align-items: center; gap: 4px; padding: 0; border: 0; background: transparent; color: var(--color-brand); font: inherit; font-size: 12px; font-weight: 700; text-decoration: none; white-space: nowrap; cursor: pointer; }
+.governance-row-action svg { width: 14px; height: 14px; }
+.governance-row-action:hover { text-decoration: underline; }
+.governance-row-action:focus-visible, .governance-pending-item a:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 3px; }
 
 .governance-recent-ops {
-  margin-top: var(--space-6);
+  margin-top: 30px;
 }
 .governance-ops-table {
   width: 100%;
@@ -393,6 +370,79 @@
 }
 
 /* ---- GitLab 仓库标签页 ---- */
+.gitlab-connection-workspace { min-width: 0; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md); overflow: hidden; }
+.gitlab-connection-toolbar { display: flex; align-items: center; gap: 12px; padding: 16px 18px; border-bottom: 1px solid var(--color-border); }
+.gitlab-connection-toolbar .gitlab-list-search { width: min(360px, 100%); margin-right: auto; }
+.gitlab-connection-toolbar select { min-height: 40px; padding: 0 32px 0 12px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); font: inherit; font-size: 13px; }
+.gitlab-connection-toolbar .gitlab-add-connection { min-height: 40px; flex: none; }
+.gitlab-connection-table-wrap { width: 100%; overflow-x: auto; }
+.gitlab-connection-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 13px; }
+.gitlab-connection-table th { padding: 12px 14px; background: var(--color-surface-subtle); color: var(--color-text-secondary); font-size: 12px; font-weight: 600; text-align: left; white-space: nowrap; }
+.gitlab-connection-table td { padding: 15px 14px; border-top: 1px solid var(--color-border); vertical-align: middle; overflow-wrap: anywhere; }
+.gitlab-connection-table tbody tr[data-gitlab-row] { cursor: pointer; }
+.gitlab-connection-table tbody tr:hover { background: var(--color-surface-subtle); }
+.gitlab-connection-table th:nth-child(1) { width: 14%; }
+.gitlab-connection-table th:nth-child(2) { width: 19%; }
+.gitlab-connection-table th:nth-child(3) { width: 11%; }
+.gitlab-connection-table th:nth-child(4) { width: 11%; }
+.gitlab-connection-table th:nth-child(5) { width: 17%; }
+.gitlab-connection-table th:nth-child(6) { width: 10%; }
+.gitlab-connection-table th:nth-child(7) { width: 11%; }
+.gitlab-connection-table th:nth-child(8) { width: 7%; }
+.gitlab-connection-table td:first-child strong { font-size: 14px; color: var(--color-text); }
+.gitlab-connection-table .gitlab-connection-path { color: var(--color-text-secondary); }
+.gitlab-connection-table .conn-status { display: inline-block; padding: 4px 8px; border-radius: var(--radius-sm); font-size: 12px; font-weight: 600; }
+.gitlab-verification-summary { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.gitlab-verification-summary time, .gitlab-verification-time { color: var(--color-text-secondary); font-size: 12px; white-space: nowrap; }
+.gitlab-state { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-size: 12px; font-weight: 600; }
+.gitlab-state::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--color-success); }
+.gitlab-state.disabled::before { background: var(--color-text-tertiary); }
+.gitlab-connection-empty { padding: 40px 16px !important; text-align: center; color: var(--color-text-secondary); }
+.gitlab-connection-footer { min-height: 52px; display: flex; justify-content: space-between; align-items: center; padding: 8px 18px; border-top: 1px solid var(--color-border); color: var(--color-text-secondary); font-size: 12px; }
+.gitlab-connection-backdrop { position: fixed; inset: 0; z-index: 1000; background: rgb(18 25 28 / 38%); }
+.gitlab-connection-drawer { position: fixed; inset: 0 0 0 auto; z-index: 1001; display: flex; flex-direction: column; width: min(440px, 100vw); height: var(--kc-viewport-height, 100dvh); border: 0; border-radius: 0; box-shadow: -12px 0 36px rgb(0 0 0 / 12%); overflow: hidden; }
+.gitlab-connection-drawer .gitlab-detail-header { display: flex; flex-direction: column; align-items: flex-start; gap: 0; padding: 32px 28px 22px; }
+.gitlab-connection-drawer .gitlab-detail-header h3 { padding-right: 34px; font-size: 20px; overflow-wrap: anywhere; }
+.gitlab-connection-drawer .gitlab-detail-header .gitlab-connection-path { margin: 4px 0 14px; color: var(--color-text-secondary); overflow-wrap: anywhere; }
+.gitlab-connection-drawer .gitlab-detail-body { flex: 1; display: flex; flex-direction: column; min-height: 0; padding: 24px 28px 0; overflow-y: auto; }
+.gitlab-connection-drawer .gitlab-detail-fields { grid-template-columns: 1fr 1fr; gap: 20px 16px; }
+.gitlab-connection-drawer .gitlab-detail-field:first-child { grid-column: 1 / -1; }
+.gitlab-connection-drawer .gitlab-detail-field { padding: 0; background: transparent; }
+.gitlab-connection-drawer .gitlab-detail-field label { text-transform: none; letter-spacing: 0; }
+.gitlab-connection-drawer .gitlab-access { grid-template-columns: 1fr; gap: 0; padding: 0; border: 0; background: none; }
+.gitlab-connection-drawer .gitlab-access h4, .gitlab-verification-title { margin: 0 0 8px; font-size: 14px; font-weight: 700; }
+.gitlab-connection-drawer .gitlab-access div { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; padding: 11px 0; border-bottom: 1px solid var(--color-border); }
+.gitlab-connection-drawer .gitlab-access strong { text-align: right; }
+.gitlab-connection-drawer .gitlab-verification { padding: 14px; }
+.gitlab-connection-drawer .gitlab-detail-actions { position: sticky; bottom: 0; z-index: 1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: auto -28px 0; padding: 16px 28px max(16px, env(safe-area-inset-bottom)); background: var(--color-surface); }
+.gitlab-connection-drawer .gitlab-detail-actions .button { min-height: 44px; display: inline-flex; justify-content: center; align-items: center; gap: 5px; padding: 8px 4px; font-size: 12px; white-space: nowrap; }
+.gitlab-connection-drawer .gitlab-detail-actions i { width: 15px; height: 15px; flex: none; }
+.gitlab-drawer-close { position: absolute; top: 22px; right: 20px; width: 44px; height: 44px; z-index: 1; }
+.gitlab-row-action { width: 44px; height: 44px; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--color-text-secondary); cursor: pointer; }
+.gitlab-row-action:hover, .gitlab-row-action:focus-visible { background: var(--color-surface-subtle); color: var(--color-brand); }
+.gitlab-row-action i, .gitlab-drawer-close i { width: 18px; height: 18px; }
+@media (max-width: 1100px) {
+  .gitlab-connection-table { min-width: 960px; }
+}
+@media (max-width: 700px) {
+  .gitlab-connection-toolbar { flex-wrap: wrap; padding: 12px; }
+  .gitlab-connection-toolbar .gitlab-list-search { flex-basis: 100%; width: 100%; }
+  .gitlab-connection-toolbar select { flex: 1; min-width: 0; }
+  .gitlab-connection-toolbar .gitlab-add-connection { width: 100%; justify-content: center; }
+  .gitlab-connection-table { min-width: 0; }
+  .gitlab-connection-table thead { display: none; }
+  .gitlab-connection-table tbody tr { display: grid; grid-template-columns: minmax(0, 1fr) 44px; gap: 5px 12px; padding: 16px 12px; border-top: 1px solid var(--color-border); }
+  .gitlab-connection-table td { display: none; padding: 0; border: 0; }
+  .gitlab-connection-table td:nth-child(1), .gitlab-connection-table td:nth-child(2), .gitlab-connection-table td:nth-child(5), .gitlab-connection-table td:nth-child(7), .gitlab-connection-table td:nth-child(8) { display: block; grid-column: 1; }
+  .gitlab-connection-table td:nth-child(8) { grid-column: 2; grid-row: 1 / span 3; align-self: center; }
+  .gitlab-connection-table td:nth-child(5), .gitlab-connection-table td:nth-child(7) { display: inline-block; }
+  .gitlab-connection-table .gitlab-connection-empty { display: block; }
+  .gitlab-connection-drawer { width: 100vw; }
+  .gitlab-connection-drawer .gitlab-detail-header { padding: 24px 20px 18px; }
+  .gitlab-drawer-close { top: 14px; right: 12px; }
+  .gitlab-connection-drawer .gitlab-detail-body { padding: 20px 20px 0; }
+  .gitlab-connection-drawer .gitlab-detail-actions { margin-left: -20px; margin-right: -20px; padding-left: 12px; padding-right: 12px; }
+}
 .gitlab-layout {
   display: grid;
   grid-template-columns: 320px 1fr;
@@ -818,9 +868,6 @@
 @keyframes team-group-pulse { to { opacity: .55; } }
 
 @media (max-width: 900px) {
-  .governance-columns {
-    grid-template-columns: 1fr;
-  }
   .permissions-layout,
   .gitlab-layout {
     grid-template-columns: 1fr;
@@ -845,9 +892,27 @@
 }
 
 @media (max-width: 600px) {
-  .governance-summary {
-    grid-template-columns: 1fr;
-  }
+  .platform-admin-page .page-intro { gap: 6px; margin-bottom: 12px; padding-bottom: 12px; }
+  .platform-admin-page .platform-header-meta { display: none; }
+  .platform-admin-page .platform-tabs { flex-wrap: nowrap; gap: 4px; margin-bottom: 16px; overflow-x: auto; scrollbar-width: thin; }
+  .platform-admin-page .platform-tab { padding: 10px 12px; }
+  .governance-page-title { margin: 24px 0 16px; font-size: 19px; }
+  .governance-conclusion { align-items: flex-start; gap: 12px; min-height: 0; padding: 16px; }
+  .governance-conclusion > svg { width: 34px; height: 34px; padding: 8px; }
+  .governance-conclusion strong { font-size: 16px; }
+  .governance-conclusion-count { display: none; }
+  .governance-action-panel, .governance-runtime { margin-top: 26px; }
+  .governance-pending-item { grid-template-columns: 1fr; gap: 7px; padding: 15px; }
+  .governance-pending-item a { justify-self: start; margin-top: 4px; }
+  .governance-status-table, .governance-status-table tbody { display: block; }
+  .governance-status-table thead { display: none; }
+  .governance-status-table tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px 12px; padding: 15px; border-top: 1px solid var(--color-border); }
+  .governance-status-table tr:first-child { border-top: 0; }
+  .governance-status-table td { min-height: 0; padding: 0; border: 0; }
+  .governance-status-table td:nth-child(2) { grid-column: 2; grid-row: 1; }
+  .governance-status-table td:nth-child(3) { grid-column: 1 / -1; }
+  .governance-status-table td:last-child { grid-column: 1 / -1; text-align: left; }
+  .governance-status-table td:empty, .governance-status-table td.governance-detail.is-empty { display: none; }
   .platform-header {
     flex-direction: column;
     align-items: flex-start;
@@ -1115,3 +1180,128 @@
   .agent-admin .agent-dialog-content { padding: 12px; }
   .agent-admin button, .agent-admin .agent-model-picker > summary { min-height: 44px; }
 }
+.gitlab-workspace-tabs{display:flex;gap:4px;border-bottom:1px solid var(--color-border,#dce2e5);margin:12px 0 18px}.gitlab-workspace-tabs button{border:0;background:transparent;padding:10px 16px;color:var(--color-text-secondary,#52616a);cursor:pointer}.gitlab-workspace-tabs button.active{color:var(--color-primary,#116c68);border-bottom:2px solid currentColor;font-weight:600}.gitlab-version-toolbar{display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:12px}.gitlab-version-toolbar label{display:flex;align-items:center;gap:8px;flex:1;min-width:min(100%,260px);max-width:440px;border:1px solid var(--color-border,#dce2e5);padding:0 10px}.gitlab-version-toolbar input{border:0;min-width:0;flex:1;padding:9px 0}.gitlab-version-toolbar>span{color:var(--color-text-secondary,#52616a);font-size:13px}.gitlab-version-toolbar>.button{margin-left:auto}.gitlab-version-feedback{min-height:20px;color:var(--color-primary,#116c68);font-size:13px}.gitlab-version-table-wrap{overflow-x:auto}.gitlab-version-table{width:100%;border-collapse:collapse;text-align:left}.gitlab-version-table th,.gitlab-version-table td{padding:12px 10px;border-bottom:1px solid var(--color-border,#dce2e5);font-size:13px;vertical-align:middle}.gitlab-version-table th{color:var(--color-text-secondary,#52616a);font-weight:600;background:var(--color-surface-muted,#f5f7f7)}.gitlab-version-table code{font-size:12px}.gitlab-version-state{display:inline-block;padding:3px 7px;background:#edf1f2;color:#43525b}.gitlab-version-state.active{background:#e4f4ed;color:#176b47}.gitlab-version-state.draft{background:#fff0d8;color:#9a6100}.gitlab-version-actions{display:flex;align-items:center;gap:6px;white-space:nowrap}.gitlab-version-empty{text-align:center;color:var(--color-text-secondary,#52616a)}.gitlab-version-form,.gitlab-version-preview{border-top:1px solid var(--color-border,#dce2e5);padding:16px 0;margin:14px 0}.gitlab-version-form-head{display:flex;align-items:center;justify-content:space-between}.gitlab-version-form h4,.gitlab-version-preview h4{font-size:15px;margin:0 0 12px}.gitlab-version-note{font-size:13px;color:#8b5a13}.gitlab-version-fields{display:flex;align-items:end;gap:12px;flex-wrap:wrap}.gitlab-version-fields label{display:grid;gap:5px;flex:1 1 175px;min-width:0;font-size:12px;color:var(--color-text-secondary,#52616a)}.gitlab-version-fields input,.gitlab-version-fields select{width:100%;box-sizing:border-box;min-height:36px;border:1px solid var(--color-border,#dce2e5);padding:7px;background:#fff;color:var(--color-text-primary,#17232a)}.gitlab-version-form-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}.gitlab-version-preview p{min-height:18px;font-size:13px;color:var(--color-text-secondary,#52616a)}@media(max-width:700px){.gitlab-version-table thead{display:none}.gitlab-version-table tr{display:grid;border-bottom:1px solid var(--color-border,#dce2e5);padding:8px 0}.gitlab-version-table td{border:0;padding:4px 8px}.gitlab-version-table td:nth-child(1){font-size:15px}.gitlab-version-toolbar>.button{margin-left:0}}
+.gitlab-version-state.superseded{background:#edf0f2;color:#56636b}.gitlab-version-state.disabled{background:#f6e9e7;color:#8d4237}.gitlab-version-actions .icon-button{min-width:34px;min-height:34px}.gitlab-version-form input:focus-visible,.gitlab-version-form select:focus-visible,.gitlab-version-preview input:focus-visible,.gitlab-version-preview select:focus-visible,.gitlab-workspace-tabs button:focus-visible{outline:2px solid #087d74;outline-offset:2px}@media(max-width:700px){.gitlab-version-table tr{grid-template-columns:minmax(0,1fr);padding:12px 0}.gitlab-version-table td{display:grid;grid-template-columns:88px minmax(0,1fr);align-items:center;gap:8px;min-height:29px;font-size:13px}.gitlab-version-table td::before{content:attr(data-label);font-size:12px;color:#64727a}.gitlab-version-table td:nth-child(1){font-size:14px}.gitlab-version-table td:nth-child(1)::before{font-weight:400}.gitlab-version-table td:last-child{padding-top:8px}.gitlab-version-actions{justify-content:flex-start}.gitlab-version-toolbar label{flex-basis:100%;max-width:none}.gitlab-version-toolbar>.button{margin-left:auto}}
+.gitlab-version-pagination{display:flex;align-items:center;justify-content:flex-end;gap:10px;padding:12px 0}.gitlab-version-pagination span{font-size:13px;color:#53626a}.gitlab-version-state{justify-self:start}@media(max-width:700px){.gitlab-version-state{width:auto}.gitlab-version-table td::before{align-self:center}}
+.gitlab-version-toolbar>select{min-height:36px;border:1px solid var(--color-border,#dce2e5);background:#fff;color:#26353e;padding:0 8px;font-size:13px}.gitlab-version-toolbar>select:focus-visible{outline:2px solid #087d74;outline-offset:2px}@media(max-width:700px){.gitlab-version-toolbar>select{flex:1;min-width:120px}}
+.gitlab-version-state.pending{background:var(--color-surface-subtle);color:var(--color-text-secondary)}
+.gitlab-version-toolbar>.icon-button,.gitlab-version-actions .icon-button{width:44px;height:44px;min-width:44px;min-height:44px;display:inline-grid;place-items:center;padding:0}
+.gitlab-version-toolbar>.icon-button{margin-left:auto}
+.gitlab-version-toolbar>.icon-button svg,.gitlab-version-actions .icon-button svg{width:18px;height:18px;stroke-width:1.8}
+.gitlab-version-actions .icon-button:disabled{opacity:.45;cursor:not-allowed}
+.gitlab-version-actions .gitlab-version-delete{color:#a33c32}.gitlab-version-actions .gitlab-version-delete:hover{background:#fceceb;color:#86291f}.gitlab-version-actions .gitlab-version-delete:focus-visible{outline:2px solid #a33c32;outline-offset:2px}
+.gitlab-version-delete-dialog{width:min(440px,calc(100vw - 32px));border:0;border-radius:7px;padding:24px;box-shadow:0 18px 55px #12272d42;color:var(--color-text-primary,#202d33)}.gitlab-version-delete-dialog::backdrop{background:#18303788}.gitlab-version-delete-dialog h4{font-size:18px;margin:0 0 14px}.gitlab-version-delete-dialog p{font-size:14px;line-height:1.5;color:var(--color-text-secondary,#52636a);margin:0 0 16px}.gitlab-version-delete-target{border:1px solid var(--color-border,#dce3e5);border-radius:5px;padding:12px;font-size:13px;line-height:1.6;overflow-wrap:anywhere}.gitlab-version-delete-dialog .button.danger{background:#a83c33;border-color:#a83c33;color:#fff}.gitlab-version-delete-dialog .button.danger:hover{background:#872b25}
+.gitlab-version-workspace{min-width:0;border:1px solid var(--color-border);border-radius:6px;background:var(--color-surface);overflow:hidden}
+.gitlab-version-workspace .gitlab-version-toolbar{gap:12px;margin:0;padding:14px 18px;border-bottom:1px solid var(--color-border)}
+.gitlab-version-workspace .gitlab-version-toolbar label{min-height:38px;border-radius:5px}
+.gitlab-version-workspace .gitlab-version-toolbar>select{min-height:38px;border-radius:5px}
+.gitlab-version-workspace .gitlab-version-toolbar>.icon-button{border-radius:5px;background:var(--color-brand-subtle);color:var(--color-brand)}
+.gitlab-version-workspace .gitlab-version-feedback{min-height:0;margin:0;padding:10px 18px;color:var(--color-success);background:var(--color-success-subtle);border-bottom:1px solid var(--color-border)}
+.gitlab-version-workspace .gitlab-version-feedback:empty{display:none}
+.gitlab-version-workspace .gitlab-version-form{margin:0;padding:16px 18px;border-top:0;border-bottom:1px solid var(--color-border)}
+.gitlab-version-workspace .gitlab-version-table{table-layout:fixed}
+.gitlab-version-workspace .gitlab-version-table th,.gitlab-version-workspace .gitlab-version-table td{height:64px;padding:12px 16px;overflow-wrap:anywhere}
+.gitlab-version-workspace .gitlab-version-table th{height:44px;background:var(--color-surface-subtle);white-space:nowrap}
+.gitlab-version-workspace .gitlab-version-table th:nth-child(1){width:13%}
+.gitlab-version-workspace .gitlab-version-table th:nth-child(2){width:18%}
+.gitlab-version-workspace .gitlab-version-table th:nth-child(3){width:24%}
+.gitlab-version-workspace .gitlab-version-table th:nth-child(4){width:19%}
+.gitlab-version-workspace .gitlab-version-table th:nth-child(5){width:12%}
+.gitlab-version-workspace .gitlab-version-table th:nth-child(6){width:14%}
+.gitlab-version-workspace .gitlab-version-table tbody tr:hover{background:var(--color-surface-subtle)}
+.gitlab-version-workspace .gitlab-version-table tbody tr:last-child td{border-bottom:0}
+.gitlab-version-workspace .gitlab-version-table code{white-space:normal;overflow-wrap:anywhere}
+.gitlab-version-workspace .gitlab-version-actions{gap:1px}
+.gitlab-version-workspace .gitlab-version-actions .icon-button{border-radius:5px}
+.gitlab-version-workspace .gitlab-version-actions .icon-button{border:0;background:transparent;box-shadow:none}
+.gitlab-version-workspace .gitlab-version-actions .icon-button:hover{background:var(--color-brand-subtle)}
+.gitlab-version-workspace .gitlab-version-actions .icon-button.gitlab-version-delete:hover{background:var(--color-danger-subtle)}
+.gitlab-version-workspace .gitlab-version-toolbar>.icon-button{border:0;box-shadow:none}
+.gitlab-version-workspace .gitlab-version-toolbar>span{margin-left:auto}
+.gitlab-version-workspace .gitlab-version-toolbar>.icon-button{margin-left:0}
+.gitlab-version-footer{min-height:44px;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 18px;border-top:1px solid var(--color-border);color:var(--color-text-secondary);font-size:12px}
+.gitlab-version-footer .gitlab-version-pagination{padding:0}
+.gitlab-version-preset{display:grid;gap:5px;max-width:360px;margin:0 0 14px;font-size:12px;color:var(--color-text-secondary)}
+.gitlab-version-preset select{min-height:40px;border:1px solid var(--color-border);background:var(--color-surface);color:var(--color-text-primary);padding:8px}
+.gitlab-version-archive{border-top:1px solid var(--color-border)}
+.gitlab-version-archive summary{display:flex;align-items:center;gap:10px;min-height:44px;padding:8px 18px;color:var(--color-text-secondary);cursor:pointer;list-style:none}
+.gitlab-version-archive summary::-webkit-details-marker{display:none}
+.gitlab-version-archive summary svg{width:17px;height:17px}
+.gitlab-version-archive summary svg:last-child{margin-left:auto;transition:transform .15s ease}
+.gitlab-version-archive[open] summary svg:last-child{transform:rotate(180deg)}
+.gitlab-version-archive-list{border-top:1px solid var(--color-border);background:var(--color-surface-subtle)}
+.gitlab-version-archive-row{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:48px;padding:4px 18px;border-bottom:1px solid var(--color-border);font-size:13px;color:var(--color-text-secondary)}
+.gitlab-version-archive-row:last-child{border-bottom:0}
+.gitlab-version-archive-row span{min-width:0;overflow-wrap:anywhere}
+.gitlab-version-archive-row .icon-button{flex:none;min-width:44px;min-height:44px}
+.gitlab-version-archive summary:focus-visible,.gitlab-version-preset select:focus-visible{outline:2px solid var(--color-brand);outline-offset:2px}
+@media(max-width:900px){.gitlab-version-workspace .gitlab-version-toolbar>.icon-button{margin-left:0}}
+@media(max-width:700px){.gitlab-version-workspace .gitlab-version-toolbar{padding:12px;gap:8px}.gitlab-version-workspace .gitlab-version-toolbar label{flex:1 0 100%}.gitlab-version-workspace .gitlab-version-toolbar>span{margin-right:auto}.gitlab-version-workspace .gitlab-version-table{display:block}.gitlab-version-workspace .gitlab-version-table tbody{display:block}.gitlab-version-workspace .gitlab-version-table tr{padding:10px 12px}.gitlab-version-workspace .gitlab-version-table td{grid-template-columns:98px minmax(0,1fr);min-height:30px;height:auto;padding:5px 0}.gitlab-version-workspace .gitlab-version-table td::before{color:var(--color-text-secondary)}.gitlab-version-workspace .gitlab-version-table td:last-child{padding-top:5px}.gitlab-version-workspace .gitlab-version-actions{gap:4px}.gitlab-version-footer{padding:10px 12px}}
+
+.agent-admin .agent-editor-body { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:0 32px; max-width:1280px; }
+.agent-admin .agent-settings-group { min-width:0; }
+.agent-admin .agent-readiness-banner { grid-column:1/-1; display:flex; align-items:center; justify-content:space-between; gap:16px; margin:12px 0 0; padding:12px 14px; border:1px solid var(--color-border); border-left:3px solid var(--color-warning); border-radius:4px; background:var(--color-warning-subtle); }
+.agent-admin .agent-readiness-banner.is-ready { border-left-color:var(--color-success); background:var(--color-success-subtle); }
+.agent-admin .agent-readiness-banner > div { display:flex; flex-wrap:wrap; align-items:center; gap:10px; }
+.agent-admin .agent-readiness-banner strong { color:var(--color-warning); font-size:14px; }
+.agent-admin .agent-readiness-banner.is-ready strong { color:var(--color-success); }
+.agent-admin .agent-readiness-banner span,.agent-admin .agent-readiness-banner details { color:var(--color-text-secondary); font-size:13px; }
+.agent-admin .agent-readiness-banner summary { cursor:pointer; color:var(--color-brand); }
+.agent-admin .agent-readiness-banner ul { margin:8px 0 0; padding-left:20px; line-height:1.6; }
+.agent-admin .agent-card small.is-not-ready { color:var(--color-warning); }
+.agent-admin .agent-card.is-dsh { grid-template-columns:minmax(0,1fr); }
+.agent-admin .agent-card.is-dsh small { grid-column:1; }
+.agent-admin [data-agent-status] { grid-column:1/-1; }
+.agent-admin .agent-header-actions .agent-trial-label { color:var(--color-text-secondary); font-size:13px; }
+@media(max-width:960px){.agent-admin .agent-editor-body{grid-template-columns:minmax(0,1fr);max-width:760px}.agent-admin .agent-readiness-banner{grid-column:1}}
+
+/* Agent 管理工作区：配置与本次运行状态共用一条任务视线。 */
+.agent-admin { --agent-list-width: 216px; --agent-editor-inset: 24px; border:1px solid var(--color-border); border-radius:6px; background:var(--color-surface); overflow:hidden; }
+.agent-admin .agent-section-head { min-height:58px; margin:0; padding:0 20px; border-bottom:1px solid var(--color-border); }
+.agent-admin .agent-section-head > span { color:var(--color-text-secondary); font-size:13px; }
+.agent-admin .agent-section-head .button { display:inline-flex; align-items:center; gap:6px; }
+.agent-admin .agent-section-head svg { width:16px; height:16px; }
+.agent-admin .agent-workspace { gap:0; align-items:stretch; }
+.agent-admin .agent-list { padding:18px 10px; border-right:1px solid var(--color-border); background:var(--color-surface-subtle); }
+.agent-admin .agent-list-heading { justify-content:flex-start; padding:0 10px 8px; color:var(--color-text-secondary); font-size:12px; font-weight:700; }
+.agent-admin .agent-trial-heading { padding-top:20px; }
+.agent-admin .agent-card { grid-template-columns:minmax(0,1fr) auto; align-items:center; min-height:62px; padding:10px 11px; margin:2px 0; border-radius:4px; }
+.agent-admin .agent-card strong { grid-column:1; font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.agent-admin .agent-card small { grid-column:2; grid-row:1; color:var(--color-brand); font-size:12px; font-weight:700; white-space:nowrap; }
+.agent-admin .agent-card span { grid-column:1/-1; grid-row:2; font-size:12px; }
+.agent-admin .agent-card.is-dsh { grid-template-columns:minmax(0,1fr) auto; }
+.agent-admin .agent-card.is-dsh small { grid-column:2; }
+.agent-admin .agent-card[aria-pressed=true] { border-color:var(--color-brand); box-shadow:inset 3px 0 var(--color-brand); }
+.agent-admin .agent-mobile-select { display:none; }
+.agent-admin .agent-editor-head { min-height:78px; padding:12px var(--agent-editor-inset); }
+.agent-admin .agent-editor-title { align-items:center; gap:9px; }
+.agent-admin .agent-editor-title h3 { font-size:21px; line-height:1.3; }
+.agent-admin .agent-editor-title > span { font-size:13px; }
+.agent-admin .agent-default-badge { padding:4px 7px; border-radius:3px; background:var(--color-brand-subtle); color:var(--color-brand); font-size:12px; font-weight:700; }
+.agent-admin .agent-editor-workspace { display:grid; grid-template-columns:minmax(0,1fr) 244px; min-height:560px; }
+.agent-admin .agent-editor-body { display:block; max-width:none; padding:0 var(--agent-editor-inset) 18px; }
+.agent-admin .agent-settings-group { padding:8px 0 9px; }
+.agent-admin .agent-settings-group:last-of-type { border-bottom:0; }
+.agent-admin .agent-settings-group h4 { margin-bottom:8px; font-size:15px; font-weight:700; }
+.agent-admin .agent-setting-row { grid-template-columns:104px minmax(0,1fr); gap:12px; min-height:42px; padding:2px 0; font-size:14px; }
+.agent-admin .agent-setting-row > :first-child { font-size:13px; }
+.agent-admin .agent-setting-value { font-size:14px; }
+.agent-admin [data-agent-mcp-summary] { flex:1; min-width:0; line-height:1.4; }
+.agent-admin .agent-model-picker > summary { min-height:40px; box-sizing:border-box; font-size:14px; font-weight:700; }
+.agent-admin .agent-permissions { margin-left:auto; }
+.agent-admin .agent-permissions p { max-width:360px; font-size:13px; }
+.agent-admin .agent-run-panel { min-width:0; padding:23px 18px; border-left:1px solid var(--color-border); background:var(--color-surface-subtle); }
+.agent-admin .agent-run-overview h4 { margin:0 0 24px; color:var(--color-text-secondary); font-size:13px; font-weight:700; }
+.agent-admin .agent-run-overview strong { display:block; color:var(--color-text); font-size:18px; line-height:1.35; }
+.agent-admin .agent-run-overview.completed strong { color:var(--color-success); }
+.agent-admin .agent-run-overview.failed strong,.agent-admin .agent-run-overview.interrupted strong { color:var(--color-danger); }
+.agent-admin .agent-run-overview.disconnected strong,.agent-admin .agent-run-overview.stale strong { color:var(--color-warning); }
+.agent-admin .agent-run-overview span { display:block; margin-top:5px; color:var(--color-text-secondary); font-size:13px; }
+.agent-admin .agent-run-panel .agent-readiness-banner { display:block; margin:22px 0 0; padding:12px; }
+.agent-admin .agent-run-panel .agent-readiness-banner strong { font-size:14px; }
+.agent-admin .agent-run-panel .agent-readiness-banner details { margin-top:8px; }
+.agent-admin .agent-run-panel .agent-readiness-banner ul { padding-left:17px; overflow-wrap:anywhere; }
+.agent-admin [data-agent-status].is-run-message { position:absolute; width:1px; height:1px; padding:0; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+@media(max-width:1100px){.agent-admin { --agent-list-width:190px; --agent-editor-inset:18px; }.agent-admin .agent-editor-workspace { grid-template-columns:minmax(0,1fr) 214px; }}
+@media(max-width:900px){.agent-admin .agent-editor-workspace { grid-template-columns:minmax(0,1fr); }.agent-admin .agent-run-panel { grid-row:1; padding:16px var(--agent-editor-inset); border-left:0; border-bottom:1px solid var(--color-border); }.agent-admin .agent-run-overview h4 { margin-bottom:7px; }.agent-admin .agent-editor-body { grid-row:2; }}
+@media(max-width:720px){.platform-admin-page.agent-tab-active .platform-tabs [data-platform-tab=models] { order:-1; }.agent-admin { --agent-editor-inset:16px; }.agent-admin .agent-section-head { min-height:0; padding:10px 14px; justify-content:flex-end; }.agent-admin .agent-section-head > span { display:none; }.agent-admin .agent-workspace { grid-template-columns:minmax(0,1fr); }.agent-admin .agent-list { display:block; padding:12px 14px; border-right:0; border-bottom:1px solid var(--color-border); }.agent-admin .agent-list-heading,.agent-admin .agent-card { display:none; }.agent-admin .agent-mobile-select { display:flex; flex-direction:row; align-items:center; gap:10px; color:var(--color-text-secondary); font-size:13px; white-space:nowrap; }.agent-admin .agent-mobile-select select { flex:1; min-width:0; }.agent-admin .agent-editor-head { gap:12px; min-height:0; padding:16px; }.agent-admin .agent-editor-title h3 { font-size:19px; }.agent-admin .agent-header-actions { justify-content:space-between; width:100%; }.agent-admin .agent-setting-row { grid-template-columns:minmax(0,1fr); gap:5px; }.agent-admin .agent-model-value { flex-wrap:wrap; }.agent-admin .agent-model-picker { flex:1 1 100%; }.agent-admin .agent-permissions { margin-left:0; }.agent-admin .agent-run-panel { padding:14px 16px; }.agent-admin .agent-run-overview h4 { margin-bottom:5px; }.agent-admin .agent-run-overview strong { font-size:16px; }}

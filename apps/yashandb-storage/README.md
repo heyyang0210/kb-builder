@@ -77,6 +77,9 @@ SQL 迁移目录：
 | `sql/010_platform_centralization.sql` | 当前认证权限与 GitLab 配置 8 张关系表及 `KC_PLATFORM_SEQ`；不导入数据、不删除旧序列 |
 | `sql/011_team_groups.sql` | 技术领域团队与成员两表；为现有有效技术领域创建真实团队，并一次性迁移旧成员关系 |
 | `sql/012_decouple_team_groups.sql` | 保留 011 历史摘要不变，把既有领域—团队关系迁移到 `KC_TECH_DOMAIN.TEAM_GROUP_ID`，再删除团队表旧领域列并重建查询索引 |
+| `sql/014_gitlab_version_mapping.sql` | 产品版本与 GitLab 分支映射的修订行基础表和操作事件表 |
+| `sql/015_retract_gitlab_version_draft.sql` | 草案撤销状态和审计动作的兼容扩展；迁移前备份，须在个人开发库验证后再考虑共享环境 |
+| `sql/016_archive_gitlab_version_mapping.sql` | 增加已停用规则归档状态与恢复/归档审计动作；已在个人开发库和共享库验证，执行证据见 `sql/README.md` |
 
 默认 SQL 目录是统一构建产物 `runtime/build/knowledge-center/current/java/sql/`。可通过 `YASDB_STORAGE_SQL_DIR` 指定其他经发布审核的 SQL 目录，但显式迁移要求该目录同时携带 `migration-source.properties`；禁止将该变量指向 `apps/yashandb-storage/sql/` 工作树源码目录。服务不会执行目录之外的 SQL。
 
@@ -171,6 +174,8 @@ HTTP 请求校验并返回 `X-Request-ID`、`X-Correlation-ID`（仅接受 1–1
 `GET /v1/domain/outlines/:id/directory` 仅查询当前大纲目录与有效分工，不读取说明 CLOB 或全局治理数据。`GET /v1/records/handbook-production/state?draftKey=<上下文键>` 返回单篇当前草稿，不返回历史、其他草稿或 AI 任务。服务在监听前预热可丢弃索引，聚合写入提交后同步发布索引，每次读通过数据库 revision 校验；跨实例变更返回可重试 503 并单飞重建，失败不会伪装成空草稿。无数据库结构变更。发布时应先更新 Storage，再更新调用方；旧 Storage 兼容提取仍会读取全聚合，不满足性能目标。详见 [按需读取设计](../../.codex/知识中心建设平台/03-详细设计/知识中心-文档生产-按需读取与性能-详细设计文档.md)。
 
 目录投影读取提供 `Server-Timing`：连接获取、版本头、节点、责任人和总处理耗时，不包含正文或凭据，用于定位运行实例尾延迟。目录节点和责任映射按大纲版本编辑号短时缓存；每次请求仍读取版本头，版本变更会自动错过缓存。缓存默认最多保留 256 个条目，写入新条目前清理过期条目，避免长期运行因历史编辑版本持续增加内存占用。JSON 响应在客户端声明支持 gzip 且原文达到 1KB 时协商压缩，并保留 `Vary: Accept-Encoding`，不改变业务 JSON 契约。Storage 默认使用 16 个工作线程和连接上限，以覆盖 10 路读取门禁，部署可通过 `YASDB_STORAGE_THREADS`、`YASDB_STORAGE_POOL_MAX` 调整。
+
+2026-11-09：轻量目录的有效文档分工项增加 `domainRole`，供任务管理区分主责与协作并预选存量文档负责人；沿用现有 `KC_MANUAL_OUTLINE_RESP_ITEM.DOMAIN_ROLE`，无 DDL 和历史数据回填。
 
 ## 2026-11-02 普通聚合记录冷读
 

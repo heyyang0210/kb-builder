@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { execFileSync } = require('node:child_process');
 const root = path.resolve(__dirname, '../../..');
 const read = relative => fs.readFileSync(path.join(root, relative), 'utf8');
 
@@ -67,6 +68,68 @@ describe('知识资产 GitLab 阅读前端契约', () => {
     expect(admin).toContain('验证连接');
     expect(admin).toContain('停用');
     expect(admin).not.toContain('accessToken');
+  });
+  test('平台标签与 GitLab 新增操作使用统一的 Lucide 图标', () => {
+    const admin = read('apps/knowledge-center-web/frontend/knowledge-center/modules/platform-admin/view.js');
+    const css = read('apps/knowledge-center-web/frontend/knowledge-center/modules/platform-admin/platform-admin.css');
+    for (const name of ['settings-2', 'users-round', 'shield-check', 'git-branch', 'bot']) {
+      expect(admin).toContain(`: '${name}'`);
+    }
+    expect(admin).toContain('data-lucide="chevron-down"');
+    expect(admin).toContain('data-gitlab-add-connection><i data-lucide="plus"');
+    expect(admin).toContain('data-version-mapping-add title="新增映射" aria-label="新增映射"><i data-lucide="plus"');
+    expect(admin).not.toContain('＋ 添加仓库连接');
+    expect(css).toContain('.platform-tab-icon { width: 20px; height: 20px;');
+    expect(css).toContain('details[open] .platform-nav-chevron');
+  });
+  test('版本映射页只展示真实规则，参考候选从新增表单选择', () => {
+    const admin = read('apps/knowledge-center-web/frontend/knowledge-center/modules/platform-admin/view.js');
+    const app = read('apps/knowledge-center-web/frontend/knowledge-center/app.js');
+    expect(admin).toContain('const items = rules;');
+    expect(admin).toContain('data-version-mapping-preset');
+    expect(admin).toContain('状态</th><th>操作</th>');
+    expect(admin).not.toContain('data-version-mapping-candidate=');
+    expect(admin).not.toContain('gitlab-version-candidates');
+    expect(admin).not.toContain('data-version-mapping-preview');
+    expect(admin).toContain("productCode: 'DB', matchKind: 'EXACT', version: '23.4.7', branch: 'br23.4.7'");
+    expect(admin).toContain("productCode: 'DB', matchKind: 'EXACT', version: '23.4.18.0', branch: 'br23.4'");
+    expect(admin).toContain("productCode: 'DB', matchKind: 'EXACT', version: '27.1.1.0', branch: 'master'");
+    expect(admin).toContain("productCode: 'YCM', matchKind: 'ALL', version: '', branch: 'dev'");
+    expect(admin).toContain("productCode: 'YDC', matchKind: 'ALL', version: '', branch: 'dev'");
+    expect(app).toContain('data-version-mapping-preset');
+    expect(app).not.toContain('data-version-mapping-preview');
+  });
+  test('主表只计数真实规则，归档记录默认折叠且可恢复', () => {
+    const script = `import { renderPlatformAdmin } from './apps/knowledge-center-web/frontend/knowledge-center/modules/platform-admin/view.js';
+      const render = (rules, archived = [], state = {}) => renderPlatformAdmin({ projection: {}, gitlabProjection: { connections: [{ id: 'r1', name: 'yasdoc' }], versionMappings: rules, archivedVersionMappings: archived }, platformAdmin: true, platformTab: 'gitlab', gitlabListState: { mappingView: true, ...state } });
+      const empty = render([]);
+      if ((empty.match(/class="gitlab-version-table"/g) || []).length !== 1 || !empty.includes('0 / 0 条映射') || empty.includes('data-version-mapping-candidate=')) throw Error('候选仍混入主表');
+      const row = { id: 1, productCode: 'DB', matchKind: 'EXACT', version: '23.4.7', connectionId: 'r1', branch: 'br23.4.7', state: 'draft' };
+      const saved = render([row]);
+      if (!saved.includes('1 / 1 条映射') || !saved.includes('yasdoc')) throw Error('真实规则未计数');
+      const archived = render([], [{ ...row, state: 'archived' }]);
+      if (!archived.includes('已归档（1）') || !archived.includes('data-version-mapping-action="restore"') || archived.includes('已归档（1）</summary>')) throw Error('归档缩略区缺失');
+      const form = render([], [], { mappingEditing: true });
+      if (!form.includes('data-version-mapping-preset') || !form.includes('YCM / 所有版本')) throw Error('新增表单缺少候选');`;
+    expect(() => execFileSync(process.execPath, ['--no-warnings', '--input-type=module', '-e', script], { cwd: root })).not.toThrow();
+  });
+  test('仓库连接以表格比较，筛选后仅为选中连接打开精简详情', () => {
+    const script = `import { renderPlatformAdmin } from './apps/knowledge-center-web/frontend/knowledge-center/modules/platform-admin/view.js';
+      const connections = [
+        { id: 'active', name: '正式连接', projectPath: 'team/docs', authMode: 'service_account', purpose: 'read', managementStatus: 'active', lastVerification: { status: 'verified', verifiedAt: '2026-11-11T00:00:00Z', branchCount: 3 }, linkedHandbookCount: 2 },
+        { id: 'disabled', name: '停用连接', projectPath: 'team/old', authMode: 'user_oauth', managementStatus: 'disabled', lastVerification: { status: 'failed' } },
+      ];
+      const render = state => renderPlatformAdmin({ projection: {}, gitlabProjection: { connections }, platformAdmin: true, platformTab: 'gitlab', gitlabListState: state });
+      const list = render({});
+      if (!list.includes('class="gitlab-connection-table"') || !list.includes('data-gitlab-connection="active"') || list.includes('gitlab-connection-drawer')) throw Error('主表或抽屉默认状态错误');
+      if (list.includes('<h3>GitLab 仓库</h3>') || !list.includes('data-gitlab-add-connection')) throw Error('仓库标题重复或新增入口缺失');
+      if (!list.includes('>通过</span><time datetime="2026-11-11T00:00:00Z">') || !list.includes('class="gitlab-verification-time">—</span>')) throw Error('读取验证结果或时间缺失');
+      const filtered = render({ status: 'disabled', verificationStatus: 'failed' });
+      if (filtered.includes('data-gitlab-connection="active"') || !filtered.includes('data-gitlab-connection="disabled"')) throw Error('状态与验证筛选未生效');
+      const detail = render({ selectedConnectionId: 'active', drawerOpen: true });
+      if (!detail.includes('gitlab-connection-drawer') || !detail.includes('平台最近读取验证') || !detail.includes('当前管理员授权') && !detail.includes('平台凭证')) throw Error('详情抽屉缺少关键信息');
+      if (detail.includes('关联手册</label>') || detail.includes('分支数量</label>')) throw Error('详情抽屉保留了重复字段');`;
+    expect(() => execFileSync(process.execPath, ['--no-warnings', '--input-type=module', '-e', script], { cwd: root })).not.toThrow();
   });
   test('连接表单要求实际默认分支并解释认证身份，编辑提交携带版本', () => {
     const admin = read('apps/knowledge-center-web/frontend/knowledge-center/modules/platform-admin/view.js');
@@ -142,7 +205,7 @@ describe('知识资产 GitLab 阅读前端契约', () => {
     expect(admin).toContain('访问能力');
     expect(admin).toContain('正在验证连接');
     expect(admin).toContain('验证失败');
-    expect(admin).toContain('个分支');
+    expect(admin).not.toContain('个分支');
     expect(admin).toContain('读取验证成功');
     expect(admin).toContain('<option value="read">只读</option>');
     expect(admin).toContain('<option value="read_write">读写</option>');

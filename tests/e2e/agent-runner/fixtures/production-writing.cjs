@@ -39,9 +39,12 @@ async function setup(t, options = {}) {
   const store = options.store || memoryStore();
   // Catalog and execution must resolve the same Agent-scoped configuration.
   const agentGovernance = options.agentGovernance || require('../../../../packages/agent-runner-core/lib/platform-management/agent-governance').createAgentGovernance();
-  const modelGovernance = options.ai?.modelGovernance || (options.ai?.generate
-    ? require('../../../../packages/agent-runner-core/lib/platform-management/model-governance').createModelGovernance()
-    : agentGovernance);
+  const fixtureSelection = { serviceId: 'fixture', model: 'fixture', configVersion: 'v1' };
+  const fixtureModelGovernance = {
+    available: () => ({ options: [fixtureSelection], defaultSelection: fixtureSelection }),
+    resolve: selection => ({ selection: selection || fixtureSelection, config: { executor: 'fixture', model: 'fixture' } }),
+  };
+  const modelGovernance = options.ai?.modelGovernance || (options.ai?.generate ? fixtureModelGovernance : agentGovernance);
   const templateStore = require('../../../../packages/agent-runner-core/lib/template-store').createTemplateStore({ store: memoryStore({ schemaVersion: 1, templates: options.templates || [], audits: [] }) });
   const service = createHandbookProductionService({ store, attachmentRoot, yashanDB: options.yashanDB, contentQuality: options.contentQuality, ai: { modelGovernance, loadMCPConfig: async () => ({}), resolveTemplate: id => templateStore.resolveForGeneration(id), ...options.ai } });
   const authModule = {
@@ -85,6 +88,7 @@ async function setup(t, options = {}) {
     modelGovernance: options.ai?.generate || options.ai?.modelGovernance ? modelGovernance : undefined,
     agentGovernance,
     codexRunner: options.codexRunner,
+    dshRunner: options.dshRunner,
     databaseConnectionGovernance: {},
     sendFile(_filePath, res) { res.writeHead(404); res.end(); },
     proxyAuth() {},

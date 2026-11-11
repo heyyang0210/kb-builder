@@ -62,6 +62,24 @@ describe('配置路由真实 HTTP 覆盖', () => {
   });
   afterAll(async () => new Promise(resolve => server.close(resolve)));
 
+  test.each([
+    ['GET', '/model', 'getModelConfig', undefined],
+    ['GET', '/mcp', 'getMCPConfig', undefined],
+    ['GET', '/agents', 'getAgentPresets', undefined],
+    ['POST', '/model', 'getModelConfig', { provider: 'custom', model: 'm' }],
+    ['POST', '/model', 'save', { provider: 'custom', model: 'm' }],
+    ['POST', '/mcp', 'getMCPConfig', { server_url: 'http://mcp' }],
+    ['POST', '/mcp', 'save', { server_url: 'http://mcp' }],
+    ['POST', '/agent', 'saveAgentPreset', { id: 'p', name: '预设', steps: [{ name: '规划', agent: 'planner' }] }],
+  ])('配置存储异常经统一处理且下一请求恢复 %s %s %s', async (method, endpoint, operation, body) => {
+    const manager = require('../../../packages/agent-runner-core/lib/config-manager');
+    manager[operation].mockRejectedValueOnce(new Error('隔离存储暂不可用'));
+    const before = JSON.stringify(state.saved);
+    expect(await request(server, method, '/api/config' + endpoint, body)).toEqual({ status: 500, data: { error: '隔离存储暂不可用' } });
+    expect(JSON.stringify(state.saved)).toBe(before);
+    expect((await request(server, method, '/api/config' + endpoint, body)).status).toBe(200);
+  });
+
   test('模型和 MCP 缺省响应提供安全默认值', async () => {
     expect((await request(server, 'GET', '/api/config/model')).data).toMatchObject({ provider: null, temperature: 0.7, api_key_configured: false });
     expect((await request(server, 'GET', '/api/config/mcp')).data).toMatchObject({ server_url: null, timeout: 30000, cache: { enabled: true, ttl: 3600 } });
@@ -78,6 +96,17 @@ describe('配置路由真实 HTTP 覆盖', () => {
       { name: 'Secret', value: '', encrypted: true, description: 's' },
       { name: 'Plain', value: 'visible', encrypted: false, description: '' },
     ]);
+  });
+
+  test('已存在但字段不完整的配置使用默认值并隐藏空请求头', async () => {
+    state.model = { provider: 'custom', model: 'm' };
+    expect((await request(server, 'GET', '/api/config/model')).data).toMatchObject({ max_tokens: 4000 });
+    state.mcp = { server_url: 'http://mcp', timeout: 5000, cache: { enabled: false, ttl: 0 } };
+    expect((await request(server, 'GET', '/api/config/mcp')).data).toMatchObject({ timeout: 5000, cache: { enabled: false, ttl: 0 }, headers: [] });
+    state.mcp.headers = [{ name: 'Empty' }];
+    expect((await request(server, 'GET', '/api/config/mcp')).data.headers).toEqual([{ name: 'Empty', value: '', encrypted: false, description: '' }]);
+    state.presets = { default_preset: 'configured' };
+    expect((await request(server, 'GET', '/api/config/agents')).data).toEqual({ presets: [], default_preset: 'configured' });
   });
 
   test('写入接口覆盖校验失败和成功路径', async () => {

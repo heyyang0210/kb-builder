@@ -111,11 +111,13 @@ test('目录先于慢草稿和仓库显示；切换文档后迟到响应不覆�
   let draftCalls = 0;
   const appState = { activeView: 'production' };
   const sandbox = { appState, handbookUi: () => ui, collectDocuments: items => items, outlineNodes: outline => outline.nodes || [],
+    document: { querySelector: () => null },
     markHandbookPerformance: () => {}, ownedByCurrentUser: () => true,
     productionRouteState: () => route,
     render: () => renders.push(appState.incrementalProjection.status),
     loadOutlineData: async () => ({ status: 'ok', detail: { nodes: [{ id: 'doc-1', kind: 'document' }, { id: 'doc-2', kind: 'document' }] } }),
     loadTemplates: async () => ({ data: [] }),
+    loadTemplateMappings: async () => ({ data: { items: [] } }),
     loadHandbookRepositoryMapping: () => mapping,
     loadSharedHandbookDraft: async () => { draftCalls++; },
     loadHandbookProductionRepository: async () => ({}),
@@ -168,11 +170,13 @@ for (const denied of [false, true]) {
     const calls = [];
     const sandbox = {
       appState: { activeView: 'production' }, handbookUi: () => ui,
+      document: { querySelector: () => null },
       markHandbookPerformance: () => {}, ownedByCurrentUser: () => true,
       collectDocuments: items => items, outlineNodes: outline => outline.nodes || [],
       productionRouteState: () => route, render: () => {},
       loadOutlineData: () => { calls.push('directory'); return directory; },
       loadTemplates: async () => ({ data: [] }),
+      loadTemplateMappings: async () => ({ data: { items: [] } }),
       loadHandbookRepositoryMapping: () => { calls.push('mapping'); return mapping; },
       loadSharedHandbookDraft: async () => { calls.push(`draft:${ui.repository.branch}`); },
       loadHandbookProductionRepository: async () => ({}),

@@ -12,6 +12,8 @@ describe('平台 Agent 管理 HTTP 契约', () => {
   let model;
   let mcp;
   let runner;
+  let dshRunner;
+  let dshReady;
   let executor;
 
   beforeAll(async () => {
@@ -23,6 +25,7 @@ describe('平台 Agent 管理 HTTP 契约', () => {
     model = {
       get: jest.fn(async () => ({ rowVersion: 'model-v1' })),
       available: jest.fn(() => ({ defaultSelection: { model: 'model-a' }, configVersion: 'model-v1' })),
+      resolve: jest.fn(() => ({ config: { model: 'model-a', protocol: 'chat_completions', api_key: 'isolated-model-key' } })),
       save: jest.fn(async () => ({ rowVersion: 'model-v2' })),
       test: jest.fn(async () => ({ ok: true })),
     };
@@ -41,7 +44,8 @@ describe('平台 Agent 管理 HTTP 契约', () => {
       save: jest.fn(async () => ({ rowVersion: 'agent-v2' })),
       agent: jest.fn(async id => ({ id, executor })),
       resolve: jest.fn(() => ({ config: { model: 'model-a' } })),
-      models: jest.fn(() => model),
+      models: jest.fn(() => executor === 'deepseek'
+        ? { available: () => ({ defaultSelection: null }) } : model),
       mcp: jest.fn(() => mcp),
       available: jest.fn(async () => ({ options: [] })),
     };
@@ -50,11 +54,17 @@ describe('平台 Agent 管理 HTTP 契约', () => {
       get: jest.fn(() => ({ id: 'run-a', status: 'completed', events: [{ seq: 1, kind: 'completed' }] })),
       cancel: jest.fn(() => ({ id: 'run-a', status: 'cancelling' })),
     };
+    dshReady = false;
+    dshRunner = {
+      readiness: jest.fn(() => ({ ready: dshReady, blockers: dshReady ? [] : ['测试运行时未配置'] })),
+      start: jest.fn(() => ({ id: 'dsh-run-a', status: 'queued' })),
+      owns: jest.fn(() => false),
+    };
     const handler = createKnowledgeCenterHandler({
       config: { KNOWLEDGE_CENTER_PREFIX: '/knowledge-center', KNOWLEDGE_CENTER_ROOT: root, KNOWLEDGE_CENTER_ENTRY: 'index.html', OUTLINE_TEMPLATE_PATH: template, OUTLINE_SAMPLE_PATH: sample, GITLAB_CONFIG_PATH: path.join(root, 'gitlab.json'), GITLAB_DOCUMENT_TYPES_PATH: path.join(root, 'rules.json') },
       stores: { knowledgeAssetsStore: { read: () => ({ handbooks: [] }), write() {} } },
       moduleRegistry: { get: key => key === 'auth' ? { authorize: async req => req.headers['x-test-role'] === 'anonymous' ? null : { user: { id: 'agent-admin' }, roles: [req.headers['x-test-role'] || 'PLATFORM_ADMIN'] } } : null },
-      agentGovernance: agent, codexRunner: runner, handbookProductionService: {},
+      agentGovernance: agent, modelGovernance: model, codexRunner: runner, dshRunner, handbookProductionService: {},
       sendFile(_file, res) { res.writeHead(404); res.end(); }, proxyAuth() {}, proxyCleaning() {}, proxyOutline() {}, proxyPermission() {}, handleIncrementalBuild() {},
     });
     server = http.createServer(handler);
@@ -104,15 +114,21 @@ describe('平台 Agent 管理 HTTP 契约', () => {
     expect((await call('/builtin-default/mcp/test', 'GET')).status).toBe(405);
   });
 
-  test('运行测试区分工作流、未部署执行器和 Codex', async () => {
+  test('运行测试区分工作流、DSH 未就绪及就绪启动和 Codex', async () => {
     expect((await call('/builtin-default/run-test', 'GET')).status).toBe(405);
     const workflow = await call('/builtin-default/run-test', 'POST');
     expect(workflow.status).toBe(422);
     expect(await workflow.json()).toMatchObject({ error: { code: 'AGENT_TEST_UNSUPPORTED' } });
     executor = 'deepseek';
     const deepseek = await call('/builtin-default/run-test', 'POST');
-    expect(deepseek.status).toBe(422);
-    expect((await deepseek.json()).error.message).toContain('DeepSeek');
+    expect(deepseek.status).toBe(409);
+    await expect(deepseek.json()).resolves.toMatchObject({ error: { code: 'DSH_NOT_READY', details: ['测试运行时未配置'] } });
+    expect(dshRunner.start).not.toHaveBeenCalled();
+    dshReady = true;
+    const launched = await call('/builtin-default/run-test', 'POST');
+    expect(launched.status).toBe(202);
+    await expect(launched.json()).resolves.toMatchObject({ data: { id: 'dsh-run-a' } });
+    expect(dshRunner.start).toHaveBeenCalledWith(expect.objectContaining({ agentId: 'builtin-default', modelConfig: expect.objectContaining({ model: 'model-a', protocol: 'chat_completions' }), prompt: expect.any(String) }));
     executor = 'codex';
     const codex = await call('/builtin-default/run-test', 'POST');
     expect(codex.status).toBe(202);

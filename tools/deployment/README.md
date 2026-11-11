@@ -13,6 +13,19 @@
 指导书第 2 节介绍 GitLab 仓库、开发分支与 Windows 开发电脑准备；第 10 节为正式配置，第 11 节为数据库验证和服务启动，第 12 节为前端访问和维护。敏感值使用填写说明，不记录真实密码；当前运行实例不要重复执行首次创建步骤。
 
 第 13 节提供局部增量发布步骤及各步预期结果，涵盖基线核对、构建、预检、切换、验收和回退，并记录 2026-11-06 手册重名提示修复的实际结果。示例脚本固定对应发布编号与文件摘要，新发布须重新准备对应材料。
+## 本机 DeepSeek Harness
+
+独立运行官方 DeepSeek Harness Web UI，与知识中心平台的 Agent 执行器适配无关。固定使用 npm 包 `@deepseek-ai/dsh@0.2.2-rc.1` 和本地 Node 24.9.0，安装与用户状态均位于 `runtime/deepseek-harness/`，不改系统 Node。首次安装需要网络：
+
+```bash
+npm install --prefix runtime/deepseek-harness --no-save --no-audit --no-fund node@24.9.0 @deepseek-ai/dsh@0.2.2-rc.1
+./deepseek-harness.sh start
+./deepseek-harness.sh status
+./deepseek-harness.sh url
+./deepseek-harness.sh stop
+```
+
+启动只监听官方默认的本机 `127.0.0.1:3080`；若端口已被占用，脚本会失败，不接管现有服务。日志和 PID 分别为 `runtime/deepseek-harness/dsh.log`、`dsh.pid`；日志可能包含访问令牌，权限限制为当前用户，勿对外分享。浏览器须打开 `./deepseek-harness.sh url` 输出的完整地址；仅打开不带令牌的根地址会出现 `authentication required`。请勿对外分享完整地址。默认工作目录是 `runtime/deepseek-harness/workspace/`，使用前在 Harness 中自行选择授权工作区并配置模型密钥；本脚本不导入知识中心配置或密钥。`stop` 仅向记录且命令行匹配的进程发送 TERM。Harness 处于开发者预览阶段，运行环境应限定为本机测试用途。
 
 HTTP 私网开发环境连接 GitLab 时，已有配置可使用 `KNOWLEDGE_CENTER_GITLAB_OAUTH_ALLOW_HTTP=true`（兼容旧 `KNOWLEDGE_CENTER_GITLAB_OAUTH_DEV_HTTP=true`）。支持 10/8、172.16/12、192.168/16 和本机地址；默认、公网 HTTP 及非 HTTP/HTTPS 协议仍被拒绝。新变量优先，配置后执行原始 restart。GitLab 应用回调地址须匹配进程实际使用的公开地址，详见[OAuth 回调设计](../../.codex/知识中心建设平台/10-使用说明/知识中心-平台-生产部署与回退-使用说明文档.md)。
 

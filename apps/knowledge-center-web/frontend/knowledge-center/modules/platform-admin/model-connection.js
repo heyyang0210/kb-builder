@@ -1,4 +1,5 @@
 import { escapeHtml as esc } from '../../common/utils/dom.js';
+import { markDynamicSelects, syncSearchableSelect } from '../../common/searchable-combobox.js';
 
 export const hasModelDraft = () => document.querySelector('[data-model-admin]')?.dataset.dirty === 'true';
 export const confirmLeavingModels = () => !hasModelDraft() || window.confirm('模型配置尚未保存，确定离开？');
@@ -64,6 +65,7 @@ export function mountModelConnection(root, options = {}) {
     row.querySelector('[data-test-saved]').onclick = event => { event.preventDefault(); event.stopPropagation(); testService(row, false); };
     row.querySelector('[name=testModel]').addEventListener('change', event => rememberModel(row.dataset.serviceId || row.dataset.clientId, event.target.value));
     refreshTestModels(row); refreshSummary(row);
+    markDynamicSelects(row);
     if (!s.id) row.querySelector('[name=name]').focus();
   }
   async function testService(row, includeUnsavedChanges) {
@@ -111,6 +113,7 @@ export function mountModelConnection(root, options = {}) {
     const select = row.querySelector('[name=testModel]'); const previous = select.value || rememberedModel(row.dataset.serviceId || row.dataset.clientId);
     select.replaceChildren(...readRow(row).models.map(model => new Option(model, model)));
     if ([...select.options].some(v => v.value === previous)) select.value = previous;
+    syncSearchableSelect(select);
   }
   function readRow(row) {
     const v = name => row.querySelector(`[name=${name}]`);
@@ -129,6 +132,7 @@ export function mountModelConnection(root, options = {}) {
     });
     if (previous && [...select.options].some(v => v.value === previous)) select.value = previous;
     else if (!previous && !projection.defaultSelection && select.options.length > 1) select.selectedIndex = 1;
+    syncSearchableSelect(select);
   }
   function refreshListState() {
     const count = root.querySelectorAll('.model-service').length;

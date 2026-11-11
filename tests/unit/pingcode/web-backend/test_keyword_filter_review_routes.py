@@ -249,8 +249,9 @@ class KeywordFilterReviewRouteAcceptanceTests(unittest.TestCase):
                 }], client=client)
                 return response.status_code, response.json()
 
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            results = list(executor.map(update, ["keyword:1", "keyword:2"]))
+        with patch.object(main_module.pingcode, "prewarm"):
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                results = list(executor.map(update, ["keyword:1", "keyword:2"]))
 
         self.assertEqual(sorted(status for status, _ in results), [200, 409])
         conflict = next(payload for status, payload in results if status == 409)

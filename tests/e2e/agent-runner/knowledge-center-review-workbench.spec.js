@@ -7,6 +7,8 @@ const crypto = require('node:crypto');
 const coverageDir = process.env.KC_FRONTEND_ISTANBUL_CASE_DIR;
 const coverageKey = '__kc_istanbul_coverage__';
 let coveragePageNumber = 0;
+// Reuse generated code only; each browser page owns fresh execution counters.
+const instrumentedSourceCache = new Map();
 const { findMapping, findConnection } = require('../../../packages/agent-runner-core/lib/gitlab-connector');
 const { createKnowledgeCenterHandler } = require('../../../packages/agent-runner-core/routes/knowledge-center');
 const { MemoryIncrementalBuildRepository, IncrementalBuildService, createIncrementalBuildHandler } = require('../../../packages/agent-runner-core/lib/incremental-build-service');
@@ -106,8 +108,14 @@ async function fixture(page) {
     const mime = { '.js': 'application/javascript', '.css': 'text/css', '.html': 'text/html', '.json': 'application/json' }[path.extname(file)] || 'application/octet-stream';
     let body = fs.readFileSync(file);
     if (coverageDir && file.endsWith('.js') && !relative.split(path.sep).includes('vendor')) {
-      const { createInstrumenter } = require('istanbul-lib-instrument');
-      body = createInstrumenter({ esModules: true, coverageVariable: coverageKey, compact: false }).instrumentSync(body.toString('utf8'), file);
+      const source = body.toString('utf8');
+      let cached = instrumentedSourceCache.get(file);
+      if (!cached || cached.source !== source) {
+        const { createInstrumenter } = require('istanbul-lib-instrument');
+        cached = { source, instrumented: createInstrumenter({ esModules: true, coverageVariable: coverageKey, compact: false }).instrumentSync(source, file) };
+        instrumentedSourceCache.set(file, cached);
+      }
+      body = cached.instrumented;
     }
     return route.fulfill({ contentType: mime, body });
   });
@@ -135,6 +143,13 @@ async function fixture(page) {
     body.operations = body.documents.map(item => ({ type: 'update', documentId: item.documentId, nodeId: item.documentId,
       beforeDigest: crypto.createHash('sha256').update('# 旧正文').digest('hex'), after: { content: item.markdown } }));
     return service.createHandbookReview(session, '共享候选修订', body);
+  }, setDelivery(taskId, deliveryState) {
+    repository.transaction(state => {
+      const task = state.tasks.find(item => item.id === taskId);
+      task.state = 'mr_submitted';
+      task.mergeRequest = { iid: 661, webUrl: 'https://git-tools.yasdb.com/cod-doc/dbdoc/-/merge_requests/661' };
+      task.deliveryObservation = { state: deliveryState, observedAt: '2026-11-09T00:00:00Z' };
+    });
   }, seedEarlyReview() { return seed('早期阶段候选', [doc('early')], 'HB-early'); }, seedPrincipalReview() { return seed('人员 ID 指派', [doc('principal-assigned', ['178'])]); }, seedOnlineDocument() {
     const filePath = 'doc/产品文档/开发手册/SQL参考手册/00SQL参考手册.md';
     return seedLegacyOnline('sql-online-review', 'document', [filePath], '# SQL参考手册\n\n已发布原文');
@@ -311,8 +326,75 @@ test('我的审核：人员 ID 指派给何阳时展示待办并可阅读冻结�
     await page.goto(`${f.base}/knowledge-center/review?view=mine`);
     await expect(row).toBeVisible();
     await row.getByRole('link', { name: '开始审核' }).click();
+    await expect(page.locator('.review-steps [data-review-step="diff"]')).toHaveClass(/active/);
+    await page.locator('.review-steps [data-review-step="read"]').click();
+    await expect(page).toHaveURL(/step=read/);
+    await expect(page.locator('.review-reader-snapshot')).toContainText('冻结正文 principal-assigned');
+    await page.goBack();
+    await expect(page.locator('.review-steps [data-review-step="diff"]')).toHaveClass(/active/);
+    await page.goForward();
     await expect(page.locator('.review-reader-snapshot')).toContainText('冻结正文 principal-assigned');
     await expect(page.locator('.review-action-card [data-review-decision="approve"]')).toBeVisible();
+  } finally { await f.close(); }
+});
+
+test('审核详情：MR 关闭显示真实交付结果，只有作者可进入修订', async ({ page }) => {
+  const f = await fixture(page);
+  try {
+    const url = `${f.base}/knowledge-center/review?view=reader&handbookId=HB-1&taskId=${f.shared.id}&documentId=shared-b&path=docs%2Fshared-b.md`;
+    const screenshots = path.resolve(__dirname, '../../../runtime/design/review-implementation-20261109');
+    fs.mkdirSync(screenshots, { recursive: true });
+    await page.goto(url);
+    await expect(page.locator('.review-steps [data-review-step="diff"]')).toHaveClass(/active/);
+    await page.screenshot({ path: path.join(screenshots, 'pending-desktop.png'), fullPage: true });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.reload();
+    await expect(page.locator('.review-steps [data-review-step="diff"]')).toHaveClass(/active/);
+    await page.evaluate(() => { document.activeElement?.blur(); window.scrollTo(0, 0); document.querySelector('#main-shell')?.scrollTo(0, 0); });
+    await page.waitForTimeout(300);
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.screenshot({ path: path.join(screenshots, 'pending-mobile.png'), fullPage: true });
+    await page.setViewportSize({ width: 1280, height: 720 });
+    f.setDelivery(f.shared.id, 'closed');
+    await page.goto(url);
+    await expect(page.locator('.review-next-step')).toContainText('MR 已关闭，交付未完成');
+    const readyMs = await page.evaluate(() => Math.round(performance.now()));
+    await expect(page.locator('.review-steps [data-review-step="read"]')).toHaveClass(/active/);
+    await expect(page.locator('.review-next-step a')).toHaveAttribute('href', /\/knowledge-center\/production\/handbook\/HB-1/);
+    await expect(page.locator('.review-delivery-summary')).toContainText('MR 已关闭，交付未完成');
+    fs.writeFileSync(path.join(screenshots, 'closed-page-timing.json'), JSON.stringify({
+      measuredAt: new Date().toISOString(), metric: 'navigationStart to visible delivery state, including fixture HTTP and Playwright polling', readyMs,
+      meets100ms: readyMs <= 100,
+    }, null, 2));
+    await page.getByRole('button', { name: '刷新阅读' }).click();
+    await expect(page.locator('.review-reading-tools')).toBeVisible();
+    await page.getByRole('button', { name: '专注阅读' }).click();
+    await expect(page.locator('body')).toHaveClass(/review-focus-mode/);
+    await page.getByRole('button', { name: '退出专注阅读' }).click();
+    await expect(page.locator('body')).not.toHaveClass(/review-focus-mode/);
+    await page.locator('.review-evidence-column summary').filter({ hasText: '审核意见' }).click();
+    await expect(page.locator('[data-review-comment-drawer]')).toHaveAttribute('open', '');
+    await page.locator('.review-evidence-column summary').filter({ hasText: '审核依据' }).click();
+    await expect(page.locator('.review-evidence-drawer')).toHaveAttribute('open', '');
+    await page.locator('.review-evidence-column summary').filter({ hasText: '审核依据' }).click();
+    await page.screenshot({ path: path.join(screenshots, 'closed-desktop.png'), fullPage: true });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.reload();
+    await expect(page.locator('.review-next-step')).toContainText('MR 已关闭，交付未完成');
+    await expect(page.locator('.review-evidence-column summary').filter({ hasText: '审核意见' })).toBeVisible();
+    await expect(page.locator('.review-evidence-column summary').filter({ hasText: '审核依据' })).toBeVisible();
+    await page.evaluate(() => { document.activeElement?.blur(); window.scrollTo(0, 0); document.querySelector('#main-shell')?.scrollTo(0, 0); });
+    await page.waitForTimeout(300);
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.screenshot({ path: path.join(screenshots, 'closed-mobile.png'), fullPage: true });
+    await page.locator('.review-detail-actions .review-more-menu > summary').click();
+    await expect(page.getByRole('link', { name: /查看 GitLab MR/ })).toHaveAttribute('href', /merge_requests\/661$/);
+    await expect(page.getByRole('button', { name: '状态刷新' })).toHaveCount(0);
+    f.identity('other');
+    await page.reload();
+    await expect(page.locator('.review-next-step')).toContainText('MR 已关闭，交付未完成');
+    await expect(page.locator('.review-next-step a')).toHaveCount(0);
+    await expect(page.locator('[data-review-decision]')).toHaveCount(0);
   } finally { await f.close(); }
 });
 
@@ -325,10 +407,13 @@ test('文档清单可改派审核人并由审核角色终止误提任务', async
     await expect(row.getByRole('button', { name: '修改审核人' })).toBeVisible();
     await row.getByRole('button', { name: '修改审核人' }).click();
     const dialog = page.locator('[data-review-assignment-dialog]');
-    await expect(dialog.getByRole('option', { name: '何阳' })).toHaveText('何阳');
+    const reviewerInput = dialog.getByRole('combobox', { name: '审核人，可输入筛选' });
+    await expect(reviewerInput).toHaveValue('何阳');
     await expect(dialog.locator('select')).toHaveValue('178');
     await expect(dialog.locator('select')).toHaveAttribute('name', 'reviewerIds');
-    await dialog.locator('select').selectOption('author');
+    await reviewerInput.fill('提交者');
+    await dialog.getByRole('option', { name: '提交者' }).click();
+    await expect(dialog.locator('select')).toHaveValue('author');
     await dialog.getByRole('button', { name: '保存' }).click();
     await expect(row.locator('td').nth(4)).toHaveText('提交者');
     await row.getByRole('button', { name: '终止任务' }).click();
@@ -423,6 +508,8 @@ test('工作台：阶段与指派准入、完整清单、冻结正文、只读�
     await page.getByRole('button', { name: '筛选', exact: true }).click();
     await expect(page.getByRole('link', { name: '开始审核' })).toHaveCount(2);
     await page.locator('a[href*="documentId=shared-a"]').click();
+    await expect(page.locator('.review-steps [data-review-step="diff"]')).toHaveClass(/active/);
+    await page.locator('.review-steps [data-review-step="read"]').click();
     await expect(page.locator('.review-reader-snapshot')).toContainText('冻结正文 shared-a');
     await expect(page.locator('.review-context-strip')).toContainText('shared-a.md');
     await expect(page.locator('.review-context-strip [title]')).toHaveAttribute('title', 'docs/shared-a.md');
@@ -445,6 +532,7 @@ test('工作台：阶段与指派准入、完整清单、冻结正文、只读�
     await expect(page.locator('[data-review-decision]')).toHaveCount(0);
     expect((await f.api('/review/bootstrap?view=mine')).data.workbench.mine).toHaveLength(3);
     await page.locator('[data-review-document="docs/shared-b.md"]').click();
+    await page.locator('.review-steps [data-review-step="read"]').click();
     await expect(page.locator('.review-reader-snapshot')).toContainText('冻结正文 shared-b');
     await expect(page.locator('.review-reader-snapshot')).not.toContainText('冻结正文 shared-a');
     await page.locator('[data-review-step="opinions"]').click();
@@ -454,7 +542,7 @@ test('工作台：阶段与指派准入、完整清单、冻结正文、只读�
     expect((await f.api('/review/bootstrap?view=mine')).data.workbench.mine).toHaveLength(3);
     await page.locator('[data-review-decision="approve"]').click();
     await expect(page.locator('[data-review-publish]')).toHaveCount(0);
-    expect((await f.api('/review/bootstrap?view=mine')).data.workbench.mine).toHaveLength(2);
+    await expect.poll(async () => (await f.api('/review/bootstrap?view=mine')).data.workbench.mine.length).toBe(2);
     const remainingDocumentUrl = new URL(page.url());
     remainingDocumentUrl.searchParams.set('documentId', 'shared-a');
     remainingDocumentUrl.searchParams.set('path', 'docs/shared-a.md');
@@ -463,9 +551,10 @@ test('工作台：阶段与指派准入、完整清单、冻结正文、只读�
     await expect(page.locator('.review-reader-snapshot')).toContainText('冻结正文 shared-a');
     await page.locator('[data-review-decision="approve"]').click();
     await expect(page.locator('[data-review-publish]')).toBeVisible();
-    expect((await f.api('/review/bootstrap?view=mine')).data.workbench.mine).toHaveLength(1);
+    await expect.poll(async () => (await f.api('/review/bootstrap?view=mine')).data.workbench.mine.length).toBe(1);
     await page.getByRole('link', { name: '下一篇待我审核' }).click();
     await expect(page).toHaveURL(new RegExp(`taskId=${f.following.id}`));
+    await page.locator('.review-steps [data-review-step="read"]').click();
     await expect(page.locator('.review-reader-snapshot')).toContainText('冻结正文 following');
     await page.getByRole('link', { name: '返回我的审核' }).click();
     await expect(page.getByLabel('关键词')).toHaveValue('shared');
@@ -534,7 +623,7 @@ test('整本手册在线评审聚合事项可从完整清单发现并阅读', as
 test('逐篇退回与重审：未改篇保留通过，只审核修改篇，旧退回记录保留', async ({ page }) => {
   const f = await fixture(page);
   try {
-    const reader = (taskId, documentId) => `${f.base}/knowledge-center/review?view=reader&handbookId=HB-1&taskId=${taskId}&documentId=${documentId}&path=${encodeURIComponent(`docs/${documentId}.md`)}`;
+    const reader = (taskId, documentId) => `${f.base}/knowledge-center/review?view=reader&handbookId=HB-1&taskId=${taskId}&documentId=${documentId}&path=${encodeURIComponent(`docs/${documentId}.md`)}&step=read`;
     await page.goto(reader(f.shared.id, 'shared-a'));
     await expect(page.locator('.review-reader-snapshot')).toContainText('冻结正文 shared-a');
     await page.locator('[data-review-decision="approve"]').click();
@@ -957,6 +1046,8 @@ test('GitLab 仓库阅读器：错误状态、目录投影和安全 Markdown 真
     const result = await page.evaluate(async () => {
       const base = '/knowledge-center/modules/repository/';
       const { renderRepository, safeMarkdown, treeHierarchy } = await import(base + 'view.js');
+      const { enhanceDirectoryTrees } = await import('/knowledge-center/common/directory-tree.js');
+      const { observeRepositoryImages } = await import('/knowledge-center/common/markdown/repository-images.js');
       const host = document.createElement('main'); host.id = 'repository-view-coverage-fixture'; document.body.append(host);
       const draw = (projection, platformAdmin) => {
         host.innerHTML = renderRepository({ projection, ...(platformAdmin === undefined ? {} : { platformAdmin }) });
@@ -1027,6 +1118,25 @@ test('GitLab 仓库阅读器：错误状态、目录投影和安全 Markdown 真
       const defaultTableRow = safeMarkdown('| 标题 | 短行 |\n| --- | --- |\n| 单元格 |');
       const pathFallback = safeMarkdown('[相对文件](file.md)');
       const unclosedPlainFence = safeMarkdown('```\n无语言且未闭合');
+      const utilityHost = document.createElement('section');
+      utilityHost.innerHTML = '<div data-directory-tree><input data-directory-search><ul><li><details open><summary role="treeitem">文档</summary><ul><li><button>安装</button></li><li><button>运维</button></li></ul></details></li></ul></div><div data-image-host><img src="./images/a.png"></div>';
+      document.body.append(utilityHost);
+      enhanceDirectoryTrees(utilityHost);
+      const directory = utilityHost.querySelector('[data-directory-tree]');
+      const search = directory.querySelector('[data-directory-search]');
+      search.value = '安装'; search.dispatchEvent(new Event('input', { bubbles: true }));
+      const treeItem = directory.querySelector('[role="treeitem"]');
+      treeItem.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+      treeItem.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }));
+      search.value = ''; search.dispatchEvent(new Event('input', { bubbles: true }));
+      const imageHost = utilityHost.querySelector('[data-image-host]');
+      const stopImageObserver = observeRepositoryImages(imageHost, 'docs/readme.md', { handbookId: 'HB-1', branch: 'main', language: 'zh' });
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const rewrittenSrcset = imageHost.querySelector('img').getAttribute('srcset');
+      imageHost.querySelector('img').setAttribute('src', 'https://example.test/a.png');
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const restoredSrcset = imageHost.querySelector('img').getAttribute('srcset');
+      stopImageObserver(); utilityHost.remove();
       const selected = [{ path: 'docs', name: 'docs', type: 'tree' }, { path: 'docs/a.md', name: 'a.md', type: 'blob' }];
       const tree = treeHierarchy([
         { path: 'docs/z.md', name: 'z.md', type: 'blob' },
@@ -1052,7 +1162,7 @@ test('GitLab 仓库阅读器：错误状态、目录投影和安全 Markdown 真
       states.nonArrayTree = draw({ status: 'ok', tree: 'invalid', branches: [] });
       states.normalWithoutLanguage = draw({ status: 'ok', handbookId: 'HB-lang', file: { path: 'README.md', content: '![图片](./a.jpg)' }, tree: [{ name: 'README.md', type: 'blob' }], branches: [] });
       states.normalWithCommit = draw({ status: 'ok', handbookId: 'HB-commit', connectionName: '主连接', branch: 'main', commitSha: '123456789abc', updatedAt: '', languages: { zh: true, en: false }, tree: [{ name: 'README.md', type: 'blob' }], file: { path: 'README.md', content: '# 中文' } });
-      return { states, markdownHtml, emptyMarkdown, defaultTableRow, pathFallback, unclosedPlainFence, hierarchy: tree, hierarchyFallbacks, context };
+      return { states, markdownHtml, emptyMarkdown, defaultTableRow, pathFallback, unclosedPlainFence, hierarchy: tree, hierarchyFallbacks, context, rewrittenSrcset, restoredSrcset };
     });
 
     expect(result.states.loading.text).toContain('正在读取仓库内容');
@@ -1111,6 +1221,8 @@ test('GitLab 仓库阅读器：错误状态、目录投影和安全 Markdown 真
     expect(result.defaultTableRow).toContain('<td></td>');
     expect(result.pathFallback).toContain('path=file.md');
     expect(result.unclosedPlainFence).toContain('language-text');
+    expect(result.rewrittenSrcset).toContain('/knowledge-center/api/gitlab/handbooks/HB-1/file');
+    expect(result.restoredSrcset).toBeNull();
     expect(result.hierarchy).toHaveLength(2);
     expect(result.hierarchy[0].children[0].children[0].path).toBe('docs/sub/b.md');
     expect(result.hierarchyFallbacks.some(node => node.path === undefined)).toBe(true);
@@ -1383,4 +1495,96 @@ test('生产质量弹窗：报告分项、失败保留、复测下载与关闭�
     await expect(dialog).toHaveCount(0);
     await expect(page.locator('[data-quality-fixture-trigger]')).toBeFocused();
   } finally { await f.close(); }
+});
+
+// Public UI and isolated HTTP faults; bootstrap continues through the real handler.
+test('在线评审发起：修改稿读取恢复、范围校验与提交恢复', async ({ page }) => {
+  const f = await fixture(page);
+  const requests = [];
+  let draftMode = 'failure', submitMode = 'failure';
+  const drafts = [
+    { documentId: 'draft-a', outlineVersionId: 'outline-1', branch: 'main', draftRevisionId: 'rev-a', editVersion: 3 },
+    { documentId: 'draft-b', outlineVersionId: 'outline-1', branch: 'main', draftRevisionId: 'rev-b', editVersion: 4 },
+    { documentId: 'draft-hidden', outlineVersionId: 'outline-1', branch: 'other', draftRevisionId: 'rev-hidden', editVersion: 1 },
+  ];
+  const backend = http.createServer(async (req, res) => {
+    const chunks = []; for await (const chunk of req) chunks.push(chunk);
+    const url = new URL(req.url, 'http://localhost');
+    const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : null;
+    requests.push({ method: req.method, path: url.pathname, body, key: req.headers['idempotency-key'] });
+    let status = 200, data;
+    if (url.pathname.endsWith('/review-drafts')) {
+      if (draftMode === 'failure') status = 503;
+      else data = { items: draftMode === 'empty' ? [] : drafts };
+    } else if (url.pathname.endsWith('/reviewers')) data = { items: [{ id: 'author', displayName: '提交者 <审核> & 验证' }, { id: 'disabled', displayName: '已停用', disabled: true }] };
+    else if (url.pathname.endsWith('/incremental-reviews')) {
+      if (submitMode === 'failure') status = 503;
+      else if (submitMode === 'network-message') status = 502;
+      else if (submitMode === 'missing-task') data = { tasks: [] };
+      else data = { tasks: [{ id: f.shared.id, handbookId: 'HB-1' }], reviewHref: `/knowledge-center/review?handbookId=HB-1&taskId=${f.shared.id}&documentId=shared-a` };
+    } else status = 404;
+    res.writeHead(status, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(status === 200 ? { success: true, data } : { success: false, error: { code: 'ISOLATED_REVIEW_FAILURE', message: submitMode === 'network-message' ? 'Failed to fetch' : '隔离评审服务不可用' } }));
+  });
+  await new Promise(resolve => backend.listen(0, '127.0.0.1', resolve));
+  const pattern = '**/knowledge-center/api/production/handbooks/**';
+  const handler = async route => {
+    const url = new URL(route.request().url()); url.hostname = '127.0.0.1'; url.port = String(backend.address().port);
+    await route.fulfill({ response: await route.fetch({ url: url.href }) });
+  };
+  await page.route(pattern, handler);
+  const dialog = page.locator('[data-review-online-dialog]');
+  const open = () => page.locator('[data-review-online-start]').click();
+  const submit = () => dialog.locator('button[type=submit]').click();
+  const error = dialog.locator('[data-review-online-error]');
+  const chooseReviewer = () => dialog.locator('[name=reviewerId]').selectOption('author', { force: true });
+  try {
+    await page.goto(`${f.base}/knowledge-center/review?view=reader&handbookId=HB-1&branch=main`);
+    await open();
+    await expect(dialog.locator('[data-review-online-drafts]')).toContainText('修改稿读取失败：隔离评审服务不可用');
+    await expect(dialog.locator('[name=reviewerId]')).toContainText('审核人不可用');
+    await dialog.locator('[data-review-online-close]').click();
+    draftMode = 'empty'; await open();
+    await expect(dialog.locator('[data-review-online-drafts]')).toContainText('当前分支没有已保存修改稿');
+    await dialog.locator('[data-review-online-cancel]').click();
+    draftMode = 'ready'; await open();
+    await expect(dialog.locator('[data-review-online-draft]')).toHaveCount(2);
+    await expect(dialog.locator('[name=reviewerId]')).toContainText('提交者 <审核> & 验证');
+    await expect(dialog.locator('[name=reviewerId] option[value=disabled]')).toHaveAttribute('disabled', '');
+    await chooseReviewer(); await submit();
+    await expect(error).toHaveText('请选择至少一篇已保存修改稿'); await expect(error).toBeFocused();
+    await dialog.locator('[data-review-online-draft]').nth(0).check();
+    await dialog.locator('[data-review-online-draft]').nth(1).check();
+    await submit(); await expect(error).toHaveText('单篇文档评审只能选择一篇修改稿');
+    await dialog.locator('[name=scope][value=handbook]').check();
+    await submit(); await expect(error).toHaveText('请填写每篇文档的完整仓库文件路径');
+    expect(requests.filter(r => r.method === 'POST')).toHaveLength(0);
+    await dialog.locator('[data-review-online-path="draft-a"]').fill(' docs/a.md ');
+    await dialog.locator('[data-review-online-path="draft-b"]').fill('docs/b.md');
+    await dialog.locator('[name=note]').fill(' 已核对修改范围 ');
+    await submit(); await expect(error).toHaveText('隔离评审服务不可用');
+    await expect(dialog.locator('button[type=submit]')).toBeEnabled();
+    await expect(dialog.locator('[data-review-online-path="draft-a"]')).toHaveValue(' docs/a.md ');
+    await expect(dialog.locator('[data-review-online-draft]:checked')).toHaveCount(2);
+    submitMode = 'network-message'; await submit(); await expect(error).toHaveText('无法连接平台服务，请检查网络后重试。');
+    submitMode = 'missing-task'; await submit(); await expect(error).toHaveText('服务端没有返回审核任务');
+    submitMode = 'success'; await submit();
+    await expect(page).toHaveURL(new RegExp(`taskId=${f.shared.id}.*view=reader`));
+    await page.getByRole('button', { name: '阅读文档', exact: true }).click();
+    await expect(page.locator('.review-reader-snapshot')).toContainText('冻结正文 shared-a');
+    const writes = requests.filter(r => r.method === 'POST'); expect(writes).toHaveLength(4);
+    for (const r of writes) {
+      expect(r.path).toBe('/knowledge-center/api/production/handbooks/HB-1/incremental-reviews');
+      expect(r.key).toBeTruthy();
+      expect(r.body).toEqual({ reviewMode: 'online_review', scope: 'handbook', businessVersion: '', defaultReviewerIds: ['author'], documents: [
+        { documentId: 'draft-a', outlineVersionId: 'outline-1', branch: 'main', draftRevisionId: 'rev-a', filePath: 'docs/a.md' },
+        { documentId: 'draft-b', outlineVersionId: 'outline-1', branch: 'main', draftRevisionId: 'rev-b', filePath: 'docs/b.md' },
+      ], note: '已核对修改范围' });
+    }
+    expect(f.gitlabWrites()).toBe(0);
+  } finally {
+    await page.unroute(pattern, handler);
+    await new Promise(resolve => { backend.closeAllConnections(); backend.close(resolve); });
+    await f.close();
+  }
 });

@@ -57,6 +57,7 @@ public final class StorageManualSnapshotHttpCheck {
     private static State committed = state.copy();
     private static int commits;
     private static int rollbacks;
+    private static boolean missingProjectedState;
 
     @SuppressWarnings("unchecked")
     private static <T> T proxy(Class<T> type, java.lang.reflect.InvocationHandler handler) {
@@ -67,7 +68,7 @@ public final class StorageManualSnapshotHttpCheck {
         List<Object[]> data;
         if (HandbookProjectionRepository.LIST_SQL.equals(sql)) {
             data = state.exists ? List.<Object[]>of(new Object[]{101L, "HB-1", state.title, 7L, "YashanDB", "5",
-                null, state.state, null, "ARCHIVED".equals(state.state) ? NOW : null, state.rowVersion,
+                null, missingProjectedState ? null : state.state, null, "ARCHIVED".equals(state.state) ? NOW : null, state.rowVersion,
                 new SerialClob(state.summary.toCharArray()), state.kind, state.visible, NOW, NOW,
                 state.ownerA == null ? null : String.valueOf(state.ownerA), state.ownerA == null ? null : "甲",
                 state.ownerB == null ? null : String.valueOf(state.ownerB), state.ownerB == null ? null : "乙"}) : List.of();
@@ -217,9 +218,51 @@ public final class StorageManualSnapshotHttpCheck {
             int beforeFailure = commits;
             expect(request(client, base, "PUT", "{\"handbooks\":[{\"handbookId\":\"HB-2\",\"productId\":7}]}") , 503, "DATABASE_UNAVAILABLE");
             expect(request(client, base, "PUT", "{\"handbooks\":[{\"handbookId\":\"HB-1\",\"productId\":7,\"productName\":\"YashanDB\",\"ownerA\":{\"id\":99}}]}") , 503, "DATABASE_UNAVAILABLE");
+            for (String invalid : List.of(
+                    "{\"productId\":7}",
+                    "{\"handbookId\":\"HB-1\"}",
+                    "{\"handbookId\":\"HB-1\",\"productId\":\"invalid\"}",
+                    "{\"handbookId\":\"HB-1\",\"productId\":\"9223372036854775808\"}",
+                    "{\"handbookId\":\"HB-1\",\"productId\":7,\"productName\":\"YashanDB\",\"ownerA\":{\"id\":\"invalid\"}}",
+                    "{\"handbookId\":\"HB-1\",\"productId\":7,\"productName\":\"YashanDB\",\"departmentId\":\"invalid\"}")) {
+                expect(request(client, base, "PUT", "{\"handbooks\":[" + invalid + "]}"), 503, "DATABASE_UNAVAILABLE");
+                if (commits != beforeFailure || state.rowVersion != 2 || state.ownerA != 12L)
+                    throw new AssertionError("invalid identifier snapshot changed committed manual");
+            }
             expect(request(client, base, "PUT", "{broken"), 400, "INVALID_JSON");
             if (commits != beforeFailure || rollbacks < 3 || state.rowVersion != 2 || state.ownerA != 12L)
                 throw new AssertionError("failed manual snapshot did not roll back");
+            expect(request(client, base, "PUT", first.replace("\"active\"", "\"frozen\"")), 200, "\"status\":\"frozen\"");
+            if (state.rowVersion != 3 || !"FROZEN".equals(state.state) || commits != beforeFailure + 1)
+                throw new AssertionError("frozen manual snapshot was not persisted");
+            int beforeProjectionFailure = commits;
+            missingProjectedState = true;
+            try {
+                expect(request(client, base, "GET", null), 503, "DATABASE_UNAVAILABLE");
+                if (commits != beforeProjectionFailure)
+                    throw new AssertionError("invalid read projection committed a transaction");
+            } finally {
+                missingProjectedState = false;
+            }
+            expect(request(client, base, "GET", null), 200, "\"status\":\"frozen\"");
+            String stringOwners = first.replace("\"ownerA\":{\"userId\":11}",
+                    "\"ownerA\":\"{\\\"userId\\\":11}\"")
+                .replace("\"ownerB\":{\"userId\":12}", "\"ownerB\":\"{\\\"id\\\":12}\"");
+            expect(request(client, base, "PUT", stringOwners), 200, "\"assetVersion\":4");
+            if (!Long.valueOf(11).equals(state.ownerA) || !Long.valueOf(12).equals(state.ownerB))
+                throw new AssertionError("serialized owner objects lost their identifiers");
+            long expectedVersion = 4;
+            for (String invalidOwner : List.of("\"{broken\"", "\"[]\"", "\"null\"", "\"   \"", "false", "null")) {
+                String invalidOwners = first.replace("\"ownerA\":{\"userId\":11}", "\"ownerA\":" + invalidOwner)
+                    .replace("\"ownerB\":{\"userId\":12}", "\"ownerB\":" + invalidOwner);
+                int beforeCompatibilityWrite = commits;
+                expect(request(client, base, "PUT", invalidOwners), 200,
+                    "\"assetVersion\":" + (++expectedVersion));
+                if (state.ownerA != null || state.ownerB != null || state.rowVersion != expectedVersion ||
+                        commits != beforeCompatibilityWrite + 1)
+                    throw new AssertionError("invalid compatible owners retained stale state: " + invalidOwner);
+                expect(request(client, base, "GET", null), 200, "\"summary\":\"初版\"");
+            }
         } finally {
             server.stop(0);
             Field poolField = Main.class.getDeclaredField("connectionPool");
