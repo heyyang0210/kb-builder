@@ -363,6 +363,21 @@ class RepositoryTestRunnerTests(unittest.TestCase):
         self.assertNotIn("outside.log", content)
         self.assertIn("失败与阻塞", content)
 
+    def test_html_report_triages_failures_without_losing_abnormal_cases(self):
+        cases = [{"name": f"case {index}", "status": "TIMEOUT" if index == 1 else "INTERRUPTED" if index == 2 else "FAIL",
+                  "file": "tests/failure.test.js", "detail": "\n  <unsafe> diagnostic\n  stack line"} for index in range(10)]
+        payload = {"command": "unit", "generatedAt": "2026-11-12T20:00:00+08:00", "durationSeconds": 1,
+                   "passed": False, "tasks": [{"suite": "unit", "label": "异常任务", "framework": "jest",
+                   "status": "FAIL", "test_total": 10, "test_passed": 0, "test_failed": 10,
+                   "test_skipped": 0, "cases": cases, "failed_tests": [], "duration_seconds": 1}]}
+        content = RUNNER.render_html_report(payload)
+        self.assertIn("10 条失败或异常用例 · 1 个异常任务", content)
+        self.assertIn("另有 2 条失败或异常用例", content)
+        self.assertIn("&lt;unsafe&gt; diagnostic", content)
+        self.assertNotIn("<unsafe>", content)
+        self.assertIn("失败 / 异常</th>", content)
+        self.assertIn('class="number fail-text">10</td>', content)
+
     def test_test_environment_targets_the_instance_prepared_by_runner(self):
         self.assertEqual(RUNNER.KNOWLEDGE_CENTER_BASE_URL, RUNNER.test_environment()["KPG_BASE_URL"])
         environment = RUNNER.test_environment(

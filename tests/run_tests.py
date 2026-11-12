@@ -1188,23 +1188,27 @@ def render_html_report(payload: dict[str, Any], model: dict[str, Any] | None = N
     case_failures = [record for record in model['records'] if record['case'].get('status') in {'FAIL', 'TIMEOUT', 'INTERRUPTED'}]
     for record in case_failures[:8]:
         case = record['case']
-        failures.append(f'<li><div class="failure-title">{report_badge(case.get("status", "FAIL"))}<a href="{escape(record["href"])}">{escape(case.get("name") or "未命名用例")}</a></div><small>{escape(record["scene"])} · {escape(case.get("file") or record["task"].get("framework") or "")}</small></li>')
-    for task in tasks:
-        if task.get('status') in {'PASS', 'DRY-RUN'}:
-            continue
+        first_line = next((line.strip() for line in (case.get('detail') or '').splitlines() if line.strip()), '')
+        diagnostic = f'<p class="failure-diagnostic">{escape(first_line[:240])}{"…" if len(first_line) > 240 else ""}</p>' if first_line else ''
+        failures.append(f'<li><div class="failure-title">{report_badge(case.get("status", "FAIL"))}<a href="{escape(record["href"])}">{escape(case.get("name") or "未命名用例")}</a></div><small>{escape(record["scene"])} · {escape(case.get("file") or record["task"].get("framework") or "")}</small>{diagnostic}</li>')
+    if len(case_failures) > 8:
+        failures.append(f'<li class="failure-more">另有 {len(case_failures) - 8} 条失败或异常用例。<a href="#status=FAIL">查看全部失败用例</a></li>')
+    abnormal_tasks = [task for task in tasks if task.get('status') not in {'PASS', 'DRY-RUN'}]
+    for task in abnormal_tasks:
         messages = task.get('failed_tests') or [CASE_STATUS_LABELS.get(task.get('status'), '异常任务')]
         failures.append(f'<li><div class="failure-title">{report_badge(task.get("status", ""))}<strong>{escape(task.get("label") or "未命名任务")}</strong></div><p>{escape("；".join(messages))}</p>{report_log_link(task)}</li>')
     fail_body = '<ul class="failure-list">' + ''.join(failures) + '</ul>' if failures else '<div class="empty">无失败项。<br><small>本次未记录失败用例或异常任务。</small></div>'
-    failure_panel = f'<section class="panel" id="failures"><div class="panel-head"><h2>失败与阻塞</h2><a href="#status=FAIL">筛选失败用例</a></div>{fail_body}</section>'
+    failure_panel = f'<section class="panel" id="failures"><div class="panel-head"><div><h2>失败与阻塞</h2><small>{len(case_failures)} 条失败或异常用例 · {len(abnormal_tasks)} 个异常任务</small></div><a href="#status=FAIL">筛选失败用例</a></div>{fail_body}</section>'
     body += '<div class="grid">' + distribution + failure_panel + '</div>' + report_search()
     scenes = []
     for group in model['scenes'].values():
         cases = group['records']
-        states = {state: sum(record['case'].get('status') == state for record in cases) for state in ('PASS', 'FAIL', 'SKIP', 'NOT_RUN')}
+        states = {state: sum(record['case'].get('status') == state for record in cases) for state in ('PASS', 'SKIP', 'NOT_RUN')}
+        states['FAIL'] = sum(record['case'].get('status') in {'FAIL', 'TIMEOUT', 'INTERRUPTED'} for record in cases)
         pass_pct = states['PASS'] / len(cases) * 100 if cases else 0
         missing = sum(not task.get('cases') for task in group['tasks'])
         scenes.append(f'<tr><td><a class="table-link" href="scenes/scene-{group["id"]}-1.html"><strong>{escape(group["label"])}</strong></a><small>{len(group["tasks"])} 个任务 · {group["pages"]} 页</small></td><td class="number">{len(cases)}</td><td class="number">{states["PASS"]}</td><td class="number {"fail-text" if states["FAIL"] else ""}">{states["FAIL"]}</td><td class="number">{states["SKIP"]}</td><td class="number">{states["NOT_RUN"]}</td><td>{pass_pct:.1f}%<div class="bar" aria-hidden="true"><span style="width:{pass_pct:.2f}%"></span></div></td><td>{missing}</td></tr>')
-    body += '<section class="panel" id="scenes"><div class="panel-head"><h2>测试场景</h2><small>按场景进入用例明细</small></div><div class="table-wrap"><table><thead><tr><th>场景</th><th class="number">明细用例</th><th class="number">通过</th><th class="number">失败</th><th class="number">跳过</th><th class="number">未执行</th><th>通过率</th><th>无明细任务</th></tr></thead><tbody>' + ''.join(scenes) + '</tbody></table></div></section>'
+    body += '<section class="panel" id="scenes"><div class="panel-head"><h2>测试场景</h2><small>按场景进入用例明细</small></div><div class="table-wrap"><table><thead><tr><th>场景</th><th class="number">明细用例</th><th class="number">通过</th><th class="number">失败 / 异常</th><th class="number">跳过</th><th class="number">未执行</th><th>通过率</th><th>无明细任务</th></tr></thead><tbody>' + ''.join(scenes) + '</tbody></table></div></section>'
     body += report_coverage(payload)
     body += '<section class="panel" id="tasks"><div class="panel-head"><h2>任务结果</h2><small>框架执行结果与原始日志</small></div><div class="table-wrap"><table><thead><tr><th>状态</th><th>任务 / 场景</th><th>框架</th><th>用例</th><th>耗时</th><th>执行证据</th></tr></thead><tbody>' + ''.join(task_rows) + '</tbody></table></div></section>'
     slow = sorted(tasks, key=lambda task: task.get('duration_seconds') or 0, reverse=True)[:5]
