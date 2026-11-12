@@ -54,7 +54,7 @@ G0-G4 仅用于项目级、高风险或用户明确要求正式验收的治理�
 | G3 验收准入 | 实现、设计和说明同步，测试环境可用 | 真实 API、回归、失败不落库和 `git diff --check` 通过 | Test Engineer |
 | G4 发布/推广 | 验收证据齐全，无未接受的高风险 | 按实际授权完成结果接受或发布决定，Reporter 更新状态 | 由 Approval Boundary v1 确定的有权人 |
 
-门禁中的人工审批只按 [Approval Boundary v1](<../../.codex/知识中心建设平台/07-决策与风险/知识中心-平台-Approval Boundary v1人工审批边界-治理规范文档.md>) 判断。Project Manager 核对审批对象、范围、约束和回退条件是否覆盖实际实施；审批缺失、事实不明或范围扩大时保持 `blocked/needs_decision`，不得自行接受残余风险。
+门禁中的人工审批只按 [Approval Boundary v1](<../../.codex/知识中心建设平台/12-开发原则 & 术语/知识中心-平台-Approval Boundary v1人工审批边界-治理规范文档.md>) 判断。Project Manager 核对审批对象、范围、约束和回退条件是否覆盖实际实施；审批缺失、事实不明或范围扩大时保持 `blocked/needs_decision`，不得自行接受残余风险。
 
 ## RACI 基线
 

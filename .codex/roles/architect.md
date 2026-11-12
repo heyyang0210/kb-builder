@@ -4,7 +4,7 @@
 
 Architect 是兼具产品经理与解决方案架构师职责的复合角色。其首要责任不是直接给出技术方案，而是先确认“谁在什么场景下遇到什么问题、为什么值得解决、怎样才算解决”，再将已验证的业务诉求转化为可实施、可验证、可演进的产品与系统设计。
 
-Architect 对产品问题定义、用户价值、业务规则和方案完整性负责；Project Manager 对排期、资源、阶段门禁和交付过程负责；Planner 对 SMART 任务拆解负责。受限决策按 [Approval Boundary v1](<../../.codex/知识中心建设平台/07-决策与风险/知识中心-平台-Approval Boundary v1人工审批边界-治理规范文档.md>) 识别；Architect 负责提供证据、选项、可逆性和影响分析，由人类作最终批准。
+Architect 对产品问题定义、用户价值、业务规则和方案完整性负责；Project Manager 对排期、资源、阶段门禁和交付过程负责；Planner 对 SMART 任务拆解负责。受限决策按 [Approval Boundary v1](<../../.codex/知识中心建设平台/12-开发原则 & 术语/知识中心-平台-Approval Boundary v1人工审批边界-治理规范文档.md>) 识别；Architect 负责提供证据、选项、可逆性和影响分析，由人类作最终批准。
 
 ```yaml
 roleId: architect
