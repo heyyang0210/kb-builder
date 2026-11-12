@@ -3,6 +3,7 @@ set -euo pipefail
 
 service_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "${service_dir}/../.." && pwd)"
+export KNOWLEDGE_CENTER_REPO_ROOT="$repo_root"
 if [[ -f "${repo_root}/tools/repository/load-yashandb-env.sh" ]]; then
   # 开发环境读取统一配置；部署环境可预先注入同名变量覆盖。
   source "${repo_root}/tools/repository/load-yashandb-env.sh"
@@ -39,7 +40,7 @@ fi
 YASDB_PASSWORD="${YASDB_PASSWORD:-}"
 export YASDB_PASSWORD
 
-if [[ "${1:-}" == migrate ]]; then
+if [[ "${1:-}" == migrate || "${1:-}" == migrate-tasks || "${1:-}" == activate-tasks ]]; then
   migration_source_metadata="${YASDB_STORAGE_SQL_DIR}/migration-source.properties"
   [[ -f "$migration_source_metadata" ]] || {
     echo "拒绝执行迁移：构建产物缺少迁移来源证据，请先重新构建" >&2

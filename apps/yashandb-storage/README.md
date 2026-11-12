@@ -6,6 +6,8 @@
 
 Pingcode 来源同步的 `017_pingcode_task_sync.sql` 新增逐 SR 任务、负责人/审核关联索引、来源、运行和快照表。旧任务数据不会随 DDL 自动迁移；`migrate-tasks` 仅允许个人开发库，要求 `YASDB_STORAGE_TARGET_CLASS=personal` 和 `KC_DOCUMENT_TASK_BACKUP_PATH` 指向本仓库 `runtime` 内的新文件。命令先备份旧聚合，再逐条复制、建立人员/审核索引并核对正文哈希和数量，留下 `VERIFIED` 记录；此状态不开放来源确认。结构迁移仍必须使用来自已提交版本的构建产物，且共享库由项目负责人执行。备份以创建时 `0600` 权限写入，不输出凭据或正文到日志。
 
+任务关系表以 `TASK_PREFIX VARCHAR(16)` 与 `TASK_NUMBER BIGINT` 共同标识任务；固定类型的 Pingcode SR、IR 关系使用 BIGINT 编号，外部接口仍收发完整编号。运行、快照、关系、变化、资源和幂等历史表按 `CREATED_AT` 月度分区，便于按批准的保留策略归档；本次迁移不会自动删除历史。外部不透明 ID、哈希及分类值保留字符类型。`regress` 测试库曾执行旧版 `017`，重建前须保留含数据备份；生产库尚未执行 `017`。
+
 逐任务关系表读取接口为 `GET /v1/document-tasks`、`GET /v1/document-tasks/{number}`、`GET /v1/document-tasks/mine?principalId=` 和 `GET /v1/document-tasks/by-review/{reviewTaskId}`；`PUT /v1/document-tasks/{number}` 使用行版本和幂等键，同事务更新任务与负责人/审核索引。列表分页至多 100 条，可按编号/描述、责任人、产品、版本、类型、状态、IR 和关注级别过滤。仅在迁移记录为 `ACTIVE` 时响应任务数据；`VERIFIED` 仍返回 409。`activate-tasks` 仅允许个人开发库，必须提供原备份路径，并重新核验旧聚合版本、备份摘要和全部任务正文后才切换；激活后旧聚合任务写入返回 409。三个迁移命令都校验 SQL 来自已提交版本。
 
 该服务是当前过渡期的 JDBC 运行组件，提供记录读写、乐观并发、Schema 初始化和完整导出。长期目标是将同一数据访问契约作为平台内核 Storage 模块直接调用，业务请求不再经过 HTTP 中转；在 Node/YashanDB 直接适配器和回退验证完成前，14210 仍由运维脚本管理，不得提前删除。
@@ -36,6 +38,7 @@ export YASDB_STORAGE_PORT='14210'
 `Main probe` 是平台数据库连接治理的内部验证命令：它使用候选 JDBC 地址和凭据建立真实会话，执行固定的 `SELECT 1 FROM DUAL` 后立即退出。`Main verify` 在不启动 HTTP 服务的情况下校验已执行迁移的版本、别名和摘要。两者都不修改数据库，密码只通过子进程环境传递，不放入命令行、日志或响应。启动脚本支持通过 `KNOWLEDGE_CENTER_JAVA_BIN` 使用项目隔离的 Java 17 运行时。
 显式迁移还会校验构建产物中的 `migration-source.properties`：SQL 和版本别名必须来自已提交的 Git revision，否则在连接数据库前拒绝执行。该门禁同样适用于 E2E 专用 `test_hy`：统一入口可以先同步基线并构建当前代码，但只执行已提交的迁移字节，不对脏 SQL 设置测试例外。运行产物重算聚合摘要时使用统一源路径 `apps/yashandb-storage/sql/<file>`，不让构建目录的路径差异影响摘要。
 迁移文件发现、历史别名兼容、摘要校验和 SQL 执行由 `src/migration/SchemaMigrationManager.java` 集中维护，业务入口只负责编排连接和服务生命周期。
+YashanDB 对已有相同列序的重复索引返回 `YAS-02043`；迁移器只在数据库元数据证明等价索引存在时跳过该语句，保留历史 SQL 摘要，其他错误仍中止迁移。
 
 业务服务切换到数据库模式前，需先启动本服务并确认健康检查成功：
 
@@ -90,6 +93,8 @@ SQL 迁移目录：
 关系表任务索引的 `TASK_STATUS` 按现有业务状态保存为 `PENDING_SCOPE`、`IN_PROGRESS` 或 `COMPLETED`，与列表状态筛选一致。旧聚合缺失状态字段时，迁移只根据已保存的范围确认事实推断未确认和进行中，完成状态须按备份逐项对账。
 
 Pingcode 确认同步新建的任务读取任务配置的默认责任人，并在同一事务内写入 `OWNER_ID` 与人员索引；未配置默认责任人时拒绝确认。同步现有任务不覆盖平台责任人。
+
+已确认来源快照按任务编号回读当前主来源的 Markdown、IR 和最新资源版本；变化历史只统计已确认批次。缺图重试追加资源版本，不改原正文及其哈希；所有失败资源修复后，批次从 `CONFIRMED_MISSING_IMAGES` 转为 `CONFIRMED`。隔离库测试覆盖多 IR 引用同一 SR、来源变化、缺图确认与修复。
 
 ## 数据迁移和导出
 

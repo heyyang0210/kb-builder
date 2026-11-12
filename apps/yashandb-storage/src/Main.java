@@ -77,6 +77,9 @@ public final class Main {
     private final PrincipalRepository principalRepository = new PrincipalRepository();
     private final PlatformAuthRepository platformAuthRepository = new PlatformAuthRepository();
     private final PlatformGitLabRepository platformGitLabRepository = new PlatformGitLabRepository();
+    private final PingcodeTaskRepository pingcodeTaskRepository = new PingcodeTaskRepository();
+    private final DocumentTaskReadRepository documentTaskReadRepository = new DocumentTaskReadRepository();
+    private final DocumentTaskWriteRepository documentTaskWriteRepository = new DocumentTaskWriteRepository();
     private static boolean perfEnabled() { return "1".equals(System.getenv("PERF_TRACE")); }
     private static void perf(String event, long started, long sqlStarted, long lockStarted) {
         if (!perfEnabled()) return;
@@ -88,8 +91,8 @@ public final class Main {
 
     public static void main(String[] args) throws Exception {
         String command = args.length == 0 ? "serve" : args[0];
-        if (args.length > 1 || !("serve".equals(command) || "migrate".equals(command) || "probe".equals(command) || "verify".equals(command))) {
-            throw new IllegalArgumentException("用法：Main [serve|migrate|probe|verify]");
+        if (args.length > 1 || !("serve".equals(command) || "migrate".equals(command) || "probe".equals(command) || "verify".equals(command) || "migrate-tasks".equals(command) || "activate-tasks".equals(command))) {
+            throw new IllegalArgumentException("用法：Main [serve|migrate|probe|verify|migrate-tasks|activate-tasks]");
         }
         Class.forName(DRIVER);
         Main application = new Main();
@@ -125,6 +128,28 @@ public final class Main {
             System.exit(0);
             return;
         }
+        if ("migrate-tasks".equals(command)) {
+            try {
+                application.verifyMigrations();
+                application.migrateDocumentTasks();
+                System.out.println("{\"success\":true,\"taskMigration\":\"verified\"}");
+            } finally {
+                application.connectionPool.closeAll();
+            }
+            System.exit(0);
+            return;
+        }
+        if ("activate-tasks".equals(command)) {
+            try {
+                application.verifyMigrations();
+                application.activateDocumentTasks();
+                System.out.println("{\"success\":true,\"taskMigration\":\"active\"}");
+            } finally {
+                application.connectionPool.closeAll();
+            }
+            System.exit(0);
+            return;
+        }
         application.verifyMigrations();
         application.connectionPool.start();
         application.warmDraftReadProjection();
@@ -149,6 +174,8 @@ public final class Main {
         register(server, "/v1/platform/team-groups", this::teamGroups);
         register(server, "/v1/platform/auth", this::platformAuth);
         register(server, "/v1/platform/gitlab", this::platformGitLab);
+        register(server, "/v1/pingcode-task-sync", this::pingcodeTaskSync);
+        register(server, "/v1/document-tasks", this::documentTasks);
         register(server, "/v1/export", this::exportAll);
         // The read gate exercises ten simultaneous users. Keep the default
         // worker and JDBC pool capacity above that level; deployments can
@@ -179,6 +206,29 @@ public final class Main {
                     throw new SQLException("数据库最小探测未返回预期结果");
                 }
             }
+        }
+    }
+
+    private void migrateDocumentTasks() throws Exception {
+        if (!"personal".equals(env("YASDB_STORAGE_TARGET_CLASS", ""))) {
+            throw new IllegalStateException("旧任务迁移仅允许显式指定个人开发库");
+        }
+        String backupPath = env("KC_DOCUMENT_TASK_BACKUP_PATH", "").trim();
+        if (backupPath.isEmpty()) throw new IllegalStateException("必须指定旧任务备份路径");
+        try (Connection connection = connection()) {
+            new DocumentTaskMigration().verifyAndCopy(connection, Path.of(backupPath));
+            connection.commit();
+        }
+    }
+
+    private void activateDocumentTasks() throws Exception {
+        if (!"personal".equals(env("YASDB_STORAGE_TARGET_CLASS", "")))
+            throw new IllegalStateException("任务切换仅允许显式指定个人开发库");
+        String backupPath = env("KC_DOCUMENT_TASK_BACKUP_PATH", "").trim();
+        if (backupPath.isEmpty()) throw new IllegalStateException("必须指定已核验的旧任务备份路径");
+        try (Connection connection = connection()) {
+            new DocumentTaskMigration().activate(connection, Path.of(backupPath));
+            connection.commit();
         }
     }
 
@@ -491,6 +541,8 @@ public final class Main {
         } catch (Exception error) {
             if ("OUTLINE_DELETED".equals(error.getMessage()) || "OUTLINE_NOT_FOUND".equals(error.getMessage())) {
                 failure(exchange, 409, error.getMessage(), "大纲已删除或不存在，不能新增或修改关联生产数据");
+            } else if ("DOCUMENT_TASK_LEGACY_WRITE_DISABLED".equals(error.getMessage())) {
+                failure(exchange, 409, "DOCUMENT_TASK_LEGACY_WRITE_DISABLED", "任务已切换到逐任务存储，请刷新页面");
             } else failure(exchange, 503, "DATABASE_UNAVAILABLE", "写入数据库记录失败");
         }
     }
@@ -529,8 +581,9 @@ public final class Main {
         Long current = null;
         String currentDigest = null;
         boolean currentDeleted = false;
+        String currentTaskPayload = null;
         long lockStarted = System.nanoTime();
-        try (PreparedStatement lock = connection.prepareStatement("SELECT REVISION, PAYLOAD_SHA256, DELETED FROM KC_RECORD WHERE NAMESPACE=? AND RECORD_KEY=? FOR UPDATE")) {
+        try (PreparedStatement lock = connection.prepareStatement("SELECT REVISION, PAYLOAD_SHA256, DELETED, PAYLOAD FROM KC_RECORD WHERE NAMESPACE=? AND RECORD_KEY=? FOR UPDATE")) {
             lock.setString(1, namespace);
             lock.setString(2, key);
             try (ResultSet result = lock.executeQuery()) {
@@ -538,10 +591,20 @@ public final class Main {
                     current = result.getLong(1);
                     currentDigest = trimToEmpty(result.getString(2));
                     currentDeleted = "Y".equals(result.getString(3));
+                    if ("document_tasks".equals(namespace) && "state".equals(key)) currentTaskPayload = readRecordClob(result.getClob(4));
                 }
             }
         }
         if (perfEnabled()) System.err.printf("[perf] for_update_wait_ms=%.3f%n", (System.nanoTime() - lockStarted) / 1e6);
+        if ("document_tasks".equals(namespace) && "state".equals(key)
+            && documentTaskReadRepository.active(connection)) {
+            if (currentDeleted || currentTaskPayload == null) throw new SQLException("DOCUMENT_TASK_LEGACY_WRITE_DISABLED");
+            Object oldValue = Json.parse(currentTaskPayload);
+            Object newValue = Json.parse(payload);
+            if (!(oldValue instanceof Map<?, ?> oldState) || !(newValue instanceof Map<?, ?> newState)
+                || !java.util.Objects.equals(Json.stringify(oldState.get("tasks")), Json.stringify(newState.get("tasks"))))
+                throw new SQLException("DOCUMENT_TASK_LEGACY_WRITE_DISABLED");
+        }
         // A concurrent writer may have changed the baseline used for the incremental check.
         if (incrementalReferences && !java.util.Objects.equals(observedRevision, current)) throw new RevisionConflict();
         if (expected != null && (current == null ? expected != 0 : !expected.equals(current))) {
@@ -573,6 +636,10 @@ public final class Main {
     }
 
     private void deleteRecord(HttpExchange exchange, String namespace, String key) throws IOException {
+        if ("document_tasks".equals(namespace) && "state".equals(key)) {
+            failure(exchange, 409, "DOCUMENT_TASK_DELETE_FORBIDDEN", "任务数据不能通过聚合接口删除");
+            return;
+        }
         Long expected = expectedRevision(exchange, true);
         if (Long.valueOf(Long.MIN_VALUE).equals(expected)) {
             return;
@@ -1072,6 +1139,238 @@ public final class Main {
         } catch (SQLException error) {
             platformFailure(exchange, error);
         }
+    }
+
+    private void pingcodeTaskSync(HttpExchange exchange) throws IOException {
+        String prefix = "/v1/pingcode-task-sync";
+        String path = exchange.getRequestURI().getRawPath();
+        String[] parts = path.substring(prefix.length()).split("/");
+        try (Connection connection = connection()) {
+            if ("GET".equals(exchange.getRequestMethod()) && "/v1/pingcode-task-sync/sources".equals(path)) {
+                sendJson(exchange, 200, mapOf("success", true, "data", pingcodeTaskRepository.listSources(connection)));
+                connection.commit(); return;
+            }
+            if ("POST".equals(exchange.getRequestMethod()) && "/v1/pingcode-task-sync/sources".equals(path)) {
+                if (!requireIdempotencyKey(exchange)) return;
+                Map<String, Object> input = readJsonObject(exchange);
+                Map<String, Object> source = pingcodeTaskRepository.createSource(connection,
+                    coalesce(input.get("name")), coalesce(input.get("type")), coalesce(input.get("url")),
+                    coalesce(input.get("connectionId")), coalesce(input.get("actor")));
+                connection.commit(); sendJson(exchange, 201, mapOf("success", true, "data", source)); return;
+            }
+            if (parts.length == 4 && "tasks".equals(parts[1])
+                && "GET".equals(exchange.getRequestMethod())) {
+                String number = decode(parts[2]);
+                Object result;
+                if ("source".equals(parts[3])) {
+                    result = pingcodeTaskRepository.sourceSnapshot(connection, number);
+                } else if ("changes".equals(parts[3])) {
+                    Map<String, String> params = queryParameters(exchange.getRequestURI().getRawQuery());
+                    result = pingcodeTaskRepository.changes(connection, number,
+                        Integer.parseInt(params.getOrDefault("page", "1")),
+                        Integer.parseInt(params.getOrDefault("pageSize", "20")));
+                } else { methodNotAllowed(exchange); return; }
+                connection.commit(); sendJson(exchange, 200, mapOf("success", true, "data", result)); return;
+            }
+            if (parts.length == 3 && "sources".equals(parts[1]) && "GET".equals(exchange.getRequestMethod())) {
+                Map<String, Object> source = pingcodeTaskRepository.findSource(connection, decode(parts[2]));
+                if (source == null) failure(exchange, 404, "PINGCODE_SOURCE_NOT_FOUND", "来源不存在");
+                else sendJson(exchange, 200, mapOf("success", true, "data", source));
+                connection.commit(); return;
+            }
+            if (parts.length == 4 && "sources".equals(parts[1]) && "runs".equals(parts[3])
+                && "GET".equals(exchange.getRequestMethod())) {
+                sendJson(exchange, 200, mapOf("success", true, "data",
+                    pingcodeTaskRepository.listRuns(connection, decode(parts[2]))));
+                connection.commit(); return;
+            }
+            if (parts.length == 4 && "sources".equals(parts[1]) && "runs".equals(parts[3])
+                && "POST".equals(exchange.getRequestMethod())) {
+                if (!requireIdempotencyKey(exchange)) return;
+                Map<String, Object> input = readJsonObject(exchange);
+                Object revision = input.get("revision");
+                if (!(revision instanceof Number)) { failure(exchange, 422, "PINGCODE_SOURCE_REVISION_REQUIRED", "来源版本缺失"); return; }
+                Map<String, Object> run = pingcodeTaskRepository.createRun(connection, decode(parts[2]),
+                    ((Number) revision).longValue(), coalesce(input.get("actor")));
+                connection.commit(); sendJson(exchange, 201, mapOf("success", true, "data", run)); return;
+            }
+            if (parts.length >= 3 && "runs".equals(parts[1])) {
+                String runId = decode(parts[2]);
+                if (parts.length == 4 && "resources".equals(parts[3])
+                    && "GET".equals(exchange.getRequestMethod())) {
+                    Map<String, String> params = queryParameters(exchange.getRequestURI().getRawQuery());
+                    Object result = pingcodeTaskRepository.failedResources(connection, runId,
+                        Integer.parseInt(params.getOrDefault("page", "1")),
+                        Integer.parseInt(params.getOrDefault("pageSize", "100")));
+                    connection.commit(); sendJson(exchange, 200, mapOf("success", true, "data", result)); return;
+                }
+                if (parts.length == 5 && "resources".equals(parts[3]) && "retry".equals(parts[4])
+                    && "POST".equals(exchange.getRequestMethod())) {
+                    if (!requireIdempotencyKey(exchange)) return;
+                    Map<String, Object> result = pingcodeTaskRepository.retryResource(connection,
+                        runId, readJsonObject(exchange));
+                    connection.commit(); sendJson(exchange, 200, mapOf("success", true, "data", result)); return;
+                }
+                if (parts.length == 3 && "GET".equals(exchange.getRequestMethod())) {
+                    Map<String, Object> run = pingcodeTaskRepository.findRun(connection, runId);
+                    if (run == null) failure(exchange, 404, "PINGCODE_RUN_NOT_FOUND", "同步运行不存在");
+                    else sendJson(exchange, 200, mapOf("success", true, "data", run));
+                    connection.commit(); return;
+                }
+                if (parts.length == 4 && "preview".equals(parts[3])
+                    && "GET".equals(exchange.getRequestMethod())) {
+                    Map<String, String> params = queryParameters(exchange.getRequestURI().getRawQuery());
+                    int page = Integer.parseInt(params.getOrDefault("page", "1"));
+                    int pageSize = Integer.parseInt(params.getOrDefault("pageSize", "50"));
+                    String view = params.getOrDefault("view", "current");
+                    if (!"current".equals(view) && !"removed".equals(view) && !"conflicts".equals(view)) {
+                        failure(exchange, 422, "PINGCODE_PREVIEW_VIEW_INVALID", "预览类型无效"); return;
+                    }
+                    sendJson(exchange, 200, mapOf("success", true, "data",
+                        pingcodeTaskRepository.preview(connection, runId, page, pageSize, view)));
+                    connection.commit(); return;
+                }
+                if (parts.length == 4 && "confirm".equals(parts[3])
+                    && "POST".equals(exchange.getRequestMethod())) {
+                    if (!requireIdempotencyKey(exchange)) return;
+                    Map<String, Object> input = readJsonObject(exchange);
+                    Object revision = input.get("expectedRevision");
+                    if (!(revision instanceof Number) || coalesce(input.get("digest")) == null) {
+                        failure(exchange, 422, "PREVIEW_CONFIRM_INPUT_INVALID", "确认同步需要预览摘要和来源版本"); return;
+                    }
+                    Map<String, String> decisions = new LinkedHashMap<>();
+                    if (input.get("primarySources") instanceof Map<?, ?> values) {
+                        for (Map.Entry<?, ?> item : values.entrySet()) decisions.put(String.valueOf(item.getKey()), String.valueOf(item.getValue()));
+                    }
+                    Map<String, Object> confirmed = pingcodeTaskRepository.confirmRun(connection, runId,
+                        coalesce(input.get("digest")), ((Number) revision).longValue(), decisions);
+                    connection.commit(); sendJson(exchange, 200, mapOf("success", true, "data", confirmed)); return;
+                }
+                if (parts.length == 4 && "POST".equals(exchange.getRequestMethod())) {
+                    if (!requireIdempotencyKey(exchange)) return;
+                    Map<String, Object> input = readJsonObject(exchange);
+                    switch (parts[3]) {
+                        case "pages" -> pingcodeTaskRepository.stagePage(connection, runId, input,
+                            coalesce(input.get("criteriaSha256")));
+                        case "finish" -> pingcodeTaskRepository.finishRun(connection, runId,
+                            coalesce(input.get("digest")));
+                        case "fail" -> pingcodeTaskRepository.markRun(connection, runId, "FAILED",
+                            coalesce(input.get("errorCode")));
+                        case "cancel" -> pingcodeTaskRepository.markRun(connection, runId, "CANCELLED", null);
+                        default -> { methodNotAllowed(exchange); return; }
+                    }
+                    connection.commit(); sendJson(exchange, 200, mapOf("success", true,
+                        "data", pingcodeTaskRepository.findRun(connection, runId))); return;
+                }
+            }
+            methodNotAllowed(exchange);
+        } catch (JsonParseException | NumberFormatException error) {
+            failure(exchange, 400, "INVALID_JSON", "请求参数格式错误");
+        } catch (SQLException error) {
+            String code = error.getMessage() == null ? "STORAGE_UNAVAILABLE" : error.getMessage();
+            int status = code.endsWith("_NOT_FOUND") ? 404
+                : code.equals("PREVIEW_STALE") || code.equals("PRIMARY_SOURCE_DECISION_REQUIRED")
+                    || code.equals("DOCUMENT_TASK_OWNER_REQUIRED")
+                    || code.equals("PINGCODE_TASK_MIGRATION_REQUIRED") || code.endsWith("_CONFLICT")
+                    || code.endsWith("_CHANGED") || code.endsWith("_INCOMPLETE")
+                    || code.endsWith("_COLLECTING") || code.endsWith("_NOT_CONFIRMABLE") ? 409
+                : code.startsWith("PINGCODE_") || code.startsWith("PRIMARY_SOURCE_")
+                    || code.startsWith("PREVIEW_CONFIRM_") ? 422 : 503;
+            failure(exchange, status, status == 503 ? "STORAGE_UNAVAILABLE" : code,
+                status == 503 ? "任务来源存储暂时不可用" : code);
+        }
+    }
+
+    private void documentTasks(HttpExchange exchange) throws IOException {
+        String path = exchange.getRequestURI().getRawPath();
+        String suffix = path.substring("/v1/document-tasks".length());
+        Map<String, String> filters = queryParameters(exchange.getRequestURI().getRawQuery());
+        try (Connection connection = connection()) {
+            if ("GET".equals(exchange.getRequestMethod()) && "/status".equals(suffix)) {
+                boolean active = documentTaskReadRepository.active(connection);
+                connection.commit();
+                sendJson(exchange, 200, mapOf("success", true, "data", mapOf("active", active)));
+                return;
+            }
+            if ("GET".equals(exchange.getRequestMethod()) && "/config".equals(suffix)) {
+                Map<String, Object> config = documentTaskReadRepository.config(connection);
+                connection.commit();
+                sendJson(exchange, 200, mapOf("success", true, "data", config));
+                return;
+            }
+            if ("PUT".equals(exchange.getRequestMethod()) && "/config".equals(suffix)) {
+                if (!requireIdempotencyKey(exchange)) return;
+                Map<String, Object> input = readJsonObject(exchange);
+                if (!(input.get("config") instanceof Map<?, ?> config)
+                    || !(input.get("expectedStorageRevision") instanceof Number expected)) {
+                    failure(exchange, 422, "DOCUMENT_TASK_CONFIG_WRITE_INVALID", "配置或版本号无效"); return;
+                }
+                Map<String, Object> saved = documentTaskWriteRepository.putConfig(connection,
+                    config, expected.longValue(), input, exchange.getRequestHeaders().getFirst("Idempotency-Key"));
+                connection.commit();
+                sendJson(exchange, 200, mapOf("success", true, "data", saved));
+                return;
+            }
+            if ("GET".equals(exchange.getRequestMethod()) && suffix.startsWith("/writes/")
+                && suffix.indexOf('/', "/writes/".length()) < 0) {
+                Map<String, Object> replay = documentTaskWriteRepository.replay(connection,
+                    decode(suffix.substring("/writes/".length())));
+                connection.commit();
+                if (replay == null) failure(exchange, 404, "DOCUMENT_TASK_WRITE_NOT_FOUND", "写入记录不存在");
+                else sendJson(exchange, 200, mapOf("success", true, "data", replay));
+                return;
+            }
+            if ("PUT".equals(exchange.getRequestMethod()) && suffix.startsWith("/")
+                && suffix.indexOf('/', 1) < 0 && suffix.length() > 1) {
+                if (!requireIdempotencyKey(exchange)) return;
+                Map<String, Object> input = readJsonObject(exchange);
+                String requestKey = exchange.getRequestHeaders().getFirst("Idempotency-Key");
+                if (!requestKey.equals(input.get("idempotencyKey"))) {
+                    failure(exchange, 422, "DOCUMENT_TASK_WRITE_INVALID", "幂等键不一致"); return;
+                }
+                Map<String, Object> result = documentTaskWriteRepository.put(connection,
+                    decode(suffix.substring(1)), input);
+                connection.commit();
+                sendJson(exchange, 200, mapOf("success", true, "data", result));
+                return;
+            }
+            if (!"GET".equals(exchange.getRequestMethod())) { methodNotAllowed(exchange); return; }
+            Object result;
+            if (suffix.isEmpty() || "/".equals(suffix)) {
+                result = documentTaskReadRepository.list(connection, filters);
+            } else if ("/mine".equals(suffix)) {
+                result = documentTaskReadRepository.mine(connection, filters.get("principalId"),
+                    taskPage(filters.get("page"), 1, 1_000_000, 1),
+                    taskPage(filters.get("pageSize"), 1, 100, 20), filters.get("visibleHandbooks"));
+            } else if (suffix.startsWith("/by-review/") && suffix.indexOf('/', "/by-review/".length()) < 0) {
+                result = documentTaskReadRepository.byReview(connection, decode(suffix.substring("/by-review/".length())));
+            } else if (suffix.startsWith("/") && suffix.indexOf('/', 1) < 0) {
+                result = documentTaskReadRepository.find(connection, decode(suffix.substring(1)));
+                if (result == null) { failure(exchange, 404, "DOCUMENT_TASK_NOT_FOUND", "任务不存在"); return; }
+            } else {
+                failure(exchange, 400, "DOCUMENT_TASK_PATH_INVALID", "任务路径无效"); return;
+            }
+            connection.commit();
+            exchange.getResponseHeaders().set("Cache-Control", "no-store");
+            sendJson(exchange, 200, mapOf("success", true, "data", result));
+        } catch (JsonParseException error) {
+            failure(exchange, 400, "INVALID_JSON", "请求参数格式错误");
+        } catch (SQLException error) {
+            String code = error.getMessage();
+            int status = code != null && (code.endsWith("_CONFLICT") || code.endsWith("_REQUIRED")) ? 409
+                : code != null && code.endsWith("_INVALID") ? 422 : 503;
+            failure(exchange, status, status == 503 ? "STORAGE_UNAVAILABLE" : code,
+                status == 503 ? "任务数据暂时不可用" : code);
+        }
+    }
+
+    private static int taskPage(String value, int minimum, int maximum, int fallback) throws SQLException {
+        if (value == null || value.isBlank()) return fallback;
+        try {
+            int parsed = Integer.parseInt(value);
+            if (parsed >= minimum && parsed <= maximum) return parsed;
+        } catch (NumberFormatException ignored) { }
+        throw new SQLException("DOCUMENT_TASK_PAGE_INVALID");
     }
 
     private void techDomains(HttpExchange exchange) throws IOException {
@@ -3578,7 +3877,7 @@ public final class Main {
         JsonParseException(String message) { super(message); }
     }
 
-    private static final class Json {
+    static final class Json {
         static Object parse(String text) throws JsonParseException {
             return new Parser(text).parse();
         }

@@ -26,6 +26,8 @@ import java.util.regex.Pattern;
 public final class SchemaMigrationManager {
     private static final Pattern MIGRATION_FILE = Pattern.compile("^[0-9]{3}_[a-z0-9_]+\\.sql$");
     private static final Pattern MIGRATION_VERSION = Pattern.compile("^([0-9]{3})_[a-z0-9_]+$");
+    private static final Pattern SIMPLE_INDEX = Pattern.compile(
+        "(?is)^CREATE\\s+INDEX\\s+[A-Z0-9_]+\\s+ON\\s+([A-Z0-9_]+)\\s*\\(([^)]+)\\)$");
     private static final String MIGRATION_ALIASES_FILE = "migration-aliases.properties";
 
     private final Path sqlDirectory;
@@ -199,10 +201,35 @@ public final class SchemaMigrationManager {
         List<String> statements = splitSqlStatements(script);
         if (statements.isEmpty()) throw new SQLException("数据库迁移脚本为空：" + filename);
         try (Statement statement = connection.createStatement()) {
-            for (String sql : statements) statement.execute(sql);
+            for (String sql : statements) {
+                try {
+                    statement.execute(sql);
+                } catch (SQLException error) {
+                    if (!error.getMessage().contains("YAS-02043") || !hasEquivalentIndex(connection, sql)) throw error;
+                    System.err.println("迁移中的索引列已由等价索引覆盖，跳过重复建索引：" + filename);
+                }
+            }
         } catch (SQLException error) {
             throw new SQLException("执行数据库迁移失败：" + filename + "：" + error.getMessage(), error);
         }
+    }
+
+    private boolean hasEquivalentIndex(Connection connection, String sql) throws SQLException {
+        var matcher = SIMPLE_INDEX.matcher(sql.trim());
+        if (!matcher.matches()) return false;
+        String table = matcher.group(1).toUpperCase();
+        List<String> columns = List.of(matcher.group(2).toUpperCase().replace(" ", "").split(","));
+        Map<String, List<String>> indexes = new LinkedHashMap<>();
+        try (PreparedStatement query = connection.prepareStatement(
+            "SELECT INDEX_NAME,COLUMN_NAME FROM USER_IND_COLUMNS WHERE TABLE_NAME=? " +
+            "ORDER BY INDEX_NAME,COLUMN_POSITION")) {
+            query.setString(1, table);
+            try (ResultSet rows = query.executeQuery()) {
+                while (rows.next()) indexes.computeIfAbsent(rows.getString(1), ignored -> new ArrayList<>())
+                    .add(rows.getString(2));
+            }
+        }
+        return indexes.values().stream().anyMatch(columns::equals);
     }
 
     static List<String> splitSqlStatements(String script) throws SQLException {

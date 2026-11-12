@@ -203,6 +203,12 @@ java_compile_args=(
   apps/yashandb-storage/src/PrincipalRepository.java
   apps/yashandb-storage/src/PlatformAuthRepository.java
   apps/yashandb-storage/src/PlatformGitLabRepository.java
+  apps/yashandb-storage/src/DocumentTaskIndex.java
+  apps/yashandb-storage/src/TaskNumber.java
+  apps/yashandb-storage/src/DocumentTaskMigration.java
+  apps/yashandb-storage/src/DocumentTaskReadRepository.java
+  apps/yashandb-storage/src/DocumentTaskWriteRepository.java
+  apps/yashandb-storage/src/PingcodeTaskRepository.java
   apps/yashandb-storage/src/StorageSchemaDao.java
   apps/yashandb-storage/src/migration/SchemaMigrationManager.java
 )
