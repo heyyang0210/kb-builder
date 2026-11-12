@@ -10,7 +10,7 @@
   "files": {
     "apps/knowledge-center-web/frontend/knowledge-center/app.js": {
       "rawLucide": 5,
-      "globalIconScan": 10
+      "globalIconScan": 4
     },
     "apps/knowledge-center-web/frontend/knowledge-center/common/base.css": {
       "rawCssColor": 1
@@ -57,8 +57,7 @@
       "legacyIcon": 4
     },
     "apps/knowledge-center-web/frontend/knowledge-center/modules/document-tasks/view.js": {
-      "legacyIcon": 21,
-      "globalIconScan": 3
+      "legacyIcon": 21
     },
     "apps/knowledge-center-web/frontend/knowledge-center/modules/outlines/outlines.css": {
       "rawCssColor": 17
@@ -73,8 +72,7 @@
       "rawCssColor": 1
     },
     "apps/knowledge-center-web/frontend/knowledge-center/modules/platform-admin/pingcode-sync.js": {
-      "legacyIcon": 13,
-      "globalIconScan": 1
+      "legacyIcon": 13
     },
     "apps/knowledge-center-web/frontend/knowledge-center/modules/platform-admin/platform-admin.css": {
       "rawCssColor": 96

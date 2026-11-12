@@ -501,7 +501,7 @@ function outlineProjectionKey(route = outlineRouteState()) {
           taskRoot._taskProjection = appState.documentTaskProjection;
         }
         syncMobileNavigationState();
-        window.lucide?.createIcons();
+        window.lucide?.createIcons({ nodes: [taskRoot] });
         return;
       }
       if (byId('view-root')._taskProjection) { const taskRoot = byId('view-root'); taskRoot.onclick = taskRoot.onchange = taskRoot.onsubmit = taskRoot.onkeydown = null; delete taskRoot._taskProjection; }
@@ -654,7 +654,7 @@ function updateAssetSelection(selectedId) {
     scrollContainer.scrollTop = scrollTop;
     requestAnimationFrame(() => { scrollContainer.scrollTop = scrollTop; });
   }
-  window.lucide?.createIcons();
+  window.lucide?.createIcons({ nodes: [root] });
   return true;
 }
 
@@ -2176,7 +2176,7 @@ function renderGitLabAccountDialog() {
       return `<section class="external-account-item"><i class="external-account-provider-icon" data-lucide="git-branch" aria-hidden="true"></i><div class="external-account-identity"><h3>${escapeHtml(item.name || 'GitLab')}</h3><p>${escapeHtml(item.host || '')}${lastUsed ? ` · 最近使用 ${escapeHtml(lastUsed)}` : ''}</p>${message ? `<p class="external-account-guidance">${message}</p>` : ''}</div><span class="external-account-status ${connected ? 'connected' : unavailable || reconnect ? 'warning' : ''}">${labels[item.status] || '未连接'}</span><div class="external-account-actions">${actions}</div></section>`;
     }).join('')}</div>`;
   }
-  window.lucide?.createIcons();
+  window.lucide?.createIcons({ nodes: [root] });
 }
 
 async function loadGitLabAccount() {
@@ -2853,7 +2853,7 @@ document.addEventListener('click', async event => {
     outlineTreeToggle.setAttribute('aria-label', expanded ? '收起全部目录' : '展开全部目录');
     outlineTreeToggle.title = expanded ? '收起全部目录' : '展开全部目录';
     outlineTreeToggle.innerHTML = `<i data-lucide="${expanded ? 'chevrons-up' : 'chevrons-down'}" aria-hidden="true"></i>`;
-    window.lucide?.createIcons();
+    window.lucide?.createIcons({ nodes: [outlineTreeToggle] });
     return;
   }
   const assignmentStatsOpen = event.target.closest('[data-outline-assignment-stats-open]');
@@ -3178,7 +3178,7 @@ document.addEventListener('click', async event => {
       });
       outlineDelete.disabled = false;
       outlineDelete.textContent = originalText;
-      window.lucide?.createIcons();
+      window.lucide?.createIcons({ nodes: [outlineDelete] });
     }
     return;
   }
@@ -4142,7 +4142,7 @@ function renderMappingTree(form, items) {
     ]);
   }
   browser.innerHTML = `<ul class="mapping-tree-root" role="tree" aria-label="GitLab 仓库目录">${renderMappingTreeNodes(visibleHierarchy)}</ul>`;
-  window.lucide?.createIcons();
+  window.lucide?.createIcons({ nodes: [browser] });
 }
 
 function renderMappingLanguageSelector(form) {

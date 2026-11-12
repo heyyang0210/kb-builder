@@ -87,7 +87,7 @@ export function renderDocumentTasks({ documentTaskProjection }) {
     if (state.selected && ['list', 'secondary'].includes(state.tab)) renderDrawer();
     cleanupSearchableSelects();
     markDynamicSelects(root);
-    window.lucide?.createIcons();
+    window.lucide?.createIcons({ nodes: [root] });
   }
   function reasonText(value) { if (!value) return '待确认'; return `${state.context.config.reasonOptions.find(r => r.id === value.id)?.label || value.id}${value.detail ? `：${value.detail}` : ''}`; }
   function renderDrawer() {
@@ -137,7 +137,7 @@ export function renderDocumentTasks({ documentTaskProjection }) {
       }
     }
     focusTaskWorkspace();
-    window.lucide?.createIcons();
+    window.lucide?.createIcons({ nodes: [root] });
   }
   function focusTaskWorkspace() {
     const t = state.selected, s = t.decomposition, books = s.handbooks || [];
@@ -261,7 +261,7 @@ export function renderDocumentTasks({ documentTaskProjection }) {
     const dialog = host.querySelector('dialog');
     if (inline) { dialog.classList.add('task-inline-dialog'); dialog.show(); dialog.scrollIntoView({ block: 'nearest' }); }
     else dialog.showModal();
-    markDynamicSelects(dialog); window.lucide?.createIcons();
+    markDynamicSelects(dialog); window.lucide?.createIcons({ nodes: [dialog] });
     dialog.querySelectorAll('[data-modal-close]').forEach(b => b.onclick = () => dialog.close());
     dialog.addEventListener('close', async () => {
       if (dialog.dataset.scopeChangeId && dialog.dataset.scopeLinked !== 'true' && dialog.dataset.scopeConfirmed !== 'true') {
