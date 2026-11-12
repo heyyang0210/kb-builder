@@ -2781,7 +2781,7 @@ function createKnowledgeCenterHandler(options) {
         const task = service?.get(session, decodeURIComponent(mrPublish[1]));
         await requireDocumentTaskScopeClear(decodeURIComponent(mrPublish[1]));
         if (!task?.handbookSource) {
-          if (task?.reviewMode === 'online_review') throw Object.assign(new Error('候选正文与 GitLab 内容完全一致，没有可提交的变更；请在文档生产修改并重新送审'), { status: 422, code: 'GITLAB_NO_CHANGES' });
+          if (task?.reviewMode === 'online_review') throw Object.assign(new Error('候选正文与 GitLab 内容完全一致，没有可提交的变更；请进入文档编写并重新提交审核'), { status: 422, code: 'GITLAB_NO_CHANGES' });
           return handleIncrementalBuild(req, res, session);
         }
         if (!hasAction(session, 'publish:manage')) throw Object.assign(new Error('没有发布权限'), { status: 403 });

@@ -254,7 +254,7 @@ test.describe('审核与发布多角色 E2E', () => {
     await page.goto(`${baseUrl}/knowledge-center/review?view=reader&handbookId=DB-001&showAll=1`);
 
     await expect(page.getByText('YAS_PORT')).toBeVisible();
-    const entry = page.getByRole('link', { name: '编辑此文档并发起评审' });
+    const entry = page.getByRole('link', { name: '进入编写' });
     await expect(entry).toHaveAttribute('href', /\/knowledge-center\/production\/handbook\/DB-001\?reviewPath=doc%2Finstall\.md&branch=master/);
     await expect(page.getByRole('button', { name: '发起在线评审' })).toBeVisible();
     await expect(page.getByRole('dialog', { name: '发起在线评审' })).toHaveCount(0);

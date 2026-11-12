@@ -525,7 +525,7 @@ describe('审核工作台真实 HTTP 契约与规模边界', () => {
       const script = `globalThis.window = { location: { search: '' } }; import { renderReviewPublishing } from ${JSON.stringify(moduleUrl)}; import fs from 'node:fs'; const projection = JSON.parse(fs.readFileSync(0, 'utf8')); process.stdout.write(renderReviewPublishing({ reviewProjection: projection, gitlabProjection: {}, reviewUi: {} }));`;
       const html = execFileSync(process.execPath, ['--input-type=module', '-e', script], { input: JSON.stringify(projection), encoding: 'utf8' });
       expect(html).toContain('data-review-publish');
-      expect(html).toContain('创建 GitLab MR');
+      expect(html).toContain('创建 MR');
       expect(html).not.toContain('仅可阅读，不可审核或发布');
       expect(html).not.toContain('查看 GitLab MR');
     } finally {
