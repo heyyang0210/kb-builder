@@ -13,6 +13,22 @@
 指导书第 2 节介绍 GitLab 仓库、开发分支与 Windows 开发电脑准备；第 10 节为正式配置，第 11 节为数据库验证和服务启动，第 12 节为前端访问和维护。敏感值使用填写说明，不记录真实密码；当前运行实例不要重复执行首次创建步骤。
 
 第 13 节提供局部增量发布步骤及各步预期结果，涵盖基线核对、构建、预检、切换、验收和回退，并记录 2026-11-06 手册重名提示修复的实际结果。示例脚本固定对应发布编号与文件摘要，新发布须重新准备对应材料。
+
+## 待执行结构迁移的单步修复
+
+平台因 `017_pingcode_task_sync` 待执行而停止时，确认 `config/yashandb/service.env` 指向个人开发库后，执行一条命令：
+
+```bash
+YASDB_STORAGE_TARGET_CLASS=personal ./knowledge-center.sh repair-migrations
+```
+
+命令使用现有统一构建产物，校验目标类别、构建摘要和数据库连接；Storage 入口再次校验迁移来源 Git revision、未修改状态及 SQL 聚合摘要，随后显式执行待应用迁移、严格回读 `verify` 并启动平台。普通 `start/restart` 继续只检查迁移，不自动执行；`restart` 在停止现有服务前先检查迁移。若目标是共享库，由项目负责人保留结构快照后，在终端执行一条命令：
+
+```bash
+YASDB_STORAGE_TARGET_CLASS=shared ./knowledge-center.sh repair-migrations
+```
+
+脚本要求负责人输入目标库结构快照的绝对文件路径，校验文件可读、非空，展示目标数据库与构建来源并要求输入完整确认语；确认时间、执行人、目标、来源及快照摘要记录在 `runtime/agent-runner/.runtime/knowledge-center-isolated/`。非交互执行必须提供实际的 `MIGRATION_APPROVAL_REF` 与 `YASDB_SCHEMA_SNAPSHOT_PATH`；缺失时会在连接数据库前失败。共享库执行失败时应停止并核对数据库实际结构，不得盲目重试。
 ## 本机 DeepSeek Harness
 
 独立运行官方 DeepSeek Harness Web UI，与知识中心平台的 Agent 执行器适配无关。固定使用 npm 包 `@deepseek-ai/dsh@0.2.2-rc.1` 和本地 Node 24.9.0，安装与用户状态均位于 `runtime/deepseek-harness/`，不改系统 Node。首次安装需要网络：

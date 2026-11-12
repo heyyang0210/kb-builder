@@ -142,6 +142,7 @@ VERBOSE=0
 DOCTOR_FORMAT=human
 FAILURE_COMPONENT=""
 FAILURE_LOG=""
+FAILURE_REASON=""
 shift $(( $# > 0 ? 1 : 0 ))
 LOG_SUBACTION=""
 LOG_ARGS=()
@@ -625,7 +626,7 @@ start_service() {
 }
 
 print_component_diagnostic() {
-  local name="$1" logfile="$2" mismatch
+  local name="$1" logfile="$2" mismatch pending
   [[ -f "$logfile" ]] || return 0
   if grep -Fq '数据库迁移摘要不一致' "$logfile"; then
     mismatch="$(grep -F '数据库迁移摘要不一致' "$logfile" | head -n 1 | sed 's/^[[:space:]]*//')"
@@ -633,9 +634,48 @@ print_component_diagnostic() {
     echo "详情：$mismatch" >&2
     echo "处理建议：先核对当前数据库环境与构建版本；不要修改已执行 SQL，也不要直接更新 KC_SCHEMA_MIGRATION。" >&2
   elif grep -Fq '存在待执行的数据库迁移' "$logfile"; then
-    echo "诊断：$name 检测到待执行迁移。请先审核迁移来源和目标数据库，再显式执行 apps/yashandb-storage/start.sh migrate。" >&2
+    pending="$(sed -n 's/.*存在待执行的数据库迁移.*：\([0-9][0-9][0-9]_[a-z0-9_]*\).*/\1/p' "$logfile" | head -n 1)"
+    echo "原因：数据库还未执行结构迁移${pending:+ $pending}，普通启动不会修改数据库。" >&2
+    echo "处理：负责人核对数据库及结构快照后，运行一条修复命令：" >&2
+    if [[ "${YASDB_STORAGE_TARGET_CLASS:-}" == personal ]]; then
+      echo "  YASDB_STORAGE_TARGET_CLASS=personal ./knowledge-center.sh repair-migrations" >&2
+    else
+      echo "  YASDB_STORAGE_TARGET_CLASS=shared ./knowledge-center.sh repair-migrations" >&2
+      echo "  若目标实际为个人开发库，请将 shared 改为 personal。共享库将在终端要求确认。" >&2
+    fi
   elif grep -Eq 'Connection refused|连接.*失败|认证失败|authentication|password' "$logfile"; then
     echo "诊断：$name 无法连接依赖服务，请检查 config/yashandb/ 连接配置、网络和凭据。" >&2
+  fi
+}
+
+preflight_storage_migrations() {
+  local logfile="$LOG_DIR/storage-preflight.log"
+  if ! timeout --signal=TERM --kill-after=3s "${DB_PROBE_TIMEOUT}s" \
+    env KNOWLEDGE_CENTER_BUILD_ROOT="$BUILD_ROOT_REL" \
+      YASDB_STORAGE_SQL_DIR="$BUILD_DIR/java/sql" \
+      YASDB_MIGRATION_CHECKSUM_POLICY="$MIGRATION_CHECKSUM_POLICY" \
+      "$STORAGE_DIR/start.sh" verify >"$logfile" 2>&1; then
+    FAILURE_COMPONENT="storage"
+    FAILURE_LOG="$logfile"
+    if grep -Fq '存在待执行的数据库迁移' "$logfile"; then
+      FAILURE_REASON="pending_migration"
+      echo "启动已暂停，现有服务未停止。" >&2
+      print_component_diagnostic storage "$logfile"
+    else
+      echo "错误：数据库结构检查失败，现有服务未停止。详情：$logfile" >&2
+      tail -n 12 "$logfile" >&2 || true
+    fi
+    return 1
+  fi
+}
+
+print_component_failure_details() {
+  local name="$1" logfile="$2"
+  if [[ "$name" == storage ]] && grep -Fq '存在待执行的数据库迁移' "$logfile"; then
+    print_component_diagnostic "$name" "$logfile"
+  else
+    tail -n 40 "$logfile" >&2 || true
+    print_component_diagnostic "$name" "$logfile"
   fi
 }
 
@@ -658,8 +698,7 @@ wait_ready() {
       FAILURE_COMPONENT="$name"
       FAILURE_LOG="$LOG_DIR/$name.log"
       echo "错误：$name 进程已退出：$LOG_DIR/$name.log" >&2
-      tail -n 40 "$LOG_DIR/$name.log" >&2 || true
-      print_component_diagnostic "$name" "$LOG_DIR/$name.log"
+      print_component_failure_details "$name" "$LOG_DIR/$name.log"
       return 1
     fi
     owner="$(listener_pid "$port")"
@@ -673,8 +712,7 @@ wait_ready() {
   FAILURE_COMPONENT="$name"
   FAILURE_LOG="$LOG_DIR/$name.log"
   echo "错误：$name 在 ${START_TIMEOUT}s 内未就绪：$LOG_DIR/$name.log" >&2
-  tail -n 40 "$LOG_DIR/$name.log" >&2 || true
-  print_component_diagnostic "$name" "$LOG_DIR/$name.log"
+  print_component_failure_details "$name" "$LOG_DIR/$name.log"
   return 1
 }
 
@@ -768,6 +806,8 @@ restart_platform() {
     build_platform || return 1
     NO_BUILD=1
   fi
+  validate_database_connection || return 1
+  preflight_storage_migrations || return 1
   # restart may follow a manually started or previously interrupted instance
   # whose PID files were not persisted. Reconcile only processes that match
   # this repository's cwd and command contract; unknown listeners remain
@@ -777,8 +817,85 @@ restart_platform() {
   start_platform || return 1
 }
 
+repair_migrations() {
+  local name target_class="${YASDB_STORAGE_TARGET_CLASS:-}"
+  case "$target_class" in
+    personal) ;;
+    shared)
+      if [[ ! -t 0 && ( -z "${MIGRATION_APPROVAL_REF:-}" || "${MIGRATION_APPROVAL_REF:-}" == *'<'* || "${MIGRATION_APPROVAL_REF:-}" == *'>'* ) ]]; then
+        echo "错误：共享库非交互执行须提供实际的 MIGRATION_APPROVAL_REF；负责人在终端执行时可交互确认。" >&2
+        return 1
+      fi
+      if [[ ! -t 0 && -z "${YASDB_SCHEMA_SNAPSHOT_PATH:-}" ]]; then
+        echo "错误：共享库非交互执行须指定 YASDB_SCHEMA_SNAPSHOT_PATH。" >&2
+        return 1
+      fi
+      ;;
+    *) echo "错误：请显式设置 YASDB_STORAGE_TARGET_CLASS=personal 或 shared，核对目标库后重试" >&2; return 1 ;;
+  esac
+  if [[ -n "$(git -C "$REPO_ROOT" status --porcelain -- 'apps/yashandb-storage/sql/*.sql' apps/yashandb-storage/sql/migration-aliases.properties)" ]]; then
+    echo "错误：迁移 SQL 尚有未提交修改；请先完成验证并构建已提交版本，当前不会执行旧产物。" >&2
+    return 1
+  fi
+  validate_environment || return 1
+  validate_build_artifact || return 1
+  for name in frontend auth pingcode document storage; do
+    if [[ -n "$(listener_pid "$(service_port "$name")")" ]]; then
+      echo "错误：$name 端口仍被占用，请先停止平台并确认目标库无运行中的写入" >&2
+      return 1
+    fi
+  done
+  validate_database_connection || return 1
+  if [[ "$target_class" == shared ]]; then
+    confirm_shared_migration || return 1
+  fi
+  echo "目标类别：$target_class；迁移来源：$BUILD_DIR/java/sql/migration-source.properties"
+  "$STORAGE_DIR/start.sh" migrate || return 1
+  YASDB_MIGRATION_CHECKSUM_POLICY=strict "$STORAGE_DIR/start.sh" verify || return 1
+  NO_BUILD=1
+  start_platform
+}
+
+confirm_shared_migration() {
+  local reply approval_log snapshot_path="${YASDB_SCHEMA_SNAPSHOT_PATH:-}" snapshot_sha approval_method approval_ref="${MIGRATION_APPROVAL_REF:-}"
+  if [[ -z "$snapshot_path" && -t 0 ]]; then
+    read -r -p '请输入目标库迁移前结构快照文件的绝对路径：' snapshot_path
+  fi
+  [[ "$snapshot_path" == /* && -f "$snapshot_path" && -s "$snapshot_path" && -r "$snapshot_path" ]] || {
+    echo "错误：结构快照必须是目标库导出的可读、非空文件，不能填 SQL 源目录。" >&2
+    return 1
+  }
+  snapshot_sha="$(sha256sum "$snapshot_path" | awk '{print $1}')"
+  if [[ -n "${MIGRATION_APPROVAL_REF:-}" && "${MIGRATION_APPROVAL_REF}" != *'<'* && "${MIGRATION_APPROVAL_REF}" != *'>'* ]]; then
+    approval_method=reference
+  else
+    if [[ ! -t 0 ]]; then
+      echo "错误：共享库非交互执行须提供实际的 MIGRATION_APPROVAL_REF。" >&2
+      return 1
+    fi
+    echo "即将迁移共享数据库：${YASDB_JDBC_URL:-未配置}；SQL 来源：$BUILD_DIR/java/sql/migration-source.properties" >&2
+    echo "结构快照：$snapshot_path（SHA-256：$snapshot_sha）" >&2
+    echo "确认已获批准，且已核对目标库、快照和迁移 SQL。" >&2
+    read -r -p '负责人请输入“批准执行共享库迁移”继续：' reply
+    [[ "$reply" == '批准执行共享库迁移' ]] || { echo "已取消共享库迁移。" >&2; return 1; }
+    approval_method=terminal
+    approval_ref=""
+  fi
+  umask 077
+  approval_log="$(mktemp "$STATE_DIR/migration-approval-$(date +%Y%m%dT%H%M%S)-XXXXXX.log")"
+  printf 'approvedAt=%s\napprovedBy=%s\ntarget=%s\nsource=%s\nmethod=%s\napprovalRef=%s\nsnapshot=%s\nsnapshotSha256=%s\n' \
+    "$(date -Is)" "${OPERATION_ACTOR}" "${YASDB_JDBC_URL:-}" \
+    "$BUILD_DIR/java/sql/migration-source.properties" "$approval_method" "$approval_ref" \
+    "$snapshot_path" "$snapshot_sha" >"$approval_log"
+  echo "本次确认记录：$approval_log"
+}
+
 print_failure_summary() {
   echo "知识中心操作失败。" >&2
+  if [[ "$FAILURE_REASON" == pending_migration ]]; then
+    echo "迁移检查日志：$FAILURE_LOG" >&2
+    return 0
+  fi
   if [[ -n "$FAILURE_COMPONENT" ]]; then
     echo "失败阶段：$FAILURE_COMPONENT" >&2
   fi
@@ -847,10 +964,11 @@ platform_healthy() {
 
 case "$ACTION" in
   help|-h|--help)
-    echo "用法：$0 {start|stop|restart|status|doctor|logs} [--no-build|--verbose|--commands|--json]"
+    echo "用法：$0 {start|stop|restart|repair-migrations|status|doctor|logs} [--no-build|--verbose|--commands|--json]"
     echo "  start    启动知识中心平台；已运行的同名服务会先受控接管"
     echo "  stop     停止知识中心平台服务，不操作 YashanDB 数据库实例"
     echo "  restart  停止后重新启动全部平台服务"
+    echo "  repair-migrations  显式迁移、严格校验并启动平台；要求声明目标类别"
     echo "  status   显示统一平台状态，不暴露内部诊断端点"
     echo "  doctor   只诊断当前环境，不安装或修改系统"
     echo "  logs     压缩日志、生成诊断包或查看日志占用"
@@ -883,6 +1001,11 @@ case "$ACTION" in
     acquire_operation_lock
     restart_platform || { print_failure_summary; exit 1; }
     ;;
+  repair-migrations)
+    print_legacy_public_host_warning
+    acquire_operation_lock
+    repair_migrations || { print_failure_summary; exit 1; }
+    ;;
   status)
     print_legacy_public_host_warning
     status_platform
@@ -897,7 +1020,7 @@ case "$ACTION" in
     rm -f "$(owner_file)"
     ;;
   *)
-    echo "用法：$0 {start|stop|restart|status|doctor}" >&2
+    echo "用法：$0 {start|stop|restart|repair-migrations|status|doctor}" >&2
     exit 2
     ;;
 esac

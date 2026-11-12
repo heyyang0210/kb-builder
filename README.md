@@ -46,6 +46,8 @@ npm run build
 
 开发环境中，已执行迁移的摘要与当前构建不一致时默认在启动终端和组件日志输出告警并继续启动；生产或共享环境通过 `YASDB_MIGRATION_CHECKSUM_POLICY=strict` 恢复强制门禁。显式数据库迁移始终保持严格校验。
 
+若启动提示 `017_pingcode_task_sync` 等待执行，核对 `config/yashandb/service.env` 的目标库后，运行单条修复命令：个人库使用 `YASDB_STORAGE_TARGET_CLASS=personal ./knowledge-center.sh repair-migrations`；共享库由项目负责人使用 `YASDB_STORAGE_TARGET_CLASS=shared ./knowledge-center.sh repair-migrations`，在终端提供目标库结构快照文件并确认批准。非交互执行须传入实际的 `MIGRATION_APPROVAL_REF` 与 `YASDB_SCHEMA_SNAPSHOT_PATH`。普通 `restart` 会在停止现有服务前检查迁移状态，详见[部署工具说明](tools/deployment/README.md)。
+
 ```bash
 npm run check:node
 python3 tests/run_tests.py smoke
