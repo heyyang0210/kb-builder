@@ -1,4 +1,5 @@
-import { escapeHtml, icon } from '../utils/dom.js';
+import { escapeHtml } from '../utils/dom.js';
+import { uiButton, uiIcon } from '../ui-system.js';
 
 export const panel = (title, body, meta = '') => `<section class="panel"><div class="panel-heading"><h2>${title}</h2>${meta}</div>${body}</section>`;
 
@@ -22,6 +23,6 @@ export function pendingState(title = '功能准备中', description = '该功能
 export const emptyState = pendingState;
 
 export function capabilityState(title, description, action, view) {
-  const button = action ? `<button class="button tertiary" data-action="${view}">${escapeHtml(action)}</button>` : '';
-  return `<div class="capability-state"><span class="icon-wrap">${icon('blocks')}</span><div><strong>${escapeHtml(title)}</strong><span>${escapeHtml(description)}</span></div>${button}</div>`;
+  const button = action ? uiButton({ label: action, variant: 'tertiary', data: { action: view } }) : '';
+  return `<div class="capability-state"><span class="icon-wrap">${uiIcon('state.capability')}</span><div><strong>${escapeHtml(title)}</strong><span>${escapeHtml(description)}</span></div>${button}</div>`;
 }

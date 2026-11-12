@@ -10,11 +10,11 @@ function renderDashboardLegacy({ projection }) {
   const hasTaskSummary = ['pending', 'review', 'publishable', 'failed'].every(name => counts[name] != null);
   const riskTone = Number(counts.failed) > 0 ? 'danger' : 'neutral';
   const riskSummary = counts.failed != null
-    ? `<div class="risk-summary"><span class="risk-summary-icon">${icon(riskTone === 'danger' ? 'triangle-alert' : 'info')}</span><div><strong>${escapeHtml(counts.failed)} 个执行失败事项</strong><span>这是当前已接入的风险事实；其他风险类型仍等待手册风险投影。</span></div><button class="button secondary" data-action="production">查看并处理</button></div>`
+    ? `<div class="risk-summary"><span class="risk-summary-icon">${icon(riskTone === 'danger' ? 'triangle-alert' : 'info')}</span><div><strong>${escapeHtml(counts.failed)} 个执行失败事项</strong><span>这是当前已接入的风险事实；其他风险类型仍等待手册风险投影。</span></div><button class="button secondary" data-action="production">查看</button></div>`
     : capabilityState('风险信息暂不可用', '风险类型、影响范围、责任人和恢复动作将在风险投影可用后显示。', '查看生产任务', 'production');
   const taskSummary = hasTaskSummary
     ? `<section class="task-summary" aria-label="当前任务概况"><div class="task-summary-primary"><span class="summary-icon">${icon('inbox')}</span><div><span>需要处理</span><strong>${escapeHtml(counts.pending)}</strong><small>当前待处理任务</small></div></div><div class="task-summary-item"><span>待审核</span><strong>${escapeHtml(counts.review)}</strong><small>需要审核决定</small></div><div class="task-summary-item"><span>可发布</span><strong>${escapeHtml(counts.publishable)}</strong><small>已满足发布条件</small></div><div class="task-summary-item"><span>执行失败</span><strong>${escapeHtml(counts.failed)}</strong><small>需要检查或重试</small></div></section>`
-    : capabilityState('任务数据暂不可用', '当前无法读取待处理、待审核和可发布事项。', '进入文档生产', 'production');
+    : capabilityState('任务数据暂不可用', '当前无法读取待处理、待审核和可发布事项。', '查看生产任务', 'production');
   const assets = [];
   if (documents?.total != null) assets.push(`<div class="asset-summary-item"><span class="asset-summary-label">${icon('file-text')}文档资产</span><strong>${escapeHtml(documents.total)}</strong>${documents.roots != null ? `<small>${escapeHtml(documents.roots)} 个资产目录</small>` : ''}</div>`);
   if (datasets?.total != null) assets.push(`<div class="asset-summary-item"><span class="asset-summary-label">${icon('database')}知识库版本</span><strong>${escapeHtml(datasets.total)}</strong><small>可追溯版本总数</small></div>`);

@@ -140,7 +140,7 @@ export function mountModelConnection(root, options = {}) {
     root.querySelector('.model-empty').hidden = count > 0;
   }
   function markDirty() { root.dataset.dirty = 'true'; options.onDirty?.(); refreshListState(); }
-  async function perform(action, successMessage = '配置已保存，新写作任务将使用此配置。') {
+  async function perform(action, successMessage = '配置已保存，后续文档编写任务将使用此配置。') {
     if (busy) return; busy = true; root.querySelector('fieldset').disabled = true; root.setAttribute('aria-busy', 'true'); status('正在处理…');
     try { await action(); status(successMessage); } catch (error) { status(error.message); }
     finally { busy = false; root.querySelector('fieldset').disabled = false; root.setAttribute('aria-busy', 'false'); }
@@ -155,7 +155,7 @@ export function mountModelConnection(root, options = {}) {
       projection = await request('', { services: [...root.querySelectorAll('.model-service')].map(readRow), defaultSelection: value ? JSON.parse(value) : null });
       projection.services.forEach((service, index) => { if (service.models.includes(testModels[index])) rememberModel(service.id, testModels[index]); });
       draw(); options.onSaved?.();
-    }, '配置已保存，新写作任务将使用此配置。'); };
+    }, '配置已保存，后续文档编写任务将使用此配置。'); };
     root.querySelector('[data-model-add]').onclick = () => { if (root.querySelectorAll('.model-service').length >= projection.limits.maxServices) { status('已达到服务数量上限'); return; } addRow(); markDirty(); };
     root.querySelector('[data-model-reload]').onclick = () => { if (root.dataset.dirty !== 'true' || window.confirm('模型连接尚未保存，确定放弃修改？')) perform(async () => { projection = await request(); draw(); }, '已读取保存的配置。'); };
   }

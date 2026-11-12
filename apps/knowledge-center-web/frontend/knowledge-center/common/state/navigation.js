@@ -14,7 +14,7 @@ const routeByView = {
 const viewByRoute = Object.fromEntries(Object.entries(routeByView).filter(([view]) => view !== 'repository').map(([view, route]) => [route, view]));
 viewByRoute['/knowledge-center'] = 'dashboard';
 
-const validPlatformTabs = new Set(['governance', 'principals', 'permissions', 'gitlab', 'mcp', 'models']);
+const validPlatformTabs = new Set(['governance', 'principals', 'permissions', 'gitlab', 'mcp', 'models', 'plugins']);
 const defaultPlatformTab = 'governance';
 
 export function pathForView(view, params) {

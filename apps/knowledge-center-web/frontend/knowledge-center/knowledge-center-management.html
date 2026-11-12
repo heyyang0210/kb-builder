@@ -37,6 +37,7 @@
   <link rel="modulepreload" href="./common/state/navigation.js">
   <link rel="modulepreload" href="./common/table-view-configurator.js">
   <link rel="modulepreload" href="./common/utils/dom.js">
+  <link rel="modulepreload" href="./common/ui-system.js">
   <link rel="modulepreload" href="./common/utils/sha256.js">
   <link rel="modulepreload" href="./common/vendor/marked.esm.js">
   <link rel="modulepreload" href="./common/viewport-runtime.js">
@@ -59,6 +60,7 @@
   <link rel="stylesheet" href="./modules/repository/repository.css">
   <link rel="stylesheet" href="./modules/auth/login.css">
   <link rel="stylesheet" data-href="./modules/platform-admin/platform-admin.css" data-route-style="platform" media="not all">
+  <link rel="stylesheet" data-href="./modules/platform-admin/pingcode-sync.css" data-route-style="platform" media="not all">
   <link rel="stylesheet" data-href="./common/vendor/katex.min.css" data-route-style="production repository" media="not all">
   <link rel="stylesheet" href="./common/appearance.css">
   <style>
@@ -204,6 +206,18 @@
     <button id="mobile-menu" class="mobile-menu" type="button" aria-label="打开导航" aria-controls="sidebar" aria-expanded="false"><i data-lucide="menu" aria-hidden="true"></i><span>菜单</span></button>
     <div class="mobile-overlay" id="mobile-overlay" hidden></div>
     <div class="main-shell" id="main-shell" data-scroll-owner="main">
+      <header class="global-header" aria-label="全局工具栏">
+        <div class="global-context"><span>知识中心</span><strong id="global-context-title">工作台</strong></div>
+        <div class="global-notification" data-global-notification>
+          <button class="global-notification-trigger" type="button" data-global-notification-trigger aria-expanded="false" aria-controls="global-notification-panel" aria-label="站内通知" title="站内通知">
+            <span data-global-notification-icon aria-hidden="true"></span><span class="global-notification-badge" data-global-notification-badge hidden></span>
+          </button>
+          <section class="global-notification-panel" id="global-notification-panel" data-global-notification-panel hidden aria-label="站内通知">
+            <header><div><h2>站内通知</h2><span data-global-notification-count>未读 0</span></div><button class="icon-button" type="button" data-global-notification-close aria-label="关闭通知" title="关闭通知"><span data-global-notification-close-icon aria-hidden="true"></span></button></header>
+            <div data-global-notification-list><p class="global-notification-empty">点击铃铛读取通知</p></div>
+          </section>
+        </div>
+      </header>
       <h1 id="page-title" class="sr-only">工作台</h1>
       <main id="main" tabindex="-1">
         <section id="error-panel" class="notice notice-danger" hidden>

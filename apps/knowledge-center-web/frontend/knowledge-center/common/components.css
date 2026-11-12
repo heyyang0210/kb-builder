@@ -15,7 +15,7 @@
   transition: background var(--motion-fast), border-color var(--motion-fast);
 }
 .button:hover { background: var(--color-brand-hover); border-color: var(--color-brand-hover); }
-.button:active { background: #0c504a; }
+.button:active { background: var(--color-brand-hover); }
 .button:disabled { opacity: .55; cursor: wait; }
 .button.secondary {
   border-color: var(--color-border-strong);

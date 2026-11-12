@@ -1038,7 +1038,8 @@
 [data-mcp-admin] .mcp-list-toolbar { justify-content:space-between; margin-bottom:12px; }
 [data-mcp-admin] .mcp-list-toolbar h3 { margin:0; font-size:17px; }
 [data-mcp-admin] .mcp-list-toolbar small { font-size:13px; font-weight:400; color:var(--color-text-secondary,#607087); margin-left:8px; }
-[data-mcp-admin] .mcp-list-tools input { width:230px; min-height:36px; }
+[data-mcp-admin] .mcp-list-tools input { width:230px; min-height:var(--workspace-control-height); }
+[data-mcp-admin] .mcp-list-tools button { min-height:var(--workspace-control-height); }
 [data-mcp-admin] [data-mcp-status]:empty { display:none; }
 [data-mcp-admin] .mcp-list-table { border:1px solid var(--color-border,#dce3eb); border-radius:6px; overflow:hidden; }
 [data-mcp-admin] .mcp-service-columns, [data-mcp-admin] .mcp-service-summary { display:grid; grid-template-columns:minmax(180px,1.6fr) minmax(140px,1.7fr) 60px 100px 185px; gap:12px; align-items:center; padding:10px 14px; }

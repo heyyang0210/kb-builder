@@ -44,6 +44,9 @@
   --space-8: 32px;
   --content-max: 1320px;
   --font-size-base: 15.4px;
+  --workspace-control-height: 44px;
+  --workspace-action-font-size: 14px;
+  --workspace-meta-font-size: 13px;
   --motion-fast: 140ms;
   --motion-standard: 200ms;
   --focus-ring: 0 0 0 3px rgb(14 165 233 / 28%);

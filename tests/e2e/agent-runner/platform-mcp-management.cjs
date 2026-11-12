@@ -51,7 +51,7 @@ const server = http.createServer((req, res) => {
   if (req.url.startsWith('/knowledge-center/api/')) return handler(req, res);
   if (req.url === '/' || req.url.startsWith('/knowledge-center/platform')) {
     res.writeHead(200, { 'Content-Type': 'text/html' });
-    res.end(`<!doctype html><html lang="zh-CN"><head><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/knowledge-center/modules/platform-admin/platform-admin.css"><style>body{font:14px sans-serif;margin:16px}.button{padding:10px 16px}button:disabled{opacity:.6}</style></head><body><main class="mcp-admin" data-mcp-admin></main><script type="module">import {mountMcpAdmin,confirmLeavingMcp} from '/knowledge-center/modules/platform-admin/mcp-admin.js';import {pathForView} from '/knowledge-center/common/state/navigation.js';mountMcpAdmin(document.querySelector('[data-mcp-admin]'));window.confirmLeavingMcp=confirmLeavingMcp;window.mcpPath=pathForView('platform',{tab:'mcp'});</script></body></html>`); return;
+    res.end(`<!doctype html><html lang="zh-CN"><head><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/knowledge-center/common/tokens.css"><link rel="stylesheet" href="/knowledge-center/common/components.css"><link rel="stylesheet" href="/knowledge-center/modules/platform-admin/platform-admin.css"><style>body{font:14px sans-serif;margin:16px}.button{padding:10px 16px}button:disabled{opacity:.6}</style></head><body><main class="mcp-admin" data-mcp-admin></main><script type="module">import {mountMcpAdmin,confirmLeavingMcp} from '/knowledge-center/modules/platform-admin/mcp-admin.js';import {pathForView} from '/knowledge-center/common/state/navigation.js';mountMcpAdmin(document.querySelector('[data-mcp-admin]'));window.confirmLeavingMcp=confirmLeavingMcp;window.mcpPath=pathForView('platform',{tab:'mcp'});</script></body></html>`); return;
   }
   const file = path.resolve(frontend, '.' + new URL(req.url, 'http://localhost').pathname.replace('/knowledge-center', ''));
   if (!file.startsWith(frontend + path.sep) || !fs.existsSync(file)) { res.writeHead(404); res.end(); return; }
@@ -68,6 +68,11 @@ const server = http.createServer((req, res) => {
     const captureCoverage = await instrumentFrontend(page, 'platform-mcp');
     await page.goto(`http://127.0.0.1:${server.address().port}/knowledge-center/platform?tab=mcp`);
     await page.locator('[data-mcp-add]').waitFor();
+    assert.equal(await page.locator('[data-mcp-add] [data-lucide="plus"]').count(), 1);
+    assert.equal((await page.locator('[data-mcp-add]').innerText()).trim(), '添加服务');
+    for (const selector of ['[data-mcp-search]', '[data-mcp-add]']) {
+      assert.ok(await page.locator(selector).evaluate(node => node.getBoundingClientRect().height >= 44), `${selector} 点击区不足 44px`);
+    }
     const rows = page.locator('[data-mcp-service]');
     async function addService(name, kb, locator) {
       await page.locator('[data-mcp-add]').click();

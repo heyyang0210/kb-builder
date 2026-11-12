@@ -16,6 +16,21 @@ export async function taskRequest(suffix = '', options = {}) {
 export const taskWrite = (suffix, body, method = 'PUT') => taskRequest(suffix, { method, headers: { 'Content-Type': 'application/json', 'Idempotency-Key': taskOperationId() }, body: JSON.stringify(body) });
 export const loadDocumentTasks = (params = {}) => taskRequest(`?${new URLSearchParams(params)}`);
 export const loadDocumentTask = id => taskRequest(`/${encodeURIComponent(id)}`);
+export async function downloadDocumentTaskFile(suffix) {
+  const response = await fetch(base + suffix, { credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(30000) });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.error?.message || `下载失败（HTTP ${response.status}）`);
+  }
+  const blob = await response.blob();
+  const disposition = response.headers.get('Content-Disposition') || '';
+  const filename = disposition.match(/filename="([^"/\\]+)"/)?.[1] || 'download';
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url; link.download = filename;
+  document.body.append(link); link.click(); link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
 export const saveDocumentTaskScope = (id, body) => taskWrite(`/${encodeURIComponent(id)}/decomposition`, body);
 export const saveDocumentTaskOwner = (id, body) => taskWrite(`/${encodeURIComponent(id)}/owner`, body);
 export const loadDocumentTaskConfig = () => taskRequest('/config');

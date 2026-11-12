@@ -5,8 +5,8 @@
   --appearance-border: #e6e8eb;
   --appearance-text: #25262b;
   --appearance-muted: #606671;
-  --appearance-accent: #335c98;
-  --appearance-accent-subtle: #eaf0f8;
+  --appearance-accent: var(--color-brand);
+  --appearance-accent-subtle: var(--color-brand-subtle);
   --appearance-success: #18794e;
   --appearance-success-subtle: #e9f6ef;
   --appearance-warning: #9a6700;
@@ -31,6 +31,141 @@
 .page-intro,
 .dashboard-header,
 .outline-subpage-header { border-bottom-color: var(--appearance-border); }
+
+/* One page-level heading rhythm across workspaces; inner editors and dialogs keep their own layout. */
+:root {
+  --workspace-heading-size: 24px;
+  --workspace-heading-gap: 16px;
+  --workspace-heading-bottom: 16px;
+}
+.my-tasks { padding: 0 0 48px; }
+:is(.page-intro, .dashboard-header, .outline-subpage-header, .document-task-page-header, .my-tasks-title, .principal-page-header) {
+  min-width: 0;
+  align-items: center;
+  gap: var(--workspace-heading-gap);
+  margin: 0 0 var(--workspace-heading-bottom);
+  padding: 0 0 var(--workspace-heading-bottom);
+  border-bottom: 1px solid var(--appearance-border);
+}
+:is(.page-intro, .dashboard-header, .outline-subpage-header, .document-task-page-header, .my-tasks-title, .principal-page-header) > :first-child { min-width: 0; }
+:is(.page-intro h2, .dashboard-header h2, .outline-subpage-header h2, .document-task-page-header h1, .my-tasks-title h1, .principal-page-header h2) {
+  margin: 0;
+  color: var(--appearance-text);
+  font-size: var(--workspace-heading-size);
+  font-weight: 650;
+  line-height: 1.35;
+  letter-spacing: 0;
+}
+:is(.page-intro, .dashboard-header, .outline-subpage-header, .principal-page-header) p { margin-top: 4px; }
+.document-task-page-header .document-task-actions,
+.my-tasks-title .my-task-title-actions,
+.principal-page-header .principal-header-actions { justify-content: flex-end; }
+.platform-admin-page .page-intro {
+  gap: var(--workspace-heading-gap);
+  margin-bottom: var(--workspace-heading-bottom);
+  padding-bottom: var(--workspace-heading-bottom);
+}
+/* The application header names the primary view. This row holds only view actions and facts. */
+.workspace-action-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  min-width: 0;
+  min-height: var(--workspace-control-height);
+  margin: 0 0 12px;
+  padding: 0;
+  border: 0;
+}
+.workspace-action-row:empty { display: none; }
+.workspace-action-row .my-task-preview { margin: 0 auto 0 0; }
+.my-tasks .workspace-action-row { padding: 0; border: 0; }
+.document-task-page-header { justify-content: flex-end; padding: 0; border: 0; margin-bottom: 12px; }
+.asset-page-intro.workspace-action-row { justify-content: flex-end; }
+.asset-page-intro.workspace-action-row .asset-page-actions { margin-left: auto; }
+.platform-admin-page .workspace-action-row { margin-bottom: 0; }
+/* 一级工作区共享控件层级；表格单元、编辑器和弹窗仍使用各自密度。 */
+.workspace-action-row :is(.button, button, select),
+.my-task-toolbar :is(input, select, button),
+.my-task-queues button,
+.my-tasks .my-task-table-row :is(.my-task-open, .my-task-go),
+.asset-toolbar :is(input, select, button),
+.outline-list-toolbar :is(input, select, button),
+.template-list-content :is(input, select),
+.document-task-toolbar :is(input, select, button),
+.production-subnav-link {
+  min-height: var(--workspace-control-height);
+  font-size: var(--workspace-action-font-size);
+}
+.my-task-toolbar :is(input, select),
+.asset-toolbar :is(input, select),
+.outline-list-toolbar :is(input, select),
+.template-list-content :is(input, select),
+.document-task-toolbar :is(input, select) {
+  height: var(--workspace-control-height);
+  border-color: var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+.my-task-board-head nav button,
+.asset-stage-grid > a,
+.document-task-tabs button,
+.template-page-tabs button,
+.platform-admin-page .platform-tab,
+.production-subnav-link {
+  min-height: var(--workspace-control-height);
+  color: var(--color-text-secondary);
+  font-size: var(--workspace-action-font-size);
+}
+.my-task-board-head nav button.active,
+.asset-stage-grid > a[aria-current="page"],
+.document-task-tabs button.active,
+.template-page-tabs button[aria-selected="true"],
+.platform-admin-page .platform-tab[aria-current="page"],
+.production-subnav-link.active { color: var(--color-brand); border-bottom-color: var(--color-brand); }
+.my-task-responsible,
+.my-task-toolbar label,
+.outline-list-toolbar label,
+.asset-page-actions .data-note,
+.platform-header-meta,
+.my-task-preview { color: var(--color-text-secondary); font-size: var(--workspace-meta-font-size); }
+.my-task-responsible select { min-height: var(--workspace-control-height); font-size: var(--workspace-action-font-size); }
+.my-task-preview strong { color: var(--color-brand); background: var(--color-brand-subtle); }
+.my-task-preview button,
+.my-task-board-head nav button.active { color: var(--color-brand); }
+.my-task-go,
+.my-task-dialog :is(a,button).primary { border-color: var(--color-brand); background: var(--color-brand); }
+.my-task-go:hover { border-color: var(--color-brand-hover); background: var(--color-brand-hover); }
+.handbook-production-page .handbook-production-header {
+  margin: 0;
+  border-bottom: 1px solid var(--appearance-border);
+  padding: 0 0 12px;
+}
+.handbook-production-page .handbook-production-header h1 { font-size: 18px; }
+.review-workbench-detail .review-detail-head,
+.review-waiting-workspace .review-detail-head { border-bottom-color: var(--appearance-border); }
+.review-workbench-detail .review-detail-head h2,
+.review-waiting-workspace .review-detail-head h2 { font-size: 20px; letter-spacing: 0; }
+@media (max-width: 700px) {
+  :is(.page-intro, .dashboard-header, .outline-subpage-header, .document-task-page-header, .my-tasks-title, .principal-page-header) {
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 10px;
+    margin-bottom: 12px;
+    padding-bottom: 12px;
+  }
+  :is(.page-intro h2, .dashboard-header h2, .outline-subpage-header h2, .document-task-page-header h1, .my-tasks-title h1, .principal-page-header h2) { font-size: 21px; }
+  .my-tasks { padding: 0 0 40px; }
+  .document-task-page-header .document-task-actions,
+  .my-tasks-title .my-task-title-actions,
+  .principal-page-header .principal-header-actions { width: 100%; justify-content: flex-start; }
+  .platform-admin-page .page-intro { gap: 10px; margin-bottom: 12px; padding-bottom: 12px; }
+  .workspace-action-row { justify-content: flex-start; }
+  .asset-page-intro.workspace-action-row .asset-page-actions { margin-left: 0; }
+  .document-task-page-header { padding: 0; border: 0; margin-bottom: 12px; }
+}
 
 /* 容器只改表面；不向子树下发颜色、字体或布局令牌。 */
 .panel,

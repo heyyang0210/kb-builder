@@ -13,6 +13,7 @@ let selectedResponsibleId = '';
 let responsibleHandler = null;
 let syncHandler = null;
 let actionFeedback = '';
+let inboxState = { open: false, loading: false, items: [], unreadCount: 0, error: '' };
 const syncErrors = new Map();
 export function getSelectedResponsibleId() { return selectedResponsibleId; }
 export function resetResponsibleSelection() { selectedResponsibleId = ''; }
@@ -65,7 +66,7 @@ function displayTitle(item) {
 function versionLabel(item) { return /^(document|handbook):/.test(String(item.id || '')) ? '目标分支' : '业务版本'; }
 function primaryAction(item) {
   if (item.primaryAction) return item.primaryAction;
-  return { code: item.queue === 'waiting' ? 'view_progress' : 'open', label: item.queue === 'waiting' ? '查看进度' : item.actionLabel || (item.kind === 'document' ? '编写文档' : item.kind === 'review' ? '审核文档' : '查看任务'), url: item.url, external: item.external };
+  return { code: item.queue === 'waiting' ? 'view_progress' : 'open', label: item.queue === 'waiting' ? '查看进度' : item.actionLabel || (item.kind === 'document' ? '进入编写' : item.kind === 'review' ? '查看审核' : '查看任务'), url: item.url, external: item.external };
 }
 const COLUMNS = ['编号', '工作项', '关联范围', '计划截止', '下一步', '详情'];
 function dateText(value) { return value ? new Date(value).toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' }) : '—'; }
@@ -78,7 +79,7 @@ function nextStep(item, preview) {
   if (preview?.readOnly) return '<button type="button" class="my-task-go" disabled>只读预览</button>';
   const action = primaryAction(item);
   if (action.enabled === false) return `<button type="button" class="my-task-go" disabled title="当前账号无权执行">${safe(action.label)}</button>`;
-  if (action.code === 'sync_delivery') return `<button type="button" class="my-task-go" data-my-task-sync="${safe(item.id)}">同步状态</button>`;
+  if (action.code === 'sync_delivery') return `<button type="button" class="my-task-go" data-my-task-sync="${safe(item.id)}">状态刷新</button>`;
   return action.url ? `<a class="my-task-go" href="${safe(action.url)}" ${action.external ? 'target="_blank" rel="noopener noreferrer"' : ''}>${safe(action.label)}</a>` : '<span>暂无操作</span>';
 }
 function taskRow(item, preview) {
@@ -109,7 +110,7 @@ function taskDetails(item, preview) {
   const trace = [['来源', item.source], ['文档路径', documentPath], ['内部任务', item.id], ['原始关联', item.context], ['计划开始', item.plannedStartTime ? dateText(item.plannedStartTime) : null]]
     .filter(([, value]) => value).map(([label, value]) => `<div class="my-task-detail-field"><dt>${label}</dt><dd>${safe(value)}</dd></div>`).join('');
   const available = !preview?.readOnly && action.enabled !== false;
-  const command = available && action.code === 'sync_delivery' ? `<button type="button" class="primary" data-my-task-sync="${safe(item.id)}">同步状态</button>`
+  const command = available && action.code === 'sync_delivery' ? `<button type="button" class="primary" data-my-task-sync="${safe(item.id)}">状态刷新</button>`
     : available && action.url ? `<a href="${safe(action.url)}" class="primary" ${action.external ? 'target="_blank" rel="noopener noreferrer"' : ''}>${safe(action.label)}</a>` : '';
   return `<dialog class="my-task-dialog" data-my-task-dialog aria-label="工作详情"><header><div><h2>${safe(displayTitle(item))}</h2>${number ? `<p class="my-task-detail-number">${safe(number)}</p>` : ''}</div><button type="button" data-my-task-close aria-label="关闭详情"><i data-lucide="x" aria-hidden="true"></i></button></header><div class="my-task-detail-body">${result}${context ? `<section class="my-task-detail-section" aria-label="关联范围"><h3>关联范围</h3><dl class="my-task-detail-fields">${context}</dl></section>` : ''}<details class="my-task-detail-trace"><summary>追溯信息</summary><dl class="my-task-detail-fields">${trace}</dl></details></div><footer><button type="button" data-my-task-close>关闭</button>${command}</footer></dialog>`;
 }
@@ -147,17 +148,39 @@ export function renderMyTasks(projection) {
     ? '<div class="my-task-empty" role="status"><strong>正在读取工作…</strong></div>'
     : ['outline', 'template'].includes(state.kind) && !hasFilters
       ? '<div class="my-task-empty"><strong>个人事项待设计</strong><p>此类工作暂不计入待办。</p></div>'
-      : `<div class="my-task-empty"><strong>${hasFilters ? '没有符合查询条件的工作' : state.queue === 'waiting' ? '当前没有等待他人的工作' : '当前没有需要你处理的工作'}</strong>${hasFilters ? '<button type="button" data-my-task-clear>清除查询</button>' : ''}</div>`;
+      : `<div class="my-task-empty"><strong>${hasFilters ? '没有符合查询条件的工作' : state.queue === 'waiting' ? '当前没有跟进中的工作' : '当前没有需要你处理的工作'}</strong>${hasFilters ? '<button type="button" data-my-task-clear>清除查询</button>' : ''}</div>`;
   const tabs = [['all', '全部'], ...Object.entries(TYPES).map(([key, value]) => [key, value.short])]
     .map(([key, name]) => `<button type="button" data-my-task-kind="${key}" class="${state.kind === key ? 'active' : ''}" aria-current="${state.kind === key ? 'true' : 'false'}">${name} <small>${key === 'all' ? facets.all || 0 : tabCount(key)}</small></button>`).join('');
   const notice = partial ? `<p class="my-task-notice" role="status">部分数据：${unavailable.map(safe).join('、')}暂不可用。当前只显示已读取来源的事项。</p>` : '';
   const people = projection?.responsibles || [];
   const selector = preview?.enabled ? `<label class="my-task-responsible">当前责任人<select data-my-task-responsible>${people.map(person => `<option value="${safe(person.id)}" ${String(person.id) === String(preview.selectedId) ? 'selected' : ''}>${safe(person.displayName)}</option>`).join('')}</select></label>` : '';
+  const roleNames = { handbook_owner: '手册负责人', document_first_owner: '文档首次责任人', knowledge_center_owner: '知识中心负责人' };
+  const inbox = inboxState.open ? `<section class="my-task-inbox" aria-label="站内通知"><header><h2>站内通知</h2><button type="button" data-my-task-inbox-close aria-label="关闭通知" title="关闭通知">×</button></header>${inboxState.loading ? '<p role="status">正在读取通知…</p>' : inboxState.error ? `<p role="alert">${safe(inboxState.error)}</p><button type="button" data-my-task-inbox-refresh>重试</button>` : inboxState.items.length ? `<ul>${inboxState.items.map(item => {
+    const roles = (item.roles || []).map(role => roleNames[role] || role).join('、');
+    const subject = [item.ticketNumber, item.handbookName, item.documentName || item.documentId].filter(Boolean).join(' / ') || item.taskName || '审核意见';
+    const type = item.type === 'review_scope_opinion' ? '范围意见' : '内容意见';
+    const actions = Array.isArray(item.actions) ? item.actions : [];
+    const action = actions.includes('scope_decide') ? '处理' : actions.includes('reply') ? '回复' : '查看';
+    const createdAt = item.createdAt && Number.isFinite(Date.parse(item.createdAt)) ? new Date(item.createdAt).toLocaleString('zh-CN') : '';
+    const detail = [roles ? `你被提及为：${roles}` : '', item.recipientActive === false ? '人员已失效' : '', item.author?.displayName ? `发起人：${item.author.displayName}` : '', createdAt].filter(Boolean).join(' · ');
+    return `<li class="my-task-inbox-item"><div class="my-task-inbox-content"><strong>${safe(type)} · ${safe(subject)}</strong>${detail ? `<small>${safe(detail)}</small>` : ''}<p>${safe(item.commentContent || '')}</p></div><span>${item.readAt ? '已读' : '未读'}</span><a href="${safe(item.url)}">${action}</a>${item.readAt ? '' : `<button type="button" data-my-task-inbox-read="${safe(item.id)}">标记已读</button>`}</li>`;
+  }).join('')}</ul>` : '<p>暂无通知</p>'}</section>` : '';
   const noticePreview = preview?.delegated ? `<p class="my-task-preview" role="status"><strong>管理员代办</strong><span>${safe(preview.displayName)}的工作 · 实际操作者：${safe(preview.operatorName)}</span><button type="button" data-my-task-self>切回我的工作</button></p>` : '';
   const details = selected ? taskDetails(selected, preview) : '';
   const filterPanel = state.filterOpen ? `<div class="my-task-filter-panel" role="group" aria-label="联合查询条件"><div class="my-task-filter-head"><strong>查询条件</strong><button type="button" data-filter-clear>清空</button></div>${filterGroup(draftFilter || { op: 'and', children: [conditionTemplate()] })}<div class="my-task-filter-footer"><span data-filter-error role="alert"></span><button type="button" data-filter-apply>应用查询</button></div></div>` : '';
   const pageCount = Math.max(1, Math.ceil((projection?.total || 0) / (projection?.pageSize || state.pageSize)));
-  return `<section class="my-tasks"><header class="my-tasks-title"><div><h1>${preview?.delegated ? `${safe(preview.displayName)}的工作` : '我的工作'}</h1>${noticePreview}</div><div class="my-task-title-actions">${selector}<button type="button" data-my-task-refresh class="my-task-refresh" ${loading ? 'disabled' : ''}>刷新</button></div></header>${notice}<p class="my-task-action-feedback" role="status" ${actionFeedback ? '' : 'hidden'}>${safe(actionFeedback)}</p><section class="my-task-board" aria-label="个人工作"><header class="my-task-board-head"><nav aria-label="工作类别">${tabs}</nav></header><div class="my-task-toolbar"><div class="my-task-queues" role="group" aria-label="处理状态"><button type="button" data-my-task-queue="actionable" class="${state.queue === 'actionable' ? 'active' : ''}">待我处理 ${facets.actionable || 0}</button><button type="button" data-my-task-queue="waiting" class="${state.queue === 'waiting' ? 'active' : ''}">等待他人 ${facets.waiting || 0}</button></div><label>搜索<input type="search" data-my-task-query placeholder="编号或标题" value="${safe(state.query)}"></label><button type="button" class="my-task-filter-trigger" data-filter-toggle aria-expanded="${state.filterOpen}">查询条件${state.filter ? ' · 已应用' : ''}</button><span role="status">${loading ? '读取中' : `${projection?.total || 0} 项 · 第 ${state.page}/${pageCount} 页`}</span></div>${filterPanel}<div class="my-task-list my-task-table" role="table">${tableHeader()}${items.map(item => taskRow(item, preview)).join('') || empty}</div><footer class="my-task-pagination"><button type="button" data-my-task-page="${state.page - 1}" ${state.page <= 1 || loading ? 'disabled' : ''}>上一页</button><span>第 ${state.page}/${pageCount} 页</span><button type="button" data-my-task-page="${state.page + 1}" ${state.page >= pageCount || loading ? 'disabled' : ''}>下一页</button></footer></section>${details}</section>`;
+  const controls = noticePreview || selector ? `<div class="workspace-action-row my-tasks-title my-task-page-heading">${noticePreview}<div class="my-task-title-actions">${selector}</div></div>` : '';
+  return `<section class="my-tasks">${controls}${notice}<p class="my-task-action-feedback" role="status" ${actionFeedback ? '' : 'hidden'}>${safe(actionFeedback)}</p><section class="my-task-board" aria-label="个人工作"><header class="my-task-board-head"><nav aria-label="工作类别">${tabs}</nav></header><div class="my-task-toolbar"><div class="my-task-queues" role="group" aria-label="处理状态"><button type="button" data-my-task-queue="actionable" class="${state.queue === 'actionable' ? 'active' : ''}">待我处理 ${facets.actionable || 0}</button><button type="button" data-my-task-queue="waiting" class="${state.queue === 'waiting' ? 'active' : ''}">跟进中 ${facets.waiting || 0}</button></div><label>搜索<input type="search" data-my-task-query placeholder="编号或标题" value="${safe(state.query)}"></label><button type="button" class="my-task-filter-trigger" data-filter-toggle aria-expanded="${state.filterOpen}">查询条件${state.filter ? ' · 已应用' : ''}</button><span role="status">${loading ? '读取中' : `${projection?.total || 0} 项 · 第 ${state.page}/${pageCount} 页`}</span></div>${filterPanel}<div class="my-task-list my-task-table" role="table">${tableHeader()}${items.map(item => taskRow(item, preview)).join('') || empty}</div><footer class="my-task-pagination"><button type="button" data-my-task-page="${state.page - 1}" ${state.page <= 1 || loading ? 'disabled' : ''}>上一页</button><span>第 ${state.page}/${pageCount} 页</span><button type="button" data-my-task-page="${state.page + 1}" ${state.page >= pageCount || loading ? 'disabled' : ''}>下一页</button></footer></section>${details}</section>`;
+}
+async function loadInbox() {
+  inboxState = { ...inboxState, loading: true, error: '' }; updateLocal();
+  try {
+    const response = await fetch(`${ROOT}api/incremental-tasks/notifications?limit=20`, { credentials: 'same-origin', cache: 'no-store' });
+    const payload = await response.json();
+    if (!response.ok || payload.success === false) throw new Error(payload.error?.message || `HTTP ${response.status}`);
+    inboxState = { ...inboxState, loading: false, items: payload.data.items || [], unreadCount: payload.data.unreadCount || 0 };
+  } catch (error) { inboxState = { ...inboxState, loading: false, error: error.message || '通知读取失败' }; }
+  updateLocal();
 }
 export function updateMyTasksProjection(projection) {
   const root = document.querySelector('#view-root .my-tasks');
@@ -168,7 +191,8 @@ export function updateMyTasksProjection(projection) {
   const selection = focus && active?.type === 'search' ? [active.selectionStart, active.selectionEnd] : null;
   const template = document.createElement('template');
   template.innerHTML = renderMyTasks(projection);
-  root.replaceWith(template.content.firstElementChild);
+  const replacement = template.content.firstElementChild;
+  root.replaceWith(replacement);
   cleanupSearchableSelects();
   markDynamicSelects(document.querySelector('#view-root .my-tasks'));
   if (focus) {
@@ -176,7 +200,7 @@ export function updateMyTasksProjection(projection) {
     next?.focus();
     if (selection) next?.setSelectionRange(...selection);
   }
-  window.lucide?.createIcons();
+  window.lucide?.createIcons({ nodes: [replacement] });
   return true;
 }
 function updateLocal() {
@@ -186,7 +210,7 @@ function updateLocal() {
   root.innerHTML = renderMyTasks(projection);
   cleanupSearchableSelects();
   markDynamicSelects(root);
-  window.lucide?.createIcons();
+  window.lucide?.createIcons({ nodes: [root] });
 }
 function openDialog() { const dialog = document.querySelector('[data-my-task-dialog]'); if (dialog && !dialog.open) dialog.showModal(); }
 function filterAt(path) { return path === '' ? draftFilter : String(path).split('.').reduce((node, index) => node.children[Number(index)], draftFilter); }
@@ -206,6 +230,15 @@ let searchTimer;
 document.addEventListener('click', event => {
   const root = event.target.closest('.my-tasks');
   if (!root) return;
+  if (event.target.closest('[data-my-task-inbox-close]')) { inboxState.open = false; updateLocal(); return; }
+  if (event.target.closest('[data-my-task-inbox], [data-my-task-inbox-refresh]')) { inboxState.open = true; loadInbox(); return; }
+  const readNotice = event.target.closest('[data-my-task-inbox-read]');
+  if (readNotice) {
+    fetch(`${ROOT}api/incremental-tasks/notifications/${encodeURIComponent(readNotice.dataset.myTaskInboxRead)}/read`, {
+      method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': globalThis.crypto?.randomUUID?.() || `notice-${Date.now()}` }, body: '{}',
+    }).then(response => { if (!response.ok) throw new Error('标记已读失败'); return loadInbox(); }).catch(error => { inboxState.error = error.message; updateLocal(); });
+    return;
+  }
   const sync = event.target.closest('[data-my-task-sync]');
   if (sync) {
     const item = window.__knowledgeMyTasksProjection?.items?.find(entry => entry.id === sync.dataset.myTaskSync);
@@ -223,7 +256,7 @@ document.addEventListener('click', event => {
       const status = root.querySelector('.my-task-action-feedback');
       if (status) { status.hidden = false; status.textContent = actionFeedback; }
       sync.disabled = false;
-      sync.textContent = '同步状态';
+      sync.textContent = '状态刷新';
     });
     return;
   }
@@ -233,7 +266,6 @@ document.addEventListener('click', event => {
   if (queue) { state.queue = queue.dataset.myTaskQueue; applyQuery(); return; }
   const page = event.target.closest('[data-my-task-page]');
   if (page) { state.page = Number(page.dataset.myTaskPage); saveUrl(); refreshHandler?.(); return; }
-  if (event.target.closest('[data-my-task-refresh]')) { refreshHandler?.(); return; }
   if (event.target.closest('[data-my-task-self]')) { selectedResponsibleId = ''; state.selectedId = null; responsibleHandler?.(); return; }
   if (event.target.closest('[data-my-task-clear]')) { state.query = ''; state.filter = null; applyQuery(); return; }
   if (event.target.closest('[data-filter-toggle]')) { state.filterOpen = !state.filterOpen; draftFilter = structuredClone(state.filter || { op: 'and', children: [conditionTemplate()] }); updateLocal(); return; }

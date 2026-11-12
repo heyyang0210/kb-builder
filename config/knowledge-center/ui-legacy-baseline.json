@@ -1,0 +1,120 @@
+{
+  "version": 1,
+  "rules": [
+    "rawLucide",
+    "legacyIcon",
+    "inlineSvg",
+    "globalIconScan",
+    "rawCssColor"
+  ],
+  "files": {
+    "apps/knowledge-center-web/frontend/knowledge-center/app.js": {
+      "rawLucide": 5,
+      "globalIconScan": 10
+    },
+    "apps/knowledge-center-web/frontend/knowledge-center/common/base.css": {
+      "rawCssColor": 1
+    },
+    "apps/knowledge-center-web/frontend/knowledge-center/common/components.css": {
+      "rawCssColor": 7
+    },
+    "apps/knowledge-center-web/frontend/knowledge-center/common/table-view-configurator.css": {
+      "rawCssColor": 1
+    },
+    "apps/knowledge-center-web/frontend/knowledge-center/common/table-view-configurator.js": {
+      "rawLucide": 4,
+      "globalIconScan": 1
+    },
+    "apps/knowledge-center-web/frontend/knowledge-center/common/utils/dom.js": {
+      "rawLucide": 1
+    },
+    "apps/knowledge-center-web/frontend/knowledge-center/knowledge-center-management.html": {
+      "rawLucide": 19
+    },
+    "apps/knowledge-center-web/frontend/knowledge-center/modules/assets/view.js": {
+      "rawLucide": 8
+    },
+    "apps/knowledge-center-web/frontend/knowledge-center/modules/auth/login.css": {
+      "rawCssColor": 6
+    },
+    "apps/knowledge-center-web/frontend/knowledge-center/modules/cleaning/view.js": {
+      "rawLucide": 1
+    },
+    "apps/knowledge-center-web/frontend/knowledge-center/modules/dashboard/dashboard.css": {
+      "rawCssColor": 58
+    },
+    "apps/knowledge-center-web/frontend/knowledge-center/modules/dashboard/my-tasks.js": {
+      "rawLucide": 1,
+      "globalIconScan": 2
+    },
+    "apps/knowledge-center-web/frontend/knowledge-center/modules/dashboard/view.js": {
+      "rawLucide": 1,
+      "legacyIcon": 5
+    },
+    "apps/knowledge-center-web/frontend/knowledge-center/modules/document-tasks/document-tasks.css": {
+      "rawCssColor": 129
+    },
+    "apps/knowledge-center-web/frontend/knowledge-center/modules/document-tasks/plan-calendar.js": {
+      "legacyIcon": 4,
+      "globalIconScan": 1
+    },
+    "apps/knowledge-center-web/frontend/knowledge-center/modules/document-tasks/view.js": {
+      "legacyIcon": 21,
+      "globalIconScan": 3
+    },
+    "apps/knowledge-center-web/frontend/knowledge-center/modules/outlines/outlines.css": {
+      "rawCssColor": 17
+    },
+    "apps/knowledge-center-web/frontend/knowledge-center/modules/outlines/view.js": {
+      "rawLucide": 28
+    },
+    "apps/knowledge-center-web/frontend/knowledge-center/modules/platform-admin/model-admin.js": {
+      "rawLucide": 1
+    },
+    "apps/knowledge-center-web/frontend/knowledge-center/modules/platform-admin/pingcode-sync.css": {
+      "rawCssColor": 1
+    },
+    "apps/knowledge-center-web/frontend/knowledge-center/modules/platform-admin/pingcode-sync.js": {
+      "legacyIcon": 13,
+      "globalIconScan": 1
+    },
+    "apps/knowledge-center-web/frontend/knowledge-center/modules/platform-admin/platform-admin.css": {
+      "rawCssColor": 96
+    },
+    "apps/knowledge-center-web/frontend/knowledge-center/modules/platform-admin/view.js": {
+      "rawLucide": 37
+    },
+    "apps/knowledge-center-web/frontend/knowledge-center/modules/production/handbook-view.js": {
+      "rawLucide": 26
+    },
+    "apps/knowledge-center-web/frontend/knowledge-center/modules/production/production-chat-evidence.js": {
+      "legacyIcon": 5,
+      "inlineSvg": 1
+    },
+    "apps/knowledge-center-web/frontend/knowledge-center/modules/production/production-writing-page.js": {
+      "legacyIcon": 7,
+      "inlineSvg": 5
+    },
+    "apps/knowledge-center-web/frontend/knowledge-center/modules/production/production.css": {
+      "rawCssColor": 104
+    },
+    "apps/knowledge-center-web/frontend/knowledge-center/modules/production/view.js": {
+      "rawLucide": 4
+    },
+    "apps/knowledge-center-web/frontend/knowledge-center/modules/repository/repository.css": {
+      "rawCssColor": 2
+    },
+    "apps/knowledge-center-web/frontend/knowledge-center/modules/repository/view.js": {
+      "rawLucide": 2
+    },
+    "apps/knowledge-center-web/frontend/knowledge-center/modules/review-publishing/view.js": {
+      "rawLucide": 20
+    },
+    "apps/knowledge-center-web/frontend/knowledge-center/modules/templates/view.js": {
+      "rawLucide": 1
+    },
+    "apps/knowledge-center-web/frontend/knowledge-center/styles.css": {
+      "rawCssColor": 220
+    }
+  }
+}

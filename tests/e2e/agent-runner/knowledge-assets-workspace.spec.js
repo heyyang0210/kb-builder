@@ -26,8 +26,10 @@ test('管理员看到必要字段、单一更新时间和真实服务端分页',
   await expect(root.getByRole('columnheader', { name: '仓库版本' })).toBeVisible();
   await expect(root.getByRole('columnheader', { name: '内容规模' })).toBeVisible();
   await expect(root.getByRole('columnheader', { name: '下一步' })).toHaveCount(0);
-  await expect(root.getByText('A：', { exact: false }).first()).toBeVisible();
-  await expect(root.getByText('B：', { exact: false }).first()).toBeVisible();
+  await expect(root.locator('.asset-table td[data-table-column="owners"] span').first()).toBeVisible();
+  await expect(root.locator('.asset-table td[data-table-column="owners"] small').first()).toContainText('协作');
+  await expect(root.locator('.asset-toolbar-view .table-view-trigger')).toBeVisible();
+  await expect(root.locator('.asset-pagination')).toBeVisible();
   await expect(root.getByRole('button', { name: '新增手册' })).toBeVisible();
   await expect(root.locator('.asset-page-intro .asset-context-label')).toHaveCount(0);
   await expect(root.getByRole('button', { name: '新增手册' })).toHaveCSS('color', 'rgb(3, 105, 161)');
@@ -57,6 +59,40 @@ test('切换阶段后立即搜索仍保留阶段条件', async ({ page }) => {
   await page.locator('[data-asset-filter] button[type="submit"]').click();
   await expect(page).toHaveURL(/status=content_building/);
   await expect(page).toHaveURL(/q=SQL/);
+});
+
+test('五种手册状态分别配色，状态差异仅在管理入口和弹窗处理', async ({ page }) => {
+  const statuses = ['asset_created', 'outline_editing', 'outline_published', 'content_building', 'handbook_published'];
+  const names = ['待创建', '完善大纲', '大纲已发布', '内容构建中', '已发布'];
+  await page.route('**/knowledge-center/api/assets/handbooks*', async route => {
+    const response = await route.fetch();
+    const body = await response.json();
+    const catalog = body.data || body;
+    for (const [index, item] of catalog.items.slice(0, statuses.length).entries()) {
+      item.status = statuses[index];
+      item.statusDisplayName = names[index];
+      item.statusConflict = index === 0;
+      if (index === 0) item.systemStatusDisplayName = '内容构建中';
+    }
+    await route.fulfill({ response, json: body });
+  });
+  await page.goto(`${baseUrl}/knowledge-center/assets`);
+  await expect(page.locator('.asset-workspace')).toHaveAttribute('data-asset-loaded', 'true');
+  const badges = page.locator('.asset-table tbody .asset-status').first();
+  await expect(badges).toHaveAttribute('data-asset-status', statuses[0]);
+  const colors = await page.locator('.asset-table tbody .asset-status').evaluateAll(nodes => nodes.slice(0, 5).map(node => getComputedStyle(node).backgroundColor));
+  expect(new Set(colors).size).toBe(5);
+  await expect(page.locator('.asset-table tbody td[data-table-column="status"]').first()).toHaveText(names[0]);
+  await expect(page.locator('.asset-table .asset-status-conflict')).toHaveCount(0);
+
+  await page.locator('.asset-table tbody .asset-name').first().click();
+  const panel = page.getByLabel('当前手册操作');
+  await expect(panel.locator('.asset-status')).toHaveAttribute('data-asset-status', statuses[0]);
+  await expect(panel.locator('[data-asset-edit-open] svg[data-lucide="alert-circle"]')).toBeVisible();
+  await panel.locator('[data-asset-edit-open]').click();
+  await expect(page.getByRole('dialog', { name: '管理手册' }).getByText('状态存在差异')).toBeVisible();
+  await expect(page.getByRole('button', { name: '使用系统状态' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '保留人工状态' })).toBeVisible();
 });
 
 test('新增对话框展示必要字段且取消不会提交', async ({ page }) => {

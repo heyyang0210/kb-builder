@@ -135,7 +135,19 @@ async function fixture(page) {
     repository.transaction(state => state.tasks.push(task));
     return task;
   }
-  return { base, shared, following, unassigned, api, identity, reviseShared() {
+  return { base, shared, following, unassigned, api, identity, seedScopeOpinion(status = 'accepted_pending_scope', key = 'scope-opinion-e2e') {
+    const reviewId = shared.reviews[0].id;
+    const comment = service.commentOnReview(session, shared.id, reviewId, key, {
+      comment: '请检查文档范围', commentType: 'scope_opinion', scopeLevel: 'handbook', candidateDigest: shared.candidate.digest,
+    });
+    repository.transaction(state => {
+      const stored = state.tasks.find(item => item.id === shared.id).reviews[0].comments.find(item => item.id === comment.id);
+      Object.assign(stored.scopeOpinion, { status, responsibleId: 'author', ticketNumber: 'T-25', handbookId: 'HB-1', level: 'handbook' });
+      if (status === 'rejected') stored.scopeOpinion.decisionReason = '范围无需调整';
+      stored.mentions = [{ handbookId: 'HB-1', handbookName: '隔离审核手册', recipientId: 'former-owner', recipientName: '原责任人', role: 'handbook_owner', disabled: true }];
+    });
+    return comment.id;
+  }, reviseShared() {
     const body = structuredClone(shared.handbookSource);
     body.submissionId = '共享候选修订'; body.name = '共享候选修订'; body.revisionOfTaskId = shared.id;
     body.documents.find(item => item.documentId === 'shared-b').markdown += '\n\n已补充操作步骤。';
@@ -173,6 +185,71 @@ async function fixture(page) {
     await page.unrouteAll({ behavior: 'wait' }); delete process.env.GITLAB_TOKEN_workbench_e2e; await Promise.all(servers.map(server => new Promise(resolve => { server.closeAllConnections(); server.close(resolve); }))); fs.rmSync(root, { recursive: true, force: true });
   } };
 }
+
+test('范围意见：类型切换、待创建重试与窄屏状态', async ({ page }, testInfo) => {
+  const f = await fixture(page);
+  try {
+    f.seedScopeOpinion();
+    await page.goto(`${f.base}/knowledge-center/review?taskId=${encodeURIComponent(f.shared.id)}&documentId=shared-a&step=opinions`);
+    const opinion = page.locator('[data-review-opinion]').filter({ hasText: '请检查文档范围' });
+    await expect(opinion).toContainText('已采纳，待创建');
+    await expect(opinion).toContainText('原责任人 · 人员已失效');
+    await expect(opinion.getByRole('button', { name: '重试' })).toBeVisible();
+    await expect(opinion.getByRole('link', { name: '查看', exact: true })).toHaveCount(0);
+    await page.screenshot({ path: testInfo.outputPath('scope-opinion-desktop.png'), fullPage: true });
+    await page.locator('[data-review-step=diff]').first().click();
+    const form = page.locator('[data-review-comment-form]').first();
+    await expect(form.locator('[name=scopeLevel]')).toBeDisabled();
+    await expect(form.getByRole('button', { name: '提交内容意见' })).toBeVisible();
+    await form.locator('[name=commentType]').selectOption('scope_opinion');
+    await expect(form.locator('[name=scopeLevel]')).toBeEnabled();
+    await expect(form.getByRole('button', { name: '提交范围意见' })).toBeVisible();
+    await page.locator('[data-review-step=opinions]').first().click();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(opinion.getByRole('button', { name: '重试' })).toBeVisible();
+    await page.waitForTimeout(350);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.screenshot({ path: testInfo.outputPath('scope-opinion-mobile.png'), fullPage: true });
+  } finally { await f.close(); }
+});
+
+test('范围意见四种结果与取消后新意见关联', async ({ page }, testInfo) => {
+  const f = await fixture(page);
+  try {
+    const closed = f.seedScopeOpinion('accepted_pending_scope', 'scope-closed');
+    const rework = f.seedScopeOpinion('accepted_pending_scope', 'scope-rework');
+    const cancelled = f.seedScopeOpinion('accepted_pending_scope', 'scope-cancelled');
+    const rejected = f.seedScopeOpinion('rejected', 'scope-rejected');
+    const projection = [
+      { commentId: closed, scopeChangeId: 'change-closed', status: 'closed', scopeVersion: 9, affectedDocuments: [{ documentId: 'shared-a' }] },
+      { commentId: rework, scopeChangeId: 'change-rework', status: 'rework_pending', scopeVersion: 9, affectedDocuments: [{ documentId: 'shared-b' }] },
+      { commentId: cancelled, scopeChangeId: 'change-cancelled', status: 'accepted_not_applied', scopeVersion: 8, affectedDocuments: [] },
+    ];
+    await page.route('**/document-tasks/review/*/scope-opinions', route => route.fulfill({ json: { success: true, data: { items: projection } } }));
+    await page.goto(`${f.base}/knowledge-center/review?taskId=${encodeURIComponent(f.shared.id)}&documentId=shared-a&step=opinions`);
+    const card = id => page.locator(`[data-review-comment-id="${id}"]`);
+    const states = [[closed, '已闭环', 'closed'], [rework, '待重新编写', 'rework'], [cancelled, '已采纳，未生效', 'cancelled'], [rejected, '不采纳', 'rejected']];
+    for (const [id, label, file] of states) {
+      await expect(card(id)).toContainText(label);
+      await card(id).screenshot({ path: testInfo.outputPath(`scope-${file}.png`) });
+    }
+    await expect(card(closed)).toContainText('范围版本：9');
+    await expect(card(rework)).toContainText('受影响文档：1 篇');
+    await expect(card(rejected)).toContainText('范围无需调整');
+    const followup = card(cancelled).locator('.review-scope-followup');
+    await followup.locator('summary').click();
+    await expect(followup.locator('[name=relatedOpinionId]')).toHaveValue(cancelled);
+    await expect(followup.locator('[name=scopeLevel]')).toHaveValue('handbook');
+    await followup.locator('[name=comment]').fill('重新核对文档范围');
+    await page.route('**/incremental-tasks/*/reviews/*/comments', route => route.request().method() === 'POST'
+      ? route.fulfill({ json: { success: true, data: { id: 'followup-created' } } }) : route.continue());
+    const [request] = await Promise.all([
+      page.waitForRequest(req => req.method() === 'POST' && /\/reviews\/[^/]+\/comments$/.test(new URL(req.url()).pathname)),
+      followup.getByRole('button', { name: '提交意见' }).click(),
+    ]);
+    expect(request.postDataJSON()).toMatchObject({ relatedOpinionId: cancelled, scopeLevel: 'handbook', commentType: 'scope_opinion', comment: '重新核对文档范围' });
+  } finally { await f.close(); }
+});
 
 test('应用导航：移动菜单、侧栏持久化与会话失效', async ({ page }) => {
   const f = await fixture(page);
@@ -325,7 +402,7 @@ test('我的审核：人员 ID 指派给何阳时展示待办并可阅读冻结�
     await expect(documentRow.locator('td').nth(4)).toHaveText('何阳');
     await page.goto(`${f.base}/knowledge-center/review?view=mine`);
     await expect(row).toBeVisible();
-    await row.getByRole('link', { name: '开始审核' }).click();
+    await row.getByRole('link', { name: '查看审核' }).click();
     await expect(page.locator('.review-steps [data-review-step="diff"]')).toHaveClass(/active/);
     await page.locator('.review-steps [data-review-step="read"]').click();
     await expect(page).toHaveURL(/step=read/);
@@ -432,7 +509,7 @@ test('00SQL 历史无差异在线审核发布 422，保留待发布状态和操�
     await page.goto(`${f.base}/knowledge-center/review?view=documents&handbookId=HB-1`);
     const row = page.locator('.review-hub-table tbody tr').filter({ hasText: '00SQL参考手册.md' });
     await expect(row).toBeVisible();
-    await row.getByRole('link', { name: '查看文档' }).click();
+    await row.getByRole('link', { name: '阅读文档' }).click();
     await expect(page.locator('.review-reader-snapshot')).toContainText('已发布原文');
     const decision = await fetch(`${f.base}/knowledge-center/api/incremental-tasks/${task.id}/reviews/${task.reviews[0].id}/decision`, {
       method: 'POST', headers: { 'content-type': 'application/json', 'idempotency-key': 'sql-e2e-decision' }, body: JSON.stringify({ decision: 'approve' }),
@@ -446,7 +523,7 @@ test('00SQL 历史无差异在线审核发布 422，保留待发布状态和操�
     expect(publishBody.error.code).toBe('GITLAB_NO_CHANGES');
     await page.reload();
     await expect(page.locator('[data-review-status]')).toHaveText('待发布');
-    await expect(page.locator('[data-review-publish]')).toContainText('创建 GitLab MR');
+    await expect(page.locator('[data-review-publish]')).toContainText('创建 MR');
     await expect(page.getByRole('link', { name: /GitLab MR/ })).toHaveCount(0);
     await page.goto(`${f.base}/knowledge-center/review?view=documents&handbookId=HB-1`);
     await expect(page.locator('.review-hub-table tbody tr').filter({ hasText: '00SQL参考手册.md' })).toContainText('待发布');
@@ -493,12 +570,12 @@ test('工作台：阶段与指派准入、完整清单、冻结正文、只读�
     await expect(page.locator('[data-review-decision]')).toHaveCount(0);
     await page.getByRole('link', { name: '手册视图', exact: true }).click();
     await page.locator('.review-count-link').click();
-    await expect(page.getByRole('link', { name: '查看文档', exact: true })).toHaveCount(4);
+    await expect(page.getByRole('link', { name: '阅读文档', exact: true })).toHaveCount(4);
     await expect(page.locator('.review-hub-table thead')).toContainText('文档 / 路径');
     await expect(page.locator('.review-hub-table')).toContainText('docs/shared-a.md');
     await expect(page.getByLabel('审核状态')).toHaveValue('');
     await page.getByRole('link', { name: /我的审核/ }).click();
-    await expect(page.getByRole('link', { name: '开始审核' })).toHaveCount(3);
+    await expect(page.getByRole('link', { name: '查看审核' })).toHaveCount(3);
     await expect(page.locator('.review-hub-table thead')).toContainText('指派人');
     const firstMineRow = page.locator('.review-hub-table tbody tr').first();
     expect(await firstMineRow.locator('td').nth(4).textContent()).toBe(await firstMineRow.locator('td').nth(3).textContent());
@@ -506,7 +583,7 @@ test('工作台：阶段与指派准入、完整清单、冻结正文、只读�
     await expect(page.locator('.review-hub-table')).not.toContainText('other-only');
     await page.getByLabel('关键词').fill('shared');
     await page.getByRole('button', { name: '筛选', exact: true }).click();
-    await expect(page.getByRole('link', { name: '开始审核' })).toHaveCount(2);
+    await expect(page.getByRole('link', { name: '查看审核' })).toHaveCount(2);
     await page.locator('a[href*="documentId=shared-a"]').click();
     await expect(page.locator('.review-steps [data-review-step="diff"]')).toHaveClass(/active/);
     await page.locator('.review-steps [data-review-step="read"]').click();
@@ -561,7 +638,7 @@ test('工作台：阶段与指派准入、完整清单、冻结正文、只读�
     await expect(page.getByRole('heading', { name: '没有符合筛选条件的文档' })).toBeVisible();
     await page.getByRole('link', { name: '手册视图', exact: true }).click();
     await page.locator('.review-count-link').click();
-    await expect(page.getByRole('link', { name: '查看文档', exact: true })).toHaveCount(4);
+    await expect(page.getByRole('link', { name: '阅读文档', exact: true })).toHaveCount(4);
     await expect(page.locator('.review-hub-table')).toContainText('待发布');
     const mismatch = await f.api(`/review/bootstrap?view=reader&handbookId=HB-1&taskId=${f.shared.id}&documentId=wrong`);
     expect(mismatch.status).toBe(409);
@@ -611,7 +688,7 @@ test('整本手册在线评审聚合事项可从完整清单发现并阅读', as
     await page.locator('.review-count-link').click();
     const row = page.locator('.review-hub-table tbody tr').filter({ hasText: '整本手册在线评审（聚合事项）' });
     await expect(row).toHaveCount(1);
-    await row.getByRole('link', { name: '查看文档', exact: true }).click();
+    await row.getByRole('link', { name: '阅读文档', exact: true }).click();
     await expect(page).toHaveURL(new RegExp(`taskId=${task.id}`));
     await expect(page.locator('.review-reader-snapshot')).toContainText('整册不可变快照');
     await expect(page).not.toHaveURL(/documentId=null/);

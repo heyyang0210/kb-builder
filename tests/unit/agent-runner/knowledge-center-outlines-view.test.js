@@ -396,7 +396,7 @@ describe('知识中心大纲管理前端契约', () => {
     const assets = read('apps/knowledge-center-web/frontend/knowledge-center/modules/assets/view.js');
     const api = read('apps/knowledge-center-web/frontend/knowledge-center/common/api/platform-api.js');
     const route = read('packages/agent-runner-core/routes/outline.js');
-    expect(assets).toContain('href="/knowledge-center/outlines/${encodeURIComponent(id)}"');
+    expect(assets).toContain('href: `/knowledge-center/outlines/${encodeURIComponent(id)}`');
     expect(assets).not.toContain('data-handbook-outline');
     expect(assets).toContain('data-asset-edit-open');
     expect(api).toContain("allItems.filter(item => String(item.handbookId || item.manualId) === String(handbookId))");

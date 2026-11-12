@@ -39,13 +39,16 @@ async function instrumentFrontend(page) {
   };
 }
 
-async function fixture({ outlineFails = false, outlineDelayMs = 280, mrState = 'opened', syncFails = false, responsiblePreview = false, handbookEntry = false, restrictedMerge = false } = {}) {
+async function fixture({ outlineFails = false, outlineDelayMs = 280, mrState = 'opened', syncFails = false, responsiblePreview = false, handbookEntry = false, restrictedMerge = false, notificationActions = ['scope_decide'] } = {}) {
   const requests = [];
   const queries = [];
+  let noticeRead = false;
   const server = http.createServer(async (req, res) => {
     requests.push(req.url);
     if (req.url === '/knowledge-center/api/auth/config') return send(res, 200, { data: { casEnabled: false } });
     if (req.url === '/knowledge-center/api/auth/session') return send(res, 200, { data: { authenticated: true, user: { id: '178', principalId: '178', displayName: '测试用户' }, allowedActions: ['knowledge:read', 'knowledge:write', 'outline:create', 'template:read', ...(responsiblePreview ? ['platform:manage'] : [])], visibleModules: ['*'], roles: [] } });
+    if (req.url === '/knowledge-center/api/incremental-tasks/notifications?limit=20') return send(res, 200, { success: true, data: { unreadCount: noticeRead ? 0 : 1, items: [{ id: 'notice-1', type: 'review_scope_opinion', ticketNumber: 'P-1', handbookName: 'SQL 参考手册', documentName: '备份恢复.md', roles: ['handbook_owner'], author: { displayName: '李某' }, createdAt: '2026-11-12T02:32:00Z', actions: notificationActions, commentContent: '请确认范围', url: '/knowledge-center/review?taskId=review-1&step=opinions&commentId=comment-1', readAt: noticeRead ? new Date().toISOString() : null }] } });
+    if (req.url === '/knowledge-center/api/incremental-tasks/notifications/notice-1/read' && req.method === 'PUT') { noticeRead = true; return send(res, 200, { success: true, data: { id: 'notice-1', readAt: new Date().toISOString() } }); }
     if (responsiblePreview && req.url === '/knowledge-center/api/workbench/responsibles') return send(res, 200, { success: true, data: [{ id: '178', displayName: '测试用户' }, { id: '200', displayName: '其他责任人' }] });
     if (req.url === '/knowledge-center/api/workbench/my-tasks/query' && req.method === 'POST') {
       let raw = ''; for await (const chunk of req) raw += chunk;
@@ -53,12 +56,12 @@ async function fixture({ outlineFails = false, outlineDelayMs = 280, mrState = '
       queries.push(query);
       const delegated = query.responsibleId === '200';
       const all = delegated ? restrictedMerge
-        ? [{ id: 'merge:other', queue: 'actionable', kind: 'merge', title: '合入 测试手册', context: '测试手册', source: 'GitLab 交付', status: '待合入', url: 'https://git.example.test/project/-/merge_requests/73', external: true, primaryAction: { code: 'merge_mr', label: '合入MR', url: 'https://git.example.test/project/-/merge_requests/73', external: true, enabled: false } }]
+        ? [{ id: 'merge:other', queue: 'actionable', kind: 'merge', title: '合入 测试手册', context: '测试手册', source: 'GitLab 交付', status: '待合入', url: 'https://git.example.test/project/-/merge_requests/73', external: true, primaryAction: { code: 'merge_mr', label: 'MR链接', url: 'https://git.example.test/project/-/merge_requests/73', external: true, enabled: false } }]
         : [{ id: 'other:1', queue: 'actionable', kind: 'document', title: '其他责任人的文档', context: '手册', source: '任务管理', status: '待处理', url: '/knowledge-center/production' }] : [
         { id: 'doc:1', queue: 'actionable', kind: 'document', title: '编写数值型.md', context: 'SQL参考手册', source: '任务管理', version: 'master', status: '待处理', url: handbookEntry ? '/knowledge-center/production/handbook/HB-RETURN?documentId=doc-return' : '/knowledge-center/production' },
         { id: 'doc:2', queue: 'actionable', kind: 'document', title: '编写字面量.md', context: 'SQL参考手册', source: '任务管理', version: 'master', status: '待处理', url: '/knowledge-center/production' },
-        { id: 'delivery:1', queue: 'actionable', kind: 'merge', title: '同步交付 用户手册改版', number: 'E2E-WB-20261104-HE-YANG', source: '审核与发布', context: 'DB-054 · inc_c28a6030124973d10b4a4812 · 业务版本待校对', lineage: { handbookName: 'DB-054 · 版本待校对', documentName: 'docs/e2e-validation/workbench-heyang-20261104/工作台验收说明.md' }, status: mrState === 'closed' ? 'MR已关闭，待处理' : '待合并回读', url: '/knowledge-center/review?taskId=delivery-1', delivery: { mergeState: mrState, markdownReadback: false, resourceReadback: false }, primaryAction: { code: 'sync_delivery', label: '同步状态', taskId: 'delivery-1', candidateDigest: 'digest-1' } },
-        ...(mrState === 'opened' ? [{ id: 'merge:1', queue: 'actionable', kind: 'merge', title: '合入 用户手册改版', source: 'GitLab 交付', status: '待合入', url: 'https://git.example.test/project/-/merge_requests/73', primaryAction: { code: 'merge_mr', label: '合入MR', url: 'https://git.example.test/project/-/merge_requests/73', external: true } }] : []),
+        { id: 'delivery:1', queue: 'actionable', kind: 'merge', title: '同步交付 用户手册改版', number: 'E2E-WB-20261104-HE-YANG', source: '审核与发布', context: 'DB-054 · inc_c28a6030124973d10b4a4812 · 业务版本待校对', lineage: { handbookName: 'DB-054 · 版本待校对', documentName: 'docs/e2e-validation/workbench-heyang-20261104/工作台验收说明.md' }, status: mrState === 'closed' ? 'MR已关闭，待处理' : '待合并回读', url: '/knowledge-center/review?taskId=delivery-1', delivery: { mergeState: mrState, markdownReadback: false, resourceReadback: false }, primaryAction: { code: 'sync_delivery', label: '状态刷新', taskId: 'delivery-1', candidateDigest: 'digest-1' } },
+        ...(mrState === 'opened' ? [{ id: 'merge:1', queue: 'actionable', kind: 'merge', title: '合入 用户手册改版', source: 'GitLab 交付', status: '待合入', url: 'https://git.example.test/project/-/merge_requests/73', primaryAction: { code: 'merge_mr', label: 'MR链接', url: 'https://git.example.test/project/-/merge_requests/73', external: true } }] : []),
         { id: 'wait:1', queue: 'waiting', kind: 'review', title: '工作台验收工单', number: 'WB-1', source: '任务管理', status: '等待他人审核', url: '/knowledge-center/document-tasks' },
       ];
       const matched = all.filter(item => item.queue === query.queue && (query.type === 'all' || item.kind === query.type)
@@ -129,7 +132,7 @@ async function fixture({ outlineFails = false, outlineDelayMs = 280, mrState = '
   return { url: `http://127.0.0.1:${server.address().port}`, requests, queries, close: () => new Promise(resolve => { server.closeAllConnections(); server.close(resolve); }) };
 }
 
-test('工作台统一列表、等待队列、桌面与窄屏布局', async t => {
+test('工作台统一列表、跟进队列、桌面与窄屏布局', async t => {
   const service = await fixture({ outlineDelayMs: 700 });
   const browser = await chromium.launch({ headless: true });
   t.after(async () => { await browser.close(); await service.close(); });
@@ -148,6 +151,7 @@ test('工作台统一列表、等待队列、桌面与窄屏布局', async t => 
   assert.deepEqual(await page.locator('.my-task-board .my-task-table-head span').allInnerTexts(), ['编号', '工作项', '关联范围', '计划截止', '下一步', '详情']);
   assert.equal(await page.locator('[data-my-task-kind]').count(), 7);
   assert.equal(await page.locator('[data-my-task-kind="all"] small').innerText(), '5');
+  assert.match(await page.locator('[data-my-task-queue="waiting"]').innerText(), /^跟进中\s+\d+$/);
   await page.locator('[data-my-task-queue="waiting"]').click();
   await page.getByText('工作台验收工单').waitFor();
   assert.equal(await page.locator('.my-task-list .my-task-table-row').count(), 1);
@@ -157,8 +161,8 @@ test('工作台统一列表、等待队列、桌面与窄屏布局', async t => 
   await page.locator('[data-my-task-queue="actionable"]').click();
   await page.getByText('编写数值型', { exact: true }).waitFor();
   assert.equal(await page.locator('.my-task-list a[target="_blank"]').getAttribute('href'), 'https://git.example.test/project/-/merge_requests/73');
-  assert.equal(await page.locator('.my-task-list a[target="_blank"]').innerText(), '合入MR');
-  assert.equal(await page.locator('[data-my-task-sync]').innerText(), '同步状态');
+  assert.equal(await page.locator('.my-task-list a[target="_blank"]').innerText(), 'MR链接');
+  assert.equal(await page.locator('[data-my-task-sync]').innerText(), '状态刷新');
   await page.locator('[data-my-task-sync]').click();
   await page.getByText('交付状态已同步').waitFor();
   assert.equal(service.requests.includes('/knowledge-center/api/incremental-tasks/delivery-1/publish'), true);
@@ -175,6 +179,58 @@ test('工作台统一列表、等待队列、桌面与窄屏布局', async t => 
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, '窄屏不得横向溢出');
   await page.screenshot({ path: path.join(output, 'mobile.png'), fullPage: true });
   await captureCoverage();
+});
+
+test('站内通知按需展开读取，不阻塞工作台首屏', async t => {
+  const service = await fixture();
+  const browser = await chromium.launch({ headless: true });
+  t.after(async () => { await browser.close(); await service.close(); });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await page.goto(`${service.url}/knowledge-center/`);
+  await page.getByText('编写数值型', { exact: true }).waitFor();
+  assert.equal(await page.locator('[data-global-notification-trigger]').isVisible(), true);
+  assert.equal(await page.locator('[data-my-task-refresh]').count(), 0);
+  assert.equal(service.requests.some(url => url.includes('/incremental-tasks/notifications')), false);
+  let releaseNotifications;
+  await page.route('**/api/incremental-tasks/notifications?limit=20', async route => {
+    await new Promise(resolve => { releaseNotifications = resolve; });
+    await route.continue();
+  }, { times: 1 });
+  await page.locator('[data-global-notification-trigger]').click();
+  await page.locator('[data-global-notification-close]').click();
+  releaseNotifications();
+  await page.waitForResponse(response => response.url().includes('/incremental-tasks/notifications?limit=20'));
+  assert.equal(await page.locator('.global-notification-panel').isVisible(), false, '关闭后迟到的通知响应不得重新打开面板');
+  await page.locator('[data-global-notification-trigger]').click();
+  await page.getByText('请确认范围').waitFor();
+  assert.match(await page.locator('.global-notification-panel').innerText(), /范围意见 · P-1 \/ SQL 参考手册 \/ 备份恢复\.md/);
+  assert.match(await page.locator('.global-notification-panel').innerText(), /你被提及为：手册负责人/);
+  assert.equal(await page.locator('.global-notification-panel a').innerText(), '处理');
+  assert.equal(await page.locator('.global-notification-panel a').getAttribute('href'), '/knowledge-center/review?taskId=review-1&step=opinions&commentId=comment-1');
+  await page.locator('[data-global-notification-read]').click();
+  await page.waitForFunction(() => document.querySelector('[data-global-notification-read]') === null);
+  assert.equal(service.requests.includes('/knowledge-center/api/incremental-tasks/notifications/notice-1/read'), true);
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  const menu = await page.locator('#mobile-menu').boundingBox();
+  const title = await page.locator('#global-context-title').boundingBox();
+  assert.ok(menu && title && menu.x + menu.width <= title.x, '窄屏全局标题不得被菜单遮挡');
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.locator('[data-view="assets"]').click();
+  assert.equal(await page.locator('[data-global-notification-trigger]').isVisible(), true, '通知入口在其他工作区仍可见');
+});
+
+test('站内通知动作只按服务端权限展示', async t => {
+  for (const [actions, label] of [[['reply'], '回复'], [[], '查看']]) {
+    const service = await fixture({ notificationActions: actions });
+    const browser = await chromium.launch({ headless: true });
+    t.after(async () => { await browser.close(); await service.close(); });
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    await page.goto(`${service.url}/knowledge-center/`);
+    await page.locator('[data-global-notification-trigger]').click();
+    await page.getByText('请确认范围').waitFor();
+    assert.equal(await page.locator('.global-notification-panel a').innerText(), label);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  }
 });
 
 test('联合查询面板支持嵌套组并将条件保存在 URL', async t => {
@@ -244,9 +300,9 @@ test('已关闭的 MR 仅保留提交人的同步动作，详情显示具体状�
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   const captureCoverage = await instrumentFrontend(page);
   await page.goto(`${service.url}/knowledge-center/`);
-  const action = page.getByRole('button', { name: '同步状态' });
+  const action = page.getByRole('button', { name: '状态刷新' });
   await action.waitFor();
-  assert.equal(await page.getByRole('link', { name: '合入MR' }).count(), 0);
+  assert.equal(await page.getByRole('link', { name: 'MR链接' }).count(), 0);
   await page.locator('.my-task-list [data-my-task-open]').last().click();
   const detail = page.locator('[data-my-task-dialog]');
   assert.match(await detail.innerText(), /当前进展[\s\S]*MR已关闭，待处理[\s\S]*关联范围/);
@@ -294,6 +350,7 @@ test('管理员切换他人工作、进入处理并切回本人', async t => {
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     await page.goto(`${service.url}/knowledge-center/`);
+    await page.getByText('编写数值型', { exact: true }).waitFor();
     const selector = page.locator('[data-my-task-responsible]');
     await selector.waitFor();
     assert.equal(await selector.inputValue(), '178');
@@ -325,7 +382,7 @@ test('任务管理动态改派弹窗可搜索人员并保持原生 ID', async t 
     const { renderDocumentTasks } = await import('/knowledge-center/modules/document-tasks/view.js');
     renderDocumentTasks({ documentTaskProjection: {
       status: 'ok', items: [], total: 0,
-      context: { canAdmin: true, people: [{ id: '178', displayName: '何阳' }, { id: '200', displayName: '其他责任人' }], handbooks: [], config: { defaultOwnerId: '178', reasonOptions: [] } },
+      context: { actorId: '178', canAdmin: true, people: [{ id: '178', displayName: '何阳' }, { id: '200', displayName: '其他责任人' }], handbooks: [], config: { defaultOwnerId: '178', reasonOptions: [] } },
       filterOptions: { product: ['YashanDB'], version: ['23.4'] },
       selected: { number: 'TEST-1', description: '测试任务', ownerId: '178', status: 'pending_scope', canAdmin: true, canConfirm: false,
         pending: [], assignmentHistory: [], decomposition: { confirmed: false, handbooks: [] } },
@@ -343,6 +400,48 @@ test('任务管理动态改派弹窗可搜索人员并保持原生 ID', async t 
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
 });
 
+test('任务管理来源变化与导出入口在窄屏可操作', async t => {
+  const service = await fixture();
+  const browser = await chromium.launch({ headless: true });
+  t.after(async () => { await browser.close(); await service.close(); });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, acceptDownloads: true });
+  await page.route('**/knowledge-center/api/document-tasks/TEST-1/sync-changes*', route => route.fulfill({
+    contentType: 'application/json', body: JSON.stringify({ success: true, data: { page: 1, pageSize: 20,
+      total: 1, items: [{ confirmedAt: '2026-11-12T04:00:00Z', sourceName: '需求基线',
+        field: 'title', before: '旧标题', after: '新标题' }] } }),
+  }));
+  await page.route('**/knowledge-center/api/document-tasks/TEST-1/source-export', route => route.fulfill({
+    contentType: 'text/markdown; charset=utf-8', headers: { 'Content-Disposition': 'attachment; filename="YDBRD-1.md"' },
+    body: '# 来源资料',
+  }));
+  await page.route('**/knowledge-center/api/document-tasks/export.csv*', route => route.fulfill({
+    contentType: 'text/csv; charset=utf-8', headers: { 'Content-Disposition': 'attachment; filename="tasks.csv"' },
+    body: '编号\r\nTEST-1\r\n',
+  }));
+  await page.goto(`${service.url}/fixture`);
+  await page.evaluate(async () => {
+    const { renderDocumentTasks } = await import('/knowledge-center/modules/document-tasks/view.js');
+    renderDocumentTasks({ documentTaskProjection: {
+      status: 'ok', items: [], total: 0,
+      context: { actorId: 'other', canAdmin: false, people: [], handbooks: [], config: { reasonOptions: [] } },
+      filterOptions: { product: [], version: [] },
+      selected: { number: 'TEST-1', description: '测试来源', ownerId: '178', status: 'in_progress',
+        sourceType: 'TICKET', ir: ['YASHAN-1'], pending: [], assignmentHistory: [],
+        decomposition: { confirmed: true, handbooks: [] } },
+    } });
+  });
+  await page.locator('.task-source-actions [data-task-action="changes"]').click();
+  await page.getByRole('cell', { name: '新标题' }).waitFor();
+  await page.locator('.document-task-dialog [data-modal-close]').first().click();
+  const sourceDownload = page.waitForEvent('download');
+  await page.locator('.task-source-actions [data-task-action="source-export"]').click();
+  assert.equal((await sourceDownload).suggestedFilename(), 'YDBRD-1.md');
+  const csvDownload = page.waitForEvent('download');
+  await page.locator('[data-task-action="export"]').click();
+  assert.equal((await csvDownload).suggestedFilename(), 'tasks.csv');
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+});
+
 test('代看合入负责人时禁用动作在列表和详情均不可跳转', async t => {
   const service = await fixture({ responsiblePreview: true, restrictedMerge: true });
   const browser = await chromium.launch({ headless: true });
@@ -353,7 +452,7 @@ test('代看合入负责人时禁用动作在列表和详情均不可跳转', as
   await page.locator('[data-my-task-responsible]').selectOption('200');
   await page.getByText('合入 测试手册').waitFor();
   assert.equal(await page.locator('.my-task-list a').count(), 0);
-  assert.equal(await page.getByRole('button', { name: '合入MR' }).isDisabled(), true);
+  assert.equal(await page.getByRole('button', { name: 'MR链接' }).isDisabled(), true);
   await page.locator('.my-task-list [data-my-task-open]').click();
   await page.locator('[data-my-task-dialog][open]').waitFor();
   assert.equal(await page.locator('[data-my-task-dialog] a').count(), 0);

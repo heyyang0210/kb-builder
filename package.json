@@ -8,6 +8,7 @@
   "scripts": {
     "build": "bash tools/repository/build-knowledge-center.sh",
     "check:node": "node tools/repository/check-node-syntax.js",
+    "check:ui": "node --test tests/unit/agent-runner/knowledge-center-ui-system.node.test.cjs && node tools/repository/check-knowledge-center-ui.cjs",
     "test:knowledge-center": "jest --config tests/unit/agent-runner/jest.config.js",
     "test:logging": "python3 -m unittest tests/unit/logging/test_log_maintenance.py && jest --config tests/unit/agent-runner/jest.config.js --runInBand tests/unit/agent-runner/log-context.test.js tests/unit/agent-runner/logger-redaction.test.js",
     "test:ui:menus": "node --test tests/e2e/agent-runner/dismissible-menu.node.cjs",

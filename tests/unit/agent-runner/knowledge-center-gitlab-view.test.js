@@ -24,6 +24,7 @@ describe('知识资产 GitLab 阅读前端契约', () => {
     expect(view()).toContain('data-repository-file');
     expect(view()).toContain('treeHierarchy');
     expect(view()).toContain('data-repository-language');
+    expect(view()).toContain('>英文</button>');
     expect(view()).toContain('仓库目录');
     expect(view()).toContain('刷新内容');
     expect(view()).toContain('repository-footer');
@@ -51,8 +52,8 @@ describe('知识资产 GitLab 阅读前端契约', () => {
     const assets = read('apps/knowledge-center-web/frontend/knowledge-center/modules/assets/view.js');
     expect(assets).toContain('repositoryMapped');
     expect(assets).toContain("/knowledge-center/review?handbookId=${encodeURIComponent(id)}");
-    expect(assets).toContain('<strong>审核与发布</strong>');
-    expect(assets).toContain('查看仓库内容、审阅并发布');
+    expect(assets).toContain("{ key: 'review', label: '审核与发布', href: reviewHref }");
+    expect(assets).toContain('repositoryMapped ? `/knowledge-center/assets/${encodeURIComponent(id)}/repository`');
     expect(assets).not.toContain('<strong>仓库内容</strong>');
     expect(assets).toContain('配置仓库映射');
     expect(assets).toContain('维护仓库映射');

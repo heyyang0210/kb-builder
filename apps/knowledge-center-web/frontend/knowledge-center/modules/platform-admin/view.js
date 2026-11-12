@@ -34,6 +34,7 @@ const TAB_LABELS = {
   gitlab: 'GitLab 仓库',
   mcp: 'MCP 服务',
   models: 'Agent&模型服务',
+  plugins: '插件',
 };
 
 const TAB_ICONS = {
@@ -43,6 +44,7 @@ const TAB_ICONS = {
   gitlab: 'git-branch',
   mcp: 'plug',
   models: 'bot',
+  plugins: 'puzzle',
 };
 
 function platformTabLabel(tab, label = TAB_LABELS[tab]) {
@@ -71,6 +73,7 @@ function renderTabs(activeTab, teamGroupView = 'people') {
     ${tabButton('permissions')}
     ${tabButton('gitlab')}
     ${tabButton('models')}
+    ${tabButton('plugins')}
   </nav>`;
 }
 
@@ -133,7 +136,7 @@ function renderGovernanceTab(governanceProjection = {}, projection = {}, databas
   const dbRow = `<tr><td><span class="governance-service"><i data-lucide="database" aria-hidden="true"></i>数据库连接</span></td><td>${state(dbHealth, dbHealth === 'ok' ? '正常' : dbHealth === 'error' ? '不可用' : '待确认')}</td><td class="governance-detail ${dbDetail === '—' ? 'is-empty' : ''}">${escapeHtml(dbDetail)}${dbHealth === 'error' && dbRuntime.jdbcUrl ? ` · ${escapeHtml(dbRuntime.jdbcUrl)}` : ''}</td><td><button type="button" class="governance-row-action" data-database-open>管理连接<i data-lucide="arrow-up-right" aria-hidden="true"></i></button></td></tr>`;
   const externalRow = `<tr><td><span class="governance-service"><i data-lucide="git-branch" aria-hidden="true"></i>GitLab 外部连接</span></td><td>${state(externalStatus, externalStatus === 'ok' ? '已验证' : externalStatus === 'warning' ? '需关注' : '待确认')}</td><td class="governance-detail">${escapeHtml(gov.externalConnectionSummary || '连接状态待加载')}</td><td><a class="governance-row-action" href="/knowledge-center/platform?tab=gitlab">查看连接<i data-lucide="arrow-up-right" aria-hidden="true"></i></a></td></tr>`;
   const healthHtml = `<section class="governance-runtime" aria-labelledby="governance-runtime-title"><header class="governance-section-head"><h3 id="governance-runtime-title">运行状态</h3><span>${services.length + 2} 项检查</span></header><div class="governance-table-wrap"><table class="governance-status-table"><thead><tr><th>对象</th><th>状态</th><th>当前信息</th><th>操作</th></tr></thead><tbody>${rows}${dbRow}${externalRow}</tbody></table></div></section>`;
-  const pendingHtml = `<section class="governance-action-panel" aria-labelledby="governance-pending-title"><header class="governance-section-head"><h3 id="governance-pending-title">待处理事项</h3><span>${pendingItems.length} 项</span></header>${pendingItems.length ? `<div class="governance-pending-list">${pendingItems.map(item => `<div class="governance-pending-item"><span class="governance-pending-level">需要处理</span><div><strong>${escapeHtml(item.title || item.name || '待处理')}</strong>${item.description ? `<span class="governance-pending-description">${escapeHtml(item.description)}</span>` : ''}</div>${item.actionUrl ? `<a href="${escapeHtml(item.actionUrl)}">查看处理<i data-lucide="arrow-up-right" aria-hidden="true"></i></a>` : ''}</div>`).join('')}</div>` : '<div class="governance-pending-empty"><i data-lucide="circle-check" aria-hidden="true"></i><span>暂无待处理事项</span></div>'}</section>`;
+  const pendingHtml = `<section class="governance-action-panel" aria-labelledby="governance-pending-title"><header class="governance-section-head"><h3 id="governance-pending-title">待处理事项</h3><span>${pendingItems.length} 项</span></header>${pendingItems.length ? `<div class="governance-pending-list">${pendingItems.map(item => `<div class="governance-pending-item"><span class="governance-pending-level">需要处理</span><div><strong>${escapeHtml(item.title || item.name || '待处理')}</strong>${item.description ? `<span class="governance-pending-description">${escapeHtml(item.description)}</span>` : ''}</div>${item.actionUrl ? `<a href="${escapeHtml(item.actionUrl)}">查看<i data-lucide="arrow-up-right" aria-hidden="true"></i></a>` : ''}</div>`).join('')}</div>` : '<div class="governance-pending-empty"><i data-lucide="circle-check" aria-hidden="true"></i><span>暂无待处理事项</span></div>'}</section>`;
 
   const recentOpsHtml = recentOps.length ? `<div class="governance-recent-ops">
     <h3 style="margin:0 0 var(--space-3);font-size:15px;font-weight:700">最近治理操作</h3>
@@ -216,6 +219,7 @@ export function renderPrincipalsTab(projection = {}, listState = {}, teamGroupPr
     <header class="principal-page-header">
       <div><h2>人员管理</h2><p>管理知识中心可选责任人及其 CAS 账号绑定。</p></div>
       <div class="principal-header-actions">
+        <a class="button secondary" href="/knowledge-center/document-tasks?tab=config">知识中心负责人</a>
         <button class="button secondary" type="button" data-principal-open-import>Excel 批量导入</button>
         <button class="button primary" type="button" data-principal-open-create>+  新增人员</button>
       </div>
@@ -720,6 +724,9 @@ export function renderPlatformAdmin({
     case 'models':
       tabContent = '<section role="tabpanel" id="platform-panel-models" aria-labelledby="platform-tab-models"><div class="mcp-admin" data-model-admin></div></section>';
       break;
+    case 'plugins':
+      tabContent = '<section role="tabpanel" id="platform-panel-plugins" aria-labelledby="platform-tab-plugins"><div data-pingcode-sync></div></section>';
+      break;
     case 'mcp':
       tabContent = '<section role="tabpanel" id="platform-panel-mcp" aria-labelledby="platform-tab-mcp"><div class="mcp-admin" data-mcp-admin></div></section>';
       break;
@@ -742,10 +749,7 @@ export function renderPlatformAdmin({
       break;
   }
 
-  return `<div class="platform-admin-page ${activeTab === 'models' ? 'agent-tab-active' : ''}"><div class="page-intro">
-    <h2>平台管理</h2>
-    <span class="platform-header-meta">${projection?.asOf ? `更新于 ${new Date(projection.asOf).toLocaleString('zh-CN', { hour12: false })}` : ''}</span>
-  </div>
+  return `<div class="platform-admin-page ${activeTab === 'models' ? 'agent-tab-active' : ''}">${projection?.asOf ? `<div class="workspace-action-row"><span class="platform-header-meta">更新于 ${new Date(projection.asOf).toLocaleString('zh-CN', { hour12: false })}</span></div>` : ''}
   ${renderTabs(activeTab, teamGroupView || 'people')}
   ${tabContent}</div>`;
 }

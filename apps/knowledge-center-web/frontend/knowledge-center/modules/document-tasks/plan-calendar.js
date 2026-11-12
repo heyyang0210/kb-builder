@@ -27,7 +27,7 @@ export function openPlanCalendar(host, task, key, save, refresh, reload) {
       return `<button type="button" data-day="${day}" aria-label="${day}" aria-pressed="${date === day}">${i + 1}</button>`;
     }).join('');
   };
-  draw(); dialog.showModal(); window.lucide?.createIcons();
+  draw(); dialog.showModal(); window.lucide?.createIcons({ nodes: [dialog] });
   dialog.addEventListener('close', () => dialog.remove());
   dialog.addEventListener('cancel', event => { if (busy) event.preventDefault(); });
   dialog.onclick = event => {

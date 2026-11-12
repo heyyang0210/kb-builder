@@ -79,7 +79,9 @@ export const runIncrementalChecks = (taskId, body = {}) => command(taskId, 'chec
 export const submitIncrementalCandidate = (taskId, body = {}) => command(taskId, 'candidate', body);
 export const createIncrementalReview = (taskId, body = {}) => command(taskId, 'reviews', body);
 export const commentIncrementalReview = (taskId, reviewId, body) => command(taskId, `reviews/${encodeURIComponent(reviewId)}/comments`, body);
+export const decideScopeOpinion = (taskId, reviewId, commentId, body) => command(taskId, `reviews/${encodeURIComponent(reviewId)}/comments/${encodeURIComponent(commentId)}/scope-decision`, body);
 export const loadReviewMentionTargets = reviewId => request(`/knowledge-center/api/document-tasks/review/${encodeURIComponent(reviewId)}/mention-targets`);
+export const loadReviewScopeOpinions = reviewId => request(`/knowledge-center/api/document-tasks/review/${encodeURIComponent(reviewId)}/scope-opinions`);
 export const replyIncrementalReviewComment = (taskId, reviewId, commentId, body) => command(taskId, `reviews/${encodeURIComponent(reviewId)}/comments/${encodeURIComponent(commentId)}/replies`, body);
 export const resolveIncrementalReviewComment = (taskId, reviewId, commentId, body = {}) => command(taskId, `reviews/${encodeURIComponent(reviewId)}/comments/${encodeURIComponent(commentId)}/resolve`, body);
 export const reopenIncrementalReviewComment = (taskId, reviewId, commentId, body = {}) => command(taskId, `reviews/${encodeURIComponent(reviewId)}/comments/${encodeURIComponent(commentId)}/reopen`, body);

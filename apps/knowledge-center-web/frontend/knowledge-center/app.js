@@ -8,7 +8,7 @@ import { canSaveHandbookDraft, handbookReviewAction } from './modules/production
 import { takeReviewBootstrapPrefetch } from './common/api/review-bootstrap-prefetch.js';
 import { archiveAsset, createAsset, createPrincipal, createTeamGroup, deleteOutline, importOutline, validateOutline, importPrincipals, loadAssets, loadOutlineData, loadPlatformData, loadPrincipals, loadTeamGroups, loadTeamGroup, saveTeamRoster, publishOutlineGovernance, resolveAssetStatus, restoreAsset, saveOutlineGovernance, updateAsset, updateAssetStatus, updateDomainBuildTaskItem, loadDomainBuildTasks as fetchDomainBuildTasks, loadPlatformPermissions, updatePlatformUserPermissions, updatePrincipal, loadDatabaseConnectionStatus, testDatabaseConnection, saveDatabaseConnection, loadTemplates, loadTemplate, loadTemplateMappings } from './common/api/platform-api.js';
 import { disconnectGitLabOAuth, handbookGitLabOAuthHref, gitLabOAuthHref, loadGitLabBranches, loadGitLabConnections, loadGitLabOAuthAccounts, loadGitLabOAuthStatus, loadGitLabOAuthConfig, loadGitLabTree, loadHandbookGitLabAccess, loadHandbookRepository, loadHandbookRepositoryCommits, loadHandbookRepositoryFile, loadHandbookRepositoryMapping, loadHandbookRepositoryStatistics, loadHandbookRepositoryTree, loadReviewRepositoryContext, saveGitLabConnection, saveHandbookRepositoryMapping, createGitLabConnection, updateGitLabConnection, verifyGitLabConnection, disableGitLabConnection, enableGitLabConnection, searchGitLabConnections, loadGitLabVersionMappings, saveGitLabVersionMapping, setGitLabVersionMappingState } from './common/api/gitlab-api.js';
-import { addIncrementalSource, bootstrapBaseline, cancelIncrementalReview, commentIncrementalReview, createIncrementalReview, createIncrementalRevision, createIncrementalTask, createOnlineReview, decideIncrementalReview, loadCandidateDiff, loadHandbookReviewSummary, loadIncrementalBaselines, loadIncrementalTask, loadIncrementalTasks, loadMyGenerations, loadReviewBootstrap, loadReviewMentionTargets, publishIncrementalTask, reassignIncrementalReview, recordIncrementalEvidence, reopenIncrementalReviewComment, replyIncrementalReviewComment, resolveIncrementalReviewComment, runIncrementalChecks, saveIncrementalDraft, submitIncrementalCandidate, updateIncrementalTarget } from './common/api/incremental-api.js';
+import { addIncrementalSource, bootstrapBaseline, cancelIncrementalReview, commentIncrementalReview, createIncrementalReview, createIncrementalRevision, createIncrementalTask, createOnlineReview, decideIncrementalReview, decideScopeOpinion, loadCandidateDiff, loadHandbookReviewSummary, loadIncrementalBaselines, loadIncrementalTask, loadIncrementalTasks, loadMyGenerations, loadReviewBootstrap, loadReviewMentionTargets, loadReviewScopeOpinions, publishIncrementalTask, reassignIncrementalReview, recordIncrementalEvidence, reopenIncrementalReviewComment, replyIncrementalReviewComment, resolveIncrementalReviewComment, runIncrementalChecks, saveIncrementalDraft, submitIncrementalCandidate, updateIncrementalTarget } from './common/api/incremental-api.js';
 import { createHandbookIncrementalReview, loadHandbookDraft, loadHandbookDraftRevisions, loadHandbookReviewDrafts, loadHandbookReviewers, restoreHandbookDraftRevision, saveHandbookDraft, uploadHandbookDraftAttachment } from './common/api/handbook-production-api.js';
 import { sha256Text } from './common/utils/sha256.js';
 import { bootstrapAuth, consumeRememberedTarget, performLogout, rememberCurrentTarget, startCasLogin, submitAdminLogin } from './common/auth/auth-controller.js';
@@ -26,6 +26,7 @@ import { updateReviewWaitingEntry } from './modules/review-publishing/view.js';
 import { initViewportRuntime } from './common/viewport-runtime.js';
 import { initScrollRuntime } from './common/scroll-runtime.js';
 import { initDismissibleMenus } from './common/dismissible-menu.js';
+import { uiIcon } from './common/ui-system.js';
 import { loadDocumentTaskWorkspace, renderDocumentTasks } from './modules/document-tasks/view.js';
 import { loadDocumentTask, taskWrite } from './common/api/document-tasks-api.js';
 import { loadMyTasks, MY_TASK_SOURCE_COUNT, setRefreshHandler, setResponsibleHandler, setSyncHandler, getMyTaskQueryKey, getSelectedResponsibleId, resetResponsibleSelection, updateMyTasksProjection } from './modules/dashboard/my-tasks.js';
@@ -38,6 +39,72 @@ window.addEventListener('pagehide', event => {
   if (!event.persisted) { scrollRuntime.destroy(); viewportRuntime.destroy(); dismissibleMenus.destroy(); }
 });
 import { renderReviewPublishing, renderReviewRepositoryRegion } from './modules/review-publishing/view.js';
+
+const globalNotificationRoot = document.querySelector('[data-global-notification]');
+if (globalNotificationRoot) {
+  globalNotificationRoot.querySelector('[data-global-notification-icon]').innerHTML = uiIcon('navigation.notifications');
+  globalNotificationRoot.querySelector('[data-global-notification-close-icon]').innerHTML = uiIcon('action.close');
+}
+const globalNotificationState = { loading: false, items: [], unreadCount: 0, error: '' };
+const notificationRoleNames = { handbook_owner: '手册负责人', document_first_owner: '文档首次责任人', knowledge_center_owner: '知识中心负责人' };
+function notificationSafe(value) { return String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char])); }
+function renderGlobalNotifications() {
+  if (!globalNotificationRoot) return;
+  const panel = globalNotificationRoot.querySelector('[data-global-notification-panel]');
+  const list = globalNotificationRoot.querySelector('[data-global-notification-list]');
+  const count = globalNotificationRoot.querySelector('[data-global-notification-count]');
+  const badge = globalNotificationRoot.querySelector('[data-global-notification-badge]');
+  const unread = Number(globalNotificationState.unreadCount || 0);
+  count.textContent = `未读 ${unread}`;
+  badge.textContent = unread > 99 ? '99+' : String(unread);
+  badge.hidden = unread < 1;
+  if (globalNotificationState.loading) list.innerHTML = '<p class="global-notification-empty" role="status">正在读取通知…</p>';
+  else if (globalNotificationState.error) list.innerHTML = `<p class="global-notification-error" role="alert">${notificationSafe(globalNotificationState.error)}</p><button type="button" class="button secondary" data-global-notification-retry>重试</button>`;
+  else if (!globalNotificationState.items.length) list.innerHTML = '<p class="global-notification-empty">暂无通知</p>';
+  else list.innerHTML = `<ul>${globalNotificationState.items.map(item => {
+    const roles = (item.roles || []).map(role => notificationRoleNames[role] || role).join('、');
+    const subject = [item.ticketNumber, item.handbookName, item.documentName || item.documentId].filter(Boolean).join(' / ') || '审核意见';
+    const type = item.type === 'review_scope_opinion' ? '范围意见' : '内容意见';
+    const action = (item.actions || []).includes('scope_decide') ? '处理' : (item.actions || []).includes('reply') ? '回复' : '查看';
+    const detail = [roles ? `你被提及为：${roles}` : '', item.recipientActive === false ? '人员已失效' : '', item.author?.displayName ? `发起人：${item.author.displayName}` : ''].filter(Boolean).join(' · ');
+    return `<li class="global-notification-item"><div><strong>${notificationSafe(type)} · ${notificationSafe(subject)}</strong>${detail ? `<small>${notificationSafe(detail)}</small>` : ''}<p>${notificationSafe(item.commentContent || '')}</p></div><span class="global-notification-state">${item.readAt ? '已读' : '未读'}</span><a href="${notificationSafe(item.url)}" data-global-notification-link>${action}</a>${item.readAt ? '' : `<button type="button" data-global-notification-read="${notificationSafe(item.id)}">标记已读</button>`}</li>`;
+  }).join('')}</ul>`;
+}
+async function loadGlobalNotifications() {
+  globalNotificationState.loading = true; globalNotificationState.error = ''; renderGlobalNotifications();
+  try {
+    const response = await fetch('/knowledge-center/api/incremental-tasks/notifications?limit=20', { credentials: 'same-origin', cache: 'no-store' });
+    const payload = await response.json();
+    if (!response.ok || payload.success === false) throw new Error(payload.error?.message || `HTTP ${response.status}`);
+    globalNotificationState.items = payload.data.items || [];
+    globalNotificationState.unreadCount = payload.data.unreadCount || 0;
+  } catch (error) { globalNotificationState.error = error.message || '通知读取失败'; }
+  globalNotificationState.loading = false; renderGlobalNotifications();
+}
+document.addEventListener('click', event => {
+  if (!globalNotificationRoot) return;
+  const trigger = event.target.closest('[data-global-notification-trigger]');
+  const close = event.target.closest('[data-global-notification-close]');
+  const retry = event.target.closest('[data-global-notification-retry]');
+  const read = event.target.closest('[data-global-notification-read]');
+  const link = event.target.closest('[data-global-notification-link]');
+  const panel = globalNotificationRoot.querySelector('[data-global-notification-panel]');
+  if (trigger) {
+    const open = panel.hidden;
+    trigger.setAttribute('aria-expanded', String(open));
+    if (open) { panel.hidden = false; loadGlobalNotifications(); }
+    else panel.hidden = true;
+    return;
+  }
+  if (close) { panel.hidden = true; globalNotificationRoot.querySelector('[data-global-notification-trigger]')?.setAttribute('aria-expanded', 'false'); return; }
+  if (retry) { loadGlobalNotifications(); return; }
+  if (read) {
+    fetch(`/knowledge-center/api/incremental-tasks/notifications/${encodeURIComponent(read.dataset.globalNotificationRead)}/read`, { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': globalThis.crypto?.randomUUID?.() || `notice-${Date.now()}` }, body: '{}' }).then(() => loadGlobalNotifications()).catch(error => { globalNotificationState.error = error.message || '标记已读失败'; renderGlobalNotifications(); });
+    return;
+  }
+  if (link) { panel.hidden = true; globalNotificationRoot.querySelector('[data-global-notification-trigger]')?.setAttribute('aria-expanded', 'false'); return; }
+  if (!globalNotificationRoot.contains(event.target)) { panel.hidden = true; globalNotificationRoot.querySelector('[data-global-notification-trigger]')?.setAttribute('aria-expanded', 'false'); }
+});
 
 const renderers = {
   review: renderReviewPublishing,
@@ -393,6 +460,7 @@ function outlineProjectionKey(route = outlineRouteState()) {
   }
   if (appState.activeView === 'platform' && appState.platformTab === 'mcp' && document.querySelector('[data-mcp-admin]')) return;
   if (appState.activeView === 'platform' && appState.platformTab === 'models' && document.querySelector('[data-model-admin]')) return;
+  if (appState.activeView === 'platform' && appState.platformTab === 'plugins' && document.querySelector('[data-pingcode-sync][data-mounted]')) return;
   platformRenderDeferred = false;
   const renderer = renderers[appState.activeView];
   if (!renderer) {
@@ -405,7 +473,10 @@ function outlineProjectionKey(route = outlineRouteState()) {
   // reviewProjection 错误投影，只有该投影明确失败时才展示页面级错误。
   const globalErrorPanel = byId('error-panel');
   if (globalErrorPanel && appState.activeView === 'review' && appState.reviewProjection?.status !== 'unavailable') globalErrorPanel.hidden = true;
-  byId('page-title').textContent = appState.activeView === 'outlines' && outlineRouteState().page === 'recycle' ? '大纲回收站' : appState.activeView === 'outlines' && outlineRouteState().page === 'resources' ? '准备大纲' : views[appState.activeView][1];
+  const currentPageTitle = appState.activeView === 'outlines' && outlineRouteState().page === 'recycle' ? '大纲回收站' : appState.activeView === 'outlines' && outlineRouteState().page === 'resources' ? '准备大纲' : views[appState.activeView][1];
+  byId('page-title').textContent = currentPageTitle;
+  const globalContextTitle = byId('global-context-title');
+  if (globalContextTitle) globalContextTitle.textContent = currentPageTitle;
   document.body.classList.toggle('review-view', appState.activeView === 'review');
   document.body.classList.toggle('review-focus-mode', appState.activeView === 'review' && appState.reviewUi.focusMode === true);
   document.querySelectorAll('.nav-item').forEach(button => {
@@ -435,7 +506,7 @@ function outlineProjectionKey(route = outlineRouteState()) {
       }
       if (byId('view-root')._taskProjection) { const taskRoot = byId('view-root'); taskRoot.onclick = taskRoot.onchange = taskRoot.onsubmit = taskRoot.onkeydown = null; delete taskRoot._taskProjection; }
       if (appState.activeView === 'review') {
-        appState.reviewUi.currentUserId = String(authState.session?.user?.id || '');
+        appState.reviewUi.currentUserId = String(authState.session?.user?.principalId || authState.session?.user?.id || '');
         appState.reviewUi.canWrite = canPerform('knowledge:write');
         appState.reviewUi.canManage = canPerform('platform:manage');
       }
@@ -452,6 +523,10 @@ function outlineProjectionKey(route = outlineRouteState()) {
       if (mcpRoot) mountMcpAdmin(mcpRoot);
       const modelRoot = byId('view-root').querySelector('[data-model-admin]');
       if (modelRoot) mountModelAdmin(modelRoot);
+      const pingcodeRoot = byId('view-root').querySelector('[data-pingcode-sync]');
+      if (pingcodeRoot) import('./modules/platform-admin/pingcode-sync.js').then(module => {
+        if (pingcodeRoot.isConnected) module.mountPingcodeSync(pingcodeRoot);
+      }).catch(showApplicationError);
       const outlineMenu = byId('view-root').querySelector('.outline-more-actions');
       if (openOutlineMenuId && outlineMenu?.dataset.outlineMoreId === openOutlineMenuId) outlineMenu.open = true;
       const permissionDraft = appState.permissionRoleDraft;
@@ -1893,6 +1968,17 @@ async function loadReviewWorkspace(taskId = null) {
     appState.reviewProjection = { status: 'ok', ...bootstrap, handbookId: readerHandbookId, onlineReviewCommits: bootstrap?.onlineReviewCommits || [] };
     appState.gitlabProjection = { status: 'loading', handbookId: readerHandbookId, language: readerLanguage, branch: readerBranch, requestedPath };
     if (appState.activeView === 'review') render();
+    if (selectedTask?.id) {
+      loadReviewScopeOpinions(selectedTask.id).then(result => {
+        if (sequence !== reviewLoadSequence) return;
+        appState.reviewProjection.scopeOpinions = Object.fromEntries((result.items || []).map(item => [item.commentId, item]));
+        if (appState.activeView === 'review') render();
+      }).catch(error => {
+        if (sequence !== reviewLoadSequence) return;
+        appState.reviewProjection.scopeOpinionError = error.message || '状态读取失败';
+        if (appState.activeView === 'review') render();
+      });
+    }
     performance.mark?.('review-workspace-ready');
     if (readerHandbookId && view === 'reader') {
       const operationPath = selectedTask?.handbookSource?.documents?.find(item => item.documentId === params.get('documentId'))?.filePath || selectedTask?.handbookSource?.documents?.[0]?.filePath || selectedTask?.target?.documentPaths?.[0] || selectedTask?.target?.paths?.[0] || selectedTask?.candidate?.operations?.find(item => item.path)?.path || '';
@@ -1951,21 +2037,22 @@ async function runIncrementalAction(control, taskId, operation, successMessage) 
   const container = control.closest('form, .incremental-section, .review-action-card');
   incrementalStatus(container, '正在处理…');
   try {
-    await operation();
-    incrementalStatus(container, successMessage);
+    const result = await operation();
+    const message = typeof successMessage === 'function' ? successMessage(result) : successMessage;
+    incrementalStatus(container, message);
     // Keep the active projection in sync. Review actions must reload the
     // review workspace (and its server-computed capabilities); otherwise a
     // successful decision would leave stale buttons visible until navigation.
-    if (appState.activeView === 'review') { await loadReviewWorkspace(taskId); showAppNotice(successMessage, { title: '操作完成', tone: 'success' }); }
+    if (appState.activeView === 'review') { await loadReviewWorkspace(taskId); showAppNotice(message, { title: result?.correctionStatus === 'pending' ? '待处理' : '操作完成', tone: result?.correctionStatus === 'pending' ? 'warning' : 'success' }); }
     else await loadIncrementalWorkspace(taskId);
   } catch (error) {
     const publishing = control.matches('[data-review-publish], [data-incremental-publish]');
     const recovery = !publishing ? '' : error.code === 'GITLAB_INSUFFICIENT_SCOPE'
       ? '请在权限开通后到个人设置重新连接 GitLab。审核任务已保留。'
       : error.code === 'GITLAB_NO_CHANGES' || error.code === 'GITLAB_BASELINE_CHANGED'
-      ? '请返回文档生产修改、保存并重新提交审核。原审核任务已保留。'
+      ? '请进入文档编写，修改、保存并重新提交审核。原审核任务已保留。'
       : error.code === 'ONLINE_REVIEW_REVISION_REQUIRED'
-        ? '请返回文档生产保存修改稿并重新提交审核。原审核记录已保留。'
+        ? '请进入文档编写，保存修改稿并重新提交审核。原审核记录已保留。'
         : '审核任务已保留，可在确认原因后重试创建 MR。';
     incrementalStatus(container, `${error.message || '操作失败'}${recovery ? ` ${recovery}` : ''}`, true);
     if (appState.activeView === 'review') showAppNotice(error.message || '操作失败，请重试', { title: '操作失败', tone: 'error' });
@@ -3363,7 +3450,7 @@ document.addEventListener('click', async event => {
         draftsPanel.innerHTML = drafts.length ? drafts.map(item => {
           const selected = new URLSearchParams(window.location.search).get('documentId') === item.documentId;
           return `<div class="review-online-draft"><label><input type="checkbox" data-review-online-draft data-document-id="${escapeHtml(item.documentId)}" data-outline-version-id="${escapeHtml(item.outlineVersionId)}" data-branch="${escapeHtml(item.branch)}" data-revision-id="${escapeHtml(item.draftRevisionId)}" ${selected ? 'checked' : ''}><span>${escapeHtml(item.documentId)} · 已保存 v${escapeHtml(item.editVersion)} · ${escapeHtml(item.branch)}</span></label><label>仓库文件路径<input data-review-online-path="${escapeHtml(item.documentId)}" placeholder="完整仓库路径，例如 docs/00SQL参考手册.md" value="${selected ? escapeHtml(form.dataset.documentPath) : ''}"></label></div>`;
-        }).join('') : '<p>当前分支没有已保存修改稿。请前往文档生产编辑并保存。</p>';
+        }).join('') : '<p>当前分支没有已保存修改稿。请进入文档编写并保存。</p>';
         reviewerSelect.innerHTML = '<option value="">请选择审核人</option>' + (reviewerResult.items || []).map(item => `<option value="${escapeHtml(item.id)}" ${item.disabled ? 'disabled' : ''}>${escapeHtml(item.displayName)}</option>`).join('');
         syncSearchableSelect(reviewerSelect);
       } catch (error) {
@@ -3458,6 +3545,13 @@ document.addEventListener('click', async event => {
     return;
   }
   const commentResolve = event.target.closest('[data-review-comment-resolve], [data-review-comment-reopen]');
+  const scopeDecision = event.target.closest('[data-scope-opinion-decision]');
+  if (scopeDecision) {
+    const decision = scopeDecision.dataset.scopeOpinionDecision;
+    await runIncrementalAction(scopeDecision, scopeDecision.dataset.taskId, () => decideScopeOpinion(scopeDecision.dataset.taskId,
+      scopeDecision.dataset.reviewId, scopeDecision.dataset.commentId, { decision }), result => result?.correctionStatus === 'pending' ? '已采纳，待创建。请点击重试。' : '已采纳，请查看范围事项');
+    return;
+  }
   if (commentResolve) { const reopen = commentResolve.hasAttribute('data-review-comment-reopen'); runIncrementalAction(commentResolve, commentResolve.dataset.taskId, () => (reopen ? reopenIncrementalReviewComment : resolveIncrementalReviewComment)(commentResolve.dataset.taskId, commentResolve.dataset.reviewId, commentResolve.dataset.reviewCommentResolve || commentResolve.dataset.reviewCommentReopen), reopen ? '意见已重新打开' : '意见已标记为已处理'); return; }
   const replyToggle = event.target.closest('[data-review-reply-toggle], [data-review-reply-cancel]');
   if (replyToggle) {
@@ -4162,16 +4256,36 @@ document.addEventListener('focusin', async event => {
   const status = select.closest('label')?.querySelector('[data-review-mention-status]');
   try {
     const targets = await loadReviewMentionTargets(select.dataset.reviewId);
-    select.replaceChildren(...targets.map(item => {
+    select.replaceChildren(...targets.flatMap(item => (item.targets || []).map(target => {
       const option = document.createElement('option'); option.value = item.handbookId;
-      option.textContent = `${item.handbookName} · ${item.ownerName || item.ownerId || '未指派负责人'} · ${item.ticketNumber}`;
-      option.disabled = !item.ownerId; return option;
-    }));
+      option.dataset.role = target.role; option.dataset.documentId = target.documentId || '';
+      option.dataset.recipientId = target.recipientId; option.dataset.recipientName = target.recipientName;
+      option.textContent = `${item.handbookName} · ${{ handbook_owner: '手册负责人', document_first_owner: '文档首次责任人', knowledge_center_owner: '知识中心负责人' }[target.role]} · ${target.recipientName}`;
+      return option;
+    })));
     select.dataset.loaded = 'true';
-    if (status) status.textContent = targets.length ? '仅显示当前审核关联工单中已确认的手册；接收人由服务端读取' : '当前审核没有可提及的已确认手册';
+    if (status) status.textContent = select.options.length ? '请选择接收人' : '当前审核没有可提及的有效人员';
   } catch (error) {
     if (status) status.textContent = error.message || '手册列表读取失败，请稍后重试';
   } finally { delete select.dataset.loading; }
+});
+
+document.addEventListener('change', event => {
+  const form = event.target.closest('[data-review-comment-form]');
+  if (!form) return;
+  if (event.target.name === 'commentType') {
+    const isScope = event.target.value === 'scope_opinion';
+    const level = form.querySelector('[data-review-scope-level]');
+    if (level) { level.hidden = !isScope; level.querySelector('select').disabled = !isScope; }
+    const submit = form.querySelector('button[type="submit"]');
+    if (submit) submit.textContent = isScope ? '提交范围意见' : '提交内容意见';
+  }
+  if (event.target.matches('[data-review-mention-select]')) {
+    const selected = [...event.target.selectedOptions].filter(option => option.value);
+    const people = new Map(selected.map(option => [option.dataset.recipientId, option.dataset.recipientName]));
+    const status = form.querySelector('[data-review-mention-status]');
+    if (status) status.textContent = people.size ? `接收人：${[...people.values()].join('、')}（${people.size} 人）` : '未选择接收人';
+  }
 });
 
 document.addEventListener('submit', async event => {
@@ -4589,7 +4703,14 @@ document.addEventListener('submit', async event => {
     return;
   }
   const reviewCommentForm = event.target.closest('[data-review-comment-form]');
-  if (reviewCommentForm) { event.preventDefault(); const button = reviewCommentForm.querySelector('button[type="submit"]'); let anchor = null; try { anchor = reviewCommentForm.elements.anchor.value ? JSON.parse(reviewCommentForm.elements.anchor.value) : null; } catch (_) { anchor = null; } const mentions = [...reviewCommentForm.elements.mentions.selectedOptions].map(option => option.value).filter(Boolean).map(handbookId => ({ handbookId })); await runIncrementalAction(button, reviewCommentForm.dataset.taskId, () => commentIncrementalReview(reviewCommentForm.dataset.taskId, reviewCommentForm.dataset.reviewId, { comment: reviewCommentForm.elements.comment.value.trim(), commentType: reviewCommentForm.elements.commentType?.value || 'suggestion', severity: reviewCommentForm.elements.severity?.value || 'normal', candidateDigest: reviewCommentForm.elements.candidateDigest.value, mentions, ...(anchor ? { anchor } : {}) }), mentions.length ? '意见已保存，通知状态请查看结果' : '意见已添加'); return; }
+  if (reviewCommentForm) { event.preventDefault(); const button = reviewCommentForm.querySelector('button[type="submit"]'); let anchor = null; try { anchor = reviewCommentForm.elements.anchor.value ? JSON.parse(reviewCommentForm.elements.anchor.value) : null; } catch (_) { anchor = null; } const mentions = [...reviewCommentForm.elements.mentions.selectedOptions].filter(option => option.value).map(option => ({ handbookId: option.value, role: option.dataset.role || 'handbook_owner', ...(option.dataset.documentId ? { documentId: option.dataset.documentId } : {}) })); await runIncrementalAction(button, reviewCommentForm.dataset.taskId, () => commentIncrementalReview(reviewCommentForm.dataset.taskId, reviewCommentForm.dataset.reviewId, { comment: reviewCommentForm.elements.comment.value.trim(), commentType: reviewCommentForm.elements.commentType?.value || 'suggestion', scopeLevel: reviewCommentForm.elements.scopeLevel?.value || 'handbook', severity: reviewCommentForm.elements.severity?.value || 'normal', candidateDigest: reviewCommentForm.elements.candidateDigest.value, mentions, ...(reviewCommentForm.elements.relatedOpinionId?.value ? { relatedOpinionId: reviewCommentForm.elements.relatedOpinionId.value } : {}), ...(anchor ? { anchor } : {}) }), mentions.length ? '意见已保存并发送站内通知' : '意见已添加'); return; }
+  const scopeReject = event.target.closest('[data-scope-opinion-reject]');
+  if (scopeReject) { event.preventDefault(); const button = scopeReject.querySelector('button[type="submit"]'); await runIncrementalAction(button, scopeReject.dataset.taskId, () => decideScopeOpinion(scopeReject.dataset.taskId, scopeReject.dataset.reviewId, scopeReject.dataset.commentId, { decision: 'reject', reason: scopeReject.elements.reason.value.trim() }), '已记录不采纳原因'); return; }
+  const scopeCancel = event.target.closest('[data-scope-change-cancel]');
+  if (scopeCancel) { event.preventDefault(); const button = scopeCancel.querySelector('button[type="submit"]'); await runIncrementalAction(button, scopeCancel.dataset.taskId, async () => {
+    const task = await loadDocumentTask(scopeCancel.dataset.ticketNumber);
+    return taskWrite(`/${encodeURIComponent(task.number)}/scope-changes/${encodeURIComponent(scopeCancel.dataset.changeId)}/cancel`, { expectedRevision: task.revision, reason: scopeCancel.elements.reason.value.trim() }, 'POST');
+  }, '已取消'); return; }
   const reviewReplyForm = event.target.closest('[data-review-reply-form]');
   if (reviewReplyForm) { event.preventDefault(); const button = reviewReplyForm.querySelector('button[type="submit"]'); await runIncrementalAction(button, reviewReplyForm.dataset.taskId, () => replyIncrementalReviewComment(reviewReplyForm.dataset.taskId, reviewReplyForm.dataset.reviewId, reviewReplyForm.dataset.commentId, { comment: reviewReplyForm.elements.comment.value.trim() }), '回复已发送'); return; }
   const reviewDecisionForm = event.target.closest('[data-review-decision-form]');

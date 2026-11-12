@@ -1,11 +1,26 @@
 import { taskOperationId } from '../../common/api/document-tasks-api.js';
-import { loadDocumentTasks, loadDocumentTask, taskRequest, taskWrite, importDocumentTasks } from '../../common/api/document-tasks-api.js';
+import { loadDocumentTasks, loadDocumentTask, taskRequest, taskWrite, importDocumentTasks, downloadDocumentTaskFile } from '../../common/api/document-tasks-api.js';
 import { escapeHtml, icon } from '../../common/utils/dom.js';
 import { planCell, openPlanCalendar } from './plan-calendar.js';
 import { markDynamicSelects, cleanupSearchableSelects } from '../../common/searchable-combobox.js';
 const e = value => escapeHtml(String(value ?? ''));
 const labels = { pending_scope: '待处理', in_progress: '处理中', completed: '已完成' };
 const timestamp = value => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '—';
+function scopeImpactTable(items) {
+  if (!items.length) return '<p>没有文档范围变化</p>';
+  const operation = { add: '新增', update: '调整', withdraw: '撤出' };
+  const draft = { saved: '已保存', draft: '草稿', none: '未保存' };
+  const review = { pending: '待审核', approved: '已通过', rejected: '已退回' };
+  const readback = { consistent: '一致', matched: '一致', success: '一致', mismatch: '不一致', failed: '失败', pending: '待回读' };
+  return `<div class="task-scope-impact-table-wrap"><table class="task-scope-impact-table"><thead><tr><th>文档</th><th>操作</th><th>草稿</th><th>审核</th><th>MR</th><th>回读</th><th>时间</th><th>结果</th></tr></thead><tbody>${items.map(item => {
+    const mr = item.mergeRequest;
+    const mrUrl = typeof mr?.webUrl === 'string' && /^https:\/\//.test(mr.webUrl) ? mr.webUrl : null;
+    const mrCell = mrUrl ? `<a href="${e(mrUrl)}" target="_blank" rel="noopener noreferrer">MR链接</a>` : e(item.mrState === 'unknown' ? '未读取' : item.mrState || '未创建');
+    const result = item.canConfirm ? '可确认' : item.nextAction === 'close_mr_manually' ? '需关闭 MR' : '需刷新状态';
+    const candidate = item.candidateDigest ? `<details class="task-scope-candidate"><summary>候选摘要</summary><code>${e(item.candidateDigest)}</code></details>` : '';
+    return `<tr><td data-label="文档">${e(item.documentName || item.documentId)}${candidate}</td><td data-label="操作">${e(operation[item.operation] || item.operation)}</td><td data-label="草稿">${e(draft[item.draftStatus] || item.draftStatus || '—')}</td><td data-label="审核">${e(review[item.reviewStatus] || item.reviewStatus || '—')}</td><td data-label="MR">${mrCell}</td><td data-label="回读">${e(readback[item.readbackStatus] || item.readbackStatus || '—')}</td><td data-label="时间">${e(timestamp(item.observedAt))}</td><td data-label="结果">${e(result)}</td></tr>`;
+  }).join('')}</tbody></table></div>`;
+}
 function outputCell(task) {
   const links = [], seen = new Set();
   const add = (type, name, url, external = false) => {
@@ -41,8 +56,8 @@ export async function loadDocumentTaskWorkspace() {
 }
 export function renderDocumentTasks({ documentTaskProjection }) {
   const root = document.querySelector('#view-root');
-  const activeTab = root.querySelector('.document-task-page [data-task-tab].active')?.dataset.taskTab || 'list';
-  const state = { ...documentTaskProjection, tab: activeTab, selected: documentTaskProjection.selected || null, activeBookId: new URLSearchParams(window.location.search).get('handbookId'), filters: { page: 1, pageSize: 20, q: new URLSearchParams(window.location.search).get('task') || '' }, preview: null, file: null };
+  const activeTab = root.querySelector('.document-task-page [data-task-tab].active')?.dataset.taskTab || (new URLSearchParams(window.location.search).get('tab') === 'config' ? 'config' : 'list');
+  const state = { ...documentTaskProjection, tab: activeTab, selected: documentTaskProjection.selected || null, activeBookId: new URLSearchParams(window.location.search).get('handbookId'), filters: { page: 1, pageSize: 20, q: new URLSearchParams(window.location.search).get('task') || '', attention: 'normal' }, preview: null, file: null };
   const name = id => state.context?.people.find(p => p.id === id)?.displayName || id || '待指派';
   const options = (items, selected, blank = '请选择') => `<option value="">${blank}</option>${items.map(p => `<option value="${e(p.id)}" ${p.id === selected ? 'selected' : ''}>${e(p.displayName || p.name)}</option>`).join('')}`;
   const person = (field, selected) => `<select name="${e(field)}" data-searchable-select aria-label="责任人">${options(state.context?.people || [], selected)}</select>`;
@@ -67,8 +82,9 @@ export function renderDocumentTasks({ documentTaskProjection }) {
   }
   function render() {
     const ctx = state.context || {};
-    root.innerHTML = `<section class="document-task-page"><header class="document-task-page-header"><h1>任务管理</h1><div class="document-task-actions">${button('refresh', icon('refresh-cw') + '刷新')}${ctx.canAdmin ? button('import', icon('upload') + '导入工单') : ''}<input type="file" accept=".json,.xlsx" hidden data-task-file></div></header><p role="alert" data-task-message ${state.error ? '' : 'hidden'}>${e(state.error?.message)}</p><nav class="document-task-tabs" aria-label="任务管理视图">${[['list', '任务列表'], ['flow', '流程流转'], ...(ctx.canAdmin ? [['config', '任务配置']] : [])].map(([id, label]) => `<button data-task-tab="${id}" class="${state.tab === id ? 'active' : ''}" aria-selected="${state.tab === id}">${label}</button>`).join('')}</nav><div data-task-list ${state.tab !== 'list' ? 'hidden' : ''}><form class="document-task-toolbar" data-task-filters><label class="task-search">${icon('search')}<input name="q" aria-label="搜索编号或描述" placeholder="搜索编号或描述" value="${e(state.filters.q)}"></label><select name="ownerId" aria-label="责任人筛选">${options(ctx.people || [], state.filters.ownerId, '全部责任人')}</select><select name="product" aria-label="产品筛选">${options((state.filterOptions?.product || []).map(v => ({ id: v, name: v })), state.filters.product, "全部产品")}</select><select name="version" aria-label="版本筛选">${options((state.filterOptions?.version || []).map(v => ({ id: v, name: v })), state.filters.version, "全部版本")}</select><select name="status" aria-label="状态筛选"><option value="">全部状态</option>${Object.entries(labels).map(([id, label]) => `<option value="${id}" ${state.filters.status === id ? 'selected' : ''}>${label}</option>`).join('')}</select><button class="button secondary">筛选</button></form><div class="document-task-table-wrap"><table class="document-task-table"><thead><tr>${['编号', '描述', '责任人', '产品', '版本', '状态', '开始时间', '结束时间', '输出件', '来源'].map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>${(state.items || []).map(t => `<tr class="task-data-row"><td><button class="task-number" data-task-open="${e(t.number)}">${e(t.number)}</button></td><td>${e(t.description)}</td><td>${e(t.ownerName)}</td><td>${e(t.product || '未指定')}</td><td>${e(t.version || '未指定')}</td><td><span class="document-task-status ${t.status}">${e(labels[t.status])}</span></td><td>${planCell(t, "plannedStartTime")}</td><td>${planCell(t, "plannedEndTime")}</td><td class="task-output-cell">${outputCell(t)}</td><td>${t.sourceUrl ? `<a href="${e(t.sourceUrl)}" target="_blank" rel="noopener noreferrer">PingCode ${icon('external-link')}</a>` : '—'}</td></tr>`).join('') || `<tr><td colspan="10">${state.status === 'loading' ? '正在读取任务…' : state.error ? '任务读取失败，请点击刷新重试' : '暂无任务，请导入工单清单'}</td></tr>`}</tbody></table></div><footer class="task-pagination"><span>共 ${state.total || 0} 条 · 第 ${state.filters.page} 页</span>${button('previous', '上一页', state.filters.page <= 1 ? 'disabled' : '')}${button('next', '下一页', state.filters.page * state.filters.pageSize >= (state.total || 0) ? 'disabled' : '')}</footer></div><section ${state.tab !== 'flow' ? 'hidden' : ''}><h2>${e(state.selected?.number || '流程流转')}</h2>${flow(state.selected)}</section>${ctx.canAdmin ? `<section ${state.tab !== 'config' ? 'hidden' : ''} class="document-task-config"><h2>任务配置</h2><form data-task-config><label>默认责任人${person('defaultOwnerId', ctx.config?.defaultOwnerId)}</label><p class="muted">只影响之后导入的新任务。</p><fieldset><legend>不涉及理由选项</legend>${(ctx.config?.reasonOptions || []).map(r => `<label>${e(r.id === "other" ? "其他" : r.label)}<input name="reasonLabel:${e(r.id)}" value="${e(r.label)}" required aria-label="${e(r.id)}理由名称"></label>`).join('')}</fieldset><button class="button">保存配置</button><span role="status"></span></form></section>` : ''}<div data-task-drawer-host></div><div data-task-modal-host></div></section>`;
-    if (state.selected && state.tab === 'list') renderDrawer();
+    root.innerHTML = `<section class="document-task-page"><header class="document-task-page-header"><h1>任务管理</h1><div class="document-task-actions">${button('refresh', icon('refresh-cw') + '刷新')}${button('export', icon('download') + '导出 CSV')}${ctx.canAdmin ? button('import', icon('upload') + '导入工单') : ''}<input type="file" accept=".json,.xlsx" hidden data-task-file></div></header><p role="alert" data-task-message ${state.error ? '' : 'hidden'}>${e(state.error?.message)}</p><nav class="document-task-tabs" aria-label="任务管理视图">${[['list', '任务列表'], ['secondary', '次要事项'], ['flow', '流程流转'], ...(ctx.canAdmin ? [['config', '任务配置']] : [])].map(([id, label]) => `<button data-task-tab="${id}" class="${state.tab === id ? 'active' : ''}" aria-selected="${state.tab === id}">${label}</button>`).join('')}</nav><div data-task-list ${!['list', 'secondary'].includes(state.tab) ? 'hidden' : ''}><form class="document-task-toolbar" data-task-filters><label class="task-search">${icon('search')}<input name="q" aria-label="搜索编号或描述" placeholder="搜索编号或描述" value="${e(state.filters.q)}"></label><input name="ir" aria-label="IR 编号" placeholder="IR 编号" value="${e(state.filters.ir || '')}"><select name="type" aria-label="任务类型"><option value="">全部类型</option><option value="REQUIREMENT" ${state.filters.type === 'REQUIREMENT' ? 'selected' : ''}>需求</option><option value="TICKET" ${state.filters.type === 'TICKET' ? 'selected' : ''}>工单</option></select><select name="ownerId" aria-label="责任人筛选">${options(ctx.people || [], state.filters.ownerId, '全部责任人')}</select><select name="product" aria-label="产品筛选">${options((state.filterOptions?.product || []).map(v => ({ id: v, name: v })), state.filters.product, "全部产品")}</select><select name="version" aria-label="版本筛选">${options((state.filterOptions?.version || []).map(v => ({ id: v, name: v })), state.filters.version, "全部版本")}</select><select name="status" aria-label="状态筛选"><option value="">全部状态</option>${Object.entries(labels).map(([id, label]) => `<option value="${id}" ${state.filters.status === id ? 'selected' : ''}>${label}</option>`).join('')}</select><button class="button secondary">筛选</button></form><div class="document-task-table-wrap"><table class="document-task-table"><thead><tr>${['编号', 'IR', '描述', '责任人', '产品', '版本', '状态', '开始时间', '结束时间', '输出件', '类型', '来源'].map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>${(state.items || []).map(t => `<tr class="task-data-row"><td><button class="task-number" data-task-open="${e(t.number)}">${e(t.number)}</button></td><td>${e(t.ir?.[0] || '—')}${t.ir?.length > 1 ? ` +${t.ir.length - 1}` : ''}</td><td>${e(t.description)}</td><td>${e(t.ownerName)}</td><td>${e(t.product || '未指定')}</td><td>${e(t.version || '未指定')}</td><td><span class="document-task-status ${t.status}">${e(labels[t.status])}</span></td><td>${planCell(t, "plannedStartTime")}</td><td>${planCell(t, "plannedEndTime")}</td><td class="task-output-cell">${outputCell(t)}</td><td>${e(t.sourceType === 'REQUIREMENT' ? '需求' : t.sourceType === 'TICKET' ? '工单' : '—')}</td><td>${t.sourceUrl ? `<a href="${e(t.sourceUrl)}" target="_blank" rel="noopener noreferrer">PingCode ${icon('external-link')}</a>` : '—'}</td></tr>`).join('') || `<tr><td colspan="12">${state.status === 'loading' ? '正在读取任务…' : state.error ? '任务读取失败，请点击刷新重试' : state.tab === 'secondary' ? '暂无次要事项' : '暂无任务，请导入工单清单'}</td></tr>`}</tbody></table></div><footer class="task-pagination"><span>共 ${state.total || 0} 条 · 第 ${state.filters.page} 页</span>${button('previous', '上一页', state.filters.page <= 1 ? 'disabled' : '')}${button('next', '下一页', state.filters.page * state.filters.pageSize >= (state.total || 0) ? 'disabled' : '')}</footer></div><section ${state.tab !== 'flow' ? 'hidden' : ''}><h2>${e(state.selected?.number || '流程流转')}</h2>${flow(state.selected)}</section>${ctx.canAdmin ? `<section ${state.tab !== 'config' ? 'hidden' : ''} class="document-task-config"><h2>任务配置</h2><form data-task-config><label>默认责任人${person('defaultOwnerId', ctx.config?.defaultOwnerId)}</label><p class="muted">只影响之后导入的新任务。</p><label>知识中心负责人${person('knowledgeCenterOwnerId', ctx.config?.knowledgeCenterOwnerId)}</label><fieldset><legend>不涉及理由选项</legend>${(ctx.config?.reasonOptions || []).map(r => `<label>${e(r.id === "other" ? "其他" : r.label)}<input name="reasonLabel:${e(r.id)}" value="${e(r.label)}" required aria-label="${e(r.id)}理由名称"></label>`).join('')}</fieldset><button class="button">保存配置</button><span role="status"></span></form></section>` : ''}<div data-task-drawer-host></div><div data-task-modal-host></div></section>`;
+    root.querySelector('.document-task-page-header h1')?.remove();
+    if (state.selected && ['list', 'secondary'].includes(state.tab)) renderDrawer();
     cleanupSearchableSelects();
     markDynamicSelects(root);
     window.lucide?.createIcons();
@@ -76,7 +92,15 @@ export function renderDocumentTasks({ documentTaskProjection }) {
   function reasonText(value) { if (!value) return '待确认'; return `${state.context.config.reasonOptions.find(r => r.id === value.id)?.label || value.id}${value.detail ? `：${value.detail}` : ''}`; }
   function renderDrawer() {
     const t = state.selected, s = t.decomposition;
-    root.querySelector('[data-task-drawer-host]').innerHTML = `<aside class="task-drawer" aria-label="任务详情"><header><div><h2>${e(t.number)}</h2><p>${e(t.description)}</p></div>${button('close', icon('x'), 'aria-label="关闭详情"')}</header><div class="task-drawer-body"><dl class="task-facts"><dt>责任人</dt><dd>${e(name(t.ownerId))} ${t.canAdmin ? button('owner', '改派') : ''}</dd><dt>状态</dt><dd>${e(labels[t.status])}</dd><dt>PingCode 状态</dt><dd>${e(t.sourceStatus || '未指定')}</dd><dt>来源责任人</dt><dd>${e(t.source?.sourceOwner || '未指定')}</dd><dt>来源创建时间</dt><dd>${e(t.sourceCreatedAt || '未指定')}</dd><dt>开始时间</dt><dd>${planCell(t, "plannedStartTime")}</dd><dt>结束时间</dt><dd>${planCell(t, "plannedEndTime")}</dd><dt>实际开始 / 完成</dt><dd>${timestamp(t.startTime)} / ${timestamp(t.endTime)}</dd></dl><section class="task-next-action"><h3>${icon('arrow-right')}下一步</h3>${t.nextAction ? `<a class="button primary" href="${e(t.nextAction.url)}">${e(t.nextAction.label)}</a>` : `<p>${e(t.pending[0] || '必要处理已完成')}</p>`}</section><section><div class="task-section-heading"><h3>处理范围</h3><span>${s.handbooks.filter(b => b.completed).length} / ${s.handbooks.length} 本手册完成</span></div><h3>工单范围</h3><p>${!s.confirmed ? '草稿 · 待责任人确认，尚未转交' : s.ticketImpact === 'not_involved' ? `不涉及 · ${e(reasonText(s.ticketReason))}` : `涉及 ${s.handbooks.length} 本手册`}</p>${t.canConfirm ? button('ticket-scope', '确认 / 调整手册范围') : ''}</section>${s.handbooks.map(b => `<section class="task-book"><div class="task-section-heading"><h3>${icon('book-open')}${e(b.name)}</h3>${b.canAssign ? button('book-owner', '改派手册责任人', `data-book="${e(b.id)}"`) : ''}</div><p>${e(name(b.ownerId))} · ${e(bookState(b, s))}</p>${b.canEdit ? button('book-scope', '确认 / 调整文档范围', `data-book="${e(b.id)}"`) : ''}${b.documents.map(d => `<div class="task-document"><div class="task-section-heading"><strong>${icon('file-text')}${e(d.name)}${d.kind === 'new' ? '<span class="task-kind">新增</span>' : ''}</strong>${d.canAssign ? button('document-owner', '改派文档责任人', `data-book="${e(b.id)}" data-doc="${e(d.id)}"`) : ''}</div><p>${e(name(d.ownerId))} · ${!s.confirmed || !b.confirmed ? '草稿未分派' : e(d.completion?.label || '待处理')}</p>${d.canEdit && b.confirmed ? `${d.writingUrl ? `<a class="button secondary" href="${e(d.writingUrl)}">进入编写</a>` : d.kind === 'new' ? button('new-document', '创建 / 关联新增文档', `data-book="${e(b.id)}" data-doc="${e(d.id)}"`) : ''}${button('link', '关联审核与交付', `data-book="${e(b.id)}" data-doc="${e(d.id)}"`)}` : ''}${d.reviewTaskId ? `<a href="/knowledge-center/review?taskId=${encodeURIComponent(d.reviewTaskId)}">查看审核</a>` : ''}${d.completion?.mergeRequest?.webUrl ? `<a href="${e(d.completion.mergeRequest.webUrl)}" target="_blank" rel="noopener noreferrer">查看 MR</a>` : ''}</div>`).join('')}</section>`).join('')}<section><h3>待办</h3><ul>${t.pending.map(p => `<li>${e(p)}</li>`).join('') || '<li>必要处理已完成</li>'}</ul>${t.canConfirm && t.pending.some(p => p.includes('确认') && p.includes('完成')) ? button('complete', '确认不涉及并完成') : ''}</section><details><summary>操作历史（${t.assignmentHistory.length}）</summary>${t.assignmentHistory.slice().reverse().map(a => `<article class="task-audit"><strong>${e(({ import: '导入', source_update: '来源更新', owner: '责任人改派', handbook_owner: '手册责任人改派', document_owner: '文档责任人改派', plan: '计划时间调整', ticket_scope: '工单范围', handbook_scope: '手册范围', review_link: '关联审核', new_document_prepare: '创建大纲候选', new_document_link: '关联新增文档', migration: '历史迁移', no_change_complete: '确认不涉及完成' })[a.type] || a.type)}</strong><p>${e(name(a.operatorId))} · ${timestamp(a.at)}${a.reason ? ' · ' + e(a.reason) : ''}</p><details><summary>变更内容</summary><pre>${e(JSON.stringify({ 原内容: a.previous, 新内容: a.next }, null, 2))}</pre></details></article>`).join('')}</details></div></aside>`;
+    // Relational task projections do not include the legacy aggregate audit array.
+    if (!Array.isArray(t.assignmentHistory)) t.assignmentHistory = [];
+    root.querySelector('[data-task-drawer-host]').innerHTML = `<aside class="task-drawer" aria-label="任务详情"><header><div><h2>${e(t.number)}</h2><p>${e(t.description)}</p></div>${button('close', icon('x'), 'aria-label="关闭详情"')}</header><div class="task-drawer-body"><dl class="task-facts"><dt>责任人</dt><dd>${e(name(t.ownerId))} ${t.canAdmin ? button('owner', '改派') : ''}</dd><dt>状态</dt><dd>${e(labels[t.status])}</dd><dt>PingCode 状态</dt><dd>${e(t.sourceStatus || '未指定')}</dd><dt>来源责任人</dt><dd>${e(t.source?.sourceOwner || '未指定')}</dd><dt>来源创建时间</dt><dd>${e(t.sourceCreatedAt || '未指定')}</dd><dt>开始时间</dt><dd>${planCell(t, "plannedStartTime")}</dd><dt>结束时间</dt><dd>${planCell(t, "plannedEndTime")}</dd><dt>实际开始 / 完成</dt><dd>${timestamp(t.startTime)} / ${timestamp(t.endTime)}</dd></dl><section class="task-next-action"><h3>${icon('arrow-right')}下一步</h3>${t.nextAction ? `<a class="button primary" href="${e(t.nextAction.url)}">${e(t.nextAction.label)}</a>` : `<p>${e(t.pending[0] || '必要处理已完成')}</p>`}</section><section><div class="task-section-heading"><h3>处理范围</h3><span>${s.handbooks.filter(b => b.completed).length} / ${s.handbooks.length} 本手册完成</span></div><h3>工单范围</h3><p>${!s.confirmed ? '草稿 · 待责任人确认，尚未转交' : s.ticketImpact === 'not_involved' ? `不涉及 · ${e(reasonText(s.ticketReason))}` : `涉及 ${s.handbooks.length} 本手册`}</p>${t.canConfirm ? button('ticket-scope', '确认 / 调整手册范围') : ''}</section>${s.handbooks.map(b => `<section class="task-book"><div class="task-section-heading"><h3>${icon('book-open')}${e(b.name)}</h3>${b.canAssign ? button('book-owner', '改派手册责任人', `data-book="${e(b.id)}"`) : ''}</div><p>${e(name(b.ownerId))} · ${e(bookState(b, s))}</p>${b.canEdit ? button('book-scope', '确认 / 调整文档范围', `data-book="${e(b.id)}"`) : ''}${b.documents.map(d => `<div class="task-document"><div class="task-section-heading"><strong>${icon('file-text')}${e(d.name)}${d.kind === 'new' ? '<span class="task-kind">新增</span>' : ''}</strong>${d.canAssign ? button('document-owner', '改派文档责任人', `data-book="${e(b.id)}" data-doc="${e(d.id)}"`) : ''}</div><p>${e(name(d.ownerId))} · ${!s.confirmed || !b.confirmed ? '草稿未分派' : e(d.completion?.label || '待处理')}</p>${d.canEdit && b.confirmed ? `${d.writingUrl ? `<a class="button secondary" href="${e(d.writingUrl)}">进入编写</a>` : d.kind === 'new' ? button('new-document', '创建 / 关联新增文档', `data-book="${e(b.id)}" data-doc="${e(d.id)}"`) : ''}${button('link', '关联审核与交付', `data-book="${e(b.id)}" data-doc="${e(d.id)}"`)}` : ''}${d.reviewTaskId ? `<a href="/knowledge-center/review?taskId=${encodeURIComponent(d.reviewTaskId)}">查看审核</a>` : ''}${d.completion?.mergeRequest?.webUrl ? `<a href="${e(d.completion.mergeRequest.webUrl)}" target="_blank" rel="noopener noreferrer">MR链接</a>` : ''}</div>`).join('')}</section>`).join('')}<section><h3>待办</h3><ul>${t.pending.map(p => `<li>${e(p)}</li>`).join('') || '<li>必要处理已完成</li>'}</ul>${t.canConfirm && t.pending.some(p => p.includes('确认') && p.includes('完成')) ? button('complete', '确认不涉及并完成') : ''}</section><details><summary>操作历史（${t.assignmentHistory.length}）</summary>${t.assignmentHistory.slice().reverse().map(a => `<article class="task-audit"><strong>${e(({ import: '导入', source_update: '来源更新', owner: '责任人改派', handbook_owner: '手册责任人改派', document_owner: '文档责任人改派', plan: '计划时间调整', ticket_scope: '工单范围', handbook_scope: '手册范围', review_link: '关联审核', new_document_prepare: '创建大纲候选', new_document_link: '关联新增文档', migration: '历史迁移', no_change_complete: '确认不涉及完成' })[a.type] || a.type)}</strong><p>${e(name(a.operatorId))} · ${timestamp(a.at)}${a.reason ? ' · ' + e(a.reason) : ''}</p><details><summary>变更内容</summary><pre>${e(JSON.stringify({ 原内容: a.previous, 新内容: a.next }, null, 2))}</pre></details></article>`).join('')}</details></div></aside>`;
+    if (t.sourceType) {
+      const section = document.createElement('section');
+      section.className = 'task-source-actions';
+      section.innerHTML = `<h3>Pingcode 来源</h3><p>${e(t.sourceType === 'REQUIREMENT' ? '需求' : '工单')}${t.ir?.length ? ` · 关联 IR ${e(t.ir.join('、'))}` : ''}</p><div>${button('changes', icon('history') + '同步变化')}${button('source-export', icon('download') + '导出来源资料')}</div>`;
+      root.querySelector('.task-drawer-body').append(section);
+    }
     if (t.scopeChecks?.length) {
       const section = document.createElement('section');
       section.className = 'task-scope-checks';
@@ -116,7 +140,7 @@ export function renderDocumentTasks({ documentTaskProjection }) {
     window.lucide?.createIcons();
   }
   function focusTaskWorkspace() {
-    const t = state.selected, books = t.decomposition.handbooks || [];
+    const t = state.selected, s = t.decomposition, books = s.handbooks || [];
     const page = root.querySelector('.document-task-page');
     const workspace = root.querySelector('.task-drawer');
     const body = workspace.querySelector('.task-drawer-body');
@@ -127,7 +151,8 @@ export function renderDocumentTasks({ documentTaskProjection }) {
       || books[0];
     if (!books.some(book => book.id === state.activeBookId)) state.activeBookId = preferred?.id || null;
     const active = books.find(book => book.id === state.activeBookId);
-    page.dataset.taskRole = active?.ownerId === state.context.actorId && !t.canConfirm ? 'book' : 'ticket';
+    page.dataset.taskRole = active?.ownerId === state.context.actorId ? 'book'
+      : t.ownerId === state.context.actorId ? 'ticket' : 'observer';
     const title = !t.decomposition.confirmed && t.canConfirm ? '确认涉及的手册，并交给负责人'
       : active?.canEdit && !active.confirmed ? '确定本手册涉及的文档'
         : t.nextAction?.label || '查看任务进度';
@@ -135,7 +160,11 @@ export function renderDocumentTasks({ documentTaskProjection }) {
     heading.insertAdjacentHTML('afterbegin', `<span class="task-workspace-eyebrow">${e(t.number)} / ${active?.canEdit ? '手册任务' : t.canConfirm ? '工单任务' : '任务进度'}</span>`);
     heading.querySelector('h2').textContent = title;
     heading.querySelector('p').classList.add('task-workspace-description');
-    heading.insertAdjacentHTML('beforeend', `<span class="task-workspace-owner">${page.dataset.taskRole === 'book' ? '手册负责人' : '责任人'} ${e(name(page.dataset.taskRole === 'book' ? active.ownerId : t.ownerId))} · ${e(labels[t.status])}</span>`);
+    const actionBook = books.find(book => book.id === t.nextAction?.handbookId) || active;
+    const actionDocument = actionBook?.documents?.find(doc => doc.id === t.nextAction?.documentId);
+    const actionOwner = t.nextAction?.action === 'book-scope' ? actionBook?.ownerId
+      : t.nextAction?.action === 'document-owner' ? actionDocument?.ownerId : t.ownerId;
+    heading.insertAdjacentHTML('beforeend', `<span class="task-workspace-owner">当前步骤责任人：${e(name(actionOwner))} · ${e(labels[t.status])}</span>`);
     const back = workspace.querySelector('header [data-task-action=close]');
     back.innerHTML = `${icon('arrow-left')}<span>返回任务列表</span>`;
     back.setAttribute('aria-label', '返回任务列表');
@@ -157,6 +186,13 @@ export function renderDocumentTasks({ documentTaskProjection }) {
     if (scope) {
       scope.querySelector('.task-section-heading h3').textContent = '工单分派';
       scope.querySelector(':scope > h3')?.remove();
+      if (t.decomposition.confirmed && t.canConfirm && active?.canEdit && !active.confirmed) {
+        const secondary = document.createElement('details');
+        secondary.className = 'task-secondary-scope';
+        secondary.innerHTML = '<summary>工单范围与分派</summary>';
+        scope.before(secondary);
+        secondary.append(scope);
+      }
     }
     const bookNodes = [...body.querySelectorAll(':scope > .task-book')];
     if (books.length) {
@@ -164,17 +200,29 @@ export function renderDocumentTasks({ documentTaskProjection }) {
       nav.className = 'task-book-switcher';
       nav.setAttribute('aria-label', '选择手册任务');
       nav.innerHTML = books.map(book => `<button type="button" data-task-book-select="${e(book.id)}" aria-pressed="${book.id === state.activeBookId}"><strong>${e(book.name)}</strong><span>${e(name(book.ownerId))} · ${e(book.confirmed ? book.completed ? '已完成' : '处理中' : '待确认')}</span></button>`).join('');
-      scope?.after(nav);
+      const scopeAnchor = scope?.parentElement?.classList.contains('task-secondary-scope') ? scope.parentElement : scope;
+      scopeAnchor?.after(nav);
       bookNodes.forEach((node, index) => { node.hidden = books[index].id !== state.activeBookId; });
     }
-    const completed = books.filter(book => book.completed).length;
+    const documents = books.flatMap(book => book.impact === 'involved' ? book.documents || [] : []);
+    const completedDocuments = documents.filter(document => document.completion?.status === 'completed').length;
     const progress = document.createElement('div');
     progress.className = 'task-workspace-progress';
     progress.setAttribute('aria-label', '任务流转进度');
-    progress.innerHTML = `<span>${icon('list-checks')} 工单分派 <strong>${t.decomposition.confirmed ? '已确认' : '待确认'}</strong></span><span>${icon('book-open')} 手册范围 <strong>${books.filter(book => book.confirmed).length}/${books.length}</strong></span><span>${icon('file-text')} 文档处理 <strong>${completed}/${books.length} 本完成</strong></span>`;
+    progress.innerHTML = `<span>${icon('list-checks')} 工单分派 <strong>${t.decomposition.confirmed ? '已确认' : '待确认'}</strong></span><span>${icon('book-open')} 手册范围 <strong>${books.filter(book => book.confirmed).length}/${books.length} 本已确认</strong></span><span>${icon('file-text')} 文档处理 <strong>${documents.length ? `${completedDocuments}/${documents.length} 篇完成` : '暂无文档任务'}</strong></span>`;
     action.after(progress);
     const pending = [...body.querySelectorAll(':scope > section')].find(section => section.querySelector(':scope > h3')?.textContent === '待办');
-    if (pending) { pending.classList.add('task-workspace-pending'); pending.querySelector('h3').textContent = '待处理'; }
+    if (pending) {
+      pending.classList.add('task-workspace-pending');
+      pending.querySelector('h3').textContent = active ? '本手册待处理' : '待处理';
+      const rows = active
+        ? !t.decomposition.confirmed ? ['工单责任人确认手册范围']
+          : !active.confirmed ? [`${active.name}：手册负责人确认文档范围`]
+            : active.impact === 'involved' ? (active.documents || []).filter(document => document.completion?.status !== 'completed').map(document => `${document.name}：${document.completion?.label || '待处理'}`)
+              : []
+        : t.pending;
+      pending.querySelector('ul').innerHTML = rows.map(item => `<li>${e(item)}</li>`).join('') || '<li>当前手册处理已完成</li>';
+    }
   }
   async function refresh({ context = false, detail = true } = {}) {
     status('正在读取任务…');
@@ -189,6 +237,23 @@ export function renderDocumentTasks({ documentTaskProjection }) {
       render();
     } finally { root.removeAttribute('aria-busy'); }
   }
+  async function showSyncChanges(taskNumber, page = 1) {
+    const result = await taskRequest(`/${encodeURIComponent(taskNumber)}/sync-changes?page=${page}&pageSize=20`);
+    const fieldLabels = { title: '标题', description: '描述', source_status: '来源状态', ir: '关联 IR', type: '类型', source_removed: '来源移除', source_restored: '来源恢复' };
+    const value = input => {
+      if (input == null || input === '') return '—';
+      try { const parsed = JSON.parse(input); return e(typeof parsed === 'string' ? parsed : JSON.stringify(parsed)); }
+      catch { return e(input); }
+    };
+    const rows = result.items.map(item => `<tr><td>${e(timestamp(item.confirmedAt))}</td><td>${e(item.sourceName || '—')}</td><td>${e(fieldLabels[item.field] || item.field)}</td><td>${value(item.before)}</td><td>${value(item.after)}</td></tr>`).join('');
+    const content = `<div class="task-change-table-wrap"><table class="task-change-table"><thead><tr><th>同步时间</th><th>来源</th><th>字段</th><th>上次</th><th>本次</th></tr></thead><tbody>${rows || '<tr><td colspan="5">暂无同步变化</td></tr>'}</tbody></table></div><div class="task-change-pagination"><span>第 ${page} 页 · 共 ${result.total} 条</span><button type="button" class="button secondary" data-change-page="${page - 1}" ${page <= 1 ? 'disabled' : ''}>上一页</button><button type="button" class="button secondary" data-change-page="${page + 1}" ${page * 20 >= result.total ? 'disabled' : ''}>下一页</button></div>`;
+    const dialog = modal(`${taskNumber} · 同步变化`, content, () => {}, { confirm: false });
+    dialog.querySelectorAll('[data-change-page]').forEach(button => button.onclick = async () => {
+      button.disabled = true;
+      try { dialog.close(); await showSyncChanges(taskNumber, Number(button.dataset.changePage)); }
+      catch (error) { status(error.message, true); }
+    });
+  }
   function modal(title, content, onSubmit, { confirm = true, confirmLabel = '确认', inline = false } = {}) {
     const host = root.querySelector('[data-task-modal-host]');
     if (inline) root.querySelector('.task-book:not([hidden])')?.append(host);
@@ -199,7 +264,7 @@ export function renderDocumentTasks({ documentTaskProjection }) {
     markDynamicSelects(dialog); window.lucide?.createIcons();
     dialog.querySelectorAll('[data-modal-close]').forEach(b => b.onclick = () => dialog.close());
     dialog.addEventListener('close', async () => {
-      if (dialog.dataset.scopeChangeId && dialog.dataset.scopeConfirmed !== 'true') {
+      if (dialog.dataset.scopeChangeId && dialog.dataset.scopeLinked !== 'true' && dialog.dataset.scopeConfirmed !== 'true') {
         try {
           const current = await loadDocumentTask(state.selected.number);
           await taskWrite(`/${encodeURIComponent(current.number)}/scope-changes/${encodeURIComponent(dialog.dataset.scopeChangeId)}/cancel`, { expectedRevision: current.revision, reason: '用户取消范围纠偏预览' }, 'POST');
@@ -284,7 +349,10 @@ export function renderDocumentTasks({ documentTaskProjection }) {
         return (book.documents || []).filter(doc => level === 'ticket' || scopeChanged || proposed.impact !== 'involved' || !selectedDocumentIds.has(String(doc.id)))
           .map(doc => ({ handbookId: book.id, documentId: doc.createdDocumentId || doc.id }));
       });
-      const change = await taskWrite(endpoint, { expectedRevision: current.revision, level, handbookId, reason, affectedDocuments }, 'POST');
+      const params = new URLSearchParams(window.location.search);
+      const sourceOpinion = params.get('scopeOpinionTaskId') && params.get('scopeOpinionReviewId') && params.get('scopeOpinionCommentId')
+        ? { taskId: params.get('scopeOpinionTaskId'), reviewId: params.get('scopeOpinionReviewId'), commentId: params.get('scopeOpinionCommentId') } : null;
+      const change = await taskWrite(endpoint, { expectedRevision: current.revision, level, handbookId, reason, affectedDocuments, ...(sourceOpinion ? { sourceOpinion } : {}) }, 'POST');
       dialog.dataset.scopeChangeId = change.id;
       state.selected = await loadDocumentTask(task.number);
     }
@@ -295,16 +363,32 @@ export function renderDocumentTasks({ documentTaskProjection }) {
       const summary = dialog.querySelector('.task-scope-impact-preview') || document.createElement('section');
       summary.className = 'task-scope-impact-preview';
       summary.setAttribute('aria-live', 'polite');
-      summary.innerHTML = `<h3>变更影响预览</h3><p>${preview.items.length ? preview.items.map(item => `${e(item.operation === 'withdraw' ? '撤出' : item.operation === 'add' ? '新增' : '调整')} ${e(item.documentId)} · MR ${e(item.mrState || '未创建')}${item.canConfirm ? '' : ` · ${e(item.nextAction === 'close_mr_manually' ? '需人工关闭 MR' : '需刷新状态')}`}`).join('<br>') : '没有文档范围变化'}</p>${preview.canConfirm ? '<p>确认后受影响文档按新范围重新计算。</p>' : '<p role="alert">当前不能确认。先处理上方列出的 MR 状态，再重新打开范围调整。</p>'}`;
+      summary.innerHTML = `<h3>变更影响预览</h3>${scopeImpactTable(preview.items)}${preview.canConfirm ? '<p>确认后受影响文档按新范围重新计算。</p>' : '<p role="alert">当前不能确认。请处理表中的 MR 状态后重新预览。</p>'}`;
       dialog.querySelector('.task-modal-body').append(summary);
       dialog.dataset.scopeCanConfirm = String(preview.canConfirm);
-      dialog.querySelector('button[value=confirm]').textContent = preview.canConfirm ? '确认范围变更' : '重新预览';
+      dialog.querySelector('button[value=confirm]').textContent = preview.canConfirm ? '确认' : '重新预览';
       return { keepOpen: true };
     }
     const current = await loadDocumentTask(task.number);
     const result = await taskWrite(`${endpoint}/${encodeURIComponent(dialog.dataset.scopeChangeId)}/confirm`, { expectedRevision: current.revision, proposed, impactDigest: dialog.dataset.impactDigest }, 'POST');
     dialog.dataset.scopeConfirmed = 'true';
     return result;
+  }
+  function linkedScopeChange(task, level, handbookId) {
+    const params = new URLSearchParams(window.location.search);
+    const taskId = params.get('scopeOpinionTaskId'), reviewId = params.get('scopeOpinionReviewId'), commentId = params.get('scopeOpinionCommentId');
+    if (!taskId || !reviewId || !commentId) return null;
+    return (task.scopeChanges || []).find(change => change.status === 'reported' && change.level === level
+      && (level !== 'handbook' || change.handbookId === handbookId)
+      && change.sourceOpinion?.taskId === taskId && change.sourceOpinion.reviewId === reviewId
+      && change.sourceOpinion.commentId === commentId) || null;
+  }
+  function bindLinkedScopeChange(dialog, change) {
+    if (!change) return;
+    dialog.dataset.scopeChangeId = change.id;
+    dialog.dataset.scopeLinked = 'true';
+    const reason = dialog.querySelector('[name=scopeChangeReason]');
+    if (reason) reason.value = change.reason || '';
   }
   function ticketScope() {
     const t = state.selected, s = t.decomposition;
@@ -314,6 +398,7 @@ export function renderDocumentTasks({ documentTaskProjection }) {
       if (s.confirmed) return saveScopeWithPreview(form, dialog, t, 'ticket', null, proposed);
       return taskWrite(`/${encodeURIComponent(t.number)}/decomposition`, { expectedRevision: t.revision, confirm, ...proposed, reason: form.get('reason') });
     });
+    bindLinkedScopeChange(dialog, linkedScopeChange(t, 'ticket', null));
     decorateScope(dialog, t, 'handbook');
     bindScope(dialog);
   }
@@ -376,6 +461,7 @@ export function renderDocumentTasks({ documentTaskProjection }) {
       if (book.confirmed) return saveScopeWithPreview(form, dialog, t, 'handbook', id, proposed);
       return taskWrite(`/${encodeURIComponent(t.number)}/handbooks/${encodeURIComponent(id)}`, { expectedRevision: t.revision, confirm, ...proposed, reason: form.get('reason') });
     }, { inline: true });
+    bindLinkedScopeChange(dialog, linkedScopeChange(t, 'handbook', id));
     const closeMenus = () => dialog.querySelectorAll('[data-folder-menu]').forEach(button => {
       button.setAttribute('aria-expanded', 'false'); button.nextElementSibling.hidden = true;
     });
@@ -449,7 +535,16 @@ export function renderDocumentTasks({ documentTaskProjection }) {
   }
   root.onclick = async event => {
     if (reading) return;
-    const tab = event.target.closest('[data-task-tab]'); if (tab) { state.tab = tab.dataset.taskTab; render(); return; }
+    const tab = event.target.closest('[data-task-tab]'); if (tab) {
+      const previousAttention = state.filters.attention;
+      state.tab = tab.dataset.taskTab;
+      state.filters.attention = state.tab === 'secondary' ? 'secondary' : 'normal';
+      if (previousAttention !== state.filters.attention) {
+        state.filters.page = 1;
+        try { await refresh({ detail: false }); } catch (error) { status(error.message, true); }
+      } else render();
+      return;
+    }
     const bookSwitch = event.target.closest('[data-task-book-select]');
     if (bookSwitch && state.selected) { state.activeBookId = bookSwitch.dataset.taskBookSelect; renderDrawer(); root.querySelector(`[data-task-book-select="${CSS.escape(state.activeBookId)}"]`)?.focus(); return; }
     const row = event.target.closest('[data-task-open]');
@@ -472,6 +567,16 @@ export function renderDocumentTasks({ documentTaskProjection }) {
           break;
         }
         case 'refresh': await refresh({ context: true }); break;
+        case 'export': {
+          const filters = { ...state.filters };
+          delete filters.page; delete filters.pageSize;
+          await readWithFeedback(() => downloadDocumentTaskFile(`/export.csv?${new URLSearchParams(filters)}`));
+          break;
+        }
+        case 'source-export':
+          await readWithFeedback(() => downloadDocumentTaskFile(`/${encodeURIComponent(t.number)}/source-export`));
+          break;
+        case 'changes': await readWithFeedback(() => showSyncChanges(t.number)); break;
         case 'import': root.querySelector('[data-task-file]').click(); break;
         case 'close': state.selected = null; render(); break;
         case 'previous': state.filters.page--; await refresh({ detail: false }); break;
@@ -531,8 +636,8 @@ export function renderDocumentTasks({ documentTaskProjection }) {
     } catch (error) { status(error.message, true); }
   };
   root.onsubmit = async event => {
-    if (event.target.matches('[data-task-filters]')) { event.preventDefault(); state.filters = { ...Object.fromEntries(new FormData(event.target)), page: 1, pageSize: 20 }; try { await refresh({ detail: false }); } catch (error) { status(error.message, true); } }
-    if (event.target.matches('[data-task-config]')) { event.preventDefault(); const output = event.target.querySelector('[role=status]'); try { const form = new FormData(event.target); state.context.config = await taskWrite('/config', { defaultOwnerId: form.get('defaultOwnerId'), reasonOptions: state.context.config.reasonOptions.map(r => ({ id: r.id, label: form.get('reasonLabel:' + r.id) })), expectedRevision: state.context.config.revision }); output.textContent = '配置已保存'; } catch (error) { output.textContent = error.message; } }
+    if (event.target.matches('[data-task-filters]')) { event.preventDefault(); state.filters = { ...Object.fromEntries(new FormData(event.target)), attention: state.tab === 'secondary' ? 'secondary' : 'normal', page: 1, pageSize: 20 }; try { await refresh({ detail: false }); } catch (error) { status(error.message, true); } }
+    if (event.target.matches('[data-task-config]')) { event.preventDefault(); const output = event.target.querySelector('[role=status]'); try { const form = new FormData(event.target); state.context.config = await taskWrite('/config', { defaultOwnerId: form.get('defaultOwnerId'), knowledgeCenterOwnerId: form.get('knowledgeCenterOwnerId') || null, reasonOptions: state.context.config.reasonOptions.map(r => ({ id: r.id, label: form.get('reasonLabel:' + r.id) })), expectedRevision: state.context.config.revision }); output.textContent = '配置已保存'; } catch (error) { output.textContent = error.message; } }
   };
   root.onkeydown = event => { if (event.key === 'Escape' && !root.querySelector('dialog[open]') && state.selected) { state.selected = null; render(); } };
   render();
