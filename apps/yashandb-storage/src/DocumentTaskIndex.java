@@ -53,6 +53,7 @@ final class DocumentTaskIndex {
                 }
             }
         }
+        reviews.addAll(historicalReviewIds(task));
         try (PreparedStatement insert = connection.prepareStatement(
             "INSERT INTO KC_DOCUMENT_TASK_ACTOR (TASK_PREFIX,TASK_NUMBER,PRINCIPAL_ID,ACTOR_ROLE) VALUES (?,?,?,?)")) {
             for (String actor : actors) {
@@ -81,6 +82,31 @@ final class DocumentTaskIndex {
             }
             insert.executeBatch();
         }
+    }
+
+    static Set<String> historicalReviewIds(Map<?, ?> task) {
+        Set<String> reviews = new LinkedHashSet<>();
+        if (task.get("scopeHistory") instanceof List<?> history) {
+            for (Object value : history) {
+                if (!(value instanceof Map<?, ?> scope) || !(scope.get("handbooks") instanceof List<?> handbooks)) continue;
+                for (Object item : handbooks) {
+                    if (!(item instanceof Map<?, ?> book) || !(book.get("documents") instanceof List<?> documents)) continue;
+                    for (Object entry : documents) {
+                        if (!(entry instanceof Map<?, ?> document)) continue;
+                        Object reviewId = document.get("reviewTaskId");
+                        if (reviewId != null && !String.valueOf(reviewId).isBlank()) reviews.add(String.valueOf(reviewId));
+                    }
+                }
+            }
+        }
+        if (task.get("scopeChanges") instanceof List<?> changes) {
+            for (Object value : changes) {
+                if (!(value instanceof Map<?, ?> change) || !(change.get("sourceOpinion") instanceof Map<?, ?> source)) continue;
+                Object reviewId = source.get("taskId");
+                if (reviewId != null && !String.valueOf(reviewId).isBlank()) reviews.add(String.valueOf(reviewId));
+            }
+        }
+        return reviews;
     }
 
     private static void addActor(Set<String> actors, Object value, String role) throws SQLException {

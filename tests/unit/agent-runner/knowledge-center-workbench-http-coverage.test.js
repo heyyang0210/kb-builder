@@ -71,6 +71,14 @@ describe('工作台责任人和联合查询的真实 HTTP 覆盖', () => {
   const query = (body, headers = {}) => fetch(`${base}/my-tasks/query`, { method: 'POST',
     headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) });
 
+  test('工作台范围入口只打开任务详情，按钮显示查看', async () => {
+    const response = await query({ responsibleId: 'writer', queue: 'actionable', page: 1, pageSize: 20 });
+    expect(response.status).toBe(200);
+    expect((await response.json()).data.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ primaryAction: expect.objectContaining({ code: 'confirm_scope', label: '查看', url: expect.stringContaining('/knowledge-center/document-tasks?task=WB-100') }) }),
+    ]));
+  });
+
   test.each(['ticket', 'handbook'])('漏报文档的%s级纠偏仍阻断审核决定', async level => {
     const state = JSON.parse(fs.readFileSync(path.join(root, 'tasks.json'), 'utf8'));
     state.tasks[0].decomposition = { confirmed: true, ticketImpact: 'involved', handbooks: [{
@@ -249,8 +257,8 @@ describe('工作台责任人和联合查询的真实 HTTP 覆盖', () => {
     const assignee = (await (await query({ ...body, responsibleId: 'writer' })).json()).data.items;
     expect(owner.filter(item => item.id.startsWith('delivery:'))).toHaveLength(1);
     expect(assignee.filter(item => item.id.startsWith('merge:'))).toHaveLength(1);
-    expect(owner.find(item => item.id.startsWith('delivery:'))?.primaryAction).toMatchObject({ code: 'sync_delivery', label: '同步状态', taskId: 'delivery-1', candidateDigest: 'digest-1', enabled: true });
-    expect(assignee.find(item => item.id.startsWith('merge:'))?.primaryAction).toMatchObject({ code: 'merge_mr', label: '合入MR', external: true, enabled: false });
+    expect(owner.find(item => item.id.startsWith('delivery:'))?.primaryAction).toMatchObject({ code: 'sync_delivery', label: '状态刷新', taskId: 'delivery-1', candidateDigest: 'digest-1', enabled: true });
+    expect(assignee.find(item => item.id.startsWith('merge:'))?.primaryAction).toMatchObject({ code: 'merge_mr', label: 'MR链接', external: true, enabled: false });
     expect(assignee.some(item => item.primaryAction?.code === 'sync_delivery')).toBe(false);
     process.env.KNOWLEDGE_CENTER_LOCAL_OWNER_PREVIEW = '1';
     const preview = (await (await fetch(`${base}/preview?responsibleId=writer`)).json()).data.items;
@@ -258,14 +266,14 @@ describe('工作台责任人和联合查询的真实 HTTP 覆盖', () => {
     reviewTasks[0].deliveryObservation.state = 'closed';
     expect((await (await query({ ...body, responsibleId: 'writer' })).json()).data.items.some(item => item.primaryAction?.code === 'merge_mr')).toBe(false);
     const recoveryQuery = { ...body, type: 'document' };
-    expect((await (await query({ ...recoveryQuery, responsibleId: 'admin' })).json()).data.items.find(item => item.id.startsWith('delivery:'))?.primaryAction).toMatchObject({ code: 'revise_document', label: '修订文档' });
+    expect((await (await query({ ...recoveryQuery, responsibleId: 'admin' })).json()).data.items.find(item => item.id.startsWith('delivery:'))?.primaryAction).toMatchObject({ code: 'revise_document', label: '查看审核' });
     expect((await (await query({ ...body, responsibleId: 'admin' })).json()).data.items.some(item => item.id.startsWith('delivery:'))).toBe(false);
     const limited = (await (await query({ ...recoveryQuery, responsibleId: 'admin' }, { 'x-test-user': 'admin-no-publish' })).json()).data.items;
     expect(limited.find(item => item.id.startsWith('delivery:'))?.primaryAction.enabled).toBe(false);
     reviewTasks[0].state = 'approved';
     reviewTasks[0].mergeRequest = null;
     reviewTasks[0].deliveryObservation = null;
-    expect((await (await query({ ...body, responsibleId: 'admin' })).json()).data.items.find(item => item.id.startsWith('delivery:'))?.primaryAction).toMatchObject({ code: 'create_mr', label: '创建MR' });
+    expect((await (await query({ ...body, responsibleId: 'admin' })).json()).data.items.find(item => item.id.startsWith('delivery:'))?.primaryAction).toMatchObject({ code: 'create_mr', label: '创建 MR' });
 
     reviewTasks.push({ id: 'safe-url', handbookId: 'HB-1', state: 'mr_submitted', createdBy: { id: 'admin' },
       handbookSource: { documents: [{ documentId: 'safe-doc', title: '安全链接', filePath: 'docs/safe.md' }] },
@@ -297,7 +305,7 @@ describe('工作台责任人和联合查询的真实 HTTP 覆盖', () => {
     const response = await query({ responsibleId: 'admin', queue: 'actionable', page: 1, pageSize: 20 });
     expect(response.status).toBe(200);
     expect((await response.json()).data.items).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 'review:review-task:review-1:doc-1', taskType: '文档审核', status: '待审核', source: '审核与发布' }),
+      expect.objectContaining({ id: 'review:review-task:review-1:doc-1', taskType: '文档审核', status: '待审核', source: '审核与发布', primaryAction: expect.objectContaining({ code: 'review_document', label: '查看审核' }) }),
     ]));
 
     incremental.service.reviewBootstrap = () => { throw new Error('审核服务暂不可用'); };

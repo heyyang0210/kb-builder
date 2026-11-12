@@ -29,6 +29,7 @@ const { readTechDomainConfig } = require('./outline-management');
 const { rules: outlineTemplateRules } = require('../lib/outline-path-template');
 const { createDatabaseConnectionGovernance } = require('../lib/platform-management/database-connection-governance');
 const { createHandbookProductionService } = require('../lib/handbook-production-service');
+const { createPingcodeTaskSyncService } = require('../lib/pingcode-task-sync-service');
 let logger;
 try { logger = require('../lib/logger'); } catch (_) { logger = { info() {} }; }
 
@@ -90,9 +91,11 @@ function createKnowledgeCenterHandler(options) {
 
   const { knowledgeAssetsStore, manualStatusStore, brandIconStore, domainStore } = stores;
   const databasePlatformMode = String(process.env.KNOWLEDGE_PLATFORM_CONFIG_MODE || process.env.KNOWLEDGE_STORAGE_MODE || '').toLowerCase() === 'database';
+  const pingcodeTaskSync = createPingcodeTaskSyncService({ storage: domainStore,
+    pingcodeUrl: `http://${PINGCODE_API_HOST}:${PINGCODE_API_PORT}` });
   const handleDocumentTasks = createDocumentTaskHandler(options.documentTasksOptions || {});
   async function requireDocumentTaskScopeClear(reviewTaskId) {
-    const state = await handleDocumentTasks.readState();
+    const state = await handleDocumentTasks.readReviewState(reviewTaskId);
     for (const task of state.tasks || []) for (const book of task.decomposition?.handbooks || []) for (const doc of book.documents || []) {
       if (String(doc.reviewTaskId || '') !== String(reviewTaskId)) continue;
       const documentId = String(doc.createdDocumentId || doc.id);
@@ -1951,8 +1954,8 @@ function createKnowledgeCenterHandler(options) {
         if (!task.handbookSource || !currentIds.has(String(task.createdBy?.id || ''))
           || (Array.isArray(visibleHandbooks) && !visibleHandbooks.map(String).includes(String(task.handbookId)))) return [];
         const projection = service.project(task, session, true);
-        const label = projection.capabilities.canPublish ? '创建 GitLab MR'
-          : projection.capabilities.canRefreshDelivery ? '刷新交付状态' : null;
+        const label = projection.capabilities.canPublish ? '创建 MR'
+          : projection.capabilities.canRefreshDelivery ? '状态刷新' : null;
         if (!label) return [];
         return (task.handbookSource.documents || []).map(document => ({ taskId: task.id, documentId: document.documentId, handbookId: task.handbookId, title: document.title || document.filePath || task.name || '文档交付',
           ...numberForReview(ticketState, snapshot, task.id, document.documentId, eligibleIds),
@@ -2079,6 +2082,62 @@ function createKnowledgeCenterHandler(options) {
     }
     if (req.method === 'GET' && pathname === '/knowledge-center/api/platform/context') {
       requireSession(req, res, () => servePlatformContext(res)); return;
+    }
+    if (pathname === '/knowledge-center/api/platform/plugins/pingcode/sources'
+      || pathname.startsWith('/knowledge-center/api/platform/plugins/pingcode/sources/')
+      || pathname.startsWith('/knowledge-center/api/platform/plugins/pingcode/runs/')) {
+      requireSession(req, res, async session => {
+        if (forbidUnlessPlatformAdmin(res, session)) return;
+        try {
+          const suffix = pathname.slice('/knowledge-center/api/platform/plugins/pingcode'.length);
+          const sourceMatch = /^\/sources\/([^/]+)(?:\/(test|runs))?$/.exec(suffix);
+          const runMatch = /^\/runs\/([^/]+)(?:\/(preview|confirm|cancel|resources)(?:\/(retry))?)?$/.exec(suffix);
+          let data;
+          if (req.method === 'GET' && suffix === '/sources') data = await pingcodeTaskSync.listSources();
+          else if (req.method === 'POST' && suffix === '/sources')
+            data = await pingcodeTaskSync.createSource(await readJsonBody(req), session.user?.id);
+          else if (req.method === 'GET' && sourceMatch && !sourceMatch[2])
+            data = await pingcodeTaskSync.source(decodeURIComponent(sourceMatch[1]));
+          else if (req.method === 'POST' && sourceMatch?.[2] === 'test')
+            data = await pingcodeTaskSync.testSource(decodeURIComponent(sourceMatch[1]));
+          else if (req.method === 'GET' && sourceMatch?.[2] === 'runs')
+            data = await pingcodeTaskSync.listRuns(decodeURIComponent(sourceMatch[1]));
+          else if (req.method === 'POST' && sourceMatch?.[2] === 'runs')
+            data = await pingcodeTaskSync.startRun(decodeURIComponent(sourceMatch[1]), session.user?.id);
+          else if (req.method === 'GET' && runMatch && !runMatch[2])
+            data = await pingcodeTaskSync.getRun(decodeURIComponent(runMatch[1]));
+          else if (req.method === 'GET' && runMatch?.[2] === 'preview') {
+            const query = new URL(req.url, 'http://localhost').searchParams;
+            data = await pingcodeTaskSync.previewRun(decodeURIComponent(runMatch[1]), {
+              page: Number(query.get('page') || 1), pageSize: Number(query.get('pageSize') || 50),
+              view: query.get('view') || 'current',
+            });
+          } else if (req.method === 'POST' && runMatch?.[2] === 'confirm')
+            data = await pingcodeTaskSync.confirmRun(decodeURIComponent(runMatch[1]), await readJsonBody(req));
+          else if (req.method === 'POST' && runMatch?.[2] === 'cancel')
+            data = await pingcodeTaskSync.cancelRun(decodeURIComponent(runMatch[1]));
+          else if (req.method === 'GET' && runMatch?.[2] === 'resources' && !runMatch[3]) {
+            const query = new URL(req.url, 'http://localhost').searchParams;
+            data = await pingcodeTaskSync.listMissingResources(decodeURIComponent(runMatch[1]),
+              Number(query.get('page') || 1), Number(query.get('pageSize') || 100));
+          } else if (req.method === 'POST' && runMatch?.[2] === 'resources' && runMatch[3] === 'retry')
+            data = pingcodeTaskSync.retryMissingResources(decodeURIComponent(runMatch[1]));
+          else {
+            res.writeHead(405, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+            res.end(JSON.stringify({ success: false, error: { code: 'METHOD_NOT_ALLOWED', message: '不支持该操作' } }));
+            return;
+          }
+          res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+          res.end(JSON.stringify({ success: true, data }));
+        } catch (error) {
+          const status = [400, 403, 404, 409, 422, 503].includes(error.status) ? error.status : 503;
+          res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+          res.end(JSON.stringify({ success: false, error: {
+            code: error.code || 'PINGCODE_SYNC_UNAVAILABLE',
+            message: status === 503 ? 'Pingcode 同步服务暂时不可用' : error.message,
+          } }));
+        }
+      }); return;
     }
     if (pathname.startsWith('/knowledge-center/api/platform/agent-runs/')) {
       requireSession(req, res, async session => {
@@ -2444,14 +2503,14 @@ function createKnowledgeCenterHandler(options) {
           let taskProjection = { items: [], following: [] };
           if (!taskSourceFailed) {
             try {
-              taskState = await handleDocumentTasks.store.readAsync();
+              taskState = await handleDocumentTasks.readMineState(targetId, targetContext.handbooks.map(book => book.id));
               taskProjection = projectDocumentTaskMine(targetContext, taskState);
             } catch (error) { taskSourceFailed = true; }
           }
           const delegated = pathname.endsWith('/delegated') || isQuery;
           const items = taskProjection.items.map(item => delegated ? ({ ...item, primaryAction: {
             code: item.id.includes(':scope') ? 'confirm_scope' : item.id.includes(':complete') ? 'complete_scope' : item.id.includes(':new-document') || item.actionLabel?.startsWith('创建/') ? 'create_document' : item.status === '需修订' ? 'revise_document' : 'write_document',
-            label: item.actionLabel?.startsWith('创建/') ? '创建文档' : item.actionLabel === '进入文档生产' ? '编写文档' : item.actionLabel || '查看任务',
+            label: item.id.includes(':scope') || item.id.includes(':complete') || item.id.includes(':new-document') || item.actionLabel?.startsWith('创建/') ? '查看' : item.actionLabel || '查看任务',
             url: item.url,
           } }) : Object.fromEntries(['id', 'kind', 'title', 'context', 'status', 'state', 'version', 'source', 'updatedAt', 'number', 'subtaskNumber', 'taskType', 'plannedStartTime', 'plannedEndTime'].map(key => [key, item[key]])));
           const following = taskProjection.following.map(item => delegated ? ({ ...item, primaryAction: { code: 'view_progress', label: '查看进度', url: item.url } }) : Object.fromEntries(['number', 'subtaskNumber', 'taskType', 'title', 'status', 'plannedStartTime', 'plannedEndTime', 'updatedAt', 'handbooks'].map(key => [key, item[key]])));
@@ -2464,7 +2523,7 @@ function createKnowledgeCenterHandler(options) {
             const visibleIds = new Set(reviewAssets.handbooks.filter(item => !Array.isArray(visible) || visible.map(String).includes(String(item.handbookId))).map(item => String(item.handbookId)));
             for (const item of review.documents.filter(item => item.assignedToMe && visibleIds.has(String(item.handbookId)))) {
               const url = `/knowledge-center/review?taskId=${encodeURIComponent(item.taskId)}&documentId=${encodeURIComponent(item.documentId || '')}`;
-              items.push({ id: `review:${item.taskId}:${item.reviewId}:${item.documentId || 'handbook'}`, kind: 'review', taskType: '文档审核', ...numberForReview(taskState, snapshot, item.taskId, item.documentId, visibleIds), title: `审核 ${item.title || item.documentId || '手册文档'}`, context: `${item.handbookId || '手册'} · ${item.documentId || '整本手册'} · ${item.taskId}`, lineage: { handbookId: item.handbookId, documentId: item.documentId, documentName: item.title }, status: '待审核', state: 'pending', version: item.businessVersion || '', source: '审核与发布', updatedAt: item.updatedAt || item.submittedAt, url, primaryAction: { code: 'review_document', label: '审核文档', url } });
+              items.push({ id: `review:${item.taskId}:${item.reviewId}:${item.documentId || 'handbook'}`, kind: 'review', taskType: '文档审核', ...numberForReview(taskState, snapshot, item.taskId, item.documentId, visibleIds), title: `审核 ${item.title || item.documentId || '手册文档'}`, context: `${item.handbookId || '手册'} · ${item.documentId || '整本手册'} · ${item.taskId}`, lineage: { handbookId: item.handbookId, documentId: item.documentId, documentName: item.title }, status: '待审核', state: 'pending', version: item.businessVersion || '', source: '审核与发布', updatedAt: item.updatedAt || item.submittedAt, url, primaryAction: { code: 'review_document', label: '查看审核', url } });
             }
             for (const task of snapshot.tasks || []) {
               if (!visibleIds.has(String(task.handbookId))) continue;
@@ -2480,7 +2539,7 @@ function createKnowledgeCenterHandler(options) {
                   if (documents.length !== 1) numbering.subtaskNumber = null;
                   const url = `/knowledge-center/review?taskId=${encodeURIComponent(task.id)}${first ? `&documentId=${encodeURIComponent(first.documentId)}` : ''}`;
                   const subject = task.name || (documents.length === 1 ? first.title || first.filePath : `${documents.length} 篇文档`) || '文档';
-                  items.push({ id: `delivery:${task.id}`, kind: action === 'revise_document' ? 'document' : 'merge', taskType: action === 'revise_document' ? '文档生产' : '文档发布', ...numbering, title: `${action === 'create_mr' ? '交付' : action === 'revise_document' ? '修订' : '同步交付'} ${subject}`, context: `${task.handbookId} · ${task.id}`, lineage: { handbookId: task.handbookId, documentId: documents.length === 1 ? first.documentId : null, documentName: documents.length === 1 ? first.title || first.filePath : null }, status: projection.completion.label, state: task.deliveryObservation?.state === 'closed' ? 'risk' : 'pending', version: task.businessVersion || '', source: '审核与发布', updatedAt: task.updatedAt || task.createdAt, url, delivery: { mergeState: projection.completion.facts.mergeState, markdownReadback: projection.completion.facts.markdownReadback, resourceReadback: projection.completion.facts.resourceReadback }, primaryAction: { code: action, label: action === 'create_mr' ? '创建MR' : action === 'revise_document' ? '修订文档' : '同步状态', url, enabled: action === 'revise_document' ? hasAction(session, 'knowledge:write') : hasAction(session, 'publish:manage'), ...(action === 'sync_delivery' ? { taskId: task.id, candidateDigest: task.candidate?.digest || '' } : {}) } });
+                  items.push({ id: `delivery:${task.id}`, kind: action === 'revise_document' ? 'document' : 'merge', taskType: action === 'revise_document' ? '文档生产' : '文档发布', ...numbering, title: `${action === 'create_mr' ? '交付' : action === 'revise_document' ? '修订' : '同步交付'} ${subject}`, context: `${task.handbookId} · ${task.id}`, lineage: { handbookId: task.handbookId, documentId: documents.length === 1 ? first.documentId : null, documentName: documents.length === 1 ? first.title || first.filePath : null }, status: projection.completion.label, state: task.deliveryObservation?.state === 'closed' ? 'risk' : 'pending', version: task.businessVersion || '', source: '审核与发布', updatedAt: task.updatedAt || task.createdAt, url, delivery: { mergeState: projection.completion.facts.mergeState, markdownReadback: projection.completion.facts.markdownReadback, resourceReadback: projection.completion.facts.resourceReadback }, primaryAction: { code: action, label: action === 'create_mr' ? '创建 MR' : action === 'revise_document' ? '查看审核' : '状态刷新', url, enabled: action === 'revise_document' ? hasAction(session, 'knowledge:write') : hasAction(session, 'publish:manage'), ...(action === 'sync_delivery' ? { taskId: task.id, candidateDigest: task.candidate?.digest || '' } : {}) } });
                 }
               }
               if (task.state !== 'mr_submitted' || !task.mergeRequest || !task.handbookSource) continue;
@@ -2493,7 +2552,7 @@ function createKnowledgeCenterHandler(options) {
                 const first = documents[0];
                 const numbering = numberForReview(taskState, snapshot, task.id, first?.documentId, visibleIds);
                 if (documents.length !== 1) numbering.subtaskNumber = null;
-                items.push({ id: `merge:${task.id}:${task.mergeRequest.iid}`, kind: 'merge', taskType: '文档发布', ...numbering, title: `合入 ${task.name || (documents.length === 1 ? first.title || first.filePath : `${documents.length} 篇文档`) || `GitLab MR !${task.mergeRequest.iid}`}`, context: `${task.handbookId} · MR !${task.mergeRequest.iid}`, lineage: { handbookId: task.handbookId, documentId: documents.length === 1 ? first.documentId : null, documentName: documents.length === 1 ? first.title || first.filePath : null }, status: '待合入', state: 'pending', version: task.businessVersion || '', source: 'GitLab 交付', updatedAt: task.updatedAt || task.createdAt, url: mrUrl.href, external: true, primaryAction: { code: 'merge_mr', label: '合入MR', url: mrUrl.href, external: true, enabled: targetId === callerId } });
+                items.push({ id: `merge:${task.id}:${task.mergeRequest.iid}`, kind: 'merge', taskType: '文档发布', ...numbering, title: `合入 ${task.name || (documents.length === 1 ? first.title || first.filePath : `${documents.length} 篇文档`) || `GitLab MR !${task.mergeRequest.iid}`}`, context: `${task.handbookId} · MR !${task.mergeRequest.iid}`, lineage: { handbookId: task.handbookId, documentId: documents.length === 1 ? first.documentId : null, documentName: documents.length === 1 ? first.title || first.filePath : null }, status: '待合入', state: 'pending', version: task.businessVersion || '', source: 'GitLab 交付', updatedAt: task.updatedAt || task.createdAt, url: mrUrl.href, external: true, primaryAction: { code: 'merge_mr', label: 'MR链接', url: mrUrl.href, external: true, enabled: targetId === callerId } });
               }
             }
           } catch (_) { unavailable.push('审核与发布'); }
@@ -2542,16 +2601,27 @@ function createKnowledgeCenterHandler(options) {
         try {
           const contextStarted = performance.now();
           const suffix = pathname.slice('/knowledge-center/api/document-tasks/'.length);
-          const detailRead = req.method === 'GET' && !suffix.includes('/') && suffix && !['context', 'catalog', 'config', 'mine', 'import'].includes(suffix);
+          const detailRead = req.method === 'GET' && !suffix.includes('/') && suffix && !['context', 'catalog', 'config', 'mine', 'import', 'export.csv'].includes(suffix);
           let contextDoneAt, taskReadDoneAt;
           const contextPromise = readDocumentTaskContext().then(value => { contextDoneAt = performance.now(); return value; });
-          const statePromise = detailRead ? handleDocumentTasks.readState().then(value => { taskReadDoneAt = performance.now(); return value; }) : Promise.resolve(null);
+          const statePromise = detailRead ? handleDocumentTasks.readTaskState(decodeURIComponent(suffix)).then(value => { taskReadDoneAt = performance.now(); return value; }) : Promise.resolve(null);
           const [[directory, assets], preloadedTaskState] = await Promise.all([contextPromise, statePromise]);
           if (process.env.KC_DOCUMENT_TASK_TIMING === '1') res.setHeader('Server-Timing', `session;dur=${(contextStarted - taskRequestStarted).toFixed(1)}, context;dur=${(contextDoneAt - contextStarted).toFixed(1)}, principals;dur=${(documentTaskContextTiming?.principals || 0).toFixed(1)}, assets;dur=${(documentTaskContextTiming?.assets || 0).toFixed(1)}${detailRead ? `, task-preload;dur=${(taskReadDoneAt - contextStarted).toFixed(1)}` : ''}`);
           const allowed = session.visibleHandbookIds || session.user?.visibleHandbookIds;
-          const people = (directory.items || []).filter(p => String(p.state || 'active').toLowerCase() === 'active').map(p => ({ id: String(p.id || p.principalId), displayName: p.displayName || p.name || p.loginName || p.id }));
+          const people = (directory.items || []).filter(p => String(p.state || 'active').toLowerCase() === 'active' && p.enabled !== false).map(p => ({ id: String(p.id || p.principalId), displayName: p.displayName || p.name || p.loginName || p.id, state: p.state || 'active', enabled: p.enabled !== false }));
           const handbooks = (assets.handbooks || []).filter(b => !b.archivedAt && (!Array.isArray(allowed) || allowed.includes(b.handbookId))).map(b => ({ id: b.handbookId, name: b.name, ownerId: b.ownerA?.principalId == null ? null : String(b.ownerA.principalId) }));
-          handleDocumentTasks(req, res, { session, people, handbooks, preloadedTaskState, reviewService: handleIncrementalBuild?.service, createDocument: (id, proposal) => options.documentTaskCreateDocument(id, proposal, session), resolveVersionMapping: databasePlatformMode ? async (id, product, version) => {
+          handleDocumentTasks(req, res, { session, people, handbooks, preloadedTaskState, reviewService: handleIncrementalBuild?.service,
+            readScopeMergeRequest: async review => {
+              if (!review.mergeRequest?.iid || !review.handbookSource?.documents?.length) throw new GitLabConnectorError('GITLAB_DELIVERY_CONTEXT_INVALID', '关联审核缺少 MR 或候选文档', 409);
+              const { connection } = findMapping(review.handbookId, GITLAB_CONFIG_PATH);
+              const identity = { connectionId: connection.id, host: connection.host, project: connection.projectPath || connection.project };
+              if (JSON.stringify(identity) !== JSON.stringify(review.handbookSource.repositoryIdentity)) throw new GitLabConnectorError('GITLAB_MAPPING_CHANGED', '审核使用的仓库映射已变化', 409);
+              const delivery = await gitLabRequestForUser(session, connection, options => readMergeRequestDelivery(connection, {
+                branch: review.handbookSource.branch, documents: review.handbookSource.documents, mergeRequest: review.mergeRequest,
+              }, options));
+              return { ...delivery, targetCommit: delivery.targetCommitSha || null, observedAt: new Date().toISOString() };
+            },
+            createDocument: (id, proposal) => options.documentTaskCreateDocument(id, proposal, session), resolveVersionMapping: databasePlatformMode ? async (id, product, version) => {
             if (!product || !version) throw new GitLabConnectorError('BUSINESS_VERSION_MISSING', '工单缺少 PingCode 产品或业务版本', 422);
             const { mapping, connection } = await findMappingAsync(id);
             if (connection.status !== 'active') throw new GitLabConnectorError('GITLAB_CONNECTION_DISABLED', '仓库连接已停用', 409);
@@ -2766,33 +2836,179 @@ function createKnowledgeCenterHandler(options) {
         });
       }); return;
     }
+    const scopeOpinionDecision = pathname.match(/^\/knowledge-center\/api\/incremental-tasks\/([^/]+)\/reviews\/([^/]+)\/comments\/([^/]+)\/scope-decision$/);
+    if (scopeOpinionDecision && req.method === 'POST') {
+      requireSession(req, res, async session => {
+        const service = handleIncrementalBuild?.service;
+        const taskId = decodeURIComponent(scopeOpinionDecision[1]);
+        const reviewId = decodeURIComponent(scopeOpinionDecision[2]);
+        const commentId = decodeURIComponent(scopeOpinionDecision[3]);
+        const body = await readJsonBody(req);
+        const comment = service.listReviewComments(session, taskId, reviewId).find(item => item.id === commentId);
+        if (!comment?.scopeOpinion) throw Object.assign(new Error('范围意见不存在'), { status: 404, code: 'SCOPE_OPINION_NOT_FOUND' });
+        const reviewTask = service.get(session, taskId);
+        const state = await handleDocumentTasks.readReviewState(taskId);
+        const matches = (state.tasks || []).flatMap(task => (task.decomposition?.handbooks || [])
+          .filter(book => book.id === reviewTask.handbookId && book.confirmed && (book.documents || []).some(doc => doc.reviewTaskId === taskId))
+          .map(book => ({ task, book })));
+        if (matches.length !== 1) throw Object.assign(new Error('审核关联范围不唯一'), { status: 409, code: 'SCOPE_REVIEW_AMBIGUOUS' });
+        const { task, book } = matches[0];
+        const responsibleId = comment.scopeOpinion.level === 'ticket' ? task.ownerId : book.ownerId;
+        const retryAccepted = comment.scopeOpinion.status === 'accepted_pending_scope' && body.decision === 'accept';
+        if (retryAccepted && String(responsibleId) !== String(session.user?.principalId || session.user?.id)) {
+          throw Object.assign(new Error('只有当前范围负责人可以继续处理'), { status: 403, code: 'SCOPE_DECISION_FORBIDDEN' });
+        }
+        const result = retryAccepted ? comment.scopeOpinion : service.decideScopeOpinion(session, taskId, reviewId, commentId, req.headers['idempotency-key'], body,
+          { level: comment.scopeOpinion.level, responsibleId });
+        const nextUrl = result.status === 'accepted_pending_scope'
+          ? `/knowledge-center/document-tasks?task=${encodeURIComponent(task.number)}&action=${comment.scopeOpinion.level === 'ticket' ? 'ticket-scope' : 'book-scope'}${comment.scopeOpinion.level === 'handbook' ? `&handbookId=${encodeURIComponent(book.id)}` : ''}&scopeOpinionTaskId=${encodeURIComponent(taskId)}&scopeOpinionReviewId=${encodeURIComponent(reviewId)}&scopeOpinionCommentId=${encodeURIComponent(commentId)}` : null;
+        let correctionStatus = null, scopeChangeId = null, correctionError = null;
+        if (result.status === 'accepted_pending_scope') {
+          try {
+            const [directory, assets] = typeof domainStore.readPrincipalsAsync === 'function' ? await readDocumentTaskContext() : [{ items: session.people || [] }, { handbooks: [{ handbookId: book.id, name: book.name }] }];
+            const allowed = session.visibleHandbookIds || session.user?.visibleHandbookIds;
+            const people = (directory.items || []).filter(person => String(person.state || 'active').toLowerCase() === 'active' && person.enabled !== false)
+              .map(person => ({ id: String(person.id || person.principalId), displayName: person.displayName || person.name || person.id }));
+            const handbooks = (assets.handbooks || []).filter(item => !item.archivedAt && (!Array.isArray(allowed) || allowed.includes(item.handbookId)))
+              .map(item => ({ id: item.handbookId, name: item.name }));
+            const change = await handleDocumentTasks.ensureLinkedScopeChange(task.number,
+              { taskId, reviewId, commentId }, session,
+              { people, handbooks, reviewService: service, level: comment.scopeOpinion.level,
+                handbookId: comment.scopeOpinion.level === 'handbook' ? book.id : null, reason: comment.content }, req.headers['idempotency-key']);
+            scopeChangeId = change.id; correctionStatus = 'ready';
+          } catch (error) {
+            correctionStatus = 'pending'; correctionError = { code: error.code || 'SCOPE_CHANGE_CREATE_FAILED', message: error.message };
+          }
+        }
+        sendProductionData(res, { ...result, ticketNumber: task.number, handbookId: book.id, nextUrl,
+          scopeChangeId, correctionStatus, correctionError,
+          retryUrl: correctionStatus === 'pending' ? pathname : null });
+      }); return;
+    }
     const reviewComments = pathname.match(/^\/knowledge-center\/api\/incremental-tasks\/([^/]+)\/reviews\/([^/]+)\/comments$/);
+    if (reviewComments && req.method === 'GET') {
+      requireSession(req, res, async session => {
+        const service = handleIncrementalBuild?.service;
+        const comments = service.listReviewComments(session, decodeURIComponent(reviewComments[1]), decodeURIComponent(reviewComments[2]),
+          Object.fromEntries(new URL(req.url, 'http://localhost').searchParams));
+        const directory = typeof domainStore.readPrincipalsAsync === 'function'
+          ? (await domainStore.readPrincipalsAsync()).items || [] : session.people || [];
+        sendProductionData(res, comments.map(comment => ({ ...comment, mentions: (comment.mentions || []).map(mention => {
+          const person = directory.find(value => [value.id, value.principalId, value.userId]
+            .filter(id => id != null).map(String).includes(String(mention.recipientId)));
+          return { ...mention, disabled: !person || person.enabled === false
+            || ['inactive', 'disabled'].includes(String(person.state || person.status || 'active').toLowerCase()) };
+        }) })));
+      }); return;
+    }
     if (reviewComments && req.method === 'POST') {
       requireSession(req, res, async session => {
         const service = handleIncrementalBuild?.service;
         if (!service?.commentOnReview) throw Object.assign(new Error('审核服务暂不可用'), { status: 503 });
         const body = await readJsonBody(req);
-        const requested = Array.isArray(body.mentions) ? body.mentions.map(item => String(item?.handbookId || '')) : [];
-        if (new Set(requested).size !== requested.length) throw Object.assign(new Error('提及的手册不能重复'), { status: 422, code: 'MENTION_DUPLICATE' });
+        if (body.relatedOpinionId) {
+          if (body.commentType !== 'scope_opinion') throw Object.assign(new Error('只有范围意见可以关联原意见'), { status: 422, code: 'RELATED_OPINION_INVALID' });
+          const taskId = decodeURIComponent(reviewComments[1]);
+          const reviewId = decodeURIComponent(reviewComments[2]);
+          const previous = service.listReviewComments(session, taskId, reviewId)
+            .find(item => item.id === String(body.relatedOpinionId));
+          const state = await handleDocumentTasks.readReviewState(taskId);
+          const cancelled = (state.tasks || []).some(task => (task.scopeChanges || []).some(change =>
+            change.status === 'cancelled' && change.sourceOpinion?.taskId === taskId
+            && change.sourceOpinion?.reviewId === reviewId && change.sourceOpinion?.commentId === previous?.id));
+          if (!previous?.scopeOpinion || previous.scopeOpinion.status !== 'accepted_pending_scope'
+            || previous.scopeOpinion.level !== body.scopeLevel || !cancelled) {
+            throw Object.assign(new Error('原范围意见未关联已取消的范围调整'), { status: 422, code: 'RELATED_OPINION_INVALID' });
+          }
+        }
+        const requested = Array.isArray(body.mentions) ? body.mentions : [];
+        const mentionKeys = requested.map(item => `${item?.role || 'handbook_owner'}:${item?.handbookId || ''}:${item?.documentId || ''}`);
+        if (new Set(mentionKeys).size !== mentionKeys.length) throw Object.assign(new Error('提及对象不能重复'), { status: 422, code: 'MENTION_DUPLICATE' });
         const trustedMentions = [];
+        let trustedScope = {};
         if (requested.length) {
-          const state = await handleDocumentTasks.readState();
-          for (const handbookId of requested) {
+          const state = await handleDocumentTasks.readReviewState(decodeURIComponent(reviewComments[2]));
+          const platformConfig = (await handleDocumentTasks.readState()).config || {};
+          const directoryPeople = typeof domainStore.readPrincipalsAsync === 'function' ? (await domainStore.readPrincipalsAsync()).items || []
+            : Array.isArray(session?.people) ? session.people : null;
+          for (const target of requested) {
+            if (target?.role && !['handbook_owner', 'document_first_owner', 'knowledge_center_owner'].includes(target.role)) throw Object.assign(new Error('提及角色无效'), { status: 422, code: 'MENTION_ROLE_INVALID' });
+            const role = target?.role || 'handbook_owner';
+            const handbookId = String(target?.handbookId || '');
             const matches = (state.tasks || []).flatMap(task => (task.decomposition?.handbooks || [])
               .filter(book => book.id === handbookId && book.confirmed && book.impact === 'involved'
                 && (book.documents || []).some(doc => String(doc.reviewTaskId || '') === decodeURIComponent(reviewComments[2])))
-              .map(book => ({ task, book })));
+              .map(book => ({ task, book, documents: (book.documents || []).filter(doc => String(doc.reviewTaskId || '') === decodeURIComponent(reviewComments[2])) })));
             if (matches.length !== 1) throw Object.assign(new Error('所选手册不属于当前审核关联的有效工单范围'), { status: 422, code: 'MENTION_SCOPE_INVALID' });
-            const { book } = matches[0];
+            const { task, book, documents } = matches[0];
             await requireHandbookReadAsync(session, book.id);
-            if (!book.ownerId) throw Object.assign(new Error(`手册“${book.name}”尚未指派负责人，无法提及`), { status: 422, code: 'MENTION_RECIPIENT_MISSING' });
-            trustedMentions.push({ handbookId: book.id, handbookName: book.name, recipientId: String(book.ownerId) });
+            const doc = role === 'document_first_owner' ? documents.find(item => String(item.createdDocumentId || item.id) === String(target.documentId || '')) : null;
+            if (role === 'document_first_owner' && !doc) throw Object.assign(new Error('文档不属于当前审核范围'), { status: 422, code: 'MENTION_SCOPE_INVALID' });
+            let recipientId;
+            if (role === 'handbook_owner') recipientId = book.ownerId;
+            if (role === 'document_first_owner') recipientId = doc.firstAssignedOwnerId;
+            if (role === 'knowledge_center_owner') recipientId = platformConfig.knowledgeCenterOwnerId;
+            if (!recipientId) throw Object.assign(new Error(role === 'document_first_owner' ? '该文档没有可信的首次正式分派记录，无法提及首次责任人' : '提及对象尚未配置或未指派'), { status: 422, code: 'MENTION_RECIPIENT_MISSING' });
+            const person = directoryPeople?.find(item => [item.id, item.principalId, item.userId].filter(value => value != null).map(String).includes(String(recipientId)));
+            if (directoryPeople && (!person || person.enabled === false || ['inactive', 'disabled'].includes(String(person.state || person.status || 'active').toLowerCase()))) {
+              throw Object.assign(new Error('接收人已在人员管理中停用，请重新选择'), { status: 422, code: 'MENTION_RECIPIENT_INACTIVE' });
+            }
+            trustedMentions.push({ role, handbookId: book.id, handbookName: book.name, documentId: role === 'document_first_owner' ? (doc.createdDocumentId || doc.id) : null,
+              documentName: role === 'document_first_owner' ? doc.name : documents.length === 1 ? documents[0].name : null,
+              recipientId: String(recipientId), recipientName: person?.displayName || person?.name || String(recipientId), ticketNumber: task.number });
           }
+        }
+        if (body.commentType === 'scope_opinion') {
+          const reviewTask = service.get(session, decodeURIComponent(reviewComments[1]));
+          const state = await handleDocumentTasks.readReviewState(decodeURIComponent(reviewComments[1]));
+          const matches = (state.tasks || []).flatMap(task => (task.decomposition?.handbooks || [])
+            .filter(book => book.id === reviewTask.handbookId && book.confirmed && (book.documents || []).some(doc => doc.reviewTaskId === decodeURIComponent(reviewComments[1])))
+            .map(book => ({ task, book })));
+          if (matches.length !== 1) throw Object.assign(new Error('审核关联范围不唯一'), { status: 409, code: 'SCOPE_REVIEW_AMBIGUOUS' });
+          const { task, book } = matches[0];
+          trustedScope = { scopeResponsibleId: body.scopeLevel === 'ticket' ? task.ownerId : book.ownerId,
+            ticketNumber: task.number, handbookId: book.id };
         }
         const key = req.headers['idempotency-key'];
         if (!key) throw Object.assign(new Error('提交审核意见需要幂等键'), { status: 400, code: 'IDEMPOTENCY_KEY_REQUIRED' });
-        const result = service.commentOnReview(session, decodeURIComponent(reviewComments[1]), decodeURIComponent(reviewComments[2]), key, body, { mentions: trustedMentions });
+        const result = service.commentOnReview(session, decodeURIComponent(reviewComments[1]), decodeURIComponent(reviewComments[2]), key, body, { mentions: trustedMentions, ...trustedScope });
         sendProductionData(res, result);
+      }); return;
+    }
+    if (pathname === '/knowledge-center/api/incremental-tasks/notifications' && req.method === 'GET') {
+      requireSession(req, res, async session => {
+        const service = handleIncrementalBuild?.service;
+        const result = service.listNotifications(session, Object.fromEntries(new URL(req.url, 'http://localhost').searchParams));
+        const directory = typeof domainStore.readPrincipalsAsync === 'function'
+          ? (await domainStore.readPrincipalsAsync()).items || [] : session.people || [];
+        const taskStates = new Map();
+        const reviewTasks = new Map();
+        const readTask = number => {
+          if (!taskStates.has(number)) taskStates.set(number, handleDocumentTasks.readTaskState(number));
+          return taskStates.get(number);
+        };
+        const items = await Promise.all(result.items.map(async item => {
+          const person = directory.find(value => [value.id, value.principalId, value.userId]
+            .filter(id => id != null).map(String).includes(String(item.recipientId)));
+          const recipientActive = Boolean(person && person.enabled !== false
+            && !['inactive', 'disabled'].includes(String(person.state || person.status || 'active').toLowerCase()));
+          const actions = [];
+          try {
+            if (!reviewTasks.has(item.taskId)) reviewTasks.set(item.taskId, service.get(session, item.taskId));
+            if (reviewTasks.get(item.taskId).capabilities?.canComment) actions.push('reply');
+            if (item.type === 'review_scope_opinion' && item.ticketNumber && hasAction(session, 'knowledge:write')) {
+              const comment = service.listReviewComments(session, item.taskId, item.reviewId).find(value => value.id === item.commentId);
+              const state = await readTask(item.ticketNumber);
+              const task = (state.tasks || []).find(value => value.number === item.ticketNumber);
+              const book = task?.decomposition?.handbooks?.find(value => value.id === item.handbookId);
+              const responsibleId = comment?.scopeOpinion?.level === 'ticket' ? task?.ownerId : book?.ownerId;
+              if (comment?.scopeOpinion?.status === 'open' && book?.confirmed
+                && String(responsibleId) === String(session.user?.principalId || session.user?.id)) actions.push('scope_decide');
+            }
+          } catch (_) { /* A stale notification remains readable without an unsafe action. */ }
+          return { ...item, recipientActive, actions };
+        }));
+        sendProductionData(res, { ...result, items });
       }); return;
     }
     if (pathname === '/knowledge-center/api/incremental-tasks' || pathname.startsWith('/knowledge-center/api/incremental-tasks/')) {

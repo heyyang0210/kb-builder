@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 from .config import PINGCODE_DIR, REPOSITORY_ROOT, settings
 from .models import SourceSelection, SourceSnapshot, TreeResponse
@@ -28,6 +29,13 @@ from pingcode_core.content_parser import ContentParser
 
 
 logger = logging.getLogger(__name__)
+
+
+class PingcodeTaskSourceError(ValueError):
+    def __init__(self, code: str, message: str, **details: Any):
+        super().__init__(message)
+        self.code = code
+        self.details = details
 
 
 class PingCodeService:
@@ -383,6 +391,215 @@ class PingCodeService:
         if include_images:
             return self._submit(self._read_reference_sync, space_key, page_id, True)
         return self._submit(self._read_reference_sync, space_key, page_id)
+
+    def read_baseline_ideas_reference(self, product_code: str, baseline_id: str, category: str = "all") -> dict[str, Any]:
+        if not all(re.fullmatch(r"[A-Za-z0-9_-]+", value) for value in (product_code, baseline_id, category)):
+            raise ValueError("基线定位符无效")
+        return self._submit(self._read_baseline_ideas_reference_sync, product_code, baseline_id, category)
+
+    def read_task_source_page(self, source_url: str, source_type: str, page_index: int) -> dict[str, Any]:
+        """Read one bounded page for a platform-managed Pingcode source."""
+        return self._submit(self._read_task_source_page_sync, source_url, source_type, page_index)
+
+    def read_task_source_image(self, image_url: str, max_bytes: int, timeout_ms: int) -> dict[str, Any]:
+        """Read a Pingcode public image through the authorized connector session."""
+        return self._submit(self._read_task_source_image_sync, image_url, max_bytes, timeout_ms)
+
+    def _read_task_source_image_sync(self, image_url: str, max_bytes: int, timeout_ms: int) -> dict[str, Any]:
+        parsed = urlparse(image_url)
+        base = urlparse(self.config.base_url)
+        if (parsed.scheme != 'https' or parsed.netloc != base.netloc or parsed.username or parsed.password
+                or parsed.fragment or not parsed.path.startswith('/atlas/files/public/')
+                or not 1 <= max_bytes <= 5242880 or not 1 <= timeout_ms <= 15000):
+            raise ValueError('图片地址或读取限制无效')
+        data, content_type = self._ensure_api().download_public_image(
+            {'originUrl': image_url}, max_bytes=max_bytes, timeout_ms=timeout_ms)
+        return {'dataBase64': base64.b64encode(data).decode('ascii'), 'contentType': content_type}
+
+    def _read_task_source_page_sync(self, source_url: str, source_type: str, page_index: int) -> dict[str, Any]:
+        parsed = urlparse(source_url)
+        configured_host = urlparse(self.config.base_url).hostname
+        if (parsed.scheme != 'https' or parsed.hostname != configured_host
+                or parsed.username or parsed.password or parsed.fragment
+                or not isinstance(page_index, int) or page_index < 0):
+            raise ValueError('Pingcode 来源 URL 或分页无效')
+        if source_type not in {'requirement', 'ticket'}:
+            raise ValueError('Pingcode 来源类型无效')
+        api = self._ensure_api()
+        if source_type == 'requirement':
+            match = re.fullmatch(r'/ship/products/([A-Za-z0-9_-]+)/baselines/([A-Za-z0-9_-]+)/ideas', parsed.path)
+            query = parse_qs(parsed.query, strict_parsing=True)
+            if not match or set(query) - {'category'} or len(query.get('category', ['all'])) != 1:
+                raise ValueError('需求来源必须是产品基线需求列表')
+            product_code, baseline_id = match.groups()
+            category = query.get('category', ['all'])[0]
+            if not re.fullmatch(r'[A-Za-z0-9_-]+', category):
+                raise ValueError('基线分类无效')
+            product = api.get_product(product_code).get('data', {}).get('value', {})
+            product_id = product.get('_id')
+            if product.get('identifier') != product_code or not product_id:
+                raise ValueError('Pingcode 产品与来源不一致')
+            baseline = api.get_baseline(product_id, baseline_id).get('data', {}).get('value', {})
+            if (baseline.get('short_id') != baseline_id or baseline.get('scope') != product_id
+                    or baseline.get('updated_at') is None):
+                raise ValueError('Pingcode 基线与来源不一致')
+            suite_id = ''
+            if category != 'all':
+                suites = api.get_baseline_suites(product_id, baseline_id).get('data', {}).get('value', [])
+                matches = [item for item in suites if item.get('short_id') == category and item.get('product_id') == product_id]
+                if len(matches) != 1:
+                    raise ValueError('基线分类不属于当前产品')
+                suite_id = matches[0]['_id']
+            data = api.get_baseline_ideas(product_id, baseline_id, page_index, suite_id=suite_id).get('data', {})
+            ideas = data.get('value')
+            if (not isinstance(ideas, list) or not isinstance(data.get('count'), int)
+                    or not isinstance(data.get('page_count'), int)
+                    or page_index >= data['page_count'] and data['count'] != 0):
+                raise ValueError('基线分页响应无效')
+            project = api.get_agile_project('YDBRD').get('data', {}).get('value', {})
+            project_id = project.get('_id')
+            if project.get('identifier') != 'YDBRD' or not project_id:
+                raise ValueError('关联工作项所属项目无法验证')
+            items = []
+            for idea in ideas:
+                identifier = idea.get('whole_identifier', '')
+                if not identifier.startswith(f'{product_code}-') or not idea.get('_id') or not idea.get('version_id'):
+                    raise ValueError('基线需求身份或版本缺失')
+                relation = api.get_idea_work_items(idea['_id'], idea['version_id']).get('data', {})
+                related = relation.get('value')
+                if not isinstance(related, list) or len(related) != idea.get('relation_data', {}).get('work_item', 0):
+                    expected = idea.get('relation_data', {}).get('work_item', 0)
+                    actual = len(related) if isinstance(related, list) else None
+                    raise PingcodeTaskSourceError(
+                        'PINGCODE_RELATION_INCOMPLETE', '需求关联工作项数量与详情不一致',
+                        sourceNumber=identifier, expectedCount=expected, actualCount=actual,
+                    )
+                if any(re.fullmatch(r'YDBRD-\d+', item.get('whole_identifier', ''))
+                       and (item.get('project_id') != project_id or not item.get('_id') or not item.get('short_id'))
+                       for item in related):
+                    raise PingcodeTaskSourceError(
+                        'PINGCODE_RELATION_IDENTITY_INVALID', '需求关联工作项身份无法验证',
+                    )
+                items.append({'ir': identifier, 'irId': idea['_id'], 'workItems': [
+                    {'number': item['whole_identifier'], 'id': item['_id'], 'shortId': item['short_id'],
+                     'title': item.get('title', ''), 'description': item.get('description', ''),
+                     'projectId': item.get('project_id'), 'updatedAt': item.get('updated_at')}
+                    for item in related if re.fullmatch(r'YDBRD-\d+', item.get('whole_identifier', ''))
+                ]})
+            return {'sourceType': source_type, 'sourceId': baseline_id, 'sourceVersion': baseline.get('updated_at'),
+                    'count': data.get('count'), 'pageIndex': page_index, 'pageCount': data.get('page_count'),
+                    'items': items}
+
+        match = re.fullmatch(r'/pjm/projects/(YDBRD)/defect/([A-Za-z0-9_-]+)', parsed.path)
+        if not match or parsed.query:
+            raise ValueError('工单来源必须是 YDBRD 缺陷视图')
+        view_short_id = match.group(2)
+        project = api.get_agile_project('YDBRD').get('data', {}).get('value', {})
+        project_id = project.get('_id')
+        if project.get('identifier') != 'YDBRD' or not project_id:
+            raise ValueError('工单项目身份无效')
+        addon = next((item for item in project.get('addons', []) if item.get('_id') and item.get('key') == 'defect'), None)
+        if not addon:
+            raise ValueError('工单项目缺少缺陷视图能力')
+        addon_id = addon['_id']
+        view = api.get_defect_view(project_id, addon_id, view_short_id).get('data', {}).get('value', {})
+        if (view.get('short_id') != view_short_id or view.get('addon_id') != addon_id
+                or not view.get('_id') or view.get('updated_at') is None):
+            raise ValueError('工单视图归属无效')
+        query = view.get('query')
+        if not isinstance(query, dict):
+            raise ValueError('工单视图筛选条件无效')
+        criteria = {'search': {'keywords': '', 'scopes': ['identifier', 'title']}, **query,
+                    'group_by': '', 'show_type': 2, 'sort_type': 1}
+        columns = [item['property_key'] for item in view.get('columns', []) if item.get('property_key')]
+        if 'description' not in columns:
+            columns.append('description')
+        data = api.get_defect_view_content(project_id, view['_id'], addon_id, criteria, columns, page_index).get('data', {})
+        rows = data.get('value')
+        if (not isinstance(rows, list) or not isinstance(data.get('count'), int)
+                or not isinstance(data.get('page_count'), int)
+                or page_index >= data['page_count'] and data['count'] != 0):
+            raise ValueError('工单视图分页响应无效')
+        items = []
+        for item in rows:
+            if (not re.fullmatch(r'YDBRD-\d+', item.get('whole_identifier', ''))
+                    or item.get('project_id') != project_id or not item.get('_id') or not item.get('short_id')):
+                raise ValueError('工单视图返回非目标项目工作项')
+            detail = item
+            if not isinstance(item.get('description'), str):
+                detail = api.get_work_item(item['short_id']).get('data', {}).get('value', {})
+                if (detail.get('_id') != item['_id'] or detail.get('whole_identifier') != item['whole_identifier']
+                        or detail.get('project_id') != project_id or not isinstance(detail.get('description'), str)):
+                    raise ValueError('工单详情与所选视图不一致')
+            items.append({'number': item['whole_identifier'], 'id': item['_id'], 'shortId': item['short_id'],
+                          'title': detail.get('title', ''), 'description': detail.get('description', ''),
+                          'projectId': project_id, 'ownerId': detail.get('assignee'),
+                          'createdAt': detail.get('created_at'), 'updatedAt': detail.get('updated_at')})
+        return {'sourceType': source_type, 'sourceId': view['_id'], 'sourceVersion': view.get('updated_at'),
+                'count': data.get('count'), 'pageIndex': page_index, 'pageCount': data.get('page_count'),
+                'criteria': criteria, 'items': items}
+
+    def _read_baseline_ideas_reference_sync(self, product_code: str, baseline_id: str, category: str) -> dict[str, Any]:
+        with self._lock:
+            from urllib.parse import urlencode
+            url = (f"{self.config.base_url.rstrip('/')}/ship/products/{product_code}"
+                   f"/baselines/{baseline_id}/ideas?{urlencode({'category': category})}")
+            api = self._ensure_api()
+            product = api.get_product(product_code).get("data", {}).get("value", {})
+            product_id = str(product.get("_id") or "") if isinstance(product, dict) else ""
+            if not re.fullmatch(r"[A-Za-z0-9_-]+", product_id) or product.get("identifier") != product_code:
+                raise ValueError("PingCode 产品与请求不一致")
+            baseline = api.get_baseline(product_id, baseline_id).get("data", {}).get("value", {})
+            if not isinstance(baseline, dict) or baseline.get("short_id") != baseline_id or baseline.get("scope") != product_id:
+                raise ValueError("PingCode 基线与请求不一致")
+            suite_id = ""
+            title = str(baseline.get("name") or f"{product_code} 基线想法")
+            if category != "all":
+                suites = api.get_baseline_suites(product_id, baseline_id).get("data", {}).get("value")
+                if not isinstance(suites, list):
+                    raise ValueError("PingCode 基线分组响应无效")
+                matches = [item for item in suites if isinstance(item, dict) and item.get("short_id") == category
+                           and item.get("product_id") == product_id]
+                if len(matches) != 1 or not re.fullmatch(r"[A-Za-z0-9_-]+", str(matches[0].get("_id") or "")):
+                    raise ValueError("基线中不存在唯一匹配的分组")
+                suite_id = str(matches[0]["_id"])
+                title = f"{title} · {matches[0].get('name') or category}"
+            rows = []
+            expected_count = None
+            suite_filter = {"suite_id": suite_id} if suite_id else {}
+            for page_index in range(20):
+                data = api.get_baseline_ideas(product_id, baseline_id, page_index, **suite_filter).get("data", {})
+                batch = data.get("value")
+                count = data.get("count")
+                if not isinstance(batch, list) or not isinstance(count, int) or count < 0 or count > 1000:
+                    raise ValueError("PingCode 基线列表响应无效")
+                if expected_count is None:
+                    expected_count = count
+                elif count != expected_count:
+                    raise ValueError("PingCode 基线列表读取期间发生变化")
+                rows.extend(batch)
+                if len(rows) >= count:
+                    break
+                if not batch:
+                    raise ValueError("PingCode 基线列表分页不完整")
+            if len(rows) != expected_count:
+                raise ValueError("基线页面分页结果不完整")
+            from .markdown_cleaning import html_to_markdown
+            lines = [f"# {title}", f"共 {expected_count} 条需求", ""]
+            for item in rows:
+                if not isinstance(item, dict) or not isinstance(item.get("whole_identifier"), str) or not isinstance(item.get("title"), str):
+                    raise ValueError("PingCode 基线需求字段无效")
+                if not item["whole_identifier"].startswith(f"{product_code}-"):
+                    raise ValueError("PingCode 基线需求不属于目标产品")
+                lines.append(f"## {item['whole_identifier']}: {item['title']}")
+                if isinstance(item.get("description"), str) and item["description"].strip():
+                    lines.append(html_to_markdown(item["description"]))
+            content = "\n".join(lines)
+            return {
+                "productCode": product_code, "baselineId": baseline_id, "category": category,
+                "title": title, "content": content,
+                "originalUrl": url,
+            }
 
     def _read_reference_sync(self, space_key: str, page_id: str, include_images: bool = False) -> dict[str, Any]:
         with self._lock:

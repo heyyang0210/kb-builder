@@ -145,5 +145,63 @@ class PingCodeReferenceTest(unittest.TestCase):
             self.assertEqual(status, response.status_code)
             self.assertNotIn("secret-detail", response.text)
 
+    def test_baseline_ideas_reference_requires_complete_authenticated_result(self):
+        service = self.service()
+        service.api.get_product.return_value = {"data": {"value": {"_id": "product1", "identifier": "YASHAN"}}}
+        service.api.get_baseline.return_value = {"data": {"value": {"short_id": "y28FbpmM", "scope": "product1", "name": "版本基线"}}}
+        service.api.get_baseline_suites.return_value = {"data": {"value": []}}
+        service.api.get_baseline_ideas.return_value = {"data": {"count": 1, "value": [{"whole_identifier": "YASHAN-1", "title": "完善数据库文档", "description": "<p>说明</p>"}]}}
+        result = service.read_baseline_ideas_reference("YASHAN", "y28FbpmM", "all")
+        self.assertIn("YASHAN-1", result["content"])
+        service.api.get_baseline_ideas.return_value = {"data": {"count": 1, "value": []}}
+        with self.assertRaises(ValueError):
+            service.read_baseline_ideas_reference("YASHAN", "y28FbpmM", "all")
+        service.api.get_baseline_ideas.return_value = {"data": {"count": 0, "value": []}}
+        self.assertIn("共 0 条需求", service.read_baseline_ideas_reference("YASHAN", "y28FbpmM", "all")["content"])
+        service.api.get_baseline_ideas.assert_called()
+        with self.assertRaises(ValueError):
+            service.read_baseline_ideas_reference("YASHAN", "y28FbpmM", "planned")
+
+    def test_baseline_ideas_http_contract(self):
+        client = TestClient(app)
+        locator = "/api/pingcode/products/YASHAN/baselines/y28FbpmM/ideas/reference?category=all"
+        with patch.object(pingcode, "read_baseline_ideas_reference", return_value={"productCode": "YASHAN", "baselineId": "y28FbpmM", "category": "all", "content": "正文"}) as reader:
+            response = client.get(locator)
+            self.assertEqual(200, response.status_code)
+            reader.assert_called_once_with("YASHAN", "y28FbpmM", "all")
+        with patch.object(pingcode, "read_baseline_ideas_reference", side_effect=ValueError("secret-detail")):
+            response = client.get(locator)
+            self.assertEqual(422, response.status_code)
+            self.assertNotIn("secret-detail", response.text)
+
+    def test_baseline_ideas_collects_every_page_and_rejects_changed_count(self):
+        service = self.service()
+        service.api.get_product.return_value = {"data": {"value": {"_id": "product1", "identifier": "YASHAN"}}}
+        service.api.get_baseline.return_value = {"data": {"value": {"short_id": "base1", "scope": "product1", "name": "版本基线"}}}
+        first = {"data": {"count": 2, "value": [{"whole_identifier": "YASHAN-1", "title": "第一条"}]}}
+        second = {"data": {"count": 2, "value": [{"whole_identifier": "YASHAN-2", "title": "第二条"}]}}
+        service.api.get_baseline_ideas.side_effect = [first, second]
+        result = service.read_baseline_ideas_reference("YASHAN", "base1")
+        self.assertIn("YASHAN-1", result["content"])
+        self.assertIn("YASHAN-2", result["content"])
+        self.assertEqual(2, service.api.get_baseline_ideas.call_count)
+        service.api.get_baseline_ideas.side_effect = [first, {"data": {"count": 3, "value": second["data"]["value"]}}]
+        with self.assertRaises(ValueError):
+            service.read_baseline_ideas_reference("YASHAN", "base1")
+
+    def test_baseline_ideas_category_resolves_within_baseline(self):
+        service = self.service()
+        service.api.get_product.return_value = {"data": {"value": {"_id": "product1", "identifier": "YASHAN"}}}
+        service.api.get_baseline.return_value = {"data": {"value": {"short_id": "base1", "scope": "product1", "name": "版本基线"}}}
+        service.api.get_baseline_suites.return_value = {"data": {"value": [
+            {"_id": "suite1", "short_id": "4iXjKHRH", "product_id": "product1", "name": "23.6.2版本规划"},
+        ]}}
+        service.api.get_baseline_ideas.return_value = {"data": {"count": 1, "value": [{"whole_identifier": "YASHAN-1", "title": "目标需求"}]}}
+        result = service.read_baseline_ideas_reference("YASHAN", "base1", "4iXjKHRH")
+        self.assertIn("YASHAN-1", result["content"])
+        service.api.get_baseline_ideas.assert_called_once_with("product1", "base1", 0, suite_id="suite1")
+        with self.assertRaises(ValueError):
+            service.read_baseline_ideas_reference("YASHAN", "base1", "unknown")
+
 
 if __name__ == "__main__": unittest.main()

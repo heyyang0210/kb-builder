@@ -168,6 +168,20 @@ describe('AI 来源公开边界及真实上游 HTTP', () => {
     await expect(preview('url', 'https://ping.example.test/wiki/spaces/SPACE/pages/PAGE?q=1')).rejects.toMatchObject({ code: 'AI_SOURCE_URL_DENIED' });
   });
 
+  test('PingCode 基线想法列表从认证资料服务读取，保留筛选网址并拒绝未知参数', async () => {
+    const locator = 'https://ping.example.test/ship/products/YASHAN/baselines/y28FbpmM/ideas?category=all';
+    reply.document = { productCode: 'YASHAN', baselineId: 'y28FbpmM', category: 'all', title: 'YASHAN 基线想法', content: '想法列表正文' };
+    const result = await preview('url', locator);
+    expect(result).toMatchObject({ locator, originalUrl: locator, content: '想法列表正文' });
+    expect(requests[0].url).toBe('/api/pingcode/products/YASHAN/baselines/y28FbpmM/ideas/reference?category=all');
+    const categoryLocator = 'https://ping.example.test/ship/products/YASHAN/baselines/y28FbpmM/ideas?category=4iXjKHRH';
+    reply.document = { ...reply.document, category: '4iXjKHRH' };
+    const categoryResult = await preview('url', categoryLocator);
+    expect(categoryResult).toMatchObject({ locator: categoryLocator, content: '想法列表正文' });
+    expect(requests[1].url).toBe('/api/pingcode/products/YASHAN/baselines/y28FbpmM/ideas/reference?category=4iXjKHRH');
+    await expect(preview('url', `${locator}&token=secret`)).rejects.toMatchObject({ code: 'AI_SOURCE_URL_DENIED' });
+  });
+
   test.each([
     { document: { spaceKey: 'OTHER', pageId: 'PAGE', content: '正文' }, code: 'AI_SOURCE_UNAVAILABLE' },
     { document: { spaceKey: 'SPACE', pageId: 'OTHER', content: '正文' }, code: 'AI_SOURCE_UNAVAILABLE' },

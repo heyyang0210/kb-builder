@@ -10,7 +10,8 @@ let reviewState, reviewError, proposalCalls, catalogOverride, versionResolver;
 const context = req => {
   const id = req.get('x-test-user') || 'owner';
   return { session: { user: { id: `auth-${id}`, principalId: id, allowedActions: id === 'outsider' ? ['knowledge:read'] : ['knowledge:read', 'knowledge:write', 'outline:create', ...(['owner', 'admin'].includes(id) ? ['platform:manage'] : [])] } }, people, handbooks: [{ id: 'h1', name: '手册一', ownerId: 'book-owner' }, { id: 'h2', name: '手册二', ownerId: null }], catalog: async () => catalogOverride || catalog, resolveVersionMapping: versionResolver, createDocument: async () => { proposalCalls++; return { outlineId: 'new-candidate', documentId: 'd2' }; },
-    reviewService: { list: () => reviewState ? [{ id: reviewState.id }] : [], get: () => { if (reviewError) throw reviewError; return IncrementalBuildService.prototype.project.call({ isOwner: () => false, canComment: () => false }, reviewState, { user: { id, allowedActions: [] } }); } } };
+    reviewService: { list: () => reviewState ? [{ id: reviewState.id }] : [], get: () => { if (reviewError) throw reviewError; return IncrementalBuildService.prototype.project.call({ isOwner: () => false, canComment: () => false }, reviewState, { user: { id, allowedActions: [] } }); },
+      listReviewComments: () => reviewState?.reviews?.flatMap(review => review.comments || []) || [] } };
 };
 describe('任务管理真实HTTP契约', () => {
   let server, base, directory;
@@ -26,6 +27,125 @@ describe('任务管理真实HTTP契约', () => {
   test('新任务只使用配置责任人和平台时间，保留来源状态', async () => { const t = await imported(); expect(t.ownerId).toBe('owner'); expect(t.startTime).toBe(null); expect(t.sourceStatus).toBe('关闭'); expect(t.status).toBe('pending_scope'); expect(t.nextAction).toMatchObject({ label: '确认手册范围', action: 'ticket-scope' }); expect(t.pending).toContain('工单责任人确认手册范围'); const mine = await request('GET', '/mine'); expect(mine.data.items).toEqual(expect.arrayContaining([expect.objectContaining({ actionLabel: '确认手册范围', title: `确认 ${t.number} 的手册范围` })])); });
   test('重复导入更新来源，保留分派、历史、已确认范围', async () => { let t = (await ticket(await imported())).data; const tasks = [{ number: t.number, title: '新标题' }]; const p = await request('POST', '/import?preview=true', { tasks }); expect(p.data.summary.updated).toBe(1); await request('POST', '/import', { tasks, digest: p.data.digest }); const next = (await get(t.number)).data; expect(next.description).toBe('新标题'); expect(next.ownerId).toBe('owner'); expect(next.decomposition).toEqual(t.decomposition); expect(next.assignmentHistory.length).toBeGreaterThan(t.assignmentHistory.length); const same = await request('POST', '/import?preview=true', { tasks }); expect(same.data.summary.unchanged).toBe(1); });
   test('过期预览被拒绝；默认配置只影响新任务', async () => { const a = await imported(); const p = await request('POST', '/import?preview=true', { tasks: [{ number: 'P-2' }] }); const c = (await request('GET', '/config')).data; expect((await request('PUT', '/config', { expectedRevision: c.revision, defaultOwnerId: 'next' })).status).toBe(200); expect((await request('POST', '/import', { tasks: [{ number: 'P-2' }], digest: p.data.digest })).status).toBe(409); const b = await imported('P-2'); expect(b.ownerId).toBe('next'); expect((await get(a.number)).data.ownerId).toBe('owner'); });
+  test('管理员配置一名知识中心负责人，首次正式分派责任人保留改派前人员', async () => {
+    const initial = (await request('GET', '/config')).data;
+    expect((await request('PUT', '/config', { expectedRevision: initial.revision, defaultOwnerId: 'owner', knowledgeCenterOwnerId: 'missing' })).status).toBe(422);
+    expect((await request('PUT', '/config', { expectedRevision: initial.revision, defaultOwnerId: 'owner', knowledgeCenterOwnerId: 'next' }, 'writer')).status).toBe(403);
+    const configured = await request('PUT', '/config', { expectedRevision: initial.revision, defaultOwnerId: 'owner', knowledgeCenterOwnerId: 'next' });
+    expect(configured.data.knowledgeCenterOwnerId).toBe('next');
+    let task = (await ticket(await imported())).data;
+    task = (await book(task)).data;
+    let doc = task.decomposition.handbooks[0].documents[0];
+    expect(doc).toMatchObject({ ownerId: 'writer', firstAssignedOwnerId: 'writer', firstAssignedAt: expect.any(String) });
+    task = (await request('PUT', '/P-1/documents/d1/owner', { expectedRevision: task.revision, handbookId: 'h1', ownerId: 'next' }, 'book-owner')).data;
+    doc = task.decomposition.handbooks[0].documents[0];
+    expect(doc.ownerId).toBe('next');
+    expect(doc.firstAssignedOwnerId).toBe('writer');
+  });
+  test('人员管理已停用的人员不能配置为知识中心负责人', async () => {
+    const candidate = people.find(person => person.id === 'next');
+    candidate.state = 'INACTIVE';
+    try {
+      const config = (await request('GET', '/config')).data;
+      const result = await request('PUT', '/config', {
+        expectedRevision: config.revision, defaultOwnerId: 'owner', knowledgeCenterOwnerId: candidate.id,
+      });
+      expect(result).toMatchObject({ status: 422, success: false, error: { code: 'PERSON_INVALID' } });
+      expect((await request('GET', '/config')).data.knowledgeCenterOwnerId || null).toBeNull();
+    } finally {
+      delete candidate.state;
+    }
+  });
+  test('已采纳范围意见关联纠偏事项，不能重复创建活跃事项', async () => {
+    let task = (await ticket(await imported())).data;
+    task = (await book(task)).data;
+    reviewState = { id: 'review-task', handbookId: 'h1', state: 'under_review', reviews: [{ id: 'review-1', comments: [{ id: 'comment-1', scopeOpinion: {
+      level: 'handbook', status: 'accepted_pending_scope', ticketNumber: 'P-1', handbookId: 'h1',
+    } }] }], candidate: { digest: 'digest', operations: [] } };
+    const sourceOpinion = { taskId: 'review-task', reviewId: 'review-1', commentId: 'comment-1' };
+    const body = { expectedRevision: task.revision, level: 'handbook', handbookId: 'h1', reason: '审核意见调整范围', affectedDocuments: [], sourceOpinion };
+    const created = await request('POST', '/P-1/scope-changes', body, 'book-owner');
+    expect(created).toMatchObject({ status: 200, data: { sourceOpinion } });
+    expect((await request('POST', '/P-1/scope-changes', { ...body, expectedRevision: task.revision + 1 }, 'book-owner')).error.code).toBe('SCOPE_OPINION_LINKED');
+    expect((await request('POST', '/P-1/scope-changes', { ...body, expectedRevision: task.revision + 1, sourceOpinion: { ...sourceOpinion, commentId: 'forged' } }, 'book-owner')).error.code).toBe('SCOPE_OPINION_INVALID');
+  });
+  test('采纳意见的纠偏记录可双向回读，取消后保持未生效', async () => {
+    let task = (await ticket(await imported())).data;
+    task = (await book(task)).data;
+    reviewState = { id: 'review-task', handbookId: 'h1', state: 'under_review', reviews: [{ id: 'review-1', comments: [{ id: 'comment-1', scopeOpinion: {
+      level: 'handbook', status: 'accepted_pending_scope', ticketNumber: 'P-1', handbookId: 'h1',
+    } }] }], candidate: { digest: 'digest', operations: [] } };
+    const sourceOpinion = { taskId: 'review-task', reviewId: 'review-1', commentId: 'comment-1' };
+    const path = '/review/review-task/scope-opinions';
+    expect((await request('GET', path)).data.items).toEqual([expect.objectContaining({
+      ...sourceOpinion, status: 'accepted_pending_scope', correctionStatus: 'pending', scopeChangeId: null,
+      retryUrl: expect.stringContaining('scope-decision'),
+    })]);
+    const body = { expectedRevision: task.revision, level: 'handbook', handbookId: 'h1', reason: '核对范围', affectedDocuments: [], sourceOpinion };
+    const created = await request('POST', '/P-1/scope-changes', body, 'book-owner');
+    expect(created.status).toBe(200);
+    expect((await request('GET', path)).data.items).toEqual([expect.objectContaining({
+      ...sourceOpinion, scopeChangeId: created.data.id, status: 'awaiting_confirmation', nextUrl: expect.stringContaining('scopeOpinionCommentId=comment-1'),
+    })]);
+    expect((await get('P-1')).data.scopeChanges).toEqual([expect.objectContaining({ id: created.data.id, sourceOpinion })]);
+    const cancelled = await request('POST', `/P-1/scope-changes/${created.data.id}/cancel`, {
+      expectedRevision: (await get('P-1')).data.revision, reason: '范围无需调整',
+    }, 'book-owner');
+    expect(cancelled.status).toBe(200);
+    expect((await request('GET', path)).data.items).toEqual([expect.objectContaining({
+      scopeChangeId: created.data.id, status: 'accepted_not_applied', nextUrl: null,
+    })]);
+    const repeated = await request('POST', '/P-1/scope-changes', { ...body, expectedRevision: (await get('P-1')).data.revision }, 'book-owner');
+    expect(repeated).toMatchObject({ status: 409, error: { code: 'SCOPE_OPINION_LINKED' } });
+    expect((await request('GET', path)).data.items).toHaveLength(1);
+  });
+  test('关联纠偏确认后，审核侧显示服务端计算的最终状态', async () => {
+    let task = (await ticket(await imported())).data;
+    task = (await book(task)).data;
+    reviewState = { id: 'review-task', handbookId: 'h1', state: 'under_review', reviews: [{ id: 'review-1', comments: [{ id: 'comment-1', scopeOpinion: {
+      level: 'handbook', status: 'accepted_pending_scope', ticketNumber: 'P-1', handbookId: 'h1',
+    } }] }], candidate: { digest: 'digest', operations: [] } };
+    const sourceOpinion = { taskId: 'review-task', reviewId: 'review-1', commentId: 'comment-1' };
+    const created = await request('POST', '/P-1/scope-changes', {
+      expectedRevision: task.revision, level: 'handbook', handbookId: 'h1', reason: '核对范围', affectedDocuments: [], sourceOpinion,
+    }, 'book-owner');
+    expect(created.status).toBe(200);
+    const proposed = { impact: 'involved', targetVersion: '23.4', documents: [{ id: 'd1', ownerId: 'writer' }] };
+    const preview = await request('POST', `/P-1/scope-changes/${created.data.id}/preview`, { proposed }, 'book-owner');
+    expect(preview.status).toBe(200);
+    const confirmed = await request('POST', `/P-1/scope-changes/${created.data.id}/confirm`, {
+      expectedRevision: (await get('P-1')).data.revision, proposed, impactDigest: preview.data.impactDigest,
+    }, 'book-owner');
+    expect(confirmed.status).toBe(200);
+    expect((await request('GET', '/review/review-task/scope-opinions')).data.items).toEqual([expect.objectContaining({
+      scopeChangeId: created.data.id, status: 'closed', nextUrl: null,
+    })]);
+  });
+  test('新增文档确认后原意见保持待处理，不能提前显示闭环', async () => {
+    let task = (await ticket(await imported())).data;
+    task = (await book(task)).data;
+    reviewState = { id: 'review-task', handbookId: 'h1', state: 'under_review', reviews: [{ id: 'review-1', comments: [{ id: 'comment-1', scopeOpinion: {
+      level: 'handbook', status: 'accepted_pending_scope', ticketNumber: 'P-1', handbookId: 'h1',
+    } }] }], candidate: { digest: 'digest', operations: [] } };
+    const created = await request('POST', '/P-1/scope-changes', {
+      expectedRevision: task.revision, level: 'handbook', handbookId: 'h1', reason: '新增文档', affectedDocuments: [],
+      sourceOpinion: { taskId: 'review-task', reviewId: 'review-1', commentId: 'comment-1' },
+    }, 'book-owner');
+    expect(created.status).toBe(200);
+    const proposed = { impact: 'involved', targetVersion: '23.4', documents: [
+      { id: 'd1', ownerId: 'writer' }, { id: 'd2', ownerId: 'writer' },
+    ] };
+    const preview = await request('POST', `/P-1/scope-changes/${created.data.id}/preview`, { proposed }, 'book-owner');
+    expect(preview.status).toBe(200);
+    const confirmed = await request('POST', `/P-1/scope-changes/${created.data.id}/confirm`, {
+      expectedRevision: (await get('P-1')).data.revision, proposed, impactDigest: preview.data.impactDigest,
+    }, 'book-owner');
+    expect(confirmed.status).toBe(200);
+    const projection = (await request('GET', '/review/review-task/scope-opinions')).data.items[0];
+    expect(projection).toMatchObject({ scopeChangeId: created.data.id, status: 'rework_pending',
+      blockingItems: expect.arrayContaining([expect.objectContaining({ documentId: 'd2' })]),
+    });
+  });
   test('两个层次独立确认，可保存草稿且不自动生成决定', async () => { let t = await imported(); t = (await ticket(t, { confirm: false, handbooks: [{ id: 'h1' }] })).data; expect(t.status).toBe('pending_scope'); expect(t.decomposition.handbooks[0].impact).toBe(null); t = (await ticket(t)).data; expect(t.startTime).toBeTruthy(); expect(t.decomposition.handbooks.every(b => !b.confirmed)).toBe(true); expect((await get(t.number)).data.nextAction).toMatchObject({ label: '确认文档范围', action: 'book-scope', handbookId: 'h1' }); t = (await book(t)).data; expect(t.decomposition.handbooks[0].confirmed).toBe(true); expect(t.decomposition.handbooks[1].confirmed).toBe(false); });
   test('业务版本自动映射并冻结；规则修改后旧任务仍保留原分支', async () => {
     versionResolver = async () => ({ id: 12, rowVersion: 1, connectionId: 'repo-1', branch: '23.4' });
@@ -172,9 +292,9 @@ describe('任务管理真实HTTP契约', () => {
     for (const delivery of [{ state: 'closed' }, { state: 'merged', readback: { status: 'consistent', resources: 'failed' } }]) { reviewState.deliveryObservation = delivery; expect((await get('P-1')).data.status).toBe('in_progress'); }
     reviewState.deliveryObservation = { state: 'closed' };
     const writerQueue = (await request('GET', '/mine', undefined, 'writer')).data;
-    expect(writerQueue.items).toEqual(expect.arrayContaining([expect.objectContaining({ actionLabel: '修订文档并重新送审', state: 'risk' })]));
+    expect(writerQueue.items).toEqual(expect.arrayContaining([expect.objectContaining({ actionLabel: '进入编写', state: 'risk' })]));
     expect(writerQueue.following.some(item => item.lineage?.documentId === 'd1')).toBe(false);
-    expect((await get('P-1')).data.nextAction).toMatchObject({ label: '修订文档并重新送审' });
+    expect((await get('P-1')).data.nextAction).toMatchObject({ label: '进入编写' });
     reviewState.state = 'rejected'; reviewState.deliveryObservation = { state: 'opened' }; expect((await get('P-1')).data.status).toBe('in_progress'); expect((await get('P-1')).data.decomposition.handbooks[0].documents[0].completion.label).toContain('审核退回'); reviewState.state = 'mr_submitted';
     reviewState.deliveryObservation = { state: 'merged', observedAt: new Date().toISOString(), readback: { status: 'consistent', resources: 'repository_relative_images_verified' } }; expect((await get('P-1')).data.status).toBe('completed'); expect((await request('PATCH', '/P-1', { status: '已完成' })).status).toBe(422);
   });
@@ -219,7 +339,10 @@ describe('任务管理真实HTTP契约', () => {
     task = (await request('POST', '/P-1/documents/d1/link', { expectedRevision: task.revision, handbookId: 'h1', reviewTaskId: reviewState.id }, 'writer')).data;
     const result = await request('GET', `/review/${reviewState.id}/mention-targets`, undefined, 'writer');
     expect(result.status).toBe(200);
-    expect(result.data).toEqual([{ handbookId: 'h1', handbookName: '手册一', ownerId: 'book-owner', ownerName: 'book-owner', ticketNumber: 'P-1' }]);
+    expect(result.data).toEqual([expect.objectContaining({ handbookId: 'h1', handbookName: '手册一', ownerId: 'book-owner', ownerName: 'book-owner', ticketNumber: 'P-1', targets: expect.arrayContaining([
+      expect.objectContaining({ role: 'handbook_owner', recipientId: 'book-owner' }),
+      expect.objectContaining({ role: 'document_first_owner', documentId: 'd1', recipientId: 'writer' }),
+    ]) })]);
     expect((await request('GET', `/review/${reviewState.id}/mention-targets`, undefined, 'outsider')).status).toBe(403);
   });
   test('部分文档完成不能完成工单，关联错分支不允许', async () => { let t = (await ticket(await imported())).data; t = (await book(t)).data; t = (await book(t, 'h2')).data; reviewState = { id: 'review', handbookId: 'h1', businessVersion: '版本待核对', handbookSource: { branch: 'wrong', documents: [{ documentId: 'd1', branch: 'wrong' }] }, state: 'approved', reviews: [] }; expect((await request('POST', '/P-1/documents/d1/link', { expectedRevision: t.revision, handbookId: 'h1', reviewTaskId: 'review' }, 'writer')).status).toBe(422); reviewState.handbookSource.branch = '23.4'; reviewState.handbookSource.documents[0].branch = '23.4'; reviewState.deliveryObservation = { state: 'merged', readback: { status: 'consistent', resources: 'repository_relative_images_verified' } }; expect((await request('GET', '/P-1/reviews?handbookId=h1&documentId=d1', undefined, 'writer')).data.map(item => item.id)).toEqual(['review']); t = (await request('POST', '/P-1/documents/d1/link', { expectedRevision: t.revision, handbookId: 'h1', reviewTaskId: 'review' }, 'writer')).data; expect(t.status).toBe('in_progress'); });
@@ -262,7 +385,7 @@ describe('任务管理真实HTTP契约', () => {
     expect(writer).toHaveLength(1);
     expect(writer[0]).toMatchObject({ kind: 'document', version: '23.4' });
     expect(writer[0].url).toContain('documentId=d1');
-    expect((await request('GET', '/P-1', undefined, 'writer')).data.nextAction).toMatchObject({ label: '进入文档生产' });
+    expect((await request('GET', '/P-1', undefined, 'writer')).data.nextAction).toMatchObject({ label: '进入编写' });
     expect((await request('GET', '/mine?ownerId=writer', undefined, 'next')).data.total).toBe(0);
   });
   test('新增文档和无变更确认的个人待办提供对应动作深链', async () => {

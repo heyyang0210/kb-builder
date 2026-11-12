@@ -7,7 +7,7 @@ const { projectCatalog } = require('../../../packages/agent-runner-core/lib/docu
 describe('统一入口清洗与任务上下文真实HTTP边界', () => {
   let root, server, base, session, directory, assets, principalRead, catalog, configPath, proxies, createDocument;
   let previousStorage, previousPlatform;
-  let assetRead, techDomainRead;
+  let assetRead, assetWrite, techDomainRead;
   const runtimeRoot = path.resolve(__dirname, '../../../runtime/test-results');
   beforeEach(() => {
     previousStorage = process.env.KNOWLEDGE_STORAGE_MODE;
@@ -24,14 +24,16 @@ describe('统一入口清洗与任务上下文真实HTTP边界', () => {
     directory = { items: [
       { id: 'display', displayName: '显示名' }, { principalId: 'name', name: '姓名', state: 'ACTIVE' },
       { id: 'login', loginName: '登录名' }, { id: 'fallback' }, { id: 'disabled', state: 'disabled' },
+      { id: 'disabled-flag', displayName: '禁用人员', state: 'ACTIVE', enabled: false },
     ] };
     assets = { generatedAt: '2026-11-10', handbooks: [
-      { handbookId: 'h1', name: '可见手册', ownerA: { principalId: 'display' } },
+      { handbookId: 'h1', name: '可见手册', assetVersion: 1, ownerA: { principalId: 'display' } },
       { handbookId: 'h2', name: '无责任人' },
       { handbookId: 'h3', name: '失效责任人', ownerA: { principalId: 'disabled' } },
       { handbookId: 'archived', archivedAt: '2026-11-01' },
     ] };
     assetRead = jest.fn(() => assets);
+    assetWrite = jest.fn(payload => { assets = payload; });
     techDomainRead = jest.fn(() => ({ techDomains: [{ name: '内核' }] }));
     principalRead = jest.fn(async () => directory);
     catalog = jest.fn(async () => ({ versions: ['23.4', 'main'], documents: [], chapters: [] }));
@@ -49,7 +51,7 @@ describe('统一入口清洗与任务上下文真实HTTP边界', () => {
     const handler = createKnowledgeCenterHandler({
       config: { KNOWLEDGE_CENTER_PREFIX: '/knowledge-center', KNOWLEDGE_CENTER_ROOT: root, KNOWLEDGE_CENTER_ENTRY: 'index.html', GITLAB_CONFIG_PATH: configPath,
         OUTLINE_TEMPLATE_PATH: path.join(root, 'template.xlsx'), OUTLINE_SAMPLE_PATH: path.join(root, 'sample.xlsx') },
-      stores: { knowledgeAssetsStore: { read: () => assetRead() }, manualStatusStore: {}, brandIconStore: {}, domainStore: { readPrincipalsAsync: () => principalRead(), readTechDomains: () => techDomainRead() } },
+      stores: { knowledgeAssetsStore: { read: () => assetRead(), write: payload => assetWrite(payload) }, manualStatusStore: {}, brandIconStore: {}, domainStore: { readPrincipalsAsync: () => principalRead(), readTechDomains: () => techDomainRead() } },
       moduleRegistry: { get: name => name === 'auth' ? { authorize: req => ({ ...session,
         ...(req.headers['x-visible'] ? { visibleHandbookIds: [req.headers['x-visible']] } : {}) }) } : null },
       handbookProductionService: {},
@@ -80,6 +82,26 @@ describe('统一入口清洗与任务上下文真实HTTP边界', () => {
     expect(failed).toEqual({ status: 503, cache: 'no-store', success: false, error: { code: 'ASSET_CONFIG_UNAVAILABLE', message: '手册资产配置暂不可用' } });
     expect(JSON.stringify(failed)).not.toContain('private');
     expect(await request('/assets/catalog')).toMatchObject({ status: 200, data: assets });
+  });
+  test('资产目录PATCH要求管理员并执行乐观版本更新', async () => {
+    await start();
+    const patch = expectedVersion => request('/assets/catalog/h1', {
+      method: 'PATCH', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: '更新后的手册', expectedVersion }),
+    });
+    expect(await patch(1)).toMatchObject({ status: 403, success: false });
+    expect(assetWrite).not.toHaveBeenCalled();
+
+    session.roles = ['PLATFORM_ADMIN'];
+    const updated = await patch(1);
+    expect(updated).toMatchObject({ status: 200, success: true, data: { handbookId: 'h1', name: '更新后的手册', assetVersion: 2 } });
+    expect(assetWrite).toHaveBeenCalledTimes(1);
+    expect(assets.handbooks[0]).toMatchObject({ name: '更新后的手册', assetVersion: 2 });
+
+    const stale = await patch(1);
+    expect(stale.status).toBe(409);
+    expect(assetWrite).toHaveBeenCalledTimes(1);
+    expect(assets.handbooks[0]).toMatchObject({ name: '更新后的手册', assetVersion: 2 });
   });
   test('样例下载在文件消失和文件变为目录时返回稳定错误，恢复后可下载', async () => {
     session.allowedActions.push('outline:read');
@@ -174,6 +196,11 @@ describe('统一入口清洗与任务上下文真实HTTP边界', () => {
       handbooks: [{ id: 'h1', ownerId: 'display' }, { id: 'h2', ownerId: null }, { id: 'h3', ownerId: null }],
       actorId: 'reader', canWrite: true,
     } });
+    session.allowedActions.push('platform:manage');
+    const config = (await request('/document-tasks/config')).data;
+    const invalid = await request('/document-tasks/config', { method: 'PUT', headers: { 'content-type': 'application/json', 'idempotency-key': 'disabled-person' },
+      body: JSON.stringify({ expectedRevision: config.revision, defaultOwnerId: 'disabled-flag' }) });
+    expect(invalid).toMatchObject({ status: 422, error: { code: 'PERSON_INVALID' } });
     session.user.visibleHandbookIds = ['h2'];
     const scoped = await request('/document-tasks/context');
     expect(scoped.data.handbooks).toEqual([{ id: 'h2', name: '无责任人', ownerId: null }]);

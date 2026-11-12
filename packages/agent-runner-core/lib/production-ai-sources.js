@@ -135,9 +135,30 @@ function createProductionAISources({ store, context, contextKey, actor, requireC
     url.hash = '';
     if (config.pingcodeOrigins?.includes(url.origin)) {
       const match = url.pathname.match(/^\/wiki\/spaces\/([A-Za-z0-9_-]+)\/pages\/([A-Za-z0-9_-]+)\/?$/);
-      if (!match || url.search) fail('AI_SOURCE_URL_DENIED', '请填写 PingCode 单篇文档网址', 403);
-      const document = await readPingCode(`${match[1]}/${match[2]}`, diagnostic);
-      return { ...document, locator: url.href, originalUrl: url.href };
+      if (match && !url.search) {
+        const document = await readPingCode(`${match[1]}/${match[2]}`, diagnostic);
+        return { ...document, locator: url.href, originalUrl: url.href };
+      }
+      const ideas = url.pathname.match(/^\/ship\/products\/([A-Za-z0-9_-]+)\/baselines\/([A-Za-z0-9_-]+)\/ideas\/?$/);
+      const category = url.searchParams.get('category');
+      if (!ideas || url.searchParams.size !== 1 || !category || !/^[A-Za-z0-9_-]+$/.test(category)) {
+        fail('AI_SOURCE_URL_DENIED', '请填写可读取的 PingCode 页面网址', 403);
+      }
+      if (!pingcodeBaseURL) fail('AI_SOURCE_NOT_CONFIGURED', '请先配置 PingCode 资料服务', 503);
+      const endpoint = new URL(`/api/pingcode/products/${encodeURIComponent(ideas[1])}/baselines/${encodeURIComponent(ideas[2])}/ideas/reference`, pingcodeBaseURL);
+      endpoint.searchParams.set('category', category);
+      diagnostic.stage = 'pingcode_fetch';
+      const response = await fetch(endpoint, { redirect: 'error', signal: AbortSignal.timeout(config.timeoutMs), headers: { Accept: 'application/json' } });
+      diagnostic.upstreamStatus = response.status;
+      diagnostic.stage = 'pingcode_response';
+      const raw = await readBody(response, config.maxBytes * 6);
+      if (!response.ok) fail('AI_SOURCE_UNAVAILABLE', 'PingCode 基线想法读取失败，请检查页面与访问权限', 502);
+      const document = JSON.parse(raw);
+      if (document.productCode !== ideas[1] || document.baselineId !== ideas[2] || document.category !== category || typeof document.content !== 'string') {
+        fail('AI_SOURCE_UNAVAILABLE', 'PingCode 返回的基线列表与请求不一致', 502);
+      }
+      return { title: typeof document.title === 'string' ? document.title : `${ideas[1]} 基线想法`, content: document.content,
+        locator: url.href, originalUrl: url.href };
     }
     try {
       diagnostic.stage = 'web_fetch';

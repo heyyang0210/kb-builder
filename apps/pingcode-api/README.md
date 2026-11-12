@@ -15,6 +15,12 @@ PYTHONPATH=apps/pingcode-api:packages/pingcode-core \
 
 参考正文读取：`GET /api/pingcode/spaces/{space_key}/pages/{page_id}/reference` 复用现有账号浏览器会话、页面详情客户端和 Slate→Markdown 解析器，先核对页面属于该空间，再返回正文、标题、原始地址及上游实际提供的版本信息。资料服务启动后异步预热账号会话，不预读空间目录或页面；首次引用继续核验目标空间和页面。`include_images=true` 时按知识中心来源图片策略下载有界公共图片，以 `source-image:` 内部标识和 base64 结果交给平台托管；响应不包含签名图片 URL。图片下载仅允许当前主机的 `/atlas/files/public/` 起点及同源 `/pc-public/` 受限跳转。不创建下载批次或下载附件；缺失页面返回404、正文无效422、上游失败502，错误响应不包含凭证或上游原始异常。该接口沿用资料服务现有网络与认证边界，知识中心入口另行校验作者权限、来源域名和文档作用域。
 
+基线想法列表读取：`GET /api/pingcode/products/{product_code}/baselines/{baseline_id}/ideas/reference?category={all|分组短ID}` 使用同一已登录会话读取产品、基线详情与分组目录。分组短 ID 在当前基线内唯一解析并核验产品归属，再按分组读取全部需求分页；`all` 读取整个基线。核验归属及总数后返回标题和 Markdown 正文，合法空分组返回 0 条需求。无权限、未知分组或分页不完整返回错误，不生成来源快照。
+
+任务来源分页读取：`POST /api/internal/pingcode/task-source-page` 仅供平台同步服务调用，需 `X-Internal-Token`，取 `PINGCODE_TASK_SYNC_INTERNAL_TOKEN` 或本机 `runtime/pingcode/task-sync-internal-token`。输入 `url/type/pageIndex`；需求基线按 IR 版本读取结构化工作项关系，缺陷来源按所选视图的筛选条件分页，列表正文缺失时回读详情。此接口只返回一页，不写任务或宣称同步完成；平台运行器、确认写入、图片资源和完整验收另行接入。
+
+来源读取的关系完整性失败会返回稳定错误码，例如 `PINGCODE_RELATION_INCOMPLETE`，并可包含来源编号和不带正文的期望/实际关系数量。平台同步服务解析标准 `{success:false,error:{code,message}}` 错误信封并保留错误码。不能用模型补造缺失关系；Agent + Skill 的辅助映射与诊断仍是待接入能力，必须经过结构校验和原始证据核对后才能进入预览。
+
 复验知识中心生产配置登记的首个 PingCode 目标：
 
 ```bash

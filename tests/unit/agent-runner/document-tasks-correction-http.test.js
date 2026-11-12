@@ -118,6 +118,43 @@ describe('文档任务范围纠偏与发布核对真实 HTTP', () => {
     expect(latest.revision).toBeGreaterThan(0);
   });
 
+  test('范围确认重读 GitLab MR，状态变化必须重新预览，读取失败不写入', async () => {
+    linkReview({ deliveryObservation: { state: 'opened', observedAt: new Date().toISOString(), targetCommit: 'commit-1' } });
+    let remote = { state: 'opened', observedAt: new Date().toISOString() };
+    let reads = 0;
+    context.readScopeMergeRequest = async () => { reads++; return remote; };
+    seed();
+    const change = await report('handbook');
+    const proposed = proposedBook({ impact: 'not_involved', reasonId: 'covered', documents: [] });
+    const opened = await preview(change, proposed);
+    expect(opened).toMatchObject({ canConfirm: false, blockedBy: [expect.objectContaining({ mrState: 'opened' })] });
+
+    remote = { state: 'closed', observedAt: new Date().toISOString() };
+    const current = await task();
+    const beforeDenied = reads;
+    await unchanged('POST', `/P-1/scope-changes/${change.id}/confirm`, {
+      expectedRevision: current.revision, proposed, impactDigest: opened.impactDigest,
+    }, 'FORBIDDEN', 403, 'writer');
+    expect(reads).toBe(beforeDenied);
+    await unchanged('POST', `/P-1/scope-changes/${change.id}/confirm`, {
+      expectedRevision: current.revision, proposed, impactDigest: opened.impactDigest,
+    }, 'IMPACT_STALE', 409, 'book-owner');
+
+    context.readScopeMergeRequest = async () => { throw new Error('GitLab 暂不可用'); };
+    await unchanged('POST', `/P-1/scope-changes/${change.id}/preview`, { proposed }, 'MR_STATUS_UNAVAILABLE', 503, 'book-owner');
+    await unchanged('POST', `/P-1/scope-changes/${change.id}/confirm`, {
+      expectedRevision: current.revision, proposed, impactDigest: opened.impactDigest,
+    }, 'MR_STATUS_UNAVAILABLE', 503, 'book-owner');
+
+    context.readScopeMergeRequest = async () => { reads++; return remote; };
+    const closed = await preview(change, proposed);
+    expect(closed).toMatchObject({ canConfirm: true });
+    const confirmed = await request('POST', `/P-1/scope-changes/${change.id}/confirm`, {
+      expectedRevision: current.revision, proposed, impactDigest: closed.impactDigest,
+    }, 'book-owner');
+    expect(confirmed.status).toBe(200);
+  });
+
   test('工单纠偏可恢复历史手册及既有分派，纯分派不提升范围版本', async () => {
     state.tasks[0].scopeHistory = [{ handbooks: [book({ id: 'h2', name: '手册二', ownerId: 'next', documents: [doc({ id: 'd2', name: '运行', subtaskNumber: 5 })] })] }];
     seed(); const change = await report('ticket');
@@ -244,6 +281,32 @@ describe('文档任务范围纠偏与发布核对真实 HTTP', () => {
     const current = await task();
     await unchanged('POST', `/P-1/scope-changes/${change.id}/cancel`, { expectedRevision: current.revision }, 'SCOPE_CHANGE_NOT_ACTIVE', 409, user);
     expect((await request('GET', '/P-1', undefined, 'writer')).data.nextAction.url).toContain('documentId=d1');
+  });
+
+  test('采纳意见关联的纠偏取消后，原意见只读投影为已采纳但未生效', async () => {
+    linkReview();
+    state.tasks[0].scopeChanges = [{ id: 'change-from-opinion', number: 'P-1', level: 'handbook',
+      handbookId: 'h1', reason: '核对文档范围', createdBy: 'book-owner', responsibleId: 'book-owner',
+      affectedDocuments: [{ handbookId: 'h1', documentId: 'd1' }], status: 'reported',
+      sourceOpinion: { taskId: 'review-1', reviewId: 'review-entry', commentId: 'comment-1' } }];
+    reviews.get('review-1').reviews = [{ id: 'review-entry', comments: [{ id: 'comment-1',
+      scopeOpinion: { status: 'accepted_pending_scope' } }] }];
+    seed();
+    const endpoint = '/review/review-1/scope-opinions';
+    const before = await request('GET', endpoint, undefined, 'book-owner');
+    expect(before).toMatchObject({ status: 200, data: { items: [expect.objectContaining({
+      commentId: 'comment-1', scopeChangeId: 'change-from-opinion', status: 'awaiting_confirmation',
+    })] } });
+    const current = await task();
+    const cancelled = await request('POST', '/P-1/scope-changes/change-from-opinion/cancel',
+      { expectedRevision: current.revision, reason: '维持现有范围' }, 'book-owner');
+    expect(cancelled.status).toBe(200);
+    const after = await request('GET', endpoint, undefined, 'book-owner');
+    expect(after).toMatchObject({ status: 200, data: { items: [expect.objectContaining({
+      commentId: 'comment-1', scopeChangeId: 'change-from-opinion', status: 'accepted_not_applied', nextUrl: null,
+    })] } });
+    expect(reviews.get('review-1').reviews[0].comments[0].scopeOpinion.status).toBe('accepted_pending_scope');
+    expect(persisted().tasks[0].decomposition.handbooks[0].documents[0].id).toBe('d1');
   });
 
   test.each([

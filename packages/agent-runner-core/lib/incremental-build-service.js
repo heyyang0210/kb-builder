@@ -952,8 +952,11 @@ class IncrementalBuildService {
     const content = body.comment ?? body.body;
     required(content, 'comment', '评论内容不能为空');
     const commentType = body.commentType || 'suggestion';
-    if (!['question', 'issue', 'suggestion', 'approval_note', 'ai_analysis'].includes(commentType)) {
+    if (!['question', 'issue', 'suggestion', 'approval_note', 'ai_analysis', 'scope_opinion'].includes(commentType)) {
       throw new IncrementalBuildError('COMMENT_TYPE_INVALID', '评论类型无效', 422, { field: 'commentType' });
+    }
+    if (commentType === 'scope_opinion' && !['ticket', 'handbook'].includes(body.scopeLevel)) {
+      throw new IncrementalBuildError('SCOPE_LEVEL_INVALID', '范围意见必须指定工单或手册层级', 422, { field: 'scopeLevel' });
     }
     const severity = body.severity || 'normal';
     if (!['normal', 'blocker'].includes(severity)) {
@@ -965,6 +968,13 @@ class IncrementalBuildService {
       if (!this.canComment(session, task)) throw new IncrementalBuildError('ACTION_FORBIDDEN', '当前用户无权提出审核意见', 403, { requiredAnyAction: ['knowledge:write', 'review:manage'] });
       const review = task.reviews.find(item => item.id === reviewId);
       if (!review) throw new IncrementalBuildError('REVIEW_NOT_FOUND', '审核记录不存在', 404);
+      const relatedOpinion = body.relatedOpinionId
+        ? review.comments?.find(item => item.id === String(body.relatedOpinionId)) : null;
+      if (body.relatedOpinionId && (commentType !== 'scope_opinion'
+        || relatedOpinion?.scopeOpinion?.status !== 'accepted_pending_scope'
+        || relatedOpinion.scopeOpinion.level !== body.scopeLevel)) {
+        throw new IncrementalBuildError('RELATED_OPINION_INVALID', '关联的原范围意见不存在', 422);
+      }
       if (body.candidateDigest && body.candidateDigest !== task.candidate?.digest) {
         throw new IncrementalBuildError('REVIEW_CANDIDATE_CONFLICT', '评论对象与当前候选版本不一致', 409, { expected: task.candidate?.digest || null, actual: body.candidateDigest });
       }
@@ -998,28 +1008,100 @@ class IncrementalBuildService {
         }
       }
       const mentions = (trusted.mentions || []).map(item => ({
-        handbookId: String(item.handbookId), handbookName: String(item.handbookName), recipientId: String(item.recipientId), recipientName: String(item.recipientName || item.recipientId),
+        role: String(item.role || 'handbook_owner'), handbookId: item.handbookId ? String(item.handbookId) : null,
+        handbookName: item.handbookName ? String(item.handbookName) : null,
+        documentId: item.documentId ? String(item.documentId) : null,
+        documentName: item.documentName ? String(item.documentName) : null, ticketNumber: item.ticketNumber ? String(item.ticketNumber) : null,
+        recipientId: String(item.recipientId), recipientName: String(item.recipientName || item.recipientId),
       }));
-      const notificationEvents = mentions.map(mention => ({
-        id: identifier('notice'), type: 'review_handbook_mention', recipientId: mention.recipientId,
-        handbookId: mention.handbookId, reviewId, commentId: null, status: 'pending_configuration',
-        channels: { inApp: 'not_configured', wecom: 'not_configured', email: 'not_configured' }, createdAt: now(),
+      const recipients = new Map();
+      for (const mention of mentions) {
+        const existing = recipients.get(mention.recipientId);
+        if (existing) existing.roles = [...new Set([...existing.roles, mention.role])];
+        else recipients.set(mention.recipientId, { recipientId: mention.recipientId, recipientName: mention.recipientName, roles: [mention.role], handbookId: mention.handbookId, handbookName: mention.handbookName, documentId: mention.documentId, documentName: mention.documentName, ticketNumber: mention.ticketNumber });
+      }
+      const notificationEvents = [...recipients.values()].map(mention => ({
+        id: identifier('notice'), type: commentType === 'scope_opinion' ? 'review_scope_opinion' : 'review_mention', recipientId: mention.recipientId,
+        recipientName: mention.recipientName, roles: mention.roles, handbookId: mention.handbookId,
+        handbookName: mention.handbookName, documentId: mention.documentId, documentName: mention.documentName, ticketNumber: mention.ticketNumber,
+        reviewId, commentId: null, status: 'inbox', readAt: null, createdAt: now(),
       }));
       const comment = {
         id: identifier('comment'), content: String(content).trim(), body: String(content).trim(), author: actor(session), at: now(), createdAt: now(), updatedAt: now(),
         commentType, severity, mode: anchor ? 'anchored' : 'global',
+        ...(commentType === 'scope_opinion' ? { scopeOpinion: { level: body.scopeLevel, status: 'open', responsibleId: trusted.scopeResponsibleId || null,
+          ticketNumber: trusted.ticketNumber || null, handbookId: trusted.handbookId || null,
+          decisionBy: null, decisionAt: null, decisionReason: null, scopeChangeId: null,
+          relatedOpinionId: relatedOpinion?.id || null } } : {}),
         anchorStatus: anchor ? ((anchor.anchorKind === 'document_span' && !task.candidate?.operations?.some(item => item.documentId === anchor.documentId && item.nodeId === anchor.nodeId)) ? 'needs_manual_confirmation' : 'valid') : 'unanchored_compat',
         candidateDigest: body.candidateDigest || task.candidate?.digest || null,
         anchor: anchor ? structuredClone(anchor) : null, diffView: body.diffView ? structuredClone(body.diffView) : null,
         resolved: false, resolvedBy: null, resolvedAt: null,
         mentions,
         notificationEvents: notificationEvents.map(event => ({ ...event, commentId: null })),
-        notificationStatus: notificationEvents.length ? 'pending_configuration' : 'not_requested',
+        notificationStatus: notificationEvents.length ? 'inbox' : 'not_requested',
       };
       comment.notificationEvents.forEach(event => { event.commentId = comment.id; });
       review.comments.push(comment); task.updatedAt = comment.at;
       this.audit(state, 'REVIEW_COMMENT_ADDED', taskId, session, { reviewId, commentId: comment.id, mode: comment.mode, candidateDigest: comment.candidateDigest, anchor: comment.anchor });
       return comment;
+    });
+  }
+
+  listNotifications(session, query = {}) {
+    requireAction(session, 'knowledge:read');
+    const recipientId = actor(session).id;
+    const state = this.repository.read();
+    const items = [];
+    for (const task of state.tasks || []) {
+      for (const review of task.reviews || []) for (const comment of review.comments || []) {
+        for (const event of comment.notificationEvents || []) {
+          if (String(event.recipientId) !== String(recipientId)) continue;
+          items.push({ ...structuredClone(event), taskId: task.id, taskName: task.name, commentContent: comment.content,
+            author: structuredClone(comment.author), url: `/knowledge-center/review?taskId=${encodeURIComponent(task.id)}&step=opinions&commentId=${encodeURIComponent(comment.id)}` });
+        }
+      }
+    }
+    items.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+    const unreadCount = items.filter(item => !item.readAt).length;
+    const filtered = query.state === 'unread' ? items.filter(item => !item.readAt) : items;
+    const limit = Math.max(1, Math.min(100, Number(query.limit) || 50));
+    return { unreadCount, items: filtered.slice(0, limit) };
+  }
+
+  markNotificationRead(session, notificationId, key, body = {}) {
+    requireAction(session, 'knowledge:read');
+    return this.withIdempotency(session, key, `notification-read:${notificationId}`, body, state => {
+      const recipientId = actor(session).id;
+      for (const task of state.tasks || []) for (const review of task.reviews || []) for (const comment of review.comments || []) {
+        const event = (comment.notificationEvents || []).find(item => item.id === notificationId && String(item.recipientId) === String(recipientId));
+        if (!event) continue;
+        event.readAt ||= now();
+        return { id: event.id, readAt: event.readAt };
+      }
+      throw new IncrementalBuildError('NOTIFICATION_NOT_FOUND', '站内通知不存在', 404);
+    });
+  }
+
+  decideScopeOpinion(session, taskId, reviewId, commentId, key, body = {}, trusted = {}) {
+    requireAction(session, 'knowledge:write');
+    if (!['accept', 'reject'].includes(body.decision)) throw new IncrementalBuildError('SCOPE_DECISION_INVALID', '请选择采纳或不采纳', 422);
+    if (body.decision === 'reject') required(String(body.reason || '').trim(), 'reason', '不采纳必须填写原因');
+    return this.withIdempotency(session, key, `scope-opinion-decision:${taskId}:${reviewId}:${commentId}`, body, state => {
+      const task = this.task(state, taskId);
+      const review = task.reviews.find(item => item.id === reviewId);
+      const comment = review?.comments?.find(item => item.id === commentId);
+      if (!comment?.scopeOpinion) throw new IncrementalBuildError('SCOPE_OPINION_NOT_FOUND', '范围意见不存在', 404);
+      if (comment.scopeOpinion.status !== 'open') throw new IncrementalBuildError('SCOPE_OPINION_DECIDED', '该意见已处理，请刷新后查看', 409);
+      if (!trusted.responsibleId || String(trusted.responsibleId) !== actor(session).id || trusted.level !== comment.scopeOpinion.level) {
+        throw new IncrementalBuildError('SCOPE_DECISION_FORBIDDEN', '只有对应层级的范围负责人可以决定', 403);
+      }
+      comment.scopeOpinion.status = body.decision === 'accept' ? 'accepted_pending_scope' : 'rejected';
+      comment.scopeOpinion.decisionBy = actor(session); comment.scopeOpinion.decisionAt = now();
+      comment.scopeOpinion.decisionReason = String(body.reason || '').trim() || null;
+      comment.updatedAt = comment.scopeOpinion.decisionAt;
+      this.audit(state, 'SCOPE_OPINION_DECIDED', taskId, session, { reviewId, commentId, decision: body.decision });
+      return structuredClone(comment.scopeOpinion);
     });
   }
 
@@ -1315,6 +1397,8 @@ function createIncrementalBuildHandler(options = {}) {
       if (parts.length === 1 && parts[0] === 'baselines' && req.method === 'GET') data = service.listBaselines(session, Object.fromEntries(url.searchParams));
       else if (parts.length === 1 && parts[0] === 'online-reviews' && req.method === 'POST') data = service.createOnlineReview(session, key, await readJsonBody(req));
       else if (parts.length === 1 && parts[0] === 'bootstrap-baseline' && req.method === 'POST') data = service.createSyntheticBaseline(session, key, await readJsonBody(req));
+      else if (parts.length === 1 && parts[0] === 'notifications' && req.method === 'GET') data = service.listNotifications(session, Object.fromEntries(url.searchParams));
+      else if (parts.length === 3 && parts[0] === 'notifications' && parts[2] === 'read' && req.method === 'PUT') data = service.markNotificationRead(session, parts[1], key, await readJsonBody(req));
       else if (parts.length === 3 && parts[0] === 'handbooks' && parts[2] === 'review-summary' && req.method === 'GET') data = service.listHandbookReviewSummary(session, parts[1], Object.fromEntries(url.searchParams));
       else if (!parts.length && req.method === 'GET') data = service.list(session, Object.fromEntries(url.searchParams), await service.readState(session));
       else if (!parts.length && req.method === 'POST') data = service.create(session, key, await readJsonBody(req));

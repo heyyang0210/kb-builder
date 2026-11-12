@@ -64,6 +64,8 @@ final class DocumentTaskReadRepository {
         StringBuilder where = new StringBuilder(" WHERE T.ATTENTION=?");
         parameters.add(attention);
         appendVisibility(where, parameters, filters.get("visibleHandbooks"));
+        String optionWhere = where.toString();
+        List<Object> optionParameters = new ArrayList<>(parameters);
         for (String[] field : new String[][] { { "ownerId", "T.OWNER_ID" }, { "product", "T.PRODUCT_CODE" },
             { "version", "T.BUSINESS_VERSION" }, { "type", "T.SOURCE_TYPE" }, { "status", "T.TASK_STATUS" } }) {
             String value = filters.get(field[0]);
@@ -104,7 +106,26 @@ final class DocumentTaskReadRepository {
             }
         }
         attachIr(connection, tasks);
-        return Map.of("items", tasks, "total", total, "page", page, "pageSize", pageSize);
+        return Map.of("items", tasks, "total", total, "page", page, "pageSize", pageSize,
+            "filterOptions", Map.of("product", filterValues(connection, "PRODUCT_CODE", optionWhere, optionParameters),
+                "version", filterValues(connection, "BUSINESS_VERSION", optionWhere, optionParameters)));
+    }
+
+    private static List<String> filterValues(Connection connection, String column, String where,
+                                             List<Object> parameters) throws SQLException {
+        List<String> values = new ArrayList<>();
+        try (PreparedStatement query = connection.prepareStatement(
+            "SELECT DISTINCT T." + column + " FROM KC_DOCUMENT_TASK T" + where +
+            " AND T." + column + " IS NOT NULL ORDER BY T." + column)) {
+            bind(query, parameters);
+            try (ResultSet rows = query.executeQuery()) {
+                while (rows.next()) {
+                    String value = rows.getString(1);
+                    if (value != null && !value.isBlank()) values.add(value);
+                }
+            }
+        }
+        return values;
     }
 
     Map<String, Object> mine(Connection connection, String principalId, int page, int pageSize,

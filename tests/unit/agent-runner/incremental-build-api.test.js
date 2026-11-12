@@ -289,8 +289,8 @@ describe('P0 平台内增量构建 API', () => {
     const notified = api.service.commentOnReview(reviewer, id, reviewId, 'trusted-mention', { comment: '通知负责人' }, {
       mentions: [{ handbookId: 'DB-001', handbookName: '安装手册', recipientId: 'book-owner' }],
     });
-    expect(notified).toMatchObject({ mentions: [{ handbookId: 'DB-001', recipientId: 'book-owner' }], notificationStatus: 'pending_configuration' });
-    expect(notified.notificationEvents).toEqual([expect.objectContaining({ recipientId: 'book-owner', status: 'pending_configuration', channels: { inApp: 'not_configured', wecom: 'not_configured', email: 'not_configured' } })]);
+    expect(notified).toMatchObject({ mentions: [{ handbookId: 'DB-001', recipientId: 'book-owner' }], notificationStatus: 'inbox' });
+    expect(notified.notificationEvents).toEqual([expect.objectContaining({ recipientId: 'book-owner', status: 'inbox', readAt: null })]);
     const listed = await request(api.baseUrl, 'GET', `/knowledge-center/api/incremental-tasks/${id}/reviews/${reviewId}/comments?mode=anchored`, undefined, undefined, 'reviewer');
     expect(listed.body.data).toHaveLength(1);
     const invalid = await request(api.baseUrl, 'POST', `/knowledge-center/api/incremental-tasks/${id}/reviews/${reviewId}/comments`, { comment: '漂移', candidateDigest: 'stale', anchor: { documentId: 'doc-1', nodeId: 'node-1', anchorKind: 'after_operation' } }, 'anchor-stale', 'reviewer');

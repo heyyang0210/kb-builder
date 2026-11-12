@@ -400,7 +400,7 @@ test('真实 HTTP：保存 → 增量评审 → 本人审核 → 创建 MR，失
     await page.locator('[data-review-publish]').click();
     await page.getByRole('dialog', { name: '创建 GitLab MR' }).locator('select[name="assigneeId"]').selectOption('author');
     await page.getByRole('dialog', { name: '创建 GitLab MR' }).getByRole('button', { name: '创建 MR', exact: true }).click();
-    await openReviewActions(page); await page.getByRole('link', { name: /查看 GitLab MR/ }).waitFor();
+    await openReviewActions(page); await page.getByRole('link', { name: /MR链接/ }).waitFor();
     await page.screenshot({ path: path.join(evidenceRoot, 'mr-submitted.png'), fullPage: true });
     const frozen = (submissionId, docs) => service.createHandbookReview(session, submissionId, {
       submissionId, name: submissionId, handbookId: context.handbookId, branch: 'main', commitSha: 'base-sha',
@@ -494,7 +494,7 @@ test('真实 HTTP：保存 → 增量评审 → 本人审核 → 创建 MR，失
     await page.locator('[data-review-publish]').click();
     await page.getByRole('dialog', { name: '创建 GitLab MR' }).locator('select[name="assigneeId"]').selectOption('author');
     await page.getByRole('dialog', { name: '创建 GitLab MR' }).getByRole('button', { name: '创建 MR', exact: true }).click();
-    await openReviewActions(page); await page.getByRole('link', { name: /查看 GitLab MR/ }).waitFor();
+    await openReviewActions(page); await page.getByRole('link', { name: /MR链接/ }).waitFor();
     assert.equal(service.get(session, browserOnlineId).state, 'mr_submitted');
     assert.equal(commits, commitsBeforeOnlineRetry + 1);
     assert.equal(mrs.filter(item => item.source_branch === `knowledge-review/${browserOnlineId}`).length, 1);
@@ -619,7 +619,7 @@ test('真实 HTTP：保存 → 增量评审 → 本人审核 → 创建 MR，失
     await page.locator('[data-review-publish]').click();
     await page.getByRole('dialog', { name: '创建 GitLab MR' }).locator('select[name="assigneeId"]').selectOption('author');
     await page.getByRole('dialog', { name: '创建 GitLab MR' }).getByRole('button', { name: '创建 MR', exact: true }).click();
-    await openReviewActions(page); await page.getByRole('link', { name: /查看 GitLab MR/ }).waitFor({ timeout: 5000 }).catch(async error => { t.diagnostic(JSON.stringify({ url: page.url(), task: service.get(session, revisedBatchId), body: await page.locator('body').innerText() })); throw error; });
+    await openReviewActions(page); await page.getByRole('link', { name: /MR链接/ }).waitFor({ timeout: 5000 }).catch(async error => { t.diagnostic(JSON.stringify({ url: page.url(), task: service.get(session, revisedBatchId), body: await page.locator('body').innerText() })); throw error; });
     assert.equal(service.get(session, revisedBatchId).state, 'mr_submitted');
     assert.equal(service.get(session, revisedBatchId).completion.status, 'pending');
     await page.getByRole('region', { name: '交付进度' }).waitFor();
@@ -776,7 +776,7 @@ test('真实 HTTP：保存 → 增量评审 → 本人审核 → 创建 MR，失
     await secondPicker.locator('select[name="assigneeId"]').selectOption('author');
     await captureWorkflow(10, '选择合入负责人', '审核人映射为 Reviewer；另选合入负责人，映射为 Assignee。', ['[data-mr-participants-dialog]', 'dialog[open]']);
     await secondPicker.getByRole('button', { name: '创建 MR', exact: true }).click();
-    await openReviewActions(page); await page.getByRole('link', { name: /查看 GitLab MR/ }).waitFor();
+    await openReviewActions(page); await page.getByRole('link', { name: /MR链接/ }).waitFor();
     await captureWorkflow(11, 'MR 已创建，等待人工合并', '可以打开 MR；创建成功不等于已合并或已正式发布。', ['.review-action-card', '[data-review-delivery]']);
     const secondDelivered = service.get(session, secondTaskId);
     assert.equal(secondDelivered.state, 'mr_submitted');
@@ -852,7 +852,7 @@ test('真实 HTTP：保存 → 增量评审 → 本人审核 → 创建 MR，失
       const picker = page.getByRole('dialog', { name: '创建 GitLab MR' });
       await picker.locator('select[name="assigneeId"]').selectOption('author');
       await picker.getByRole('button', { name: '创建 MR', exact: true }).click();
-      await openReviewActions(page); await page.getByRole('link', { name: /查看 GitLab MR/ }).waitFor();
+      await openReviewActions(page); await page.getByRole('link', { name: /MR链接/ }).waitFor();
       const delivered = service.get(session, liveTaskId);
       assert.equal(delivered.state, 'mr_submitted');
       assert.equal(delivered.completion.status, 'pending');

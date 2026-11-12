@@ -1,10 +1,12 @@
 import json
+import hmac
 import logging
 import os
 import queue
 import re
 import time
 import uuid
+import secrets
 from contextvars import ContextVar
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -66,7 +68,7 @@ from .models import (
     UploadSession,
     WorkbenchSummary,
 )
-from .pingcode_service import PingCodeService
+from .pingcode_service import PingCodeService, PingcodeTaskSourceError
 from .prompt_management import (
     PromptDraftConflictError,
     PromptDraftNotFoundError,
@@ -120,6 +122,24 @@ from .repositories import (
 
 store = JsonStore(settings.data_root / "state.json")
 pingcode = PingCodeService()
+
+
+def _task_sync_token() -> str:
+    configured = os.getenv('PINGCODE_TASK_SYNC_INTERNAL_TOKEN', '')
+    if configured:
+        return configured
+    token_path = REPOSITORY_ROOT / 'runtime' / 'pingcode' / 'task-sync-internal-token'
+    token_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with token_path.open('x') as token_file:
+            os.chmod(token_path, 0o600)
+            token_file.write(secrets.token_hex(32))
+    except FileExistsError:
+        pass
+    return token_path.read_text().strip()
+
+
+_TASK_SYNC_TOKEN = _task_sync_token()
 batches = BatchService(store, pingcode)
 tasks = TaskService(store, batches, pingcode)
 files = FileService()
@@ -752,6 +772,46 @@ def get_page_reference(space_key: str, page_id: str, include_images: bool = Fals
         error("PINGCODE_REFERENCE_INVALID", "页面定位或正文不满足引用要求", 422)
     except Exception:
         error("PINGCODE_REQUEST_FAILED", "PingCode 正文读取失败，请检查来源配置和访问权限", 502, retryable=True)
+
+
+@app.get("/api/pingcode/products/{product_code}/baselines/{baseline_id}/ideas/reference")
+def get_baseline_ideas_reference(product_code: str, baseline_id: str, category: str = "all"):
+    try:
+        return pingcode.read_baseline_ideas_reference(product_code, baseline_id, category)
+    except ValueError:
+        error("PINGCODE_REFERENCE_INVALID", "基线列表无可引用内容或需要登录", 422)
+    except Exception:
+        error("PINGCODE_REQUEST_FAILED", "PingCode 基线列表读取失败，请检查来源配置和访问权限", 502, retryable=True)
+
+
+@app.post('/api/internal/pingcode/task-source-page')
+def read_task_source_page(request: dict = Body(...), x_internal_token: str | None = Header(default=None)):
+    if not x_internal_token or not hmac.compare_digest(x_internal_token, _TASK_SYNC_TOKEN):
+        error('FORBIDDEN', '仅允许平台同步服务读取', 403)
+    try:
+        return pingcode.read_task_source_page(
+            request['url'], request['type'], request['pageIndex']
+        )
+    except PingcodeTaskSourceError as exc:
+        error(exc.code, str(exc), 422, **exc.details)
+    except (KeyError, TypeError, ValueError):
+        error('PINGCODE_TASK_SOURCE_INVALID', '来源、权限或分页结果无效', 422)
+    except Exception:
+        error('PINGCODE_REQUEST_FAILED', 'Pingcode 任务来源读取失败', 502, retryable=True)
+
+
+@app.post('/api/internal/pingcode/task-source-image')
+def read_task_source_image(request: dict = Body(...), x_internal_token: str | None = Header(default=None)):
+    if not x_internal_token or not hmac.compare_digest(x_internal_token, _TASK_SYNC_TOKEN):
+        error('FORBIDDEN', '仅允许平台同步服务读取', 403)
+    try:
+        return pingcode.read_task_source_image(
+            request['url'], request['maxBytes'], request['timeoutMs']
+        )
+    except (KeyError, TypeError, ValueError):
+        error('PINGCODE_TASK_IMAGE_INVALID', '图片地址或读取限制无效', 422)
+    except Exception:
+        error('PINGCODE_TASK_IMAGE_UNAVAILABLE', 'Pingcode 图片读取失败', 502, retryable=True)
 
 
 @app.post("/api/material-batches/estimate", response_model=SourceSnapshot)

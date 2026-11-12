@@ -2237,3 +2237,13 @@ GitLab 图片定向 Jest 覆盖采集退出 0，证据 `runtime/coverage-goal/gi
 
 2026-11-11 Java GitLab 版本映射归档续作：`StorageGitLabHttpCheck` 通过真实本地 HTTP 验证归档/恢复、缺版本/幂等键、非法状态、条件更新冲突、列表分区、行版本与审计；共享 JDBC 夹具按当前 SQL 处理归档筛选和条件绑定。完整 9 产品文件 JaCoCo 稳定复采 `runtime/coverage-goal/java-archive-http-20261111/` 为 3493/3519 行（99.26%）、2090/2362 分支（88.48%），同分母增加 17 行、21 分支。尚缺 26 行，100%/95% 平台目标未达成。
 2026-11-11 文档预处理索引结构异常补测：隔离真实 HTTP 服务将 `metadata.json` 临时写为 JSON `null`，GET 列表返回 500；恢复原始文件后列表重新可用。`document-route-coverage.test.js` 29/29 通过，定向插桩确认 `routes/document.js:865` 命中；结果见 `runtime/coverage-goal/document-null-directed/`。此为局部覆盖证据，Node 全量及三端 100% 行、95% 分支目标仍未完成。
+2026-11-12 Node 固定 Jest 清单复采：首次稳定采集发现两套既有失败（AI 阶段产物误用外部数据库、连接详情抽屉绕过视口令牌），修复后两套定向回归 47/47 通过。完整清单 192 文件复采于 `runtime/coverage-goal/node-current-20261111-1212/`，191 套件通过、1 跳过，2870 项通过、8 跳过；`source-stability.json` 为 `completed=true`、`stable=true`、`changedInputs=[]`。Node 当前有效计数 16391/16508 行（99.29%）、16953/19046 分支（89.01%）。知识中心统一路由仍有 33 行和 531 分支未覆盖；此 Node 报告不代表前端、Java 或平台整体已达标。
+2026-11-12 知识中心资产目录 PATCH 增加隔离 HTTP 授权与乐观版本测试：普通用户 403 且无写入，管理员成功更新并递增版本，过期版本 409 且状态不变。`knowledge-center-context-boundaries-http.test.js` 16/16 通过；定向插桩 `runtime/coverage-goal/asset-catalog-patch-directed/lcov.info` 确认路由授权两分支命中（2/1 次）。Node 全量稳定基线仍为 99.29% 行、89.01% 分支，本次仅定向增量，等待全量复采核实累计值。
+
+2026-11-12 后续固定 Node 清单现含 200 个文件。复采 `runtime/coverage-goal/node-current-20261112-1940/` 有 188 套件通过、11 失败、1 跳过；2929 项通过、30 失败、8 跳过。采集期间 11 个源码/测试/配置输入变化，且多套环境依赖和视口门禁失败，`completed=false`、`stable=false`，97.45% 行和 87.13% 分支仅为诊断，不能与稳定基线比较。资产目录新增套件自身 16/16 通过，前述定向两分支证据仍有效。
+
+2026-11-12 网页引用传输新增生产 `http/https.get` 接收路径测试，绕过 receive 注入替身，分别验证协议选择、已校验 DNS 地址的 `all=true/false` 固定回调、请求头和受控内存响应；没有外网请求。`web-reference-transport.test.js` 14/14通过；定向报告 `runtime/coverage-goal/web-reference-receive-directed-final/lcov.info` 确认原缺失 44、45、48、52 行均命中两次，协议与 lookup 两种分支均命中。此为局部结果，尚待全量稳定复采核算平台比例。
+
+同日继续为真实 `http/https.get` 接收路径增加套接字错误注入，验证 Promise 拒绝并保留原因、后续受控 HTTP 请求成功；完整传输测试 16/16 通过，定向报告 `runtime/coverage-goal/web-reference-socket-directed/` 通过。生产模块仍为局部采集，不据此声明全平台覆盖率达标。
+
+2026-11-12 数据库配置模块独立公开契约测试 5/5 通过，定向插桩 `runtime/coverage-goal/database-config-contract-final/` 行/分支/函数/语句均100%。删除的 `merge()` 经全仓调用搜索确认仅自递归、无调用方；`readDotenv()` 唯一调用固定要求 service.env 存在，因此将私有解析器改为无配置文件时直接报错，保持公开接口现有失败语义。此为单模块结果，不代表 Node 全量或三端达标。

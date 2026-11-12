@@ -282,8 +282,8 @@ describe('审核工作台真实 HTTP 契约与规模边界', () => {
     try {
       const owner = { 'x-user': 'usr_heyang', 'x-principal': '178', 'x-publish': '1' };
       expect((await get('?view=mine', owner)).body.data.workbench.myDeliveryActions).toEqual([
-        expect.objectContaining({ taskId: source.id, documentId: 'a', label: '创建 GitLab MR', url: `/knowledge-center/review?taskId=${source.id}&documentId=a` }),
-        expect.objectContaining({ taskId: source.id, documentId: 'b', label: '创建 GitLab MR', url: `/knowledge-center/review?taskId=${source.id}&documentId=b` }),
+        expect.objectContaining({ taskId: source.id, documentId: 'a', label: '创建 MR', url: `/knowledge-center/review?taskId=${source.id}&documentId=a` }),
+        expect.objectContaining({ taskId: source.id, documentId: 'b', label: '创建 MR', url: `/knowledge-center/review?taskId=${source.id}&documentId=b` }),
       ]);
       expect((await get('?view=mine', { 'x-user': 'usr_heyang', 'x-principal': '178' })).body.data.workbench.myDeliveryActions).toEqual([]);
       expect((await get('?view=mine', { 'x-user': 'usr_reviewer', 'x-principal': '179', 'x-publish': '1' })).body.data.workbench.myDeliveryActions).toEqual([]);
@@ -294,8 +294,8 @@ describe('审核工作台真实 HTTP 契约与规模边界', () => {
         current.deliveryObservation = { state: 'opened' };
       });
       expect((await get('?view=mine', owner)).body.data.workbench.myDeliveryActions).toEqual([
-        expect.objectContaining({ taskId: source.id, documentId: 'a', label: '刷新交付状态' }),
-        expect.objectContaining({ taskId: source.id, documentId: 'b', label: '刷新交付状态' }),
+        expect.objectContaining({ taskId: source.id, documentId: 'a', label: '状态刷新' }),
+        expect.objectContaining({ taskId: source.id, documentId: 'b', label: '状态刷新' }),
       ]);
     } finally {
       repository.transaction(state => { state.tasks = state.tasks.filter(item => item.id !== source.id); });

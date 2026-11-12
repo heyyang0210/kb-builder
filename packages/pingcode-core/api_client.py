@@ -88,6 +88,71 @@ class PingCodeAPIClient:
     def get_page(self, page_id: str) -> dict:
         """获取页面详情"""
         return self._api_request(f'/api/wiki/pages/{page_id}')
+
+    def get_product(self, product_code: str) -> dict:
+        return self._api_request(f'/api/ship/products/{product_code}?addons=true&members=true')
+
+    def get_baseline(self, product_id: str, baseline_id: str) -> dict:
+        return self._api_request(f'/api/ship/products/{product_id}/baseline/snapshots/{baseline_id}')
+
+    def get_baseline_suites(self, product_id: str, baseline_id: str) -> dict:
+        return self._api_request(f'/api/ship/products/{product_id}/baseline/snapshots/{baseline_id}/partial-suites')
+
+    def get_baseline_ideas(self, product_id: str, baseline_id: str, page_index: int, page_size: int = 50, *, suite_id: str = '') -> dict:
+        path = f'/api/ship/products/{product_id}/baseline/snapshots/{baseline_id}/content?pi={page_index}&ps={page_size}'
+        payload = {
+            'pi': page_index, 'ps': page_size,
+            'criteria': {'conditions': [], 'search': {'scopes': ['identifier', 'title']}, 'mode': 1, 'sorts': None},
+            'scope': {'group_by': '', 'suite_id': suite_id, 'suite_children': 1},
+        }
+        result = self.page.evaluate("""async ({path, payload}) => {
+            const response = await fetch(path, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
+            if (!response.ok) throw new Error(`PingCode API HTTP ${response.status}`);
+            return response.json();
+        }""", {'path': path, 'payload': payload})
+        return result
+
+    def get_idea_work_items(self, idea_id: str, version_id: str) -> dict:
+        query = urlencode({
+            'principal_id': idea_id,
+            'principal_name': 'idea',
+            'target_name': 'work_item',
+            'version_id': version_id,
+        })
+        return self._api_request(f'/api/ladon/relation/related-items?{query}')
+
+    def get_agile_project(self, project_code: str) -> dict:
+        return self._api_request(f'/api/agile/projects/{project_code}?addons=true&members=true')
+
+    def get_defect_view(self, project_id: str, addon_id: str, view_id: str) -> dict:
+        return self._api_request(
+            f'/api/agile/projects/{project_id}/addons/{addon_id}/visible/views/{view_id}'
+        )
+
+    def get_defect_view_content(
+        self, project_id: str, view_id: str, addon_id: str,
+        criteria: dict, columns: list[str], page_index: int, page_size: int = 50,
+    ) -> dict:
+        path = f'/api/agile/projects/{project_id}/defect/views/{view_id}/content'
+        payload = {
+            'addon_setting_id': addon_id,
+            'criteria': criteria,
+            'columns': columns,
+            'is_brief': 1,
+            'pi': page_index,
+            'ps': page_size,
+        }
+        return self.page.evaluate("""async ({path, payload}) => {
+            const response = await fetch(path, {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(payload),
+            });
+            if (!response.ok) throw new Error(`PingCode API HTTP ${response.status}`);
+            return response.json();
+        }""", {'path': path, 'payload': payload})
+
+    def get_work_item(self, short_id: str) -> dict:
+        return self._api_request(f'/api/agile/work-items/{short_id}')
     
     def get_attachments(self, page_id: str) -> list[dict]:
         """获取页面附件列表"""

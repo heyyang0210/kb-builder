@@ -13,10 +13,9 @@ function assertNoSecrets(value, location = 'config') {
   }
 }
 
-function readDotenv(file, required = false) {
+function readDotenv(file) {
   if (!fs.existsSync(file)) {
-    if (required) throw new Error(`数据库配置文件不存在：${file}`);
-    return {};
+    throw new Error(`数据库配置文件不存在：${file}`);
   }
   const values = {};
   for (const rawLine of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
@@ -29,18 +28,6 @@ function readDotenv(file, required = false) {
     values[match[1]] = value;
   }
   return values;
-}
-
-function merge(base, override) {
-  const result = { ...base };
-  for (const [key, value] of Object.entries(override || {})) {
-    if (value && typeof value === 'object' && !Array.isArray(value) && result[key] && typeof result[key] === 'object') {
-      result[key] = merge(result[key], value);
-    } else if (value !== undefined && value !== '') {
-      result[key] = value;
-    }
-  }
-  return result;
 }
 
 function envOverrides(env) {
@@ -74,7 +61,7 @@ function envOverrides(env) {
 function loadDatabaseConfig(options = {}) {
   const repositoryRoot = options.repositoryRoot || path.resolve(__dirname, '../../../');
   const configRoot = options.configRoot || path.join(repositoryRoot, 'config', 'yashandb');
-  const fileEnv = readDotenv(path.join(configRoot, 'service.env'), true);
+  const fileEnv = readDotenv(path.join(configRoot, 'service.env'));
   const loaded = envOverrides({ ...fileEnv, ...(options.env || process.env) });
   return { version: 1, jdbc: loaded.jdbc, storage: loaded.storage, expImp: loaded.expImp };
 }
