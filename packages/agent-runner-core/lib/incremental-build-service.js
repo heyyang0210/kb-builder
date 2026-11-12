@@ -266,7 +266,7 @@ class IncrementalBuildService {
         if (closedMr && body.documents.every(document => {
           const prior = previous.handbookSource.documents.find(item => item.documentId === document.documentId);
           return prior?.markdown === document.markdown;
-        })) throw new IncrementalBuildError('MR_CLOSED_REVISION_REQUIRED', 'MR 已关闭，请先修订文档再重新送审', 409);
+        })) throw new IncrementalBuildError('MR_CLOSED_REVISION_REQUIRED', 'MR 已关闭，请先进入文档编写并重新提交审核', 409);
         if (state.tasks.some(item => item.revisionOf === previous.id)) {
           throw new IncrementalBuildError('REVIEW_REVISION_ALREADY_CREATED', '该退回任务已有后续修订，请从后续任务继续', 409);
         }
@@ -494,7 +494,7 @@ class IncrementalBuildService {
       }
       // This legacy command only copies the baseline and therefore cannot
       // produce the GitLab change required by the online review workflow.
-      throw new IncrementalBuildError('GITLAB_NO_CHANGES', '候选正文与 GitLab 内容完全一致，请先在文档生产修改并保存后发起评审', 422);
+      throw new IncrementalBuildError('GITLAB_NO_CHANGES', '候选正文与 GitLab 内容完全一致，请先进入文档编写，修改并保存后发起评审', 422);
     });
   }
 
@@ -1256,7 +1256,7 @@ class IncrementalBuildService {
     this.requireReadable(session, this.task(this.repository.read(), taskId));
     const sourceTask = this.task(this.repository.read(), taskId);
     if (sourceTask.handbookSource) throw new IncrementalBuildError('GITLAB_MR_REQUIRED', '手册任务须通过 GitLab MR 交付，不能发布平台版本', 409);
-    if (sourceTask.reviewMode === 'online_review') throw new IncrementalBuildError('GITLAB_NO_CHANGES', '候选正文与 GitLab 内容完全一致，没有可提交的变更；请在文档生产修改并重新送审', 422);
+    if (sourceTask.reviewMode === 'online_review') throw new IncrementalBuildError('GITLAB_NO_CHANGES', '候选正文与 GitLab 内容完全一致，没有可提交的变更；请进入文档编写并重新提交审核', 422);
     required(body.expectedCandidateDigest, 'expectedCandidateDigest', '必须确认候选版本指纹');
     return this.withIdempotency(session, key, `publish:${taskId}`, body, state => {
       const task = this.task(state, taskId);
@@ -1325,6 +1325,7 @@ class IncrementalBuildService {
       canReassign: owner && hasAction(session, 'knowledge:write') && Boolean(task.handbookSource) && task.state === 'under_review' && hasPendingReview,
       canCancelReview: hasAction(session, 'review:manage') && task.state === 'under_review' && hasPendingReview,
       canEdit: owner && hasAction(session, 'knowledge:write') && EDITABLE_STATES.has(task.state),
+      canSubmitReview: owner && hasAction(session, 'knowledge:write') && task.state === 'candidate_ready' && task.reviews.length === 0,
       canReview: hasAction(session, 'review:manage') && task.state === 'under_review' && hasPendingReview && (!task.handbookSource || hasAction(session, 'platform:manage') || task.reviews.some(review => review.status === 'pending' && isAssignedReviewer(session, review.reviewerIds))),
       canPublish: hasAction(session, 'publish:manage') && task.state === 'approved',
       canRefreshDelivery: hasAction(session, 'publish:manage') && Boolean(task.handbookSource && task.mergeRequest) && task.state === 'mr_submitted' && task.deliveryObservation?.state !== 'closed',

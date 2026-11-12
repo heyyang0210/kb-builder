@@ -80,6 +80,25 @@ describe('P0 平台内增量构建 API', () => {
   beforeEach(async () => { api = await startApi(); });
   afterEach(() => new Promise(resolve => api.server.close(resolve)));
 
+  test('候选审核按钮能力仅对任务负责人开放，送审后关闭', async () => {
+    const created = await request(api.baseUrl, 'POST', '/knowledge-center/api/incremental-tasks', {
+      name: '能力校验', handbookId: 'DB-001', businessVersion: '23.4.5.100', baselineVersionId: 'baseline-v1',
+    }, 'capability-create');
+    const taskId = created.body.data.id;
+    const endpoint = `/knowledge-center/api/incremental-tasks/${taskId}`;
+    expect((await request(api.baseUrl, 'GET', endpoint)).body.data.capabilities.canSubmitReview).toBe(false);
+    await request(api.baseUrl, 'POST', `${endpoint}/sources`, { sourceType: 'manual', label: '需求', reference: 'CAP-1', content: '更新文档' }, 'capability-source');
+    await request(api.baseUrl, 'PATCH', `${endpoint}/target`, { documentIds: ['doc-install'], sectionIds: ['section-1'], language: 'zh-CN' }, 'capability-target');
+    await request(api.baseUrl, 'PUT', `${endpoint}/draft`, { editVersion: 0, content: '# 更新文档', operations: [updateOperation()] }, 'capability-draft');
+    await request(api.baseUrl, 'POST', `${endpoint}/checks`, {}, 'capability-checks');
+    await request(api.baseUrl, 'POST', `${endpoint}/candidate`, {}, 'capability-candidate');
+    expect((await request(api.baseUrl, 'GET', endpoint)).body.data.capabilities.canSubmitReview).toBe(true);
+    expect((await request(api.baseUrl, 'GET', endpoint, undefined, undefined, 'other')).status).toBe(404);
+    await request(api.baseUrl, 'POST', `${endpoint}/reviews`, {}, 'capability-review');
+    expect((await request(api.baseUrl, 'GET', endpoint)).body.data.capabilities.canSubmitReview).toBe(false);
+    expect((await request(api.baseUrl, 'GET', endpoint, undefined, undefined, 'other')).body.data.capabilities.canSubmitReview).toBe(false);
+  });
+
   test('真实 HTTP 闭环：来源快照、范围、草稿、检查、候选、审核、发布和外部证据', async () => {
     const { taskId, candidate } = await buildApprovedCandidate(api.baseUrl);
     const published = await request(api.baseUrl, 'POST', `/knowledge-center/api/incremental-tasks/${taskId}/publish`, { expectedCandidateDigest: candidate.digest }, 'publish-a', 'reviewer');

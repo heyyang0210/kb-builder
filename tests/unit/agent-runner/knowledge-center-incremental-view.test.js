@@ -51,6 +51,9 @@ describe('增量构建前端契约', () => {
     expect(read('apps/knowledge-center-web/frontend/knowledge-center/modules/review-publishing/workbench.js'))
       .toContain('返回审核文档清单');
     expect(review).toContain('stage=review');
+    expect(view()).toContain('task.capabilities?.canSubmitReview === true');
+    expect(view()).toContain('task.capabilities?.canRevise === true');
+    expect(view()).not.toContain('canEdit ?? true');
   });
 
   test('草稿、范围和外部证据字段与 DTO 一致', () => {
