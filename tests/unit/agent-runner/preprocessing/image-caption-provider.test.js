@@ -1,4 +1,5 @@
 const { OpenAICompatibleImageCaptionProvider } = require('../../../../packages/agent-runner-core/lib/preprocessing/captioning/openai-compatible-image-caption-provider');
+const { ImageCaptionProvider } = require('../../../../packages/agent-runner-core/lib/preprocessing/contracts/image-caption-provider');
 const http = require('http');
 
 async function withCaptionServer(responder, run) {
@@ -20,6 +21,11 @@ async function withCaptionServer(responder, run) {
 }
 
 describe('OpenAICompatibleImageCaptionProvider', () => {
+  test('Provider基类caption调用明确拒绝未实现', async () => {
+    await expect(new ImageCaptionProvider().caption({ fileName: 'diagram.png' }))
+      .rejects.toThrow('ImageCaptionProvider.caption must be implemented');
+  });
+
   test('默认构造 GPT-5.6 Terra 的图片说明请求', async () => {
     const create = jest.fn().mockResolvedValue({
       choices: [{ message: { content: '图中展示数据库日志写入流程' } }]

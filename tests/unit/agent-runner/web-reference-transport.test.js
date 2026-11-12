@@ -1,5 +1,8 @@
 const http = require('node:http');
+const https = require('node:https');
 const zlib = require('node:zlib');
+const { EventEmitter } = require('node:events');
+const { Readable } = require('node:stream');
 const { readWebReference, resolveTarget } = require('../../../packages/agent-runner-core/lib/production-web-reference');
 let server, config;
 beforeAll(async () => {
@@ -33,6 +36,45 @@ beforeAll(async () => {
 });
 afterAll(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); });
 const read = (route, overrides = {}) => readWebReference(`http://public.example${route}`, { ...config, ...overrides });
+test.each([['http', http], ['https', https]])('生产%s接收器固定已校验DNS地址并监听请求错误', async (protocol, client) => {
+  const get = jest.spyOn(client, 'get').mockImplementation((url, options, callback) => {
+    const all = jest.fn();
+    const single = jest.fn();
+    options.lookup(url.hostname, { all: true }, all);
+    options.lookup(url.hostname, { all: false }, single);
+    expect(all).toHaveBeenCalledWith(null, [{ address: '1.1.1.1', family: 4 }]);
+    expect(single).toHaveBeenCalledWith(null, '1.1.1.1', 4);
+    expect(options.headers).toMatchObject({ Accept: expect.stringContaining('text/plain'), 'Accept-Encoding': 'gzip, deflate, br' });
+    const response = Readable.from([Buffer.from('受控HTTP正文')]);
+    response.statusCode = 200;
+    response.headers = { 'content-type': 'text/plain; charset=utf-8', 'content-encoding': 'identity' };
+    queueMicrotask(() => callback(response));
+    return new EventEmitter();
+  });
+  try {
+    const locator = `${protocol}://public.example/fixture`;
+    await expect(readWebReference(locator, { ...config, receive: undefined }))
+      .resolves.toMatchObject({ content: '受控HTTP正文', locator });
+    expect(get).toHaveBeenCalledTimes(1);
+  } finally {
+    get.mockRestore();
+  }
+});
+test.each([['http', http], ['https', https]])('生产%s接收器传播套接字错误且后续请求可恢复', async (protocol, client) => {
+  const failure = new Error('isolated socket failure');
+  const get = jest.spyOn(client, 'get').mockImplementation(() => {
+    const request = new EventEmitter();
+    queueMicrotask(() => request.emit('error', failure));
+    return request;
+  });
+  try {
+    await expect(readWebReference(`${protocol}://public.example/failure`, { ...config, receive: undefined }))
+      .rejects.toBe(failure);
+  } finally {
+    get.mockRestore();
+  }
+  await expect(read('/ok')).resolves.toMatchObject({ content: '正常正文' });
+});
 test.each(['/deflate', '/br', '/ok'])('真实HTTP解码并保留正文 %s', async route => {
   expect(await read(route)).toMatchObject({ content: route === '/ok' ? '正常正文' : '压缩正文', locator: `http://public.example${route}` });
 });

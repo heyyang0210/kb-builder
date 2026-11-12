@@ -2247,3 +2247,5 @@ GitLab 图片定向 Jest 覆盖采集退出 0，证据 `runtime/coverage-goal/gi
 同日继续为真实 `http/https.get` 接收路径增加套接字错误注入，验证 Promise 拒绝并保留原因、后续受控 HTTP 请求成功；完整传输测试 16/16 通过，定向报告 `runtime/coverage-goal/web-reference-socket-directed/` 通过。生产模块仍为局部采集，不据此声明全平台覆盖率达标。
 
 2026-11-12 数据库配置模块独立公开契约测试 5/5 通过，定向插桩 `runtime/coverage-goal/database-config-contract-final/` 行/分支/函数/语句均100%。删除的 `merge()` 经全仓调用搜索确认仅自递归、无调用方；`readDotenv()` 唯一调用固定要求 service.env 存在，因此将私有解析器改为无配置文件时直接报错，保持公开接口现有失败语义。此为单模块结果，不代表 Node 全量或三端达标。
+
+2026-11-12 图片说明 Provider 基类补充未实现方法应拒绝的契约，现有具体 Provider 测试文件9/9通过；定向报告 `runtime/coverage-goal/image-caption-contract-directed/` 显示基类行、分支、函数及语句均100%。此为稳定源码的单模块增量，仍需完整 Node 复采确认累计覆盖率。
