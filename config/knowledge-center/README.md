@@ -72,6 +72,8 @@ PingCode 设计文档与测试文档共用既有资料服务，不以空间标�
 
 `productionAI.sources.pingcodeOrigins` 将 PingCode 页面网址转交既有资料服务；其他公开网址通过通用网页正文读取。参考资料可多选，作者确定的引用优先级随任务快照保留，数值 1 为最高。
 
+PingCode 基线想法列表支持 `/ship/products/{product}/baselines/{baseline}/ideas?category={all|分组短ID}`；资料服务使用现有账号权限读取完整分页，分组短 ID 必须属于该基线和产品，归属或总数无法核验时拒绝快照。
+
 真实网关内容检查使用 `productionQuality.timeoutMs=120000`，超过期限仍按未执行返回，不能降级为通过。
 
 
