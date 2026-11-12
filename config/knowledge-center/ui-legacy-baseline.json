@@ -44,8 +44,7 @@
       "rawCssColor": 58
     },
     "apps/knowledge-center-web/frontend/knowledge-center/modules/dashboard/my-tasks.js": {
-      "rawLucide": 1,
-      "globalIconScan": 2
+      "rawLucide": 1
     },
     "apps/knowledge-center-web/frontend/knowledge-center/modules/dashboard/view.js": {
       "rawLucide": 1,
@@ -55,8 +54,7 @@
       "rawCssColor": 129
     },
     "apps/knowledge-center-web/frontend/knowledge-center/modules/document-tasks/plan-calendar.js": {
-      "legacyIcon": 4,
-      "globalIconScan": 1
+      "legacyIcon": 4
     },
     "apps/knowledge-center-web/frontend/knowledge-center/modules/document-tasks/view.js": {
       "legacyIcon": 21,
@@ -86,10 +84,6 @@
     },
     "apps/knowledge-center-web/frontend/knowledge-center/modules/production/handbook-view.js": {
       "rawLucide": 26
-    },
-    "apps/knowledge-center-web/frontend/knowledge-center/modules/production/production-chat-evidence.js": {
-      "legacyIcon": 5,
-      "inlineSvg": 1
     },
     "apps/knowledge-center-web/frontend/knowledge-center/modules/production/production-writing-page.js": {
       "legacyIcon": 7,

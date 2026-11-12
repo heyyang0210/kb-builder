@@ -1,12 +1,12 @@
 import { loadHandbookAI, deleteHandbookAIHistory, saveHandbookAIFeedback } from '../../common/api/handbook-production-api.js';
+import { uiIcon } from '../../common/ui-system.js';
 
-const icon = paths => `<svg aria-hidden="true" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${paths}</svg>`;
 const ICONS = {
-  copy: icon('<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/>'),
-  good: icon('<path d="M7 10v11H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3Zm0 0 5-8a3 3 0 0 1 2 3v3h5a3 3 0 0 1 2.9 3.8l-2 7A3 3 0 0 1 17 21H7"/>'),
-  bad: icon('<path d="M7 14V3H4a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h3Zm0 0 5 8a3 3 0 0 0 2-3v-3h5a3 3 0 0 0 2.9-3.8l-2-7A3 3 0 0 0 17 3H7"/>'),
-  more: icon('<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>'),
-  link: icon('<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>'),
+  copy: uiIcon('action.copy'),
+  good: uiIcon('feedback.positive'),
+  bad: uiIcon('feedback.negative'),
+  more: uiIcon('action.more'),
+  link: uiIcon('action.references'),
 };
 const operationNames = { generate: '文档生成', polish: '内容修订', continue: '内容续写', rewrite: '内容修订', update: '内容修订' };
 const statusNames = { queued: '等待执行', running: '生成中', completed: '候选已生成', failed: '生成失败', cancelled: '已中断', interrupted: '已中断' };
@@ -109,6 +109,7 @@ export function createAIConversationTools({ host, conversation, context, getCurr
       const open = document.createElement('button'); open.type = 'button'; open.className = 'handbook-writing-chat-open'; open.textContent = '查看候选与执行过程'; open.onclick = () => openHistory(item.jobId);
       answer.append(heading, time, open, toolbar(item.jobId, item.status, item.feedback)); turn.append(prompt, answer); list.append(turn);
     }
+    window.lucide?.createIcons({ nodes: [list] });
   }
 
   function renderCurrent(job, container) {
@@ -118,6 +119,7 @@ export function createAIConversationTools({ host, conversation, context, getCurr
     const heading = document.createElement('strong'); heading.textContent = `${operationNames[job.operation] || 'AI 写作'} · ${statusNames[job.status] || job.status}`;
     const summary = document.createElement('p'); summary.textContent = job.status === 'completed' ? '本次候选已生成，可查看引用原文并逐处比较采用。' : job.error?.message || '执行过程正在更新。';
     answer.append(heading, summary, toolbar(job.jobId, job.status, job.userFeedback?.rating)); container.append(answer);
+    window.lucide?.createIcons({ nodes: [container] });
   }
   return { renderHistory, renderCurrent, showEvidence };
 }
