@@ -4,7 +4,16 @@
 
 历史迁移确需纠正文件名时，必须在 `migration-aliases.properties` 登记“新版本标识=数据库已记录的旧版本标识”。迁移器仅在别名双方数字版本相同且 SQL 摘要匹配时跳过执行；新环境记录新名称，已执行环境保留原记录。别名只解决历史改名兼容，不得用于替换或重排 SQL。
 
-统一构建会在 SQL 产物中生成 `migration-source.properties`，记录 Git revision、迁移源是否存在未提交变更以及聚合 SHA-256。`start.sh migrate` 只允许执行来自已提交 Git 版本的产物；普通启动仍只做数据库摘要校验。禁止先从脏工作树执行迁移、再修改或格式化 SQL 后提交。
+统一构建会在 SQL 产物中生成 `migration-source.properties`，记录 Git revision、迁移源是否存在未提交变更以及聚合 SHA-256。`start.sh migrate` 和 `start.sh migrate-tasks` 只允许执行来自已提交 Git 版本的产物；普通启动仍只做数据库摘要校验。禁止先从脏工作树执行迁移、再修改或格式化 SQL 后提交。
+
+## 测试环境
+- 连接方式：yasql regress/regress@172.22.69.74:1688
+- 用户名：regress
+- 密码：regress
+- ip端口：172.22.69.74:1688
+
+生产环境配置：在仓库下的config/yashandb/service.env 位置
+
 
 ## 当前迁移
 
@@ -26,6 +35,9 @@
 | `014_gitlab_version_mapping.sql` | PingCode 产品版本到 GitLab 分支的可修订基础表及操作事件表；只建空表，不导入候选规则 |
 | `015_retract_gitlab_version_draft.sql` | 扩展草案撤销状态和审计动作；保留行与事件，不清理历史数据 |
 | `016_archive_gitlab_version_mapping.sql` | 扩展已停用规则归档状态和归档/恢复审计动作；归档只影响管理列表，不删除规则或历史 |
+| `017_pingcode_task_sync.sql` | Pingcode 来源、运行、SR/IR 快照、关系、资源及逐 SR 任务索引；只建空表，旧任务迁移需先备份与对账 |
+
+`017` 的 `KC_DOCUMENT_TASK_ACTOR` 按任务与人员记录工单、手册和文档责任人；`KC_DOCUMENT_TASK_REVIEW` 按审核任务号定位关联 SR；`KC_DOCUMENT_TASK_WRITE` 保存逐任务幂等写入结果。旧聚合迁移时一同建立索引，后续每次单任务写入须在同一事务中替换索引。关系表迁移仅在个人开发库执行并验证，`VERIFIED` 不等于业务切换完成；关系表读写全部接通后执行 `activate-tasks`，该命令重新核验原备份、旧聚合修订与每条任务正文，失败则不激活。未激活时同步确认继续返回 409。
 
 ## 015 执行与验收（2026-11-11）
 
