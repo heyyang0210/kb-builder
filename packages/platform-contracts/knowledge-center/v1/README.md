@@ -25,6 +25,8 @@ SSE、下载和预览响应约束见 `stream-download-contract.json`；该文件
 方法和路径；写请求由统一入口会话校验并透传 `Idempotency-Key`、`X-Request-Id`、
 `X-Correlation-Id` 及脱敏操作者标识，未登记路径不会被网关暴露。
 
+`GET /datasets` 为兼容存量客户端，不传分页参数时返回完整 `items/total`；知识中心工作区传入 `page` 和 `pageSize` 时按页返回，并增加 `page/pageSize/total` 元数据。`page` 最小为 1，`pageSize` 为 1–100；分页只限制响应窗口，不改变数据过滤和排序。分页 UI 调用该列表端点的同源代理，不重复请求统计和索引端点。
+
 ## 兼容规则
 
 1. 网关聚合接口只能生成只读投影，不重算或写入下游状态。

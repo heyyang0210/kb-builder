@@ -132,7 +132,7 @@ public final class StorageDomainReadHttpCheck {
         else if (sql.startsWith("SELECT NAMESPACE,PAYLOAD FROM KC_RECORD WHERE NAMESPACE NOT IN"))
             values = candidateReferenced ? List.<Object[]>of(new Object[]{"production", new javax.sql.rowset.serial.SerialClob(
                 "{\"outlineVersionId\":\"outline-candidate\"}".toCharArray())}) : List.of();
-        else if (sql.startsWith("SELECT REVISION, PAYLOAD_SHA256, DELETED FROM KC_RECORD")) values = List.of();
+        else if (sql.startsWith("SELECT REVISION, PAYLOAD_SHA256, DELETED") && sql.contains("FROM KC_RECORD")) values = List.of();
         else if (sql.startsWith("SELECT KC_OUTLINE_SEQ.NEXTVAL FROM DUAL"))
             values = missingOutlineSequence ? List.of() : List.<Object[]>of(new Object[]{nextOutlineSequence++});
         else if (sql.startsWith("SELECT MANUAL_ID FROM KC_MANUAL WHERE MANUAL_CODE"))
@@ -475,7 +475,11 @@ public final class StorageDomainReadHttpCheck {
         Method outlines = Main.class.getDeclaredMethod("domainOutlines", HttpExchange.class);
         outlines.setAccessible(true);
         server.createContext("/v1/domain/outlines", exchange -> {
-            try { outlines.invoke(application, exchange); } catch (ReflectiveOperationException error) { throw new IOException(error); }
+            try { outlines.invoke(application, exchange); } catch (ReflectiveOperationException error) {
+                Throwable cause = error.getCause() == null ? error : error.getCause();
+                cause.printStackTrace();
+                throw new IOException(cause);
+            }
         });
         server.start();
         URI base = URI.create("http://127.0.0.1:" + server.getAddress().getPort());

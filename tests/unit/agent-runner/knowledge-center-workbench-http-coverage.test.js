@@ -300,12 +300,12 @@ describe('工作台责任人和联合查询的真实 HTTP 覆盖', () => {
     reviewTasks.push({ id: 'review-task', handbookId: 'HB-1' });
     incremental.service.reviewBootstrap = () => ({ documents: [{
       taskId: 'review-task', reviewId: 'review-1', documentId: 'doc-1', handbookId: 'HB-1',
-      assignedToMe: true, title: '审核文档', businessVersion: '1.0', submittedAt: '2026-11-10T00:00:00Z',
+      assignedToMe: true, title: '审核文档', path: 'docs/23.4.3/guide/审核文档.md', businessVersion: '1.0', submittedAt: '2026-11-10T00:00:00Z',
     }] });
     const response = await query({ responsibleId: 'admin', queue: 'actionable', page: 1, pageSize: 20 });
     expect(response.status).toBe(200);
     expect((await response.json()).data.items).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 'review:review-task:review-1:doc-1', taskType: '文档审核', status: '待审核', source: '审核与发布', primaryAction: expect.objectContaining({ code: 'review_document', label: '查看审核' }) }),
+      expect.objectContaining({ id: 'review:review-task:review-1:doc-1', taskType: '文档审核', status: '待审核', source: '审核与发布', lineage: expect.objectContaining({ documentName: '审核文档', documentPath: 'docs/23.4.3/guide/审核文档.md' }), primaryAction: expect.objectContaining({ code: 'review_document', label: '查看审核' }) }),
     ]));
 
     incremental.service.reviewBootstrap = () => { throw new Error('审核服务暂不可用'); };

@@ -1,5 +1,7 @@
 # YashanDB 存储服务
 
+Pingcode 来源管理使用既有 `KC_PINGCODE_SOURCE.ROW_VERSION` 并发控制；编辑、停用/恢复和删除由 Storage 内部 HTTP 接口执行。来源配置变更与创建运行共享来源行锁，避免运行启动和修改竞争。有运行或任务来源引用时不可物理删除。产品类型字段由新增迁移 `018_pingcode_product_type.sql` 提供，默认 DB 并校验 DB/YCM/YMP/YDC；该迁移尚待单独 Schema 审批，批准和执行前不可启动依赖此字段的生产版本。列表计数和来源已确认任务/正文读取均由 Storage 查询返回。详细规则见[Pingcode 来源同步详细设计](../../.codex/知识中心建设平台/03-详细设计/知识中心-任务管理-Pingcode来源同步-详细设计文档.md)。
+
 `handbook-production/state` 聚合写入时，存储层只对本次新增或修改的实体校验大纲版本引用；未变动的历史草稿引用已删除大纲，不会阻断新 AI 任务。新增、修改或恢复软删除的实体仍按原规则校验，旧值读取与写入锁后的版本必须一致，冲突返回 409。其他命名空间继续全量校验。回归用例位于 `tests/unit/agent-runner/fixtures/ProductionReferenceChangesCheck.java`，真实 JDBC 事务回滚验证位于 `ProductionReferenceJdbcCheck.java`，仅允许 `test_hy` 执行。
 
 数据库结构和迁移变更必须遵循 [YashanDB Storage 变更约束](./AGENTS.md)。
@@ -95,6 +97,8 @@ SQL 迁移目录：
 关系表任务索引的 `TASK_STATUS` 按现有业务状态保存为 `PENDING_SCOPE`、`IN_PROGRESS` 或 `COMPLETED`，与列表状态筛选一致。旧聚合缺失状态字段时，迁移只根据已保存的范围确认事实推断未确认和进行中，完成状态须按备份逐项对账。
 
 Pingcode 确认同步新建的任务读取任务配置的默认责任人，并在同一事务内写入 `OWNER_ID` 与人员索引；未配置默认责任人时拒绝确认。同步现有任务不覆盖平台责任人。
+
+运行分页读取新增 `GET /v1/pingcode-task-sync/runs/{runId}/unlinked-irs?page=1&pageSize=100`，从该运行的 IR 快照中返回 `RELATED_SR_COUNT=0` 的 IR 编号，支持最多 100 条分页。该只读接口用于解释同步跳过项，不改变确认或任务投影。
 
 已确认来源快照按任务编号回读当前主来源的 Markdown、IR 和最新资源版本；变化历史只统计已确认批次。缺图重试追加资源版本，不改原正文及其哈希；所有失败资源修复后，批次从 `CONFIRMED_MISSING_IMAGES` 转为 `CONFIRMED`。隔离库测试覆盖多 IR 引用同一 SR、来源变化、缺图确认与修复。
 

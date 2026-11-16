@@ -138,7 +138,7 @@ function createProductionAIService(options) {
     if (input.operation !== 'generate' && !input.markdown.trim()) fail('AI_ORIGINAL_REQUIRED', '当前操作需要已有正文');
     if (input.originSnapshot != null) {
       if (typeof input.originSnapshot !== 'object' || Array.isArray(input.originSnapshot)
-        || !['gitlab', 'blank'].includes(String(input.originSnapshot.originType || 'blank'))
+        || !['gitlab', 'platform', 'blank'].includes(String(input.originSnapshot.originType || 'blank'))
         || (input.originSnapshot.contentDigest && !/^[a-f0-9]{64}$/i.test(input.originSnapshot.contentDigest))) {
         fail('AI_ORIGIN_SNAPSHOT_INVALID', '原文来源快照无效，请重新打开文档后重试', 409);
       }

@@ -41,7 +41,7 @@ describe('数据库连接右侧抽屉交互', () => {
     expect(view).toContain("healthStatus === 'healthy'");
     expect(view).toContain('已配置，尚未验证');
     expect(view).toContain('database-summary-skeleton');
-    expect(view).toContain('database-summary-skeleton-card');
+    expect(view).toContain('database-summary-skeleton-jdbc');
     expect(view).toContain('database-status-skeleton');
     expect(view).not.toContain("loading ? '正在检查'");
     expect(view).not.toContain("loading\n    ? '正在读取数据库运行状态…'");

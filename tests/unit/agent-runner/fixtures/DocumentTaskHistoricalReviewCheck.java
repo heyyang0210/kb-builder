@@ -25,6 +25,23 @@ public final class DocumentTaskHistoricalReviewCheck {
         if (!expected.equals(historical)) throw new AssertionError("Historical review index mismatch: " + historical);
         if (historical.contains("current-review")) throw new AssertionError("Current review must come from the active scope");
 
+        if (!DocumentTaskIndex.historicalReviewIds(Map.of()).isEmpty()) {
+            throw new AssertionError("Missing history fields must produce no review IDs");
+        }
+        List<Object> malformedDocuments = List.of("not-a-document", Map.of("reviewTaskId", " "),
+            Map.of("reviewTaskId", "kept-review"));
+        List<Object> malformedHandbooks = List.of("not-a-handbook", Map.of("documents", "not-a-list"),
+            Map.of("documents", malformedDocuments));
+        Map<String, Object> malformedHistory = Map.of(
+            "scopeHistory", List.of("not-a-scope", Map.of("handbooks", "not-a-list"),
+                Map.of("handbooks", malformedHandbooks)),
+            "scopeChanges", List.of("not-a-change", Map.of("sourceOpinion", "not-an-object"),
+                Map.of("sourceOpinion", Map.of("taskId", "")),
+                Map.of("sourceOpinion", Map.of("taskId", "kept-review"))));
+        if (!Set.of("kept-review").equals(DocumentTaskIndex.historicalReviewIds(malformedHistory))) {
+            throw new AssertionError("Malformed history values must be ignored and IDs deduplicated");
+        }
+
         Set<String> indexed = new LinkedHashSet<>();
         Connection connection = (Connection) Proxy.newProxyInstance(Connection.class.getClassLoader(),
             new Class<?>[] { Connection.class }, (proxy, method, arguments) -> {

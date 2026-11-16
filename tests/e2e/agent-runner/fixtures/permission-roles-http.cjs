@@ -63,8 +63,8 @@ async function exercisePermissionRolesHttp(page) {
     await form().locator('[type=submit]').click();
     await statusText('权限已保存');
     assert.equal(await form().locator('[name=roles][value=REVIEWER]').isChecked(), true);
-    await statusText('');
     await selectUser('local-reader');
+    await statusText('');
     assert.equal(await form().locator('[type=submit]').isDisabled(), true);
     for (const checkbox of await form().locator('[name=roles]').all()) assert.equal(await checkbox.isDisabled(), true);
     await selectUser('stale-editor');

@@ -205,7 +205,10 @@ function createDshAdapter(options = {}) {
     const socket = path.join(socketRoot, `kc-dsh-model-${id}.sock`);
     const server = require('node:net').createServer(client => client.end('proxy-only'));
     try {
-      await new Promise((resolve, reject) => server.listen(socket, error => error ? reject(error) : resolve()));
+      await new Promise((resolve, reject) => {
+        server.once('error', reject);
+        server.listen(socket, () => { server.off('error', reject); resolve(); });
+      });
       const script = `const fs=require('fs'),net=require('net');const r={node:process.version,pid:process.pid,repo:fs.existsSync(${JSON.stringify(path.join(REPOSITORY_ROOT, 'README.md'))}),home:fs.existsSync('/home/hey/.bashrc'),bus:fs.existsSync(${JSON.stringify(path.join(socketRoot, 'bus'))}),env:Object.keys(process.env).sort(),socket:false,network:false};const s=net.createConnection(${JSON.stringify(path.join(socketRoot, `kc-dsh-task-${id}`, 'model.sock'))});s.on('data',b=>{r.socket=b.toString()==='proxy-only';s.end();const n=net.createConnection({host:'1.1.1.1',port:443,timeout:800});n.on('connect',()=>{r.network=true;n.destroy();console.log(JSON.stringify(r))});n.on('error',()=>console.log(JSON.stringify(r)));n.on('timeout',()=>{n.destroy();console.log(JSON.stringify(r))})});s.on('error',()=>{console.log(JSON.stringify(r));process.exitCode=1})`;
       const args = unitArgs(id, guest, socket);
       args.splice(-1, 1, '-e', script);
@@ -222,7 +225,7 @@ function createDshAdapter(options = {}) {
       credentialProven = facts.socket === true && !facts.env.some(name => /KEY|TOKEN|SECRET|AUTH|DBUS|SSH/i.test(name));
     } catch (_) { sandboxProven = false; credentialProven = false; }
     finally {
-      server.close();
+      if (server.listening) server.close();
       try { fs.unlinkSync(socket); } catch (_) {}
       fs.rmSync(directory, { recursive: true, force: true });
     }

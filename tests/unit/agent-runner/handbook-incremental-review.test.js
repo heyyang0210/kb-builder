@@ -642,7 +642,7 @@ test('真实 HTTP：保存 → 增量评审 → 本人审核 → 创建 MR，失
     assert.equal(await page.locator('[data-review-publish]').count(), 0);
     const closedTaskResponse = await call('GET', `/incremental-tasks/${revisedBatchId}`);
     assert.equal(closedTaskResponse.status, 200);
-    assert.equal(closedTaskResponse.data.completion.label, 'MR已关闭，需修订并重新审核');
+    assert.equal(closedTaskResponse.data.completion.label, 'MR已关闭');
     await page.goto(`${base}/knowledge-center/production/handbook/${context.handbookId}?documentId=browser-batch-b&branch=main`);
     await page.locator('.handbook-review-submission-status').filter({ hasText: closedTaskResponse.data.completion.label }).waitFor();
     await page.goto(`${base}/knowledge-center/production?view=tasks&taskId=${encodeURIComponent(revisedBatchId)}`);

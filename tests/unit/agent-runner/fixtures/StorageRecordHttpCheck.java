@@ -36,6 +36,7 @@ public final class StorageRecordHttpCheck {
     private static int outlineReferenceQueries;
     private static long revision;
     private static boolean deleted;
+    private static boolean taskMigrationActive;
     private static int commits;
     private static int rollbacks;
     private static boolean handbookPresent;
@@ -53,6 +54,15 @@ public final class StorageRecordHttpCheck {
     }
 
     private static ResultSet rows(String sql) throws SQLException {
+        if (sql.startsWith("SELECT MIGRATION_STATUS FROM KC_TASK_MIGRATION")) {
+            int[] cursor = { 0 };
+            return proxy(ResultSet.class, (self, method, args) -> switch (method.getName()) {
+                case "next" -> ++cursor[0] == 1;
+                case "getString" -> taskMigrationActive ? "ACTIVE" : "VERIFIED";
+                case "close" -> null;
+                default -> throw new UnsupportedOperationException("TaskMigration." + method.getName());
+            });
+        }
         if (sql.startsWith("SELECT REVISION, PAYLOAD, DELETED FROM KC_RECORD WHERE NAMESPACE=?")) {
             int[] cursor = { 0 };
             return proxy(ResultSet.class, (self, method, args) -> switch (method.getName()) {
@@ -190,6 +200,15 @@ public final class StorageRecordHttpCheck {
         HttpRequest.Builder builder = HttpRequest.newBuilder(base.resolve("/v1/records/fixture/item"));
         if (revisionHeader != null) builder.header(method.equals("GET") ? "If-None-Match" : "If-Match", revisionHeader);
         builder.method(method, body == null ? HttpRequest.BodyPublishers.noBody() : HttpRequest.BodyPublishers.ofString(body));
+        return client.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+    }
+
+    private static HttpResponse<String> taskAggregateRequest(HttpClient client, URI base, String method,
+                                                             String body, String revisionHeader) throws Exception {
+        HttpRequest.Builder builder = HttpRequest.newBuilder(base.resolve("/v1/records/document_tasks/state"));
+        if (revisionHeader != null) builder.header("If-Match", revisionHeader);
+        builder.method(method, body == null ? HttpRequest.BodyPublishers.noBody()
+            : HttpRequest.BodyPublishers.ofString(body));
         return client.send(builder.build(), HttpResponse.BodyHandlers.ofString());
     }
 
@@ -426,6 +445,34 @@ public final class StorageRecordHttpCheck {
             awaitDraft(client, base, 8, "updated body");
             draftDeleted = true;
             expect(draftRequest(client, base), 200, "\"payload\":null");
+            String legacy = Main.Json.stringify(Map.of("schemaVersion", 2,
+                "tasks", java.util.List.of(Map.of("number", "YDBRD-42")),
+                "config", Map.of("defaultOwnerId", "177")));
+            payload = legacy;
+            digest = java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
+                .digest(legacy.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+            revision = 1; deleted = false; taskMigrationActive = true;
+            String configOnly = Main.Json.stringify(Map.of("schemaVersion", 2,
+                "tasks", java.util.List.of(Map.of("number", "YDBRD-42")),
+                "config", Map.of("defaultOwnerId", "178")));
+            expect(taskAggregateRequest(client, base, "PUT", configOnly, "1"), 200, "\"revision\":2");
+            if (!configOnly.equals(payload)) throw new AssertionError("Compatible legacy config was not saved");
+            int beforeLegacyRejections = commits;
+            String changedTasks = Main.Json.stringify(Map.of("schemaVersion", 2,
+                "tasks", java.util.List.of(Map.of("number", "YDBRD-99")),
+                "config", Map.of("defaultOwnerId", "178")));
+            expect(taskAggregateRequest(client, base, "PUT", changedTasks, "2"), 409,
+                "DOCUMENT_TASK_LEGACY_WRITE_DISABLED");
+            expect(taskAggregateRequest(client, base, "PUT", "[]", "2"), 409,
+                "DOCUMENT_TASK_LEGACY_WRITE_DISABLED");
+            deleted = true;
+            expect(taskAggregateRequest(client, base, "PUT", configOnly, "2"), 409,
+                "DOCUMENT_TASK_LEGACY_WRITE_DISABLED");
+            deleted = false;
+            expect(taskAggregateRequest(client, base, "DELETE", null, null), 409,
+                "DOCUMENT_TASK_DELETE_FORBIDDEN");
+            if (commits != beforeLegacyRejections || revision != 2 || !configOnly.equals(payload))
+                throw new AssertionError("Legacy task aggregate rejection changed committed record");
         } finally {
             server.stop(0);
             Field poolField = Main.class.getDeclaredField("connectionPool");

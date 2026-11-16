@@ -166,7 +166,7 @@ function delivery(ctx, book, doc, task) {
     return { ...review.completion, reviewState: review.state, reviewTaskId: review.id, mergeRequest: review.mergeRequest || null,
       recovery: closedMr ? 'revise_after_mr_closed' : review.deliveryFailure ? 'retry_delivery_readback' : review.state === 'rejected' ? 'revise_after_rejection' : null,
       deliveryFailure: review.deliveryFailure || null,
-      label: review.state === 'rejected' ? '审核退回，请修订并重新送审' : review.completion.label };
+      label: review.state === 'rejected' ? '审核已退回，待重新编写并提交审核' : review.completion.label };
   } catch (error) { return { status: 'pending', label: '关联审核不可读取，请检查权限或重新关联', code: error.code }; }
 }
 function project(ctx, raw, config) {
@@ -679,6 +679,13 @@ function createDocumentTaskRouter(options = {}) {
     if (!Number.isSafeInteger(page) || !Number.isSafeInteger(pageSize) || page < 1 || pageSize < 1 || pageSize > 100)
       fail('PINGCODE_CHANGE_PAGE_INVALID', '变化历史页码无效', 422);
     return relational.changes(req.params.number, page, pageSize);
+  }));
+  router.get('/:number/source', route(async (req, ctx) => {
+    const state = await readTask(req.params.number);
+    requireTask(state, ctx, req.params.number);
+    if (!await relationalActive()) fail('PINGCODE_SNAPSHOT_NOT_FOUND', '任务没有已确认的 Pingcode 来源', 404);
+    const { number, title, markdown, ir, sourceName, sourceUrl, confirmedAt } = await relational.source(req.params.number);
+    return { number, title, markdown, ir, sourceName, sourceUrl, confirmedAt };
   }));
   router.get('/:number/source-export', async (req, res, next) => {
     try {

@@ -295,7 +295,7 @@ describe('任务管理真实HTTP契约', () => {
     expect(writerQueue.items).toEqual(expect.arrayContaining([expect.objectContaining({ actionLabel: '进入编写', state: 'risk' })]));
     expect(writerQueue.following.some(item => item.lineage?.documentId === 'd1')).toBe(false);
     expect((await get('P-1')).data.nextAction).toMatchObject({ label: '进入编写' });
-    reviewState.state = 'rejected'; reviewState.deliveryObservation = { state: 'opened' }; expect((await get('P-1')).data.status).toBe('in_progress'); expect((await get('P-1')).data.decomposition.handbooks[0].documents[0].completion.label).toContain('审核退回'); reviewState.state = 'mr_submitted';
+    reviewState.state = 'rejected'; reviewState.deliveryObservation = { state: 'opened' }; expect((await get('P-1')).data.status).toBe('in_progress'); expect((await get('P-1')).data.decomposition.handbooks[0].documents[0].completion.label).toContain('审核已退回'); reviewState.state = 'mr_submitted';
     reviewState.deliveryObservation = { state: 'merged', observedAt: new Date().toISOString(), readback: { status: 'consistent', resources: 'repository_relative_images_verified' } }; expect((await get('P-1')).data.status).toBe('completed'); expect((await request('PATCH', '/P-1', { status: '已完成' })).status).toBe(422);
   });
   test('部分交付后更换目标分支，保留历史但不沿用旧审核完成证据', async () => {

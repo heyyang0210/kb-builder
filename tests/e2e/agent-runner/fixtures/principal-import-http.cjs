@@ -108,7 +108,10 @@ async function exercisePrincipalImportHttp(page) {
       assert.equal(request.body.includes(Buffer.from('name="file"')), true);
       assert.equal(request.body.includes(Buffer.from('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')), true);
     }
-    assert.deepEqual(requests.filter(request => request.method === 'GET').map(request => request.path).sort(), [
+    const reads = requests.filter(request => request.method === 'GET').map(request => request.path).sort();
+    const optionalTemplateRead = '/knowledge-center/api/templates/mappings';
+    assert.ok(reads.filter(path => path === optionalTemplateRead).length <= 1);
+    assert.deepEqual(reads.filter(path => path !== optionalTemplateRead), [
       '/knowledge-center/api/auth/users', '/knowledge-center/api/gitlab/connections',
       '/knowledge-center/api/gitlab/oauth/config', '/knowledge-center/api/gitlab/oauth/status',
       '/knowledge-center/api/gitlab/version-mappings', '/knowledge-center/api/platform/principals',

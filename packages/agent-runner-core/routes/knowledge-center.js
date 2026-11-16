@@ -28,6 +28,7 @@ const handbookValidation = require('../../../config/knowledge-center/content-rul
 const { readTechDomainConfig } = require('./outline-management');
 const { rules: outlineTemplateRules } = require('../lib/outline-path-template');
 const { createDatabaseConnectionGovernance } = require('../lib/platform-management/database-connection-governance');
+const { readWorkCalendar } = require('../lib/work-calendar');
 const { createHandbookProductionService } = require('../lib/handbook-production-service');
 const { createPingcodeTaskSyncService } = require('../lib/pingcode-task-sync-service');
 let logger;
@@ -307,8 +308,19 @@ function createKnowledgeCenterHandler(options) {
 
   async function requireSession(req, res, action) {
     let session;
+    const pingcodeRequest = String(req.url || '').startsWith('/knowledge-center/api/platform/plugins/pingcode');
+    const pingcodeStartedAt = pingcodeRequest ? Date.now() : 0;
     try { session = await authorizeRequest(req); }
-    catch (error) { sendRequestError(res, error, 'AUTH_SERVICE_UNAVAILABLE'); return; }
+    catch (error) {
+      if (pingcodeRequest) {
+        const { requestId, correlationId } = requestContext(req);
+        res.setHeader('x-request-id', requestId); res.setHeader('x-correlation-id', correlationId);
+        logger.info('pingcode.source.request.failed', { requestId, correlationId, stage: 'authorization',
+          status: error.status || 503, errorCode: error.code || 'AUTH_SERVICE_UNAVAILABLE',
+          durationMs: Date.now() - pingcodeStartedAt });
+      }
+      sendRequestError(res, error, 'AUTH_SERVICE_UNAVAILABLE'); return;
+    }
     if (session) {
       try { await action(session); } catch (error) { sendRequestError(res, error); }
       return;
@@ -316,6 +328,8 @@ function createKnowledgeCenterHandler(options) {
     const { requestId, correlationId } = requestContext(req);
     res.setHeader('x-request-id', requestId);
     res.setHeader('x-correlation-id', correlationId);
+    if (pingcodeRequest) logger.info('pingcode.source.request.failed', { requestId, correlationId,
+      stage: 'authorization', status: 401, errorCode: 'AUTH_REQUIRED', durationMs: Date.now() - pingcodeStartedAt });
     res.writeHead(401, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
     res.end(JSON.stringify({ success: false, error: { code: 'AUTH_REQUIRED', message: '请登录后继续', retryable: false, requestId, correlationId } }));
   }
@@ -834,6 +848,19 @@ function createKnowledgeCenterHandler(options) {
     }
     if (snapshot.handbookId && String(snapshot.handbookId) !== String(input.handbookId)) reject('AI_ORIGIN_SNAPSHOT_INVALID', '原文快照与当前手册不匹配');
     if (snapshot.documentId && String(snapshot.documentId) !== String(input.documentId)) reject('AI_ORIGIN_SNAPSHOT_INVALID', '原文快照与当前文档不匹配');
+    if (snapshot.originType === 'platform') {
+      if (typeof input.markdown !== 'string' || !/^[a-f0-9]{64}$/i.test(String(snapshot.contentDigest || ''))) {
+        reject('AI_ORIGIN_SNAPSHOT_INVALID', '平台正文快照缺少有效的内容摘要');
+      }
+      const contentDigest = crypto.createHash('sha256').update(input.markdown).digest('hex');
+      if (contentDigest !== String(snapshot.contentDigest).toLowerCase()) reject('AI_ORIGIN_SNAPSHOT_INVALID', '平台正文已变化，请重新检查来源');
+      if (snapshot.branch && input.branch && String(snapshot.branch) !== String(input.branch)) reject('AI_ORIGIN_SNAPSHOT_INVALID', '平台正文快照与当前分支不匹配');
+      return {
+        originType: 'platform', snapshotId: null, contentDigest, handbookId: input.handbookId,
+        documentId: input.documentId, outlineVersionId: input.outlineVersionId || snapshot.outlineVersionId || null,
+        branch: input.branch || snapshot.branch || null, fetchedAt: new Date().toISOString(),
+      };
+    }
     if (snapshot.originType === 'blank') {
       let mapped = true;
       try { findMapping(input.handbookId, GITLAB_CONFIG_PATH); }
@@ -2086,24 +2113,63 @@ function createKnowledgeCenterHandler(options) {
     if (pathname === '/knowledge-center/api/platform/plugins/pingcode/sources'
       || pathname.startsWith('/knowledge-center/api/platform/plugins/pingcode/sources/')
       || pathname.startsWith('/knowledge-center/api/platform/plugins/pingcode/runs/')) {
+      const startedAt = Date.now();
+      const { requestId, correlationId } = requestContext(req);
+      res.setHeader('x-request-id', requestId); res.setHeader('x-correlation-id', correlationId);
+      const routeSuffix = pathname.slice('/knowledge-center/api/platform/plugins/pingcode'.length);
+      const sourceId = routeSuffix.match(/^\/sources\/([^/]+)/)?.[1] || null;
+      const runId = routeSuffix.match(/^\/runs\/([^/]+)/)?.[1] || null;
+      const operation = `${req.method} ${routeSuffix.split('/').filter(Boolean).filter(part => part !== sourceId && part !== runId).join('/') || 'sources'}`;
+      const meta = { requestId, correlationId, operation, sourceId, runId };
+      logger.info('pingcode.source.request.started', meta);
       requireSession(req, res, async session => {
-        if (forbidUnlessPlatformAdmin(res, session)) return;
+        if (forbidUnlessPlatformAdmin(res, session)) {
+          logger.info('pingcode.source.request.failed', { ...meta, stage: 'authorization', status: 403,
+            errorCode: 'PLATFORM_ADMIN_REQUIRED', durationMs: Date.now() - startedAt });
+          return;
+        }
         try {
           const suffix = pathname.slice('/knowledge-center/api/platform/plugins/pingcode'.length);
-          const sourceMatch = /^\/sources\/([^/]+)(?:\/(test|runs))?$/.exec(suffix);
-          const runMatch = /^\/runs\/([^/]+)(?:\/(preview|confirm|cancel|resources)(?:\/(retry))?)?$/.exec(suffix);
+          const sourceItemsMatch = /^\/sources\/([^/]+)\/items(?:\/([^/]+))?$/.exec(suffix);
+          const sourceMatch = /^\/sources\/([^/]+)(?:\/(test|runs|state))?$/.exec(suffix);
+          const runMatch = /^\/runs\/([^/]+)(?:\/(preview|confirm|cancel|resources|items|unlinked-irs)(?:\/(retry|[^/]+))?)?$/.exec(suffix);
           let data;
           if (req.method === 'GET' && suffix === '/sources') data = await pingcodeTaskSync.listSources();
+          else if (req.method === 'GET' && sourceItemsMatch && !sourceItemsMatch[2]) {
+            const query = new URL(req.url, 'http://localhost').searchParams;
+            data = await pingcodeTaskSync.sourceItems(decodeURIComponent(sourceItemsMatch[1]),
+              Number(query.get('page') || 1), Number(query.get('pageSize') || 50));
+          } else if (req.method === 'GET' && sourceItemsMatch?.[2])
+            data = await pingcodeTaskSync.sourceItem(decodeURIComponent(sourceItemsMatch[1]), decodeURIComponent(sourceItemsMatch[2]));
+          else if (req.method === 'GET' && runMatch?.[2] === 'items' && !runMatch[3]) {
+            const query = new URL(req.url, 'http://localhost').searchParams;
+            data = await pingcodeTaskSync.runItems(decodeURIComponent(runMatch[1]),
+              Number(query.get('page') || 1), Number(query.get('pageSize') || 50));
+          } else if (req.method === 'GET' && runMatch?.[2] === 'items' && runMatch[3])
+            data = await pingcodeTaskSync.runItem(decodeURIComponent(runMatch[1]), decodeURIComponent(runMatch[3]));
+          else if (req.method === 'GET' && runMatch?.[2] === 'unlinked-irs') {
+            const query = new URL(req.url, 'http://localhost').searchParams;
+            data = await pingcodeTaskSync.unlinkedIrs(decodeURIComponent(runMatch[1]),
+              Number(query.get('page') || 1), Number(query.get('pageSize') || 100));
+          }
           else if (req.method === 'POST' && suffix === '/sources')
             data = await pingcodeTaskSync.createSource(await readJsonBody(req), session.user?.id);
+          else if (req.method === 'PATCH' && sourceMatch && !sourceMatch[2])
+            data = await pingcodeTaskSync.updateSource(decodeURIComponent(sourceMatch[1]), await readJsonBody(req));
+          else if (req.method === 'PATCH' && sourceMatch?.[2] === 'state')
+            data = await pingcodeTaskSync.setSourceState(decodeURIComponent(sourceMatch[1]), await readJsonBody(req));
+          else if (req.method === 'DELETE' && sourceMatch && !sourceMatch[2])
+            data = await pingcodeTaskSync.deleteSource(decodeURIComponent(sourceMatch[1]), Number(req.headers['if-match']));
           else if (req.method === 'GET' && sourceMatch && !sourceMatch[2])
             data = await pingcodeTaskSync.source(decodeURIComponent(sourceMatch[1]));
           else if (req.method === 'POST' && sourceMatch?.[2] === 'test')
             data = await pingcodeTaskSync.testSource(decodeURIComponent(sourceMatch[1]));
           else if (req.method === 'GET' && sourceMatch?.[2] === 'runs')
             data = await pingcodeTaskSync.listRuns(decodeURIComponent(sourceMatch[1]));
-          else if (req.method === 'POST' && sourceMatch?.[2] === 'runs')
-            data = await pingcodeTaskSync.startRun(decodeURIComponent(sourceMatch[1]), session.user?.id);
+          else if (req.method === 'POST' && sourceMatch?.[2] === 'runs') {
+            const input = await readJsonBody(req);
+            data = await pingcodeTaskSync.startRun(decodeURIComponent(sourceMatch[1]), session.user?.id, input.revision);
+          }
           else if (req.method === 'GET' && runMatch && !runMatch[2])
             data = await pingcodeTaskSync.getRun(decodeURIComponent(runMatch[1]));
           else if (req.method === 'GET' && runMatch?.[2] === 'preview') {
@@ -2129,8 +2195,12 @@ function createKnowledgeCenterHandler(options) {
           }
           res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
           res.end(JSON.stringify({ success: true, data }));
+          logger.info('pingcode.source.request.completed', { ...meta, stage: 'storage', status: res.statusCode,
+            durationMs: Date.now() - startedAt });
         } catch (error) {
           const status = [400, 403, 404, 409, 422, 503].includes(error.status) ? error.status : 503;
+          logger.info('pingcode.source.request.failed', { ...meta, stage: 'storage', status,
+            errorCode: error.code || 'PINGCODE_SYNC_UNAVAILABLE', durationMs: Date.now() - startedAt });
           res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
           res.end(JSON.stringify({ success: false, error: {
             code: error.code || 'PINGCODE_SYNC_UNAVAILABLE',
@@ -2523,7 +2593,7 @@ function createKnowledgeCenterHandler(options) {
             const visibleIds = new Set(reviewAssets.handbooks.filter(item => !Array.isArray(visible) || visible.map(String).includes(String(item.handbookId))).map(item => String(item.handbookId)));
             for (const item of review.documents.filter(item => item.assignedToMe && visibleIds.has(String(item.handbookId)))) {
               const url = `/knowledge-center/review?taskId=${encodeURIComponent(item.taskId)}&documentId=${encodeURIComponent(item.documentId || '')}`;
-              items.push({ id: `review:${item.taskId}:${item.reviewId}:${item.documentId || 'handbook'}`, kind: 'review', taskType: '文档审核', ...numberForReview(taskState, snapshot, item.taskId, item.documentId, visibleIds), title: `审核 ${item.title || item.documentId || '手册文档'}`, context: `${item.handbookId || '手册'} · ${item.documentId || '整本手册'} · ${item.taskId}`, lineage: { handbookId: item.handbookId, documentId: item.documentId, documentName: item.title }, status: '待审核', state: 'pending', version: item.businessVersion || '', source: '审核与发布', updatedAt: item.updatedAt || item.submittedAt, url, primaryAction: { code: 'review_document', label: '查看审核', url } });
+              items.push({ id: `review:${item.taskId}:${item.reviewId}:${item.documentId || 'handbook'}`, kind: 'review', taskType: '文档审核', ...numberForReview(taskState, snapshot, item.taskId, item.documentId, visibleIds), title: `审核 ${item.title || item.documentId || '手册文档'}`, context: `${item.handbookId || '手册'} · ${item.documentId || '整本手册'} · ${item.taskId}`, lineage: { handbookId: item.handbookId, documentId: item.documentId, documentName: item.title, documentPath: item.path || null }, status: '待审核', state: 'pending', version: item.businessVersion || '', source: '审核与发布', updatedAt: item.updatedAt || item.submittedAt, url, primaryAction: { code: 'review_document', label: '查看审核', url } });
             }
             for (const task of snapshot.tasks || []) {
               if (!visibleIds.has(String(task.handbookId))) continue;
@@ -2539,7 +2609,7 @@ function createKnowledgeCenterHandler(options) {
                   if (documents.length !== 1) numbering.subtaskNumber = null;
                   const url = `/knowledge-center/review?taskId=${encodeURIComponent(task.id)}${first ? `&documentId=${encodeURIComponent(first.documentId)}` : ''}`;
                   const subject = task.name || (documents.length === 1 ? first.title || first.filePath : `${documents.length} 篇文档`) || '文档';
-                  items.push({ id: `delivery:${task.id}`, kind: action === 'revise_document' ? 'document' : 'merge', taskType: action === 'revise_document' ? '文档生产' : '文档发布', ...numbering, title: `${action === 'create_mr' ? '交付' : action === 'revise_document' ? '修订' : '同步交付'} ${subject}`, context: `${task.handbookId} · ${task.id}`, lineage: { handbookId: task.handbookId, documentId: documents.length === 1 ? first.documentId : null, documentName: documents.length === 1 ? first.title || first.filePath : null }, status: projection.completion.label, state: task.deliveryObservation?.state === 'closed' ? 'risk' : 'pending', version: task.businessVersion || '', source: '审核与发布', updatedAt: task.updatedAt || task.createdAt, url, delivery: { mergeState: projection.completion.facts.mergeState, markdownReadback: projection.completion.facts.markdownReadback, resourceReadback: projection.completion.facts.resourceReadback }, primaryAction: { code: action, label: action === 'create_mr' ? '创建 MR' : action === 'revise_document' ? '查看审核' : '状态刷新', url, enabled: action === 'revise_document' ? hasAction(session, 'knowledge:write') : hasAction(session, 'publish:manage'), ...(action === 'sync_delivery' ? { taskId: task.id, candidateDigest: task.candidate?.digest || '' } : {}) } });
+                  items.push({ id: `delivery:${task.id}`, kind: action === 'revise_document' ? 'document' : 'merge', taskType: action === 'revise_document' ? '文档生产' : '文档发布', ...numbering, title: `${action === 'create_mr' ? '交付' : action === 'revise_document' ? '修订' : '同步交付'} ${subject}`, context: `${task.handbookId} · ${task.id}`, lineage: { handbookId: task.handbookId, documentId: documents.length === 1 ? first.documentId : null, documentName: documents.length === 1 ? first.title || first.filePath : null, documentPath: documents.length === 1 ? first.filePath || null : null }, status: projection.completion.label, state: task.deliveryObservation?.state === 'closed' ? 'risk' : 'pending', version: task.businessVersion || '', source: '审核与发布', updatedAt: task.updatedAt || task.createdAt, url, delivery: { mergeState: projection.completion.facts.mergeState, markdownReadback: projection.completion.facts.markdownReadback, resourceReadback: projection.completion.facts.resourceReadback }, primaryAction: { code: action, label: action === 'create_mr' ? '创建 MR' : action === 'revise_document' ? '查看审核' : '状态刷新', url, enabled: action === 'revise_document' ? hasAction(session, 'knowledge:write') : hasAction(session, 'publish:manage'), ...(action === 'sync_delivery' ? { taskId: task.id, candidateDigest: task.candidate?.digest || '' } : {}) } });
                 }
               }
               if (task.state !== 'mr_submitted' || !task.mergeRequest || !task.handbookSource) continue;
@@ -2552,7 +2622,7 @@ function createKnowledgeCenterHandler(options) {
                 const first = documents[0];
                 const numbering = numberForReview(taskState, snapshot, task.id, first?.documentId, visibleIds);
                 if (documents.length !== 1) numbering.subtaskNumber = null;
-                items.push({ id: `merge:${task.id}:${task.mergeRequest.iid}`, kind: 'merge', taskType: '文档发布', ...numbering, title: `合入 ${task.name || (documents.length === 1 ? first.title || first.filePath : `${documents.length} 篇文档`) || `GitLab MR !${task.mergeRequest.iid}`}`, context: `${task.handbookId} · MR !${task.mergeRequest.iid}`, lineage: { handbookId: task.handbookId, documentId: documents.length === 1 ? first.documentId : null, documentName: documents.length === 1 ? first.title || first.filePath : null }, status: '待合入', state: 'pending', version: task.businessVersion || '', source: 'GitLab 交付', updatedAt: task.updatedAt || task.createdAt, url: mrUrl.href, external: true, primaryAction: { code: 'merge_mr', label: 'MR链接', url: mrUrl.href, external: true, enabled: targetId === callerId } });
+                items.push({ id: `merge:${task.id}:${task.mergeRequest.iid}`, kind: 'merge', taskType: '文档发布', ...numbering, title: `合入 ${task.name || (documents.length === 1 ? first.title || first.filePath : `${documents.length} 篇文档`) || `GitLab MR !${task.mergeRequest.iid}`}`, context: `${task.handbookId} · MR !${task.mergeRequest.iid}`, lineage: { handbookId: task.handbookId, documentId: documents.length === 1 ? first.documentId : null, documentName: documents.length === 1 ? first.title || first.filePath : null, documentPath: documents.length === 1 ? first.filePath || null : null }, status: '待合入', state: 'pending', version: task.businessVersion || '', source: 'GitLab 交付', updatedAt: task.updatedAt || task.createdAt, url: mrUrl.href, external: true, primaryAction: { code: 'merge_mr', label: 'MR链接', url: mrUrl.href, external: true, enabled: targetId === callerId } });
               }
             }
           } catch (_) { unavailable.push('审核与发布'); }
@@ -2609,7 +2679,7 @@ function createKnowledgeCenterHandler(options) {
           if (process.env.KC_DOCUMENT_TASK_TIMING === '1') res.setHeader('Server-Timing', `session;dur=${(contextStarted - taskRequestStarted).toFixed(1)}, context;dur=${(contextDoneAt - contextStarted).toFixed(1)}, principals;dur=${(documentTaskContextTiming?.principals || 0).toFixed(1)}, assets;dur=${(documentTaskContextTiming?.assets || 0).toFixed(1)}${detailRead ? `, task-preload;dur=${(taskReadDoneAt - contextStarted).toFixed(1)}` : ''}`);
           const allowed = session.visibleHandbookIds || session.user?.visibleHandbookIds;
           const people = (directory.items || []).filter(p => String(p.state || 'active').toLowerCase() === 'active' && p.enabled !== false).map(p => ({ id: String(p.id || p.principalId), displayName: p.displayName || p.name || p.loginName || p.id, state: p.state || 'active', enabled: p.enabled !== false }));
-          const handbooks = (assets.handbooks || []).filter(b => !b.archivedAt && (!Array.isArray(allowed) || allowed.includes(b.handbookId))).map(b => ({ id: b.handbookId, name: b.name, ownerId: b.ownerA?.principalId == null ? null : String(b.ownerA.principalId) }));
+          const handbooks = (assets.handbooks || []).filter(b => !b.archivedAt && (!Array.isArray(allowed) || allowed.includes(b.handbookId))).map(b => ({ id: b.handbookId, name: b.name, productType: b.productName || b.productType || null, ownerId: b.ownerA?.principalId == null ? null : String(b.ownerA.principalId) }));
           handleDocumentTasks(req, res, { session, people, handbooks, preloadedTaskState, reviewService: handleIncrementalBuild?.service,
             readScopeMergeRequest: async review => {
               if (!review.mergeRequest?.iid || !review.handbookSource?.documents?.length) throw new GitLabConnectorError('GITLAB_DELIVERY_CONTEXT_INVALID', '关联审核缺少 MR 或候选文档', 409);
@@ -2724,6 +2794,14 @@ function createKnowledgeCenterHandler(options) {
     if (req.method === 'GET' && pathname === '/knowledge-center/api/production/generations') {
       requireSession(req, res, session => serveMyGenerations(req, res, session)); return;
     }
+    if (req.method === 'GET' && pathname === '/knowledge-center/api/production/work-calendar') {
+      requireSession(req, res, () => {
+        const year = new URL(req.url, 'http://localhost').searchParams.get('year');
+        const data = readWorkCalendar(year, path.join(REPOSITORY_ROOT, 'config/knowledge-center/work-calendar'));
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'private, max-age=3600' });
+        res.end(JSON.stringify({ success: true, data }));
+      }); return;
+    }
     if (pathname.startsWith('/knowledge-center/api/production/handbooks/') || pathname.startsWith('/knowledge-center/api/production/attachments/')) {
       requireSession(req, res, session => handleHandbookProduction(req, res, session, pathname)); return;
     }
@@ -2791,7 +2869,7 @@ function createKnowledgeCenterHandler(options) {
         if (!key) throw Object.assign(new Error('发布需要幂等键'), { status: 400 });
         if (body.expectedCandidateDigest !== task.candidate?.digest) throw Object.assign(new Error('候选版本已变化'), { status: 409 });
         if (task.state === 'mr_submitted') {
-          if (task.deliveryObservation?.state === 'closed') throw Object.assign(new Error('已关闭的 MR 不能继续交付，请修订并重新送审'), { status: 409, code: 'MR_CLOSED_RECOVERY_REQUIRED' });
+          if (task.deliveryObservation?.state === 'closed') throw Object.assign(new Error('已关闭的 MR 不能继续交付，请重新编写并提交审核'), { status: 409, code: 'MR_CLOSED_RECOVERY_REQUIRED' });
           try {
             const { mapping, connection } = findMapping(task.handbookId, GITLAB_CONFIG_PATH);
             const identity = { connectionId: connection.id, host: connection.host, project: connection.projectPath || connection.project };

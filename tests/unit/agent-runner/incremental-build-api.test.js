@@ -22,6 +22,7 @@ const otherEditor = {
   user: { id: 'editor-2', displayName: '其他作者' },
   allowedActions: ['knowledge:read', 'knowledge:write'],
 };
+const testApis = new Map();
 const initialState = () => ({
   schemaVersion: 1,
   tasks: [],
@@ -40,7 +41,17 @@ function startApi() {
     const session = req.headers['x-test-actor'] === 'reviewer' ? reviewer : req.headers['x-test-actor'] === 'other' ? otherEditor : editor;
     handler(req, res, session);
   });
-  return new Promise(resolve => server.listen(0, '127.0.0.1', () => resolve({ server, repository, service, baseUrl: `http://127.0.0.1:${server.address().port}` })));
+  return new Promise(resolve => server.listen(0, '127.0.0.1', () => {
+    const baseUrl = `http://127.0.0.1:${server.address().port}`;
+    testApis.set(baseUrl, { service, repository });
+    resolve({ server, repository, service, baseUrl });
+  }));
+}
+
+function seedTask(baseUrl, body, key = 'seed-task', who = 'editor') {
+  const api = testApis.get(baseUrl);
+  const session = who === 'reviewer' ? reviewer : who === 'other' ? otherEditor : editor;
+  return { status: 200, body: { data: api.service.create(session, key, body) } };
 }
 
 async function request(baseUrl, method, pathname, body, key, who = 'editor') {
@@ -61,7 +72,7 @@ function updateOperation(documentId = 'doc-install', nodeId = 'section-1') {
 }
 
 async function buildApprovedCandidate(baseUrl, suffix = 'a', baselineVersionId = 'baseline-v1') {
-  const created = await request(baseUrl, 'POST', '/knowledge-center/api/incremental-tasks', {
+  const created = seedTask(baseUrl, {
     name: `安装手册增量 ${suffix}`, handbookId: 'DB-001', businessVersion: '23.4.5.100', baselineVersionId,
   }, `create-${suffix}`);
   const taskId = created.body.data.id;
@@ -78,10 +89,26 @@ async function buildApprovedCandidate(baseUrl, suffix = 'a', baselineVersionId =
 describe('P0 平台内增量构建 API', () => {
   let api;
   beforeEach(async () => { api = await startApi(); });
-  afterEach(() => new Promise(resolve => api.server.close(resolve)));
+  afterEach(() => new Promise(resolve => api.server.close(() => { testApis.delete(api.baseUrl); resolve(); })));
+
+  test('任务列表摘要保留日历所需的历史活动日期和计划日期', async () => {
+    api.repository.transaction(state => state.tasks.push({
+      id: 'calendar-legacy-task', name: '旧字段任务', handbookId: 'DB-001', state: 'editing',
+      created_at: '2026-02-10T08:00:00Z', updated_at: '2026-02-12T10:00:00Z', started_at: '2026-02-11T09:00:00Z',
+      plannedStartTime: '2026-02-14T09:00:00Z', plannedEndTime: '2026-02-15T17:00:00Z',
+      createdBy: editor.user, reviews: [],
+    }));
+
+    const response = await request(api.baseUrl, 'GET', '/knowledge-center/api/incremental-tasks');
+    expect(response.status).toBe(200);
+    expect(response.body.data).toEqual(expect.arrayContaining([expect.objectContaining({
+      id: 'calendar-legacy-task', created_at: '2026-02-10T08:00:00Z', updated_at: '2026-02-12T10:00:00Z',
+      started_at: '2026-02-11T09:00:00Z', plannedStartTime: '2026-02-14T09:00:00Z', plannedEndTime: '2026-02-15T17:00:00Z',
+    })]));
+  });
 
   test('候选审核按钮能力仅对任务负责人开放，送审后关闭', async () => {
-    const created = await request(api.baseUrl, 'POST', '/knowledge-center/api/incremental-tasks', {
+    const created = seedTask(api.baseUrl, {
       name: '能力校验', handbookId: 'DB-001', businessVersion: '23.4.5.100', baselineVersionId: 'baseline-v1',
     }, 'capability-create');
     const taskId = created.body.data.id;
@@ -114,7 +141,7 @@ describe('P0 平台内增量构建 API', () => {
   });
 
   test('逐篇审核：一篇通过时任务仍审核中，范围内全部通过后才可发布', async () => {
-    const created = await request(api.baseUrl, 'POST', '/knowledge-center/api/incremental-tasks', {
+    const created = seedTask(api.baseUrl, {
       name: '双文档逐篇审核', handbookId: 'DB-001', businessVersion: '23.4.5.100', baselineVersionId: 'baseline-v1',
     }, 'per-doc-create');
     const taskId = created.body.data.id;
@@ -169,8 +196,8 @@ describe('P0 平台内增量构建 API', () => {
   test('基线必须来自已发布事实，并提供只读查询', async () => {
     const baselines = await request(api.baseUrl, 'GET', '/knowledge-center/api/incremental-tasks/baselines?handbookId=DB-001&businessVersion=23.4');
     expect(baselines.body.data).toEqual([{ id: 'v1', handbookId: 'DB-001', businessVersion: '23.4', current: true, contentDigest: 'digest-v1', publishedAt: null }]);
-    const missing = await request(api.baseUrl, 'POST', '/knowledge-center/api/incremental-tasks', { name: '无基线', handbookId: 'DB-001', businessVersion: '23.4', baselineVersionId: 'typed-by-user' }, 'missing-baseline');
-    expect(missing).toMatchObject({ status: 422, body: { error: { code: 'BASELINE_NOT_FOUND' } } });
+    const removedCreate = await request(api.baseUrl, 'POST', '/knowledge-center/api/incremental-tasks', { name: '无基线', handbookId: 'DB-001', businessVersion: '23.4', baselineVersionId: 'typed-by-user' }, 'removed-create');
+    expect(removedCreate.status).toBe(404);
   });
 
   test('我的生成只投影当前用户发起或实际参与的持久化运行', () => {
@@ -205,7 +232,7 @@ describe('P0 平台内增量构建 API', () => {
   });
 
   test('知识编辑者可对非自有待审核任务提意见，但不能读取或修改任务', async () => {
-    const created = await request(api.baseUrl, 'POST', '/knowledge-center/api/incremental-tasks', { name: '归属验证', handbookId: 'DB-001', businessVersion: '23.4', baselineVersionId: 'v1' }, 'owner-create');
+    const created = seedTask(api.baseUrl, { name: '归属验证', handbookId: 'DB-001', businessVersion: '23.4', baselineVersionId: 'v1' }, 'owner-create');
     const id = created.body.data.id;
     expect((await request(api.baseUrl, 'GET', '/knowledge-center/api/incremental-tasks', undefined, undefined, 'other')).body.data).toEqual([]);
     expect(await request(api.baseUrl, 'GET', `/knowledge-center/api/incremental-tasks/${id}`, undefined, undefined, 'other')).toMatchObject({ status: 404, body: { error: { code: 'INCREMENTAL_TASK_NOT_FOUND' } } });
@@ -236,18 +263,16 @@ describe('P0 平台内增量构建 API', () => {
     expect(reviewerEdit.status).toBe(404);
   });
 
-  test('所有写操作必须使用幂等键，重放返回同一任务，异请求复用键被阻断', async () => {
-    const body = { name: '增量任务', handbookId: 'DB-001', businessVersion: '23.4', baselineVersionId: 'v1' };
-    expect((await request(api.baseUrl, 'POST', '/knowledge-center/api/incremental-tasks', body)).body.error.code).toBe('IDEMPOTENCY_KEY_REQUIRED');
-    const first = await request(api.baseUrl, 'POST', '/knowledge-center/api/incremental-tasks', body, 'same-key');
-    const replay = await request(api.baseUrl, 'POST', '/knowledge-center/api/incremental-tasks', body, 'same-key');
-    expect(replay.body.data.id).toBe(first.body.data.id);
-    const conflict = await request(api.baseUrl, 'POST', '/knowledge-center/api/incremental-tasks', { ...body, name: '另一任务' }, 'same-key');
-    expect(conflict).toMatchObject({ status: 409, body: { error: { code: 'IDEMPOTENCY_KEY_REUSED' } } });
+  test('不再通过通用任务列表接口创建任务', async () => {
+    const response = await request(api.baseUrl, 'POST', '/knowledge-center/api/incremental-tasks', {
+      name: '独立增量任务', handbookId: 'DB-001', businessVersion: '23.4', baselineVersionId: 'v1',
+    }, 'removed-create');
+    expect(response.status).toBe(404);
+    expect(api.repository.read().tasks).toHaveLength(0);
   });
 
   test('完整性检查只声明真正执行的项目', async () => {
-    const created = await request(api.baseUrl, 'POST', '/knowledge-center/api/incremental-tasks', { name: '检查范围', handbookId: 'DB-001', businessVersion: '23.4', baselineVersionId: 'v1' }, 'check-scope-create');
+    const created = seedTask(api.baseUrl, { name: '检查范围', handbookId: 'DB-001', businessVersion: '23.4', baselineVersionId: 'v1' }, 'check-scope-create');
     const checks = await request(api.baseUrl, 'POST', `/knowledge-center/api/incremental-tasks/${created.body.data.id}/checks`, {}, 'check-scope-run');
     expect(checks.body.data.scope).toBe('incremental_completeness');
     expect(checks.body.data.checks.map(item => item.code)).toEqual(['SOURCE_SNAPSHOT_PRESENT', 'TARGET_DOCUMENT_PRESENT', 'DRAFT_CONTENT_PRESENT', 'CHANGESET_OPERATION_VALID', 'CHANGESET_TARGET_DOCUMENTS_MATCH', 'CHANGESET_TARGET_SECTIONS_MATCH']);
@@ -255,7 +280,7 @@ describe('P0 平台内增量构建 API', () => {
   });
 
   test('变更集必须可重放，并且只能修改已确认目标', async () => {
-    const created = await request(api.baseUrl, 'POST', '/knowledge-center/api/incremental-tasks', { name: '变更集契约', handbookId: 'DB-001', businessVersion: '23.4', baselineVersionId: 'v1' }, 'operation-create');
+    const created = seedTask(api.baseUrl, { name: '变更集契约', handbookId: 'DB-001', businessVersion: '23.4', baselineVersionId: 'v1' }, 'operation-create');
     const id = created.body.data.id;
     await request(api.baseUrl, 'POST', `/knowledge-center/api/incremental-tasks/${id}/sources`, { sourceType: 'manual', label: '来源', content: 'x' }, 'operation-source');
     await request(api.baseUrl, 'PATCH', `/knowledge-center/api/incremental-tasks/${id}/target`, { documentIds: ['doc-1'], sectionIds: ['node-1'] }, 'operation-target');
@@ -269,7 +294,7 @@ describe('P0 平台内增量构建 API', () => {
   });
 
   test('未具备审核权限的候选作者不能作出审核决定，退回后可创建修订', async () => {
-    const created = await request(api.baseUrl, 'POST', '/knowledge-center/api/incremental-tasks', { name: '退回样例', handbookId: 'DB-001', businessVersion: '23.4', baselineVersionId: 'v1' }, 'reject-create');
+    const created = seedTask(api.baseUrl, { name: '退回样例', handbookId: 'DB-001', businessVersion: '23.4', baselineVersionId: 'v1' }, 'reject-create');
     const taskId = created.body.data.id;
     await request(api.baseUrl, 'POST', `/knowledge-center/api/incremental-tasks/${taskId}/sources`, { sourceType: 'local', label: '本地文件', content: '# a' }, 'reject-source');
     await request(api.baseUrl, 'PATCH', `/knowledge-center/api/incremental-tasks/${taskId}/target`, { documentIds: ['doc-1'] }, 'reject-target');
@@ -286,7 +311,7 @@ describe('P0 平台内增量构建 API', () => {
   });
 
   test('行级评论绑定候选摘要和稳定锚点，旧请求保持全局评论兼容', async () => {
-    const created = await request(api.baseUrl, 'POST', '/knowledge-center/api/incremental-tasks', { name: '行级评论', handbookId: 'DB-001', businessVersion: '23.4', baselineVersionId: 'v1' }, 'anchor-create');
+    const created = seedTask(api.baseUrl, { name: '行级评论', handbookId: 'DB-001', businessVersion: '23.4', baselineVersionId: 'v1' }, 'anchor-create');
     const id = created.body.data.id;
     await request(api.baseUrl, 'POST', `/knowledge-center/api/incremental-tasks/${id}/sources`, { sourceType: 'manual', label: '来源', content: 'x' }, 'anchor-source');
     await request(api.baseUrl, 'PATCH', `/knowledge-center/api/incremental-tasks/${id}/target`, { documentIds: ['doc-1'], sectionIds: ['node-1'] }, 'anchor-target');
@@ -318,7 +343,7 @@ describe('P0 平台内增量构建 API', () => {
 
   test('阻断意见未解决时禁止审核通过，解决后允许通过', async () => {
     const { taskId, candidate } = await (async () => {
-      const created = await request(api.baseUrl, 'POST', '/knowledge-center/api/incremental-tasks', { name: '阻断意见', handbookId: 'DB-001', businessVersion: '23.4', baselineVersionId: 'v1' }, 'block-create');
+      const created = seedTask(api.baseUrl, { name: '阻断意见', handbookId: 'DB-001', businessVersion: '23.4', baselineVersionId: 'v1' }, 'block-create');
       const id = created.body.data.id;
       await request(api.baseUrl, 'POST', `/knowledge-center/api/incremental-tasks/${id}/sources`, { sourceType: 'manual', label: '来源', content: 'x' }, 'block-source');
       await request(api.baseUrl, 'PATCH', `/knowledge-center/api/incremental-tasks/${id}/target`, { documentIds: ['doc-1'] }, 'block-target');
@@ -340,7 +365,7 @@ describe('P0 平台内增量构建 API', () => {
 
   test('同时拥有编辑和审核权限的提交者可以审核通过自己的候选', async () => {
     const create = body => request(api.baseUrl, body.method, body.path, body.data, body.key, 'reviewer');
-    const task = await create({ method: 'POST', path: '/knowledge-center/api/incremental-tasks', data: { name: '管理员创建', handbookId: 'DB-001', businessVersion: '23.4', baselineVersionId: 'v1' }, key: 'admin-create' });
+    const task = seedTask(api.baseUrl, { name: '服务内部创建', handbookId: 'DB-001', businessVersion: '23.4', baselineVersionId: 'v1' }, 'admin-create', 'reviewer');
     const id = task.body.data.id;
     await create({ method: 'POST', path: `/knowledge-center/api/incremental-tasks/${id}/sources`, data: { sourceType: 'manual', label: '来源', content: '内容' }, key: 'admin-source' });
     await create({ method: 'PATCH', path: `/knowledge-center/api/incremental-tasks/${id}/target`, data: { documentIds: ['doc-1'] }, key: 'admin-target' });
@@ -411,7 +436,7 @@ describe('P0 平台内增量构建 API', () => {
   });
 
   test('按手册汇总审核事项，并提供真实的前后全文与变更统计', async () => {
-    const created = await request(api.baseUrl, 'POST', '/knowledge-center/api/incremental-tasks', { name: '审核汇总', handbookId: 'DB-001', businessVersion: '23.4', baselineVersionId: 'v1' }, 'summary-create');
+    const created = seedTask(api.baseUrl, { name: '审核汇总', handbookId: 'DB-001', businessVersion: '23.4', baselineVersionId: 'v1' }, 'summary-create');
     const id = created.body.data.id;
     await request(api.baseUrl, 'POST', `/knowledge-center/api/incremental-tasks/${id}/sources`, { sourceType: 'manual', label: '来源', content: '依据' }, 'summary-source');
     await request(api.baseUrl, 'PATCH', `/knowledge-center/api/incremental-tasks/${id}/target`, { documentIds: ['doc-1'] }, 'summary-target');

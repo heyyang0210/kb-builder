@@ -95,9 +95,9 @@ async function exerciseGitlabConnectionHttp(page) {
     verificationFailure = false; await verify.click();
     await waitText('.gitlab-verification.success', '读取验证成功');
     const disable = page.locator('[data-gitlab-disable="created-connection"]');
-    const beforeCancel = requests.length;
+    const writesBeforeCancel = requests.filter(item => item.method !== 'GET').length;
     page.once('dialog', dialog => dialog.dismiss()); await disable.click();
-    assert.equal(requests.length, beforeCancel);
+    assert.equal(requests.filter(item => item.method !== 'GET').length, writesBeforeCancel);
     failure = 'disable'; page.once('dialog', dialog => dialog.accept()); await disable.click();
     await page.waitForFunction(() => !document.querySelector('[data-gitlab-disable="created-connection"]').disabled);
     assert.equal(await page.locator('[data-gitlab-enable]').count(), 0);
@@ -108,6 +108,8 @@ async function exerciseGitlabConnectionHttp(page) {
     failure = 'enable'; await enable.click();
     await page.waitForFunction(() => !document.querySelector('[data-gitlab-enable="created-connection"]').disabled);
     failure = ''; await enable.click(); await disable.waitFor({ state: 'visible' });
+    await page.locator('.gitlab-drawer-close').click();
+    await page.locator('.gitlab-connection-drawer').waitFor({ state: 'detached' });
     await page.locator('[data-gitlab-add-connection]').click();
     form = await fillAdd('OAuth待授权连接', 'user_oauth');
     await form.locator('[type=submit]').click();

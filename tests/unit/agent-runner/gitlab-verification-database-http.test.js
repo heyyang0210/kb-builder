@@ -3,6 +3,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { createKnowledgeCenterHandler } = require('../../../packages/agent-runner-core/routes/knowledge-center');
+const { createGitLabVerificationStore } = require('../../../packages/agent-runner-core/lib/gitlab-verification-store');
 
 describe('数据库配置模式 GitLab 验证运行时事实 HTTP 回归', () => {
   let root, upstream, server, baseUrl, connection;
@@ -55,6 +56,25 @@ describe('数据库配置模式 GitLab 验证运行时事实 HTTP 回归', () =>
     expect(responseBody).toMatchObject({ data: { items: [{ status: 'verified', lastVerification: { status: 'verified', branchCount: 1 } }] } });
     expect(JSON.stringify(responseBody)).not.toContain('verify_test');
   });
+  test('原子替换失败时清理临时文件，保留旧结果并可重试', async () => {
+    const saved = fs.readFileSync(path.join(root, 'results.json'), 'utf8');
+    const rename = fs.renameSync;
+    const injected = jest.spyOn(fs, 'renameSync').mockImplementation((source, target) => {
+      if (target === path.join(root, 'results.json')) throw Object.assign(new Error('rename unavailable'), { code: 'EIO' });
+      return rename(source, target);
+    });
+    try {
+      const response = await fetch(`${baseUrl}/db-repo/verify`, { method: 'POST' });
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({ error: { code: 'GITLAB_VERIFICATION_STORE_UNAVAILABLE' } });
+      expect(fs.readFileSync(path.join(root, 'results.json'), 'utf8')).toBe(saved);
+      expect(fs.readdirSync(root).filter(name => name.endsWith('.tmp'))).toEqual([]);
+      expect(await (await fetch(baseUrl)).json()).toMatchObject({ data: { items: [{ lastVerification: { status: 'verified' } }] } });
+    } finally {
+      injected.mockRestore();
+    }
+    expect((await fetch(`${baseUrl}/db-repo/verify`, { method: 'POST' })).status).toBe(200);
+  });
   test('连接列表保留数据库的关联手册统计，不被空文件映射覆盖', async () => {
     connection.linkedHandbookCount = 3;
     const response = await fetch(baseUrl);
@@ -81,5 +101,29 @@ describe('数据库配置模式 GitLab 验证运行时事实 HTTP 回归', () =>
     const response = await fetch(`${baseUrl}/db-repo/verify`, { method: 'POST' });
     expect(response.status).toBe(503);
     expect(await response.json()).toMatchObject({ error: { code: 'GITLAB_VERIFICATION_STORE_UNAVAILABLE', details: { recovery: expect.stringContaining('runtime') } } });
+  });
+  test('旧连接字段参与指纹计算，默认路径缺文件时返回空验证结果', () => {
+    const store = createGitLabVerificationStore(path.join(root, 'legacy-verifications.json'));
+    const legacy = { id: 'legacy', baseUrl: 'https://gitlab.example.test', projectPath: 'group/legacy', authMode: 'service_account' };
+    store.record(legacy, { status: 'verified' });
+    expect(store.project(legacy).lastVerification).toEqual({ status: 'verified' });
+    expect(store.project({ ...legacy, projectPath: 'group/changed' }).lastVerification).toBeNull();
+
+    const currentEnv = process.env.KNOWLEDGE_CENTER_GITLAB_VERIFICATION_STORE;
+    delete process.env.KNOWLEDGE_CENTER_GITLAB_VERIFICATION_STORE;
+    const read = fs.readFileSync;
+    const intercepted = jest.spyOn(fs, 'readFileSync').mockImplementation((file, ...args) => {
+      if (String(file).endsWith('/runtime/knowledge-center/gitlab-verifications.json')) {
+        throw Object.assign(new Error('not found'), { code: 'ENOENT' });
+      }
+      return read(file, ...args);
+    });
+    try {
+      expect(createGitLabVerificationStore().project(legacy).lastVerification).toBeNull();
+      expect(intercepted).toHaveBeenCalledWith(expect.stringContaining('/runtime/knowledge-center/gitlab-verifications.json'), 'utf8');
+    } finally {
+      intercepted.mockRestore();
+      process.env.KNOWLEDGE_CENTER_GITLAB_VERIFICATION_STORE = currentEnv;
+    }
   });
 });

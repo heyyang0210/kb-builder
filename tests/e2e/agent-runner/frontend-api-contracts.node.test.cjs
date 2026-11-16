@@ -332,8 +332,6 @@ test('增量审核客户端读取：默认查询、编码与审核引导参数',
     ['loadIncrementalTasks', [], incrementalBase],
     ['loadIncrementalTasks', [{ status: '待审核 /', page: 2 }], `${incrementalBase}?${new URLSearchParams({ status: '待审核 /', page: 2 })}`],
     ['loadMyGenerations', [], '/knowledge-center/api/production/generations?scope=mine'],
-    ['loadIncrementalBaselines', ['H/1'], `${incrementalBase}/baselines?handbookId=H%2F1`],
-    ['loadIncrementalBaselines', ['H/1', 'release/1'], `${incrementalBase}/baselines?handbookId=H%2F1&businessVersion=release%2F1`],
     ['loadIncrementalTask', ['T/1'], `${incrementalBase}/T%2F1`],
     ['loadCandidateDiff', ['T/1'], `${incrementalBase}/T%2F1/diff`],
     ['loadHandbookReviewSummary', ['H/1'], `${incrementalBase}/handbooks/H%2F1/review-summary`],
@@ -358,9 +356,7 @@ test('增量审核客户端写入：全部命令端点与默认正文', async t 
   const api = await setup(t, 'incremental-api-write', incrementalModule);
   const body = { text: '审核意见', rowVersion: 3 };
   const cases = [
-    ['createIncrementalTask', [body], 'POST', incrementalBase, body],
     ['createOnlineReview', [body], 'POST', `${incrementalBase}/online-reviews`, body],
-    ['bootstrapBaseline', [body], 'POST', `${incrementalBase}/bootstrap-baseline`, body],
     ['addIncrementalSource', ['T/1', body], 'POST', `${incrementalBase}/T%2F1/sources`, body],
     ['updateIncrementalTarget', ['T/1', body], 'PATCH', `${incrementalBase}/T%2F1/target`, body],
     ['saveIncrementalDraft', ['T/1', body], 'PUT', `${incrementalBase}/T%2F1/draft`, body],

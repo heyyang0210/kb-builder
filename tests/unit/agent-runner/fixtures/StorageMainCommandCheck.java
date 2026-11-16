@@ -57,6 +57,13 @@ public final class StorageMainCommandCheck {
                 if (runtimeFailure) throw new IllegalStateException("fixture runtime failure");
                 if (queryFailure != null) throw queryFailure;
                 if (sql.contains("USER_TABLES")) return rows(new Object[]{migrationTable ? 1L : 0L});
+                if (sql.contains("USER_IND_COLUMNS")) {
+                    check("KC_EXAMPLE".equals(binds.get(1)), "equivalent index table binding");
+                    if (scenario.equals("migrate-index-conflict"))
+                        return rows(new Object[]{"KC_EXISTING_IDX", "COL_A"});
+                    return rows(new Object[]{"KC_EXISTING_IDX", "COL_A"},
+                        new Object[]{"KC_EXISTING_IDX", "COL_B"});
+                }
                 if (sql.contains("SELECT CHECKSUM")) {
                     String checksum = applied.get(binds.get(1));
                     return checksum == null ? rows() : rows(new Object[]{checksum});
@@ -84,8 +91,16 @@ public final class StorageMainCommandCheck {
     private static Statement statement() {
         return proxy(Statement.class, (self, method, args) -> {
             if (method.getName().equals("execute")) {
-                check(String.valueOf(args[0]).startsWith("CREATE TABLE KC_SCHEMA_MIGRATION"), "migration SQL");
-                migrationTable = true; migrationStatements++; return true;
+                String sql = String.valueOf(args[0]);
+                if (sql.startsWith("CREATE TABLE KC_SCHEMA_MIGRATION")) {
+                    migrationTable = true; migrationStatements++; return true;
+                }
+                if ((scenario.equals("migrate-index-equivalent") || scenario.equals("migrate-index-conflict"))
+                    && sql.equals("CREATE INDEX KC_NEW_IDX ON KC_EXAMPLE (COL_A,COL_B)")) {
+                    migrationStatements++;
+                    throw new SQLException("YAS-02043: equivalent index already exists");
+                }
+                throw new AssertionError("unexpected migration SQL: " + sql);
             }
             if (method.getName().equals("executeQuery")) return rows(new Object[]{1});
             return zero(method.getReturnType());
@@ -107,7 +122,9 @@ public final class StorageMainCommandCheck {
     private static void assertFinished(boolean failed) {
         check(closed > 0, "command must close physical JDBC resources");
         if (scenario.startsWith("migrate")) {
-            check(migrationStatements == 1 && applied.size() == 1, "migration must execute and record exactly once");
+            int expectedStatements = scenario.equals("migrate-index-equivalent") ? 2 : 1;
+            check(migrationStatements == expectedStatements && applied.size() == 1,
+                "migration must execute and record exactly once");
             check(commits == (failed ? 1 : 2), "migration/seed commit boundary: " + commits);
             int expected = scenario.equals("migrate-seed") ? 2 : 0;
             check(groups == expected && inserts == expected, "seed insert counts: " + groups + "/" + inserts);
@@ -119,7 +136,8 @@ public final class StorageMainCommandCheck {
         scenario = args[0];
         Path sqlDirectory = Path.of(System.getenv("YASDB_STORAGE_SQL_DIR"));
         Files.createDirectories(sqlDirectory);
-        Files.writeString(sqlDirectory.resolve("001_init.sql"), SQL);
+        Files.writeString(sqlDirectory.resolve("001_init.sql"), scenario.startsWith("migrate-index-")
+            ? SQL + "CREATE INDEX KC_NEW_IDX ON KC_EXAMPLE (COL_A,COL_B);" : SQL);
         Path seed = Path.of(System.getenv("YASDB_TECH_DOMAINS_SEED_FILE"));
         Files.deleteIfExists(seed);
         if (scenario.equals("migrate-seed")) {
@@ -143,6 +161,19 @@ public final class StorageMainCommandCheck {
             public boolean jdbcCompliant() { return false; }
             public Logger getParentLogger() { return Logger.getGlobal(); }
         });
+        if (scenario.equals("migrate-index-conflict")) {
+            try {
+                Main.main(new String[]{"migrate"});
+                throw new AssertionError("non-equivalent index was accepted");
+            } catch (SQLException error) {
+                check(error.getMessage().contains("YAS-02043") && error.getMessage().contains("执行数据库迁移失败"),
+                    "non-equivalent index error must retain the database reason");
+                check(migrationStatements == 2 && applied.isEmpty() && commits == 0 && closed > 0,
+                    "non-equivalent index changed migration state");
+                System.out.println("PASS: public startup command " + scenario);
+                return;
+            }
+        }
         boolean expectsFailure = scenario.contains("invalid") || scenario.equals("verify-pending");
         AtomicBoolean failureChecked = new AtomicBoolean(!expectsFailure);
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {

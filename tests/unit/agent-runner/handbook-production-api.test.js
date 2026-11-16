@@ -884,6 +884,45 @@ test('AI HTTP verifies GitLab origin against the authorized mapping and server f
   assert.equal(requestedRefs.at(-1), 'commit-1', '作者确认保留旧基线后应按不可变 commit 校验');
 });
 
+test('已映射手册中的未映射文档可基于平台正文生成，不强制匹配仓库文件', async t => {
+  const previousAllowedHosts = process.env.KNOWLEDGE_CENTER_GITLAB_ALLOWED_HOSTS;
+  process.env.KNOWLEDGE_CENTER_GITLAB_ALLOWED_HOSTS = '127.0.0.1';
+  t.after(() => {
+    if (previousAllowedHosts === undefined) delete process.env.KNOWLEDGE_CENTER_GITLAB_ALLOWED_HOSTS;
+    else process.env.KNOWLEDGE_CENTER_GITLAB_ALLOWED_HOSTS = previousAllowedHosts;
+  });
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'production-ai-platform-origin-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const gitlabConfigPath = path.join(root, 'gitlab.json');
+  const connector = require('../../../packages/agent-runner-core/lib/gitlab-connector');
+  const connection = connector.upsertConnection({
+    name: 'platform-origin-test', baseUrl: 'http://127.0.0.1:9', projectPath: 'fixture/project',
+    defaultBranch: 'main', mode: 'sandbox', authMode: 'service_account', credentialRef: 'PLATFORM_ORIGIN_TEST', purpose: 'read',
+  }, gitlabConfigPath);
+  connector.upsertMapping('HB-1', { connectionId: connection.id, defaultBranch: 'main', enabledBranches: ['main'], zhPaths: ['docs'], enPaths: [] }, gitlabConfigPath);
+  let generateCalls = 0;
+  const api = await setup(t, { gitlabConfigPath, ai: { generate: async () => { generateCalls++; return { content: '平台正文候选', model: 'fixture' }; } } });
+  const markdown = '# 平台新建文档\n\n正文来自知识中心草稿。';
+  const contentDigest = crypto.createHash('sha256').update(markdown).digest('hex');
+  const input = json({ outlineVersionId: 'outline-v1', branch: 'main', operation: 'polish', markdown,
+    editVersion: 0, range: { start: 0, end: markdown.length },
+    originSnapshot: { originType: 'platform', contentDigest, handbookId: 'HB-1', documentId: 'doc-1', branch: 'main' },
+  }, 'platform-origin-mapped-handbook');
+  const stale = json({ ...JSON.parse(input.body), originSnapshot: { ...JSON.parse(input.body).originSnapshot, contentDigest: '0'.repeat(64) } }, 'platform-origin-stale');
+  const rejected = await api.request('POST', '/handbooks/HB-1/documents/doc-1/ai-jobs', stale.body, stale.headers);
+  assert.equal(rejected.status, 409);
+  assert.equal(rejected.body.error.code, 'AI_ORIGIN_SNAPSHOT_INVALID');
+  assert.equal(generateCalls, 0);
+  const created = await api.request('POST', '/handbooks/HB-1/documents/doc-1/ai-jobs', input.body, input.headers);
+  assert.equal(created.status, 202, JSON.stringify(created.body));
+  const jobId = created.body.data.jobId;
+  const result = await api.request('GET', `/handbooks/HB-1/documents/doc-1/ai-jobs/${jobId}${query}`);
+  assert.equal(result.status, 200);
+  assert.equal(result.body.data.document.origin.originType, 'platform');
+  assert.equal(result.body.data.document.origin.contentDigest, contentDigest);
+  assert.equal(generateCalls, 1);
+});
+
 test('测试用例库引用经生成采用与质量 HTTP 关联到正文位置，人工修改后旧来源失效', async t => {
   const storageUrl = process.env.PRODUCTION_QUALITY_REAL_STORAGE_URL;
   const yashanDB = storageUrl
@@ -985,10 +1024,10 @@ test('AI browser dialog uses real HTTP, preserves editor until adoption and read
   // The current writing surface applies the selected polish range automatically.
   await page.locator('[data-ai-start]').click();
   await page.waitForFunction(() => document.querySelector('[data-ai-fragment]')?.value === '浏览器候选');
-  await page.locator('[data-ai-manual-edit]').click();
-  await page.locator('[data-ai-fragment]').waitFor({ state: 'visible' });
+  await page.getByRole('button', { name: '编辑第 1 处修改', exact: true }).click();
   assert.equal(await page.evaluate(() => window.editorMarkdown), '前文旧句后文');
-  await page.locator('[data-ai-fragment]').fill('人工核对后的候选');
+  await page.locator('[data-ai-inline-editor]').fill('人工核对后的候选');
+  await page.getByRole('button', { name: '保存修改', exact: true }).click();
   const evidenceDir = path.join(repositoryRoot, 'runtime/test-results/production-ai-browser');
   fs.mkdirSync(evidenceDir, { recursive: true });
   await page.screenshot({ path: path.join(evidenceDir, 'candidate-human-edit.png'), fullPage: true });
@@ -1450,9 +1489,9 @@ test('混合元信息经真实 HTTP 与浏览器预览、人工采用、再次�
   const evidenceDir = path.join(repositoryRoot, 'runtime/test-results/production-ai-provenance'); fs.mkdirSync(evidenceDir, { recursive: true });
   await page.locator('[data-ai-provenance]').scrollIntoViewIfNeeded();
   await page.screenshot({ path: path.join(evidenceDir, 'candidate-provenance.png'), fullPage: true });
-  await page.locator('[data-ai-manual-edit]').click();
-  await page.locator('[data-ai-fragment]').waitFor({ state: 'visible' });
-  await page.locator('[data-ai-fragment]').fill('引用原句。归纳参数。人工补充。');
+  await page.getByRole('button', { name: '编辑第 1 处修改', exact: true }).click();
+  await page.locator('[data-ai-inline-editor]').fill('引用原句。归纳参数。人工补充。');
+  await page.getByRole('button', { name: '保存修改', exact: true }).click();
   await page.locator('[data-ai-adopt]').click(); await page.waitForFunction(() => !!window.adoptedResult);
   const saved = await api.request('GET', `${draftPath()}${query}`);
   const revision = saved.body.data.draft.revision;

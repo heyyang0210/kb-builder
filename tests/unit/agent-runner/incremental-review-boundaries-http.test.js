@@ -74,7 +74,7 @@ describe('增量审核辅助接口真实HTTP边界', () => {
     });
     return { status: response.status, body: await response.json() };
   }
-  test('合成基线只替换相同手册版本的当前记录，幂等重试仅一次审计', async () => {
+  test('公开合成基线路由已关闭且不会修改基线或审计', async () => {
     repository.transaction(state => {
       state.publishedVersions = [
         { id: 'old-current', handbookId: 'manual', businessVersion: 'v1', current: true },
@@ -86,29 +86,17 @@ describe('增量审核辅助接口真实HTTP边界', () => {
     const existing = repository.read().publishedVersions;
     const body = { handbookId: 'manual', businessVersion: 'v1', content: '# 原始全文',
       commitSha: 'commit-1', filePath: 'docs/manual.md', branch: 'main' };
-    const created = await rootRequest('POST', 'bootstrap-baseline', body, 'baseline-create');
-    expect(created).toMatchObject({ status: 200, body: { data: {
-      handbookId: 'manual', businessVersion: 'v1', current: true, synthetic: true,
-      source: { type: 'gitlab_bootstrap', commitSha: 'commit-1', filePath: 'docs/manual.md', branch: 'main' }
-    } } });
-    const after = repository.read();
-    expect(after.publishedVersions.slice(0, 4)).toEqual(existing.map(item =>
-      item.id === 'old-current' ? { ...item, current: false } : item));
-    expect(after.publishedVersions[4]).toMatchObject({ id: created.body.data.id, content: body.content });
-    expect(after.audits.map(item => item.action)).toEqual(['SYNTHETIC_BASELINE_CREATED']);
-    expect(await rootRequest('POST', 'bootstrap-baseline', body, 'baseline-create')).toEqual(created);
-    expect(repository.read()).toEqual(after);
-    const listed = await rootRequest('GET', 'baselines?handbookId=manual&businessVersion=v1');
-    expect(listed.status).toBe(200);
-    expect(listed.body.data.find(item => item.id === created.body.data.id)).toMatchObject({ current: true });
-    expect(listed.body.data.every(item => !Object.hasOwn(item, 'content'))).toBe(true);
+    const response = await rootRequest('POST', 'bootstrap-baseline', body, 'baseline-create');
+    expect(response.status).toBe(404);
+    expect(repository.read().publishedVersions).toEqual(existing);
+    expect(repository.read().audits).toEqual([]);
   });
-  test.each(['handbookId', 'businessVersion', 'content'])('合成基线缺少%s时存储与审计不变', async field => {
+  test.each(['handbookId', 'businessVersion', 'content'])('关闭的合成基线路由不会处理缺少%s的请求', async field => {
     const body = { handbookId: 'manual', businessVersion: 'v1', content: '基线' };
     delete body[field];
     const before = repository.read();
-    expect(await rootRequest('POST', 'bootstrap-baseline', body)).toMatchObject({ status: 422,
-      body: { error: { code: 'VALIDATION_FAILED', details: { field } } } });
+    expect(await rootRequest('POST', 'bootstrap-baseline', body)).toMatchObject({ status: 404,
+      body: { error: { code: 'ROUTE_NOT_FOUND' } } });
     expect(repository.read()).toEqual(before);
   });
   test('手册审核摘要排序、状态筛选和未解决阻断意见计数保持可读边界', async () => {

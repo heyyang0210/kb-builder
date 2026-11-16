@@ -2,16 +2,31 @@
 // contribute to the same coverage report without maintaining copied assertions.
 const registerJestTest = global.test;
 const nodeAssert = jest.requireActual('node:assert/strict');
+const { execFileSync } = require('node:child_process');
+const fs = require('node:fs');
+const path = require('node:path');
 
-jest.doMock('node:assert/strict', () => ({
-  ...nodeAssert,
-  deepEqual(actual, expected, message) { expect(actual).toEqual(expected, message); },
-}));
+function hasSystemdUserSession() {
+  const socketRoot = process.env.XDG_RUNTIME_DIR || `/run/user/${process.getuid()}`;
+  if (!fs.existsSync(path.join(socketRoot, 'bus'))) return false;
+  try {
+    execFileSync('systemctl', ['--user', 'show-environment'], { stdio: 'ignore', timeout: 2000 });
+    return true;
+  } catch (_) { return false; }
+}
+
+jest.doMock('node:assert/strict', () => Object.assign(
+  (...args) => nodeAssert(...args),
+  nodeAssert,
+  { deepEqual(actual, expected, message) { expect(actual).toEqual(expected, message); } },
+));
 
 jest.doMock('node:test', () => {
   const register = (name, optionsOrRun, maybeRun) => {
     const options = typeof optionsOrRun === 'object' && optionsOrRun !== null ? optionsOrRun : {};
     const run = typeof optionsOrRun === 'function' ? optionsOrRun : maybeRun;
+    if (name.startsWith('DSH SDK 管理员试运行') && !hasSystemdUserSession())
+      return registerJestTest.skip(name, () => {});
     // The frontend ESM case stays in its native runner; this Jest bridge covers HTTP contracts.
     if (name.startsWith('送审入口区分无草稿') || name.startsWith('写作页逐篇结论优先')) return registerJestTest.skip(name, () => {});
     if (name.startsWith('500 篇目录、20 条规则')) return registerJestTest.skip(name, () => {});
@@ -54,3 +69,5 @@ require('./aggregate-store-async.node.test.cjs');
 require('./admin-delegated-review.node.test.cjs');
 require('./workbench-numbering.node.test.cjs');
 require('./gitlab-participants.test');
+require('../../e2e/agent-runner/dsh-sdk-runtime.test.cjs');
+require('./document-task-relational-read-http.test.js');

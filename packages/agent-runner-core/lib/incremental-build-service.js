@@ -365,7 +365,7 @@ class IncrementalBuildService {
       if (task.state !== 'mr_submitted' || !task.mergeRequest) throw new IncrementalBuildError('MR_NOT_SUBMITTED', '任务尚未登记 GitLab MR', 409);
       const delivery = body.delivery;
       if (!delivery || delivery.iid !== task.mergeRequest.iid || !['opened', 'closed', 'merged'].includes(delivery.state)) throw new IncrementalBuildError('MR_DELIVERY_INVALID', 'GitLab MR 状态回读结果无效', 409);
-      if (task.deliveryObservation?.state === 'closed' && delivery.state !== 'closed') throw new IncrementalBuildError('MR_CLOSED_RECOVERY_REQUIRED', '已关闭的 MR 不能继续交付，请修订并重新送审', 409);
+      if (task.deliveryObservation?.state === 'closed' && delivery.state !== 'closed') throw new IncrementalBuildError('MR_CLOSED_RECOVERY_REQUIRED', '已关闭的 MR 不能继续交付，请重新编写并提交审核', 409);
       if (delivery.state === 'merged' && (delivery.readback?.status !== 'consistent' || delivery.readback?.resources !== 'repository_relative_images_verified')) throw new IncrementalBuildError('MR_READBACK_REQUIRED', '合并后的正文与仓库图片回读未通过', 409);
       task.deliveryObservation = { ...structuredClone(delivery), observedAt: now() };
       task.deliveryFailure = null;
@@ -1339,7 +1339,8 @@ class IncrementalBuildService {
       ? structuredClone(Object.fromEntries([
         'id', 'name', 'title', 'handbookId', 'handbookName', 'productName',
         'businessVersion', 'baselineVersionId', 'baselineVersionLabel',
-        'baselineVersionName', 'state', 'status', 'createdAt', 'updatedAt', 'mergeRequest', 'deliveryObservation', 'deliveryFailure',
+        'baselineVersionName', 'state', 'status', 'createdAt', 'updatedAt', 'created_at', 'updated_at', 'started_at',
+        'startedAt', 'activityAt', 'lastActivityAt', 'plannedStartAt', 'plannedStartTime', 'plannedEndAt', 'plannedEndTime', 'mergeRequest', 'deliveryObservation', 'deliveryFailure',
       ].filter(key => Object.prototype.hasOwnProperty.call(task, key)).map(key => [key, task[key]])))
       : structuredClone(task);
     const delivery = task.deliveryObservation;
@@ -1348,7 +1349,7 @@ class IncrementalBuildService {
       && delivery?.readback?.resources === 'repository_relative_images_verified';
     projection.completion = {
       status: completed ? 'completed' : 'pending',
-      label: completed ? '已完成' : delivery?.state === 'closed' ? 'MR已关闭，需修订并重新审核' : task.deliveryFailure ? '交付回读失败，待重试' : '待合并回读',
+      label: completed ? '已完成' : delivery?.state === 'closed' ? 'MR已关闭' : task.deliveryFailure ? '交付回读失败，待重试' : '待合并回读',
       completedAt: completed ? (delivery.observedAt || null) : null,
       criteria: ['gitlab_merged', 'target_branch_markdown_readback', 'repository_relative_images_readback'],
       facts: {
@@ -1397,12 +1398,10 @@ function createIncrementalBuildHandler(options = {}) {
       let data;
       if (parts.length === 1 && parts[0] === 'baselines' && req.method === 'GET') data = service.listBaselines(session, Object.fromEntries(url.searchParams));
       else if (parts.length === 1 && parts[0] === 'online-reviews' && req.method === 'POST') data = service.createOnlineReview(session, key, await readJsonBody(req));
-      else if (parts.length === 1 && parts[0] === 'bootstrap-baseline' && req.method === 'POST') data = service.createSyntheticBaseline(session, key, await readJsonBody(req));
       else if (parts.length === 1 && parts[0] === 'notifications' && req.method === 'GET') data = service.listNotifications(session, Object.fromEntries(url.searchParams));
       else if (parts.length === 3 && parts[0] === 'notifications' && parts[2] === 'read' && req.method === 'PUT') data = service.markNotificationRead(session, parts[1], key, await readJsonBody(req));
       else if (parts.length === 3 && parts[0] === 'handbooks' && parts[2] === 'review-summary' && req.method === 'GET') data = service.listHandbookReviewSummary(session, parts[1], Object.fromEntries(url.searchParams));
       else if (!parts.length && req.method === 'GET') data = service.list(session, Object.fromEntries(url.searchParams), await service.readState(session));
-      else if (!parts.length && req.method === 'POST') data = service.create(session, key, await readJsonBody(req));
       else if (parts.length === 1 && req.method === 'GET') data = service.get(session, parts[0], await service.readState(session));
       else if (parts[1] === 'sources' && parts.length === 2 && req.method === 'POST') data = service.addSource(session, parts[0], key, await readJsonBody(req));
       else if (parts[1] === 'target' && parts.length === 2 && req.method === 'PATCH') data = service.updateTarget(session, parts[0], key, await readJsonBody(req));

@@ -74,10 +74,11 @@ async function exerciseWritingAdoptionHttp(page) {
       || document.querySelector('[data-ai-status]')?.textContent.includes('富文本编辑器暂不可用'));
     // Editing the real original field must update the workbench, and remain after history is opened.
     await writing.locator('[data-ai-original]').fill(original);
-    await writing.locator('[data-chat-job="adoption-http-job"] .handbook-writing-chat-open').click();
+    await writing.locator('[data-chat-job="adoption-http-job"]')
+      .getByRole('button', { name: '查看候选与执行过程' }).click();
     await page.waitForFunction(() => !document.querySelector('[data-ai-candidate]').hidden && !document.querySelector('[data-ai-adopt]').disabled);
     await writing.locator('[data-ai-adopt]').click();
-    await page.waitForFunction(() => document.querySelector('[data-ai-status]').textContent.includes('采用未完成'));
+    await page.waitForFunction(() => document.querySelector('[data-ai-status]').textContent.includes('保存未完成'));
     assert.equal(await writing.locator('[data-ai-fragment]').inputValue(), candidate);
     assert.equal(await writing.locator('[data-ai-adopt]').isEnabled(), true);
     assert.equal(await writing.locator('[data-ai-original]').inputValue(), original);

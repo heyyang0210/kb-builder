@@ -19,7 +19,7 @@ const sections = [
   ['知识资产', '<section><div class="workspace-action-row asset-page-intro"><div class="asset-page-actions"><span class="data-note">更新于 2026-11-12</span><button>新增手册</button></div></div><div class="asset-toolbar"><input placeholder="搜索手册名称"><button>筛选</button></div><div>手册列表</div></section>'],
   ['大纲管理', '<section><div class="workspace-action-row outline-list-intro"><div class="outline-list-intro-actions"><button>准备大纲</button><button>回收站</button></div></div><div class="outline-list-toolbar"><label>搜索手册</label><input placeholder="手册名称或编号"></div><div>大纲列表</div></section>'],
   ['模板管理', '<section><div class="workspace-action-row template-page-head"><button>新建模板</button></div><div>模板编辑</div></section>'],
-  ['文档生产', '<section><div class="workspace-action-row production-heading"><div class="production-heading-actions"><button>文档生成工作台</button><button>创建增量任务</button></div></div><a class="production-subnav-link active">生产列表</a></section>'],
+  ['文档生产', '<section><nav class="production-overview-tabs"><button>生产进展</button></nav><a class="production-subnav-link active">生产进展</a><nav class="production-progress-stages"><button>全部任务</button></nav></section>'],
   ['任务管理', '<section class="document-task-page"><div class="workspace-action-row document-task-page-header"><div class="document-task-actions"><button>导出 CSV</button><button>导入工单</button></div></div><div class="document-task-toolbar"><input placeholder="搜索编号或描述"><button>筛选</button></div><div>任务列表</div></section>'],
   ['资料清洗', '<section><div class="cleaning-workspace">资料批次</div></section>'],
   ['平台管理', '<section class="platform-admin-page"><div class="workspace-action-row"><span class="platform-header-meta">更新于 2026-11-12</span></div><button class="platform-tab active">系统治理</button></section>'],
@@ -32,8 +32,8 @@ test('八个一级视图移除同名内容标题并保留关键操作', () => {
     ['modules/assets/view.js', 'asset-page-actions'],
     ['modules/outlines/view.js', 'outline-list-intro-actions'],
     ['modules/templates/view.js', 'data-template-new'],
-    ['modules/production/view.js', 'data-incremental-create-open'],
-    ['modules/document-tasks/view.js', "root.querySelector('.document-task-page-header h1')?.remove()"],
+    ['modules/production/view.js', 'data-progress-mode="calendar"'],
+    ['modules/document-tasks/view.js', 'document-task-page-header'],
     ['modules/cleaning/view.js', 'cleaning-workspace'],
     ['modules/platform-admin/view.js', 'platform-header-meta'],
   ];
@@ -50,6 +50,71 @@ test('八个一级视图移除同名内容标题并保留关键操作', () => {
   assert.ok(!read('modules/dashboard/my-tasks.js').includes(" : '我的工作'}</h1>"));
   assert.ok(read('knowledge-center-management.html').includes('id="global-context-title"'));
   assert.ok(read('knowledge-center-management.html').includes('id="page-title" class="sr-only"'));
+});
+
+test('普通关闭与隐藏使用中性色，删除仍使用危险色', async () => {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    await page.setContent(`<html lang="zh-CN"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${styles}</style><main><button class="icon-button" type="button" aria-label="关闭设置"><i></i></button><button id="sidebar-hide" class="sidebar-control" type="button" aria-label="隐藏导航"><i></i></button><button class="button danger" type="button">删除记录</button><button class="button secondary danger" type="button">移入回收站</button></main></html>`);
+    const colors = await page.evaluate(() => ({
+      close: getComputedStyle(document.querySelector('[aria-label="关闭设置"]')).color,
+      hide: getComputedStyle(document.querySelector('#sidebar-hide')).color,
+      remove: getComputedStyle(document.querySelector('.button.danger')).backgroundColor,
+      secondaryRemove: getComputedStyle(document.querySelector('.button.secondary.danger')).color,
+      secondaryBackground: getComputedStyle(document.querySelector('.button.secondary.danger')).backgroundColor,
+      neutral: getComputedStyle(document.documentElement).getPropertyValue('--color-icon-default').trim(),
+      danger: getComputedStyle(document.documentElement).getPropertyValue('--color-danger').trim(),
+    }));
+    assert.equal(colors.close, 'rgb(107, 112, 120)');
+    assert.equal(colors.hide, 'rgb(107, 112, 120)');
+    assert.equal(colors.remove, 'rgb(180, 35, 24)');
+    assert.equal(colors.secondaryRemove, 'rgb(180, 35, 24)');
+    assert.equal(colors.secondaryBackground, 'rgb(255, 255, 255)');
+    assert.equal(colors.neutral, '#6b7078');
+    assert.equal(colors.danger, '#b42318');
+    await page.close();
+  } finally {
+    await browser.close();
+  }
+});
+
+test('平台字体继承不覆盖组件字体，代码仍使用代码字体', async () => {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.setContent(`<html lang="zh-CN"><style>${styles}.component-font{font-family:Arial,sans-serif}</style><body><p class="component-font">组件文字</p><pre><code>select 1;</code></pre></body></html>`);
+    const fonts = await page.evaluate(() => ({
+      component: getComputedStyle(document.querySelector('.component-font')).fontFamily,
+      code: getComputedStyle(document.querySelector('code')).fontFamily,
+    }));
+    assert.match(fonts.component, /^Arial/);
+    assert.match(fonts.code, /Consolas|monospace/i);
+    await page.close();
+  } finally {
+    await browser.close();
+  }
+});
+
+test('审核工作区常用控件为44px且禁用态不表现为等待', async () => {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    for (const width of [1440, 390]) {
+      const page = await browser.newPage({ viewport: { width, height: 900 } });
+      await page.setContent(`<html lang="zh-CN"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${styles}</style><main style="padding:16px"><nav class="review-steps"><button>正文阅读</button><button>差异</button></nav><div class="review-reading-layout"><aside class="review-document-tree"><button class="review-directory-toggle">目录</button><ul><li><button>安装说明</button></li></ul></aside><section><div class="review-reader-toolbar"><input aria-label="搜索正文"></div><div class="review-reader-controls"><select aria-label="分支"><option>main</option></select><div class="review-reader-language"><button>中文</button></div></div></section></div><button class="button" disabled>不可执行</button></main></html>`);
+      const result = await page.evaluate(() => ({
+        overflow: document.documentElement.scrollWidth > innerWidth,
+        heights: [...document.querySelectorAll('.review-steps button,.review-directory-toggle,.review-document-tree li button,.review-reader-toolbar input,.review-reader-controls select,.review-reader-language button')].map(node => node.getBoundingClientRect().height),
+        disabledCursor: getComputedStyle(document.querySelector('.button:disabled')).cursor,
+      }));
+      assert.equal(result.overflow, false, `${width}px 审核工作区横向溢出`);
+      assert.ok(result.heights.every(height => height >= 44), `${width}px 审核操作目标不足44px: ${JSON.stringify(result.heights)}`);
+      assert.equal(result.disabledCursor, 'not-allowed');
+      await page.close();
+    }
+  } finally {
+    await browser.close();
+  }
 });
 
 test('仓库操作与审核更多菜单在桌面和窄屏可触达', async () => {

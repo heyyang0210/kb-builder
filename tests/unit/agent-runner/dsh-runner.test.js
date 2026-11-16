@@ -1,5 +1,26 @@
 const { createDshRunner, versionAtLeast, requiredVersion } = require('../../../packages/agent-runner-core/lib/agent-runtime/dsh-runner');
 const { sandboxFactsValid } = require('../../../packages/agent-runner-core/lib/agent-runtime/dsh-adapter');
+const { spawnSync } = require('node:child_process');
+const os = require('node:os');
+const path = require('node:path');
+
+test('DSH 探针 socket 不可用时不产生未处理错误或阻断主服务启动', () => {
+  const missingRuntimeDir = path.join(os.tmpdir(), `kc-dsh-missing-${process.pid}-${Date.now()}`);
+  const script = [
+    "const { createDshAdapter } = require('./packages/agent-runner-core/lib/agent-runtime/dsh-adapter');",
+    'createDshAdapter({ autoProbe: false }).probe().then(result => {',
+    "  console.log(JSON.stringify(result));",
+    '  process.exitCode = result.sandbox || result.credential ? 1 : 0;',
+    '});',
+  ].join('\n');
+  const result = spawnSync(process.execPath, ['-e', script], {
+    cwd: path.resolve(__dirname, '../../..'), encoding: 'utf8',
+    env: { ...process.env, XDG_RUNTIME_DIR: missingRuntimeDir },
+  });
+  expect(result.status).toBe(0);
+  expect(JSON.parse(result.stdout.trim())).toEqual({ sandbox: false, credential: false });
+  expect(result.stderr).not.toMatch(/Unhandled 'error' event/);
+});
 
 test.each(['v24.9.0', 'v24.10.0', 'v25.0.0'])('DSH 探针接受符合最低版本的独立运行时 %s', node => {
   expect(sandboxFactsValid({ node, repo: false, home: false, bus: false, pid: 1, network: false })).toBe(true);
