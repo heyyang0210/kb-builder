@@ -604,7 +604,7 @@
     },
     {
       "source": "docs/agent-runner/38-独立质询审查者与门禁设计.md",
-      "target": ".codex/知识中心建设平台/07-决策与风险/知识中心-平台-独立质询审查者与门禁-治理规范文档.md",
+      "target": ".codex/知识中心建设平台/12-开发原则 & 术语/知识中心-平台-独立质询审查者与门禁-治理规范文档.md",
       "action": "move",
       "reason": "原文独立迁移，不合并、不改变业务设计",
       "bytes": 15637,
@@ -612,7 +612,7 @@
     },
     {
       "source": "docs/agent-runner/39-Role-Contract-v1与角色治理设计.md",
-      "target": ".codex/知识中心建设平台/07-决策与风险/知识中心-平台-Role Contract v1与角色治理-治理规范文档.md",
+      "target": ".codex/知识中心建设平台/12-开发原则 & 术语/知识中心-平台-Role Contract v1与角色治理-治理规范文档.md",
       "action": "move",
       "reason": "原文独立迁移，不合并、不改变业务设计",
       "bytes": 11837,
@@ -620,7 +620,7 @@
     },
     {
       "source": "docs/agent-runner/40-Task-Routing-Contract-v1与最小角色路径设计.md",
-      "target": ".codex/知识中心建设平台/07-决策与风险/知识中心-平台-Task Routing Contract v1与最小执行路径-治理规范文档.md",
+      "target": ".codex/知识中心建设平台/12-开发原则 & 术语/知识中心-平台-Task Routing Contract v1与最小执行路径-治理规范文档.md",
       "action": "move",
       "reason": "原文独立迁移，不合并、不改变业务设计",
       "bytes": 3910,
@@ -628,7 +628,7 @@
     },
     {
       "source": "docs/agent-runner/41-Approval-Boundary-v1人工审批边界.md",
-      "target": ".codex/知识中心建设平台/07-决策与风险/知识中心-平台-Approval Boundary v1人工审批边界-治理规范文档.md",
+      "target": ".codex/知识中心建设平台/12-开发原则 & 术语/知识中心-平台-Approval Boundary v1人工审批边界-治理规范文档.md",
       "action": "move",
       "reason": "原文独立迁移，不合并、不改变业务设计",
       "bytes": 10505,
@@ -636,7 +636,7 @@
     },
     {
       "source": "docs/agent-runner/42-Code-Review与提交验证流程.md",
-      "target": ".codex/知识中心建设平台/07-决策与风险/知识中心-平台-Code Review与提交验证流程-治理规范文档.md",
+      "target": ".codex/知识中心建设平台/12-开发原则 & 术语/知识中心-平台-Code Review与提交验证流程-治理规范文档.md",
       "action": "move",
       "reason": "原文独立迁移，不合并、不改变业务设计",
       "bytes": 4440,

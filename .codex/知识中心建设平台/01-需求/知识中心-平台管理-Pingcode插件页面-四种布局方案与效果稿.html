@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pingcode 插件页面布局方案</title>
+  <style>
+    :root{font-family:"Microsoft YaHei","Noto Sans CJK SC",Arial,sans-serif;color:#202124;background:#f3f5f7;font-synthesis:none;text-rendering:optimizeLegibility;--line:#dfe3e8;--muted:#657181;--brand:#0876ad;--brand-soft:#e5f4fb;--green:#18794e;--green-bg:#e9f6ef;--amber:#946200;--amber-bg:#fff5dc;--red:#b42318;--red-bg:#fff0ee;--nav:#f1f5f9}
+    *{box-sizing:border-box}body{margin:0;min-width:320px}.page{max-width:1580px;margin:0 auto;padding:30px 36px 54px}.eyebrow{font-size:12px;font-weight:700;color:#526277}.page h1{font-size:26px;line-height:1.3;margin:8px 0 8px}.lead{margin:0 0 24px;max-width:980px;font-size:14px;line-height:1.7;color:#566171}.section-title{display:flex;align-items:baseline;gap:12px;margin:28px 0 12px}.section-title h2{font-size:18px;margin:0}.section-title span{font-size:12px;color:var(--muted)}
+    .scheme-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.scheme{background:#fff;border:1px solid var(--line);border-radius:8px;padding:15px;min-width:0;cursor:pointer;text-align:left;color:inherit;font:inherit;transition:border-color .15s,box-shadow .15s}.scheme:hover{border-color:#8bbdd4}.scheme[aria-pressed=true]{border-color:var(--brand);box-shadow:0 0 0 2px #0876ad1a}.scheme-head{display:flex;justify-content:space-between;gap:10px;align-items:center}.scheme-head strong{font-size:14px}.scheme-head small{font-size:11px;color:var(--muted)}.scheme p{font-size:12px;color:#596575;line-height:1.55;min-height:38px;margin:9px 0 12px}.wire{height:94px;border:1px solid #dce1e6;border-radius:5px;background:#f8fafb;padding:7px;display:grid;gap:5px;overflow:hidden}.wire-top{height:12px;background:#e5e9ed;border-radius:2px}.wire-body{display:grid;gap:5px;min-height:0}.wire-block{background:#fff;border:1px solid #e0e5e9;border-radius:3px;display:flex;align-items:center;justify-content:center;color:#687484;font-size:9px}.wire-a .wire-body{grid-template-columns:1fr}.wire-a .wire-empty{max-width:75%;width:75%;justify-self:center;background:#fff;border:1px dashed #b9c7d2;border-radius:3px}.wire-b .wire-body{grid-template-columns:28% 1fr}.wire-c .wire-body{grid-template-columns:25% 1fr}.wire-c .wire-right{display:grid;grid-template-rows:1fr 1fr;gap:5px}.pros-cons{font-size:11px;color:#526071;margin-top:10px;line-height:1.55}.pros-cons b{color:#344052}
+    .recommend{border-left:3px solid var(--brand);padding:10px 14px;background:#eaf5fa;border-radius:0 5px 5px 0;font-size:13px;color:#344052;line-height:1.55;margin:14px 0 22px}.recommend strong{color:#075e8c}
+    .preview-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:12px 0}.state-switch{display:flex;gap:6px;flex-wrap:wrap}.state-switch button{border:1px solid var(--line);background:#fff;color:#455161;border-radius:5px;padding:7px 10px;font:inherit;font-size:12px;cursor:pointer}.state-switch button[aria-pressed=true]{border-color:var(--brand);color:var(--brand);background:var(--brand-soft)}.sample-note{font-size:11px;color:#687484}
+    .platform{min-height:650px;display:grid;grid-template-columns:196px minmax(0,1fr);border:1px solid #d7dde3;background:#fff;border-radius:7px;overflow:hidden;box-shadow:0 2px 8px #2030400a}.side{background:var(--nav);border-right:1px solid #d8e1eb;padding:14px 10px;color:#26374b}.brand{font-weight:700;font-size:14px;margin:2px 7px 24px;display:flex;gap:8px;align-items:center}.brand-mark{width:25px;height:25px;border:1px solid #a8cfe1;color:var(--brand);background:white;border-radius:6px;display:grid;place-items:center;font-size:13px}.nav-label{font-size:10px;color:#718094;margin:14px 7px 6px}.nav-item{display:flex;align-items:center;gap:9px;padding:9px 10px;margin:2px 0;border-radius:5px;font-size:12px;color:#334155}.nav-item.active{background:#bfe5f5;color:#075e8c;font-weight:700}.nav-dot{width:15px;height:15px;border:1.5px solid currentColor;border-radius:4px;opacity:.8;flex:none}.main{min-width:0;background:#f7f8fa}.topbar{height:54px;background:#fff;border-bottom:1px solid #e2e5e9;padding:0 22px;display:flex;align-items:center;font-size:20px;font-weight:700}.tabs{height:56px;display:flex;align-items:stretch;gap:8px;padding:0 18px;background:#fff;border-bottom:1px solid #e0e4e8;overflow:auto}.tab{display:flex;align-items:center;gap:7px;padding:0 13px;font-size:12px;color:#526071;white-space:nowrap}.tab.selected{color:#056b9c;background:#e7f4fa;border-bottom:2px solid var(--brand);font-weight:700}.tab-ico{width:14px;height:14px;border:1.5px solid currentColor;border-radius:3px}.content{padding:20px 22px 24px}.content-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}.content-head h2{font-size:18px;margin:0}.head-meta{font-size:12px;color:#697585;margin-top:4px}.actions{display:flex;gap:8px;align-items:center}.btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:36px;padding:7px 12px;border-radius:5px;border:1px solid #ccd4db;background:#fff;color:#3e4a59;font-size:12px;font-weight:600;white-space:nowrap}.btn.primary{background:var(--brand);border-color:var(--brand);color:#fff}.btn:disabled{opacity:.48}.plus{font-size:17px;line-height:10px}.sync-shell{min-height:488px;border:1px solid var(--line);border-radius:6px;background:#fff;overflow:hidden}.source-workspace{display:grid;grid-template-columns:258px minmax(0,1fr);min-height:488px}.source-list{background:#f8f9fa;border-right:1px solid var(--line);min-width:0}.list-head{height:52px;padding:0 13px 0 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between}.list-head strong{font-size:13px}.source-item{width:100%;padding:13px 13px 12px 16px;border:0;border-bottom:1px solid #e6e9ec;background:transparent;display:block;text-align:left;font:inherit;cursor:pointer;color:inherit}.source-item.selected{background:#fff;box-shadow:inset 3px 0 var(--brand)}.source-item strong{font-size:12px;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.source-meta{margin-top:6px;color:#6b7684;font-size:10px;display:flex;justify-content:space-between;gap:5px}.tag{padding:2px 6px;border-radius:10px;font-size:10px;font-weight:600;white-space:nowrap}.tag.green{background:var(--green-bg);color:var(--green)}.tag.gray{background:#eef1f4;color:#556171}.detail{min-width:0}.detail-head{padding:17px 19px 15px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:14px;align-items:flex-start}.detail-title{min-width:0}.detail-title h3{font-size:15px;margin:0 0 7px}.url{font-size:11px;color:#607080;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:min(590px,48vw)}.detail-buttons{display:flex;gap:7px;flex:none}.detail-buttons .btn{min-height:34px}.overview{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border-bottom:1px solid var(--line)}.metric{padding:14px 16px;border-right:1px solid #e8ebee;min-width:0}.metric:last-child{border:0}.metric span{display:block;font-size:10px;color:#6d7783;margin-bottom:7px}.metric strong{font-size:14px;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.metric em{font-style:normal;font-weight:400;font-size:10px;color:#738090;margin-left:4px}.history-head{padding:13px 17px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #eaedf0}.history-head strong{font-size:12px}.history-head a{color:var(--brand);font-size:11px;text-decoration:none}.empty-history{padding:26px 18px;display:flex;align-items:center;gap:13px;color:#647182;font-size:12px}.empty-symbol{width:35px;height:35px;border:1px solid #dce3e9;background:#fafbfc;border-radius:7px;display:grid;place-items:center;color:#718093;flex:none}.empty-history strong{display:block;color:#394554;margin-bottom:4px;font-size:12px}.operation{padding:14px 18px;border-top:1px solid #eaedf0;background:#fcfcfd;display:flex;align-items:center;justify-content:space-between;gap:12px}.operation p{margin:0;font-size:11px;color:#5d6a79;line-height:1.5}.operation p strong{color:#344052}
+    .empty-state,.error-state{min-height:488px;padding:36px 20px;display:flex;align-items:center;justify-content:center;text-align:center}.empty-inner,.error-inner{max-width:460px}.illustration{width:52px;height:52px;border:1px solid #d6e4eb;border-radius:12px;background:#f3f9fc;color:var(--brand);display:grid;place-items:center;margin:0 auto 16px;font-size:22px}.empty-state h3,.error-state h3{font-size:16px;margin:0 0 8px}.empty-state p,.error-state p{font-size:12px;color:#647182;line-height:1.65;margin:0 0 16px}.state-badge{display:inline-flex;align-items:center;gap:6px;padding:5px 9px;border-radius:12px;font-size:11px;font-weight:600;background:var(--red-bg);color:var(--red)}.state-badge:before{content:"";width:6px;height:6px;background:currentColor;border-radius:50%}.error-symbol{background:#fff6f5;border-color:#f1d0cd;color:var(--red)}.error-state .actions{justify-content:center}.system-detail{margin:12px auto 0;display:flex;justify-content:center;gap:8px;color:#8993a0;font-size:10px}.system-detail code{font:inherit;background:#f4f5f6;padding:2px 5px;border-radius:3px}.state-label{font-size:10px;color:#768190;margin-bottom:9px}
+    .scheme-caption{font-size:11px;color:#5e6a79;line-height:1.6;margin:10px 0 0}.prototype-foot{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:12px 2px;color:#707b88;font-size:10px}.hidden{display:none!important}
+    @media(max-width:900px){.page{padding:22px 18px 36px}.scheme-grid{grid-template-columns:1fr}.scheme{padding:12px}.scheme p{min-height:0}.platform{grid-template-columns:60px minmax(0,1fr)}.side{padding:12px 6px}.brand{justify-content:center;margin:0 0 18px}.brand span,.nav-label,.nav-item span{display:none}.nav-item{justify-content:center;padding:10px 6px}.nav-dot{width:16px;height:16px}.content{padding:15px}.tabs{padding:0 8px}.source-workspace{grid-template-columns:205px minmax(0,1fr)}.overview{grid-template-columns:repeat(2,minmax(0,1fr))}.metric:nth-child(2){border-right:0}.metric:nth-child(-n+2){border-bottom:1px solid #e8ebee}.detail-head{flex-wrap:wrap}.url{max-width:72vw}}
+    @media(max-width:620px){.page{padding:18px 10px 26px}.page h1{font-size:22px}.lead{font-size:13px}.section-title{margin-top:22px}.preview-toolbar{align-items:flex-start;flex-direction:column}.platform{grid-template-columns:1fr;border-radius:5px}.side{display:none}.topbar{height:48px;padding:0 14px;font-size:17px}.tabs{height:48px;gap:2px}.tab{padding:0 10px;font-size:11px}.content{padding:12px 9px}.content-head h2{font-size:16px}.content-head .head-meta{max-width:210px}.btn{min-height:38px;padding:7px 9px}.source-workspace{grid-template-columns:1fr}.source-list{border-right:0;border-bottom:1px solid var(--line)}.source-list:not(.with-items){display:none}.source-workspace.no-selection .source-list{display:block}.source-workspace.no-selection .detail{display:none}.source-items{display:flex;overflow:auto}.source-item{flex:0 0 190px}.detail-head{padding:13px;align-items:flex-start}.detail-buttons{width:100%}.detail-buttons .btn{flex:1}.url{max-width:86vw}.metric{padding:11px}.operation{align-items:flex-start;flex-direction:column}.operation .btn{width:100%}.sync-shell,.source-workspace{min-height:420px}.empty-state,.error-state{min-height:420px;padding:25px 16px}.detail-buttons{flex-wrap:wrap}}
+    .scheme-grid{grid-template-columns:repeat(4,minmax(0,1fr))}
+    .wire-d .wire-body{position:relative;grid-template-columns:1fr}
+    .wire-d .wire-table{display:grid;grid-template-rows:repeat(3,1fr);gap:2px;padding:3px;width:100%}
+    .wire-d .wire-row{border-bottom:1px solid #e8ebee;background:linear-gradient(90deg,#dfe8ed 25%,transparent 25% 32%,#e9eef1 32% 52%,transparent 52% 58%,#e4eaee 58% 80%,transparent 80%)}
+    .wire-d .wire-modal{position:absolute;inset:15px 25%;background:#fff;box-shadow:0 3px 12px #20304024}
+    .sync-shell{min-height:360px}
+    .source-workspace{grid-template-columns:minmax(0,1fr);min-height:360px}
+    .source-table{min-width:0;border-right:0}
+    .table-toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-bottom:1px solid var(--line)}
+    .table-filters{display:flex;align-items:center;gap:7px;min-width:0}
+    .search{height:32px;width:min(220px,30vw);padding:0 9px;border:1px solid #cfd7de;border-radius:4px;background:#fff;font:inherit;font-size:11px}
+    .select{height:32px;padding:0 8px;border:1px solid #cfd7de;border-radius:4px;background:#fff;color:#43505f;font:inherit;font-size:11px}
+    .table-wrap{overflow:auto}
+    .source-table table{width:100%;border-collapse:collapse;min-width:650px}
+    .source-table th,.source-table td{padding:10px 9px;border-bottom:1px solid #e8ebee;text-align:left;font-size:10px;white-space:nowrap}
+    .source-table th{background:#f8fafb;color:#647181;font-weight:600}
+    .source-table tr{cursor:pointer}
+    .source-table tr.active td{background:#eef8fc}
+    .source-table tr:hover td{background:#f5fafc}
+    .source-table tr:focus-visible{outline:2px solid var(--brand);outline-offset:-2px}
+    .source-table td:first-child{font-weight:600;color:#2c3b4c}
+    .source-type{color:#627183;font-weight:400}
+    .detail-head{padding:14px 15px 12px;display:block}
+    .detail-head .detail-buttons{margin-top:12px}
+    .detail-head .detail-buttons .btn{flex:1}
+    .overview{grid-template-columns:repeat(2,minmax(0,1fr))}
+    .metric{padding:12px 13px}
+    .empty-state,.error-state{min-height:320px;padding:28px 20px}
+    .source-dialog{width:min(680px,calc(100vw - 32px));max-width:none;max-height:min(86vh,760px);padding:0;border:1px solid #d6dde4;border-radius:8px;background:#fff;color:#202124;box-shadow:0 20px 60px #172b3b38;overflow:auto}
+    .source-dialog::backdrop{background:#13253755;backdrop-filter:blur(1px)}
+    .dialog-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:20px 22px 16px;border-bottom:1px solid #e6eaee}
+    .dialog-head h3{margin:0 0 7px;font-size:17px}.dialog-url{max-width:580px;overflow-wrap:anywhere;color:#647181;font-size:11px;line-height:1.5}
+    .dialog-close{width:34px;height:34px;flex:none;border:1px solid #d6dde4;border-radius:5px;background:#fff;color:#485563;font-size:20px;line-height:1;cursor:pointer}
+    .dialog-content{padding:17px 22px}.dialog-status{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;font-size:12px;color:#657181}
+    .dialog-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));border:1px solid #e6eaee;border-radius:5px;overflow:hidden}
+    .dialog-metric{padding:13px 15px;border-right:1px solid #e6eaee;border-bottom:1px solid #e6eaee;min-width:0}.dialog-metric:nth-child(2n){border-right:0}.dialog-metric:nth-last-child(-n+2){border-bottom:0}.dialog-metric span{display:block;margin-bottom:6px;color:#718090;font-size:11px}.dialog-metric strong{font-size:13px;font-weight:600}
+    .dialog-history{margin-top:18px}.dialog-history h4{margin:0 0 8px;font-size:13px}.dialog-history p{margin:0;padding:13px;border:1px solid #e7ebee;border-radius:5px;background:#fafbfc;color:#687585;font-size:12px;line-height:1.6}
+    .dialog-actions{display:flex;justify-content:flex-end;gap:8px;padding:14px 22px 18px;border-top:1px solid #e6eaee;background:#fbfcfd}
+    @media(max-width:620px){.dialog-head{padding:16px}.dialog-content{padding:14px 16px}.dialog-actions{padding:12px 16px}.dialog-actions .btn{flex:1}.dialog-url{max-width:calc(100vw - 100px)}}
+    @media(max-width:1100px){.scheme-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+    @media(max-width:900px){.scheme-grid{grid-template-columns:1fr}.source-workspace{grid-template-columns:1fr}.source-table{border-right:0;border-bottom:1px solid var(--line)}}
+    @media(max-width:620px){.table-toolbar{align-items:flex-start;flex-direction:column}.table-filters{width:100%}.search{width:100%;flex:1}.source-table table{min-width:620px}.sync-shell,.source-workspace{min-height:360px}.empty-state,.error-state{min-height:300px;padding:24px 14px}}
+  </style>
+</head>
+<body>
+  <main class="page">
+    <div class="eyebrow">知识中心管理平台 / 平台管理 / 插件</div>
+    <h1>Pingcode 插件页面布局方案</h1>
+    <p class="lead">核心任务是管理 Pingcode 来源并安全地同步任务。下面比较四种页面结构，并展示推荐方案在无来源、正常使用和服务故障时的画面。效果稿沿用现有平台导航、色彩和控件密度。</p>
+
+    <div class="section-title"><h2>四种布局简图</h2><span>选择方案卡片查看差异</span></div>
+    <div class="scheme-grid" role="group" aria-label="布局方案">
+      <button class="scheme" data-scheme="a" aria-pressed="false">
+        <div class="scheme-head"><strong>方案 A · 空状态自适应</strong><small>备选</small></div>
+        <p>未配置来源时用完整工作区提供清楚入口；有来源后切换成来源列表与详情双栏。</p>
+        <div class="wire wire-a"><div class="wire-top"></div><div class="wire-body"><div class="wire-empty wire-block">空状态 / 添加来源</div></div></div>
+        <div class="pros-cons"><b>优点：</b>首次进入明确，空状态不浪费空间。<br><b>代价：</b>配置前后布局有变化。</div>
+      </button>
+      <button class="scheme" data-scheme="b" aria-pressed="false">
+        <div class="scheme-head"><strong>方案 B · 固定双栏</strong><small>适合来源较多</small></div>
+        <p>始终保留来源列表与右侧详情，添加和切换来源的位置固定。</p>
+        <div class="wire wire-b"><div class="wire-top"></div><div class="wire-body"><div class="wire-block">来源列表</div><div class="wire-block">来源详情 / 同步</div></div></div>
+        <div class="pros-cons"><b>优点：</b>布局稳定，适合频繁切换。<br><b>代价：</b>首次只有一个加号，仍会留下大面积空区。</div>
+      </button>
+      <button class="scheme" data-scheme="c" aria-pressed="false">
+        <div class="scheme-head"><strong>方案 C · 分步同步台</strong><small>适合低频操作</small></div>
+        <p>左侧按来源、预览、确认、记录分步导航，右侧只显示当前步骤。</p>
+        <div class="wire wire-c"><div class="wire-top"></div><div class="wire-body"><div class="wire-block">同步步骤</div><div class="wire-right"><div class="wire-block">当前操作</div><div class="wire-block">差异 / 结果</div></div></div></div>
+        <div class="pros-cons"><b>优点：</b>流程边界显眼，新手容易理解。<br><b>代价：</b>重复同步步骤多，查看来源详情和历史更绕。</div>
+      </button>
+      <button class="scheme" data-scheme="d" aria-pressed="true">
+        <div class="scheme-head"><strong>方案 D · 来源表格 + 详情弹窗</strong><small>推荐</small></div>
+        <p>表格铺满工作区，选择来源后弹窗展示同步详情与操作。</p>
+        <div class="wire wire-d"><div class="wire-top"></div><div class="wire-body"><div class="wire-block wire-table"><i class="wire-row"></i><i class="wire-row"></i><i class="wire-row"></i></div><div class="wire-block wire-modal">详情弹窗</div></div></div>
+        <div class="pros-cons"><b>优点：</b>状态可比较，详情按需查看。<br><b>代价：</b>弹窗内容需要控制层级。</div>
+      </button>
+    </div>
+    <div class="recommend"><strong>推荐方案 D，并采用 A 的空状态。</strong>来源表格适合管理员查找、比较和管理多条配置；点击行后用弹窗承载详情，表格保持完整宽度。首次使用给出明确的添加入口，接口故障显示重试和诊断，不把 404 误显示为没有来源。</div>
+
+    <div class="section-title"><h2>推荐方案效果图</h2><span>切换状态查看页面如何响应</span></div>
+    <div class="preview-toolbar">
+      <div class="state-switch" role="group" aria-label="效果图状态">
+        <button type="button" data-state="ready" aria-pressed="true">已有来源</button>
+        <button type="button" data-state="empty" aria-pressed="false">尚无来源</button>
+        <button type="button" data-state="error" aria-pressed="false">接口故障</button>
+      </div>
+      <span class="sample-note">已配置状态中的来源名称和数量为示意数据</span>
+    </div>
+
+    <section class="platform" aria-label="平台管理插件页面效果">
+      <aside class="side">
+        <div class="brand"><span class="brand-mark">知</span><span>知识中心管理</span></div>
+        <div class="nav-label">工作区</div>
+        <div class="nav-item"><i class="nav-dot"></i><span>工作台</span></div>
+        <div class="nav-item"><i class="nav-dot"></i><span>知识资产</span></div>
+        <div class="nav-item"><i class="nav-dot"></i><span>大纲管理</span></div>
+        <div class="nav-item"><i class="nav-dot"></i><span>模板管理</span></div>
+        <div class="nav-item"><i class="nav-dot"></i><span>文档生产</span></div>
+        <div class="nav-item"><i class="nav-dot"></i><span>任务管理</span></div>
+        <div class="nav-item"><i class="nav-dot"></i><span>审核与发布</span></div>
+        <div class="nav-label">治理</div>
+        <div class="nav-item"><i class="nav-dot"></i><span>资料清洗</span></div>
+        <div class="nav-item active"><i class="nav-dot"></i><span>平台管理</span></div>
+      </aside>
+      <div class="main">
+        <header class="topbar">平台管理</header>
+        <nav class="tabs" aria-label="平台管理标签">
+          <div class="tab"><i class="tab-ico"></i>系统治理</div><div class="tab"><i class="tab-ico"></i>人员管理</div>
+          <div class="tab"><i class="tab-ico"></i>用户权限</div><div class="tab"><i class="tab-ico"></i>GitLab 仓库</div>
+          <div class="tab"><i class="tab-ico"></i>Agent&模型服务</div><div class="tab selected"><i class="tab-ico"></i>插件</div>
+        </nav>
+        <div class="content">
+          <header class="content-head">
+            <div><h2>Pingcode 来源同步</h2><div class="head-meta">手动预览并确认后更新任务</div></div>
+            <div class="actions"><button class="btn" type="button" aria-label="刷新来源">↻ <span>刷新</span></button></div>
+          </header>
+          <div class="sync-shell" data-view="ready">
+            <div class="source-workspace">
+              <section class="source-table" aria-label="Pingcode 来源表格">
+                <div class="table-toolbar"><div class="table-filters"><input class="search" aria-label="搜索来源" placeholder="搜索来源名称"><select class="select" aria-label="筛选来源类型"><option>全部类型</option><option>需求基线</option><option>工单视图</option></select></div><button class="btn" type="button"><span class="plus">+</span> 添加来源</button></div>
+                <div class="table-wrap"><table><thead><tr><th>来源名称</th><th>类型</th><th>连接状态</th><th>最近同步</th><th>任务数</th></tr></thead><tbody>
+                  <tr class="active" tabindex="0" role="button" data-kind="需求基线" data-title="23.6.X 1 月份版本规划" data-url="https://pingcode.yasdb.com/ship/products/YASHAN/baselines/y28FbpmM/ideas?category=all" data-scope="全部需求" data-count="59 个 IR"><td>23.6.X 1 月份版本规划</td><td class="source-type">需求基线</td><td><span class="tag green">已连接</span></td><td>尚未同步</td><td>59 个 IR</td></tr>
+                  <tr tabindex="0" role="button" data-kind="需求基线" data-title="27.1.X 3 月份版本规划" data-url="https://pingcode.yasdb.com/ship/products/YASHAN/baselines/FamqqMdv/ideas?category=all" data-scope="全部需求" data-count="35 个 IR"><td>27.1.X 3 月份版本规划</td><td class="source-type">需求基线</td><td><span class="tag green">已连接</span></td><td>尚未同步</td><td>35 个 IR</td></tr>
+                  <tr tabindex="0" role="button" data-kind="工单视图" data-title="YDBRD 已筛选缺陷" data-url="https://pingcode.yasdb.com/pjm/projects/YDBRD/defect" data-scope="所选视图" data-count="128 个 SR"><td>YDBRD 已筛选缺陷</td><td class="source-type">工单视图</td><td><span class="tag green">已连接</span></td><td>11 月 12 日 09:30</td><td>128 个 SR</td></tr>
+                </tbody></table></div>
+              </section>
+            </div>
+            <dialog class="source-dialog" aria-labelledby="dialog-title">
+              <header class="dialog-head"><div><h3 class="dialog-title" id="dialog-title">23.6.X 1 月份版本规划</h3><div class="dialog-url">https://pingcode.yasdb.com/ship/products/YASHAN/baselines/y28FbpmM/ideas?category=all</div></div><button class="dialog-close" type="button" aria-label="关闭详情">×</button></header>
+              <div class="dialog-content"><div class="dialog-status"><span>来源详情</span><span class="tag green">已连接</span></div>
+                <div class="dialog-grid"><div class="dialog-metric"><span>来源类型</span><strong class="dialog-type">需求基线</strong></div><div class="dialog-metric"><span>同步方式</span><strong>手动预览并确认</strong></div><div class="dialog-metric"><span>读取范围</span><strong class="dialog-scope">全部需求</strong></div><div class="dialog-metric"><span>任务数量</span><strong class="dialog-count">59 个 IR</strong></div><div class="dialog-metric"><span>最近同步</span><strong>尚未同步</strong></div><div class="dialog-metric"><span>最近结果</span><strong>暂无记录</strong></div></div>
+                <section class="dialog-history"><h4>同步记录</h4><p>运行预览后会先检查差异，确认后才更新任务。</p></section>
+              </div>
+              <footer class="dialog-actions"><button class="btn" type="button">测试连接</button><button class="btn primary" type="button">预览同步</button></footer>
+            </dialog>
+            <div class="empty-state hidden" data-state-panel="empty"><div class="empty-inner"><div class="illustration">＋</div><h3>尚未添加 Pingcode 来源</h3><p>添加需求基线或工单视图，然后预览同步内容。</p><button class="btn primary" type="button"><span class="plus">+</span> 添加 Pingcode 来源</button></div></div>
+            <div class="error-state hidden" data-state-panel="error"><div class="error-inner"><div class="state-label">来源列表</div><span class="state-badge">服务暂不可用</span><h3 style="margin-top:14px">暂时无法读取 Pingcode 来源</h3><p>来源列表尚未加载。本次没有修改任务数据，请重试；持续失败时可查看平台服务诊断。</p><div class="actions"><button class="btn primary" type="button">↻ 重试</button><button class="btn" type="button">查看系统诊断</button></div><div class="system-detail"><span>管理员诊断</span><code>HTTP 404 · 插件接口未部署</code></div></div></div>
+          </div>
+          <div class="prototype-foot"><span>方案 D · 来源表格占满工作区，点击行后弹窗查看详情</span><span>窄屏：表格横向滚动，弹窗适配屏幕宽度</span></div>
+        </div>
+      </div>
+    </section>
+    <p class="scheme-caption">布局取舍：首次使用时把“添加来源”作为唯一主操作；配置完成后把“预览同步”作为唯一主操作。运行状态、差异、冲突裁决和缺图恢复仍保留在现有同步流程中，不以简化布局为由隐藏业务门槛。</p>
+  </main>
+  <script>
+    const states = [...document.querySelectorAll('[data-state]')];
+    const shell = document.querySelector('.sync-shell');
+    const sourceDialog = document.querySelector('.source-dialog');
+    function setState(value) {
+      if (sourceDialog.open) sourceDialog.close();
+      shell.dataset.view = value;
+      shell.querySelector('.source-workspace').classList.toggle('hidden', value !== 'ready');
+      shell.querySelectorAll('[data-state-panel]').forEach(panel => panel.classList.toggle('hidden', panel.dataset.statePanel !== value));
+      states.forEach(button => button.setAttribute('aria-pressed', String(button.dataset.state === value)));
+    }
+    states.forEach(button => button.addEventListener('click', () => setState(button.dataset.state)));
+    const sourceRows = [...document.querySelectorAll('.source-table tbody tr')];
+    const sourceSearch = document.querySelector('.search');
+    const sourceType = document.querySelector('.select');
+    function selectSource(row) {
+      sourceRows.forEach(item => item.classList.toggle('active', item === row));
+      const source = row.dataset;
+      document.querySelector('.dialog-title').textContent = source.title;
+      document.querySelector('.dialog-url').textContent = source.url;
+      document.querySelector('.dialog-type').textContent = source.kind;
+      document.querySelector('.dialog-scope').textContent = source.scope;
+      document.querySelector('.dialog-count').textContent = source.count;
+      sourceDialog.showModal();
+    }
+    sourceRows.forEach(row => {
+      row.addEventListener('click', () => selectSource(row));
+      row.addEventListener('keydown', event => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          selectSource(row);
+        }
+      });
+    });
+    function filterSources() {
+      const query = sourceSearch.value.trim().toLocaleLowerCase();
+      const kind = sourceType.value;
+      sourceRows.forEach(row => {
+        const matchesQuery = row.dataset.title.toLocaleLowerCase().includes(query);
+        const matchesType = kind === '全部类型' || row.dataset.kind === kind;
+        row.hidden = !matchesQuery || !matchesType;
+      });
+    }
+    sourceSearch.addEventListener('input', filterSources);
+    sourceType.addEventListener('change', filterSources);
+    document.querySelector('.dialog-close').addEventListener('click', () => sourceDialog.close());
+    sourceDialog.addEventListener('click', event => {
+      if (event.target === sourceDialog) sourceDialog.close();
+    });
+    document.querySelectorAll('[data-scheme]').forEach(button => button.addEventListener('click', () => {
+      document.querySelectorAll('[data-scheme]').forEach(item => item.setAttribute('aria-pressed', String(item === button)));
+    }));
+  </script>
+</body>
+</html>
