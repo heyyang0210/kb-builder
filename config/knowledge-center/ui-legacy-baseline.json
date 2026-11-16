@@ -22,14 +22,13 @@
       "rawCssColor": 1
     },
     "apps/knowledge-center-web/frontend/knowledge-center/common/table-view-configurator.js": {
-      "rawLucide": 4,
-      "globalIconScan": 1
+      "rawLucide": 4
     },
     "apps/knowledge-center-web/frontend/knowledge-center/common/utils/dom.js": {
       "rawLucide": 1
     },
     "apps/knowledge-center-web/frontend/knowledge-center/knowledge-center-management.html": {
-      "rawLucide": 19
+      "rawLucide": 0
     },
     "apps/knowledge-center-web/frontend/knowledge-center/modules/assets/view.js": {
       "rawLucide": 8
@@ -72,7 +71,7 @@
       "rawCssColor": 1
     },
     "apps/knowledge-center-web/frontend/knowledge-center/modules/platform-admin/pingcode-sync.js": {
-      "legacyIcon": 13
+      "legacyIcon": 7
     },
     "apps/knowledge-center-web/frontend/knowledge-center/modules/platform-admin/platform-admin.css": {
       "rawCssColor": 96
@@ -81,7 +80,7 @@
       "rawLucide": 37
     },
     "apps/knowledge-center-web/frontend/knowledge-center/modules/production/handbook-view.js": {
-      "rawLucide": 26
+      "rawLucide": 25
     },
     "apps/knowledge-center-web/frontend/knowledge-center/modules/production/production-writing-page.js": {
       "legacyIcon": 7,
@@ -91,7 +90,7 @@
       "rawCssColor": 104
     },
     "apps/knowledge-center-web/frontend/knowledge-center/modules/production/view.js": {
-      "rawLucide": 4
+      "rawLucide": 0
     },
     "apps/knowledge-center-web/frontend/knowledge-center/modules/repository/repository.css": {
       "rawCssColor": 2
@@ -103,7 +102,7 @@
       "rawLucide": 20
     },
     "apps/knowledge-center-web/frontend/knowledge-center/modules/templates/view.js": {
-      "rawLucide": 1
+      "rawLucide": 0
     },
     "apps/knowledge-center-web/frontend/knowledge-center/styles.css": {
       "rawCssColor": 220

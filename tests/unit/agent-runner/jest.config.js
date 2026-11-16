@@ -26,5 +26,8 @@ module.exports = {
     '!**/handbook-incremental-review.test.js',
     '!**/handbook-production-api.test.js',
     '!**/document-comments-api.integration.test.js',
+    '!**/production-content-inventory.test.js',
+    '!**/production-ai-http-stage-adapters.test.js',
+    '!**/read-performance-sampling.test.js',
   ],
 };

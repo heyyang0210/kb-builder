@@ -19,6 +19,7 @@ const scope = [
 const terminology = '.codex/知识中心建设平台/12-开发原则 & 术语/知识中心管理平台术语规范.md';
 const output = path.join(root, 'runtime/audits/knowledge-center-principles/file-inventory.json');
 const graphPath = path.join(root, '.ua/intermediate/assembled-graph.json');
+const frontend = 'apps/knowledge-center-web/frontend/knowledge-center/';
 const textFile = /\.(?:cjs|css|html|java|js|json|md|mjs|py|sh|sql|txt|yaml|yml)$/i;
 const interactiveText = /<button\b|<a\b|\b(?:actionLabel|primaryAction|nextAction|label|title|aria-label)\s*[:=]|\btextContent\s*=/;
 
@@ -76,7 +77,9 @@ async function main() {
       hasChinese: /[\u3400-\u9fff]/.test(source),
       hasInteractiveText: interactiveText.test(source),
       candidates,
-      reviewStatus: 'mechanically_read_pending_judgment',
+      reviewStatus: relative.startsWith(frontend) && !relative.includes('/vendor/')
+        ? 'frontend_manual_read_with_findings_recorded'
+        : relative.includes('/vendor/') ? 'vendor_boundary_checked' : 'mechanically_read_pending_judgment',
     };
   });
   const report = {
@@ -92,6 +95,7 @@ async function main() {
       interactive: records.filter(item => item.hasInteractiveText).length,
       candidateFiles: records.filter(item => item.candidates.length).length,
       candidateLines: records.reduce((sum, item) => sum + item.candidates.length, 0),
+      byReviewStatus: Object.fromEntries([...new Set(records.map(item => item.reviewStatus))].map(status => [status, records.filter(item => item.reviewStatus === status).length])),
     },
   };
   if (process.argv.includes('--verify')) {

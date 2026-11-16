@@ -55,7 +55,7 @@ async function main() {
   const catalogPath = path.join(root, platform, 'common/ui-system.js');
   const catalogSource = fs.readFileSync(catalogPath, 'utf8');
   const catalog = await import(`data:text/javascript,${encodeURIComponent(catalogSource)}`);
-  const usages = [...catalogSource.matchAll(/^\s*'([a-z][a-z0-9.]+)':\s*'([a-z][a-z0-9-]*)',?$/gm)].map(match => match[1]);
+  const usages = [...catalogSource.matchAll(/^\s*'([a-z][a-z0-9.-]+)':\s*'([a-z][a-z0-9-]*)',?$/gm)].map(match => match[1]);
   if (usages.length !== new Set(usages).size || usages.length !== Object.keys(catalog.UI_ICONS).length) throw new Error('图标用途重复或格式不正确');
   const current = inventory();
   const baseline = JSON.parse(fs.readFileSync(baselinePath, 'utf8'));
