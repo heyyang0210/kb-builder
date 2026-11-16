@@ -1,6 +1,314 @@
 # 仓库测试入口
 
-DSH 管理员试运行真实 HTTP 与 SDK 验证：`node --test tests/e2e/agent-runner/dsh-sdk-runtime.test.cjs`。使用隔离本地模型端点与任务级 systemd 沙箱，覆盖完成、SSE 回读、取消、工具清单约束和运行产物无密钥明文；需要支持 user systemd 与 user namespace 的本机环境。真实模型短调用和共享实例部署回读另行记录，不由此夹具代替。
+### 2026-11-16T15:28:02+08:00 前端固定场景更新与覆盖采集诊断
+
+当前产品已移除旧增量创建对话框。固定 13 项 HTTP 场景改为生产进展页面，并经隔离 HTTP/Chromium 验证阶段、列表、日历、工作日历、筛选/清空和图表。定向场景发现“清空”按钮无事件处理，已补清除搜索、状态、手册、版本、起止日期并重绘；保持显示模式和阶段筛选。助手抽屉真实生产视图下打开焦点失败，原因是焦点回调早于打开 CSS 的可见帧；将焦点延后至第二动画帧后定向通过。审核工作台旧测试仍查询已删除的创建对话框，已更新为现行生产进展投影契约，定向 Chromium 1/1 通过。
+
+完整固定清单全部场景执行成功：61 源文件、49 导航、22 API 契约、20 PingCode 来源同步、13 生产进展、审核工作台 19/19；诊断覆盖率为行 11553/12357（93.49%）、分支 14039/19110（73.46%）。但采集期间 `app.js` 和平台管理视图发生变化，`completed=true`、`stable=false`、`inputsStable=false`，该轮拒绝采纳，诊断报告 `runtime/coverage-goal/frontend-production-progress-pingcode-verified-20261116/` 不作为正式基线。待输入固定后重新执行完整采集。
+
+15:45 后完整复采因手册历史模式工作区渲染及写作入口旧弹窗夹具失败；运行期间 `app.js`、`handbook-view.js`、`production.css` 也有变化。审核手册渲染定向测试已改为分开验证历史工作区和草稿编辑区并通过；固定写作入口夹具改用当前历史修订选择与“返回编辑”公开 DOM 事件。上述完整运行未完成稳定门禁，不采纳其覆盖数。
+
+### 2026-11-16T14:24:44+08:00 专业 HTML 测试报告 REA 复验
+
+参考 Allure、Playwright HTML Reporter、ReportPortal 和 pytest-html 的运行总览、状态筛选、用例定位、质量概览、离线明细与日志能力。真实 smoke 命令 `python3 tests/run_tests.py smoke --report-page-size 2` 执行 2/2 任务、24/24 用例通过，生成 `runtime/test-results/smoke/20261116-142230-262840-smoke/report.html` 和 12 个场景分页；入口回归 48/48 通过。REA Evidence `ev_d1c2c0dcfeef5962d60a4e2f999e6bc467a69cf869946279cdff97d5bd2929f0` completed/complete，含 Chromium 截图和无障碍树，仅访问回环地址。离线浏览器验证 1440px/390px 搜索、用例深链、无 JS 场景浏览通过，无页面错误或横向溢出。内部评分 9.5/10，性能维度继续扣 0.5 分；不是第三方认证。smoke 未启用覆盖率，平台行 100%/分支 95% 目标仍需单独验收。
+
+PingCode 来源确认后任务管理列表的真实 Storage 回读使用专用入口：
+
+```bash
+python3 tests/run_tests.py pingcode-storage --fail-fast --jobs 1
+```
+
+该入口复用统一 E2E 生命周期：从 `runtime/test-config/yashandb/service.env` 读取仅含 `test_hy` 的隔离数据库配置，持有独占锁，同步并迁移隔离 Schema，启动本次专属 Storage，再执行 `pingcode-task-storage-real.node.cjs` 并清理实例。测试 URL 与 `KC_TEST_ISOLATED_SCHEMA=1` 由 runner 注入；不要手动指定服务地址，也不要直接对 13510、`pf_knowledge` 或 `regress` 执行该写入测试。缺配置、数据库同步/迁移失败或服务启动失败时，入口报告前置失败，不会把场景显示为跳过。配置准备见 [YashanDB 测试配置](config/yashandb/README.md)。
+
+2026-11-16 首次真实运行中，test_hy Schema 复制与结构迁移通过，Storage 实例也正常启动；用例在 `GET /v1/document-tasks/config` 被 `409 DOCUMENT_TASK_MIGRATION_REQUIRED` 阻断，2 项均失败、0 跳过。原因是统一入口未执行旧任务数据迁移及激活，而这两个命令限定个人开发库并要求备份，不能为通过测试而绕过。当前入口已把原先静默跳过变成真实运行和显式失败，但“任务列表数据库回读”仍未验收；须先为专用测试库建立符合迁移规则的已激活状态，再重跑。
+
+### 2026-11-16T14:05:00+08:00 Markdown 渲染器覆盖
+
+生产写作插桩浏览器矩阵覆盖数据库 Markdown 的相对路径、手册/审核资源 URL、代码块语言、缺省值及解析失败回退。定向测试和 61 文件固定全量通过，报告 `runtime/coverage-goal/frontend-markdown-renderer-verified-20261116-1405/` 输入稳定、变更列表为空；行 10482/11685（89.70%）、分支 12248/16489（74.27%）。Markdown 渲染器 27/27 行、40/40 分支；平台整体目标仍未达成。
+
+### 2026-11-16T13:53:21+08:00 平台来源快照覆盖
+
+生产写作浏览器采集新增对 `origin-snapshot.js` 的真实插桩调用，覆盖正常正文、空值、缺省上下文与可选字段回退。独立测试通过；覆盖模式工作台 6/6 通过；一次全量因静态文件请求 `ECONNRESET` 中止后，固定全量重跑成功。报告 `runtime/coverage-goal/frontend-origin-snapshot-recheck-20261116-1350/`：61 个源码文件，行 10475/11685（89.64%）、分支 12223/16489（74.12%），来源快照模块 2/2 行、7/7 分支，`completed/stable/inputsStable=true` 且变更清单为空。全平台覆盖率目标仍未达成。
+
+### 2026-11-16T13:29:47+08:00 审核失败恢复与完整前端复采
+
+审核工作台“我的审核”用例独立复跑通过 1/1。随后使用固定清单重新采集 61 个前端脚本及全部场景，审核套件 19/19；报告 `runtime/coverage-goal/frontend-cleaning-api-error-branches-recheck-20261116-1320/` 的 `completed/stable/inputsStable` 均为 true，源码和输入变更列表为空。行 10460/11685（89.51%），分支 12176/16489（73.84%）；平台覆盖率目标尚未达成。前次失败运行保留作历史，不计覆盖率。
+
+### 2026-11-16T12:44:31+08:00 清洗 API 固定覆盖场景
+
+清洗 API 浏览器覆盖除上传外还需验证工作台、分页列表和批次/数据集详情读取；页码回退、路径编码、自动生成幂等键、分片默认请求头和空批次名均在隔离 HTTP 响应下检查。完整固定覆盖和稳定验收要求见 [TEST_REPORT_DESIGN.md](TEST_REPORT_DESIGN.md)。
+
+读取契约还覆盖索引降级、缺失/非法错误响应、无 `data` 包装体回退及列表/详情默认分页；只有公开可达的 API 路径计入目标。
+
+最新全量诊断中的新增清洗 API 场景均通过；审核工作台 18/19，失败为指派待办行未渲染。运行时 PingCode 产品源码及其测试输入变化，稳定门禁拒收整份覆盖报告；不得将其作为正式覆盖率结果。
+
+### 2026-11-16T12:11:47+08:00 大纲自动保存全量采集夹具
+
+说明字段防抖场景前必须模拟手动保存完成后的详情重载，因为保存会失效当前大纲投影；夹具重置为有效投影后仍须断言只提交最终输入值和当前版本。完整场景及稳定验收要求见 [TEST_REPORT_DESIGN.md](TEST_REPORT_DESIGN.md)。
+
+自动保存成功还会禁用旧 DOM 的保存按钮；夹具 `reset()` 同步模拟重载后新按钮的可用状态，以便继续验证后续失败恢复与重试。
+
+### 2026-11-16T12:08:36+08:00 专业 HTML 报告当前运行复验
+
+当前统一入口在实际测试运行结束后自动生成 `report.html`，同时保留 JSON、Markdown、任务日志和按场景静态分页。业界能力对照采用 Allure 的运行/结果总览、Playwright HTML Reporter 的状态筛选与用例定位、ReportPortal 的质量总览、pytest-html 的离线明细与日志；来源及可访问性限制见 `runtime/rea/professional-test-report/sources.json` 和 `official-repositories.json`。
+
+本轮 `python3 tests/run_tests.py smoke --report-page-size 2` 通过 2/2 任务、24/24 用例；入口回归 `python3 -m unittest tests.unit.root.test_run_tests` 通过 46/46。报告：`runtime/test-results/smoke/20261116-120600-918071-smoke/report.html`。REA 6.7.0 Chromium Evidence `ev_2983427d290062100ad328b119489d8b9d659b47cfbd852cb3dfa727d05e5a9e` 完整无截断，仅观察本机回环报告。桌面/390px 离线导航各 10 次，DCL P95 为 32.2ms/15.0ms；搜索 17 条、用例深链、无 JavaScript 场景分页通过，零脚本错误、外部请求和页面横向溢出。内部七项量表为 9.5/10，评分依据与限制见 `runtime/rea/professional-test-report/ACCEPTANCE.md`；本轮未采集覆盖率，不代表平台覆盖率门槛通过。
+
+### 2026-11-16T11:30:28+08:00 清洗质量结果分支
+
+知识库质量结果分别验证通过、未通过和未提供状态。
+
+大纲治理浏览器场景验证列表搜索/空状态/阶段 URL 同步，以及说明编辑防抖仅提交最终输入值。
+
+### 2026-11-16T10:37:42+08:00 清洗视图兼容与错误态覆盖
+
+固定前端采集在真实隔离清洗 API 场景中验证 `renderCleaning` 的加载、错误、批次/知识库详情、分页、字段别名、缺省值、链接安全、图谱和权限投影，扩大清洗视图分支覆盖而不改覆盖分母。
+
+未知中文状态保留原文；未知非中文状态显示“状态待确认”，回退夹具使用未知英文状态。
+
+清洗视图继续覆盖来源字符串、文件名称回退、空详情和分页首末页按钮禁用状态。
+
+分页首页与末页分别验证上一页/下一页禁用，并断言首页当前页数。
+
+文档范围点击区测量需等待 `.task-scope-dialog[open]` 可见及两帧绘制，再检查 44px 目标。
+
+有文件行但没有名称时显示“未命名”；仅空文件数组显示“暂无文件”。
+
+### 2026-11-16T10:20:26+08:00 来源 Markdown 安全渲染覆盖
+
+任务管理插桩浏览器场景直接覆盖共享来源 Markdown 渲染的默认文本、HTML 转义、安全链接、危险协议拒绝和图片说明转义。输出断言是安全契约，完整固定前端采集纳入该模块计数。
+
+GitLab 连接取消确认只要求没有写请求；后台读取可能并发完成，因此夹具比较非 GET 数量，并在结束时校验各类真实写入的精确计数。
+
+人员导入场景底层可能触发模板映射只读预取；它由本地 HTTP 隔离，允许零次或一次，其余固定读取和导入写入仍精确断言。
+
+### 2026-11-16T09:39:55+08:00 任务详情插桩性能等待
+
+任务详情 30 次性能循环需等待真实请求完成、读取状态清除和打开的详情 DOM 就绪后关闭，再等待关闭完成后继续；网络资源记录出现不能单独作为交互完成信号。性能测量和门槛保持不变，需以插桩真实 HTTP 测试验收。
+
+### 2026-11-16T09:54:18+08:00 审核生产加载态
+
+生产总览加载态只展示大纲读取状态，创建表单在数据加载完成后挂载；测试按当前 DOM 契约断言加载态没有创建表单，并继续覆盖不可用、错误、任务列表和增量工作区状态。
+
+创建对话框夹具通过 `?view=progress` 进入真实包含表单的生产进展视图，继续断言手册选项及基线按钮。
+
+增量输入 `sourceType: manual` 当前真实文案为“人工提供”，来源回退断言按该文案验证。
+
+章节回退夹具按真实 `availableChapters[*].sections` 结构提供 `chapter-a`，保持已选章节计数断言。
+
+空 `generationRun` 按当前渲染契约显示“生成状态待确认”，回退断言使用该真实文案。
+
+发布阶段已有版本时显示“平台版本已发布”，发布权限和版本投影继续验证。
+
+### 2026-11-16T09:26:00+08:00 写作历史入口定位器同步
+
+写作浏览器场景按可访问名称“查看候选与执行过程”定位图标按钮，覆盖双滚动、编辑器复用和知识库移除后的历史恢复；旧 `.handbook-writing-chat-open` 类已不属于产品契约。保持真实 HTTP 请求及原有候选、正文和恢复断言，先定向验证三项场景，再执行完整固定前端覆盖率采集。
+
+### 2026-11-13T21:40:54+08:00 前端模板覆盖夹具导航
+
+模板管理的 `data-template-tab` 仅有 `library`、`mappings`；模板编辑器由选择目录项进入，使用“返回模板库”离开。固定 Istanbul 采集器须遵循真实视图转换，分别在目录视图测页签键盘行为、在编辑器视图测编辑/历史/上传流程，不以不存在的 `editor` 页签跳转。详细场景、伪代码与稳定验收门槛见 [TEST_REPORT_DESIGN.md](TEST_REPORT_DESIGN.md)。
+
+模板库每行有名称入口和“打开”操作两个模板 ID 按钮；固定覆盖夹具通过 `.template-catalog-open[data-template-id]` 明确选择名称入口，避免严格模式下的歧义。
+
+模板搜索结果数量按 `.template-catalog-open[data-template-id]` 统计，一行只计一个模板；勿按操作按钮总数推断模板条数。
+
+元数据取消场景需点 `#template-meta-panel footer [data-template-meta-cancel]`；标题栏另有同属性的关闭按钮，需区分两个行为入口。
+
+模板目录视图没有可调宽度分隔条；不得保留针对 `data-template-list-resizer` 或旧宽度存储键的覆盖断言。键盘场景覆盖当前真实页签及对话框交互。
+
+### 2026-11-13T21:32:54+08:00 模板映射覆盖导航返回目录
+
+完整前端采集已通过历史查看和启停，映射步骤直接访问编辑工作区不存在的“适用文档”页签。产品编辑器需先返回模板库，映射页签才可见。设计已记录真实导航路径；修正后继续固定全量采集。
+
+### 2026-11-13T21:29:57+08:00 模板历史采集步骤同步自动关闭
+
+模板历史产品修复后的定向回归通过；完整采集器随后因仍点击已自动关闭的 `[data-template-history-close]` 报错。设计已记录更新采集器步骤，保留历史版本读取/返回、状态更新和映射检查，再重新完整采集。
+
+### 2026-11-13T21:24:24+08:00 修复模板历史查看的模态层遮挡
+
+前端完整采集已通过审核及增量创建场景，在模板历史回读时确认选择历史版本后历史 dialog 仍保留模态层，挡住编辑器里的“返回当前内容”，导致场景失败。这是实际交互缺陷；设计记录要求成功加载历史版本后关闭历史 dialog，失败时保留上下文。修复后保留原历史回读/返回当前完整场景并继续固定全量采集。
+
+### 2026-11-13T21:20:35+08:00 前端审核夹具剔除不存在的原型控件
+
+完整前端采集在 `exerciseReviewLocalControls` 失败，因为它测试的 `data-incremental-prototype-*` 是夹具虚构控件，当前产品没有对应处理器；现有 E2E 规格反而确认这些原型入口不存在。已记录移除范围，仅清除这组不可执行的旧断言，同时保留审核控件、行锚点和真实生产页签验证；产品覆盖文件分母和固定场景不变。须继续完整稳定复采验收。
+
+### 2026-11-13T21:16:17+08:00 增量任务创建夹具选择真实生产视图
+
+模板导航和写作采用夹具修复后，完整前端采集在增量创建 HTTP 场景失败。产品只在生产进展（`progress`）或任务工作区展示创建按钮；通用导航最后停在“我的生成”，点击一级生产入口不会自动切页。设计已记录应先点击真实 `data-production-overview-tab="progress"`，再执行原完整创建场景。修改后继续固定全量采集，失败运行不计覆盖率。
+
+### 2026-11-13T21:12:48+08:00 写作候选采用夹具按钮选择器更新
+
+模板导航修正后，固定前端全量推进至写作候选采用时失败：夹具等待已移除的 `.handbook-writing-chat-open`。当前生产聊天按钮通过 `aria-label="查看候选与执行过程"` 提供入口。设计文档已记录当前契约与保持候选、503 恢复、成功采用请求断言的方案；更新夹具后需重新跑固定全量，当前失败运行不计覆盖。
+
+### 2026-11-13T21:09:49+08:00 前端模板完整采集导航根因
+
+固定前端全量 `runtime/coverage-goal/frontend-goal-current-20261113-2057/` 为 `completed=false`、`stable=false`、`inputsStable=false`，其中 `styles.css` 在运行中变化，结果无效。核对模板管理实际 DOM 后发现页签只有模板库 `library` 与适用文档 `mappings`；编辑器通过选中模板或新建进入。覆盖采集器却将 `editor` 当作页签，通用导航和专用模板流程均违反当前契约。已在设计文档记录修复伪代码和稳定性验收门槛；更新采集器后须完整固定清单复采，只有稳定全量结果才计数。
+
+### 2026-11-13T21:06:09+08:00 专业 HTML 测试报告 REA 当前工作树验收
+
+行业能力参考 Allure（运行概览、结果分布、失败证据）、Playwright HTML Reporter（用例状态筛选和定位）、ReportPortal（质量总览）、pytest-html（离线逐项明细与日志）。当前报告提供中文总览、结果分布、失败与阻塞、按场景分页、跨场景搜索/状态筛选、用例深链、原始 JSON、任务日志和可选覆盖率门禁。未采集趋势、重试、附件或覆盖率时均明确显示未提供，不猜测补齐。
+
+`python3 tests/run_tests.py smoke --report-page-size 2` 通过 2/2 个任务、24/24 用例（Jest 22/22、Python unittest 2/2），HTML 报告为 `runtime/test-results/smoke/20261113-210256-829462-smoke/report.html`。统一入口回归 `python3 -m unittest tests.unit.root.test_run_tests` 为 46/46。REA Chromium Evidence `ev_53ff66f69051531e0298239c75d365bd44e0bf9a8fd91887058af88cb75e8ab1` 完整无截断；390px 浏览器搜索匹配 17 条、深链、场景分页、无 JavaScript 浏览通过，无页面横向溢出和脚本错误。七项内部质量量表 9.5/10，性能项保留 0.5 分扣减；这不是第三方认证，也不代表平台覆盖率目标已达成。Evidence、截图、验证输入及评分限制见 `runtime/rea/professional-test-report/`。
+
+### 2026-11-13T20:57:11+08:00 PingCode 多来源主来源决策覆盖
+
+固定夹具 `StoragePingcodeTaskHttpCheck primary-decision` 通过公开 `/confirm` HTTP 接口验证多个有效任务来源没有主来源时返回 409 `PRIMARY_SOURCE_DECISION_REQUIRED`，并断言无提交、无任务写入、运行仍待确认。完整 Java JaCoCo `runtime/coverage-goal/java-pingcode-primary-decision-20261113/` 退出 0，15 个源码文件稳定；行 5006/5072（98.70%）、分支 3176/3846（82.58%）。对比上一稳定报告增加 1 行、2 分支；Java 尚差 66 行及 478 个门槛分支，Node、前端与平台目标未达成。
+
+### 2026-11-13T20:45:31+08:00 PingCode 来源输入拒绝边界覆盖
+
+`StoragePingcodeTaskHttpCheck crud` 经公开 HTTP 接口覆盖来源新增和更新的名称、类型、产品类型、URL、连接 ID、操作者非法输入；每次拒绝均断言 422 `PINGCODE_SOURCE_INVALID`，来源写入数与修订号保持不变，随后合法 CRUD 仍成功。完整固定 JaCoCo `runtime/coverage-goal/java-pingcode-source-input-boundaries-20261113/` 退出 0，15 个产品源码文件稳定（`stable=true`、`changedFiles=[]`），行 5005/5072（98.68%）、分支 3174/3846（82.52%）。相较同源稳定报告行增加 1、分支增加 17；Java 尚缺 67 行，达到 95% 分支仍差 480 项。Node、前端及平台目标未达成。
+
+### 2026-11-13T20:30:38+08:00 PingCode 读取路由稳定全量验收
+
+`StoragePingcodeTaskHttpCheck` 经公开 Storage HTTP 接口覆盖来源任务分页、来源快照、运行项分页、运行快照和未关联 IR 空结果，验证读取不增加任务或来源写入。完整 JaCoCo `runtime/coverage-goal/java-current-read-routes-20261113-2025/` 退出 0，15 个源码文件输入稳定；行 5004/5072（98.66%）、分支 3157/3846（82.09%）。仍缺 68 行，分支达到 95% 还差 497 项；平台 Node、前端、Java 的行 100% / 分支 95% 目标尚未达成。
+
+### 2026-11-13T20:24:30+08:00 Java PingCode 来源投影与当前 REA 报告证据
+
+`StoragePingcodeTaskHttpCheck` 的隔离 JDBC 状态机现覆盖来源列表中产品类型/已确认任务数投影，并在运行记录中回读新增、更新和未变化计数，使 `/preview?view=updated` 的总数与逐条记录一致。固定 Java JaCoCo 全量 `runtime/coverage-goal/java-current-recheck-20261113-2015/` 退出 0，输入稳定，15 个产品文件行 4941/5072（97.42%）、分支 3136/3846（81.54%）。Java 与平台行 100%、分支 95% 目标仍未达成。
+
+最新真实 smoke `python3 tests/run_tests.py smoke --report-page-size 2` 为 2/2 任务、24/24 用例通过，HTML 为 `runtime/test-results/smoke/20261113-202358-453799-smoke/report.html`。REA Evidence `runtime/rea/professional-test-report/current-smoke-rea-evidence-20261113-2024.json` ID `ev_70288384497e3534824430941b81387cddfc3a3ed105cbc5d93cdc53d39cb31e` completed/complete，无截断；仅观察本机报告并捕获 Chromium 截图和无障碍树。本次 smoke 未启用覆盖率。报告交互及内部 9.5/10 评分依据和限制见 `runtime/rea/professional-test-report/ACCEPTANCE.md`。
+
+### 2026-11-13T20:05:43+08:00 生产总览导航契约修正
+
+生产总览通用采集现在按真实页面遍历手册、生产进展、我的生成三个标签；`tasks` 是 taskId 详情路由，不是标签。此前复采期间 `app.js` 输入变化，稳定性报告为 false，不能报告覆盖结果。
+
+### 2026-11-13T20:03:20+08:00 权限保存状态验收顺序
+
+权限角色场景的“权限已保存”按产品行为持续展示，切换用户后清除。固定覆盖夹具现将状态清除断言放到账号切换后，保留保存成功及只读/过期/筛选边界检查。尚无本轮完整稳定覆盖率结果。
+
+### 2026-11-13T19:56:04+08:00 PingCode 来源同步场景更新
+
+固定前端采集中的 PingCode 场景已从旧版详情/连接测试流程调整为当前来源工作区同步流程，继续使用本机隔离 HTTP 覆盖来源创建、失败恢复、冲突预览、确认和缺图重试。所有先前失败复采均未生成有效完整覆盖率报告；继续修复并重跑固定全量清单。
+
+### 2026-11-13T19:51:00+08:00 任务管理导航权限条件修正
+
+固定覆盖导航中的通用任务管理页面以普通账号运行，`任务配置` 按产品权限仅管理员可见。通用采集导航现验证任务列表、次要事项和流程流转；管理员配置由独立真实 HTTP 浏览器套件覆盖。完整前端复采继续进行，未完成证据不计覆盖率。
+
+### 2026-11-13T19:48:00+08:00 在线审核覆盖夹具同步
+
+固定前端复采中的在线审核场景已按当前 DOM/交互契约调整：审核人用 select；前置条件不满足时提交按钮应禁用且不发请求；有效提交的网络失败和空响应仍验证错误聚焦、按钮恢复及请求载荷。此前失败运行均未生成可用覆盖率结果，正在继续完整复采。
+
+### 2026-11-13T19:46:00+08:00 前端范围表单覆盖夹具
+
+固定前端完整采集进一步发现增量任务范围夹具用 textarea 模拟文档 ID，但产品表单处理器读取的是已选文档复选框。夹具现按真实 DOM 契约构造三个已选文档，并保持章节、语言、失败重试、幂等键和载荷断言。完整采集尚未完成，不报告覆盖增量。
+
+### 2026-11-13T19:45:29+08:00 覆盖率全量复采前置修复
+
+当前前端固定采集发现两处过期测试契约：生产总览旧标签 `versions` 已由 `handbooks/progress` 替代；写作采纳失败状态文案已从“采用未完成”更新为“保存未完成”。采集器导航已跟随当前 DOM 标签，真实 HTTP 写作场景断言更新为当前文案，同时保留失败后候选、重试和成功请求校验。完整固定前端复采仍在进行，未完成报告不计覆盖率；最终需以完整稳定采集为准。
+
+### 2026-11-13 知识中心前端体验审查证据
+
+前端体验评分与问题清单见 `.codex/知识中心建设平台/09-审查与复盘/知识中心-前端体验问题清单与评分基准.md`。固定 E2E 报告 `runtime/test-results/e2e/20261113-164418-092649-e2e/details/report.json`：350 个浏览器测试实例中 300 通过、44 失败、6 跳过；Chromium/Firefox 对同一场景的失败分别计数，不能据此认定有 44 个独立产品问题。隔离浏览器证据不替代四角色真实登录验收；13510 未认证请求为 401，相关体验结论保持待验证。
+
+2026-11-13：`knowledge-center-my-work.node.test.cjs` 覆盖工作台状态/窄屏、任务管理窄屏关键字段、资料清洗批次与数据集分页、未知状态/时间提示和显式失败重试；`test_dataset_pagination.py` 覆盖 `/api/datasets` 分页及旧全量响应兼容。
+
+2026-11-13：`tests/unit/agent-runner/document-tasks-frontend.test.cjs` 校验任务管理工作区桌面和 390px 窄屏主操作、返回、范围弹窗操作及快捷改派的实际点击高度至少 44px。
+
+2026-11-13：PingCode 来源插件浏览器测试覆盖来源新增、配置、方案 C 状态开关（ARIA 状态、Space 键、revision、失败恢复）、“更多”菜单受保护删除、独立“已同步内容”列、同步差异分类及汇总、完整 Markdown 章节阅读、无运行状态列、确认/缺图重试、5 秒短提示、迟到响应隔离、微软雅黑计算字体和 390px 窄屏布局；详情弹窗已移除。`StoragePingcodeTaskHttpCheck crud` 通过隔离 JDBC 对 Storage HTTP handler 验证来源写入、产品类型更新、冲突、revision、状态门禁、删除保护以及 `created/updated/removed` 差异分类分页。Node `previewRun` 必须接受与 Storage 相同的 `current/created/updated/removed/conflicts` 枚举；未知值返回 `PINGCODE_PREVIEW_VIEW_INVALID`。真实 13510 页面可读，但未认证会话访问受保护的来源 API 会返回 `AUTH_REQUIRED`；企业同步和人工确认需使用有权限的管理员会话验收。大纲分工布局测试使用 13510 的真实数据/API 和工作树 `outlines.css`，核验桌面及 390px 的目录、过滤器和分派操作高度至少 44px。
+
+### 2026-11-13T09:27:56+08:00 专业 HTML 报告最终 smoke 验收
+
+最新真实 `smoke --report-page-size 2` 为 2/2 任务、24/24 用例通过，报告 `runtime/test-results/smoke/20261113-091914-942932-smoke/report.html`；入口回归 `python3 -m unittest tests.unit.root.test_run_tests` 为 46/46。REA Chromium Evidence `ev_97afb20ecbbe1bb4e72ea65322a90108c7beb40262a7ebfb3b9a1f9757fb707f` 完整。桌面/390px 离线导航各 10 次，DCL P95 17.1ms/15.5ms；跨场景搜索、深链、无 JS 分页及窄屏表格方向键/Home/End 滚动通过，零外部请求、脚本错误和页面横向溢出。内部报告评分 9.5/10，性能限制和评分边界见 `runtime/rea/professional-test-report/ACCEPTANCE.md`；本次未采集覆盖率，不代表平台覆盖率门槛通过。
+
+### 2026-11-13T09:15:49+08:00 专业 HTML 报告 REA 验收与键盘可用性
+
+真实 smoke `python3 tests/run_tests.py smoke --report-page-size 2` 为 2/2 任务、24/24 用例通过（Jest 22/22，Python unittest 2/2），报告 `runtime/test-results/smoke/20261113-091433-539144-smoke/report.html`。新增表格区域方向键 48px 横向滚动和 Home/End 两端定位。定向入口回归 `python3 -m unittest tests.unit.root.test_run_tests` 为 46/46。
+
+REA Chromium Evidence `ev_b6fac42ae0b9cd74a95f1300862a05ef364c1abb4ed65efa7e34d78348638356` 完整，原始记录 `runtime/rea/professional-test-report/current-smoke-rea-evidence-20261113-091433.json`。离线 Chromium 1440px/390px 各 10 次导航，DCL P95 为 19.8ms/16.4ms，搜索命中 17 条、用例深链和无 JS 静态分页通过；390px 键盘左右滚动、Home/End 及场景明细表横向滚动通过。零脚本错误、外部请求和页面横向溢出。内部评分 9.5/10，评分量表和 Allure、Playwright HTML Reporter、ReportPortal、pytest-html 能力映射见 `runtime/rea/professional-test-report/ACCEPTANCE.md`；不是第三方认证，也不代表平台覆盖率门槛已达成。
+
+### 2026-11-13T07:51:09+08:00 专业 HTML 报告最新 REA 验收
+
+真实 smoke 为 2/2 任务、24/24 用例通过，最新总览 `runtime/test-results/smoke/20261113-074912-988667-smoke/report.html`。仓库固定 REA CLI 的受控 Chromium Evidence 为 `ev_210f466d5d347d920337a8e1b4512123ddd9c1c67802c3bbaa1b4beebb1778c4`，状态 completed、完整性 complete；只访问本机报告。报告内部评分 9.5/10，性能项保留半分扣减；评分不是第三方认证，也不代表平台覆盖率目标达成。评分明细、Allure/Playwright/ReportPortal/pytest-html 能力映射及大样本交互验收见 `runtime/rea/professional-test-report/ACCEPTANCE.md`。
+
+### 2026-11-13 Node 文档任务关系存储适配器 HTTP 覆盖
+
+`document-task-relational-read-http.test.js` 以真实本机 HTTP 请求穿过文档任务公开路由和 `createDocumentTaskRelationalStore`，由隔离 storage 响应器验证查询编码、默认/可选参数、配置及任务写入幂等头、来源/变更路径、NOT_FOUND 转空值和其他错误传播。定向 Jest 3/3 通过，模块定向覆盖为 23/23 行、17/17 分支，报告 `runtime/coverage-goal/document-task-relational-adapter-directed/`。该局部结果尚未计入稳定全量 Node 基线；固定清单与平台整体行 100%、分支 95% 目标仍需完整稳定复采确认。
+
+### 2026-11-13 全量 HTML 报告验收
+
+完整入口 `python3 tests/run_tests.py full --coverage --jobs 1 --report-page-size 50` 已生成 `runtime/test-reports/2026-11-13/20261113-064013-281056-full/report.html`。80 个任务中 77 个成功，HTML 总览记录 4057 条用例（3977 通过、40 失败、40 跳过）及逐场景分页、失败日志和覆盖率明细。三端输入稳定，但覆盖率为 Node 17144/17439 行、17801/20300 分支，前端 9930/10957 行、11469/15320 分支，Java 4814/4867 行、3001/3609 分支；平台行 100%、分支 95% 门槛仍未达成。E2E 和性能失败均保留在报告中。
+
+### 2026-11-13 前端公共 UI 系统契约覆盖
+
+固定 Chromium 会话新增 `common/ui-system.js` 公共契约场景，覆盖完整图标映射、action 图标按钮启用/禁用、普通按钮显式禁用、按钮变体、输入转义及非法输入拒绝。完整稳定报告 `runtime/coverage-goal/frontend-ui-button-disabled-20261113-final/` 显示 59 个产品脚本、1286 个跟踪输入稳定（`completed/stable/inputsStable=true`，变更清单为空）；行 9930/10957（90.62%）、分支 11465/15320（74.83%）。相较前一稳定报告增加 2 行、2 个分支。前端尚缺 1027 行，达到 95% 分支至少还需覆盖 3099 项；Node、Java 与平台总目标仍未达成。
+
+### 2026-11-13 PingCode 图片资源元素类型拒绝
+
+真实隔离 JDBC HTTP 边界场景为合法分页注入非对象图片资源元素，验证返回 422 `PINGCODE_RESOURCE_INVALID`、无分页/工单/资源持久化影响，随后继续合法分页成功。完整固定 Java JaCoCo `runtime/coverage-goal/java-resource-element-invalid-20261113b/` 退出 0，15 个源码文件输入稳定；行 4812/4867（98.87%）、分支 2982/3609（82.62%），较前一同分母报告增加 1 个分支，命中 `PingcodeTaskRepository.java:853`。Java、Node、前端覆盖率尚未达到行 100% / 分支 95% 平台目标。
+
+### 2026-11-13T02:36:21+08:00 Java 文档写入回放损坏结果补测
+
+隔离 JDBC 的真实 `/v1/document-tasks` HTTP 夹具先完成配置和任务写入及幂等回放，再分别注入数组格式的损坏配置回放结果和非法 JSON 任务写入结果。配置重复 PUT 返回 422 `DOCUMENT_TASK_CONFIG_INVALID`，写入结果 GET 返回 422 `DOCUMENT_TASK_RESULT_INVALID`；两者均断言版本与提交次数不变，并在请求后恢复合成状态。完整 15 个 Java 产品源码 JaCoCo 采集 `runtime/coverage-goal/java-write-replay-invalid-20261113/` 输入稳定（`changedFiles=[]`），行 4812/4867（98.87%）、分支 2981/3609（82.60%），较同分母 `java-document-nonsr-20261113` 增加 2 行、2 分支。Java 尚缺 55 行，达到 95% 分支尚差 448 项；Node、前端和平台总门槛仍未完成。
+
+### 2026-11-13 HTML 报告首屏脚本加载
+
+交互脚本现在在静态报告 `window.load` 后加载，页面首屏不等待搜索/筛选代码或启动器资源；搜索仍按需读取全局用例索引。回归覆盖延迟加载、不预加载及恶意用例文本转义，并以 3,469 条用例报告复核首屏性能、离线交互与无 JavaScript 场景。
+
+### 2026-11-13T01:54:39+08:00 Java 迁移索引、PingCode 边界与非 SR 读取补测
+
+公开 `Main.main("migrate")` 的隔离 JDBC 命令覆盖等价索引跳过与非等价索引拒绝；真实 PingCode HTTP 覆盖非法工单/READY 资源暂存和 FAILED→FAILED→READY 资源恢复；真实文档任务 GET 验证非 SR 任务 `ir=[]` 且不查 SR 关系。固定 15 文件 JaCoCo `runtime/coverage-goal/java-document-nonsr-20261113/` 退出 0、输入稳定，行 4810/4867（98.83%）、分支 2979/3609（82.54%）。较本轮开始同分母净增 20 行、24 分支；Java 仍缺 57 行，95% 分支至少差 450 项。平台 Node、前端、Java 的 100%/95% 总目标仍未达成。
+
+### 2026-11-13T01:37:49+08:00 Java 文档任务筛选与分页补测
+
+真实 `/v1/document-tasks` HTTP 夹具新增负责人、产品、版本、来源类型、状态、关键词组合筛选，验证 SQL 条件与参数绑定；`/mine` 合法数值页码及列表越界页码也经真实请求验证。固定 15 文件 JaCoCo `runtime/coverage-goal/java-document-pages-20261113/` 退出 0、输入稳定，行 4790/4867（98.42%）、分支 2955/3609（81.88%）。相对上一轮稳定报告净增 10 行、14 分支；Java 仍缺 77 行，95% 分支目标至少差 474 项。平台 Node、前端、Java 的 100%/95% 总目标尚未完成。
+
+### 2026-11-13T01:29:43+08:00 Java 文档任务索引与异常读取补测
+
+隔离 JDBC 的真实 `/v1/document-tasks` HTTP 夹具新增嵌套手册、文档负责人、审核任务索引写入及三种非法索引拒绝；还验证配置缺行、损坏配置与损坏任务正文的错误响应和恢复。固定 15 文件 JaCoCo 报告 `runtime/coverage-goal/java-document-read-invalid-20261113/` 退出 0、输入稳定，行 4780/4867（98.21%）、分支 2941/3609（81.49%）。相对 `java-task-aggregate-protection-20261113` 同分母净增 6 行、12 分支；Java 尚缺 87 行，达到 95% 分支至少差 488 项。平台三端目标仍未达成。
+
+### 2026-11-12T23:32:52+08:00 PingCode 来源失败恢复覆盖
+
+固定前端浏览器场景新增来源列表读取 503 后重试、登记 503 后保留表单并重试、连接检查 503 后恢复。定向真实浏览器 8 阶段通过；完整稳定报告 `runtime/coverage-goal/frontend-pingcode-errors-20261112-2340/` 退出 0，59 产品脚本、1286 输入稳定。前端总量为 9908/10957 行（90.42%）、11444/15320 分支（74.69%）；插件模块为 149/184 行、218/314 分支。前端距离行 100% 仍缺 1049 行，达到分支 95% 至少需再覆盖 3110 项；平台总目标仍未完成。
+
+### 2026-11-12T23:20:53+08:00 全局通知前端覆盖续作
+
+固定浏览器采集新增站内通知的真实点击与隔离 HTTP 场景：未读展示、标记已读、空列表、服务失败和重试。完整稳定报告 `runtime/coverage-goal/frontend-notifications-current-20261112-2325/` 退出 0，59 产品脚本、前后输入哈希一致；`app.js` 行 3844/4618、分支 2934/4474。前端总量为行 9902/10957（90.37%）、分支 11436/15320（74.64%）；仍缺 1055 行，达到 95% 分支至少还差 3118 项。平台三端总目标尚未达成。
+
+### 2026-11-12T23:03:00+08:00 PingCode 插件纳入前端完整采集
+
+固定前端 Istanbul 采集新增插件页本机隔离 HTTP 场景，真实浏览器完成来源登记、连接检查、预览、主来源选择、确认和缺图重试，并验证幂等键及确认载荷。`runtime/coverage-goal/frontend-pingcode-current-20261112-2300/` 完整采集退出 0；59 个产品脚本、1286 个输入稳定，`completed/stable/inputsStable=true`。`pingcode-sync.js` 从 0 增至 143/184 行、211/314 分支；前端全量为 9867/10957 行（90.05%）、11394/15320 分支（74.37%）。仍缺 1090 行，达到 95% 分支至少需再覆盖 3160 项；Node、Java 和前端均未达到平台最终门槛。
+
+### 2026-11-12T22:48:21+08:00 当前前端完整稳定覆盖率基线
+
+`runtime/coverage-goal/frontend-current-verified-20261112-2248/` 的完整 Istanbul 采集退出 0；59 个产品脚本、1285 个采集输入在前后哈希一致，`completed/stable/inputsStable=true`，变更清单为空。覆盖率为行 9723/10957（88.73%）、分支 11178/15320（72.96%）；离 100% 行还差 1234 行，达到 95% 分支至少差 3376 项。主要缺口是 `app.js` 808 行、`pingcode-sync.js` 184 行（0 覆盖）、文档任务视图 63 行、写作页 57 行。完整采集前修复 GitLab 测试抽屉关闭步骤和审核工作台旧文案/键盘步骤；审核 19/19 通过。Node 和 Java 需按各自当前完整产品分母独立达标，平台目标尚未完成。
+
+### 专业 HTML 测试报告与业界参考
+
+实际运行 `python3 tests/run_tests.py smoke`（或 `unit`、`e2e`、`full` 等）后，终端输出本次 `report.html` 路径。总览显示任务与用例数量、成功/失败/跳过、失败诊断、场景、覆盖率门禁、耗时最长任务与用例；场景明细静态分页，全局检索每页 50 条并可直达用例及日志。报告可离线打开；未启用 JavaScript 时仍能浏览场景分页。交互脚本异步加载，不阻塞静态总览首屏；`--report-page-size` 调整场景静态页大小，不改变检索的 50 条分页。
+
+参考 [Allure Report](https://allurereport.org/docs/features/) 的运行概览与失败证据、[Playwright HTML Reporter](https://playwright.dev/docs/test-reporters#html-reporter) 的筛选与定位、[ReportPortal](https://reportportal.io/docs/dashboards-and-widgets/) 的质量总览、[pytest-html](https://pytest-html.readthedocs.io/en/latest/user_guide.html) 的可分享离线报告。仓库内 REA Skill 为 `.codex/plugins/rea/skills/reverse-engineer-anything/SKILL.md`；上一轮的 Allure 浏览器 Evidence、官方来源抓取记录及受限页面说明在 `runtime/rea/professional-test-report/`。本次没有重新连接 REA 服务，未将未抓取到的官网内容当成已验证事实。
+
+报告内部量表为 9.5/10（非第三方认证）：数据可信 2、失败定位 2、检索导航 2、视觉层级 1.5、无障碍与移动端 1、离线与性能 0.5、可追溯 0.5。`runtime/test-results/report-pagination-review-20261112/` 中 125 条离线样本验证了检索跨 3 页、失败筛选、桌面/390px 无溢出及首屏采样低于 100ms；大型报告性能仍需单独验收。此评分不表示平台行覆盖率 100% / 分支覆盖率 95% 已达标。
+
+2026-11-13 当前代码复验：统一入口单测 45/45；真实 smoke 2 个任务、24/24 用例通过，最新报告为 `runtime/test-results/smoke/20261113-042706-758997-smoke/report.html`。重建 3,469 条历史结果后，离线桌面/390px 搜索可访问全部 335 条匹配（7 页，末页 35 条），末条可深链；无脚本错误、外部请求或横向溢出。大样本导航 DCL/load P95 为 19.1/23.3ms、70.3/70.9ms；内部报告功能评分 9.5/10，其中性能项 0.5/1。完整记录见 `runtime/rea/professional-test-report/ACCEPTANCE.md` 与 `tests/TEST_REPORT_DESIGN.md`。
+
+### 2026-11-12T21:59:08+08:00 Java 当前完整产品分母复采
+
+当前 Java 产品源码为 15 文件。首次 JaCoCo 完整采集在 `StorageDomainReadHttpCheck` 删除候选大纲时连接提前关闭；定向复现表明夹具仍匹配旧三列审计记录查询，而当前产品查询新增 `PAYLOAD` 列。修正夹具查询匹配并在反射异常时输出根因后，定向真实 HTTP 场景通过。把已有五个任务/PingCode 领域夹具及新的隔离 JDBC 真实文档任务、PingCode 来源/运行/分页/预览 HTTP 夹具纳入固定采集后，完整报告 `runtime/coverage-goal/java-pingcode-confirm-boundary-20261113/` 退出 0，`source-stability.json` 为 stable=true、changedFiles=[]；行 4248/4867（87.28%）、分支 2585/3609（71.63%），较最初同分母报告净增 733 行、486 分支。剩余主要缺口为 PingCode 成功确认与资源流程及逐任务迁移；旧 9 文件报告不得作为当前平台验收。`test_hy` 是同步副本，未运行只允许个人库的逐任务数据迁移命令。
+
+### 2026-11-12T21:50:32+08:00 DSH 遗留运行与代理拒绝覆盖续验
+
+现有真实 HTTP/SDK E2E 增加遗留 `running` 记录经管理员运行详情 API 读取后持久化为 `interrupted`，以及运行中 Unix socket 模型代理拒绝 GET 为 403 且不转发上游。原生 E2E 1/1、定向 Jest DSH 1/1 通过；固定 202 文件串行完整报告 `runtime/coverage-goal/node-dsh-recovery-proxy-serial-20261112/` 为 201 套通过/1 跳过、2976 项通过/8 跳过，910 个输入稳定。Node 行 17125/17439（98.19%）、分支 17787/20300（87.62%）；DSH 模块 166/168 行、85/112 分支。平台三端目标仍未达成。
+
+### 2026-11-12T21:25:02+08:00 DSH 试运行模型配置拒绝场景
+
+`dsh-sdk-runtime.test.cjs` 通过现有隔离真实 HTTP 入口验证缺少模型密钥和带查询参数的模型地址均返回 422 `DSH_MODEL_UNAVAILABLE`，拒绝后恢复合法模型继续原有完成、SSE 和取消流程。该套件仍由 `native-contract-coverage.test.js` 接入 Jest 覆盖清单；验收数字以实际执行结果和完整稳定采集为准。
+
+原生 E2E 1/1、Jest 桥接 96 通过/5 跳过。固定 202 文件串行完整采集 `runtime/coverage-goal/node-dsh-model-validation-serial-20261112/`：201 套通过/1 跳过、2976 用例通过/8 跳过，910 个输入稳定；Node 行 17122/17439（98.18%）、分支 17785/20300（87.61%）。DSH 适配器为 163/168 行、83/112 分支。并行 4 worker 首次复采有 6 套超时失败，仅作诊断，不代替上述有效结果。平台三端目标仍未达成。
+
+### 2026-11-12T21:19:00+08:00 DSH 真实 HTTP/SDK 纳入 Node 固定覆盖清单
+
+原 `dsh-sdk-runtime.test.cjs` 由真实平台 HTTP API、隔离模型服务与任务级 systemd 验证完成、SSE 和取消；由于独立 `.test.cjs` 不在 Jest 分类中，产品适配器原先仅 58/168 行被采集。冷启动历史记录可超过 15 秒，隔离 E2E 的等待和运行预算扩展为 60 秒，显式测试超时 90 秒；产品 100ms 页面要求不变。现通过 `native-contract-coverage.test.js` 桥接复用同一契约，桥接保留 `assert(condition)` 可调用语义。原生 E2E 1/1、桥接完整套件 96 通过/5 条条件跳过。`runtime/coverage-goal/node-dsh-http-20261112-2113/` 的 202 文件完整 Jest 采集退出 0，201 套通过、1 套跳过，2976 项通过、8 项跳过；910 个受跟踪输入前后 SHA-256 一致，160 个产品文件行 17120/17439（98.17%）、分支 17783/20300（87.60%）。较上一稳定同分母报告净增 104 行、57 分支；DSH 适配器为 161/168 行、81/112 分支。Node 仍缺 319 行，达到 95% 分支至少需再覆盖 1502 项；前端与 Java 当前稳定全量仍待重采，平台目标未达成。
+
+### 2026-11-12T21:05:19+08:00 当前 Node 完整稳定基线
+
+统一入口发现的 202 个 Jest 文件以固定清单和完整 Node 产品源码分母采集；`runtime/coverage-goal/node-current-20261112-2056/` 中 201 套通过、1 套跳过，2975 项通过、8 项跳过，Jest 退出 0。`source-stability.json` 记录 910 个受跟踪应用、包、测试及配置输入前后 SHA-256 一致，`completed=true`、`stable=true`。160 个产品文件行 17016/17439（97.57%），分支 17726/20300（87.32%）；仍缺 423 行，分支达到 95% 至少还缺 1559 项。最大行缺口为 DSH 适配器 110 行、知识中心路由 80 行、任务路由 75 行、PingCode 同步服务 57 行。此前 `node-current-20261112-2048` 输入稳定但有 1 条任务文案旧断言失败，只用于诊断。DSH 独立 E2E 当前真实 HTTP 运行在等待完成状态时超时，不能据此声称该适配器已通过端到端验收或已计入 Jest 覆盖。前端和 Java 仍需当前完整稳定复采；平台行 100% / 分支 95% 目标未完成。
+
+### 2026-11-12T20:35:32+08:00 GitLab 验证结果存储覆盖续验
+
+数据库配置模式真实 HTTP 套件 `gitlab-verification-database-http.test.js` 增加原子替换失败、临时文件清理、旧结果保留及重试场景，并验证旧连接字段指纹和默认路径缺文件行为。定向 7/7 通过；`runtime/coverage-goal/gitlab-verification-atomic-directed/coverage-summary.json` 中目标产品模块为 22/22 行、13/13 分支。该单模块结果不代表 Node 全量或平台三端达到行 100% / 分支 95% 门槛。
+
+DSH 管理员试运行真实 HTTP 与 SDK 验证：`node --test tests/e2e/agent-runner/dsh-sdk-runtime.test.cjs`。使用隔离本地模型端点与任务级 systemd 沙箱，覆盖完成、SSE 回读、取消、工具清单约束和运行产物无密钥明文；需要支持 user systemd 与 user namespace 的本机环境。缺少可用的 `systemd --user` 会话时，测试会显式标记为跳过；在具备该能力的 CI/主机上必须执行真实沙箱测试。真实模型短调用和共享实例部署回读另行记录，不由此夹具代替。
 
 系统治理首页布局回归：`NODE_PATH=runtime/agent-runner/node_modules node --test tests/e2e/agent-runner/platform-governance-layout.test.cjs`，使用正式渲染函数与样式检查桌面/窄屏、正常/告警状态、数据库管理入口和无横向溢出；截图输出到 `runtime/test-results/platform-governance-layout/`。
 
@@ -420,9 +728,13 @@ Node 测试中的文件 watcher 必须 `unref` 或显式关闭；会修改共享
 
 ## 文档生产与审核入口性能专项
 
+生产进展单页视图：`production-progress-workspace.spec.js` 通过浏览器验证列表/日历/图表切换、阶段筛选、任务摘要、任务列表不重复读取、2026 官方工作日历、2025 未配置日期性质、桌面/窄屏布局和点击至画面稳定的 100ms 门槛。年度日历的真实 HTTP 权限与来源契约由 `production-work-calendar-http.test.js` 验证，配置解析由 `work-calendar.test.js` 验证，视图契约由 `knowledge-center-incremental-view.test.js` 覆盖。浏览器夹具仅模拟增量任务列表；日历 API 使用实际知识中心后端，账号与资产数据不作为本用例结论。
+
 `incremental-read-performance.test.js` 通过真实 HTTP 验证 Storage 等待不阻塞网关、逐请求新快照、详情与差异异步读取及权限保留；与 review-workbench-contract、incremental-build-api 和源码性能门禁共同执行。`tools/repository/profile-knowledge-center.cjs` 是独立只读浏览器审计，需显式 KPG_BASE_URL，输出冷/暖刷新、侧栏切换、个人生成、审核正文、资源、长任务和接口状态。KC_PERF_CPU_RATE 控制 CPU 降速，KC_PERF_CHECK_BEHAVIOR=1 检查标签延迟请求及 context 刷新保留正文；接口失败/仓库失败/页面错误均判失败。旧独立生成器只测外壳，不能计为业务就绪。该审计不替代既有性能门禁和统一隔离写入型 E2E。
 
 AI 生产补充验证：`production-ai-service.test.js` 验证人工采用及后续保存保留生成元信息、旧依据失效；`handbook-production-api.test.js` 通过隔离 HTTP/MCP 与 Chromium 验证资料拉取预览、显式勾选、冻结来源传给模型、上下文隔离、来源地址限制、重定向及读取错误。真实 MCP 只读探测证据位于 `runtime/test-results/production-ai-sources/real-source-result.json`；隔离来源测试不等于 PingCode、用例库或真实模型验收。
+
+AI 写作来源回归：`production-origin-snapshot.node.test.cjs` 验证未匹配仓库文件时前端冻结平台正文及 SHA-256；`handbook-production-api.test.js` 通过真实隔离 HTTP 验证映射手册中的平台正文来源可以生成、摘要不一致会拒绝，且不调用 GitLab。该契约只解除 AI 生成对仓库文件映射的依赖；送审和 MR 仍需真实仓库路径及基线。
 
 阶段 HTTP Adapter：`production-ai-http-stage-adapters.test.js` 通过本地真实 HTTP 服务覆盖非 2xx、超时、非法 JSON、1 MiB 响应上限和非法部署配置；`handbook-production-api.test.js` 验证服务端冻结 envelope 经 Planner HTTP Adapter 传递。Fixture 不构成目标环境独立 Agent 部署验收。
 
@@ -545,6 +857,8 @@ npm run test:performance -- --current
 菜单基础回归已接入 `npm run verify:full`，无真实实例变量时仍执行模板契约与隔离浏览器验证；发布验证另启用真实实例用例。真实页面验证必须避免与共享实例压测/其他 Playwright 验收并发运行。
 
 手册工作台参考效果验收：`knowledge-center-handbook-workspace.spec.js` 覆盖目录、格式下拉、AI六类来源、人工内容保留、窄屏与保存回读；格式切换先打开summary。临时格式菜单纳入 `dismissible-menu.node.cjs`。续作隔离实测Chromium/Firefox共6项通过，历史大纲引用409通过已批准的测试Schema备份初始化消除；真实模型生成—采用—送审全链路另行验收。
+
+2026-11-16：手册工作台增加全局顶栏隐藏与返回恢复断言，覆盖桌面、390px 顶边和横向溢出。本轮在本机平台只读加载真实页面 DOM，并覆盖注入工作树 CSS：1366px 与 390px 顶边均为 0、无溢出，返回后顶栏恢复，页面错误 0；此验证不代表本机平台静态产物已发布。
 
 Jest 的 CommonJS runner 在 `tests/unit/agent-runner/jest.config.js` 中将 `marked` 映射到已安装同版本的 UMD 入口，用于来源图片 Markdown 解析测试；不替换产品运行时依赖或版本。
 
@@ -2132,6 +2446,12 @@ Time:        181.062 s。行16165/16412=98.49%；分支16633/18957=87.74%。证�
 
 实际运行默认输出中文 `report.html` 总览，按测试场景静态分页，包含逐条结果、失败详情、原始日志与覆盖率门禁。运行示例：`python3 tests/run_tests.py smoke --report-page-size 50`；覆盖率使用 `python3 tests/run_tests.py full --coverage`。搜索及状态筛选首次使用时加载本地索引，支持离线浏览；分享时保留整个运行目录（assets/scenes/details），无 JavaScript 可通过场景和分页查看。
 
+2026-11-13 Java 逐任务迁移覆盖续验：固定采集器纳入 14 个公开 `migrate-tasks` / `activate-tasks` 命令场景，均使用合成 JDBC 和独立 `runtime` 备份目录。`runtime/coverage-goal/java-task-migration-boundaries-20261113/` 的 15 个产品源码及输入哈希稳定，行 4407/4867（90.55%）、分支 2669/3609（73.95%）；较上一稳定 Java 报告增加 12 行、12 分支。Java 仍缺 460 行及至少 760 个分支，平台三端 100% 行、95% 分支目标未完成。
+
+2026-11-13 PingCode 存储 HTTP 续验：在隔离合成 JDBC 状态下，经公开 HTTP 完成预览确认、幂等回放、任务来源快照、变更历史读取、失败图片列表及 READY 资源重试；无效参数和过期资源版本均拒绝且不增加版本。完整稳定报告 `runtime/coverage-goal/java-pingcode-resource-retry-verified-20261113/` 为 15 产品文件行 4648/4867（95.50%）、分支 2779/3609（77.00%），相对上份同分母净增 241 行、110 分支；PingCode 仓储仍缺 108 行，Java 全量仍缺 219 行和至少 650 个目标分支。Node、前端与 Java 均未达到平台最终门槛。
+
+2026-11-13 Java 续验：本机隔离真实 HTTP 夹具增加 PingCode 第二次运行的标题/正文历史变更、第三次空页移除、REQUIREMENT 来源 IR/SR 关联，以及文档任务可见手册过滤和版本 0 首次创建与幂等冲突。固定 `runtime/coverage-goal/java-document-create-20261113/` 完整退出 0，15 产品文件、输入前后哈希稳定；行 4741/4867（97.41%）、分支 2862/3609（79.30%），相对上一稳定报告净增 93 行、83 分支。Java 仍缺 126 行及至少 567 个目标分支；PingCode 仓库缺 34 行、Main 缺 56 行。Node、前端与 Java 的平台 100% 行、95% 分支目标仍未完成。
+
 验收量表及限制见 `runtime/rea/professional-test-report/ACCEPTANCE.md`：43项入口回归、24项真实smoke通过，3469用例/75分页离线检索验证通过；桌面首次打开仍超过100ms，性能尚未完全达标。评分9.5/10为内部量表自评。
 
 
@@ -2249,3 +2569,62 @@ GitLab 图片定向 Jest 覆盖采集退出 0，证据 `runtime/coverage-goal/gi
 2026-11-12 数据库配置模块独立公开契约测试 5/5 通过，定向插桩 `runtime/coverage-goal/database-config-contract-final/` 行/分支/函数/语句均100%。删除的 `merge()` 经全仓调用搜索确认仅自递归、无调用方；`readDotenv()` 唯一调用固定要求 service.env 存在，因此将私有解析器改为无配置文件时直接报错，保持公开接口现有失败语义。此为单模块结果，不代表 Node 全量或三端达标。
 
 2026-11-12 图片说明 Provider 基类补充未实现方法应拒绝的契约，现有具体 Provider 测试文件9/9通过；定向报告 `runtime/coverage-goal/image-caption-contract-directed/` 显示基类行、分支、函数及语句均100%。此为稳定源码的单模块增量，仍需完整 Node 复采确认累计覆盖率。
+
+### 2026-11-13 专业 HTML 报告 REA 复验
+
+参考 Allure 的运行总览/失败证据、Playwright HTML Reporter 的状态筛选/用例定位、ReportPortal 的质量概览、pytest-html 的离线明细/日志。当前真实 smoke 报告 `runtime/test-results/smoke/20261113-033946-228165-smoke/report.html` 有总览、场景静态分页、24 条逐条结果、任务日志链接及覆盖率未启用提示；2/2 任务通过（Jest 22/22、Python unittest 2/2）。统一入口回归 `python3 -m unittest tests/unit/root/test_run_tests.py` 为 45/45。
+
+仓库 REA `app-capability-transfer` Skill 的既有受控报告 Chromium Evidence 为 `ev_50491be1528b0312b6410fd921da6ca143249abbf1241f996be4bb23948332b7`，原始 JSON 保存在 `runtime/rea/professional-test-report/current-smoke-rea-evidence.json`，完整捕获无障碍树。本轮没有连接 REA MCP，未生成新 REA Evidence；当前报告另由离线 Playwright 复验，1440px 和 390px 各 10 次导航的 DCL/load P95 为 25.0/25.5ms、22.5/23.1ms，搜索、深链、无 JS 分页通过。3,469 条用例大样本报告在 1440px 的 DCL/load P95 为 19.1/23.3ms，390px 为 70.3/70.9ms；335 条搜索结果、失败过滤、深链和无 JS 分页通过。内部量表评分为 9.5/10，性能项保留半分扣减，评分限制见 `runtime/rea/professional-test-report/ACCEPTANCE.md`。该分数不是第三方认证，不代表平台行 100%/分支 95% 覆盖目标达成。
+
+### 2026-11-13 前端 CSV 导出行为补测与稳定复采
+
+`document-tasks-frontend.test.cjs` 在导入后经实际页面点击 CSV 导出，验证生产任务路由返回的下载文件名和正文；隔离 HTTP 503 响应验证用户可见错误提示。首次补测中的来源资料导出断言因导入契约不会自动设置来源类型而不适用于该夹具，已移除；产品代码未修改。定向浏览器套件 2/2 通过。完整前端固定清单 `runtime/coverage-goal/frontend-task-export-20261113/` 退出 0，59 个产品文件及固定场景全部完成，`source-stability.json` 的 `completed/stable/inputsStable=true`，`changedFiles/changedInputs=[]`。覆盖行 9925/10957（90.58%），分支 11451/15320（74.74%），较前一稳定复采 9908/10957 行、11444/15320 分支增加 17 行、7 分支。前端及全平台行 100%、分支 95% 目标仍未达成。
+
+### 2026-11-13 角色工作交付体验回归
+
+知识中心持续体验整改以“某个角色接手一项工作直到确认交付”为验收单位。对应回归覆盖全局通知认证后异步读取未读数、通知列表按需读取与失败重试；大纲未知状态不计入已知状态；资料清洗批次/数据集行级详情、状态与缺省字段；工作台到任务、编写、逐篇审核及 MR 回读的服务端深链；桌面和 390px 关键字段、控件触达与横向溢出；一级页面首屏与首个可执行内容的真实性能测量。隔离浏览器 fixture 只证明页面交互；后端行为须由真实 HTTP 网关/API 测试支撑，真实平台登录证据需另列环境与会话条件。
+
+本轮清洗/通知行为回归新增批次与版本列表进入详情、批次文件分页、详情返回原列表页、窄屏触控尺寸、认证后异步未读角标、读取失败不显示为零及打开面板重试；`knowledge-center-my-work.node.test.cjs` 17/17 通过。公共样式颜色回归先证实关闭按钮当前错误采用危险红，再修复为中性色；工作区布局套件另加关闭/隐藏/删除的计算颜色对照。真实资料清洗 API 从本机 13510 返回 `401 AUTH_REQUIRED`，本轮没有可用登录会话，因此真实共享平台数据验收仍未通过；真实端点契约由既有网关白名单和 FastAPI 路由定义确认，隔离 HTTP fixture 不替代真实调用。
+
+2026-11-13T14:46:15+08:00 工作台路径与重试续验：列表保留短标题并展示完整相对路径，工作详情在关联范围中直接展示路径；缺少 URL 时显示“操作入口暂不可用”，点击“重新读取”重新请求待办投影。桌面/390px 浏览器回归与手册返回性能共 18/18 通过，工作台手册返回 P95 34.5ms（隔离 HTTP fixture）。另修正 `knowledge-center-entry.spec.js` 中过时的“工作台刷新按钮”及六列表头断言，改为断言没有独立刷新按钮、七列表头和数据变更投影刷新；该集成规格未在真实 13510 登录环境运行。本轮大纲、仪表盘和资料清洗单元测试 62/62 通过，`npm run check:ui`、语法与差异检查通过。13510 未认证 API 返回 401，四类真实角色、八工作区视觉和真实页面性能验收仍待有登录会话的环境完成。
+
+2026-11-13T14:46:15+08:00 公共危险按钮续验：统一组件曾没有 `.button.danger` 变体，导致明确标为删除的主操作仍使用品牌蓝；新增红底白字主危险、白底红字次级危险样式，并调整 PingCode 删除确认局部样式保证对比度。关闭/隐藏保持中性；更新详细设计中相反的旧规则。工作台与八工作区布局浏览器用例 22/22、`npm run check:ui` 通过；统一构建 `runtime/build/knowledge-center/current` 成功。当前验收表已更正清洗、通知、大纲的隔离验证状态，并保留真实服务端、八区截图和全站性能为未完成项。
+
+2026-11-13T15:03:24+08:00 复核确认：按钮语义用例验证危险主按钮红底、次级按钮白底红字，关闭/隐藏为中性；工作台和八工作区布局浏览器测试 22/22，清洗/通知/大纲等单元测试 62/62。手册返回 P95 最新样本为 34.5ms（隔离夹具）。服务端 13510 仅以未认证请求读取，返回 401；没有据此宣称真实角色链路或真实页面通过。
+
+2026-11-13T16:07:56+08:00 PingCode 同步工作区与详情字段续验：`test_task_source_pages.py` 7/7 覆盖需求/工单详情章节映射、空字段提示、PingCode 短 ID、批次上限和来源身份错配拒绝；插件 Chromium 7/7 覆盖桌面/窄屏同步及已确认正文查看。`npm run check:ui`、Node/Python 语法与 `git diff --check` 通过；首次 UI 门禁发现生产视图原始 Lucide 计数已由 4 降到 1，同步降低基线后通过。重建并按既有授权重启 13510 与四服务，健康端点 4/4 HTTP 200。真实 PingCode 需求基线 `Yq_yJCzT` 第 0–3 页读取成功；样例 `R8zzm6Ue` 位于第 3 页，四个章节均已输出，测试建议上游为空并标注“PingCode 未填写”，另外三项有内容。第 4 页因 `YASHAN-4241` 声明 1 条关系、结构化查询返回 0 条而返回 `PINGCODE_RELATION_INCOMPLETE`，全量预览/确认未完成且没有写任务快照。真实浏览器打开 13510 插件页重定向到登录表单，未认证 API 返回 `AUTH_REQUIRED`；因此真实管理员页面交互未验收。
+
+2026-11-13T16:53:01+08:00 PingCode 同步无反馈回归：插件 Chromium 7/7 验证同步按钮确实发送创建运行 POST、运行时显示“同步中…”且禁用重复提交、失败后在工作区持续显示完整性错误并可重试；失败信息去除旧运行错误重复展示。完整性错误来源仍使用真实只读接口确认：`YASHAN-4241` 声明 1 条关系但结构化接口返回 0，后端拒绝预览是预期保护；未认证 13510 页面实际停留在登录表单，真实管理员点击链路无法验收。构建成功、13510 四服务重启成功，服务健康 4/4 HTTP 200；构建产物已核对含新反馈代码。
+
+2026-11-13T18:13:41+08:00 PingCode 停用运行恢复及慢点诊断：同步服务停用前中断活动执行并取消遗留 `COLLECTING` 运行；Jest 13/13 覆盖活动运行、重启遗留运行、异步采集和阶段日志。PingCode API 单测 7/7 断言分页、关系、详情时延字段及关系异常日志；插件 Chromium 7/7，`npm run check:ui`、Python/Node 语法、`git diff --check`、完整构建通过。13510 已重启，Storage/文档/PingCode/前端健康 4/4，页面 HTTP 200；构建前端文件与运行资源 SHA-256 一致。真实管理员会话缺失：页面重定向登录表单，来源 API 401，故没有操作共享来源配置。
+
+真实只读 PingCode 测量基线 `Yq_yJCzT`：255 条、6 页。第 0–3 页读取 200 条，耗时 20136.8ms、20809.8ms、17338.1ms、18859.3ms；第 4 页耗时 2525.9ms 时因 `YASHAN-4241` 期望关联 1、实际 0 返回 `PINGCODE_RELATION_INCOMPLETE`，累计 79670.2ms。运行时日志明确记录第 4 页 5 次关系请求、关系阶段 706.3ms、页总耗时 2521.2ms。请求只读，没有确认预览或写入任务。用户要求全量完成 1 秒，当前架构未达标；启动回执时间不作为全量性能证据，成功全量及真实页面操作均未验收。
+
+2026-11-13T18:20:00+08:00 PingCode 需求关系查询有界并发：保留 Python/Playwright 单 worker，新增同一认证浏览器页内最多 10 个异步 fetch worker 批量读取每页 IR→SR 关系，按输入位置返回，完整性校验和失败阻断不变；工作项详情沿用每批 10 个 Promise.all。`test_task_source_pages.py` 8/8、Python 编译与 `git diff --check` 通过。部署后真实只读复测基线 `Yq_yJCzT` 第 0 页 200、50 条、共 6 页、无限流错误，用时 16796ms；此前同页样本 20136.8ms，单页约改善 17%，但仍约为 1 秒门槛的 16.8 倍。其他页和全量差异未完成，全量 1 秒依旧失败。
+
+
+### 2026-11-16T15:55:32+08:00 专业报告交付核验
+
+本轮 smoke 24/24、入口回归48/48通过。报告 `runtime/test-results/smoke/20261116-155252-956422-smoke/report.html` 包含总览及12页明细；离线桌面/窄屏检索、详情深链、无JS导航通过，DCL P95 32.4ms/23.1ms。REA既有证据、七项内部9.5/10评分及限制见 `runtime/rea/professional-test-report/ACCEPTANCE.md`。本次未新增生成器改动或REA Evidence，未启用覆盖率。
+
+
+## 2026-11-16T15:57:06+08:00 手册写作入口定向覆盖验收
+
+固定采集器增加 `KC_FRONTEND_ISTANBUL_SCENARIO=handbook-writing-entry`，调用与全量一致的 `exerciseHandbookWritingEntry`，先验证历史工作区契约更新，定向结果仍明确 `capturedCoverage=false`。通过后重跑全部固定源码与场景；只采纳 completed/stable/inputsStable 为 true、变更列表为空的完整报告。不更改产品逻辑、覆盖分母或既有断言。
+
+当前场景发现编辑态收到残留历史修订选择事件时处理器会重建 `history` 状态，修复为忽略无活动历史工作区的事件，并保留“返回编辑后历史状态为 null”的原断言。先执行定向浏览器验收，再运行完整固定采集；输入稳定门禁通过前不采纳覆盖率。
+
+
+2026-11-16T16:15:06+08:00 前端固定采集诊断：`handbook-writing-entry` 定向通过，但完整运行 `runtime/coverage-goal/frontend-handbook-history-current-20261116-1605/` 在任务管理真实 HTTP 场景缺少 `ticket-scope` 控件而失败，采集期间源码和输入同时变化，门禁拒收所有覆盖率数字。并行任务管理变更结束后需重跑完整清单。
+
+
+## 2026-11-16T16:38:13+08:00 认证 API 网络失败覆盖设计
+
+当前有效前端基线 `runtime/coverage-goal/frontend-markdown-renderer-verified-20261116-1405/` 中 `common/api/auth-api.js` 行 20/21，未覆盖语句为 `fetch` 拒绝后转换 `AuthApiError`。固定认证控制器场景已通过真实浏览器调用公开 API，并用隔离的 `window.fetch` 为认证端点提供响应。新增 `network-error` 模式，使 `/auth/session` 的 `fetch` Promise 拒绝；直接调用公开 `getSession()`，断言错误类型、文案、`AUTH_SERVICE_UNAVAILABLE` 及原始 `details`。不更改产品代码或覆盖分母。先以定向入口确认场景及插桩计数，随后重跑完整固定清单，只接受稳定性门禁通过的结果。
+
+伪代码：`mode=network-error -> getSession() -> catch AuthApiError -> assert code/message/details -> restore mode and fetch`。
+
+
+## 2026-11-16T16:43:50+08:00 前端固定采集可见标签选择器诊断
+
+定向 `document-task-tabs` 浏览器流程通过。完整采集上一轮 source stability 为 true，但任务管理标签切换失败；采集器已将标签/面板等待条件限定到可见元素，以适配被保留的隐藏视图节点。语法及 diff 检查通过；完整固定采集仍需重跑，定向执行不作为覆盖率计数。

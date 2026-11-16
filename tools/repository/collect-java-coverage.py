@@ -15,6 +15,13 @@ ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / "apps/yashandb-storage/src"
 FIXTURES = ROOT / "tests/unit/agent-runner/fixtures"
 DEFAULT_TOOLS = ROOT / "runtime/test-results/quality-fix-coverage/tools"
+TASK_MIGRATION_SCENARIOS = ("copy", "activate", "copy-existing", "copy-invalid-legacy",
+                            "copy-duplicate", "copy-bad-readback", "copy-wrong-target", "copy-no-backup",
+                            "activate-bad-backup",
+                            "activate-not-verified", "activate-changed", "activate-duplicate",
+                            "activate-bad-row", "activate-missing-row", "activate-no-repo",
+                            "activate-wrong-target", "activate-no-backup",
+                            "activate-symlink")
 
 
 def run(command, *, env=None, timeout=90):
@@ -55,6 +62,9 @@ def main():
               "OutlineStorageContractCheck", "StorageBootstrapContractCheck", "MigrationSqlParserCheck", "MigrationExecutionCheck",
               "StorageSchemaDaoCheck", "HandbookProjectionCheck", "PrincipalRepositoryCheck",
               "PlatformAuthRepositoryCheck", "PlatformGitLabRepositoryCheck"]
+    checks.extend(["StorageDocumentTaskHttpCheck", "StoragePingcodeTaskHttpCheck", "StorageDocumentTaskMigrationCommandCheck",
+                   "TaskNumberCheck", "DocumentTaskStatusCheck", "DocumentTaskHistoricalReviewCheck",
+                   "PingcodeTaskPayloadCheck", "PingcodeTaskSourceUrlCheck"])
     before = source_manifest(checks)
     (output / "source-manifest-before.json").write_text(json.dumps(before, ensure_ascii=False, indent=2), encoding="utf-8")
     run(["javac", "-encoding", "UTF-8", "-cp", str(jdbc), "-d", str(product), *map(str, sources)])
@@ -76,6 +86,8 @@ def main():
     for check in ("DraftReadProjectionCheck", "QualityResultLimitCheck", "JdbcPoolReuseCheck",
                   "ProductionReferenceChangesCheck", "RecordClobReadCheck", "StorageSchemaDaoCheck", "StorageHttpInputCheck", "StorageRecordHttpCheck", "StorageManualSnapshotHttpCheck", "StoragePrincipalHttpCheck", "StorageAuthHttpCheck", "StorageGitLabHttpCheck", "StorageDomainReadHttpCheck",
                   "HandbookProjectionCheck", "PrincipalRepositoryCheck", "PlatformAuthRepositoryCheck", "StorageBootstrapContractCheck",
+                  "StorageDocumentTaskHttpCheck", "StoragePingcodeTaskHttpCheck", "TaskNumberCheck", "DocumentTaskStatusCheck", "DocumentTaskHistoricalReviewCheck",
+                  "PingcodeTaskPayloadCheck", "PingcodeTaskSourceUrlCheck",
                   "PlatformGitLabRepositoryCheck", "StorageMainProbeCheck"):
         check_env = {**env, "YASDB_DIRECTORY_CACHE_TTL_MS": "60000"} if check == "StorageDomainReadHttpCheck" else env
         if check == "StorageManualSnapshotHttpCheck":
@@ -93,11 +105,27 @@ def main():
          "StorageBootstrapContractCheck", "server-http"], env=server_env)
     run(["java", f"-javaagent:{agent}=destfile={execution},append=true", "-cp", classpath,
          "OutlineStorageContractCheck", str(outline_fixture)], env=env)
+    requirement_log = run(["java", f"-javaagent:{agent}=destfile={execution},append=true", "-cp", classpath,
+                           "StoragePingcodeTaskHttpCheck", "requirement"], env=env)
+    if "PASS: PingCode requirement IR/SR real HTTP lifecycle" not in requirement_log:
+        raise RuntimeError(f"PingCode 需求关联验收未完成：{requirement_log}")
+    boundary_log = run(["java", f"-javaagent:{agent}=destfile={execution},append=true", "-cp", classpath,
+                        "StoragePingcodeTaskHttpCheck", "boundary"], env=env)
+    if "PASS: PingCode source and page boundary real HTTP lifecycle" not in boundary_log:
+        raise RuntimeError(f"PingCode 分页边界验收未完成：{boundary_log}")
+    primary_log = run(["java", f"-javaagent:{agent}=destfile={execution},append=true", "-cp", classpath,
+                       "StoragePingcodeTaskHttpCheck", "primary-decision"], env=env)
+    if "PASS: PingCode multiple-source decision real HTTP boundary" not in primary_log:
+        raise RuntimeError(f"PingCode 多来源决策验收未完成：{primary_log}")
+    crud_log = run(["java", f"-javaagent:{agent}=destfile={execution},append=true", "-cp", classpath,
+                    "StoragePingcodeTaskHttpCheck", "crud"], env=env)
+    if "PASS: PingCode source CRUD real HTTP lifecycle" not in crud_log:
+        raise RuntimeError(f"PingCode 来源 CRUD 验收未完成：{crud_log}")
     run(["java", f"-javaagent:{agent}=destfile={execution},append=true", "-cp", classpath,
          "migration.MigrationSqlParserCheck"], env=env)
     run(["java", f"-javaagent:{agent}=destfile={execution},append=true", "-cp", classpath,
          "migration.MigrationExecutionCheck", str(output / "migration-fixture")], env=env)
-    command_scenarios = ("migrate-no-seed", "migrate-seed", "migrate-empty-seed", "migrate-invalid-json",
+    command_scenarios = ("migrate-no-seed", "migrate-index-equivalent", "migrate-index-conflict", "migrate-seed", "migrate-empty-seed", "migrate-invalid-json",
                          "migrate-invalid-utf8", "verify", "verify-pending", "serve")
     for scenario in command_scenarios:
         command_directory = output / "startup-commands" / scenario
@@ -116,6 +144,17 @@ def main():
             raise RuntimeError("migrate未输出完成信息")
         if scenario == "verify" and '\"migrations\":\"verified\"' not in command_log:
             raise RuntimeError("verify未输出校验成功JSON")
+        (command_directory / "command.log").write_text(command_log, encoding="utf-8")
+    for scenario in TASK_MIGRATION_SCENARIOS:
+        command_directory = output / "task-migration" / scenario
+        command_env = {**env, "YASDB_STORAGE_SQL_DIR": str(command_directory / "sql"),
+                       "KC_DOCUMENT_TASK_BACKUP_PATH": "" if scenario.endswith("no-backup") else str(command_directory / "backup.json"),
+                       "KNOWLEDGE_CENTER_REPO_ROOT": "" if scenario == "activate-no-repo" else str(ROOT),
+                       "YASDB_STORAGE_TARGET_CLASS": "shared" if scenario.endswith("wrong-target") else "personal"}
+        command_log = run(["java", f"-javaagent:{agent}=destfile={execution},append=true", "-cp", classpath,
+                           "StorageDocumentTaskMigrationCommandCheck", scenario], env=command_env)
+        if f"PASS: public task migration command {scenario}" not in command_log:
+            raise RuntimeError(f"逐任务迁移命令验证未完成：{scenario}\n{command_log}")
         (command_directory / "command.log").write_text(command_log, encoding="utf-8")
     invalid_policy_env = {**env, "YASDB_MIGRATION_CHECKSUM_POLICY": "invalid"}
     run(["java", f"-javaagent:{agent}=destfile={execution},append=true", "-cp", classpath,
@@ -150,6 +189,9 @@ def main():
                          "HandbookProjectionCheck", "PrincipalRepositoryCheck", "PlatformAuthRepositoryCheck",
                          "PlatformGitLabRepositoryCheck", "StorageBootstrapContractCheck",
                          "StorageBootstrapContractCheck:server-http",
+                         "StorageDocumentTaskHttpCheck", "StoragePingcodeTaskHttpCheck", "StoragePingcodeTaskHttpCheck:requirement", "StoragePingcodeTaskHttpCheck:boundary", "StoragePingcodeTaskHttpCheck:primary-decision", "StoragePingcodeTaskHttpCheck:crud", "TaskNumberCheck", "DocumentTaskStatusCheck", "DocumentTaskHistoricalReviewCheck",
+                         *[f"StorageDocumentTaskMigrationCommandCheck:{scenario}" for scenario in TASK_MIGRATION_SCENARIOS],
+                         "PingcodeTaskPayloadCheck", "PingcodeTaskSourceUrlCheck",
                          *[f"QualityExecuteHttpCheck:{scenario}" for scenario in
                            ("missing-url", "missing-user", "missing-password", "business-url", "configured")]]}
     (output / "coverage-summary.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")

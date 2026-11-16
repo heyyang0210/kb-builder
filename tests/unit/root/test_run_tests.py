@@ -21,6 +21,32 @@ SPEC.loader.exec_module(RUNNER)
 
 
 class RepositoryTestRunnerTests(unittest.TestCase):
+    def test_pingcode_storage_command_selects_the_real_storage_readback_case(self):
+        tasks = RUNNER.build_tasks("pingcode-storage")
+        self.assertEqual(1, len(tasks))
+        self.assertEqual("node-test", tasks[0].framework)
+        self.assertEqual((RUNNER.E2E_TEST_ROOT / "pingcode-task-storage-real.node.cjs",), tasks[0].files)
+
+    def test_pingcode_storage_target_comes_only_from_runner_owned_instance(self):
+        task = RUNNER.build_tasks("pingcode-storage")[0]
+        old_url = os.environ.get("KC_TEST_STORAGE_URL")
+        old_isolated = os.environ.get("KC_TEST_ISOLATED_SCHEMA")
+        os.environ["KC_TEST_STORAGE_URL"] = "http://127.0.0.1:13510"
+        os.environ["KC_TEST_ISOLATED_SCHEMA"] = "0"
+        try:
+            env = RUNNER.test_environment(task, knowledge_center_storage_url="http://127.0.0.1:45679")
+        finally:
+            if old_url is None:
+                os.environ.pop("KC_TEST_STORAGE_URL", None)
+            else:
+                os.environ["KC_TEST_STORAGE_URL"] = old_url
+            if old_isolated is None:
+                os.environ.pop("KC_TEST_ISOLATED_SCHEMA", None)
+            else:
+                os.environ["KC_TEST_ISOLATED_SCHEMA"] = old_isolated
+        self.assertEqual("http://127.0.0.1:45679", env["KC_TEST_STORAGE_URL"])
+        self.assertEqual("1", env["KC_TEST_ISOLATED_SCHEMA"])
+
     def test_jest_bridge_has_unique_jest_assignment(self):
         bridge = RUNNER.NODE_TEST_ROOT / "native-contract-coverage.test.js"
         self.assertEqual("jest", RUNNER.classify_node_runner(bridge))
@@ -348,6 +374,20 @@ class RepositoryTestRunnerTests(unittest.TestCase):
                 self.assertIn(f"<title>{suite} 测试报告</title>", content)
                 self.assertIn("2 / 0 / 1", content)
                 self.assertIn('href="details/tasks/task.log"', content)
+                self.assertIn('data-search-pagination', content)
+                self.assertIn("window.addEventListener('load'", content)
+                self.assertIn("script.async=true", content)
+                self.assertNotIn('<link rel="preload"', content)
+                self.assertNotIn('<script defer', content)
+
+    def test_html_report_keyboard_scrolls_wide_tables(self):
+        script = (REPOSITORY_ROOT / "tests" / "report_assets" / "report.js").read_text(encoding="utf-8")
+        self.assertIn(".table-wrap[role=\"region\"][tabindex=\"0\"]", script)
+        self.assertIn("event.key === 'ArrowRight'", script)
+        self.assertIn("event.key === 'ArrowLeft'", script)
+        self.assertIn("event.key === 'Home'", script)
+        self.assertIn("event.key === 'End'", script)
+        self.assertIn("if (maxScroll <= 0) return", script)
 
     def test_html_report_escapes_failures_and_handles_missing_counts_and_logs(self):
         payload = RUNNER.report_payload("unit", [RUNNER.TaskResult(
@@ -359,7 +399,7 @@ class RepositoryTestRunnerTests(unittest.TestCase):
         self.assertIn("未统计", content)
         self.assertIn("&lt;任务&gt;", content)
         self.assertIn("&lt;script&gt;", content)
-        self.assertNotIn("<script>", content)
+        self.assertNotIn("<script>alert", content)
         self.assertNotIn("outside.log", content)
         self.assertIn("失败与阻塞", content)
 
@@ -377,6 +417,21 @@ class RepositoryTestRunnerTests(unittest.TestCase):
         self.assertNotIn("<unsafe>", content)
         self.assertIn("失败 / 异常</th>", content)
         self.assertIn('class="number fail-text">10</td>', content)
+
+    def test_html_report_ranks_timed_cases_and_counts_timeout_on_scene_page(self):
+        cases = [{"name": "fast", "status": "PASS", "duration_seconds": 0.1},
+                 {"name": "slow <case>", "status": "TIMEOUT", "duration_seconds": 2.5},
+                 {"name": "unknown", "status": "PASS"}]
+        payload = {"command": "unit", "passed": False, "tasks": [{"suite": "unit", "label": "任务",
+                   "framework": "jest", "status": "FAIL", "test_total": 3, "test_passed": 2,
+                   "test_failed": 1, "test_skipped": 0, "cases": cases}]}
+        model = RUNNER.report_model(payload, 50)
+        overview = RUNNER.render_html_report(payload, model)
+        self.assertIn("耗时较长的用例", overview)
+        self.assertLess(overview.index("slow &lt;case&gt;", overview.index("耗时较长的用例")),
+                        overview.index("fast", overview.index("耗时较长的用例")))
+        scene = RUNNER.report_scene_page(payload, model, "unit", model["scenes"]["unit"], 1)
+        self.assertIn("失败 1", scene)
 
     def test_test_environment_targets_the_instance_prepared_by_runner(self):
         self.assertEqual(RUNNER.KNOWLEDGE_CENTER_BASE_URL, RUNNER.test_environment()["KPG_BASE_URL"])
@@ -528,15 +583,22 @@ class HtmlCaseReportIntegrationTests(unittest.TestCase):
                 self.assertTrue(any(case["detail"] for case in result.cases if case["status"] == "FAIL"))
                 results.append(result)
             payload = RUNNER.report_payload("unit", results, 1.0)
+            payload["coverage"] = {"status": "PASS", "runtime_metrics": {}}
             (root / "details/report.json").write_text(json.dumps(payload), encoding="utf-8")
             report = RUNNER.write_html_report(root, page_size=2)
-            self.assertIn("2 / 2 / 2", report.read_text())
+            overview = report.read_text()
+            self.assertIn("2 / 2 / 2", overview)
+            self.assertIn('aria-label="任务结果表" tabindex="0"', overview)
+            self.assertIn('aria-label="测试场景统计表" tabindex="0"', overview)
+            self.assertIn('aria-label="覆盖率门禁表" tabindex="0"', overview)
+            self.assertIn('.task-table{min-width:680px}', (root / "assets/report.css").read_text())
             pages = sorted((root / "scenes").glob("*.html"))
             self.assertEqual(3, len(pages))
             self.assertIn('href="scene-1-2.html"', pages[0].read_text())
             self.assertIn('&lt;script&gt;', pages[0].read_text())
-            self.assertNotIn('<script>', pages[0].read_text())
+            self.assertNotIn('<script>throw', pages[0].read_text())
             self.assertIn('href="../report.html"', pages[-1].read_text())
+            self.assertIn('aria-label="用例结果表" tabindex="0"', pages[0].read_text())
 
     def test_fail_fast_still_writes_formal_html_with_unexecuted_tasks(self):
         from unittest.mock import patch

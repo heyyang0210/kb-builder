@@ -308,6 +308,12 @@ def make_task(suite: str, framework: str, files: Iterable[Path], resource: str =
 
 
 def build_tasks(command: str) -> list[TestTask]:
+    if command == "pingcode-storage":
+        path = E2E_TEST_ROOT / "pingcode-task-storage-real.node.cjs"
+        if not path.is_file():
+            raise RuntimeError(f"缺少 PingCode Storage 回读测试：{relative(path)}")
+        task = make_task(command, "node-test", (path,))
+        return [task] if task else []
     if command == "smoke":
         smoke_paths = [REPOSITORY_ROOT / item for item in SMOKE_FILES]
         missing = [relative(path) for path in smoke_paths if not path.is_file()]
@@ -443,6 +449,12 @@ def test_environment(
     if knowledge_center_storage_url:
         env["KC_STORAGE_URL"] = knowledge_center_storage_url
         env["YASDB_STORAGE_URL"] = knowledge_center_storage_url
+    # Never inherit an arbitrary target for the real Storage integration test.
+    env.pop("KC_TEST_STORAGE_URL", None)
+    env.pop("KC_TEST_ISOLATED_SCHEMA", None)
+    if task and task.suite == "pingcode-storage" and knowledge_center_storage_url:
+        env["KC_TEST_STORAGE_URL"] = knowledge_center_storage_url
+        env["KC_TEST_ISOLATED_SCHEMA"] = "1"
     if run_context:
         env["YASDB_TEST_RUN_DIR"] = str(run_context.run_dir)
         # Playwright clears its outputDir at startup. Each invocation needs its
@@ -1086,7 +1098,8 @@ def report_search() -> str:
     return f'''<section class="search-panel" data-search-panel hidden aria-label="全局用例检索">
 <div class="search-controls"><div class="search-field"><label for="case-search">搜索全部用例</label><input id="case-search" data-case-search type="search" placeholder="用例名称、文件、框架或错误关键词" autocomplete="off"></div>
 <div class="filters" role="group" aria-label="按用例状态筛选">{buttons}</div><button type="button" class="clear-button" data-clear-search>清除</button></div>
-<p class="search-summary" data-search-summary role="status" aria-live="polite"></p><ul class="search-results" data-search-results hidden></ul></section>
+<p class="search-summary" data-search-summary role="status" aria-live="polite"></p><ul class="search-results" data-search-results hidden></ul>
+<nav class="search-pagination" data-search-pagination aria-label="检索结果分页" hidden><button type="button" data-search-previous aria-label="上一页" title="上一页">‹</button><span data-search-page></span><button type="button" data-search-next aria-label="下一页" title="下一页">›</button></nav></section>
 <noscript><p class="no-js">当前未启用 JavaScript，可通过场景导航和分页浏览全部用例与日志。</p></noscript>'''
 
 
@@ -1098,12 +1111,12 @@ def report_shell(payload: dict[str, Any], model: dict[str, Any], body: str, *, t
         nav += f'<a href="{prefix}scenes/scene-{group["id"]}-1.html"{current}><span>{escape(group["label"])}</span><small>{len(group["records"])}</small></a>'
     return f'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{escape(title)}</title><link rel="stylesheet" href="{prefix}assets/report.css">
-<script defer src="{prefix}assets/report.js"></script></head>
+</head>
 <body data-prefix="{prefix}" data-case-count="{len(model['records'])}"><a class="skip-link" href="#main">跳转至报告内容</a><aside class="sidebar" aria-label="报告导航">
 <div class="brand"><span class="brand-mark" aria-hidden="true">✓</span>知识中心 · 测试报告</div>
 <p class="side-caption">本次运行</p><nav aria-label="测试场景">{nav}</nav><div class="side-footer">离线报告<br>结果、用例与执行证据</div></aside>
 <main class="workspace" id="main"><header class="topbar"><span><a href="{prefix}report.html">测试报告</a> / {escape(subtitle)}</span><span class="tag">{escape(payload.get("command") or "测试")} · 本次运行</span></header>
-{body}<footer class="footer"><span>知识中心管理平台 · 统一测试报告<br>生成于 {escape(payload.get("generatedAt") or "未记录")}</span><a href="{prefix}details/report.json">原始 JSON ↗</a></footer></main></body></html>'''
+{body}<footer class="footer"><span>知识中心管理平台 · 统一测试报告<br>生成于 {escape(payload.get("generatedAt") or "未记录")}</span><a href="{prefix}details/report.json">原始 JSON ↗</a></footer></main><script>window.addEventListener('load',function(){{var script=document.createElement('script');script.src=(document.body.dataset.prefix||'')+'assets/report.js';script.async=true;document.body.append(script);}},{{once:true}});</script></body></html>'''
 
 
 def report_coverage(payload: dict[str, Any]) -> str:
@@ -1141,7 +1154,7 @@ def report_coverage(payload: dict[str, Any]) -> str:
     if not rows:
         metrics = coverage.get("metrics") or {}
         rows.append('<tr><td>汇总</td><td>' + escape(metrics.get('lines', '未统计')) + '</td><td>' + escape(metrics.get('branches', '未统计')) + '</td><td>未提供运行时明细</td></tr>')
-    return heading + '<div class="panel-body">' + report_badge(coverage.get('status', '')) + '<p class="muted long-text">' + escape(coverage.get('diagnostic') or '按原始计数检查门禁，不以显示值四舍五入判定。') + '</p></div><div class="table-wrap"><table><thead><tr><th>运行时</th><th>行覆盖率</th><th>分支覆盖率</th><th>门禁与缺口</th></tr></thead><tbody>' + ''.join(rows) + '</tbody></table></div></section>'
+    return heading + '<div class="panel-body">' + report_badge(coverage.get('status', '')) + '<p class="muted long-text">' + escape(coverage.get('diagnostic') or '按原始计数检查门禁，不以显示值四舍五入判定。') + '</p></div><div class="table-wrap" role="region" aria-label="覆盖率门禁表" tabindex="0"><table><thead><tr><th>运行时</th><th>行覆盖率</th><th>分支覆盖率</th><th>门禁与缺口</th></tr></thead><tbody>' + ''.join(rows) + '</tbody></table></div></section>'
 
 
 def render_html_report(payload: dict[str, Any], model: dict[str, Any] | None = None) -> str:
@@ -1210,10 +1223,15 @@ def render_html_report(payload: dict[str, Any], model: dict[str, Any] | None = N
         scenes.append(f'<tr><td><a class="table-link" href="scenes/scene-{group["id"]}-1.html"><strong>{escape(group["label"])}</strong></a><small>{len(group["tasks"])} 个任务 · {group["pages"]} 页</small></td><td class="number">{len(cases)}</td><td class="number">{states["PASS"]}</td><td class="number {"fail-text" if states["FAIL"] else ""}">{states["FAIL"]}</td><td class="number">{states["SKIP"]}</td><td class="number">{states["NOT_RUN"]}</td><td>{pass_pct:.1f}%<div class="bar" aria-hidden="true"><span style="width:{pass_pct:.2f}%"></span></div></td><td>{missing}</td></tr>')
     body += '<section class="panel" id="scenes"><div class="panel-head"><h2>测试场景</h2><small>按场景进入用例明细</small></div><div class="table-wrap" role="region" aria-label="测试场景统计表" tabindex="0"><table class="scene-table"><thead><tr><th>场景</th><th class="number">明细用例</th><th class="number">通过</th><th class="number">失败 / 异常</th><th class="number">跳过</th><th class="number">未执行</th><th>通过率</th><th>无明细任务</th></tr></thead><tbody>' + ''.join(scenes) + '</tbody></table></div></section>'
     body += report_coverage(payload)
-    body += '<section class="panel" id="tasks"><div class="panel-head"><h2>任务结果</h2><small>框架执行结果与原始日志</small></div><div class="table-wrap"><table><thead><tr><th>状态</th><th>任务 / 场景</th><th>框架</th><th>用例</th><th>耗时</th><th>执行证据</th></tr></thead><tbody>' + ''.join(task_rows) + '</tbody></table></div></section>'
+    body += '<section class="panel" id="tasks"><div class="panel-head"><h2>任务结果</h2><small>框架执行结果与原始日志</small></div><div class="table-wrap" role="region" aria-label="任务结果表" tabindex="0"><table class="task-table"><thead><tr><th>状态</th><th>任务 / 场景</th><th>框架</th><th>用例</th><th>耗时</th><th>执行证据</th></tr></thead><tbody>' + ''.join(task_rows) + '</tbody></table></div></section>'
     slow = sorted(tasks, key=lambda task: task.get('duration_seconds') or 0, reverse=True)[:5]
     slow_rows = ''.join(f'<tr><td>{escape(task.get("label") or "未命名任务")}</td><td>{escape(report_duration(task.get("duration_seconds")))}</td><td>{report_badge(task.get("status", ""))}</td></tr>' for task in slow)
-    body += '<section class="panel"><div class="panel-head"><h2>耗时较长的任务</h2><small>按任务耗时降序 · 最多 5 项</small></div><div class="table-wrap"><table><thead><tr><th>任务</th><th>耗时</th><th>状态</th></tr></thead><tbody>' + slow_rows + '</tbody></table></div></section>'
+    body += '<section class="panel"><div class="panel-head"><h2>耗时较长的任务</h2><small>按任务耗时降序 · 最多 5 项</small></div><div class="table-wrap" role="region" aria-label="耗时较长的任务表" tabindex="0"><table><thead><tr><th>任务</th><th>耗时</th><th>状态</th></tr></thead><tbody>' + slow_rows + '</tbody></table></div></section>'
+    timed_cases = [record for record in model['records'] if isinstance(record['case'].get('duration_seconds'), (int, float)) and record['case']['duration_seconds'] >= 0]
+    if timed_cases:
+        slow_cases = sorted(timed_cases, key=lambda record: record['case']['duration_seconds'], reverse=True)[:10]
+        case_rows = ''.join(f'<tr><td><a href="{escape(record["href"])}">{escape(record["case"].get("name") or "未命名用例")}</a><small>{escape(record["scene"])}</small></td><td>{report_duration(record["case"]["duration_seconds"], 3)}</td><td>{report_badge(record["case"].get("status", ""))}</td></tr>' for record in slow_cases)
+        body += '<section class="panel"><div class="panel-head"><h2>耗时较长的用例</h2><small>按用例耗时降序 · 最多 10 项</small></div><div class="table-wrap" role="region" aria-label="耗时较长的用例表" tabindex="0"><table><thead><tr><th>用例 / 场景</th><th>耗时</th><th>状态</th></tr></thead><tbody>' + case_rows + '</tbody></table></div></section>'
     body += f'<section class="panel"><div class="panel-head"><h2>运行信息与统计口径</h2></div><div class="panel-body"><h3>执行入口</h3><div class="command-line mono">python3 tests/run_tests.py {escape(payload.get("command") or "")}</div><p class="muted">任务状态与用例状态独立统计；没有逐条明细的任务不虚构为单条用例。仅预览不代表实际执行成功。</p><p class="muted">本次报告未提供历史趋势、重试记录和附件信息；不据此推断测试稳定性。</p><a class="table-link" href="details/report.json">查看 JSON 报告 ↗</a></div></section>'
     return report_shell(payload, model, body, title=f'{payload.get("command") or "测试"} 测试报告')
 
@@ -1243,11 +1261,12 @@ def report_scene_page(payload: dict[str, Any], model: dict[str, Any], scene: str
         detail = case.get('detail') or ''
         details = f'<details><summary>查看详情 / 错误日志</summary><pre>{escape(detail)}</pre></details>' if detail else ''
         rows.append(f'<tr class="case-row" id="{record["id"]}"><td>{report_badge(case.get("status", ""))}</td><td><a class="case-name" href="#{record["id"]}">{escape(case.get("name") or "未命名用例")}</a><small class="mono">{escape(case.get("file") or "文件未提供")}</small>{details}</td><td>{escape(task.get("framework") or "—")}</td><td>{report_duration(case.get("duration_seconds"), 3)}</td><td>{report_log_link(task, "../")}</td></tr>')
-    counts = {state: sum(record['case'].get('status') == state for record in records) for state in ('PASS','FAIL','SKIP','NOT_RUN')}
+    counts = {state: sum(record['case'].get('status') == state for record in records) for state in ('PASS','SKIP','NOT_RUN')}
+    counts['FAIL'] = sum(record['case'].get('status') in {'FAIL', 'TIMEOUT', 'INTERRUPTED'} for record in records)
     unknown = [task for task in group['tasks'] if not task.get('cases')]
     body = f'<div class="hero"><div><div class="eyebrow">场景明细 / 第 {page} 页</div><h1>{escape(group["label"])}</h1><p class="muted">共 {len(records)} 条明细；通过 {counts["PASS"]}，失败 {counts["FAIL"]}，跳过 {counts["SKIP"]}，未执行 {counts["NOT_RUN"]}。</p></div><a href="../report.html">返回总览</a></div>'
     body += report_search() + '<section class="panel"><div class="panel-head"><h2>用例结果</h2><small>每页最多 ' + str(size) + ' 条</small></div>' + navigation
-    body += '<div class="table-wrap"><table class="case-table"><thead><tr><th>状态</th><th>用例与详情</th><th>框架</th><th>耗时</th><th>执行证据</th></tr></thead><tbody>' + ''.join(rows) + '</tbody></table></div>' + ('' if rows else '<div class="empty">当前场景未提供逐条用例，请查看下方任务日志。</div>') + navigation + '</section>'
+    body += '<div class="table-wrap" role="region" aria-label="用例结果表" tabindex="0"><table class="case-table"><thead><tr><th>状态</th><th>用例与详情</th><th>框架</th><th>耗时</th><th>执行证据</th></tr></thead><tbody>' + ''.join(rows) + '</tbody></table></div>' + ('' if rows else '<div class="empty">当前场景未提供逐条用例，请查看下方任务日志。</div>') + navigation + '</section>'
     body += '<section class="panel"><div class="panel-head"><h2>未提供逐条明细的任务</h2><small>不计作单条用例</small></div>'
     if unknown:
         body += '<ul class="failure-list">' + ''.join(f'<li>{report_badge(task.get("status", ""))} <strong>{escape(task.get("label") or "未命名任务")}</strong><p>逐条用例未统计，请查看任务日志。{escape("；".join(task.get("failed_tests") or []))}</p>{report_log_link(task, "../")}</li>' for task in unknown) + '</ul>'
@@ -1663,7 +1682,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "command",
-        choices=("list", "smoke", "gate", "unit", "contract", "integration", "system", "e2e", "full", "all"),
+        choices=("list", "smoke", "gate", "unit", "contract", "integration", "system", "e2e", "pingcode-storage", "full", "all"),
         help="测试分类；all 是 full 的兼容别名",
     )
     parser.add_argument("--dry-run", action="store_true", help="只展示将执行的命令和文件")
@@ -1720,8 +1739,10 @@ def main(argv: list[str] | None = None) -> int:
     preflight_executor = None
     preflight_future = None
     has_playwright = any(task.framework == "playwright" for task in tasks)
-    playwright_ready = args.dry_run or not has_playwright
-    if has_playwright and not args.dry_run and not args.fail_fast:
+    requires_isolated_instance = has_playwright or args.command == "pingcode-storage"
+    playwright_ready = args.dry_run or not requires_isolated_instance
+    can_prepare_in_background = has_playwright and any(task.framework != "playwright" for task in tasks)
+    if can_prepare_in_background and not args.dry_run and not args.fail_fast:
         preflight_executor = ThreadPoolExecutor(max_workers=1)
         preflight_future = preflight_executor.submit(ensure_knowledge_center, context)
         print("Playwright 前置条件：已后台准备，先执行不依赖浏览器服务的测试。")
@@ -1734,7 +1755,11 @@ def main(argv: list[str] | None = None) -> int:
         runnable = [
             (index, task)
             for index, task in enumerate(tasks, 1)
-            if not (task.framework == "playwright" and not playwright_ready and preflight_future is None)
+            if not (
+                (task.framework == "playwright" or args.command == "pingcode-storage")
+                and not playwright_ready
+                and preflight_future is None
+            )
         ]
         task_results: dict[int, TaskResult] = {}
 

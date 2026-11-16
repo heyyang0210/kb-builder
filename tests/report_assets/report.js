@@ -1,6 +1,18 @@
 /* Offline enhancement; the static report remains readable without JavaScript. */
 (() => {
   'use strict';
+  document.querySelectorAll('.table-wrap[role="region"][tabindex="0"]').forEach(region => {
+    region.addEventListener('keydown', event => {
+      const maxScroll = region.scrollWidth - region.clientWidth;
+      if (maxScroll <= 0) return;
+      if (event.key === 'ArrowRight') region.scrollBy({left: 48});
+      else if (event.key === 'ArrowLeft') region.scrollBy({left: -48});
+      else if (event.key === 'Home') region.scrollTo({left: 0});
+      else if (event.key === 'End') region.scrollTo({left: maxScroll});
+      else return;
+      event.preventDefault();
+    });
+  });
   let index = globalThis.KC_REPORT_CASES;
   let loading = null;
   const search = document.querySelector('[data-case-search]');
@@ -8,7 +20,13 @@
   const panel = document.querySelector('[data-search-panel]');
   const results = document.querySelector('[data-search-results]');
   const summary = document.querySelector('[data-search-summary]');
+  const pagination = document.querySelector('[data-search-pagination]');
+  const pageLabel = document.querySelector('[data-search-page]');
+  const previous = document.querySelector('[data-search-previous]');
+  const next = document.querySelector('[data-search-next]');
   const buttons = [...document.querySelectorAll('[data-status-filter]')];
+  const pageSize = 50;
+  let page = 1;
   const labels = {PASS:'通过',FAIL:'失败',SKIP:'跳过',NOT_RUN:'未执行',TIMEOUT:'超时',INTERRUPTED:'中断'};
   const prefix = document.body.dataset.prefix || '';
   const params = new URLSearchParams(location.hash.slice(1));
@@ -21,6 +39,7 @@
     results.replaceChildren();
     const active = Boolean(query) || status !== 'ALL';
     results.hidden = !active;
+    pagination.hidden = true;
     if (!active) { summary.textContent = `可搜索全部 ${document.body.dataset.caseCount} 条已采集明细，范围覆盖所有场景和分页。`; return; }
     if (!index) {
       summary.textContent = '正在加载全部场景的用例索引…';
@@ -38,9 +57,16 @@
       return;
     }
     const matched = index.filter(item => (status === 'ALL' || item.status === status || (status === 'FAIL' && ['TIMEOUT','INTERRUPTED'].includes(item.status))) && (!query || [item.name,item.file,item.scene,item.framework,item.detail].join(' ').toLocaleLowerCase().includes(query)));
-    summary.textContent = matched.length ? `匹配 ${matched.length} 条用例${matched.length > 100 ? '，显示前 100 条；请增加关键词缩小范围' : ''}。点击用例可直达所在分页和详情。` : '没有匹配的用例。请调整关键词或清除筛选。';
+    const pages = Math.max(1, Math.ceil(matched.length / pageSize));
+    page = Math.min(page, pages);
+    const start = (page - 1) * pageSize;
+    summary.textContent = matched.length ? `匹配 ${matched.length} 条用例，显示第 ${start + 1}–${Math.min(start + pageSize, matched.length)} 条。点击用例可直达所在分页和详情。` : '没有匹配的用例。请调整关键词或清除筛选。';
+    pagination.hidden = matched.length <= pageSize;
+    pageLabel.textContent = `第 ${page} / ${pages} 页`;
+    previous.disabled = page === 1;
+    next.disabled = page === pages;
     const fragment = document.createDocumentFragment();
-    matched.slice(0,100).forEach(item => {
+    matched.slice(start,start + pageSize).forEach(item => {
       const li = document.createElement('li');
       const badge = document.createElement('span'); badge.className = `badge ${classes(item.status)}`; badge.textContent = labels[item.status] || item.status;
       const link = document.createElement('a'); link.href = prefix + item.href; link.textContent = item.name || '未命名用例';
@@ -49,9 +75,11 @@
     });
     results.append(fragment);
   }
-  search.addEventListener('input', update);
-  buttons.forEach(button => button.addEventListener('click', () => { status = button.dataset.statusFilter; update(); }));
-  document.querySelector('[data-clear-search]').addEventListener('click', () => { search.value = ''; status = 'ALL'; update(); search.focus(); });
+  search.addEventListener('input', () => { page = 1; update(); });
+  buttons.forEach(button => button.addEventListener('click', () => { status = button.dataset.statusFilter; page = 1; update(); }));
+  previous.addEventListener('click', () => { if (page > 1) { page--; update(); pagination.scrollIntoView({block:'nearest'}); } });
+  next.addEventListener('click', () => { page++; update(); pagination.scrollIntoView({block:'nearest'}); });
+  document.querySelector('[data-clear-search]').addEventListener('click', () => { search.value = ''; status = 'ALL'; page = 1; update(); search.focus(); });
   panel.hidden = false;
   update();
   function revealTarget() {
@@ -67,6 +95,7 @@
       if (buttons.some(button => button.dataset.statusFilter === state)) {
         status = state;
         search.value = '';
+        page = 1;
         update();
         panel.scrollIntoView({block:'start'});
         search.focus({preventScroll:true});

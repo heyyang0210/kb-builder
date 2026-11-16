@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 const fs = require('node:fs');
+const assert = require('node:assert/strict');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
 const { spawn } = require('node:child_process');
@@ -17,10 +18,11 @@ const { exerciseWritingAdoptionHttp } = require('../../tests/e2e/agent-runner/fi
 const { exercisePrincipalImportHttp } = require('../../tests/e2e/agent-runner/fixtures/principal-import-http.cjs');
 const { exerciseGitlabMappingHttp } = require('../../tests/e2e/agent-runner/fixtures/gitlab-mapping-http.cjs');
 const { exerciseGitlabConnectionHttp } = require('../../tests/e2e/agent-runner/fixtures/gitlab-connection-http.cjs');
+const { exercisePingcodeSyncHttp } = require('../../tests/e2e/agent-runner/fixtures/pingcode-sync-http.cjs');
 const { exercisePermissionRolesHttp } = require('../../tests/e2e/agent-runner/fixtures/permission-roles-http.cjs');
 const { exerciseAssetManagementHttp } = require('../../tests/e2e/agent-runner/fixtures/asset-management-http.cjs');
 const { exerciseOutlineRecycleHttp } = require('../../tests/e2e/agent-runner/fixtures/outline-recycle-http.cjs');
-const { exerciseIncrementalCreateHttp } = require('../../tests/e2e/agent-runner/fixtures/incremental-create-http.cjs');
+const { exerciseProductionProgressHttp } = require('../../tests/e2e/agent-runner/fixtures/production-progress-http.cjs');
 
 const root = path.resolve(__dirname, '../..');
 const frontendRoot = path.join(root, 'apps/knowledge-center-web/frontend/knowledge-center');
@@ -110,6 +112,53 @@ function runWritingTest(args, env, logFile, label) {
   });
 }
 
+async function exerciseGlobalNotifications(page) {
+  let reads = 0;
+  const requests = [];
+  const pattern = '**/knowledge-center/api/incremental-tasks/notifications**';
+  const handler = async route => {
+    const request = route.request();
+    const url = new URL(request.url());
+    requests.push({ method: request.method(), path: url.pathname });
+    if (request.method() === 'PUT') {
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: {} }) });
+    }
+    reads += 1;
+    if (reads > 2) {
+      return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ success: false, error: { message: '通知服务不可用' } }) });
+    }
+    if (reads === 2) {
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: { unreadCount: 0, items: [] } }) });
+    }
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: {
+      unreadCount: 1,
+      items: [{ id: 'notice-1', type: 'review_scope_opinion', ticketNumber: 'YDBRD-1', handbookName: '隔离手册', documentName: '指南',
+        roles: ['handbook_owner'], commentContent: '请确认范围', url: '/knowledge-center/review?view=mine', readAt: null,
+        actions: ['scope_decide'], author: { displayName: '审核人' }, recipientActive: true }],
+    } }) });
+  };
+  await page.route(pattern, handler);
+  try {
+    const trigger = page.getByRole('button', { name: '站内通知' });
+    await trigger.click();
+    await page.getByText('请确认范围', { exact: true }).waitFor();
+    await page.getByText('你被提及为：手册负责人', { exact: false }).waitFor();
+    const read = page.locator('[data-global-notification-read="notice-1"]');
+    await Promise.all([page.waitForRequest(request => request.method() === 'PUT' && request.url().includes('/notifications/notice-1/read')), read.click()]);
+    await page.getByText('暂无通知', { exact: true }).waitFor();
+    await page.locator('[data-global-notification-close]').click();
+    await page.getByRole('button', { name: '站内通知' }).click();
+    await page.getByText('通知服务不可用', { exact: true }).waitFor();
+    await page.getByRole('button', { name: '重试' }).click();
+    await page.getByText('通知服务不可用', { exact: true }).waitFor();
+    await page.locator('[data-global-notification-close]').click();
+    assert(requests.some(item => item.method === 'PUT'));
+    return 4;
+  } finally {
+    await page.unroute(pattern, handler);
+  }
+}
+
 async function runWritingCoverage(caseDirectory) {
   fs.mkdirSync(caseDirectory, { recursive: true });
   const testFile = 'tests/e2e/agent-runner/production-writing.test.cjs';
@@ -178,8 +227,8 @@ async function activateTab(page, selector, activeSelector, panelSelector) {
   const tab = page.locator(selector).first();
   await tab.waitFor({ state: 'visible', timeout: 10000 });
   await tab.click();
-  await page.locator(activeSelector).first().waitFor({ state: 'visible', timeout: 10000 });
-  if (panelSelector) await page.locator(panelSelector).first().waitFor({ state: 'visible', timeout: 10000 });
+  await page.locator(`${activeSelector}:visible`).first().waitFor({ state: 'visible', timeout: 10000 });
+  if (panelSelector) await page.locator(`${panelSelector}:visible`).first().waitFor({ state: 'visible', timeout: 10000 });
 }
 
 async function exerciseCleaning(page) {
@@ -226,6 +275,7 @@ async function exerciseCleaning(page) {
         } else {
           await page.locator('.metric').filter({ hasText: '索引条目' }).filter({ hasText: '17' }).waitFor({ state: 'visible' });
           await exerciseView(page, 'cleaning');
+          await exerciseCleaningRenderCases(page);
         }
       }
       // Leave the view so the next navigation starts a fresh API load.
@@ -238,6 +288,78 @@ async function exerciseCleaning(page) {
   }
 }
 
+async function exerciseCleaningRenderCases(page) {
+  const rendered = await page.evaluate(async () => {
+    const { renderCleaning } = await import('/knowledge-center/modules/cleaning/view.js');
+    return {
+      loading: renderCleaning({}),
+      unavailable: renderCleaning({ cleaningProjection: { status: 'unavailable' } }),
+      batchLoading: renderCleaning({ cleaningDetailProjection: { type: 'batch', status: 'loading' } }),
+      datasetLoading: renderCleaning({ cleaningDetailProjection: { type: 'dataset', status: 'loading' } }),
+      batchError: renderCleaning({ cleaningDetailProjection: { type: 'batch', status: 'unavailable', id: 'B-1', batchPage: 2, datasetPage: 3, error: { message: '<读取失败>' } } }),
+      datasetError: renderCleaning({ cleaningDetailProjection: { type: 'dataset', status: 'unavailable' } }),
+      batch: renderCleaning({ cleaningDetailProjection: {
+        type: 'batch', status: 'ok', id: 'B-2', batchPage: 2, datasetPage: 3,
+        batch: { id: 'B-2', name: '<隔离批次>', status: 'CUSTOM', source: { source_type: '外部来源' }, local_space_name: '资料空间', created_at: '2026-01-02T03:04:00Z', updatedAt: 'invalid-date', source_snapshot: { estimated_pages: 6, estimated_attachments: 2 } },
+        summary: { processSummary: { state: '处理中', stage: '扫描', percent: 0 }, qualitySummary: { state: 'failed', errors: 0, warnings: 2 }, materialSummary: { pages: null, attachments: 3, documents: 4, chunks: 5 }, latestActivity: { message: '最近活动', at: '2026-02-03T04:05:00Z' }, recommendedAction: { route: '/knowledge-center/assets', label: '继续处理' } },
+        files: { items: [{ file_name: '资料.md', status: 'future_state', size_bytes: 0 }], page: 2, pageSize: 1, total: 3 },
+      } }),
+      batchFallbacks: renderCleaning({ cleaningDetailProjection: { type: 'batch', status: 'ok', id: 'B-5', batch: { id: 'B-5', source: '本地文件' }, summary: { recommendedAction: { route: '/knowledge-center/assets' } }, files: { items: [{ path: '目录/路径.txt' }, { id: 'file-id' }, {}] } } }),
+      batchNoFiles: renderCleaning({ cleaningDetailProjection: { type: 'batch', status: 'ok', id: 'B-6', files: [] } }),
+      unsafeAction: renderCleaning({ cleaningDetailProjection: { type: 'batch', status: 'ok', id: 'B-3', summary: { recommendedAction: { route: '//outside.example', label: '不安全跳转' } }, files: [] } }),
+      dataset: renderCleaning({ cleaningDetailProjection: { type: 'dataset', status: 'ok', id: 'D-1', datasetPage: 2,
+        dataset: { id: 'D-1', state: 'published', batch_id: 'B-2', total_documents: 7, totalChunks: 0, quality_passed: false, created_at: '2026-03-04T05:06:00Z', graph_available: true, graph_summary: { node_count: 9, edge_count: 4 }, quality_metrics: { '<准确率>': '99%' } },
+      } }),
+      datasetQualityPassed: renderCleaning({ cleaningDetailProjection: { type: 'dataset', status: 'ok', id: 'D-4', dataset: { qualityPassed: true } } }),
+      datasetFallbacks: renderCleaning({ cleaningDetailProjection: { type: 'dataset', status: 'ok', id: 'D-2', dataset: { status: 'future_state', graphAvailable: false, qualityMetrics: {} } } }),
+      datasetEmpty: renderCleaning({ cleaningDetailProjection: { type: 'dataset', status: 'ok', id: 'D-3' } }),
+      listings: renderCleaning({ cleaningProjection: { status: 'ok', workbench: { counts: { running: 3 } },
+        batches: { items: [{ id: 'B-4', name: '批次', state: 'scanning', updated_at: 'bad-date' }, { name: '缺少编号', phase: '未来状态' }], page: 1, pageSize: 1, total: 3 },
+        datasets: { items: [{ datasetId: 'D-4', name: '版本', status: '通过' }, {}], page: 1, pageSize: 1, total: 2 }, indexStats: { status: 'ok', count: 0, nodes: 2, edges: 1 },
+      }, cleaningCanWrite: true }),
+      listingsLastPage: renderCleaning({ cleaningProjection: { status: 'ok', batches: { items: [], page: 3, pageSize: 1, total: 3 }, datasets: { items: [], page: 2, pageSize: 1, total: 2 }, indexStats: {} } }),
+      indexUnavailable: renderCleaning({ cleaningProjection: { status: 'ok', batches: [], datasets: [], workbench: { active: 0, failed: 0 }, indexStats: { status: 'unavailable' } } }),
+    };
+  });
+  assert.match(rendered.loading, /正在读取资料加工数据/);
+  assert.match(rendered.unavailable, /请检查服务连接后重试/);
+  assert.match(rendered.batchLoading, /正在读取资料批次/);
+  assert.match(rendered.datasetLoading, /正在读取知识库版本/);
+  assert.match(rendered.batchError, /&lt;读取失败&gt;/);
+  assert.match(rendered.batchError, /batchPage=2/);
+  assert.match(rendered.datasetError, /知识库版本详情暂时不可用/);
+  assert.match(rendered.batch, /&lt;隔离批次&gt;/);
+  assert.match(rendered.batch, /外部来源/);
+  assert.match(rendered.batch, /资料.md/);
+  assert.match(rendered.batch, /第 2 \/ 3 页，共 3 个文件/);
+  assert.match(rendered.batch, /继续处理/);
+  assert.match(rendered.batch, /日期待确认/);
+  assert.match(rendered.batchFallbacks, /本地文件/);
+  assert.match(rendered.batchFallbacks, /目录\/路径\.txt/);
+  assert.match(rendered.batchFallbacks, /file-id/);
+  assert.match(rendered.batchFallbacks, /未命名/);
+  assert.match(rendered.batchFallbacks, /继续处理/);
+  assert.match(rendered.batchNoFiles, /暂无文件/);
+  assert.doesNotMatch(rendered.unsafeAction, /href="\/\/outside\.example"/);
+  assert.match(rendered.dataset, /来源批次/);
+  assert.match(rendered.dataset, /9 个节点 · 4 条边/);
+  assert.match(rendered.dataset, /&lt;准确率&gt;/);
+  assert.match(rendered.dataset, /未通过/);
+  assert.match(rendered.datasetQualityPassed, /通过/);
+  assert.match(rendered.datasetFallbacks, /未提供/);
+  assert.match(rendered.datasetFallbacks, /状态待确认/);
+  assert.match(rendered.datasetEmpty, /知识库版本 D-3/);
+  assert.match(rendered.listings, /上传资料/);
+  assert.match(rendered.listings, /第 1 \/ 3 页/);
+  assert.match(rendered.listings, /data-cleaning-page="0"[^>]*disabled/);
+  assert.match(rendered.listings, /data-cleaning-page="2"[^>]*data-cleaning-page-kind="datasets"/);
+  assert.match(rendered.listings, /资料批次/);
+  assert.match(rendered.listingsLastPage, /data-cleaning-page="4"[^>]*disabled/);
+  assert.match(rendered.listingsLastPage, /data-cleaning-page="3"[^>]*data-cleaning-page-kind="datasets"[^>]*disabled/);
+  assert.match(rendered.indexUnavailable, /索引状态暂时不可用/);
+  return Object.keys(rendered).length;
+}
+
 async function exerciseCleaningApi(page) {
   const requests = [];
   let mode = 'success';
@@ -248,36 +370,113 @@ async function exerciseCleaningApi(page) {
     requests.push({ method: request.method(), path: url.pathname + url.search, headers: request.headers(), body: request.postData() });
     if (mode === 'invalid-json') return route.fulfill({ status: 502, contentType: 'text/plain', body: 'upstream unavailable' });
     if (mode === 'error') return route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ error: { code: 'UPLOAD_CONFLICT', message: '会话冲突' } }) });
-    const body = request.method() === 'GET' ? { data: { status: 'ok' } } : { data: { accepted: true, path: url.pathname } };
+    if (mode === 'get-error-no-message') return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: { code: 'CLEANING_UNAVAILABLE' } }) });
+    if (mode === 'index-error' && url.pathname.endsWith('/index/stats')) return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: { code: 'INDEX_OFFLINE', message: '索引暂不可用' } }) });
+    const body = mode === 'raw' ? { status: 'raw' }
+      : request.method() === 'GET' ? { data: { status: 'ok' } } : { data: { accepted: true, path: url.pathname } };
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
   };
   await page.route(pattern, handler);
   try {
+    const reads = await page.evaluate(async () => {
+      const api = await import('/knowledge-center/common/api/cleaning-api.js');
+      const workspace = await api.loadCleaningWorkspace(0, -2);
+      const batches = await api.loadCleaningBatches();
+      const fallbackBatches = await api.loadCleaningBatches(0);
+      const datasets = await api.loadCleaningDatasets();
+      const fallbackDatasets = await api.loadCleaningDatasets(0);
+      const batch = await api.loadCleaningBatchDetail('batch/1', 0);
+      const defaultBatch = await api.loadCleaningBatchDetail('batch-default');
+      const dataset = await api.loadCleaningDatasetDetail('dataset/1');
+      return [workspace.workbench.status, workspace.indexStats.status, batches.status, fallbackBatches.status,
+        datasets.status, fallbackDatasets.status, batch.batch.status, batch.summary.status, batch.files.status,
+        defaultBatch.batch.status, defaultBatch.summary.status, defaultBatch.files.status, dataset.status];
+    });
+    const expectedReads = [
+      'GET /knowledge-center/api/cleaning/workbench/summary',
+      'GET /knowledge-center/api/cleaning/material-batches?page=1&pageSize=20',
+      'GET /knowledge-center/api/cleaning/datasets?page=1&pageSize=20',
+      'GET /knowledge-center/api/cleaning/index/stats',
+      'GET /knowledge-center/api/cleaning/material-batches?page=1&pageSize=20',
+      'GET /knowledge-center/api/cleaning/material-batches?page=1&pageSize=20',
+      'GET /knowledge-center/api/cleaning/datasets?page=1&pageSize=20',
+      'GET /knowledge-center/api/cleaning/datasets?page=1&pageSize=20',
+      'GET /knowledge-center/api/cleaning/material-batches/batch%2F1',
+      'GET /knowledge-center/api/cleaning/material-batches/batch%2F1/workbench-summary',
+      'GET /knowledge-center/api/cleaning/material-batches/batch%2F1/files?page=1&pageSize=20',
+      'GET /knowledge-center/api/cleaning/material-batches/batch-default',
+      'GET /knowledge-center/api/cleaning/material-batches/batch-default/workbench-summary',
+      'GET /knowledge-center/api/cleaning/material-batches/batch-default/files?page=1&pageSize=20',
+      'GET /knowledge-center/api/cleaning/datasets/dataset%2F1',
+    ];
+    const actualReads = requests.splice(0).map(request => `${request.method} ${request.path}`).sort();
+    if (JSON.stringify(reads) !== JSON.stringify(Array(13).fill('ok'))
+      || JSON.stringify(actualReads) !== JSON.stringify(expectedReads.sort()))
+      throw new Error('清洗读取 API 分页、详情或编码契约错误：' + JSON.stringify({ reads, actualReads }));
+    mode = 'index-error';
+    const indexUnavailable = await page.evaluate(async () => (await import('/knowledge-center/common/api/cleaning-api.js')).loadCleaningWorkspace(2, 3));
+    if (indexUnavailable.indexStats.status !== 'unavailable' || indexUnavailable.indexStats.error.code !== 'INDEX_OFFLINE')
+      throw new Error('工作台索引错误未降级到不可用状态：' + JSON.stringify(indexUnavailable.indexStats));
+    mode = 'get-error-no-message';
+    const getError = await page.evaluate(async () => {
+      try { await (await import('/knowledge-center/common/api/cleaning-api.js')).loadCleaningBatches(2); return null; }
+      catch (error) { return { message: error.message, status: error.status, code: error.code }; }
+    });
+    if (getError?.status !== 503 || getError.code !== 'CLEANING_UNAVAILABLE' || getError.message !== '资料加工服务暂不可用（HTTP 503）')
+      throw new Error('清洗读取错误缺少服务消息时未生成回退提示：' + JSON.stringify(getError));
+    mode = 'invalid-json';
+    const getInvalidJson = await page.evaluate(async () => {
+      try { await (await import('/knowledge-center/common/api/cleaning-api.js')).loadCleaningDatasets(2); return null; }
+      catch (error) { return { message: error.message, status: error.status, code: error.code }; }
+    });
+    if (getInvalidJson?.status !== 502 || getInvalidJson.code !== undefined || getInvalidJson.message !== '资料加工服务暂不可用（HTTP 502）')
+      throw new Error('清洗读取非法 JSON 未使用 HTTP 回退提示：' + JSON.stringify(getInvalidJson));
+    mode = 'raw';
+    const rawRead = await page.evaluate(async () => (await import('/knowledge-center/common/api/cleaning-api.js')).loadCleaningDatasets(2));
+    if (rawRead.status !== 'raw') throw new Error('清洗读取未兼容无 data 信封响应：' + JSON.stringify(rawRead));
+    requests.splice(0);
+    mode = 'success';
     const result = await page.evaluate(async () => {
       const api = await import('/knowledge-center/common/api/cleaning-api.js');
       const session = await api.createUploadSession({ name: '隔离上传', idempotencyKey: 'coverage-idempotency' });
+      const generatedSession = await api.createUploadSession({ name: '自动生成幂等键' });
       const file = await api.addUploadFile('session/1', { name: '中文 文件.md', size: 3 });
       const chunk = await api.uploadChunk('session/1', 'file/1', 2, 'abc', { 'X-Chunk-Digest': 'sha256:test' });
+      const defaultHeadersChunk = await api.uploadChunk('session/1', 'file/1', 3, 'def');
       const completedFile = await api.completeUploadFile('session/1', 'file/1');
       const completedSession = await api.completeUploadSession('session/1');
       const batch = await api.createUploadBatch('session/1', '隔离批次');
-      return { session, file, chunk, completedFile, completedSession, batch };
+      const defaultNameBatch = await api.createUploadBatch('session/2');
+      return { session, generatedSession, file, chunk, defaultHeadersChunk, completedFile, completedSession, batch, defaultNameBatch };
     });
-    if (!result.session.accepted || !result.batch.accepted) throw new Error('上传 API 成功信封未解包');
+    if (!result.session.accepted || !result.generatedSession.accepted || !result.batch.accepted || !result.defaultNameBatch.accepted)
+      throw new Error('上传 API 成功信封未解包');
     const expected = [
+      ['POST', '/knowledge-center/api/cleaning/upload-sessions'],
       ['POST', '/knowledge-center/api/cleaning/upload-sessions'],
       ['POST', '/knowledge-center/api/cleaning/upload-sessions/session%2F1/files'],
       ['PUT', '/knowledge-center/api/cleaning/upload-sessions/session%2F1/files/file%2F1/chunks/2'],
+      ['PUT', '/knowledge-center/api/cleaning/upload-sessions/session%2F1/files/file%2F1/chunks/3'],
       ['POST', '/knowledge-center/api/cleaning/upload-sessions/session%2F1/files/file%2F1/complete'],
       ['POST', '/knowledge-center/api/cleaning/upload-sessions/session%2F1/complete'],
       ['POST', '/knowledge-center/api/cleaning/upload-sessions/session%2F1/create-batch'],
+      ['POST', '/knowledge-center/api/cleaning/upload-sessions/session%2F2/create-batch'],
     ];
     if (requests.length !== expected.length || expected.some(([method, path], index) => requests[index].method !== method || requests[index].path !== path))
       throw new Error('上传 API 请求契约错误：' + JSON.stringify(requests));
-    if (!requests[0].headers['idempotency-key'] || !requests[5].headers['idempotency-key'] || requests[5].headers['idempotency-key'] === requests[0].headers['idempotency-key'])
+    if (!requests[0].headers['idempotency-key'] || requests[0].headers['idempotency-key'] !== 'coverage-idempotency'
+      || !requests[1].headers['idempotency-key'] || requests[1].headers['idempotency-key'] === requests[0].headers['idempotency-key']
+      || !requests[7].headers['idempotency-key'] || requests[8].headers['idempotency-key'] === requests[7].headers['idempotency-key'])
       throw new Error('上传会话和批次幂等键未按契约发送');
-    if (requests[2].headers['content-type'] !== 'application/octet-stream' || requests[2].body !== 'abc')
+    if (requests[3].headers['content-type'] !== 'application/octet-stream' || requests[3].body !== 'abc')
       throw new Error('分片正文或 Content-Type 错误');
+    if (requests[4].headers['content-type'] !== 'application/octet-stream' || requests[4].body !== 'def'
+      || requests[7].body !== JSON.stringify({ name: '隔离批次' }) || requests[8].body !== JSON.stringify({ name: null }))
+      throw new Error('可选分片请求头或批次名称默认值错误');
+    mode = 'raw';
+    const rawWrite = await page.evaluate(async () => (await import('/knowledge-center/common/api/cleaning-api.js')).completeUploadSession('raw-session'));
+    if (rawWrite.status !== 'raw') throw new Error('清洗写入未兼容无 data 信封响应：' + JSON.stringify(rawWrite));
+    mode = 'success';
     mode = 'error';
     const error = await page.evaluate(async () => {
       const { createUploadSession } = await import('/knowledge-center/common/api/cleaning-api.js');
@@ -299,17 +498,17 @@ async function exerciseCleaningApi(page) {
 
 async function exerciseView(page, view) {
   if (view === 'templates') {
-    for (const tab of ['mappings', 'editor']) {
+    for (const tab of ['mappings', 'library']) {
       await activateTab(page, `[data-template-tab="${tab}"]`, `[data-template-tab="${tab}"][aria-selected="true"]`);
     }
   }
   if (view === 'documentTasks') {
-    for (const tab of ['flow', 'config', 'list']) {
+    for (const tab of ['list', 'secondary', 'flow']) {
       await activateTab(page, `[data-task-tab="${tab}"]`, `[data-task-tab="${tab}"][aria-selected="true"]`);
     }
   }
   if (view === 'production') {
-    for (const tab of ['versions', 'tasks', 'generations', 'handbooks']) {
+    for (const tab of ['handbooks', 'progress', 'generations']) {
       await activateTab(page, `[data-production-overview-tab="${tab}"]`, `[data-production-overview-tab="${tab}"][aria-selected="true"]`);
     }
   }
@@ -999,6 +1198,7 @@ async function exerciseProductionProvenance(page) {
 async function exerciseAuthController(page) {
   await page.evaluate(async () => {
     const auth = await import('/knowledge-center/common/auth/auth-controller.js');
+    const authApi = await import('/knowledge-center/common/api/auth-api.js');
     const { authState } = await import('/knowledge-center/common/state/auth-state.js');
     const assert = (condition, message) => { if (!condition) throw new Error(message); };
     const originalFetch = window.fetch;
@@ -1009,6 +1209,7 @@ async function exerciseAuthController(page) {
     window.fetch = async (input, options) => {
       const path = new URL(input, window.location.href).pathname;
       if (!path.startsWith('/knowledge-center/api/auth/')) return originalFetch(input, options);
+      if (mode === 'network-error' && path.endsWith('/auth/session')) throw new TypeError('isolated auth network failure');
       if (path.endsWith('/auth/config')) {
         if (mode === 'config-error') return response(503, { error: { message: 'config offline' } });
         return response(200, { data: { casEnabled: true, loginUrl: '/cas/login', serviceId: 'kc-service', serviceUrl: '/callback' } });
@@ -1035,6 +1236,14 @@ async function exerciseAuthController(page) {
       return originalFetch(input, options);
     };
     try {
+      mode = 'network-error';
+      try { await authApi.getSession(); throw new Error('认证网络错误未抛出'); }
+      catch (error) {
+        assert(error instanceof authApi.AuthApiError && error.code === 'AUTH_SERVICE_UNAVAILABLE'
+          && error.message === '认证服务暂时不可用'
+          && error.details instanceof TypeError && error.details.message === 'isolated auth network failure',
+        '认证网络故障未保留错误类型、代码与原始原因');
+      }
       assert(auth.sanitizeReturnTo(null) === '/knowledge-center/', '空返回地址未使用安全默认值');
       assert(auth.sanitizeReturnTo('http://[') === '/knowledge-center/', '非法返回地址未使用安全默认值');
       mode = 'anonymous';
@@ -1114,6 +1323,7 @@ async function exerciseHandbookWritingEntry(page) {
     const retry = document.getElementById('retry');
     const action = document.getElementById('notice-action');
     const originalFetch = window.fetch;
+    const originalConfirm = window.confirm;
     const previousNotice = {
       className: panel.className, hidden: panel.hidden, title: title.textContent,
       message: message.textContent, retryHidden: retry.hidden, actionHidden: action.hidden,
@@ -1123,7 +1333,8 @@ async function exerciseHandbookWritingEntry(page) {
     const previousUi = appState.handbookProductionUi;
     const previousUrl = location.pathname + location.search + location.hash;
     const previousHistoryState = history.state;
-    const previousOutline = appState.incrementalProjection.handbookOutline;
+    const previousIncrementalProjection = appState.incrementalProjection;
+    const previousOutline = previousIncrementalProjection?.handbookOutline;
     const documentId = 'coverage-handbook-document';
     const currentDocument = document.createElement('span');
     currentDocument.dataset.handbookCurrentDocument = documentId;
@@ -1148,8 +1359,10 @@ async function exerciseHandbookWritingEntry(page) {
       await new Promise(resolve => setTimeout(resolve, 20));
     };
     try {
+      window.confirm = () => true;
       appState.activeView = 'production';
       appState.handbookProductionUi = ui;
+      appState.incrementalProjection = { handbookOutline: null };
       history.pushState({ view: 'production', handbookId: 'coverage-handbook' }, '',
         `/knowledge-center/production/handbook/coverage-handbook?documentId=${encodeURIComponent(documentId)}`);
 
@@ -1306,9 +1519,9 @@ async function exerciseHandbookWritingEntry(page) {
       // Successful GitLab origin: exercise mapping, access, branch, tree and file reads.
       originMode = 'success';
       ui.drafts[documentId] = savedMarkdown;
-      appState.incrementalProjection.handbookOutline = { detail: {
+      appState.incrementalProjection = { ...(appState.incrementalProjection || {}), handbookOutline: { detail: {
         nodes: [{ kind: 'document', id: documentId, sourceId: 'docs/current.md', title: '当前文档' }],
-      } };
+      } } };
       const successRequests = [];
       window.fetch = async (input, options = {}) => {
         const url = new URL(typeof input === 'string' ? input : input.url, location.origin);
@@ -1363,7 +1576,8 @@ async function exerciseHandbookWritingEntry(page) {
       for (let attempt = 0; attempt < 50 && document.querySelector('.handbook-writing-page'); attempt++)
         await new Promise(resolve => setTimeout(resolve, 20));
       assert(!document.querySelector('.handbook-writing-page'), '成功来源写作页关闭后未清理');
-      appState.incrementalProjection.handbookOutline = previousOutline;
+      if (appState.incrementalProjection) appState.incrementalProjection.handbookOutline = previousOutline;
+      appState.incrementalProjection = previousIncrementalProjection;
 
       const saveButton = document.createElement('button');
       saveButton.dataset.handbookDraftSave = documentId;
@@ -1441,8 +1655,9 @@ async function exerciseHandbookWritingEntry(page) {
 
       const controls = document.createElement('section');
       controls.innerHTML = `<button data-handbook-history="${documentId}">历史</button>
-        <dialog data-handbook-history-dialog><button data-handbook-history-compare="revision-old">比较</button>
-          <button data-handbook-history-restore="revision-old">恢复</button><button data-handbook-history-close>关闭历史</button></dialog>
+        <button data-handbook-history-select="revision-old">选择历史版本</button>
+        <button data-handbook-history-close>返回编辑</button>
+        <button data-handbook-history-restore="revision-old">恢复历史版本</button>
         <dialog data-coverage-conflict><button data-handbook-conflict-close>关闭冲突</button></dialog>
         <button data-handbook-conflict-copy>复制</button><button data-handbook-conflict-reload>重新读取</button>
         <button data-handbook-conflict-merge>合并</button>`;
@@ -1471,15 +1686,12 @@ async function exerciseHandbookWritingEntry(page) {
       localClick('[data-handbook-history]');
       await until(() => ui.history?.loading === false, '历史列表读取未结束');
       assert(ui.history.documentId === documentId && ui.history.items[0]?.revisionId === 'revision-old', '历史列表结果未显示');
-      localClick('[data-handbook-history-compare]');
-      assert(ui.history.compareRevisionId === 'revision-old', '历史比较未选择目标修订');
-      ui.history = null;
-      localClick('[data-handbook-history-compare]');
-      assert(ui.history === null, '无历史列表时比较应保持空状态');
-      const historyDialog = controls.querySelector('[data-handbook-history-dialog]');
-      historyDialog.showModal();
+      localClick('[data-handbook-history-select]');
+      assert(ui.history.selectedRevisionId === 'revision-old', '历史工作区未选择目标修订');
       localClick('[data-handbook-history-close]');
-      assert(!historyDialog.open, '历史关闭按钮未关闭弹窗');
+      assert(ui.history === null, '历史返回按钮未恢复文档工作区');
+      localClick('[data-handbook-history-select]');
+      assert(ui.history === null, '无历史工作区时选择操作应为空');
       historyMode = 'empty';
       localClick('[data-handbook-history]');
       await until(() => ui.history?.loading === false, '空历史列表读取未结束');
@@ -1489,8 +1701,8 @@ async function exerciseHandbookWritingEntry(page) {
       await until(() => ui.history?.error, '历史服务失败未展示错误');
       assert(ui.history.error === '隔离历史服务不可用' && ui.history.items.length === 0, '历史失败状态不正确');
       localClick('[data-handbook-history-restore]');
-      await until(() => title.textContent === '恢复失败', '历史恢复失败未反馈');
-      assert(message.textContent === '隔离历史服务不可用', '历史恢复失败原因未保留');
+      await until(() => ui.history?.actionError, '历史恢复失败未反馈');
+      assert(ui.history.actionError === '隔离历史服务不可用', '历史恢复失败原因未保留');
       historyMode = 'success';
       localClick('[data-handbook-history-restore]');
       await until(() => ui.serverDrafts[documentId]?.draft.editVersion === 7, '历史恢复成功未更新版本');
@@ -1773,7 +1985,8 @@ async function exerciseHandbookWritingEntry(page) {
 
     } finally {
       window.fetch = originalFetch;
-      appState.incrementalProjection.handbookOutline = previousOutline;
+      window.confirm = originalConfirm;
+      if (appState.incrementalProjection) appState.incrementalProjection.handbookOutline = previousOutline;
       document.querySelector('.handbook-ai-dialog[open]')?.close();
       document.querySelectorAll('.handbook-ai-dialog').forEach(dialog => dialog.remove());
       document.querySelectorAll('.handbook-writing-page').forEach(node => node.remove());
@@ -2112,10 +2325,16 @@ async function exerciseOutlineGovernanceMutations(page) {
   await page.evaluate(async () => {
     const { appState } = await import('/knowledge-center/common/state/app-state.js');
     const assert = (value, message) => { if (!value) throw new Error(message); };
-    const previous = { projection: appState.outlineProjection, view: appState.activeView,
+    const previous = { projection: appState.outlineProjection, view: appState.activeView, outlineListState: { ...appState.outlineListState },
       url: location.href, history: history.state, fetch: window.fetch };
     const host = document.createElement('section');
     host.innerHTML = `
+      <input data-outline-search>
+      <a href="#" data-outline-stage="published">已发布</a>
+      <a href="#" data-outline-stage="draft">草稿</a>
+      <article data-outline-row data-outline-search-text="手册甲 安装" data-outline-state="published"></article>
+      <article data-outline-row data-outline-search-text="手册乙 升级" data-outline-state="draft"></article>
+      <p data-outline-filter-empty hidden></p>
       <p class="outline-governance-status"></p>
       <button data-outline-governance-save>保存分工</button><button data-outline-publish>发布</button>
       <input data-outline-description="doc-1" value="批量说明">
@@ -2136,7 +2355,10 @@ async function exerciseOutlineGovernanceMutations(page) {
         { id: 'dir-b', kind: 'directory' }],
       governance: { governanceVersion: 5, assignments: [
         { nodeId: 'dir-a', techDomainIds: ['9'] }, { nodeId: 'doc-1', techDomainIds: ['6'] }] } });
-    const reset = () => { appState.outlineProjection = { selectedId: 'coverage-outline', detail: detail() }; };
+    const reset = () => {
+      appState.outlineProjection = { selectedId: 'coverage-outline', detail: detail() };
+      host.querySelector('[data-outline-governance-save]').disabled = false;
+    };
     const requests = [];
     let fail = false;
     let pending = 0;
@@ -2166,6 +2388,26 @@ async function exerciseOutlineGovernanceMutations(page) {
       appState.activeView = 'production';
       history.replaceState({}, '', '/knowledge-center/outlines');
       reset();
+      const search = host.querySelector('[data-outline-search]');
+      search.value = '安装'; search.dispatchEvent(new Event('input', { bubbles: true }));
+      assert(appState.outlineListState.search === '安装'
+        && !host.querySelector('[data-outline-row][data-outline-state="published"]').hidden
+        && host.querySelector('[data-outline-row][data-outline-state="draft"]').hidden, '大纲搜索未过滤行或更新状态');
+      search.value = '不存在'; search.dispatchEvent(new Event('input', { bubbles: true }));
+      assert(!host.querySelector('[data-outline-filter-empty]').hidden, '无匹配大纲时空状态未显示');
+      search.value = '手册'; search.dispatchEvent(new Event('input', { bubbles: true }));
+      host.querySelector('[data-outline-stage="published"]').click();
+      assert(appState.outlineListState.statusFilter === 'published'
+        && !host.querySelector('[data-outline-row][data-outline-state="published"]').hidden
+        && host.querySelector('[data-outline-row][data-outline-state="draft"]').hidden
+        && new URLSearchParams(location.search).get('q') === '手册' && new URLSearchParams(location.search).get('status') === 'published'
+        && host.querySelector('[data-outline-stage="published"]').getAttribute('aria-current') === 'page'
+        && !host.querySelector('[data-outline-stage="draft"]').hasAttribute('aria-current'), `大纲阶段筛选未同步行、链接或历史 URL: ${JSON.stringify({ state: appState.outlineListState, search: location.search, publishedHidden: host.querySelector('[data-outline-row][data-outline-state="published"]').hidden, draftHidden: host.querySelector('[data-outline-row][data-outline-state="draft"]').hidden, publishedCurrent: host.querySelector('[data-outline-stage="published"]').getAttribute('aria-current'), draftCurrent: host.querySelector('[data-outline-stage="draft"]').getAttribute('aria-current') })}`);
+      host.querySelector('[data-outline-stage="draft"]').click();
+      assert(!host.querySelector('[data-outline-row][data-outline-state="draft"]').hidden
+        && host.querySelector('[data-outline-stage="draft"]').getAttribute('aria-current') === 'page', '切换大纲阶段未更新列表');
+      history.replaceState({}, '', '/knowledge-center/outlines');
+      appState.outlineListState.search = ''; appState.outlineListState.statusFilter = '';
       const dialog = host.querySelector('[data-outline-description-dialog]');
       await click('[data-outline-description-edit]');
       assert(dialog.open && dialog.querySelector('h3').textContent === '测试文档'
@@ -2184,6 +2426,20 @@ async function exerciseOutlineGovernanceMutations(page) {
       await click('[data-outline-description-save]');
       assert(!dialog.open && document.getElementById('error-title').textContent === '保存完成', '说明成功未关闭或提示');
 
+      // A successful save invalidates the loaded projection; model the refreshed detail before editing again.
+      reset();
+      const description = host.querySelector('[data-outline-description="doc-1"]');
+      const requestsBeforeDebouncedSave = requests.length;
+      description.value = '自动保存第一版'; description.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: '版' }));
+      await new Promise(resolve => setTimeout(resolve, 150));
+      description.value = '自动保存最终版'; description.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: '版' }));
+      const deadline = performance.now() + 2000;
+      while (requests.length === requestsBeforeDebouncedSave && performance.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
+      await settle();
+      assert(requests.length === requestsBeforeDebouncedSave + 1
+        && last().body.descriptions[0].description === '自动保存最终版'
+        && host.querySelector('.outline-governance-status').textContent === '目录说明和责任分工已保存。', `大纲说明防抖自动保存未仅提交最终值: ${JSON.stringify({ before: requestsBeforeDebouncedSave, after: requests.length, body: last()?.body, status: host.querySelector('.outline-governance-status').textContent })}`);
+
       reset();
       fail = true;
       await click('[data-outline-governance-save]');
@@ -2191,9 +2447,9 @@ async function exerciseOutlineGovernanceMutations(page) {
         && host.querySelector('.outline-governance-status').textContent.includes('大纲服务暂时不可用'), '分工失败未恢复按钮');
       const body = last().body;
       assert(body.editVersion === 13 && body.governanceVersion === 5
-        && body.descriptions[0].description === '批量说明'
+        && body.descriptions[0].description === '自动保存最终版'
         && body.assignments.length === 2 && body.assignments[0].nodeId === 'dir-a'
-        && JSON.stringify(body.assignments[1].techDomainIds) === '["7","8"]', '分工合并未保留目录或覆盖文档领域');
+        && JSON.stringify(body.assignments[1].techDomainIds) === '["7","8"]', `分工合并未保留目录或覆盖文档领域: ${JSON.stringify({ body, requests })}`);
       fail = false;
       await click('[data-outline-governance-save]');
       assert(host.querySelector('.outline-governance-status').textContent === '目录说明和责任分工已保存。', '分工保存未显示成功');
@@ -2225,11 +2481,12 @@ async function exerciseOutlineGovernanceMutations(page) {
       move.showModal();
       await click('[data-outline-move-close]');
       assert(!move.open, '移动关闭未关闭弹窗');
-      assert(requests.length === 8, '治理操作写请求次数异常');
+      assert(requests.length === 9, '治理操作写请求次数异常');
     } finally {
       window.fetch = previous.fetch;
       appState.outlineProjection = previous.projection;
       appState.activeView = previous.view;
+      Object.assign(appState.outlineListState, previous.outlineListState);
       history.replaceState(previous.history, '', previous.url);
       host.remove();
     }
@@ -2259,7 +2516,7 @@ async function exerciseIncrementalFormCommands(page) {
     const cases = [
       vector('data-incremental-source-form', '<input name="sourceType" value="local-document"><input name="label" value=" 参考资料 "><input name="reference" value=" "><textarea name="content">来源正文</textarea>',
         'sources', 'POST', { sourceType: 'local-document', label: '参考资料', content: '来源正文' }, '来源已固化'),
-      vector('data-incremental-target-form', '<textarea name="documentIds"> doc-1, doc-2，\n doc-3 </textarea><input type="checkbox" name="sectionIds" value="section-1" checked><input type="checkbox" name="chapterIds" value="chapter-1" checked><input name="language" value="en">',
+      vector('data-incremental-target-form', '<input type="checkbox" name="documentIds" value="doc-1" checked><input type="checkbox" name="documentIds" value="doc-2" checked><input type="checkbox" name="documentIds" value="doc-3" checked><input type="checkbox" name="sectionIds" value="section-1" checked><input type="checkbox" name="chapterIds" value="chapter-1" checked><input name="language" value="en">',
         'target', 'PATCH', { documentIds: ['doc-1', 'doc-2', 'doc-3'], sectionIds: ['section-1', 'chapter-1'], language: 'en' }, '修改范围已确认'),
       ...['add', 'update', 'delete', 'move'].map(type => vector('data-incremental-draft-form',
         `<input name="operationType" value="${type}"><input name="operationDocumentId" value="doc-1"><input name="nodeId" value=" node-1 "><input name="beforeDigest" value=" digest-1 "><textarea name="afterContent">修改正文</textarea><input name="targetParentId" value=" dir-2 "><input name="ordinal" value="3"><textarea name="content">完整草稿</textarea>`,
@@ -2268,12 +2525,12 @@ async function exerciseIncrementalFormCommands(page) {
           ...(['add', 'update'].includes(type) ? { after: { content: '修改正文' } } : {}),
           ...(type === 'move' ? { targetParentId: 'dir-2', ordinal: 3 } : {}) }] }, '草稿已保存')),
       vector('data-review-comment-form', '<textarea name="comment"> 审核评论 </textarea><input name="candidateDigest" value=""><input name="anchor" value=""><select name="mentions" multiple></select>',
-        'reviews/review-1/comments', 'POST', { comment: '审核评论', commentType: 'suggestion', severity: 'normal', candidateDigest: '', mentions: [] }, '意见已添加', 'data-review-id="review-1"'),
+        'reviews/review-1/comments', 'POST', { comment: '审核评论', commentType: 'suggestion', scopeLevel: 'handbook', severity: 'normal', candidateDigest: '', mentions: [] }, '意见已添加', 'data-review-id="review-1"'),
       ...['', '{broken', 'null', '{"documentId":"doc-1","anchorKind":"document_span","nodeId":"node-1"}'].map((anchor, index) => vector('data-review-comment-form',
         `<textarea name="comment"> 审核意见 </textarea><input name="candidateDigest" value="digest-1"><input name="anchor" value='${anchor}'><select name="mentions" multiple>${index === 3 ? '<option value="" selected>请选择</option><option value="HB-mentioned" selected>关联手册</option>' : ''}</select>${index === 3 ? '<input name="commentType" value="issue"><input name="severity" value="blocker">' : ''}`,
-        'reviews/review-1/comments', 'POST', { comment: '审核意见', commentType: index === 3 ? 'issue' : 'suggestion',
-          severity: index === 3 ? 'blocker' : 'normal', candidateDigest: 'digest-1', mentions: index === 3 ? [{ handbookId: 'HB-mentioned' }] : [],
-          ...(index === 3 ? { anchor: { documentId: 'doc-1', anchorKind: 'document_span', nodeId: 'node-1' } } : {}) }, index === 3 ? '意见已保存，通知状态请查看结果' : '意见已添加', 'data-review-id="review-1"')),
+        'reviews/review-1/comments', 'POST', { comment: '审核意见', commentType: index === 3 ? 'issue' : 'suggestion', scopeLevel: 'handbook',
+          severity: index === 3 ? 'blocker' : 'normal', candidateDigest: 'digest-1', mentions: index === 3 ? [{ handbookId: 'HB-mentioned', role: 'handbook_owner' }] : [],
+          ...(index === 3 ? { anchor: { documentId: 'doc-1', anchorKind: 'document_span', nodeId: 'node-1' } } : {}) }, index === 3 ? '意见已保存并发送站内通知' : '意见已添加', 'data-review-id="review-1"')),
       vector('data-review-reply-form', '<textarea name="comment"> 回复结论 </textarea>',
         'reviews/review-1/comments/comment-1/replies', 'POST', { comment: '回复结论' }, '回复已发送', 'data-review-id="review-1" data-comment-id="comment-1"'),
       ...['digest-1', ''].map(digest => vector('data-review-decision-form', '<textarea name="comment"> 需要补充证据 </textarea>',
@@ -2347,8 +2604,8 @@ async function exerciseOnlineReviewPreflight(page) {
       for (const item of scenarios) {
         response = item.response || 'network';
         const selected = item.selected ?? 1;
-        host.innerHTML = `<form data-review-online-form data-handbook-id="coverage-handbook" data-business-version=" v1 ">
-          <input name="scope" value="${item.scope || 'handbook'}"><input name="reviewerId" value="${item.reviewer ?? 'reviewer-1'}">
+        host.innerHTML = `<form data-review-online-form data-review-online-state="ready" data-handbook-id="coverage-handbook" data-business-version=" v1 ">
+          <input name="scope" value="${item.scope || 'handbook'}"><select name="reviewerId"><option value="${item.reviewer ?? 'reviewer-1'}" selected>审核人</option></select>
           <textarea name="note"> 请审核 </textarea>${[0, 1].map(index => `<input type="checkbox" data-review-online-draft
             data-document-id="doc-${index}" data-outline-version-id="outline-1" data-branch="${item.mixed && index === 1 ? 'other' : 'main'}"
             data-revision-id="revision-${index}" ${index < selected ? 'checked' : ''}>
@@ -2357,10 +2614,14 @@ async function exerciseOnlineReviewPreflight(page) {
         const form = host.querySelector('form'), button = form.querySelector('button'), error = form.querySelector('p');
         const before = requests.length;
         form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true, submitter: button }));
-        for (let attempt = 0; attempt < 100 && (error.hidden || button.disabled); attempt++)
+        for (let attempt = 0; attempt < 100 && (item.request ? (error.hidden || button.disabled) : !button.disabled); attempt++)
           await new Promise(resolve => setTimeout(resolve, 5));
-        if (error.hidden || error.textContent !== item.message || button.disabled || document.activeElement !== error)
-          throw new Error(`在线评审错误提示或恢复异常：${item.message} / ${error.textContent}`);
+        if (item.request) {
+          if (error.hidden || error.textContent !== item.message || button.disabled || document.activeElement !== error)
+            throw new Error(`在线评审错误提示或恢复异常：${item.message} / ${error.textContent}`);
+        } else if (!button.disabled || !error.hidden) {
+          throw new Error(`不满足在线评审前置条件时提交按钮应禁用且不显示错误：${item.message}`);
+        }
         if (requests.length !== before + (item.request ? 1 : 0)) throw new Error('在线评审前置校验请求次数错误');
         if (item.request) {
           const expected = { reviewMode: 'online_review', scope: 'handbook', businessVersion: 'v1',
@@ -2381,6 +2642,9 @@ async function exerciseHandbookDrawers(page) {
   await page.evaluate(async () => {
     const { appState } = await import('/knowledge-center/common/state/app-state.js');
     const previous = { view: appState.activeView, ui: appState.handbookProductionUi, focus: document.activeElement };
+    const liveUi = [...document.querySelectorAll('.handbook-production-directory, .handbook-assistant-panel, .handbook-directory-backdrop, .handbook-assistant-backdrop, [data-handbook-directory-open], [data-handbook-assistant-open]')]
+      .map(node => ({ node, parent: node.parentNode, next: node.nextSibling }));
+    for (const entry of liveUi) entry.node.remove();
     const host = document.createElement('section');
     host.innerHTML = `<button data-handbook-directory-open>目录</button><button data-handbook-assistant-open>助手</button>
       <button class="handbook-directory-backdrop" data-handbook-directory-close>关闭目录背景</button>
@@ -2417,8 +2681,10 @@ async function exerciseHandbookDrawers(page) {
       assert(document.activeElement === find('input'), '打开目录未聚焦搜索');
       await click('[data-handbook-directory-open]'); state(false, false);
       await click('[data-handbook-directory-open]');
-      await click('[data-handbook-assistant-open]'); state(false, true);
-      assert(document.activeElement === find('[role=tab]'), '打开助手未聚焦页签');
+      await click('[data-handbook-assistant-open]');
+      state(false, true);
+      const focusTarget = document.querySelector('.handbook-assistant-panel.is-open [role="tab"]');
+      assert(document.activeElement === find('[role=tab]'), `打开助手未聚焦页签：active=${document.activeElement?.outerHTML || document.activeElement?.nodeName}; target=${focusTarget?.outerHTML || 'missing'}; targetVisibility=${focusTarget ? getComputedStyle(focusTarget.closest('.handbook-assistant-panel')).visibility : 'missing'}; panel=${find('.handbook-assistant-panel').className}; tabs=${host.querySelectorAll('.handbook-assistant-panel.is-open [role="tab"]').length}`);
       for (const tab of ['evidence', 'chat']) {
         await click(`[data-handbook-assistant-tab="${tab}"]`);
         assert(appState.handbookProductionUi.assistantTab === tab, '助手页签状态未保存');
@@ -2451,6 +2717,9 @@ async function exerciseHandbookDrawers(page) {
       appState.activeView = previous.view;
       appState.handbookProductionUi = previous.ui;
       host.remove();
+      for (const entry of liveUi.reverse()) {
+        if (entry.parent) entry.parent.insertBefore(entry.node, entry.next?.parentNode === entry.parent ? entry.next : null);
+      }
       previous.focus?.focus();
     }
   });
@@ -2798,19 +3067,6 @@ async function exerciseReviewLocalControls(page) {
       <button class="review-line-button" data-review-line="9">未定位行</button>
       <button class="review-line-button" data-review-line="10" data-document-id="doc-local">缺少节点</button>
       <form data-review-comment-form><input name="anchor"><span data-review-anchor-status></span></form>
-      <article>
-        <button data-incremental-prototype-toggle="sources">展开来源</button>
-        <section data-incremental-prototype-panel="sources" hidden><input aria-label="来源"></section>
-      </article>
-      <article>
-        <button data-incremental-prototype-toggle="legacy">旧版输入</button>
-        <form data-incremental-prototype-form hidden><input aria-label="需求"></form>
-      </article>
-      <button data-incremental-prototype-toggle="missing">缺少面板</button>
-      <section class="incremental-generation-console"><button data-incremental-prototype-generate>启动</button><span class="incremental-prototype-status"></span></section>
-      <section><button data-incremental-prototype-publish>确认发布</button><span class="incremental-prototype-status"></span></section>
-      <button data-incremental-prototype-generate data-missing-status>无状态启动</button>
-      <button data-incremental-prototype-publish data-missing-status>无状态发布</button>
       <button data-production-tab="sources">来源</button><button data-production-tab="strategy">策略</button><button data-production-tab="tasks">任务</button>
       <section id="production-sources"></section><section id="production-strategy" hidden></section><section id="production-tasks" hidden></section>`;
     for (const id of ['production-sources', 'production-strategy', 'production-tasks']) {
@@ -2861,24 +3117,6 @@ async function exerciseReviewLocalControls(page) {
       find('[data-review-comment-form]').remove();
       click('[data-review-line="7"]');
       assert(find('[data-review-line="7"]').classList.contains('selected'), '无评论表单时仍应选中行');
-
-      for (const [name, selector] of [['sources', '[data-incremental-prototype-panel]'], ['legacy', '[data-incremental-prototype-form]']]) {
-        click(`[data-incremental-prototype-toggle="${name}"]`);
-        assert(!find(selector).hidden && document.activeElement === find(`${selector} input`), '原型面板展开未聚焦输入');
-        click(`[data-incremental-prototype-toggle="${name}"]`);
-        assert(find(selector).hidden, '原型面板再次点击未收起');
-      }
-      click('[data-incremental-prototype-toggle="missing"]');
-      click('.incremental-generation-console [data-incremental-prototype-generate]');
-      assert(find('.incremental-generation-console button').disabled
-        && find('.incremental-generation-console .incremental-prototype-status').textContent.includes('等待真实 Agent 接口接入'), '启动意图状态错误');
-      click('section > [data-incremental-prototype-publish]');
-      const publish = find('section > [data-incremental-prototype-publish]');
-      assert(publish.disabled && publish.parentElement.textContent.includes('服务端事务'), '发布意图状态错误');
-      click('[data-incremental-prototype-generate][data-missing-status]');
-      click('[data-incremental-prototype-publish][data-missing-status]');
-      assert(find('[data-incremental-prototype-generate][data-missing-status]').disabled
-        && find('[data-incremental-prototype-publish][data-missing-status]').disabled, '缺少状态容器时未防止重复操作');
 
       for (const name of ['strategy', 'tasks', 'sources']) {
         click(`[data-production-tab="${name}"]`);
@@ -3190,7 +3428,6 @@ async function exerciseTemplateController(page, coverageMap, expectedFiles) {
     });
     await page.locator('[data-view="templates"]').first().click();
     await page.locator('[data-template-new]:not([disabled])').waitFor({ state: 'visible', timeout: 10000 });
-    await page.locator('[data-template-tab="editor"]').click();
     await page.locator('[data-template-new]').click();
     await page.locator('[data-template-create-blank]').click();
     await page.locator('[data-template-field="name"]').fill('覆盖率模板');
@@ -3218,7 +3455,6 @@ async function exerciseTemplateController(page, coverageMap, expectedFiles) {
     await page.locator('[data-template-version="1"]').click();
     await page.locator('.template-history-banner').filter({ hasText: 'v1' }).waitFor({ state: 'visible', timeout: 10000 });
     await page.locator('[data-template-current]').click();
-    await page.locator('[data-template-history-close]').click();
     await page.locator('.template-more summary').click();
     await page.locator('[data-template-toggle]').click();
     await page.locator('[data-template-status]').filter({ hasText: '模板状态已更新' }).waitFor({ state: 'visible', timeout: 10000 });
@@ -3239,6 +3475,7 @@ async function exerciseTemplateController(page, coverageMap, expectedFiles) {
         { documentId: 'doc-2', title: '第二篇', path: '目录/第二篇.md', status: 'unmatched', ai: { templateId: 'coverage-template', reason: '匹配正文结构' }, candidates: ['coverage-template'] },
       ] };
     });
+    await page.locator('[data-template-back]').click();
     await page.locator('[data-template-tab="mappings"]').click();
     await page.locator('[data-map-select="doc-1"]').check();
     failNextDecision = true;
@@ -3286,7 +3523,8 @@ async function exerciseTemplateController(page, coverageMap, expectedFiles) {
         requests.find(item => item.suffix === '/mapping-rules')?.payload.rules[0]?.when.pathPrefix !== '目录' || unexpected.length)
       throw new Error(`模板规则预览或发布未按预期完成：${unexpected.join(', ')}`);
 
-    await page.locator('[data-template-tab="editor"]').click();
+    await page.locator('[data-template-tab="library"]').click();
+    await page.locator('.template-catalog-open[data-template-id="coverage-template"]').click();
     await page.locator('[data-template-edit]').click();
     await page.locator('[data-template-content]').fill('# 本地冲突草稿');
     conflictOnNextSave = true;
@@ -3306,6 +3544,7 @@ async function exerciseTemplateController(page, coverageMap, expectedFiles) {
         saves[2].payload.baseVersion !== 3 || template.content !== '# 本地冲突草稿')
       throw new Error('模板冲突重试的版本基线或正文不一致');
 
+    await page.locator('[data-template-back]').click();
     const upload = page.locator('[data-template-file]');
     await upload.setInputFiles({ name: 'invalid.txt', mimeType: 'text/plain', buffer: Buffer.from('not markdown') });
     await page.locator('[data-template-status]').filter({ hasText: '仅支持 Markdown' }).waitFor({ state: 'visible', timeout: 10000 });
@@ -3321,6 +3560,7 @@ async function exerciseTemplateController(page, coverageMap, expectedFiles) {
         uploadedTemplate?.id !== 'uploaded-template' || unexpected.length)
       throw new Error(`模板上传请求或详情回读不一致：${unexpected.join(', ')}`);
 
+    await page.locator('[data-template-back]').click();
     await page.locator('[data-template-tab="mappings"]').click();
     failNextAnalyze = true;
     await page.locator('[data-map-analyze]').click();
@@ -3338,8 +3578,8 @@ async function exerciseTemplateController(page, coverageMap, expectedFiles) {
     if (!requests.some(item => item.suffix === '/mappings/batch-coverage/cancel') || unexpected.length)
       throw new Error(`模板映射取消未调用批次 API：${unexpected.join(', ')}`);
 
-    await page.locator('[data-template-tab="editor"]').click();
-    await page.locator('[data-template-id="coverage-template"]').click();
+    await page.locator('[data-template-tab="library"]').click();
+    await page.locator('.template-catalog-open[data-template-id="coverage-template"]').click();
     await page.locator('.template-more summary').click();
     await page.locator('[data-template-history]').click();
     await page.locator('.template-version').filter({ hasText: 'v1' }).locator('summary').click();
@@ -3355,10 +3595,11 @@ async function exerciseTemplateController(page, coverageMap, expectedFiles) {
         finalSave?.payload.content !== '# 第一版正文' || template.currentVersion !== 5 || unexpected.length)
       throw new Error(`历史恢复保存版本或正文不一致：${unexpected.join(', ')}`);
 
+    await page.locator('[data-template-back]').click();
     const search = page.locator('[data-template-search]');
     const waitForSearchResults = (count, name = '') => page.waitForFunction(({ count, name }) => {
       const results = document.querySelector('[data-template-results]');
-      return results && results.querySelectorAll('[data-template-id]').length === count &&
+      return results && results.querySelectorAll('.template-catalog-open[data-template-id]').length === count &&
         (!name || results.textContent.includes(name));
     }, { count, name }, { timeout: 5000 });
     await search.fill('导入');
@@ -3371,17 +3612,18 @@ async function exerciseTemplateController(page, coverageMap, expectedFiles) {
       input.dispatchEvent(new InputEvent('input', { bubbles: true, isComposing: true }));
     });
     await page.waitForTimeout(240);
-    if (await page.locator('[data-template-results] [data-template-id]').count() !== 2)
+    if (await page.locator('[data-template-results] .template-catalog-open[data-template-id]').count() !== 2)
       throw new Error('模板搜索在中文输入法组词期间提前重绘');
     await search.evaluate(input => input.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true })));
     await waitForSearchResults(1, '覆盖率模板');
     await search.fill('');
     await waitForSearchResults(2);
 
+    await page.locator('.template-catalog-open[data-template-id="coverage-template"]').click();
     await page.locator('[data-template-edit]').click();
     await page.locator('[data-template-meta-toggle]').click();
     await page.locator('[data-template-field="name"]').fill('临时名称');
-    await page.locator('[data-template-meta-cancel]').click();
+    await page.locator('#template-meta-panel footer [data-template-meta-cancel]').click();
     if (await page.locator('.template-editor > header h3').textContent() !== '覆盖率模板')
       throw new Error('取消基本信息编辑未恢复原模板名称');
     await page.locator('[data-template-meta-toggle]').click();
@@ -3401,26 +3643,13 @@ async function exerciseTemplateController(page, coverageMap, expectedFiles) {
       throw new Error('基本信息 Escape 未恢复快照');
     await page.locator('[data-template-cancel]').click();
 
-    const resizer = page.locator('[data-template-list-resizer]');
-    await resizer.press('Home');
-    if (await resizer.getAttribute('aria-valuenow') !== '240') throw new Error('模板目录宽度 Home 快捷键无效');
-    await resizer.press('End');
-    await resizer.press('ArrowLeft');
-    if (await resizer.getAttribute('aria-valuenow') !== '404') throw new Error('模板目录宽度方向键无效');
-    await resizer.evaluate(handle => {
-      handle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 200 }));
-      document.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: 165 }));
-      document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX: 165 }));
-    });
-    if (await resizer.getAttribute('aria-valuenow') !== '369' ||
-        await page.evaluate(() => localStorage.getItem('knowledge-center:template-list-width')) !== '369')
-      throw new Error('模板目录拖拽宽度未持久化');
-
-    await page.locator('[data-template-tab="editor"]').press('End');
+    await page.locator('[data-template-back]').click();
+    await page.locator('[data-template-tab="library"]').press('End');
     await page.locator('[data-template-tab="mappings"][aria-selected="true"]').waitFor({ state: 'visible', timeout: 10000 });
     await page.locator('[data-template-tab="mappings"]').press('Home');
-    await page.locator('[data-template-tab="editor"][aria-selected="true"]').waitFor({ state: 'visible', timeout: 10000 });
+    await page.locator('[data-template-tab="library"][aria-selected="true"]').waitFor({ state: 'visible', timeout: 10000 });
 
+    await page.locator('.template-catalog-open[data-template-id="coverage-template"]').click();
     await page.locator('.template-more summary').click();
     await page.locator('[data-template-history]').click();
     await page.locator('.template-history').waitFor({ state: 'visible', timeout: 10000 });
@@ -3440,6 +3669,7 @@ async function exerciseTemplateController(page, coverageMap, expectedFiles) {
     await page.locator('[data-template-history-close]').press('Escape');
     if (await page.locator('.template-history').count()) throw new Error('历史版本 Escape 未关闭');
     await page.setViewportSize({ width: 1280, height: 720 });
+    await page.locator('[data-template-back]').click();
     await page.locator('[data-template-tab="mappings"]').click();
     await page.locator('[data-map-rules]').click();
     const mappingTrap = await page.evaluate(() => {
@@ -3454,7 +3684,7 @@ async function exerciseTemplateController(page, coverageMap, expectedFiles) {
     if (!mappingTrap) throw new Error('映射规则弹层焦点未循环');
     await page.locator('.template-map-evidence button[data-map-rules-close]').press('Escape');
     if (await page.locator('.template-map-evidence').count()) throw new Error('映射规则 Escape 未关闭');
-    await page.locator('[data-template-tab="editor"]').click();
+    await page.locator('[data-template-tab="library"]').click();
 
     await page.locator('[data-template-file]').setInputFiles([
       { name: 'mixed-invalid.txt', mimeType: 'text/plain', buffer: Buffer.from('invalid') },
@@ -3467,15 +3697,18 @@ async function exerciseTemplateController(page, coverageMap, expectedFiles) {
         !uploadResults.includes('已保存') || !uploadResults.includes('未保存') || !uploadResults.includes('mixed-invalid.txt'))
       throw new Error('混合模板上传未分别报告入库和格式拒绝结果');
 
+    await page.locator('[data-template-back]').click();
     omitNextDetailContent = true;
-    await page.locator('[data-template-id="coverage-template"]').click();
+    await page.locator('.template-catalog-open[data-template-id="coverage-template"]').click();
     await page.locator('[data-template-status]').filter({ hasText: '模板详情未返回正文' }).waitFor({ state: 'visible', timeout: 10000 });
-    await page.locator('[data-template-id="coverage-template"]').click();
+    await page.locator('[data-template-back]').click();
+    await page.locator('.template-catalog-open[data-template-id="coverage-template"]').click();
     await page.locator('.template-preview').filter({ hasText: '第一版正文' }).waitFor({ state: 'visible', timeout: 10000 });
     await page.evaluate(async () => {
       const { appState } = await import('/knowledge-center/common/state/app-state.js');
       appState.templateUi.mappingHandbooks = null;
     });
+    await page.locator('[data-template-back]').click();
     await page.locator('[data-template-tab="mappings"]').click();
     await page.locator('.template-mapping-error').first().waitFor({ state: 'visible', timeout: 10000 });
   } finally {
@@ -3742,6 +3975,73 @@ async function main() {
       await page.locator('#admin-submit').click();
       await page.locator('#app-shell').waitFor({ state: 'visible', timeout: 15000 });
     }
+    const targetedScenario = process.env.KC_FRONTEND_ISTANBUL_SCENARIO;
+    if (targetedScenario) {
+      const scenarios = {
+        'auth-controller': exerciseAuthController,
+        'handbook-drawers': exerciseHandbookDrawers,
+        'handbook-writing-entry': exerciseHandbookWritingEntry,
+        'document-task-tabs': async page => {
+          await page.locator('[data-view="documentTasks"]').first().click();
+          await exerciseView(page, 'documentTasks');
+        },
+        'production-progress': exerciseProductionProgressHttp,
+      };
+      if (!scenarios[targetedScenario]) throw new Error(`未知前端定向场景：${targetedScenario}`);
+      if (targetedScenario === 'handbook-drawers') await page.locator('[data-view="production"]').first().click();
+      await scenarios[targetedScenario](page);
+      fs.mkdirSync(output, { recursive: true });
+      fs.writeFileSync(path.join(output, 'targeted-scenario-result.json'), JSON.stringify({
+        scenario: targetedScenario, completed: true, capturedCoverage: false, finishedAt: new Date().toISOString(),
+      }, null, 2) + '\n');
+      console.log(JSON.stringify({ output, targetedScenario, completed: true, capturedCoverage: false }));
+      return;
+    }
+    const globalNotificationCases = await exerciseGlobalNotifications(page);
+    if (globalNotificationCases !== 4) throw new Error(`站内通知场景计数应为 4，实际 ${globalNotificationCases}`);
+    const uiSystemContractCases = await page.evaluate(async () => {
+      const { UI_ICONS, uiButton, uiIcon, uiIconButton } = await import('/knowledge-center/common/ui-system.js');
+      const { panel, section, formattedTime, pendingState, capabilityState } = await import('/knowledge-center/common/components/ui.js');
+      const assert = (condition, message) => { if (!condition) throw new Error(message); };
+      let cases = 0;
+      for (const usage of Object.keys(UI_ICONS)) {
+        assert(uiIcon(usage).includes(`data-lucide="${UI_ICONS[usage]}"`), `图标映射错误：${usage}`);
+        cases++;
+        if (usage.startsWith('action.')) {
+          assert(uiIconButton({ usage, label: '操作按钮', disabled: true, data: { action: 'confirm' } }).includes(' disabled data-action="confirm"'), `操作图标按钮错误：${usage}`);
+          assert(!uiIconButton({ usage, label: '操作按钮' }).includes(' disabled'), `默认图标按钮不应禁用：${usage}`);
+          cases++;
+        }
+      }
+      for (const variant of ['primary', 'secondary', 'tertiary']) {
+        assert(uiButton({ label: '查看&处理', variant, data: { action: 'review' } }).includes(`button ${variant}`), `按钮样式错误：${variant}`);
+        cases++;
+      }
+      assert(uiButton({ label: '处理中', disabled: true }).includes(' disabled'), '显式禁用的普通按钮未输出 disabled 属性');
+      cases++;
+      const rejects = (operation, message) => {
+        try { operation(); } catch (error) { assert(error.message.includes(message), `错误内容不匹配：${message}`); cases++; return; }
+        throw new Error(`预期拒绝输入：${message}`);
+      };
+      rejects(() => uiIcon('unknown'), '未登记');
+      rejects(() => uiIconButton({ usage: 'action.close', label: ' ' }), '中文可访问名称');
+      rejects(() => uiIconButton({ usage: 'feedback.error', label: '错误' }), 'action 图标用途');
+      rejects(() => uiIconButton({ usage: 'action.close', label: '关闭', data: { 'bad key': 'value' } }), '无效的 data 属性');
+      rejects(() => uiButton({ label: '删除', variant: 'danger' }), '未登记的按钮变体');
+      rejects(() => uiButton({ label: '' }), '可见名称');
+      assert(uiButton({ label: '<安全&可见>' }).includes('&lt;安全&amp;可见&gt;'), '按钮文本未转义');
+      const escaped = uiIconButton({ usage: 'action.close', label: '关闭"设置', data: { 'dialog-close': '<x>' } });
+      assert(escaped.includes('aria-label="关闭&quot;设置"') && escaped.includes('data-dialog-close="&lt;x&gt;"'), '图标按钮属性未转义');
+      cases += 2;
+      assert(panel('面板标题', '面板正文').includes('<h2>面板标题</h2></div>面板正文</section>'), '面板默认 meta 未正确渲染');
+      assert(section({}, 'missing') === null, '缺失 section 数据应返回 null');
+      assert(formattedTime({}) === '等待数据', '缺少 asOf 时应显示等待数据');
+      assert(pendingState().includes('功能准备中') && pendingState().includes('该功能尚未开放'), '空态默认参数未正确渲染');
+      assert(capabilityState('能力标题', '能力说明').includes('能力说明') && !capabilityState('能力标题', '能力说明').includes('<button'), '无动作能力态不应渲染按钮');
+      cases += 5;
+      return cases;
+    });
+    if (uiSystemContractCases < 45) throw new Error(`UI系统契约场景计数异常：${uiSystemContractCases}`);
     // Cover the projection-only outline branches in a real Chromium DOM. These
     // scenarios exercise public renderers without mutating a backend resource.
     await page.evaluate(async () => {
@@ -3909,10 +4209,11 @@ async function main() {
     for (const [exercise, expected, label] of [
       [exerciseGitlabMappingHttp, 16, 'GitLab版本映射'],
       [exerciseGitlabConnectionHttp, 14, 'GitLab仓库连接'],
+      [exercisePingcodeSyncHttp, 20, 'PingCode来源同步'],
       [exercisePermissionRolesHttp, 8, '权限管理'],
       [exerciseAssetManagementHttp, 9, '知识资产管理'],
       [exerciseOutlineRecycleHttp, 12, '大纲回收站'],
-      [exerciseIncrementalCreateHttp, 13, '增量任务创建'],
+      [exerciseProductionProgressHttp, 13, '生产进展视图'],
     ]) {
       const dedicatedPage = await context.newPage();
       const pageErrors = [];
@@ -3929,7 +4230,7 @@ async function main() {
         await dedicatedPage.close();
       }
     }
-    const [gitlabMappingHttpCases, gitlabConnectionHttpCases, permissionRolesHttpCases, assetManagementHttpCases, outlineRecycleHttpCases, incrementalCreateHttpCases] = managementHttpCounts;
+    const [gitlabMappingHttpCases, gitlabConnectionHttpCases, pingcodeSyncHttpCases, permissionRolesHttpCases, assetManagementHttpCases, outlineRecycleHttpCases, productionProgressHttpCases] = managementHttpCounts;
     await exerciseOutlineImport(page);
     await exerciseReviewLocalControls(page);
     await exerciseReviewInlineComment(page);
@@ -4050,7 +4351,7 @@ async function main() {
     const reviewDirectory = path.join(output, 'review-cases', `${Date.now()}-${process.pid}`);
     await runReviewCoverage(reviewDirectory);
     const reviewFiles = fs.readdirSync(reviewDirectory).filter(name => name.endsWith('.json'));
-    if (reviewFiles.length !== 17) throw new Error(`审核工作台计数文件应为 17 个，实际 ${reviewFiles.length}`);
+    if (reviewFiles.length !== 19) throw new Error(`审核工作台计数文件应为 19 个，实际 ${reviewFiles.length}`);
     for (const name of reviewFiles) {
       const pageCoverages = JSON.parse(fs.readFileSync(path.join(reviewDirectory, name), 'utf8'));
       if (!Array.isArray(pageCoverages) || !pageCoverages.length) throw new Error(`审核工作台页面计数为空：${name}`);
@@ -4071,7 +4372,7 @@ async function main() {
     reports.create('lcovonly').execute(contextReport);
     completed = true;
     const summary = JSON.parse(fs.readFileSync(path.join(output, 'coverage-summary.json'), 'utf8'));
-    console.log(JSON.stringify({ output, sourceFiles: files.length, navigationFiles, apiContractCases: apiFiles.length, handbookReviewSelectionCases, handbookDraftInputCases, teamGroupHttpCases, cleaningUploadHttpCases, writingAdoptionHttpCases, principalImportHttpCases, gitlabMappingHttpCases, gitlabConnectionHttpCases, permissionRolesHttpCases, assetManagementHttpCases, outlineRecycleHttpCases, incrementalCreateHttpCases, writingCases: caseFiles.length, documentTaskPages: documentTaskSnapshots.length, myWorkCases: myWorkFiles.length, handbookReturnCases: handbookReturnFiles.length, handbookEditorCases: handbookEditorFiles.length, platformCases: platformSuites.reduce((sum, suite) => sum + suite[3], 0), reviewCases: reviewFiles.length, total: summary.total }, null, 2));
+    console.log(JSON.stringify({ output, sourceFiles: files.length, navigationFiles, globalNotificationCases, apiContractCases: apiFiles.length, handbookReviewSelectionCases, handbookDraftInputCases, teamGroupHttpCases, cleaningUploadHttpCases, writingAdoptionHttpCases, principalImportHttpCases, gitlabMappingHttpCases, gitlabConnectionHttpCases, pingcodeSyncHttpCases, permissionRolesHttpCases, assetManagementHttpCases, outlineRecycleHttpCases, productionProgressHttpCases, writingCases: caseFiles.length, documentTaskPages: documentTaskSnapshots.length, myWorkCases: myWorkFiles.length, handbookReturnCases: handbookReturnFiles.length, handbookEditorCases: handbookEditorFiles.length, platformCases: platformSuites.reduce((sum, suite) => sum + suite[3], 0), reviewCases: reviewFiles.length, total: summary.total }, null, 2));
   } finally {
     if (browser) await browser.close();
     if (server.exitCode === null) {
