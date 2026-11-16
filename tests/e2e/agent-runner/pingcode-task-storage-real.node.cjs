@@ -47,6 +47,9 @@ test('隔离库：来源同步、次要事项、幂等重放与版本冲突', { 
   const imported = await ok('GET', `/v1/document-tasks/${number}`);
   assert.equal(imported.sourceType, 'TICKET');
   assert.equal(imported.ownerId, config.defaultOwnerId);
+  const taskList = await ok('GET', `/v1/document-tasks?q=${number}`);
+  assert.equal(taskList.total, 1, '确认的 PingCode SR 应进入任务管理列表');
+  assert.ok(taskList.items.some(item => item.number === number), '任务管理列表应回读确认后的 SR 编号');
   const firstSnapshot = await ok('GET', `/v1/pingcode-task-sync/tasks/${number}/source`);
   assert.equal(firstSnapshot.markdown, '## 正文\n\n测试内容。');
   assert.equal(firstSnapshot.sourceId, source.id);
@@ -113,16 +116,20 @@ test('隔离库：来源同步、次要事项、幂等重放与版本冲突', { 
     { revision: requirement.revision, actor: config.defaultOwnerId });
   const ir = `YASHAN-${suffix}`;
   const secondIr = `YASHAN-${suffix + 1}`;
+  const unlinkedIr = `YASHAN-${suffix + 2}`;
   await ok('POST', `/v1/pingcode-task-sync/runs/${relation.id}/pages`, {
-    pageIndex: 0, pageCount: 1, count: 2, sourceVersion: 'isolated-idea-v1',
+    pageIndex: 0, pageCount: 1, count: 3, sourceVersion: 'isolated-idea-v1',
     criteriaSha256: hash('isolated-idea-criteria'), sourceType: 'requirement',
     items: [ir, secondIr].map((identifier, index) => ({ ir: identifier,
       irId: `idea-${suffix}-${index}`, workItems: [{ number,
       id: `upstream-${suffix}`, shortId: `short-${suffix}`,
-      title: '隔离需求中的 SR', description: '## 正文\n\n需求关联内容。' }] })),
+      title: '隔离需求中的 SR', description: '## 正文\n\n需求关联内容。' }] }))
+      .concat([{ ir: unlinkedIr, irId: `idea-${suffix}-unlinked`, workItems: [] }]),
   });
   const relationReady = await ok('POST', `/v1/pingcode-task-sync/runs/${relation.id}/finish`,
     { digest: hash('isolated-idea-run') });
+  const unlinked = await ok('GET', `/v1/pingcode-task-sync/runs/${relation.id}/unlinked-irs?page=1&pageSize=100`);
+  assert.deepEqual(unlinked.items, [unlinkedIr]);
   const conflictKey = crypto.randomUUID();
   const undecided = await request('POST', `/v1/pingcode-task-sync/runs/${relation.id}/confirm`,
     { digest: relationReady.digest, expectedRevision: requirement.revision, primarySources: {} }, conflictKey);

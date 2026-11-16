@@ -5,10 +5,15 @@ PingCode API 客户端
 """
 
 import time
+import re
 from typing import Callable
 from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 
 from playwright.sync_api import Page
+
+MAX_WORK_ITEM_DETAILS_PER_PAGE = 500
+MAX_BROWSER_FETCH_CONCURRENCY = 50
+MAX_TASK_SOURCE_RELATIONS = 5000
 
 
 class PingCodeAPIClient:
@@ -112,6 +117,38 @@ class PingCodeAPIClient:
         }""", {'path': path, 'payload': payload})
         return result
 
+    def get_baseline_ideas_pages(
+        self, product_id: str, baseline_id: str, page_count: int, *, suite_id: str = '', concurrency: int = 6,
+    ) -> list[dict]:
+        if not 0 <= page_count <= 100 or not 1 <= concurrency <= 20:
+            raise ValueError('基线分页批次无效')
+        page_indexes = list(range(1, page_count))
+        if not page_indexes:
+            return []
+        return self.page.evaluate("""async ({productId, baselineId, pageIndexes, suiteId, concurrency}) => {
+            const results = new Array(pageIndexes.length);
+            let next = 0;
+            async function worker() {
+                while (true) {
+                    const slot = next++;
+                    if (slot >= pageIndexes.length) return;
+                    const pi = pageIndexes[slot];
+                    const path = `/api/ship/products/${encodeURIComponent(productId)}`
+                        + `/baseline/snapshots/${encodeURIComponent(baselineId)}/content?pi=${pi}&ps=50`;
+                    const payload = { pi, ps: 50,
+                        criteria: { conditions: [], search: { scopes: ['identifier', 'title'] }, mode: 1, sorts: null },
+                        scope: { group_by: '', suite_id: suiteId, suite_children: 1 } };
+                    const response = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload) });
+                    if (!response.ok) throw new Error(`PingCode 基线分页 HTTP ${response.status}`);
+                    results[slot] = await response.json();
+                }
+            }
+            await Promise.all(Array.from({ length: Math.min(concurrency, pageIndexes.length) }, worker));
+            return results;
+        }""", { 'productId': product_id, 'baselineId': baseline_id, 'pageIndexes': page_indexes,
+            'suiteId': suite_id, 'concurrency': concurrency })
+
     def get_idea_work_items(self, idea_id: str, version_id: str) -> dict:
         query = urlencode({
             'principal_id': idea_id,
@@ -120,6 +157,33 @@ class PingCodeAPIClient:
             'version_id': version_id,
         })
         return self._api_request(f'/api/ladon/relation/related-items?{query}')
+
+    def get_idea_work_items_batch(self, ideas: list[tuple[str, str]], concurrency: int = 10) -> list[dict]:
+        if (len(ideas) > MAX_TASK_SOURCE_RELATIONS or not 1 <= concurrency <= MAX_BROWSER_FETCH_CONCURRENCY
+                or any(not isinstance(idea_id, str) or not idea_id
+                       or not isinstance(version_id, str) or not version_id
+                       for idea_id, version_id in ideas)):
+            raise ValueError('需求关联批次无效')
+        return self.page.evaluate("""async ({ideas, concurrency}) => {
+            const results = new Array(ideas.length);
+            let next = 0;
+            async function worker() {
+                while (true) {
+                    const index = next++;
+                    if (index >= ideas.length) return;
+                    const [ideaId, versionId] = ideas[index];
+                    const query = new URLSearchParams({
+                        principal_id: ideaId, principal_name: 'idea',
+                        target_name: 'work_item', version_id: versionId,
+                    });
+                    const response = await fetch(`/api/ladon/relation/related-items?${query}`);
+                    if (!response.ok) throw new Error(`PingCode 需求关联 HTTP ${response.status}`);
+                    results[index] = await response.json();
+                }
+            }
+            await Promise.all(Array.from({length: Math.min(concurrency, ideas.length)}, worker));
+            return results;
+        }""", {'ideas': ideas, 'concurrency': concurrency})
 
     def get_agile_project(self, project_code: str) -> dict:
         return self._api_request(f'/api/agile/projects/{project_code}?addons=true&members=true')
@@ -153,7 +217,32 @@ class PingCodeAPIClient:
 
     def get_work_item(self, short_id: str) -> dict:
         return self._api_request(f'/api/agile/work-items/{short_id}')
-    
+
+    def get_work_items(self, short_ids: list[str], concurrency: int = 10) -> list[dict]:
+        if len(short_ids) > MAX_WORK_ITEM_DETAILS_PER_PAGE or any(not isinstance(value, str)
+                                      or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', value)
+                                      for value in short_ids) or not 1 <= concurrency <= MAX_BROWSER_FETCH_CONCURRENCY:
+            raise ValueError('工作项详情批次无效')
+        if not short_ids:
+            return []
+        return self.page.evaluate("""async ({shortIds, concurrency}) => {
+            const values = new Array(shortIds.length);
+            let next = 0;
+            async function worker() {
+                while (true) {
+                    const index = next++;
+                    if (index >= shortIds.length) return;
+                    const shortId = shortIds[index];
+                    const response = await fetch(`/api/agile/work-items/${encodeURIComponent(shortId)}`);
+                    if (!response.ok) throw new Error(`PingCode 工作项详情 HTTP ${response.status}`);
+                    const result = await response.json();
+                    values[index] = result?.data?.value;
+                }
+            }
+            await Promise.all(Array.from({length: Math.min(concurrency, shortIds.length)}, worker));
+            return values;
+        }""", {'shortIds': short_ids, 'concurrency': concurrency})
+
     def get_attachments(self, page_id: str) -> list[dict]:
         """获取页面附件列表"""
         result = self._api_request(f'/api/wiki/pages/{page_id}/attachments')

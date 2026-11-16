@@ -16,6 +16,13 @@ test('完整分页后按 SR 去重并保留所有 IR 关联', async () => {
   expect(progress).toHaveLength(2);
 });
 
+test('无 SR 关联的 IR 仍计入分页完整性但不生成任务', async () => {
+  const emptyRelation = { ...page(0, [{ ir: 'YASHAN-4241', irId: 'idea-4241', workItems: [] }], 1),
+    pageCount: 1, unlinkedIrCount: 1 };
+  const result = await collectPingcodeTaskSource({ source, readPage: async () => emptyRelation });
+  expect(result).toMatchObject({ rowCount: 1, pageCount: 1, srCount: 0, items: [] });
+});
+
 test('筛选条件、版本或总数漂移不能生成预览', async () => {
   const pages = [page(0, [{ ir: 'YASHAN-1', irId: 'idea-1', workItems: [work] }]),
     { ...page(1, [{ ir: 'YASHAN-2', irId: 'idea-2', workItems: [] }]), sourceVersion: 'v2' }];

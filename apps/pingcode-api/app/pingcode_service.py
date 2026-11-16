@@ -4,6 +4,7 @@ import hashlib
 import sys
 import json
 import logging
+import os
 import re
 import threading
 import time
@@ -21,7 +22,7 @@ PACKAGES_DIR = PINGCODE_DIR.parent
 if str(PACKAGES_DIR) not in sys.path:
     sys.path.insert(0, str(PACKAGES_DIR))
 
-from pingcode_core.api_client import PingCodeAPIClient
+from pingcode_core.api_client import MAX_WORK_ITEM_DETAILS_PER_PAGE, PingCodeAPIClient
 from pingcode_core.client import PingCodeClient
 from pingcode_core.config import PingCodeConfig
 from pingcode_core.tree_builder import TreeBuilder
@@ -29,6 +30,10 @@ from pingcode_core.content_parser import ContentParser
 
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    logger.addHandler(logging.StreamHandler())
+    logger.propagate = False
 
 
 class PingcodeTaskSourceError(ValueError):
@@ -36,6 +41,63 @@ class PingcodeTaskSourceError(ValueError):
         super().__init__(message)
         self.code = code
         self.details = details
+
+
+TASK_DETAIL_PROPERTIES = (
+    ('ceshijianyi', '测试建议'),
+    ('Gittijiaojilu', 'Git 提交记录'),
+    ('gaiyaoshejifangan', '概要设计方案'),
+    ('kaifashejifangan', '开发设计方案'),
+    ('kaifashejifanganpingshenhuiyijiyao', '开发设计方案评审会议纪要'),
+    ('ceshishejifangan', '测试设计方案'),
+    ('ceshishejifanganpingshen', '测试设计方案评审'),
+    ('yongliMRlianjie', '用例 MR 链接'),
+    ('fugaishuaibaogao', '覆盖率报告'),
+    ('shejibiangeng_1', '设计变更'),
+    ('shangcheyunhangcishu', '上车运行次数'),
+    ('zhuancezhiliangpingjiAD_1_2', '转测质量评级（A~D）'),
+    ('ceshiyonglishu', '测试用例数'),
+    ('zhuancezhiliangpingjiamiaoshu_1_2', '转测质量评价描述'),
+    ('TSEpinggu_1_2', 'TSE 评估'),
+    ('daimahangshu', '代码行数'),
+    ('kaifayonglishukaifatianxie', '开发用例数（开发填写）'),
+)
+
+
+def _get_work_item_details(api: PingCodeAPIClient, short_ids: list[str], concurrency: int) -> list[dict]:
+    details = []
+    for offset in range(0, len(short_ids), MAX_WORK_ITEM_DETAILS_PER_PAGE):
+        batch = short_ids[offset:offset + MAX_WORK_ITEM_DETAILS_PER_PAGE]
+        details.extend(api.get_work_items(batch, concurrency=concurrency))
+    return details
+
+
+def _task_property_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, list):
+        return '\n'.join(text for text in (_task_property_text(item) for item in value) if text)
+    if isinstance(value, dict):
+        for key in ('text', 'value', 'content', 'display_value', 'label'):
+            if key in value:
+                return _task_property_text(value[key])
+    return ''
+
+
+def _task_description(detail: dict[str, Any]) -> str:
+    from .markdown_cleaning import html_to_markdown
+
+    description = detail.get('description') if isinstance(detail.get('description'), str) else ''
+    body = html_to_markdown(description) if description.strip() else 'PingCode 未填写'
+    properties = detail.get('properties') if isinstance(detail.get('properties'), dict) else {}
+    sections = [f'## 需求描述\n\n{body}']
+    for key, label in TASK_DETAIL_PROPERTIES:
+        raw = _task_property_text(properties.get(key))
+        value = html_to_markdown(raw) if raw else 'PingCode 未填写'
+        sections.append(f'## {label}\n\n{value or "PingCode 未填写"}')
+    return '\n\n'.join(sections)
 
 
 class PingCodeService:
@@ -46,6 +108,8 @@ class PingCodeService:
         self._lock = threading.RLock()
         self._executor: ThreadPoolExecutor | None = self._new_executor()
         self._closed = False
+        self._relation_concurrency = self._configured_concurrency('PINGCODE_RELATION_CONCURRENCY')
+        self._detail_concurrency = self._configured_concurrency('PINGCODE_DETAIL_CONCURRENCY')
         self._login_space_key: str | None = None
         self._space_cache: dict[
             str, tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]]
@@ -56,6 +120,16 @@ class PingCodeService:
     @staticmethod
     def _new_executor() -> ThreadPoolExecutor:
         return ThreadPoolExecutor(max_workers=1, thread_name_prefix="pingcode-browser")
+
+    @staticmethod
+    def _configured_concurrency(name: str) -> int:
+        try:
+            value = int(os.getenv(name, '50'))
+        except ValueError as exc:
+            raise RuntimeError(f'{name} 必须为 1 至 50 的整数') from exc
+        if not 1 <= value <= 50:
+            raise RuntimeError(f'{name} 必须为 1 至 50 的整数')
+        return value
 
     @staticmethod
     def _isolate_asyncio(callback, *args):
@@ -399,7 +473,178 @@ class PingCodeService:
 
     def read_task_source_page(self, source_url: str, source_type: str, page_index: int) -> dict[str, Any]:
         """Read one bounded page for a platform-managed Pingcode source."""
-        return self._submit(self._read_task_source_page_sync, source_url, source_type, page_index)
+        try:
+            return self._submit(self._read_task_source_page_sync, source_url, source_type, page_index)
+        except (TypeError, ValueError) as exc:
+            reason = re.sub(r'https?://\S+', '<URL>', str(exc))
+            reason = re.sub(r'(?i)(token|authorization|cookie|password)\s*[=:]\s*\S+', r'\1=<REDACTED>', reason)
+            logger.warning(
+                'pingcode.task_source_page.validation_failed sourceType=%s pageIndex=%s '
+                'errorType=%s reason=%s', source_type, page_index, type(exc).__name__, reason[:160],
+            )
+            raise
+
+    def read_task_source_pages(self, source_url: str) -> dict[str, Any]:
+        """Read and validate all pages of one requirement baseline in one browser session."""
+        try:
+            return self._submit(self._read_task_source_pages_sync, source_url)
+        except (TypeError, ValueError) as exc:
+            reason = re.sub(r'https?://\S+', '<URL>', str(exc))
+            reason = re.sub(r'(?i)(token|authorization|cookie|password)\s*[=:]\s*\S+', r'\1=<REDACTED>', reason)
+            logger.warning('pingcode.task_source_pages.validation_failed errorType=%s reason=%s',
+                           type(exc).__name__, reason[:160])
+            raise
+
+    def _read_task_source_pages_sync(self, source_url: str) -> dict[str, Any]:
+        started_at = time.perf_counter()
+        parsed = urlparse(source_url)
+        configured_host = urlparse(self.config.base_url).hostname
+        match = re.fullmatch(r'/ship/products/([A-Za-z0-9_-]+)/baselines/([A-Za-z0-9_-]+)/ideas', parsed.path)
+        query = parse_qs(parsed.query, strict_parsing=True)
+        if (parsed.scheme != 'https' or parsed.hostname != configured_host or parsed.username or parsed.password
+                or parsed.fragment or not match or set(query) - {'category'}
+                or len(query.get('category', ['all'])) != 1):
+            raise ValueError('Pingcode 需求基线来源 URL 无效')
+        product_code, baseline_id = match.groups()
+        category = query.get('category', ['all'])[0]
+        if not re.fullmatch(r'[A-Za-z0-9_-]+', category):
+            raise ValueError('基线分类无效')
+        api = self._ensure_api()
+        phase = time.perf_counter()
+        product = api.get_product(product_code).get('data', {}).get('value', {})
+        product_id = product.get('_id')
+        if product.get('identifier') != product_code or not product_id:
+            raise ValueError('Pingcode 产品与来源不一致')
+        baseline = api.get_baseline(product_id, baseline_id).get('data', {}).get('value', {})
+        if (baseline.get('short_id') != baseline_id or baseline.get('scope') != product_id
+                or baseline.get('updated_at') is None):
+            raise ValueError('Pingcode 基线与来源不一致')
+        suite_id = ''
+        if category != 'all':
+            suites = api.get_baseline_suites(product_id, baseline_id).get('data', {}).get('value', [])
+            matches = [item for item in suites if item.get('short_id') == category and item.get('product_id') == product_id]
+            if len(matches) != 1:
+                raise ValueError('基线分类不属于当前产品')
+            suite_id = matches[0]['_id']
+        project = api.get_agile_project('YDBRD').get('data', {}).get('value', {})
+        project_id = project.get('_id')
+        if project.get('identifier') != 'YDBRD' or not project_id:
+            raise ValueError('关联工作项所属项目无法验证')
+        metadata_duration_ms = (time.perf_counter() - phase) * 1000
+
+        phase = time.perf_counter()
+        first = api.get_baseline_ideas(product_id, baseline_id, 0, suite_id=suite_id).get('data', {})
+        page_count = first.get('page_count')
+        count = first.get('count')
+        if not isinstance(page_count, int) or not 0 <= page_count <= 100 or not isinstance(count, int) or count < 0:
+            raise ValueError('基线分页响应无效')
+        remaining = api.get_baseline_ideas_pages(product_id, baseline_id, page_count, suite_id=suite_id)
+        raw_pages = [first, *[item.get('data', {}) for item in remaining]]
+        if len(raw_pages) != max(page_count, 1):
+            raise ValueError('基线分页缺失')
+        ideas_by_page = []
+        all_ideas = []
+        for page_index, data in enumerate(raw_pages):
+            ideas = data.get('value')
+            if (not isinstance(ideas, list) or data.get('count') != count or data.get('page_count') != page_count
+                    or (page_index > 0 and page_count == 0)):
+                raise ValueError('基线分页响应无效')
+            for idea in ideas:
+                identifier = idea.get('whole_identifier', '')
+                if not identifier.startswith(f'{product_code}-') or not idea.get('_id') or not idea.get('version_id'):
+                    raise ValueError('基线需求身份或版本缺失')
+            ideas_by_page.append(ideas)
+            all_ideas.extend(ideas)
+        if len(all_ideas) != count:
+            raise ValueError('基线分页总数不完整')
+        pages_duration_ms = (time.perf_counter() - phase) * 1000
+
+        phase = time.perf_counter()
+        relations = api.get_idea_work_items_batch(
+            [(idea['_id'], idea['version_id']) for idea in all_ideas], concurrency=self._relation_concurrency)
+        if len(relations) != len(all_ideas):
+            raise ValueError('需求关系响应数量不一致')
+        related_by_idea = []
+        unique_related = {}
+        unlinked_numbers = []
+        relation_incomplete = []
+        for idea, relation in zip(all_ideas, relations):
+            related = relation.get('data', {}).get('value') if isinstance(relation, dict) else None
+            expected = idea.get('relation_data', {}).get('work_item', 0)
+            if not isinstance(related, list) or not isinstance(expected, int) or expected < 0:
+                actual = len(related) if isinstance(related, list) else None
+                relation_incomplete.append({'number': idea.get('whole_identifier'), 'expected': expected, 'actual': actual})
+                continue
+            if not related and expected > 0:
+                unlinked_numbers.append(idea['whole_identifier'])
+            elif len(related) != expected:
+                relation_incomplete.append({'number': idea['whole_identifier'], 'expected': expected, 'actual': len(related)})
+                continue
+            if any(re.fullmatch(r'YDBRD-\d+', item.get('whole_identifier', ''))
+                   and (item.get('project_id') != project_id or not item.get('_id') or not item.get('short_id'))
+                   for item in related):
+                raise PingcodeTaskSourceError('PINGCODE_RELATION_IDENTITY_INVALID', '需求关联工作项身份无法验证')
+            filtered = [item for item in related if re.fullmatch(r'YDBRD-\d+', item.get('whole_identifier', ''))]
+            related_by_idea.append((idea, filtered))
+            for item in filtered:
+                existing = unique_related.get(item['short_id'])
+                if existing and (existing.get('_id'), existing.get('whole_identifier'), existing.get('project_id')) != (
+                    item.get('_id'), item.get('whole_identifier'), item.get('project_id')
+                ):
+                    raise PingcodeTaskSourceError('PINGCODE_RELATION_IDENTITY_INVALID', '同一工作项短编号对应多个身份')
+                unique_related[item['short_id']] = item
+        if relation_incomplete:
+            logger.warning('pingcode.task_source_pages.relation_incomplete count=%s firstSourceNumber=%s',
+                           len(relation_incomplete), relation_incomplete[0]['number'])
+            first_issue = relation_incomplete[0]
+            raise PingcodeTaskSourceError('PINGCODE_RELATION_INCOMPLETE', '需求关联工作项数量与详情不一致',
+                sourceNumber=first_issue['number'], expectedCount=first_issue['expected'], actualCount=first_issue['actual'])
+        relation_duration_ms = (time.perf_counter() - phase) * 1000
+
+        phase = time.perf_counter()
+        short_ids = list(unique_related)
+        details = _get_work_item_details(api, short_ids, self._detail_concurrency)
+        if len(details) != len(short_ids):
+            raise ValueError('关联工作项详情响应数量不一致')
+        details_by_short_id = dict(zip(short_ids, details))
+        latest_baseline = api.get_baseline(product_id, baseline_id).get('data', {}).get('value', {})
+        if (latest_baseline.get('short_id') != baseline_id or latest_baseline.get('scope') != product_id
+                or latest_baseline.get('updated_at') != baseline.get('updated_at')):
+            raise PingcodeTaskSourceError('PINGCODE_SOURCE_CHANGED', '采集期间 Pingcode 基线版本已变化')
+        related_by_idea_id = {idea['_id']: work_items for idea, work_items in related_by_idea}
+        pages = []
+        for page_index, ideas in enumerate(ideas_by_page):
+            page_items = []
+            for idea in ideas:
+                identifier = idea['whole_identifier']
+                related = related_by_idea_id[idea['_id']]
+                work_items = []
+                for item in related:
+                    detail = details_by_short_id[item['short_id']]
+                    if (not isinstance(detail, dict) or detail.get('_id') != item['_id']
+                            or detail.get('short_id') != item['short_id']
+                            or detail.get('whole_identifier') != item['whole_identifier']
+                            or detail.get('project_id') != project_id):
+                        raise ValueError('关联工作项详情与需求来源不一致')
+                    work_items.append({'number': item['whole_identifier'], 'id': item['_id'],
+                        'shortId': item['short_id'], 'title': detail.get('title', ''),
+                        'description': _task_description(detail), 'projectId': project_id,
+                        'ownerId': detail.get('assignee'), 'createdAt': detail.get('created_at'),
+                        'updatedAt': detail.get('updated_at')})
+                page_items.append({'ir': identifier, 'irId': idea['_id'], 'workItems': work_items})
+            pages.append({'sourceType': 'requirement', 'sourceId': baseline_id,
+                'sourceVersion': baseline.get('updated_at'), 'count': count, 'pageIndex': page_index,
+                'pageCount': page_count, 'unlinkedIrCount': sum(
+                    1 for idea in ideas if idea['whole_identifier'] in unlinked_numbers), 'items': page_items})
+        detail_duration_ms = (time.perf_counter() - phase) * 1000
+        logger.info('pingcode.task_source_pages.completed sourceId=%s pageCount=%s rowCount=%s srCount=%s '
+            'unlinkedIrCount=%s metadataDurationMs=%.1f pagesDurationMs=%.1f relationRequests=%s '
+            'relationDurationMs=%.1f detailRequests=%s detailDurationMs=%.1f durationMs=%.1f',
+            baseline_id, page_count, count, len(short_ids), len(unlinked_numbers), metadata_duration_ms,
+            pages_duration_ms, len(all_ideas), relation_duration_ms, len(short_ids), detail_duration_ms,
+            (time.perf_counter() - started_at) * 1000)
+        return {'pages': pages, 'pageCount': page_count, 'count': count,
+                'unlinkedIrNumbers': sorted(set(unlinked_numbers))}
 
     def read_task_source_image(self, image_url: str, max_bytes: int, timeout_ms: int) -> dict[str, Any]:
         """Read a Pingcode public image through the authorized connector session."""
@@ -417,6 +662,13 @@ class PingCodeService:
         return {'dataBase64': base64.b64encode(data).decode('ascii'), 'contentType': content_type}
 
     def _read_task_source_page_sync(self, source_url: str, source_type: str, page_index: int) -> dict[str, Any]:
+        started_at = time.perf_counter()
+        relation_duration_ms = 0.0
+        relation_request_count = 0
+        detail_duration_ms = 0.0
+        product_duration_ms = 0.0
+        baseline_duration_ms = 0.0
+        project_duration_ms = 0.0
         parsed = urlparse(source_url)
         configured_host = urlparse(self.config.base_url).hostname
         if (parsed.scheme != 'https' or parsed.hostname != configured_host
@@ -435,11 +687,15 @@ class PingCodeService:
             category = query.get('category', ['all'])[0]
             if not re.fullmatch(r'[A-Za-z0-9_-]+', category):
                 raise ValueError('基线分类无效')
+            phase_started_at = time.perf_counter()
             product = api.get_product(product_code).get('data', {}).get('value', {})
+            product_duration_ms = (time.perf_counter() - phase_started_at) * 1000
             product_id = product.get('_id')
             if product.get('identifier') != product_code or not product_id:
                 raise ValueError('Pingcode 产品与来源不一致')
+            phase_started_at = time.perf_counter()
             baseline = api.get_baseline(product_id, baseline_id).get('data', {}).get('value', {})
+            baseline_duration_ms = (time.perf_counter() - phase_started_at) * 1000
             if (baseline.get('short_id') != baseline_id or baseline.get('scope') != product_id
                     or baseline.get('updated_at') is None):
                 raise ValueError('Pingcode 基线与来源不一致')
@@ -450,29 +706,72 @@ class PingCodeService:
                 if len(matches) != 1:
                     raise ValueError('基线分类不属于当前产品')
                 suite_id = matches[0]['_id']
+            page_started_at = time.perf_counter()
             data = api.get_baseline_ideas(product_id, baseline_id, page_index, suite_id=suite_id).get('data', {})
+            page_duration_ms = round((time.perf_counter() - page_started_at) * 1000, 1)
             ideas = data.get('value')
             if (not isinstance(ideas, list) or not isinstance(data.get('count'), int)
                     or not isinstance(data.get('page_count'), int)
                     or page_index >= data['page_count'] and data['count'] != 0):
                 raise ValueError('基线分页响应无效')
+            phase_started_at = time.perf_counter()
             project = api.get_agile_project('YDBRD').get('data', {}).get('value', {})
+            project_duration_ms = (time.perf_counter() - phase_started_at) * 1000
             project_id = project.get('_id')
             if project.get('identifier') != 'YDBRD' or not project_id:
                 raise ValueError('关联工作项所属项目无法验证')
-            items = []
+            valid_ideas = []
             for idea in ideas:
                 identifier = idea.get('whole_identifier', '')
                 if not identifier.startswith(f'{product_code}-') or not idea.get('_id') or not idea.get('version_id'):
                     raise ValueError('基线需求身份或版本缺失')
-                relation = api.get_idea_work_items(idea['_id'], idea['version_id']).get('data', {})
+                valid_ideas.append(idea)
+            relation_started_at = time.perf_counter()
+            relations = api.get_idea_work_items_batch([
+                (idea['_id'], idea['version_id']) for idea in valid_ideas
+            ], concurrency=self._relation_concurrency)
+            relation_duration_ms = (time.perf_counter() - relation_started_at) * 1000
+            relation_request_count = len(valid_ideas)
+            related_by_idea = []
+            unique_related_by_short_id = {}
+            unlinked_ir_count = 0
+            for idea, relation in zip(valid_ideas, relations):
+                identifier = idea['whole_identifier']
+                relation = relation.get('data', {})
                 related = relation.get('value')
-                if not isinstance(related, list) or len(related) != idea.get('relation_data', {}).get('work_item', 0):
-                    expected = idea.get('relation_data', {}).get('work_item', 0)
+                expected = idea.get('relation_data', {}).get('work_item', 0)
+                if not isinstance(related, list) or not isinstance(expected, int) or expected < 0:
                     actual = len(related) if isinstance(related, list) else None
+                    logger.warning(
+                        'pingcode.task_source_page.relation_incomplete sourceId=%s pageIndex=%s '
+                        'sourceNumber=%s expectedCount=%s actualCount=%s relationRequests=%s '
+                        'relationDurationMs=%.1f productDurationMs=%.1f baselineDurationMs=%.1f '
+                        'projectDurationMs=%.1f detailDurationMs=%.1f durationMs=%.1f',
+                        baseline_id, page_index, identifier, expected, actual, relation_request_count,
+                        relation_duration_ms, product_duration_ms, baseline_duration_ms,
+                        project_duration_ms, detail_duration_ms, (time.perf_counter() - started_at) * 1000,
+                    )
                     raise PingcodeTaskSourceError(
                         'PINGCODE_RELATION_INCOMPLETE', '需求关联工作项数量与详情不一致',
                         sourceNumber=identifier, expectedCount=expected, actualCount=actual,
+                    )
+                if not related and expected > 0:
+                    unlinked_ir_count += 1
+                    logger.warning(
+                        'pingcode.task_source_page.unlinked_ir sourceId=%s pageIndex=%s '
+                        'sourceNumber=%s expectedCount=%s actualCount=0 relationRequests=%s relationDurationMs=%.1f',
+                        baseline_id, page_index, identifier, expected, relation_request_count, relation_duration_ms,
+                    )
+                elif len(related) != expected:
+                    logger.warning(
+                        'pingcode.task_source_page.relation_incomplete sourceId=%s pageIndex=%s '
+                        'sourceNumber=%s expectedCount=%s actualCount=%s relationRequests=%s relationDurationMs=%.1f',
+                        baseline_id, page_index, identifier, expected, len(related), relation_request_count,
+                        relation_duration_ms,
+                    )
+                    raise PingcodeTaskSourceError(
+                        'PINGCODE_RELATION_INCOMPLETE', '需求关联工作项数量与详情不一致',
+                        sourceNumber=identifier, expectedCount=expected, actualCount=len(related),
                     )
                 if any(re.fullmatch(r'YDBRD-\d+', item.get('whole_identifier', ''))
                        and (item.get('project_id') != project_id or not item.get('_id') or not item.get('short_id'))
@@ -480,15 +779,69 @@ class PingCodeService:
                     raise PingcodeTaskSourceError(
                         'PINGCODE_RELATION_IDENTITY_INVALID', '需求关联工作项身份无法验证',
                     )
-                items.append({'ir': identifier, 'irId': idea['_id'], 'workItems': [
-                    {'number': item['whole_identifier'], 'id': item['_id'], 'shortId': item['short_id'],
-                     'title': item.get('title', ''), 'description': item.get('description', ''),
-                     'projectId': item.get('project_id'), 'updatedAt': item.get('updated_at')}
-                    for item in related if re.fullmatch(r'YDBRD-\d+', item.get('whole_identifier', ''))
-                ]})
+                related_items = [item for item in related
+                                 if re.fullmatch(r'YDBRD-\d+', item.get('whole_identifier', ''))]
+                related_by_idea.append((idea, related_items))
+                for item in related_items:
+                    existing = unique_related_by_short_id.get(item['short_id'])
+                    if existing and (existing.get('_id'), existing.get('whole_identifier'), existing.get('project_id')) != (
+                        item.get('_id'), item.get('whole_identifier'), item.get('project_id')
+                    ):
+                        raise PingcodeTaskSourceError(
+                            'PINGCODE_RELATION_IDENTITY_INVALID', '同一工作项短编号对应多个身份',
+                        )
+                    unique_related_by_short_id[item['short_id']] = item
+
+            detail_started_at = time.perf_counter()
+            detail_short_ids = list(unique_related_by_short_id)
+            details = api.get_work_items(detail_short_ids, concurrency=self._detail_concurrency)
+            detail_duration_ms = (time.perf_counter() - detail_started_at) * 1000
+            if len(details) != len(detail_short_ids):
+                raise ValueError('关联工作项详情响应数量不一致')
+            details_by_short_id = dict(zip(detail_short_ids, details))
+
+            items = []
+            for idea, related_items in related_by_idea:
+                identifier = idea['whole_identifier']
+                work_items = []
+                for item in related_items:
+                    detail = details_by_short_id[item['short_id']]
+                    mismatch_fields = []
+                    if not isinstance(detail, dict):
+                        mismatch_fields.append('detail_shape')
+                    else:
+                        for field, expected in (
+                            ('_id', item['_id']), ('short_id', item['short_id']),
+                            ('whole_identifier', item['whole_identifier']), ('project_id', project_id),
+                        ):
+                            if detail.get(field) != expected:
+                                mismatch_fields.append(field)
+                    if mismatch_fields:
+                        logger.warning(
+                            'pingcode.task_source_page.detail_identity_mismatch sourceId=%s '
+                            'pageIndex=%s sourceNumber=%s shortId=%s mismatchFields=%s',
+                            baseline_id, page_index, identifier, item['short_id'], ','.join(mismatch_fields),
+                        )
+                        raise ValueError('关联工作项详情与需求来源不一致')
+                    work_items.append({'number': item['whole_identifier'], 'id': item['_id'],
+                        'shortId': item['short_id'], 'title': detail.get('title', ''),
+                        'description': _task_description(detail), 'projectId': project_id,
+                        'ownerId': detail.get('assignee'), 'createdAt': detail.get('created_at'),
+                        'updatedAt': detail.get('updated_at')})
+                items.append({'ir': identifier, 'irId': idea['_id'], 'workItems': work_items})
+            logger.info(
+                'pingcode.task_source_page.completed sourceType=%s sourceId=%s pageIndex=%s '
+                'pageCount=%s rowCount=%s productDurationMs=%.1f baselineDurationMs=%.1f '
+                'projectDurationMs=%.1f relationRequests=%s relationDurationMs=%.1f '
+                'detailDurationMs=%.1f pageReadDurationMs=%.1f durationMs=%.1f',
+                source_type, baseline_id, page_index, data.get('page_count'), len(ideas),
+                product_duration_ms, baseline_duration_ms, project_duration_ms,
+                relation_request_count, relation_duration_ms, detail_duration_ms, page_duration_ms,
+                (time.perf_counter() - started_at) * 1000,
+            )
             return {'sourceType': source_type, 'sourceId': baseline_id, 'sourceVersion': baseline.get('updated_at'),
                     'count': data.get('count'), 'pageIndex': page_index, 'pageCount': data.get('page_count'),
-                    'items': items}
+                    'unlinkedIrCount': unlinked_ir_count, 'items': items}
 
         match = re.fullmatch(r'/pjm/projects/(YDBRD)/defect/([A-Za-z0-9_-]+)', parsed.path)
         if not match or parsed.query:
@@ -520,21 +873,32 @@ class PingCodeService:
                 or not isinstance(data.get('page_count'), int)
                 or page_index >= data['page_count'] and data['count'] != 0):
             raise ValueError('工单视图分页响应无效')
+        if any(not isinstance(item, dict) or not re.fullmatch(r'YDBRD-\d+', item.get('whole_identifier', ''))
+               or item.get('project_id') != project_id or not item.get('_id') or not item.get('short_id')
+               for item in rows):
+            raise ValueError('工单视图返回非目标项目工作项')
+        detail_started_at = time.perf_counter()
+        details = api.get_work_items([item['short_id'] for item in rows])
+        detail_duration_ms = (time.perf_counter() - detail_started_at) * 1000
+        if len(details) != len(rows):
+            raise ValueError('工单详情响应数量不一致')
         items = []
-        for item in rows:
-            if (not re.fullmatch(r'YDBRD-\d+', item.get('whole_identifier', ''))
-                    or item.get('project_id') != project_id or not item.get('_id') or not item.get('short_id')):
-                raise ValueError('工单视图返回非目标项目工作项')
-            detail = item
-            if not isinstance(item.get('description'), str):
-                detail = api.get_work_item(item['short_id']).get('data', {}).get('value', {})
-                if (detail.get('_id') != item['_id'] or detail.get('whole_identifier') != item['whole_identifier']
-                        or detail.get('project_id') != project_id or not isinstance(detail.get('description'), str)):
-                    raise ValueError('工单详情与所选视图不一致')
+        for item, detail in zip(rows, details):
+            if (not isinstance(detail, dict) or detail.get('_id') != item['_id']
+                    or detail.get('whole_identifier') != item['whole_identifier']
+                    or detail.get('short_id') != item['short_id'] or detail.get('project_id') != project_id
+                    or not isinstance(detail.get('description'), str)):
+                raise ValueError('Pingcode 工单详情与所选视图不一致')
             items.append({'number': item['whole_identifier'], 'id': item['_id'], 'shortId': item['short_id'],
-                          'title': detail.get('title', ''), 'description': detail.get('description', ''),
+                          'title': detail.get('title', ''), 'description': _task_description(detail),
                           'projectId': project_id, 'ownerId': detail.get('assignee'),
                           'createdAt': detail.get('created_at'), 'updatedAt': detail.get('updated_at')})
+        logger.info(
+            'pingcode.task_source_page.completed sourceType=%s sourceId=%s pageIndex=%s '
+            'pageCount=%s rowCount=%s relationRequests=0 detailDurationMs=%.1f durationMs=%.1f',
+            source_type, view['_id'], page_index, data.get('page_count'), len(rows), detail_duration_ms,
+            (time.perf_counter() - started_at) * 1000,
+        )
         return {'sourceType': source_type, 'sourceId': view['_id'], 'sourceVersion': view.get('updated_at'),
                 'count': data.get('count'), 'pageIndex': page_index, 'pageCount': data.get('page_count'),
                 'criteria': criteria, 'items': items}

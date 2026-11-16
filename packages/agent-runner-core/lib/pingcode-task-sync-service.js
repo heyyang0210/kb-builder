@@ -6,6 +6,7 @@ const { collectPingcodeTaskSource } = require('./pingcode-task-collection');
 const { HtmlAdapter } = require('./preprocessing/cleaners/html-adapter');
 const { imageReferences, imageType, policyFor } = require('./source-image-resources');
 const { REPOSITORY_ROOT, AGENT_RUNNER_RUNTIME_ROOT } = require('./repo-paths');
+const defaultLogger = require('./logger');
 
 const idempotencyKey = () => crypto.randomUUID();
 const sha256 = value => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -25,15 +26,19 @@ function markdownBody(value, sourceUrl) {
 }
 
 function createPingcodeTaskSyncService({ storage, pingcodeUrl, readPage: providedReadPage,
+  readPages: providedReadPages,
   readImage: providedReadImage,
+  logger = defaultLogger,
   tokenPath = path.join(REPOSITORY_ROOT, 'runtime/pingcode/task-sync-internal-token') }) {
   const activeRuns = new Map();
   const resourceRetries = new Map();
   const imagePolicy = policyFor({});
   const imageRoot = path.join(AGENT_RUNNER_RUNTIME_ROOT, 'pingcode', 'task-resources');
   const extension = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp' };
-  const request = (method, pathname, body) => storage.requestAsync(method, `${storagePath}${pathname}`, body,
-    method === 'GET' ? {} : { 'Idempotency-Key': idempotencyKey() });
+  const request = (method, pathname, body, extraHeaders = {}) => storage.requestAsync(method,
+    `${storagePath}${pathname}`, body, {
+      ...(method === 'GET' ? {} : { 'Idempotency-Key': idempotencyKey() }), ...extraHeaders,
+    });
 
   async function internalRead(endpoint, body, signal) {
     const token = process.env.PINGCODE_TASK_SYNC_INTERNAL_TOKEN || fs.readFileSync(tokenPath, 'utf8').trim();
@@ -56,6 +61,12 @@ function createPingcodeTaskSyncService({ storage, pingcodeUrl, readPage: provide
     if (providedReadPage) return providedReadPage(source, pageIndex, signal);
     return internalRead('/api/internal/pingcode/task-source-page',
       { url: source.url, type: source.type.toLowerCase() === 'requirement' ? 'requirement' : 'ticket', pageIndex }, signal);
+  }
+
+  async function readAllPages(source, signal) {
+    if (providedReadPages) return providedReadPages(source, signal);
+    return internalRead('/api/internal/pingcode/task-source-pages',
+      { url: source.url, type: 'requirement' }, signal).then(result => result.pages);
   }
 
   async function readImage(url, limit, timeoutMs, signal) {
@@ -141,14 +152,54 @@ function createPingcodeTaskSyncService({ storage, pingcodeUrl, readPage: provide
   }
 
   async function listSources() { return (await request('GET', '/sources')).data; }
+  async function sourceItems(id, page = 1, pageSize = 50) {
+    return (await request('GET', `/sources/${encodeURIComponent(id)}/items?page=${page}&pageSize=${pageSize}`)).data;
+  }
+  async function sourceItem(id, number) {
+    return (await request('GET', `/sources/${encodeURIComponent(id)}/items/${encodeURIComponent(number)}`)).data;
+  }
+  async function runItems(id, page = 1, pageSize = 50) {
+    return (await request('GET', `/runs/${encodeURIComponent(id)}/items?page=${page}&pageSize=${pageSize}`)).data;
+  }
+  async function unlinkedIrs(id, page = 1, pageSize = 100) {
+    return (await request('GET', `/runs/${encodeURIComponent(id)}/unlinked-irs?page=${page}&pageSize=${pageSize}`)).data;
+  }
+  async function runItem(id, number) {
+    return (await request('GET', `/runs/${encodeURIComponent(id)}/items/${encodeURIComponent(number)}`)).data;
+  }
   async function createSource(input, actor) {
     const type = input?.type === 'REQUIREMENT' ? 'requirement' : input?.type === 'TICKET' ? 'ticket' : null;
-    if (!type || !input?.url || !input?.name) throw Object.assign(new Error('请填写来源名称、类型和 URL'),
+    if (!type || !input?.url || !input?.name || !['DB', 'YCM', 'YMP', 'YDC'].includes(input?.productType)) throw Object.assign(new Error('请填写来源名称、类型、产品类型和 URL'),
       { code: 'PINGCODE_SOURCE_INVALID', status: 422 });
-    return (await request('POST', '/sources', { name: input.name, type: input.type, url: input.url,
+    return (await request('POST', '/sources', { name: input.name, type: input.type, productType: input.productType, url: input.url,
       connectionId: new URL(pingcodeUrl).host, actor })).data;
   }
   async function source(id) { return (await request('GET', `/sources/${encodeURIComponent(id)}`)).data; }
+  async function updateSource(id, input) {
+    if (!Number.isSafeInteger(input?.revision) || !input.name || !input.type || !input.url
+      || !['DB', 'YCM', 'YMP', 'YDC'].includes(input?.productType))
+      throw Object.assign(new Error('请填写完整的来源信息并刷新最新版本'), { code: 'PINGCODE_SOURCE_INVALID', status: 422 });
+    return (await request('PATCH', `/sources/${encodeURIComponent(id)}`, {
+      name: input.name, type: input.type, productType: input.productType, url: input.url, revision: input.revision,
+    })).data;
+  }
+  async function setSourceState(id, input) {
+    if (!Number.isSafeInteger(input?.revision) || !['ACTIVE', 'DISABLED'].includes(input.state))
+      throw Object.assign(new Error('请刷新来源后重试'), { code: 'PINGCODE_SOURCE_INVALID', status: 422 });
+    if (input.state === 'DISABLED') {
+      const startedAt = Date.now();
+      await cancelCollectingRuns(id, true);
+      logger.info('pingcode.source.collecting_runs_cancelled', {
+        sourceId: id, operation: 'disable', durationMs: Date.now() - startedAt,
+      });
+    }
+    return (await request('PATCH', `/sources/${encodeURIComponent(id)}/state`, input)).data;
+  }
+  async function deleteSource(id, revision) {
+    if (!Number.isSafeInteger(revision)) throw Object.assign(new Error('来源版本缺失，请刷新后重试'),
+      { code: 'PINGCODE_SOURCE_REVISION_REQUIRED', status: 422 });
+    return (await request('DELETE', `/sources/${encodeURIComponent(id)}`, undefined, { 'If-Match': String(revision) })).data;
+  }
   async function testSource(id) {
     const configured = await source(id);
     const first = await readPage(configured, 0);
@@ -157,10 +208,25 @@ function createPingcodeTaskSyncService({ storage, pingcodeUrl, readPage: provide
   }
   async function getRun(id) { return (await request('GET', `/runs/${encodeURIComponent(id)}`)).data; }
   async function listRuns(sourceId) { return (await request('GET', `/sources/${encodeURIComponent(sourceId)}/runs`)).data; }
+  async function cancelCollectingRuns(sourceId, interruptActive = false) {
+    const runs = await listRuns(sourceId);
+    for (const run of runs.filter(item => item.status === 'COLLECTING')) {
+      const active = activeRuns.get(run.id);
+      if (active && !interruptActive)
+        throw Object.assign(new Error('该来源正在同步，请等待当前同步结束'),
+          { code: 'PINGCODE_SOURCE_RUNNING', status: 409 });
+      active?.controller.abort();
+      try { await request('POST', `/runs/${encodeURIComponent(run.id)}/cancel`, {}); }
+      catch (error) {
+        const current = await getRun(run.id);
+        if (current.status === 'COLLECTING') throw error;
+      }
+    }
+  }
   async function previewRun(id, { page = 1, pageSize = 50, view = 'current' } = {}) {
     if (!Number.isInteger(page) || page < 1 || !Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100)
       throw Object.assign(new Error('预览页码无效'), { code: 'PINGCODE_PREVIEW_PAGE_INVALID', status: 422 });
-    if (!['current', 'removed', 'conflicts'].includes(view))
+    if (!['current', 'created', 'updated', 'removed', 'conflicts'].includes(view))
       throw Object.assign(new Error('预览类型无效'), { code: 'PINGCODE_PREVIEW_VIEW_INVALID', status: 422 });
     return (await request('GET', `/runs/${encodeURIComponent(id)}/preview?page=${page}&pageSize=${pageSize}&view=${view}`)).data;
   }
@@ -182,28 +248,58 @@ function createPingcodeTaskSyncService({ storage, pingcodeUrl, readPage: provide
     return (await request('POST', `/runs/${encodeURIComponent(id)}/confirm`,
       { digest, expectedRevision, primarySources })).data;
   }
-  async function startRun(id, actor) {
-    const configured = await source(id);
+  async function startRun(id, actor, revision) {
+    const startedAt = Date.now();
+    if (!Number.isSafeInteger(revision))
+      throw Object.assign(new Error('请刷新来源后重试'), { code: 'PINGCODE_SOURCE_REVISION_REQUIRED', status: 422 });
+    await cancelCollectingRuns(id);
     const run = (await request('POST', `/sources/${encodeURIComponent(id)}/runs`,
-      { revision: configured.revision, actor })).data;
+      { revision, actor })).data;
+    logger.info('pingcode.sync.accepted', {
+      sourceId: id, runId: run.id, stage: 'run_created',
+      startResponseDurationMs: Date.now() - startedAt,
+    });
     const controller = new AbortController();
     const materialized = new Map();
-    activeRuns.set(run.id, controller);
+    activeRuns.set(run.id, { controller, sourceId: id });
     void (async () => {
+      const collectionStartedAt = Date.now();
+      let pageCount = 0;
+      logger.info('pingcode.sync.collection_started', { sourceId: id, runId: run.id });
       try {
+        const configured = await source(id);
+        if (controller.signal.aborted) throw Object.assign(new Error('采集已取消'), { code: 'COLLECTION_CANCELLED' });
+        if (configured.revision !== revision)
+          throw Object.assign(new Error('来源配置已变化，请刷新后重试'), { code: 'ROW_VERSION_CONFLICT', status: 409 });
         const result = await collectPingcodeTaskSource({ source: {
           type: configured.type.toLowerCase() === 'requirement' ? 'requirement' : 'ticket', url: configured.url,
-        }, readPage, signal: controller.signal, retainItems: false,
+        }, readPage, readPages: providedReadPages || (providedReadPage ? undefined : readAllPages),
+        signal: controller.signal, retainItems: false,
         onPage: async (page, { criteriaSha256 }) => {
           await request('POST', `/runs/${encodeURIComponent(run.id)}/pages`,
             { ...await markdownPage(page, configured.url, controller.signal, materialized), criteriaSha256 });
+          pageCount++;
+          logger.info('pingcode.sync.page_staged', {
+            sourceId: id, runId: run.id, pageIndex: page.pageIndex,
+            itemCount: page.items?.length || 0, pagesStaged: pageCount,
+            durationMs: Date.now() - collectionStartedAt,
+          });
         } });
         if (controller.signal.aborted) throw Object.assign(new Error('采集已取消'), { code: 'COLLECTION_CANCELLED' });
         await request('POST', `/runs/${encodeURIComponent(run.id)}/finish`, { digest: sha256({
           sourceId: id, revision: configured.revision, collectionDigest: result.digest,
         }) });
+        logger.info('pingcode.sync.collection_completed', {
+          sourceId: id, runId: run.id, pageCount, rowCount: result.count,
+          durationMs: Date.now() - collectionStartedAt,
+        });
       } catch (error) {
         const action = controller.signal.aborted || error.code === 'COLLECTION_CANCELLED' ? 'cancel' : 'fail';
+        logger.warn('pingcode.sync.collection_failed', {
+          sourceId: id, runId: run.id, action, pageCount,
+          errorCode: error.code || 'COLLECTION_FAILED',
+          durationMs: Date.now() - collectionStartedAt,
+        });
         try { await request('POST', `/runs/${encodeURIComponent(run.id)}/${action}`,
           action === 'fail' ? { errorCode: String(error.code || 'COLLECTION_FAILED').slice(0, 64) } : {}); }
         catch (recordError) { /* A concurrent cancel may have already set the terminal state. */ }
@@ -212,7 +308,7 @@ function createPingcodeTaskSyncService({ storage, pingcodeUrl, readPage: provide
     return run;
   }
   async function cancelRun(id) {
-    activeRuns.get(id)?.abort();
+    activeRuns.get(id)?.controller.abort();
     try { return (await request('POST', `/runs/${encodeURIComponent(id)}/cancel`, {})).data; }
     catch (error) {
       const current = await getRun(id);
@@ -272,7 +368,7 @@ function createPingcodeTaskSyncService({ storage, pingcodeUrl, readPage: provide
     })();
     return progress;
   }
-  return { listSources, createSource, source, testSource, getRun, listRuns, previewRun, confirmRun,
+  return { listSources, sourceItems, sourceItem, runItems, runItem, unlinkedIrs, createSource, updateSource, setSourceState, deleteSource, source, testSource, getRun, listRuns, previewRun, confirmRun,
     startRun, cancelRun, listMissingResources, retryMissingResources };
 }
 

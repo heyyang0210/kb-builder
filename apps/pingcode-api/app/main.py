@@ -800,6 +800,22 @@ def read_task_source_page(request: dict = Body(...), x_internal_token: str | Non
         error('PINGCODE_REQUEST_FAILED', 'Pingcode 任务来源读取失败', 502, retryable=True)
 
 
+@app.post('/api/internal/pingcode/task-source-pages')
+def read_task_source_pages(request: dict = Body(...), x_internal_token: str | None = Header(default=None)):
+    if not x_internal_token or not hmac.compare_digest(x_internal_token, _TASK_SYNC_TOKEN):
+        error('FORBIDDEN', '仅允许平台同步服务读取', 403)
+    try:
+        if request.get('type') != 'requirement':
+            error('PINGCODE_TASK_SOURCE_INVALID', '批量分页仅支持需求基线', 422)
+        return pingcode.read_task_source_pages(request['url'])
+    except PingcodeTaskSourceError as exc:
+        error(exc.code, str(exc), 422, **exc.details)
+    except (KeyError, TypeError, ValueError):
+        error('PINGCODE_TASK_SOURCE_INVALID', '来源、权限或分页结果无效', 422)
+    except Exception:
+        error('PINGCODE_REQUEST_FAILED', 'Pingcode 需求基线批量读取失败', 502, retryable=True)
+
+
 @app.post('/api/internal/pingcode/task-source-image')
 def read_task_source_image(request: dict = Body(...), x_internal_token: str | None = Header(default=None)):
     if not x_internal_token or not hmac.compare_digest(x_internal_token, _TASK_SYNC_TOKEN):
@@ -1158,9 +1174,20 @@ def get_preprocess_task(task_id: str):
 
 
 @app.get("/api/datasets")
-def list_datasets(batch_id: str | None = Query(default=None, alias="batchId")):
+def list_datasets(
+    batch_id: str | None = Query(default=None, alias="batchId"),
+    page: int | None = Query(default=None, ge=1),
+    page_size: int | None = Query(default=None, alias="pageSize", ge=1, le=100),
+):
     items = preprocess.list_datasets(batch_id)
-    return {"items": items, "total": len(items)}
+    total = len(items)
+    if page is None and page_size is None:
+        return {"items": items, "total": total}
+    current_page = page or 1
+    current_page_size = page_size or 20
+    start = (current_page - 1) * current_page_size
+    return {"items": items[start:start + current_page_size], "page": current_page,
+            "pageSize": current_page_size, "total": total}
 
 
 @app.get("/api/datasets/{dataset_id}", response_model=DatasetVersion)

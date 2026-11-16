@@ -20,8 +20,12 @@ final class PingcodeTaskRepository {
     List<Map<String, Object>> listSources(Connection connection) throws SQLException {
         List<Map<String, Object>> items = new ArrayList<>();
         try (PreparedStatement query = connection.prepareStatement(
-            "SELECT SOURCE_ID,SOURCE_NAME,SOURCE_TYPE,SOURCE_URL,CONNECTION_ID,SOURCE_STATE,ROW_VERSION," +
-            "LAST_CONFIRMED_RUN,CREATED_BY,CREATED_AT,UPDATED_AT FROM KC_PINGCODE_SOURCE ORDER BY UPDATED_AT DESC")) {
+            "SELECT P.SOURCE_ID,P.SOURCE_NAME,P.SOURCE_TYPE,P.SOURCE_URL,P.CONNECTION_ID,P.SOURCE_STATE,P.ROW_VERSION," +
+            "P.LAST_CONFIRMED_RUN,P.CREATED_BY,P.CREATED_AT,P.UPDATED_AT,P.PRODUCT_TYPE," +
+            "(SELECT COUNT(DISTINCT T.SR_NUMBER) FROM KC_PINGCODE_TASK_SOURCE T " +
+            "JOIN KC_PINGCODE_RUN R ON R.RUN_ID=T.LAST_RUN_ID WHERE T.SOURCE_ID=P.SOURCE_ID " +
+            "AND T.PRESENT='Y' AND R.RUN_STATUS IN ('CONFIRMED','CONFIRMED_MISSING_IMAGES')) " +
+            "FROM KC_PINGCODE_SOURCE P ORDER BY P.UPDATED_AT DESC")) {
             try (ResultSet rows = query.executeQuery()) {
                 while (rows.next()) items.add(source(rows));
             }
@@ -32,17 +36,100 @@ final class PingcodeTaskRepository {
     Map<String, Object> findSource(Connection connection, String id) throws SQLException {
         try (PreparedStatement query = connection.prepareStatement(
             "SELECT SOURCE_ID,SOURCE_NAME,SOURCE_TYPE,SOURCE_URL,CONNECTION_ID,SOURCE_STATE,ROW_VERSION," +
-            "LAST_CONFIRMED_RUN,CREATED_BY,CREATED_AT,UPDATED_AT FROM KC_PINGCODE_SOURCE WHERE SOURCE_ID=?")) {
+            "LAST_CONFIRMED_RUN,CREATED_BY,CREATED_AT,UPDATED_AT,PRODUCT_TYPE,0 FROM KC_PINGCODE_SOURCE WHERE SOURCE_ID=?")) {
             query.setString(1, id);
             try (ResultSet rows = query.executeQuery()) { return rows.next() ? source(rows) : null; }
         }
     }
 
-    Map<String, Object> createSource(Connection connection, String name, String type, String url,
+    private Map<String, Object> lockSource(Connection connection, String id) throws SQLException {
+        try (PreparedStatement query = connection.prepareStatement(
+            "SELECT SOURCE_ID,SOURCE_NAME,SOURCE_TYPE,SOURCE_URL,CONNECTION_ID,SOURCE_STATE,ROW_VERSION," +
+            "LAST_CONFIRMED_RUN,CREATED_BY,CREATED_AT,UPDATED_AT,PRODUCT_TYPE,0 FROM KC_PINGCODE_SOURCE WHERE SOURCE_ID=? FOR UPDATE")) {
+            query.setString(1, id);
+            try (ResultSet rows = query.executeQuery()) { return rows.next() ? source(rows) : null; }
+        }
+    }
+
+    Map<String, Object> updateSource(Connection connection, String id, String name, String type,
+                                     String productType, String url, long revision) throws SQLException {
+        Map<String, Object> current = lockSource(connection, id);
+        if (current == null) throw new SQLException("PINGCODE_SOURCE_NOT_FOUND");
+        if (((Number) current.get("revision")).longValue() != revision) throw new SQLException("ROW_VERSION_CONFLICT");
+        if (name == null || name.isBlank() || name.length() > 255 || !"REQUIREMENT".equals(type)
+            && !"TICKET".equals(type) || !validProductType(productType) || url == null || url.length() > 2000 || !validSourceUrl(type, url))
+            throw new SQLException("PINGCODE_SOURCE_INVALID");
+        if (hasRuns(connection, id) && (!type.equals(current.get("type")) || !url.equals(current.get("url"))))
+            throw new SQLException("PINGCODE_SOURCE_HISTORY_LOCKED");
+        try (PreparedStatement update = connection.prepareStatement(
+            "UPDATE KC_PINGCODE_SOURCE SET SOURCE_NAME=?,SOURCE_TYPE=?,SOURCE_URL=?,PRODUCT_TYPE=?,ROW_VERSION=ROW_VERSION+1," +
+            "UPDATED_AT=CURRENT_TIMESTAMP WHERE SOURCE_ID=? AND ROW_VERSION=?")) {
+            update.setString(1, name); update.setString(2, type); update.setString(3, url); update.setString(4, productType);
+            update.setString(5, id); update.setLong(6, revision);
+            if (update.executeUpdate() != 1) throw new SQLException("ROW_VERSION_CONFLICT");
+        } catch (SQLException error) {
+            if (isConstraintViolation(error)) throw new SQLException("PINGCODE_SOURCE_CONFLICT", error);
+            throw error;
+        }
+        return findSource(connection, id);
+    }
+
+    Map<String, Object> updateSourceState(Connection connection, String id, String state, long revision)
+        throws SQLException {
+        if (!"ACTIVE".equals(state) && !"DISABLED".equals(state)) throw new SQLException("PINGCODE_SOURCE_INVALID");
+        Map<String, Object> current = lockSource(connection, id);
+        if (current == null) throw new SQLException("PINGCODE_SOURCE_NOT_FOUND");
+        if (((Number) current.get("revision")).longValue() != revision) throw new SQLException("ROW_VERSION_CONFLICT");
+        if (hasCollectingRun(connection, id)) throw new SQLException("PINGCODE_SOURCE_RUNNING");
+        try (PreparedStatement update = connection.prepareStatement(
+            "UPDATE KC_PINGCODE_SOURCE SET SOURCE_STATE=?,ROW_VERSION=ROW_VERSION+1,UPDATED_AT=CURRENT_TIMESTAMP " +
+            "WHERE SOURCE_ID=? AND ROW_VERSION=?")) {
+            update.setString(1, state); update.setString(2, id); update.setLong(3, revision);
+            if (update.executeUpdate() != 1) throw new SQLException("ROW_VERSION_CONFLICT");
+        }
+        return findSource(connection, id);
+    }
+
+    void deleteSource(Connection connection, String id, long revision) throws SQLException {
+        Map<String, Object> current = lockSource(connection, id);
+        if (current == null) throw new SQLException("PINGCODE_SOURCE_NOT_FOUND");
+        if (((Number) current.get("revision")).longValue() != revision) throw new SQLException("ROW_VERSION_CONFLICT");
+        if (hasCollectingRun(connection, id)) throw new SQLException("PINGCODE_SOURCE_RUNNING");
+        if (hasHistory(connection, id)) throw new SQLException("PINGCODE_SOURCE_REFERENCED");
+        try (PreparedStatement delete = connection.prepareStatement(
+            "DELETE FROM KC_PINGCODE_SOURCE WHERE SOURCE_ID=? AND ROW_VERSION=?")) {
+            delete.setString(1, id); delete.setLong(2, revision);
+            if (delete.executeUpdate() != 1) throw new SQLException("ROW_VERSION_CONFLICT");
+        }
+    }
+
+    boolean deletable(Connection connection, String id) throws SQLException { return !hasHistory(connection, id); }
+
+    private boolean hasRuns(Connection connection, String id) throws SQLException {
+        try (PreparedStatement query = connection.prepareStatement("SELECT 1 FROM KC_PINGCODE_RUN WHERE SOURCE_ID=?")) {
+            query.setString(1, id); try (ResultSet rows = query.executeQuery()) { return rows.next(); }
+        }
+    }
+
+    private boolean hasCollectingRun(Connection connection, String id) throws SQLException {
+        try (PreparedStatement query = connection.prepareStatement(
+            "SELECT 1 FROM KC_PINGCODE_RUN WHERE SOURCE_ID=? AND RUN_STATUS='COLLECTING'")) {
+            query.setString(1, id); try (ResultSet rows = query.executeQuery()) { return rows.next(); }
+        }
+    }
+
+    private boolean hasHistory(Connection connection, String id) throws SQLException {
+        if (hasRuns(connection, id)) return true;
+        try (PreparedStatement query = connection.prepareStatement("SELECT 1 FROM KC_PINGCODE_TASK_SOURCE WHERE SOURCE_ID=?")) {
+            query.setString(1, id); try (ResultSet rows = query.executeQuery()) { return rows.next(); }
+        }
+    }
+
+    Map<String, Object> createSource(Connection connection, String name, String type, String productType, String url,
                                       String connectionId, String actor) throws SQLException {
         if (name == null || name.isBlank() || name.length() > 255 || url == null || url.length() > 2000
             || !"REQUIREMENT".equals(type) && !"TICKET".equals(type)
-            || connectionId == null || connectionId.isBlank() || actor == null || actor.isBlank()
+            || !validProductType(productType) || connectionId == null || connectionId.isBlank() || actor == null || actor.isBlank()
             || !validSourceUrl(type, url)) {
             throw new SQLException("PINGCODE_SOURCE_INVALID");
         }
@@ -55,18 +142,32 @@ final class PingcodeTaskRepository {
         }
         String id = UUID.randomUUID().toString();
         try (PreparedStatement insert = connection.prepareStatement(
-            "INSERT INTO KC_PINGCODE_SOURCE (SOURCE_ID,SOURCE_NAME,SOURCE_TYPE,SOURCE_URL,CONNECTION_ID,CREATED_BY)" +
-            " VALUES (?,?,?,?,?,?)")) {
+            "INSERT INTO KC_PINGCODE_SOURCE (SOURCE_ID,SOURCE_NAME,SOURCE_TYPE,PRODUCT_TYPE,SOURCE_URL,CONNECTION_ID,CREATED_BY)" +
+            " VALUES (?,?,?,?,?,?,?)")) {
             insert.setString(1, id); insert.setString(2, name); insert.setString(3, type);
-            insert.setString(4, url); insert.setString(5, connectionId); insert.setString(6, actor);
+            insert.setString(4, productType); insert.setString(5, url); insert.setString(6, connectionId); insert.setString(7, actor);
             insert.executeUpdate();
+        } catch (SQLException error) {
+            if (isConstraintViolation(error)) throw new SQLException("PINGCODE_SOURCE_CONFLICT", error);
+            throw error;
         }
         return findSource(connection, id);
     }
 
+    private boolean validProductType(String value) {
+        return value != null && Set.of("DB", "YCM", "YMP", "YDC").contains(value);
+    }
+
+    private boolean isConstraintViolation(SQLException error) {
+        for (SQLException current = error; current != null; current = current.getNextException()) {
+            if (current.getSQLState() != null && current.getSQLState().startsWith("23")) return true;
+        }
+        return false;
+    }
+
     Map<String, Object> createRun(Connection connection, String sourceId, long revision, String actor)
         throws SQLException {
-        Map<String, Object> source = findSource(connection, sourceId);
+        Map<String, Object> source = lockSource(connection, sourceId);
         if (source == null) throw new SQLException("PINGCODE_SOURCE_NOT_FOUND");
         if (!"ACTIVE".equals(source.get("state"))) throw new SQLException("PINGCODE_SOURCE_DISABLED");
         if (((Number) source.get("revision")).longValue() != revision) throw new SQLException("ROW_VERSION_CONFLICT");
@@ -226,6 +327,11 @@ final class PingcodeTaskRepository {
         List<Map<String, Object>> items = new ArrayList<>();
         boolean removed = "removed".equals(view);
         boolean conflicts = "conflicts".equals(view);
+        boolean created = "created".equals(view);
+        boolean updated = "updated".equals(view);
+        if (!removed && !conflicts && !created && !updated && !"current".equals(view)) {
+            throw new SQLException("PINGCODE_PREVIEW_VIEW_INVALID");
+        }
         String querySql = removed
             ? "SELECT O.SR_NUMBER,O.TITLE,O.BODY_SHA256,NULL,NULL FROM KC_PINGCODE_SNAPSHOT O " +
               "WHERE O.RUN_ID=? AND NOT EXISTS (SELECT 1 FROM KC_PINGCODE_SNAPSHOT S WHERE S.RUN_ID=? " +
@@ -233,6 +339,8 @@ final class PingcodeTaskRepository {
             : "SELECT S.SR_NUMBER,S.TITLE,S.BODY_SHA256,O.TITLE,O.BODY_SHA256 " +
               "FROM KC_PINGCODE_SNAPSHOT S LEFT JOIN KC_PINGCODE_SNAPSHOT O " +
               "ON O.RUN_ID=? AND O.SR_NUMBER=S.SR_NUMBER WHERE S.RUN_ID=? " +
+              (created ? "AND O.SR_NUMBER IS NULL " : updated ? "AND O.SR_NUMBER IS NOT NULL " +
+                "AND (S.BODY_SHA256<>O.BODY_SHA256 OR COALESCE(S.TITLE,'')<>COALESCE(O.TITLE,'')) " : "") +
               (conflicts ? "AND EXISTS (SELECT 1 FROM KC_PINGCODE_TASK_SOURCE T " +
                 "JOIN KC_PINGCODE_SOURCE P ON P.SOURCE_ID=T.SOURCE_ID " +
                 "WHERE T.SR_NUMBER=S.SR_NUMBER AND T.PRESENT='Y' AND T.SOURCE_ID<>? " +
@@ -264,7 +372,7 @@ final class PingcodeTaskRepository {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("run", run); result.put("items", items); result.put("page", page);
         result.put("pageSize", pageSize); result.put("view", view);
-        result.put("total", removed ? run.get("removedCount") : conflicts ? count(connection,
+        result.put("total", removed ? run.get("removedCount") : created ? run.get("newCount") : updated ? run.get("changedCount") : conflicts ? count(connection,
             "SELECT COUNT(*) FROM KC_PINGCODE_SNAPSHOT S WHERE S.RUN_ID=? AND EXISTS " +
             "(SELECT 1 FROM KC_PINGCODE_TASK_SOURCE T JOIN KC_PINGCODE_SOURCE P ON P.SOURCE_ID=T.SOURCE_ID " +
             "WHERE T.SR_NUMBER=S.SR_NUMBER AND T.PRESENT='Y' AND T.SOURCE_ID<>? AND P.SOURCE_STATE='ACTIVE')",
@@ -327,6 +435,130 @@ final class PingcodeTaskRepository {
                 result.put("confirmedAt", timestamp(rows, 12));
                 result.put("ir", irNumbers(connection, runId, number));
                 result.put("resources", resources(connection, runId, number));
+                return result;
+            }
+        }
+    }
+
+    Map<String, Object> sourceItems(Connection connection, String sourceId, int page, int pageSize) throws SQLException {
+        if (page < 1 || pageSize < 1 || pageSize > 100 || (long) (page - 1) * pageSize > Integer.MAX_VALUE)
+            throw new SQLException("PINGCODE_SOURCE_PAGE_INVALID");
+        if (findSource(connection, sourceId) == null) throw new SQLException("PINGCODE_SOURCE_NOT_FOUND");
+        long total = count(connection,
+            "SELECT COUNT(DISTINCT T.SR_NUMBER) FROM KC_PINGCODE_TASK_SOURCE T " +
+            "JOIN KC_PINGCODE_RUN R ON R.RUN_ID=T.LAST_RUN_ID WHERE T.SOURCE_ID=? AND T.PRESENT='Y' " +
+            "AND R.RUN_STATUS IN ('CONFIRMED','CONFIRMED_MISSING_IMAGES')", sourceId);
+        List<Map<String, Object>> items = new ArrayList<>();
+        try (PreparedStatement query = connection.prepareStatement(
+            "SELECT T.SR_NUMBER,S.TITLE,T.LAST_RUN_ID,R.CONFIRMED_AT FROM KC_PINGCODE_TASK_SOURCE T " +
+            "JOIN KC_PINGCODE_RUN R ON R.RUN_ID=T.LAST_RUN_ID " +
+            "JOIN KC_PINGCODE_SNAPSHOT S ON S.RUN_ID=T.LAST_RUN_ID AND S.SR_NUMBER=T.SR_NUMBER " +
+            "WHERE T.SOURCE_ID=? AND T.PRESENT='Y' AND R.RUN_STATUS IN ('CONFIRMED','CONFIRMED_MISSING_IMAGES') " +
+            "ORDER BY T.SR_NUMBER OFFSET ? ROWS FETCH NEXT ? ROWS ONLY")) {
+            query.setString(1, sourceId); query.setInt(2, (page - 1) * pageSize); query.setInt(3, pageSize);
+            try (ResultSet rows = query.executeQuery()) {
+                while (rows.next()) {
+                    String number = TaskNumber.sr(rows.getLong(1));
+                    Map<String, Object> item = new LinkedHashMap<>(); item.put("number", number);
+                    item.put("title", rows.getString(2)); item.put("runId", rows.getString(3));
+                    item.put("confirmedAt", timestamp(rows, 4)); item.put("ir", irNumbers(connection, rows.getString(3), number));
+                    items.add(item);
+                }
+            }
+        }
+        Map<String, Object> result = new LinkedHashMap<>(); result.put("items", items);
+        result.put("total", total); result.put("page", page); result.put("pageSize", pageSize); return result;
+    }
+
+    Map<String, Object> runItems(Connection connection, String runId, int page, int pageSize) throws SQLException {
+        if (page < 1 || pageSize < 1 || pageSize > 100 || (long) (page - 1) * pageSize > Integer.MAX_VALUE)
+            throw new SQLException("PINGCODE_SOURCE_PAGE_INVALID");
+        Map<String, Object> run = findRun(connection, runId);
+        if (run == null) throw new SQLException("PINGCODE_RUN_NOT_FOUND");
+        long total = count(connection, "SELECT COUNT(*) FROM KC_PINGCODE_SNAPSHOT WHERE RUN_ID=?", runId);
+        List<Map<String, Object>> items = new ArrayList<>();
+        try (PreparedStatement query = connection.prepareStatement(
+            "SELECT SR_NUMBER,TITLE FROM KC_PINGCODE_SNAPSHOT WHERE RUN_ID=? ORDER BY SR_NUMBER " +
+            "OFFSET ? ROWS FETCH NEXT ? ROWS ONLY")) {
+            query.setString(1, runId); query.setInt(2, (page - 1) * pageSize); query.setInt(3, pageSize);
+            try (ResultSet rows = query.executeQuery()) {
+                while (rows.next()) {
+                    String number = TaskNumber.sr(rows.getLong(1)); Map<String, Object> item = new LinkedHashMap<>();
+                    item.put("number", number); item.put("title", rows.getString(2));
+                    item.put("ir", irNumbers(connection, runId, number)); items.add(item);
+                }
+            }
+        }
+        Map<String, Object> result = new LinkedHashMap<>(); result.put("items", items);
+        result.put("total", total); result.put("page", page); result.put("pageSize", pageSize); return result;
+    }
+
+    Map<String, Object> unlinkedIrs(Connection connection, String runId, int page, int pageSize) throws SQLException {
+        if (page < 1 || pageSize < 1 || pageSize > 100 || (long) (page - 1) * pageSize > Integer.MAX_VALUE)
+            throw new SQLException("PINGCODE_RUN_PAGE_INVALID");
+        Map<String, Object> run = findRun(connection, runId);
+        if (run == null) throw new SQLException("PINGCODE_RUN_NOT_FOUND");
+        long total = count(connection,
+            "SELECT COUNT(*) FROM KC_PINGCODE_IR_SNAPSHOT WHERE RUN_ID=? AND RELATED_SR_COUNT=0", runId);
+        List<String> items = new ArrayList<>();
+        try (PreparedStatement query = connection.prepareStatement(
+            "SELECT IR_NUMBER FROM KC_PINGCODE_IR_SNAPSHOT WHERE RUN_ID=? AND RELATED_SR_COUNT=0 " +
+            "ORDER BY IR_NUMBER OFFSET ? ROWS FETCH NEXT ? ROWS ONLY")) {
+            query.setString(1, runId); query.setInt(2, (page - 1) * pageSize); query.setInt(3, pageSize);
+            try (ResultSet rows = query.executeQuery()) {
+                while (rows.next()) items.add(TaskNumber.ir(rows.getLong(1)));
+            }
+        }
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("items", items); result.put("total", total); result.put("page", page);
+        result.put("pageSize", pageSize); return result;
+    }
+
+    Map<String, Object> runSnapshot(Connection connection, String runId, String number) throws SQLException {
+        Map<String, Object> run = findRun(connection, runId);
+        if (run == null) throw new SQLException("PINGCODE_RUN_NOT_FOUND");
+        long srNumber = TaskNumber.sr(number);
+        try (PreparedStatement query = connection.prepareStatement(
+            "SELECT S.TITLE,S.BODY_MARKDOWN,S.BODY_SHA256,S.SOURCE_UPDATED_AT,S.RESOURCE_VERSION,S.RESOURCE_STATE," +
+            "P.SOURCE_ID,P.SOURCE_NAME,P.SOURCE_TYPE,P.SOURCE_URL FROM KC_PINGCODE_SNAPSHOT S " +
+            "JOIN KC_PINGCODE_RUN R ON R.RUN_ID=S.RUN_ID JOIN KC_PINGCODE_SOURCE P ON P.SOURCE_ID=R.SOURCE_ID " +
+            "WHERE S.RUN_ID=? AND S.SR_NUMBER=?")) {
+            query.setString(1, runId); query.setLong(2, srNumber);
+            try (ResultSet rows = query.executeQuery()) {
+                if (!rows.next()) throw new SQLException("PINGCODE_SNAPSHOT_NOT_FOUND");
+                Map<String, Object> result = new LinkedHashMap<>(); result.put("number", number);
+                result.put("runId", runId); result.put("title", rows.getString(1)); result.put("markdown", rows.getString(2));
+                result.put("bodySha256", rows.getString(3)); result.put("sourceUpdatedAt", rows.getString(4));
+                result.put("resourceVersion", rows.getLong(5)); result.put("resourceState", rows.getString(6));
+                result.put("sourceId", rows.getString(7)); result.put("sourceName", rows.getString(8));
+                result.put("type", rows.getString(9)); result.put("sourceUrl", rows.getString(10));
+                result.put("confirmedAt", run.get("confirmedAt")); result.put("ir", irNumbers(connection, runId, number));
+                result.put("resources", resources(connection, runId, number)); return result;
+            }
+        }
+    }
+
+    Map<String, Object> sourceSnapshot(Connection connection, String sourceId, String number) throws SQLException {
+        long srNumber = TaskNumber.sr(number);
+        try (PreparedStatement query = connection.prepareStatement(
+            "SELECT S.RUN_ID,S.TITLE,S.BODY_MARKDOWN,S.BODY_SHA256,S.SOURCE_UPDATED_AT,S.RESOURCE_VERSION," +
+            "S.RESOURCE_STATE,P.SOURCE_ID,P.SOURCE_NAME,P.SOURCE_TYPE,P.SOURCE_URL,R.CONFIRMED_AT " +
+            "FROM KC_PINGCODE_TASK_SOURCE T JOIN KC_PINGCODE_SOURCE P ON P.SOURCE_ID=T.SOURCE_ID " +
+            "JOIN KC_PINGCODE_RUN R ON R.RUN_ID=T.LAST_RUN_ID " +
+            "JOIN KC_PINGCODE_SNAPSHOT S ON S.RUN_ID=T.LAST_RUN_ID AND S.SR_NUMBER=T.SR_NUMBER " +
+            "WHERE T.SOURCE_ID=? AND T.SR_NUMBER=? AND T.PRESENT='Y' " +
+            "AND R.RUN_STATUS IN ('CONFIRMED','CONFIRMED_MISSING_IMAGES')")) {
+            query.setString(1, sourceId); query.setLong(2, srNumber);
+            try (ResultSet rows = query.executeQuery()) {
+                if (!rows.next()) throw new SQLException("PINGCODE_SNAPSHOT_NOT_FOUND");
+                String runId = rows.getString(1); Map<String, Object> result = new LinkedHashMap<>();
+                result.put("number", number); result.put("runId", runId); result.put("title", rows.getString(2));
+                result.put("markdown", rows.getString(3)); result.put("bodySha256", rows.getString(4));
+                result.put("sourceUpdatedAt", rows.getString(5)); result.put("resourceVersion", rows.getLong(6));
+                result.put("resourceState", rows.getString(7)); result.put("sourceId", rows.getString(8));
+                result.put("sourceName", rows.getString(9)); result.put("type", rows.getString(10));
+                result.put("sourceUrl", rows.getString(11)); result.put("confirmedAt", timestamp(rows, 12));
+                result.put("ir", irNumbers(connection, runId, number)); result.put("resources", resources(connection, runId, number));
                 return result;
             }
         }
@@ -935,6 +1167,7 @@ final class PingcodeTaskRepository {
         item.put("revision", rows.getLong(7)); item.put("lastConfirmedRun", rows.getString(8));
         item.put("createdBy", rows.getString(9)); item.put("createdAt", timestamp(rows, 10));
         item.put("updatedAt", timestamp(rows, 11));
+        item.put("productType", rows.getString(12)); item.put("syncedTaskCount", rows.getLong(13));
         return item;
     }
 

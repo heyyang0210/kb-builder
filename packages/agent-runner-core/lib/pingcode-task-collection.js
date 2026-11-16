@@ -13,9 +13,10 @@ function pageIdentity(page) {
     page.criteria || null]);
 }
 
-async function collectPingcodeTaskSource({ source, readPage, signal, onProgress = () => {},
+async function collectPingcodeTaskSource({ source, readPage, readPages, signal, onProgress = () => {},
   onPage = async () => {}, retainItems = true }) {
-  if (!source || !['requirement', 'ticket'].includes(source.type) || typeof readPage !== 'function') {
+  if (!source || !['requirement', 'ticket'].includes(source.type)
+    || typeof readPage !== 'function' && typeof readPages !== 'function') {
     throw collectionError('SOURCE_INVALID', '来源类型或读取器无效');
   }
   const items = new Map();
@@ -23,9 +24,12 @@ async function collectPingcodeTaskSource({ source, readPage, signal, onProgress 
   const digest = crypto.createHash('sha256');
   let first = null;
   let readCount = 0;
+  const batchPages = source.type === 'requirement' && readPages ? await readPages(source, signal) : null;
+  if (batchPages !== null && (!Array.isArray(batchPages) || !batchPages.length || batchPages.length > 100))
+    throw collectionError('SOURCE_PAGE_INVALID', '来源批量分页响应无效');
   for (let index = 0; first === null || index < first.pageCount; index += 1) {
     if (signal?.aborted) throw collectionError('COLLECTION_CANCELLED', '采集已取消');
-    const page = await readPage(source, index, signal);
+    const page = batchPages ? batchPages[index] : await readPage(source, index, signal);
     if (!page || page.pageIndex !== index || !Array.isArray(page.items)
       || !Number.isSafeInteger(page.count) || page.count < 0
       || !Number.isSafeInteger(page.pageCount) || page.pageCount < 0
@@ -62,6 +66,8 @@ async function collectPingcodeTaskSource({ source, readPage, signal, onProgress 
     onProgress({ pagesRead: index + 1, pageCount: first.pageCount, rowsRead: readCount,
       rowCount: first.count, srCount: items.size });
   }
+  if (batchPages && batchPages.length !== Math.max(first.pageCount, 1))
+    throw collectionError('SOURCE_PAGE_COUNT_MISMATCH', '批量分页数量与来源页数不一致');
   if (readCount !== first.count) throw collectionError('SOURCE_PAGE_COUNT_MISMATCH', '分页行数与来源总数不一致');
   return { sourceId: first.sourceId, sourceVersion: first.sourceVersion, criteria: first.criteria,
     rowCount: first.count, pageCount: first.pageCount, digest: digest.digest('hex'), srCount: items.size,

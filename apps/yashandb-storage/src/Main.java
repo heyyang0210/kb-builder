@@ -1150,12 +1150,25 @@ public final class Main {
                 sendJson(exchange, 200, mapOf("success", true, "data", pingcodeTaskRepository.listSources(connection)));
                 connection.commit(); return;
             }
+            if (parts.length == 4 && "sources".equals(parts[1]) && "items".equals(parts[3])
+                && "GET".equals(exchange.getRequestMethod())) {
+                Map<String, String> params = queryParameters(exchange.getRequestURI().getRawQuery());
+                Object data = pingcodeTaskRepository.sourceItems(connection, decode(parts[2]),
+                    Integer.parseInt(params.getOrDefault("page", "1")),
+                    Integer.parseInt(params.getOrDefault("pageSize", "50")));
+                connection.commit(); sendJson(exchange, 200, mapOf("success", true, "data", data)); return;
+            }
+            if (parts.length == 5 && "sources".equals(parts[1]) && "items".equals(parts[3])
+                && "GET".equals(exchange.getRequestMethod())) {
+                Object data = pingcodeTaskRepository.sourceSnapshot(connection, decode(parts[2]), decode(parts[4]));
+                connection.commit(); sendJson(exchange, 200, mapOf("success", true, "data", data)); return;
+            }
             if ("POST".equals(exchange.getRequestMethod()) && "/v1/pingcode-task-sync/sources".equals(path)) {
                 if (!requireIdempotencyKey(exchange)) return;
                 Map<String, Object> input = readJsonObject(exchange);
                 Map<String, Object> source = pingcodeTaskRepository.createSource(connection,
-                    coalesce(input.get("name")), coalesce(input.get("type")), coalesce(input.get("url")),
-                    coalesce(input.get("connectionId")), coalesce(input.get("actor")));
+                    coalesce(input.get("name")), coalesce(input.get("type")), coalesce(input.get("productType")),
+                    coalesce(input.get("url")), coalesce(input.get("connectionId")), coalesce(input.get("actor")));
                 connection.commit(); sendJson(exchange, 201, mapOf("success", true, "data", source)); return;
             }
             if (parts.length == 4 && "tasks".equals(parts[1])
@@ -1175,8 +1188,37 @@ public final class Main {
             if (parts.length == 3 && "sources".equals(parts[1]) && "GET".equals(exchange.getRequestMethod())) {
                 Map<String, Object> source = pingcodeTaskRepository.findSource(connection, decode(parts[2]));
                 if (source == null) failure(exchange, 404, "PINGCODE_SOURCE_NOT_FOUND", "来源不存在");
-                else sendJson(exchange, 200, mapOf("success", true, "data", source));
+                else {
+                    source.put("deletable", pingcodeTaskRepository.deletable(connection, decode(parts[2])));
+                    sendJson(exchange, 200, mapOf("success", true, "data", source));
+                }
                 connection.commit(); return;
+            }
+            if (parts.length == 3 && "sources".equals(parts[1]) && "PATCH".equals(exchange.getRequestMethod())) {
+                Map<String, Object> input = readJsonObject(exchange);
+                Object revision = input.get("revision");
+                if (!(revision instanceof Number)) { failure(exchange, 422, "PINGCODE_SOURCE_REVISION_REQUIRED", "来源版本缺失"); return; }
+                Map<String, Object> source = pingcodeTaskRepository.updateSource(connection, decode(parts[2]),
+                    coalesce(input.get("name")), coalesce(input.get("type")), coalesce(input.get("productType")), coalesce(input.get("url")),
+                    ((Number) revision).longValue());
+                source.put("deletable", pingcodeTaskRepository.deletable(connection, decode(parts[2])));
+                connection.commit(); sendJson(exchange, 200, mapOf("success", true, "data", source)); return;
+            }
+            if (parts.length == 4 && "sources".equals(parts[1]) && "state".equals(parts[3])
+                && "PATCH".equals(exchange.getRequestMethod())) {
+                Map<String, Object> input = readJsonObject(exchange);
+                Object revision = input.get("revision");
+                if (!(revision instanceof Number)) { failure(exchange, 422, "PINGCODE_SOURCE_REVISION_REQUIRED", "来源版本缺失"); return; }
+                Map<String, Object> source = pingcodeTaskRepository.updateSourceState(connection, decode(parts[2]),
+                    coalesce(input.get("state")), ((Number) revision).longValue());
+                source.put("deletable", pingcodeTaskRepository.deletable(connection, decode(parts[2])));
+                connection.commit(); sendJson(exchange, 200, mapOf("success", true, "data", source)); return;
+            }
+            if (parts.length == 3 && "sources".equals(parts[1]) && "DELETE".equals(exchange.getRequestMethod())) {
+                String match = exchange.getRequestHeaders().getFirst("If-Match");
+                if (match == null || !match.matches("[0-9]+")) { failure(exchange, 422, "PINGCODE_SOURCE_REVISION_REQUIRED", "来源版本缺失"); return; }
+                pingcodeTaskRepository.deleteSource(connection, decode(parts[2]), Long.parseLong(match));
+                connection.commit(); sendJson(exchange, 200, mapOf("success", true, "data", mapOf("deleted", true))); return;
             }
             if (parts.length == 4 && "sources".equals(parts[1]) && "runs".equals(parts[3])
                 && "GET".equals(exchange.getRequestMethod())) {
@@ -1196,6 +1238,27 @@ public final class Main {
             }
             if (parts.length >= 3 && "runs".equals(parts[1])) {
                 String runId = decode(parts[2]);
+                if (parts.length == 4 && "unlinked-irs".equals(parts[3])
+                    && "GET".equals(exchange.getRequestMethod())) {
+                    Map<String, String> params = queryParameters(exchange.getRequestURI().getRawQuery());
+                    Object data = pingcodeTaskRepository.unlinkedIrs(connection, runId,
+                        Integer.parseInt(params.getOrDefault("page", "1")),
+                        Integer.parseInt(params.getOrDefault("pageSize", "100")));
+                    connection.commit(); sendJson(exchange, 200, mapOf("success", true, "data", data)); return;
+                }
+                if (parts.length == 4 && "items".equals(parts[3])
+                    && "GET".equals(exchange.getRequestMethod())) {
+                    Map<String, String> params = queryParameters(exchange.getRequestURI().getRawQuery());
+                    Object data = pingcodeTaskRepository.runItems(connection, runId,
+                        Integer.parseInt(params.getOrDefault("page", "1")),
+                        Integer.parseInt(params.getOrDefault("pageSize", "50")));
+                    connection.commit(); sendJson(exchange, 200, mapOf("success", true, "data", data)); return;
+                }
+                if (parts.length == 5 && "items".equals(parts[3])
+                    && "GET".equals(exchange.getRequestMethod())) {
+                    Object data = pingcodeTaskRepository.runSnapshot(connection, runId, decode(parts[4]));
+                    connection.commit(); sendJson(exchange, 200, mapOf("success", true, "data", data)); return;
+                }
                 if (parts.length == 4 && "resources".equals(parts[3])
                     && "GET".equals(exchange.getRequestMethod())) {
                     Map<String, String> params = queryParameters(exchange.getRequestURI().getRawQuery());
@@ -1223,7 +1286,8 @@ public final class Main {
                     int page = Integer.parseInt(params.getOrDefault("page", "1"));
                     int pageSize = Integer.parseInt(params.getOrDefault("pageSize", "50"));
                     String view = params.getOrDefault("view", "current");
-                    if (!"current".equals(view) && !"removed".equals(view) && !"conflicts".equals(view)) {
+                    if (!"current".equals(view) && !"created".equals(view) && !"updated".equals(view)
+                        && !"removed".equals(view) && !"conflicts".equals(view)) {
                         failure(exchange, 422, "PINGCODE_PREVIEW_VIEW_INVALID", "预览类型无效"); return;
                     }
                     sendJson(exchange, 200, mapOf("success", true, "data",
@@ -1273,11 +1337,20 @@ public final class Main {
                     || code.equals("DOCUMENT_TASK_OWNER_REQUIRED")
                     || code.equals("PINGCODE_TASK_MIGRATION_REQUIRED") || code.endsWith("_CONFLICT")
                     || code.endsWith("_CHANGED") || code.endsWith("_INCOMPLETE")
-                    || code.endsWith("_COLLECTING") || code.endsWith("_NOT_CONFIRMABLE") ? 409
+                    || code.endsWith("_COLLECTING") || code.endsWith("_NOT_CONFIRMABLE")
+                    || Set.of("PINGCODE_SOURCE_HISTORY_LOCKED", "PINGCODE_SOURCE_RUNNING",
+                        "PINGCODE_SOURCE_REFERENCED").contains(code) ? 409
                 : code.startsWith("PINGCODE_") || code.startsWith("PRIMARY_SOURCE_")
                     || code.startsWith("PREVIEW_CONFIRM_") ? 422 : 503;
             failure(exchange, status, status == 503 ? "STORAGE_UNAVAILABLE" : code,
-                status == 503 ? "任务来源存储暂时不可用" : code);
+                status == 503 ? "任务来源存储暂时不可用" : switch (code) {
+                    case "PINGCODE_SOURCE_CONFLICT" -> "相同类型和 URL 的来源已存在，请打开现有来源";
+                    case "PINGCODE_SOURCE_HISTORY_LOCKED" -> "来源已有同步历史，类型和 URL 不能修改";
+                    case "PINGCODE_SOURCE_RUNNING" -> "来源正在采集，完成或中断运行后再操作";
+                    case "PINGCODE_SOURCE_REFERENCED" -> "来源已有同步历史或任务关联，请停用来源以保留追溯记录";
+                    case "PINGCODE_SOURCE_INVALID" -> "请检查来源名称、类型和 Pingcode URL";
+                    default -> code;
+                });
         }
     }
 
@@ -3509,17 +3582,25 @@ public final class Main {
             return;
         }
         String code = error.getMessage() == null ? "STORAGE_UNAVAILABLE" : error.getMessage();
-        int status = switch (code) {
-            case "AUTH_USER_NOT_FOUND", "GITLAB_CONNECTION_NOT_FOUND", "GITLAB_MAPPING_NOT_FOUND", "ASSET_NOT_FOUND", "VERSION_MAPPING_NOT_FOUND" -> 404;
-            case "ROW_VERSION_CONFLICT", "CAS_LOGIN_BIND_CONFLICT", "CAS_PRINCIPAL_INACTIVE", "VERSION_MAPPING_CONFLICT" -> 409;
-            case "ROLE_REQUIRED", "ROLE_INVALID", "GITLAB_CONNECTION_NAME_REQUIRED", "GITLAB_BASE_URL_REQUIRED",
-                "GITLAB_PROJECT_REQUIRED", "GITLAB_DEFAULT_BRANCH_REQUIRED", "GITLAB_RUN_MODE_INVALID",
-                "GITLAB_AUTH_MODE_INVALID", "GITLAB_PURPOSE_INVALID", "GITLAB_STATE_INVALID", "GITLAB_MAPPING_REQUIRED",
-                "GITLAB_CONNECTION_REQUIRED", "MAPPING_VALIDATION_FAILED", "VERSION_MAPPING_INVALID" -> 422;
-            default -> 503;
-        };
+        int status;
+        if (Set.of("AUTH_USER_NOT_FOUND", "GITLAB_CONNECTION_NOT_FOUND", "GITLAB_MAPPING_NOT_FOUND", "ASSET_NOT_FOUND",
+            "VERSION_MAPPING_NOT_FOUND", "PINGCODE_SOURCE_NOT_FOUND").contains(code)) status = 404;
+        else if (Set.of("ROW_VERSION_CONFLICT", "CAS_LOGIN_BIND_CONFLICT", "CAS_PRINCIPAL_INACTIVE",
+            "VERSION_MAPPING_CONFLICT", "PINGCODE_SOURCE_CONFLICT", "PINGCODE_SOURCE_HISTORY_LOCKED",
+            "PINGCODE_SOURCE_RUNNING", "PINGCODE_SOURCE_REFERENCED").contains(code)) status = 409;
+        else if (Set.of("ROLE_REQUIRED", "ROLE_INVALID", "GITLAB_CONNECTION_NAME_REQUIRED", "GITLAB_BASE_URL_REQUIRED",
+            "GITLAB_PROJECT_REQUIRED", "GITLAB_DEFAULT_BRANCH_REQUIRED", "GITLAB_RUN_MODE_INVALID",
+            "GITLAB_AUTH_MODE_INVALID", "GITLAB_PURPOSE_INVALID", "GITLAB_STATE_INVALID", "GITLAB_MAPPING_REQUIRED",
+            "GITLAB_CONNECTION_REQUIRED", "MAPPING_VALIDATION_FAILED", "VERSION_MAPPING_INVALID",
+            "PINGCODE_SOURCE_INVALID").contains(code)) status = 422;
+        else status = 503;
         String message = switch (code) {
             case "ROW_VERSION_CONFLICT" -> "配置已被其他操作修改，请刷新后重试";
+            case "PINGCODE_SOURCE_CONFLICT" -> "相同类型和 URL 的来源已存在，请打开现有来源";
+            case "PINGCODE_SOURCE_HISTORY_LOCKED" -> "来源已有同步历史，类型和 URL 不能修改";
+            case "PINGCODE_SOURCE_RUNNING" -> "来源正在采集，完成或中断运行后再操作";
+            case "PINGCODE_SOURCE_REFERENCED" -> "来源已有同步历史或任务关联，请停用来源以保留追溯记录";
+            case "PINGCODE_SOURCE_INVALID" -> "请检查来源名称、类型和 Pingcode URL";
             case "MAPPING_VALIDATION_FAILED" -> "手册映射必须包含合法的分支和中英文路径";
             case "VERSION_MAPPING_CONFLICT" -> "映射已被修改或目标版本已有启用规则，请刷新后重试";
             case "VERSION_MAPPING_INVALID" -> "请填写有效的产品、业务版本和仓库分支";
