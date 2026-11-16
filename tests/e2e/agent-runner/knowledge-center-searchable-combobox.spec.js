@@ -63,9 +63,10 @@ test('知识资产动态实体可输入筛选且固定枚举保留原生选择',
   await productInput.press('Enter');
   await expect(productSelect).not.toHaveValue('');
 
-  const statusSelect = page.locator('.asset-filters select[name="status"]');
-  await expect(statusSelect).toBeVisible();
-  await expect(statusSelect.locator('xpath=ancestor::*[@data-searchable-combobox]')).toHaveCount(0);
+  const statusInput = page.locator('.asset-filters input[name="status"]');
+  await expect(statusInput).toBeAttached();
+  await expect(statusInput).toHaveValue('');
+  await expect(page.locator('.catalog-stage-tabs [aria-current="page"]')).toContainText('全部手册');
   expect(errors).toEqual([]);
 });
 
@@ -98,9 +99,9 @@ test('大纲动态实体使用组合框而状态筛选保持原生选择', async
   await expect.poll(async () => (await outlineFilter.boundingBox())?.width || Infinity).toBeLessThanOrEqual(220);
 
   await page.goto(`${baseUrl}/knowledge-center/outlines`);
-  const statusSelect = page.locator('[data-outline-status-filter]');
-  await expect(statusSelect).toBeVisible();
-  await expect(statusSelect.locator('xpath=ancestor::*[@data-searchable-combobox]')).toHaveCount(0);
+  const statusStage = page.locator('[data-outline-stage="published"]');
+  await expect(statusStage).toBeVisible();
+  await expect(statusStage.locator('xpath=ancestor::*[@data-searchable-combobox]')).toHaveCount(0);
 
   await page.goto(`${baseUrl}/knowledge-center/platform?tab=permissions`);
   const roleFilter = page.getByRole('combobox', { name: '按角色筛选，可输入筛选' });

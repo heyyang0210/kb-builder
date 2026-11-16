@@ -26,14 +26,37 @@ describe('知识中心大纲管理前端契约', () => {
     expect(source).not.toContain('<span>待处理问题</span>');
     expect(source).not.toContain('outline-issue-summary');
     expect(source).toContain('outline-list-link asset-name');
-    expect(view()).toContain('outlineStructureVersion');
-    expect(view()).toContain('大纲版本');
+    expect(source).not.toContain('大纲版本：${escapeHtml(value.outlineVersion');
   });
   test('未接入、真实空数据与已有数据采用不同分支', () => {
     expect(view()).toContain("source.status !== 'ok'");
     expect(view()).toContain('大纲服务不可用');
     expect(view()).toContain('尚无大纲');
     expect(view()).not.toContain('23.4.5.100');
+  });
+  test('未知大纲状态可从统一阶段栏筛选，不混入已知状态', () => {
+    const source = view()
+      .replace(/^import .*;$/gm, '')
+      .replace(/^export function /gm, 'function ');
+    const renderOutlines = new Function('dataNote', 'pendingState', 'escapeHtml', 'renderDirectoryTree',
+      `${source}\nreturn renderOutlines;`)(() => '', () => '', value => String(value ?? ''), () => '');
+    const html = renderOutlines({
+      outlineProjection: { status: 'ok', items: [
+        { id: 'known-draft', state: 'draft', name: '候选大纲' },
+        { id: 'unknown-state', state: 'future_state', name: '新状态大纲' },
+      ] },
+      outlineView: { listState: { search: '', status: '' } },
+      outlinePermissions: {},
+    });
+    expect(html).toContain('状态待确认');
+    expect(html).toContain('服务端返回状态：future_state');
+    expect(html).toContain('data-outline-state="unknown"');
+    expect(html).toContain('<span>状态待确认</span>');
+    expect(html).toContain('<span>待完善</span><strong>1</strong>');
+    expect(html).toContain('<span>状态待确认</span><strong>1</strong>');
+    expect(html).toContain('href="/knowledge-center/outlines?status=unknown" data-outline-stage="unknown"');
+    expect(html).not.toContain('outline-list-summary');
+    expect(html).not.toContain('data-outline-status-filter');
   });
   test('详情加载中不误报服务不可用，真实失败和权限不足保持独立语义', () => {
     const source = view()
@@ -309,9 +332,14 @@ describe('知识中心大纲管理前端契约', () => {
 
   test('发布后分工管理显示领域成员和实际责任人', () => {
     const source = view();
+    const styles = read('apps/knowledge-center-web/frontend/knowledge-center/modules/outlines/outlines.css');
     const route = read('packages/agent-runner-core/routes/outline.js');
     expect(source).toContain('data-outline-assignment-stats-dialog');
-    expect(source).toContain('成员负载');
+    expect(source).toContain('成员分工');
+    expect(source).toContain('outline-assignment-stats-list');
+    expect(source).toContain("knownAssignee ? '' : '历史责任人待确认'");
+    expect(source).not.toContain('大纲版本：${escapeHtml(value.outlineVersion');
+    expect(styles).toContain('.outline-assignment-workspace .outline-responsibility-table td { padding-top: 4px; padding-bottom: 4px; }');
     expect(source).not.toContain('人员分派进度');
     expect(source).toContain('data-domain-task-assignee');
     expect(source).toContain('已发布大纲的内容说明不可修改');
@@ -324,6 +352,44 @@ describe('知识中心大纲管理前端契约', () => {
     expect(route).toContain('readOutlinesAsync()');
     expect(route).toContain('readOutlineGovernanceAsync(req.params.id)');
     expect(route).toContain('impact: buildImpactProjection({ ...outline, governance })');
+  });
+
+  test('分工行隐藏重复的已分派状态，统计按列表呈现', () => {
+    const source = view()
+      .replace(/^import .*;$/gm, '')
+      .replace(/^export function /gm, 'function ');
+    const renderAssignments = new Function('dataNote', 'pendingState', 'escapeHtml', 'renderDirectoryTree',
+      `${source}\nreturn renderOutlineAssignments;`)(() => '', () => '', value => String(value ?? ''), () => '');
+    const html = renderAssignments({
+      outlineProjection: {
+        handbook: { id: 'book-1' },
+        detail: {
+          id: 'outline-v1-outline_internal', handbookId: 'book-1', nodes: [],
+          governance: { state: 'published', effectiveDocumentAssignments: [{ documentId: 'doc-1', techDomainIds: ['compat'] }] },
+        },
+      },
+      outlineView: { domainId: 'compat' },
+      outlinePermissions: {},
+      domainBuildTaskProjection: { status: 'ok', tasks: [{
+        id: 'task-1', manualId: 'book-1', outlineVersionId: 'outline-v1-outline_internal',
+        techDomainId: 'compat', techDomainName: '兼容性', domainLeaderId: 'leader', domainLeaderName: '负责人',
+        domainMembers: [{ id: 'member', name: '撰写人' }],
+        items: [
+          { id: 'item-1', documentId: 'doc-1', documentTitle: '已分派.md', assigneeId: 'member' },
+          { id: 'item-2', documentId: 'doc-2', documentTitle: '待分派.md', assigneeId: '' },
+        ],
+      }] },
+    });
+    const assignedRow = html.match(/<tr[^>]*data-assigned="true"[\s\S]*?<\/tr>/)?.[0];
+    const pendingRow = html.match(/<tr[^>]*data-assigned="false"[\s\S]*?<\/tr>/)?.[0];
+    expect(assignedRow).toContain('撰写人');
+    expect(assignedRow).not.toContain('已分派</small>');
+    expect(pendingRow).toContain('待分派');
+    expect(html).toContain('outline-assignment-stats-list');
+    expect(html).toContain('<dt>主责文档</dt>');
+    expect(html).toContain('撰写人');
+    expect(html).toContain('1 篇');
+    expect(html).not.toContain('outline-assignment-stats-summary');
   });
 
   test('目录导航只负责定位，支持搜索、目录兼页面和单一展开切换', () => {

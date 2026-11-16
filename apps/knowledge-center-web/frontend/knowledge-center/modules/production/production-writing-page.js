@@ -2,7 +2,7 @@ import { loadTemplates } from '../../common/api/platform-api.js';
 import { enhanceSearchableSelects, syncSearchableSelect, cleanupSearchableSelects } from '../../common/searchable-combobox.js';
 import { writingChanges, assembleWritingChanges } from './writing-changes.js';
 import { retainWritingSelection } from './writing-selection.js';
-import { loadProductionModels, startHandbookAI, loadHandbookAI, loadHandbookAIHistory, actHandbookAI, loadHandbookAISources, previewHandbookAISource, uploadHandbookAISource, loadHandbookAISkills, runHandbookQuality } from '../../common/api/handbook-production-api.js';
+import { loadProductionModels, startHandbookAI, loadHandbookAI, loadHandbookAIHistory, actHandbookAI, loadHandbookAISources, previewHandbookAISource, uploadHandbookAISource, loadHandbookAISkills } from '../../common/api/handbook-production-api.js';
 import { createAIConversationTools } from './production-chat-evidence.js';
 import { renderProductionProvenance } from './production-provenance.js';
 import { Marked } from '../../common/vendor/marked.esm.js';
@@ -32,7 +32,7 @@ const names = { generate: '文档生成', polish: '内容修订', continue: '内
 // 兼容历史入口参数；页面统一展示“内容修订”，旧调用仍可恢复。
 const legacyOperationAliases = { rewrite: 'polish', update: 'polish' };
 const normalizeOperation = operation => ['rewrite', 'update'].includes(operation) ? 'polish' : operation || 'generate';
-const stateNames = { queued: '等待执行', running: '正在生成', completed: '候选已生成，请比较后采用', failed: '生成失败', cancelled: '已取消', interrupted: '任务中断，可重试' };
+const stateNames = { queued: '等待执行', running: '正在生成', completed: '候选已生成，请比较后保存', failed: '生成失败', cancelled: '已取消', interrupted: '任务中断，可重试' };
 
 // The page owns polling; the detached workbench retains its editor and unsaved draft.
 export function openProductionWritingPage(options) {
@@ -66,7 +66,8 @@ export function openProductionWritingPage(options) {
   const richSelection = retainWritingSelection(() => ({ editor: writingEditor, element: find('rich-editor') }));
   let fallbackCandidate = null;
   let feedbackTimer; let feedbackJob = null;
-  let job = null; let timer; let closed = false; let busy = false; let pendingStart = null; let pendingRetry = null; let qualityReportId = null;
+  let job = null; let timer; let closed = false; let busy = false; let pendingStart = null; let pendingRetry = null;
+  let selectedHistoryJobId = null;
   let sourceSnapshots = [];
   let referenceOrder = ['knowledge-mcp'];
   let templateId = options.templateId || ''; let templatesLoading = false; let templateCatalog = []; let templatesLoaded = false;
@@ -87,7 +88,7 @@ export function openProductionWritingPage(options) {
           <p data-ai-preview-wait hidden></p>
           <ol class="handbook-writing-agent-events" data-ai-agent-events hidden aria-label="Codex 实际活动"></ol>
           <div data-ai-stages></div>
-          <details data-ai-preview-panel hidden open><summary>生成内容预览 · 完成后可比较采用</summary><pre data-ai-preview aria-label="生成内容预览"></pre><p data-ai-preview-notice></p></details>
+          <details data-ai-preview-panel hidden open><summary>生成内容预览 · 完成后可比较保存</summary><pre data-ai-preview aria-label="生成内容预览"></pre><p data-ai-preview-notice></p></details>
         </section>
         <section class="handbook-writing-transcript" data-ai-history hidden aria-label="此前的 AI 对话"><div data-ai-history-list></div></section>
         <details class="handbook-editor-format" data-dismissible-menu data-ai-format><summary aria-label="正文编写格式"><span data-ai-mode-label>可视化编辑</span><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m6 9 6 6 6-6"/></svg></summary><div><button type="button" data-ai-mode-rich aria-pressed="true">可视化编辑</button><button type="button" data-ai-mode-markdown aria-pressed="false">Markdown</button></div></details>
@@ -115,7 +116,7 @@ export function openProductionWritingPage(options) {
         <div class="handbook-writing-submit"><div data-ai-origin hidden><p data-ai-origin-message role="status" aria-live="polite"></p><a class="button secondary" data-ai-origin-authorize target="_blank" rel="noopener noreferrer" hidden>授权 GitLab（新窗口）</a><button type="button" data-ai-origin-recheck>重新检查来源</button></div><div class="handbook-ai-dialog-actions"><button type="button" data-ai-start>生成候选</button><button type="button" data-ai-cancel hidden disabled>取消任务</button><button type="button" data-ai-retry hidden disabled>重试任务</button></div><p id="handbook-ai-start-hint" class="handbook-writing-submit-hint" data-ai-start-hint role="status" aria-live="polite" hidden></p><button type="button" data-ai-resume hidden>恢复上次任务</button></div>
       </aside>
     </div>
-    <section data-ai-candidate hidden tabindex="-1" aria-label="候选对照"><h3>比较后采用</h3><div class="handbook-writing-comparison"><label>原片段<textarea data-ai-before rows="10" readonly></textarea></label><label>候选片段（可人工修改）<textarea data-ai-fragment rows="10"></textarea></label></div><p>采用仅替换已确认的片段；其余原文保留。可调整写作要求后重新生成。内容尚待事实与用例核验。</p><div class="handbook-ai-dialog-actions"><button type="button" data-ai-adopt>采用并保存草稿</button><button type="button" data-ai-refine>调整要求重新生成</button><button type="button" data-ai-quality>执行 YashanDB 用例检查</button><button type="button" data-ai-discard>放弃候选</button></div><p data-ai-quality-result role="status"></p></section>
+    <section data-ai-candidate hidden tabindex="-1" aria-label="候选对照"><h3>比较后采用</h3><div class="handbook-writing-comparison" hidden><label>原片段<textarea data-ai-before rows="10" readonly></textarea></label><label>候选片段<textarea data-ai-fragment rows="10"></textarea></label></div><div class="handbook-ai-dialog-actions"><button type="button" data-ai-adopt>保存</button><button type="button" data-ai-quality>测试校验</button><button type="button" data-ai-discard>取消</button></div><p data-ai-quality-result role="status"></p></section>
     </form>`;
   dialog.querySelectorAll('button').forEach(button => button.classList.add('button', 'secondary'));
   const find = selector => dialog.querySelector(`[data-ai-${selector}]`);
@@ -138,10 +139,7 @@ export function openProductionWritingPage(options) {
   find('candidate').querySelector('h3').textContent = '正文修订';
   find('candidate').querySelector('h3').hidden = true;
   find('candidate').querySelector('.handbook-writing-comparison').hidden = true;
-  const manualEdit = document.createElement('button'); manualEdit.type = 'button'; manualEdit.className = 'button tertiary'; manualEdit.textContent = '手动调整候选'; manualEdit.dataset.aiManualEdit = '';
-  manualEdit.onclick = () => { const comparison = find('candidate').querySelector('.handbook-writing-comparison'); comparison.hidden = !comparison.hidden; if (!comparison.hidden) find('fragment').focus(); };
-  find('refine').before(manualEdit);
-  find('candidate').querySelector('p').textContent = '逐处接受或拒绝修改，确认后保存。原文在保存前保持不变。';
+  let editingCandidateIndex = null;
   function changeList() { return reviewSegments.filter(segment => segment.type === 'change'); }
   function syncReviewFragment() { find('fragment').value = assembleWritingChanges(reviewSegments); }
   function moveChange(step) {
@@ -171,13 +169,28 @@ export function openProductionWritingPage(options) {
       const block = document.createElement('section'); block.className = `handbook-review-change is-${segment.decision}`; block.dataset.aiChange = String(index); block.tabIndex = -1;
       block.setAttribute('aria-label', `第 ${index + 1} 处修改`);
       if (segment.decision !== 'accepted' && segment.before) block.append(appendMarkdown(segment.before, segment.decision === 'pending' ? 'handbook-review-removed' : 'handbook-review-context'));
-      if (segment.decision !== 'rejected' && segment.after) block.append(appendMarkdown(segment.after, 'handbook-review-added'));
+      if (editingCandidateIndex === index) {
+        const form = document.createElement('div'); form.className = 'handbook-review-inline-editor';
+        const label = document.createElement('label'); label.className = 'sr-only'; label.textContent = '修改候选内容';
+        const editor = document.createElement('textarea'); editor.dataset.aiInlineEditor = ''; editor.rows = 5; editor.setAttribute('aria-label', `修改第 ${index + 1} 处候选内容`); editor.value = segment.after;
+        const editorActions = document.createElement('div'); editorActions.className = 'handbook-review-inline-actions';
+        const save = document.createElement('button'); save.type = 'button'; save.className = 'button'; save.textContent = '保存修改'; save.dataset.aiInlineSave = '';
+        save.onclick = () => { segment.after = editor.value; segment.decision = 'pending'; editingCandidateIndex = null; syncReviewFragment(); renderInlineReview(); controls(); reviewSurface.querySelector(`[data-ai-change="${index}"]`)?.focus({ preventScroll: true }); };
+        const cancelEdit = document.createElement('button'); cancelEdit.type = 'button'; cancelEdit.className = 'button secondary'; cancelEdit.textContent = '取消修改';
+        cancelEdit.onclick = () => { editingCandidateIndex = null; renderInlineReview(); controls(); reviewSurface.querySelector(`[data-ai-change="${index}"]`)?.focus({ preventScroll: true }); };
+        label.append(editor); editorActions.append(save, cancelEdit); form.append(label, editorActions); block.append(form);
+      } else if (segment.decision !== 'rejected' && segment.after) block.append(appendMarkdown(segment.after, 'handbook-review-added'));
       const actions = document.createElement('div'); actions.className = 'handbook-review-change-actions';
+      if (editingCandidateIndex !== index) {
+        const edit = document.createElement('button'); edit.type = 'button'; edit.className = 'handbook-review-edit'; edit.textContent = '编辑'; edit.setAttribute('aria-label', `编辑第 ${index + 1} 处修改`);
+        edit.disabled = !!job?.adopted || busy; edit.onclick = () => { editingCandidateIndex = index; reviewIndex = index; renderInlineReview(); controls(); reviewSurface.querySelector('[data-ai-inline-editor]')?.focus(); };
+        actions.append(edit);
+      }
       for (const [decision, symbol, label] of [['accepted', '✓', '接受'], ['rejected', '×', '拒绝']]) {
         const button = document.createElement('button'); button.type = 'button'; button.textContent = symbol; button.setAttribute('aria-label', `${label}第 ${index + 1} 处修改`); button.setAttribute('aria-pressed', String(segment.decision === decision));
-        button.disabled = !!job?.adopted; button.onclick = () => { segment.decision = decision; reviewIndex = index; syncReviewFragment(); renderInlineReview(); reviewSurface.querySelector(`[data-ai-change="${index}"]`)?.focus({ preventScroll: true }); }; actions.append(button);
+        button.disabled = !!job?.adopted || busy || editingCandidateIndex === index; button.onclick = () => { segment.decision = decision; reviewIndex = index; syncReviewFragment(); renderInlineReview(); reviewSurface.querySelector(`[data-ai-change="${index}"]`)?.focus({ preventScroll: true }); }; actions.append(button);
       }
-      block.append(actions); reviewSurface.append(block);
+      if (editingCandidateIndex !== index) block.append(actions); reviewSurface.append(block);
     }
     reviewSurface.append(appendMarkdown(original.slice(range.end), 'handbook-review-context'));
     find('rich-editor').hidden = true; find('markdown').hidden = true; find('format').hidden = true; find('markdown-preview-toggle').hidden = true;
@@ -214,7 +227,7 @@ export function openProductionWritingPage(options) {
     breadcrumb.textContent = document.querySelector('.handbook-document-heading > p')?.textContent || '当前文档';
     documentSurface.prepend(breadcrumb);
     const note = document.createElement('p'); note.className = 'handbook-writing-adoption-note';
-    note.textContent = '生成内容先预览，确认采用后再保存'; dialog.querySelector('.handbook-writing-submit').append(note);
+    note.textContent = '生成内容先预览，确认后保存'; dialog.querySelector('.handbook-writing-submit').append(note);
     dialog.querySelector('.handbook-writing-document').append(find('candidate'));
   }
   dialog.querySelector('.handbook-writing-document').append(find('candidate'));
@@ -341,7 +354,7 @@ export function openProductionWritingPage(options) {
   const currentAnswer = document.createElement('article'); currentAnswer.className = 'handbook-writing-current-answer'; currentAnswer.hidden = true;
   conversation.append(recommendation, find('history'), requestMessage, find('execution'), currentAnswer, viewCandidate);
   const chatTools = createAIConversationTools({ host: dialog.querySelector('.handbook-writing-layout'), conversation, context,
-    getCurrentJob: () => job, openHistory: id => openHistoryItem(id),
+    getCurrentJob: () => job, openHistory: (id, expanded) => openHistoryItem(id, expanded),
     onDeleted: id => { if (job?.jobId === id) { resetCandidate(); currentAnswer.hidden = true; } void refreshHistory(); },
     notify: message => status(message), });
   const documentSurface = dialog.querySelector('.handbook-writing-document');
@@ -481,12 +494,15 @@ export function openProductionWritingPage(options) {
   resetWidth.title = '恢复默认对话栏宽度'; resetWidth.setAttribute('aria-label', resetWidth.title);
   resetWidth.innerHTML = icon('<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M14 4v16"/>'); resetWidth.onclick = () => resizeSidebar(420);
   dialog.querySelector('.handbook-writing-heading-actions').prepend(resetWidth);
+  let workspaceTop = null;
   function sizeWorkspace() {
     if (!embedded || closed) return;
     const viewportHeight = document.documentElement.clientHeight;
-    dialog.style.setProperty('--writing-workspace-height', `${Math.max(320, viewportHeight - layout.getBoundingClientRect().top)}px`);
+    // Capture the panel's initial position so page scrolling cannot enlarge its fixed height.
+    workspaceTop ??= Math.max(0, layout.getBoundingClientRect().top);
+    dialog.style.setProperty('--writing-workspace-height', `${Math.max(320, viewportHeight - workspaceTop)}px`);
   }
-  const layoutObserver = new ResizeObserver(() => { resizeSidebar(); sizeWorkspace(); });
+  const layoutObserver = new ResizeObserver(() => resizeSidebar());
   window.addEventListener('resize', sizeWorkspace);
   const status = message => { find('execution').hidden = false; find('status').textContent = message; };
   let pickerKind = 'template';
@@ -647,7 +663,8 @@ export function openProductionWritingPage(options) {
     referenceToggle.disabled = !!(busy || running);
     for (const box of find('skill-list').querySelectorAll('input')) box.disabled = busy || running;
     find('origin-recheck').disabled = busy || running || originChecking;
-    const startBlockedReason = busy ? '正在准备任务，请稍候。'
+    const startBlockedReason = editingCandidateIndex !== null ? '请先保存或取消正文中的修改。'
+      : busy ? '正在准备任务，请稍候。'
       : running ? '任务正在生成中，可点击停止图标中断。'
       : originChecking ? '正在检查仓库来源，请稍候。'
       : !originReady ? (find('origin-message').textContent || '请先完成仓库来源检查。')
@@ -666,8 +683,7 @@ export function openProductionWritingPage(options) {
     settingsTool.disabled ||= !usesTemplate();
     syncTemplatePlaceholder();
     find('source-preview').disabled ||= find('source-type').value === 'knowledge-mcp' && referenceOrder.includes('knowledge-mcp');
-    for (const button of dialog.querySelectorAll('[data-ai-accept-all], [data-ai-reject-all], .handbook-review-change-actions button, [data-ai-manual-edit]')) button.disabled = !!(busy || running || job?.adopted);
-    find('refine').disabled = busy || running;
+    for (const button of dialog.querySelectorAll('[data-ai-accept-all], [data-ai-reject-all], .handbook-review-change-actions button')) button.disabled = !!(busy || running || job?.adopted);
     find('discard').disabled = busy || running;
     find('fragment').disabled = busy || running;
     for (const button of find('source-list').querySelectorAll('button')) button.disabled = busy || running;
@@ -766,13 +782,21 @@ export function openProductionWritingPage(options) {
   const historyStatusNames = { queued: '等待执行', running: '生成中', completed: '已完成', failed: '生成失败', cancelled: '已中断', interrupted: '已中断' };
   function renderHistory(items = []) {
     const panel = find('history'); const list = find('history-list');
-    const older = items.filter(item => item.jobId !== job?.jobId);
+    const older = items.filter(item => item.jobId !== job?.jobId || item.jobId === selectedHistoryJobId);
     panel.hidden = !older.length; chatTools.renderHistory(older, list);
   }
   async function refreshHistory() {
     try { renderHistory(await loadHandbookAIHistory(context)); } catch (_) { /* 历史记录不应阻断当前写作 */ }
   }
-  async function openHistoryItem(jobId) {
+  async function openHistoryItem(jobId, expanded = true) {
+    selectedHistoryJobId = jobId;
+    if (!expanded) {
+      find('execution').hidden = true;
+      requestMessage.hidden = true;
+      currentAnswer.hidden = true;
+      void refreshHistory();
+      return;
+    }
     if (busy || !jobId) return;
     busy = true; controls(); revealExecution();
     try {
@@ -789,7 +813,7 @@ export function openProductionWritingPage(options) {
       const previous = fallbackCandidate; fallbackCandidate = null;
       showJob(previous.job); renderExecution(value); find('fragment').value = previous.fragment; renderInlineReview(true);
       provenancePanel.innerHTML = previous.provenance; remember(previous.job.jobId);
-      status(`${value.error?.message || stateNames[value.status]}。上次候选仍保留，可调整要求重试。`); return;
+      status(`${value.error?.message || stateNames[value.status]}。上次候选仍保留，可重试。`); return;
     }
     const newlyCompleted = value.status === 'completed' && (job?.jobId !== value.jobId || job?.status !== 'completed');
     job = value;
@@ -808,7 +832,7 @@ export function openProductionWritingPage(options) {
       if (newlyCompleted || !reviewSegments.length) { find('fragment').value = value.fragment; renderInlineReview(true); }
       provenancePanel.innerHTML = renderProductionProvenance(value.metadata, value.candidateMarkdown);
       if (newlyCompleted) requestAnimationFrame(() => { if (!closed) { find('candidate').focus({ preventScroll: true }); find('candidate').scrollIntoView({ block: 'start' }); } });
-      if (value.adopted) status('此候选已采用，请回到工作台查看已保存草稿。');
+      if (value.adopted) status('此候选已保存，请回到工作台查看草稿。');
     }
     controls();
     clearTimeout(timer);
@@ -1120,7 +1144,7 @@ export function openProductionWritingPage(options) {
   }
   for (const event of ['select', 'keyup', 'pointerup']) find('original').addEventListener(event, trackMarkdownSelection);
   document.addEventListener('selectionchange', trackSelection);
-  function resetCandidate() { clearInterval(feedbackTimer); feedbackJob = null; job = null; fallbackCandidate = null; pendingStart = null; remember(null); find('candidate').hidden = true; currentAnswer.hidden = true; requestMessage.hidden = true; dialog.classList.remove('is-reviewing'); find('format').hidden = false; setWritingMode(writingMode, false); reviewSegments = []; qualityReportId = null; find('quality-result').textContent = ''; controls(); }
+  function resetCandidate() { clearInterval(feedbackTimer); feedbackJob = null; job = null; fallbackCandidate = null; pendingStart = null; editingCandidateIndex = null; remember(null); find('candidate').hidden = true; currentAnswer.hidden = true; requestMessage.hidden = true; dialog.classList.remove('is-reviewing'); find('format').hidden = false; setWritingMode(writingMode, false); reviewSegments = []; find('quality-result').textContent = ''; controls(); }
   find('operation').onchange = () => {
     resetCandidate();
     pendingStart = null;
@@ -1159,6 +1183,7 @@ export function openProductionWritingPage(options) {
   find('start').onclick = async () => {
     if (job && ['queued', 'running'].includes(job.status)) { find('cancel').click(); return; }
     if (busy || originChecking || !originReady || !rangeConfirmed || modelsLoading || !selectedModel()) return;
+    selectedHistoryJobId = null; chatTools.setExpandedHistory(null);
     requestMessage.textContent = find('requirements').value.trim() || names[find('operation').value]; requestMessage.hidden = false;
     busy = true; controls();
     status(options.prepareOrigin ? '正在检查仓库来源…' : '正在准备生成…');
@@ -1191,7 +1216,7 @@ export function openProductionWritingPage(options) {
     if (!pendingStart || pendingStart.digest !== digest) pendingStart = { digest, key: globalThis.crypto?.randomUUID?.() || `ai-web-${Date.now()}-${Math.random().toString(36).slice(2)}` };
     try {
       const value = await startHandbookAI(context, payload, pendingStart.key);
-      remember(value.jobId); pendingStart = null; qualityReportId = null; find('quality-result').textContent = ''; showJob(value); void refreshHistory();
+      remember(value.jobId); pendingStart = null; find('quality-result').textContent = ''; showJob(value); void refreshHistory();
     } catch (error) {
       find('phase').textContent = '任务创建失败'; find('elapsed').textContent = '尚未调用模型';
       find('preview-wait').hidden = true; find('preview-panel').hidden = true;
@@ -1243,7 +1268,6 @@ export function openProductionWritingPage(options) {
       }
     } catch (error) { status(`读取 GitLab 最新基线失败：${error.message}`); }
   }
-  find('refine').onclick = () => { setAssistantVisible(true); find('requirements').focus(); find('requirements').scrollIntoView({ block: 'center' }); status('调整写作要求后点击“重新生成候选”；本次仍基于原文与已确认范围。'); };
   find('resume').onclick = async () => {
     let id; try { id = sessionStorage.getItem(storageKey); } catch (_) {}
     if (!id) { status('当前文档没有可恢复任务。'); return; }
@@ -1286,7 +1310,7 @@ export function openProductionWritingPage(options) {
     } catch (error) { status(`重试未提交：${error.message}。请恢复任务核对。`); }
     finally { busy = false; controls(); }
   };
-  find('discard').onclick = () => { resetCandidate(); status('已放弃候选，当前正文保留。'); controls(); };
+  find('discard').onclick = () => { resetCandidate(); status('已取消候选，当前正文保留。'); controls(); };
   find('fragment').addEventListener('input', () => {
     renderInlineReview(true);
     provenancePanel.innerHTML = '<p>候选已人工修改；保存时记录修改区间。原候选依据可在恢复任务后查看，修改内容需重新核验。</p>';
@@ -1296,7 +1320,7 @@ export function openProductionWritingPage(options) {
     if (options.getMarkdown() !== original) { status('工作台正文已变化，请保留人工修改并重新生成。'); return; }
     const fragment = find('fragment').value;
     const markdown = original.slice(0, range.start) + fragment + original.slice(range.end);
-    busy = true; controls(); find('fragment').disabled = true; status('正在采用并保存…');
+    busy = true; controls(); find('fragment').disabled = true; status('正在保存…');
     try {
       const result = await actHandbookAI(context, job.jobId, 'adopt', {
         originalMarkdown: original, markdown, editVersion,
@@ -1304,20 +1328,12 @@ export function openProductionWritingPage(options) {
       });
       remember(null); closePage();
       await options.onAdopt(result, original);
-    } catch (error) { status(`采用未完成：${error.message}。候选仍保留，可核对后重试。`); }
+    } catch (error) { status(`保存未完成：${error.message}。候选仍保留，可核对后重试。`); }
     finally { busy = false; find('fragment').disabled = false; controls(); }
   };
   find('quality').onclick = async () => {
     if (busy || job?.status !== 'completed') return;
-    busy = true; controls();
-    const output = find('quality-result'); output.textContent = '正在执行用例检查…';
-    try {
-      const candidateMarkdown = original.slice(0, range.start) + find('fragment').value + original.slice(range.end);
-      const report = await runHandbookQuality(context, { markdown: candidateMarkdown, editVersion, rerunOfReportId: qualityReportId, idempotencyKey: `quality-${job?.jobId || Date.now()}-${qualityReportId || 'first'}` });
-      qualityReportId = report.reportId;
-      output.textContent = `质量报告：${report.gate === 'passed' ? '通过' : '未通过'}；通过 ${report.coverage.passed}，失败 ${report.coverage.failed}，未执行 ${report.coverage.notExecuted}。报告编号 ${report.reportId}`;
-    } catch (error) { output.textContent = `质量检查未完成：${error.message}`; }
-    finally { busy = false; controls(); }
+    find('quality-result').textContent = '功能待完善';
   };
   async function loadModelCatalog() {
     modelsLoading = true; controls();

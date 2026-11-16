@@ -1,4 +1,5 @@
 import { emptyState } from '../../common/components/ui.js';
+import { uiIcon } from '../../common/ui-system.js';
 import { escapeHtml } from '../../common/utils/dom.js';
 import { renderHandbookProduction } from './handbook-view.js';
 
@@ -9,7 +10,7 @@ const statusNames = {
 const phases = [
   ['setup', '建立任务'],
   ['inputs', '确认输入'],
-  ['generation', '生成与修订'],
+  ['generation', '草稿'],
   ['review', '按文档审核'],
   ['publish', '整体发布'],
 ];
@@ -17,12 +18,17 @@ const phases = [
 const array = value => Array.isArray(value) ? value : [];
 const idOf = value => String(value?.taskId || value?.id || '');
 const selectedTask = projection => projection?.detail?.task || projection?.detail || null;
-const taskStatus = task => task?.completion?.status === 'completed'
+export const taskStatus = task => task?.completion?.status === 'completed'
   ? (task.completion.label || '已完成')
   : task?.completion?.status === 'pending' && task?.mergeRequest
     ? (task.completion.label || '待合并回读')
     : task?.statusDisplayName || statusNames[task?.state] || statusNames[task?.status] || task?.state || task?.status || '状态未返回';
-function fmtTime(value) { if (!value) return '暂无'; const date = new Date(value); return Number.isNaN(date.getTime()) ? escapeHtml(value) : date.toLocaleString('zh-CN', { hour12: false }); }
+export function formatProductionTimestamp(value, fallback = '—') {
+  if (!value) return fallback;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString('zh-CN', { hour12: false });
+}
+function fmtTime(value) { return value ? escapeHtml(formatProductionTimestamp(value, '暂无')) : '暂无'; }
 function suggestedPhase(task) {
   const status = task?.state || task?.status;
   if (['pending_publish', 'approved', 'published', 'mr_submitted', 'batch_publish_failed'].includes(status)) return 'publish';
@@ -45,7 +51,7 @@ function taskList(projection) {
   const selectedId = idOf(selectedTask(projection));
   if (projection?.status === 'loading') return '<div class="incremental-list-state" role="status">正在读取增量任务…</div>';
   if (projection?.status === 'unavailable') return `<div class="incremental-list-state error"><strong>任务暂时无法读取</strong><span>${escapeHtml(projection?.error?.message || '请稍后重试')}</span><button class="button secondary compact" type="button" data-incremental-reload>重新读取</button></div>`;
-  if (!items.length) return emptyState('暂无增量任务', '选择有已发布基线的手册创建第一个任务。');
+  if (!items.length) return emptyState('暂无增量任务', '当前没有可查看的任务记录。');
   return `<div class="incremental-task-list">${items.map(task => { const id = idOf(task); return `<button class="incremental-task-item${id === selectedId ? ' selected' : ''}" type="button" data-incremental-task="${escapeHtml(id)}" aria-pressed="${id === selectedId}"><strong>${escapeHtml(task.name || task.title || '未命名任务')}</strong><span>${escapeHtml(taskStatus(task))}</span><small>${escapeHtml(task.handbookName || task.handbookId || '')}${task.updatedAt ? ` · ${fmtTime(task.updatedAt)}` : ''}</small></button>`; }).join('')}</div>`;
 }
 
@@ -70,17 +76,18 @@ function progress(task, active) {
 function sourceSection(task) {
   const sources = array(task.sources || task.sourceSnapshots);
   const editable = task.capabilities?.canEdit !== false && ['draft', 'editing', 'checked'].includes(task.state);
-  const sourceTypeName = type => type === 'local' ? '本地资料' : '人工选择';
-  return `<section class="incremental-section" id="incremental-source"><header><div><h3>来源材料</h3><p>人工选择并固化本次修改使用的内容。</p></div><span>${sources.length} 项</span></header>${sources.length ? `<ul class="incremental-fact-list">${sources.map(source => `<li><div><strong>${escapeHtml(source.label || source.title || source.name || '未命名来源')}</strong><small>${sourceTypeName(source.sourceType)} · 人工固化，未经连接器验证</small></div>${source.reference ? `<span>${escapeHtml(source.reference)}</span>` : ''}</li>`).join('')}</ul>` : '<p class="incremental-empty">尚未固化来源。</p>'}${editable ? `<form class="incremental-inline-form source" data-incremental-source-form data-task-id="${escapeHtml(idOf(task))}"><label>来源名称<input name="label" required maxlength="120"></label><label>来源引用<input name="reference" placeholder="PingCode 页面或任务编号"></label><label>来源方式<select name="sourceType"><option value="manual">人工选择</option><option value="local">本地资料</option></select></label><label class="wide">已确认的来源内容<textarea name="content" rows="5" required></textarea></label><button class="button" type="submit">选择并固化</button><span class="incremental-form-status" role="status"></span></form>` : ''}</section>`;
+  const sourceTypeName = type => type === 'local' ? '本地文件' : '人工提供';
+  return `<section class="incremental-section" id="incremental-source"><header><div><h3>参考资料</h3><p>保存后作为本次任务的来源快照。</p></div><span>${sources.length} 项</span></header>${sources.length ? `<ul class="incremental-fact-list">${sources.map(source => `<li><div><strong>${escapeHtml(source.label || source.title || source.name || '未命名来源')}</strong><small>${sourceTypeName(source.sourceType)} · 已保存</small></div>${source.reference ? `<span>${escapeHtml(source.reference)}</span>` : ''}</li>`).join('')}</ul>` : '<p class="incremental-empty">尚未添加参考资料。</p>'}${editable ? `<form class="incremental-inline-form source" data-incremental-source-form data-task-id="${escapeHtml(idOf(task))}"><label>资料名称<input name="label" required maxlength="120"></label><label>资料链接或编号<input name="reference" placeholder="可填写网页地址、PingCode 链接或编号"></label><label>资料类型<select name="sourceType"><option value="manual">人工提供</option><option value="local">本地文件</option></select></label><label class="wide">资料内容<textarea name="content" rows="5" required></textarea></label><label class="wide incremental-file-field">选择本地文件<input name="localFile" type="file" accept=".md,.markdown,.html,.htm,.txt,text/markdown,text/html,text/plain" data-incremental-source-file><span data-incremental-source-file-status>支持 Markdown、HTML 和 TXT；文件最大 512 KiB；点击“保存资料”后才会写入任务。</span></label><button class="button" type="submit">保存资料</button><span class="incremental-form-status" role="status"></span></form>` : ''}</section>`;
 }
 
 function targetSection(task) {
-  const available = array(task.availableTargets || task.availableChapters || task.chapters);
+  const available = array(task.availableTargets || task.availableChapters || task.chapters || task.taskDocuments);
   const selected = new Set(array(task.target?.sectionIds || task.targetScope?.sectionIds).map(String));
-  const documentIds = array(task.target?.documentIds).join('\n');
-  const selector = `<label class="incremental-draft-field">目标文档 ID（每行一个）<textarea name="documentIds" rows="3" required>${escapeHtml(documentIds)}</textarea></label>${available.length ? `<div class="incremental-target-list">${available.map(item => { const id = String(item.chapterId || item.nodeId || item.id); return `<label><input type="checkbox" name="sectionIds" value="${escapeHtml(id)}" data-document-id="${escapeHtml(item.documentId || '')}" ${selected.has(id) ? 'checked' : ''}><span><strong>${escapeHtml(item.title || item.name || '未命名章节')}</strong><small>${escapeHtml(item.path || item.documentName || '')}</small></span></label>`; }).join('')}</div>` : ''}`;
+  const selectedIds = new Set(array(task.target?.documentIds).map(String));
+  const documentPicker = available.length ? `<div class="incremental-target-list" role="group" aria-label="选择目标文档">${available.map(item => { const documentId = String(item.documentId || item.id || ''); const title = item.documentName || item.title || item.name || '未命名文档'; return `<label><input type="checkbox" name="documentIds" value="${escapeHtml(documentId)}" ${selectedIds.has(documentId) ? 'checked' : ''}><span><strong>${escapeHtml(title)}</strong><small>${escapeHtml(item.path || item.documentPath || '')}</small></span></label>`; }).join('')}</div>` : `<p class="incremental-empty" role="status">${task.taskOutlineStatus === 'unavailable' ? '无法读取已发布大纲，当前不能确认修改范围。请重新读取任务。' : '当前手册没有可选择的已发布文档。'}</p>`;
+  const selector = `${documentPicker}${available.length ? `<fieldset class="incremental-section-picker"><legend>章节范围（可选）</legend><div class="incremental-target-list">${available.flatMap(item => array(item.chapters || item.sections)).map(item => { const id = String(item.chapterId || item.nodeId || item.id); return `<label><input type="checkbox" name="sectionIds" value="${escapeHtml(id)}" ${selected.has(id) ? 'checked' : ''}><span><strong>${escapeHtml(item.title || item.name || '未命名章节')}</strong><small>${escapeHtml(item.path || item.documentName || '')}</small></span></label>`; }).join('')}</div></fieldset>` : ''}`;
   const editable = task.capabilities?.canEdit !== false && ['draft', 'editing', 'checked'].includes(task.state);
-  return `<section class="incremental-section" id="incremental-target"><header><div><h3>修改范围</h3><p>只保存人工确认的文档和章节，不自动扩大范围。</p></div><span>${array(task.target?.documentIds).length} 个文档 · ${selected.size} 个章节</span></header>${editable ? `<form data-incremental-target-form data-task-id="${escapeHtml(idOf(task))}">${selector}<div class="incremental-form-actions"><label>语言<select name="language"><option value="zh-CN" ${task.target?.language === 'en-US' ? '' : 'selected'}>中文</option><option value="en-US" ${task.target?.language === 'en-US' ? 'selected' : ''}>英文</option></select></label><button class="button" type="submit">确认范围</button><span class="incremental-form-status" role="status"></span></div></form>` : (task.target ? `<p class="incremental-empty">已确认：${escapeHtml(documentIds.replace(/\n/g, '、'))}</p>` : '<p class="incremental-empty">未确认修改范围。</p>')}</section>`;
+  return `<section class="incremental-section" id="incremental-target"><header><div><h3>修改范围</h3><p>只保存人工确认的文档和章节，不自动扩大范围。</p></div><span>${array(task.target?.documentIds).length} 个文档 · ${selected.size} 个章节</span></header>${editable ? `<form data-incremental-target-form data-task-id="${escapeHtml(idOf(task))}">${selector}<div class="incremental-form-actions"><label>语言<select name="language"><option value="zh-CN" ${task.target?.language === 'en-US' ? '' : 'selected'}>中文</option><option value="en-US" ${task.target?.language === 'en-US' ? 'selected' : ''}>英文</option></select></label><button class="button" type="submit" ${available.length ? '' : 'disabled'}>确认范围</button><span class="incremental-form-status" role="status"></span></div></form>` : (task.target ? `<p class="incremental-empty">已确认：${array(task.target.documentIds).map(id => available.find(item => String(item.documentId || item.id) === String(id))?.documentName || available.find(item => String(item.documentId || item.id) === String(id))?.title || id).map(escapeHtml).join('、')}</p>` : '<p class="incremental-empty">未确认修改范围。</p>')}</section>`;
 }
 
 function draftSection(task) {
@@ -91,7 +98,7 @@ function draftSection(task) {
   const sections = array(task.target?.sectionIds);
   const documentOptions = documents.map(id => `<option value="${escapeHtml(id)}">${escapeHtml(id)}</option>`).join('');
   const nodeControl = sections.length ? `<select name="nodeId" required><option value="">请选择</option>${sections.map(id => `<option value="${escapeHtml(id)}">${escapeHtml(id)}</option>`).join('')}</select>` : '<input name="nodeId" required placeholder="目标节点">';
-  return `<section class="incremental-section incremental-draft" id="incremental-draft"><header><div><h3>增量草稿</h3><p>GitLab 正文可作为初稿；保存不会覆盖正式版本。</p></div><span>${draft.editVersion ? `草稿 ${escapeHtml(String(draft.editVersion))}` : '未保存'}</span></header><form data-incremental-draft-form data-task-id="${escapeHtml(idOf(task))}"><label class="incremental-draft-field">本次修改内容<textarea name="content" rows="14" ${editable ? '' : 'readonly'} placeholder="在此编辑增量内容…">${escapeHtml(draft.content || task.draftContent || '')}</textarea></label>${editable ? `<div class="incremental-operation-fields"><label>变更类型<select name="operationType" data-incremental-operation-type><option value="add">新增</option><option value="update">修改</option><option value="delete">删除</option><option value="move">移动</option></select></label><label>目标文档<select name="operationDocumentId" required><option value="">请选择</option>${documentOptions}</select></label><label>目标节点${nodeControl}</label><label data-operation-field="before" hidden>变更前指纹<input name="beforeDigest" placeholder="当前平台基线节点内容指纹"></label><label data-operation-field="after">变更后内容<textarea name="afterContent" rows="3" required></textarea></label><label data-operation-field="move" hidden>新父节点<input name="targetParentId"></label><label data-operation-field="move" hidden>新顺序<input name="ordinal" type="number" min="0" value="0"></label></div><div class="incremental-form-actions"><button class="button secondary" type="submit">保存草稿</button><button class="button" type="button" data-incremental-checks="${escapeHtml(idOf(task))}">执行完整性检查</button><span class="incremental-form-status" role="status"></span></div>` : '<p class="incremental-lock-note">当前候选已冻结，如需修改必须退回后创建新草稿。</p>'}</form></section>`;
+  return `<section class="incremental-section incremental-draft" id="incremental-draft"><header><div><h3>增量草稿</h3><p>GitLab 正文可作为初稿；保存不会覆盖正式版本。</p></div><span>${draft.editVersion ? `草稿 ${escapeHtml(String(draft.editVersion))}` : '未保存'}</span></header><form data-incremental-draft-form data-task-id="${escapeHtml(idOf(task))}"><label class="incremental-draft-field">候选正文<textarea name="content" rows="14" ${editable ? '' : 'readonly'} placeholder="编辑本次提交审核的正文…">${escapeHtml(draft.content || task.draftContent || '')}</textarea></label>${editable ? `<fieldset class="incremental-operation-group"><legend>具体变更操作</legend><div class="incremental-operation-fields"><label>变更类型<select name="operationType" data-incremental-operation-type><option value="add">新增</option><option value="update">修改</option><option value="delete">删除</option><option value="move">移动</option></select></label><label>目标文档<select name="operationDocumentId" required><option value="">请选择</option>${documentOptions}</select></label><label>目标节点${nodeControl}</label><label data-operation-field="before" hidden>变更前指纹<input name="beforeDigest" placeholder="当前平台基线节点内容指纹"></label><label data-operation-field="after">变更后内容<textarea name="afterContent" rows="3" required></textarea></label><label data-operation-field="move" hidden>新父节点<input name="targetParentId"></label><label data-operation-field="move" hidden>新顺序<input name="ordinal" type="number" min="0" value="0"></label></div></fieldset><div class="incremental-form-actions"><button class="button secondary" type="submit">保存草稿</button><button class="button" type="button" data-incremental-checks="${escapeHtml(idOf(task))}">执行完整性检查</button><span class="incremental-form-status" role="status"></span></div>` : '<p class="incremental-lock-note">当前候选已冻结，如需修改必须退回后创建新草稿。</p>'}</form></section>`;
 }
 
 function checksSection(task) {
@@ -148,7 +155,7 @@ function publishStage(task, privileged) {
   const evidence = array(task.externalEvidence || task.deliveryEvidence);
   const canRecordEvidence = task.capabilities?.canRecordEvidence ?? privileged;
   const documents = array(task.target?.documentIds);
-  return `<section class="incremental-stage-panel" aria-labelledby="incremental-publish-title"><header><div><span class="incremental-stage-eyebrow">第 5 步</span><h3 id="incremental-publish-title">整体发布</h3><p>发布以整个任务为单位执行；任一文档失败时，全部文档保持原正式版本。</p></div><span class="incremental-stage-state">${escapeHtml(taskStatus(task))}</span></header><div class="incremental-release-summary"><div><span>目标文档</span><strong>${documents.length}</strong></div><div><span>审核门禁</span><strong>${canPublish ? '已满足' : published ? '已完成' : '未满足'}</strong></div><div><span>发布方式</span><strong>整体原子发布</strong></div></div>${canPublishTask && canPublish ? `<div class="incremental-release-warning"><strong>发布影响</strong><p>将为 ${documents.length} 个目标文档创建不可变新版本，并整体切换当前版本。</p></div><button class="button" type="button" data-incremental-publish="${escapeHtml(idOf(task))}">确认整体发布</button>` : `<button class="button secondary" type="button" data-incremental-prototype-publish>体验发布确认</button><p class="incremental-prototype-status" role="status">${published ? '服务端已返回发布版本。' : '当前仅展示前端确认，不会改变正式版本。'}</p>`}${published ? `<div class="incremental-published"><strong>平台版本已发布</strong><span>${escapeHtml(published.id || '')} · ${fmtTime(published.publishedAt)}</span></div>` : !canPublish ? '<div class="incremental-block-note"><strong>发布门禁尚未满足</strong><p>正式发布需要所有目标文档审核通过。</p></div>' : ''}${published && (canRecordEvidence || evidence.length) ? `<details class="incremental-secondary-evidence"><summary>发布后的外部证据（不属于 MVP 主流程）</summary>${canRecordEvidence ? `<form class="incremental-inline-form evidence" data-incremental-evidence-form data-task-id="${escapeHtml(idOf(task))}"><label>证据类型<select name="type"><option value="gitlab_mr">GitLab MR</option><option value="ci">CI</option><option value="manual">人工记录</option></select></label><label>外部引用<input name="reference" required placeholder="MR 编号或证据地址"></label><label>结果<select name="status"><option value="pending">待确认</option><option value="success">成功</option><option value="failed">失败</option></select></label><label class="wide">说明<input name="note" maxlength="240"></label><button class="button secondary" type="submit">登记外部证据</button><span class="incremental-form-status" role="status"></span></form>` : ''}${evidence.length ? `<ul class="incremental-evidence-list">${evidence.map(item => `<li><strong>${escapeHtml(item.status || '待确认')}</strong><span>${escapeHtml(item.note || item.reference || '')}</span></li>`).join('')}</ul>` : ''}</details>` : ''}<span class="incremental-form-status" role="status"></span></section>`;
+  return `<section class="incremental-stage-panel" aria-labelledby="incremental-publish-title"><header><div><span class="incremental-stage-eyebrow">第 5 步</span><h3 id="incremental-publish-title">整体发布</h3><p>发布以整个任务为单位执行；任一文档失败时，全部文档保持原正式版本。</p></div><span class="incremental-stage-state">${escapeHtml(taskStatus(task))}</span></header><div class="incremental-release-summary"><div><span>目标文档</span><strong>${documents.length}</strong></div><div><span>审核门禁</span><strong>${canPublish ? '已满足' : published ? '已完成' : '未满足'}</strong></div><div><span>发布方式</span><strong>整体原子发布</strong></div></div>${canPublishTask && canPublish ? `<div class="incremental-release-warning"><strong>发布影响</strong><p>将为 ${documents.length} 个目标文档创建不可变新版本，并整体切换当前版本。</p></div><button class="button" type="button" data-incremental-publish="${escapeHtml(idOf(task))}">确认整体发布</button>` : `<button class="button" type="button" disabled>确认整体发布</button><p class="incremental-block-note" role="status">${!canPublish ? '所有目标文档审核通过后，才能整体发布。' : '当前账号没有整体发布权限。'}</p>`}${published ? `<div class="incremental-published"><strong>平台版本已发布</strong><span>${escapeHtml(published.id || '')} · ${fmtTime(published.publishedAt)}</span></div>` : ''}${published && (canRecordEvidence || evidence.length) ? `<details class="incremental-secondary-evidence"><summary>发布后的外部证据（不属于 MVP 主流程）</summary>${canRecordEvidence ? `<form class="incremental-inline-form evidence" data-incremental-evidence-form data-task-id="${escapeHtml(idOf(task))}"><label>证据类型<select name="type"><option value="gitlab_mr">GitLab MR</option><option value="ci">CI</option><option value="manual">人工记录</option></select></label><label>外部引用<input name="reference" required placeholder="MR 编号或证据地址"></label><label>结果<select name="status"><option value="pending">待确认</option><option value="success">成功</option><option value="failed">失败</option></select></label><label class="wide">说明<input name="note" maxlength="240"></label><button class="button secondary" type="submit">登记外部证据</button><span class="incremental-form-status" role="status"></span></form>` : ''}${evidence.length ? `<ul class="incremental-evidence-list">${evidence.map(item => `<li><strong>${escapeHtml(item.status || '待确认')}</strong><span>${escapeHtml(item.note || item.reference || '')}</span></li>`).join('')}</ul>` : ''}</details>` : ''}<span class="incremental-form-status" role="status"></span></section>`;
 }
 
 function setupStage(task) {
@@ -156,35 +163,27 @@ function setupStage(task) {
 }
 
 function inputStage(task) {
-  return `<section class="incremental-stage-panel" aria-labelledby="incremental-input-title"><header><div><span class="incremental-stage-eyebrow">第 2 步</span><h3 id="incremental-input-title">确认输入</h3><p>来源、修改范围、大纲和模板共同决定 Agent 可以生成什么。</p></div><span class="incremental-stage-state">${array(task.sources || task.sourceSnapshots).length} 项来源</span></header><div class="incremental-source-entry-grid"><article><i data-lucide="file-up" aria-hidden="true"></i><div><strong>上传 Markdown</strong><p>选择文件并预览；后端接入后将在这里固化快照。</p></div><button class="button secondary compact" type="button" data-incremental-prototype-toggle="markdown">选择文件</button><div class="incremental-prototype-form" data-incremental-prototype-panel="markdown" hidden><label>Markdown 文件<input type="file" accept=".md,text/markdown" data-incremental-prototype-file></label><p role="status">尚未选择文件。</p></div></article><article><i data-lucide="link" aria-hidden="true"></i><div><strong>选择 PingCode 页面</strong><p>填写页面链接并检查输入；真实正文读取等待连接器接入。</p></div><button class="button secondary compact" type="button" data-incremental-prototype-toggle="pingcode">填写链接</button><form class="incremental-prototype-form" data-incremental-prototype-form="pingcode" hidden><label>PingCode 页面链接<input name="url" type="url" required placeholder="https://.../wiki/..."></label><button class="button secondary compact" type="submit">检查链接</button><p role="status"></p></form></article></div><details class="incremental-compatibility-entry" ${array(task.sources || task.sourceSnapshots).length ? 'open' : ''}><summary>现有人工来源兼容入口</summary>${sourceSection(task)}</details>${targetSection(task)}<section class="incremental-input-contract"><header><div><h4>大纲与模板</h4><p>先完成前端选择；正式版本引用等待接口返回后固化。</p></div><span>前端可配置</span></header><form class="incremental-contract-form" data-incremental-prototype-form="contract"><label>发布大纲<select name="outline" required><option value="">请选择发布大纲</option><option value="current">当前发布大纲</option></select></label><label>原模板<select name="sourceTemplate" required><option value="">请选择原模板</option><option value="baseline">沿用基线模板</option></select></label><label>目标模板<select name="targetTemplate" required><option value="">请选择目标模板</option><option value="incremental">增量内容模板</option></select></label><button class="button secondary" type="submit">确认生成输入</button><p role="status"></p></form></section><div class="incremental-stage-footer"><span>当前可先完成界面选择；真实快照和版本引用将在后端接入后固化。</span><button class="button" type="button" data-incremental-stage="generation">进入生成与修订</button></div></section>`;
+  const hasInputs = Boolean(array(task.sources || task.sourceSnapshots).length && task.target?.documentIds?.length);
+  return `<section class="incremental-stage-panel" aria-labelledby="incremental-input-title"><header><div><span class="incremental-stage-eyebrow">第 2 步</span><h3 id="incremental-input-title">确认输入</h3><p>添加参考资料，并确认本次修改涉及的文档和章节。</p></div><span class="incremental-stage-state">${array(task.sources || task.sourceSnapshots).length} 项资料</span></header>${sourceSection(task)}${targetSection(task)}<div class="incremental-stage-footer"><span>资料和修改范围保存后才能编写草稿。</span><button class="button" type="button" data-incremental-stage="generation" ${hasInputs ? '' : 'disabled'}>编写草稿</button></div></section>`;
 }
 
 function generationStage(task) {
   const hasGeneration = Boolean(task.generationRun || task.generationPlan);
-  return `<section class="incremental-stage-panel" aria-labelledby="incremental-generation-title"><header><div><span class="incremental-stage-eyebrow">第 3 步</span><h3 id="incremental-generation-title">生成与修订</h3><p>Agent 只使用已确认输入生成草稿，结果不会直接覆盖正式版本。</p></div><span class="incremental-stage-state">${hasGeneration ? escapeHtml(task.generationRun?.statusDisplayName || task.generationRun?.status || '运行状态待返回') : '前端流程可操作'}</span></header>${hasGeneration ? `<div class="incremental-generation-run" role="status"><strong>${escapeHtml(task.generationRun?.statusDisplayName || '生成任务已建立')}</strong><p>${escapeHtml(task.generationRun?.progressMessage || '正在读取服务端运行状态。')}</p></div>` : '<div class="incremental-generation-console"><div><i data-lucide="bot" aria-hidden="true"></i><div><strong>生成方案</strong><p>先在前端检查输入摘要，再启动真实 Agent；当前启动动作只展示待接入反馈。</p></div></div><dl><div><dt>基线</dt><dd>已关联任务基线</dd></div><div><dt>来源</dt><dd>使用确认输入阶段的选择</dd></div><div><dt>范围</dt><dd>仅允许已确认文档与章节</dd></div><div><dt>输出</dt><dd>增量草稿，不覆盖正式版本</dd></div></dl><button class="button" type="button" data-incremental-prototype-generate>启动 Agent 生成</button><p class="incremental-prototype-status" role="status">尚未启动。</p></div>'}${draftSection(task)}${checksSection(task)}<div class="incremental-stage-footer"><span>可先体验完整前端路径；正式候选仍必须通过真实检查。</span><button class="button" type="button" data-incremental-stage="review">查看审核</button></div></section>`;
+  return `<section class="incremental-stage-panel" aria-labelledby="incremental-generation-title"><header><div><span class="incremental-stage-eyebrow">第 3 步</span><h3 id="incremental-generation-title">编写草稿</h3><p>编辑本次修改内容并保存；保存不会覆盖正式版本。</p></div><span class="incremental-stage-state">${hasGeneration ? escapeHtml(task.generationRun?.statusDisplayName || task.generationRun?.status || '生成状态待确认') : '手动编写'}</span></header>${hasGeneration ? `<div class="incremental-generation-run" role="status"><strong>${escapeHtml(task.generationRun?.statusDisplayName || '生成任务已建立')}</strong><p>${escapeHtml(task.generationRun?.progressMessage || '正在读取服务端运行状态。')}</p></div>` : '<p class="incremental-capability-note" role="note">Agent 自动生成暂未开放。你可以直接编写草稿，保存后继续检查和提交审核。</p>'}${draftSection(task)}${checksSection(task)}<div class="incremental-stage-footer"><span>草稿保存并通过完整性检查后，才能提交候选版本。</span><button class="button" type="button" data-incremental-stage="review" ${task.state !== 'candidate_ready' ? 'disabled' : ''}>按文档审核</button></div></section>`;
 }
 
 function taskContext(task, active) {
   const issues = array(task.checkReport?.issues || task.checks?.issues || task.checks?.items);
   const blockers = issues.filter(item => item.level === 'error' || item.blocking === true).length;
   const sources = array(task.sources || task.sourceSnapshots);
-  const sourceEvidence = sources.length
-    ? `<ul class="incremental-context-source-list">${sources.map(source => `<li><strong>${escapeHtml(source.label || source.title || source.name || '未命名来源')}</strong>${source.reference ? `<span>${escapeHtml(source.reference)}</span>` : ''}</li>`).join('')}</ul>`
-    : '<p class="incremental-context-empty">尚未确认来源。</p>';
-  return `<details class="incremental-context" aria-label="任务摘要与门禁" open><summary>任务摘要与门禁</summary><section><h3>任务摘要</h3><dl><div><dt>当前阶段</dt><dd>${escapeHtml(phases.find(([key]) => key === active)?.[1] || '')}</dd></div><div><dt>来源</dt><dd>${sources.length} 项</dd></div><div><dt>目标文档</dt><dd>${array(task.target?.documentIds).length} 个</dd></div><div><dt>目标章节</dt><dd>${array(task.target?.sectionIds || task.targetScope?.sectionIds).length} 个</dd></div></dl></section><section><h3>来源证据</h3>${sourceEvidence}</section><section><h3>文档状态</h3>${documentStatusList(task)}</section><section class="${blockers ? 'has-blockers' : ''}"><h3>当前门禁</h3>${blockers ? `<p><strong>${blockers} 个阻断项</strong><br>处理后才能继续提交。</p>` : task.checkReport || task.checks ? '<p><strong>检查结果可用</strong><br>请按当前阶段继续处理。</p>' : '<p><strong>尚未执行检查</strong><br>生成草稿后执行范围与完整性检查。</p>'}</section><section><h3>版本证据</h3><p>基线：${escapeHtml(task.baselineVersionName || task.baselineVersionId || '未返回')}</p><p>更新：${fmtTime(task.updatedAt)}</p></section></details>`;
+  return `<details class="incremental-context" aria-label="任务摘要与门禁"><summary>任务摘要 · ${escapeHtml(taskStatus(task))}</summary><section><h3>任务信息</h3><dl><div><dt>当前阶段</dt><dd>${escapeHtml(phases.find(([key]) => key === active)?.[1] || '')}</dd></div><div><dt>参考资料</dt><dd>${sources.length} 项</dd></div><div><dt>修改范围</dt><dd>${array(task.target?.documentIds).length} 个文档 · ${array(task.target?.sectionIds || task.targetScope?.sectionIds).length} 个章节</dd></div></dl></section><section class="${blockers ? 'has-blockers' : ''}"><h3>完整性检查</h3>${blockers ? `<p><strong>${blockers} 个阻断项</strong><br>请返回编写草稿并修复后重试。</p>` : task.checkReport || task.checks ? '<p><strong>已完成</strong> · 请按当前阶段继续。</p>' : '<p>尚未执行</p>'}</section><section><h3>发布基线</h3><p>${escapeHtml(task.baselineVersionName || task.baselineVersionId || '未返回')}</p><p>更新于 ${fmtTime(task.updatedAt)}</p></section></details>`;
 }
 
-function taskDetail(task, privileged) {
+function taskDetail(task, privileged, taskDocuments = [], taskOutlineStatus = 'not-requested') {
   if (!task) return `<section class="incremental-welcome">${emptyState('选择一个增量任务', '查看来源、修改范围、草稿、差异和发布进度。')}</section>`;
   const active = activePhase(task);
-  const panels = { setup: setupStage(task), inputs: inputStage(task), generation: generationStage(task), review: reviewStage(task), publish: publishStage(task, privileged) };
+  const panels = { setup: setupStage(task), inputs: inputStage({ ...task, taskDocuments, taskOutlineStatus }), generation: generationStage(task), review: reviewStage(task), publish: publishStage(task, privileged) };
   return `<article class="incremental-detail"><header class="incremental-detail-header"><div><span>${escapeHtml(task.handbookName || task.handbookId || '手册待返回')} · ${escapeHtml(task.businessVersion || '业务版本待返回')}</span><h2>${escapeHtml(task.name || task.title || '增量修改任务')}</h2><p>基线：${escapeHtml(task.baselineVersionName || task.baselineVersionId || '未返回')} · 更新于 ${fmtTime(task.updatedAt)}</p></div><strong class="status">${escapeHtml(taskStatus(task))}</strong></header>${progress(task, active)}<div class="incremental-stage-layout"><main class="incremental-stage-main" tabindex="-1" data-incremental-stage-main>${panels[active]}</main>${taskContext(task, active)}</div></article>`;
-}
-
-function createDialog(projection) {
-  const handbooks = array(projection?.handbooks || projection?.availableHandbooks);
-  const requestedHandbookId = projection?.requestedHandbookId || '';
-  return `<dialog class="asset-dialog incremental-create-dialog" data-incremental-create-dialog data-scroll-region="dialog"><form data-incremental-create-form><header class="asset-dialog-heading"><div><span class="eyebrow asset-context-label">增量构建</span><h2>创建增量任务</h2><p>任务将锁定选定的已发布基线。</p></div><button class="icon-button asset-dialog-close" type="button" data-incremental-dialog-close aria-label="关闭"><i data-lucide="x" aria-hidden="true"></i></button></header><label>手册<select name="handbookId" required ${handbooks.length ? '' : 'disabled'}><option value="">${handbooks.length ? '请选择' : '暂无可用手册'}</option>${handbooks.map(item => { const id = String(item.handbookId || item.id); return `<option value="${escapeHtml(id)}" ${id === requestedHandbookId ? 'selected' : ''}>${escapeHtml(item.name || item.handbookName)}</option>`; }).join('')}</select></label><label>任务名称<input name="name" required maxlength="120" placeholder="例如：更新安装前检查说明"></label><label>业务版本<input name="businessVersion" required placeholder="例如：23.4.5.100"></label><div class="incremental-baseline-picker"><label>已发布基线<select name="baselineVersionId" required disabled><option value="">请先读取基线</option></select></label><button class="button secondary" type="button" data-incremental-load-baselines ${handbooks.length ? '' : 'disabled'}>读取基线</button></div><p class="incremental-baseline-status" role="status">仅能选择服务端返回的当前已发布基线。</p><footer><span role="status" class="incremental-form-status"></span><button class="button secondary" type="button" data-incremental-dialog-close>取消</button><button class="button" type="submit" disabled>创建任务</button></footer></form></dialog>`;
 }
 
 function handbookValue(item, keys = []) {
@@ -262,38 +261,141 @@ function handbookOverview(projection, assetCatalog) {
   return `<section class="production-overview" aria-label="手册生产列表"><div class="production-overview-toolbar"><label class="production-handbook-search">搜索手册<input type="search" data-production-handbook-search value="${escapeHtml(search)}" placeholder="输入手册名称" aria-label="搜索已发布大纲的手册"></label><span data-production-handbook-count>${rows.length} / ${allRows.length} 本</span></div><div class="production-handbook-table-wrap" data-table-view-host ${rows.length ? '' : 'hidden'}><table class="production-handbook-table" data-table-view-id="production-handbooks" data-table-view-schema="1" data-table-view-label="手册生产列表" data-table-view-legacy-key="kc-production-handbook-columns"><caption class="sr-only">手册生产进展</caption><thead><tr>${column('handbook', '手册', true)}${column('product', '所属产品')}${column('owner', '负责人')}${column('progress', '当前进展')}${column('published', '最近发布')}</tr></thead><tbody>${allRows.map(item => `<tr class="production-handbook-row" tabindex="0" role="link" data-production-handbook-row data-handbook-search-text="${escapeHtml(item.name.toLocaleLowerCase())}" data-handbook-href="/knowledge-center/production/handbook/${encodeURIComponent(item.id)}" ${query && !item.name.toLocaleLowerCase().includes(query) ? 'hidden' : ''}>${cell('handbook', `<strong>${escapeHtml(item.name)}</strong>`, 'is-required')}${cell('product', escapeHtml(item.product))}${cell('owner', escapeHtml(item.owner))}${cell('progress', `<strong>${escapeHtml(item.progress)}</strong><small>${escapeHtml(item.progressDetail)}</small>`)}${cell('published', `<strong>${escapeHtml(item.published)}</strong><small>${escapeHtml(item.publishedAt ? fmtTime(item.publishedAt) : '发布时间暂不可用')}</small>`)}</tr>`).join('')}</tbody></table></div><section class="production-overview-empty" data-production-handbook-empty role="status" ${rows.length ? 'hidden' : ''}>没有匹配“${escapeHtml(search)}”的手册，请尝试其他名称。</section></section>`;
 }
 
-function taskDocumentCount(task) {
-  const documents = array(task?.handbookSource?.documents || task?.target?.documentIds);
-  if (documents.length) return new Set(documents.map(item => String(item?.documentId || item?.id || item))).size;
-  return new Set(array(task?.candidate?.operations).map(item => item?.documentId).filter(Boolean).map(String)).size;
+const progressStages = ['待生成', '生成中', '待审核', '退回修订', '待发布', '已完成', '状态待确认'];
+function productionStage(task) {
+  const state = String(task?.state || task?.status || '').toLowerCase();
+  if (task?.completion?.status === 'completed') return '已完成';
+  if (state === 'published') return '已完成';
+  if (['rejected', 'changes_requested'].includes(state)) return '退回修订';
+  if (['pending_publish', 'approved', 'mr_submitted', 'batch_publish_failed'].includes(state)) return '待发布';
+  if (['candidate_ready', 'under_review', 'in_review', 'review_pending'].includes(state)) return '待审核';
+  if (['editing', 'checked', 'pending_submission', 'checks_passed', 'generation_failed'].includes(state)) return '生成中';
+  if (['draft', 'pending', 'queued', 'not_started', 'waiting_generation'].includes(state)) return '待生成';
+  return '状态待确认';
 }
 
-function versionOverview(projection) {
-  if (projection?.status === 'loading') return '<section class="production-overview-empty" role="status">正在读取数据库版本任务…</section>';
-  if (projection?.status === 'unavailable') return '<section class="production-overview-empty" role="alert">数据库版本任务暂时无法读取，请稍后重试。</section>';
-  const tasks = array(projection?.items || projection?.tasks);
-  const groups = new Map();
-  tasks.forEach(task => {
-    const version = String(task?.businessVersion || '').trim() || '版本待核对';
-    if (!groups.has(version)) groups.set(version, []);
-    groups.get(version).push(task);
+function progressUrl(params, changes = {}) {
+  const next = new URLSearchParams(params);
+  next.set('view', 'progress');
+  for (const [key, value] of Object.entries(changes)) value ? next.set(key, value) : next.delete(key);
+  return `/knowledge-center/production?${next.toString()}`;
+}
+const localDateKey = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+function productionActivityDate(item) {
+  // Calendar placement uses server-provided activity facts and known legacy aliases.
+  for (const value of [item?.activityAt, item?.lastActivityAt, item?.updatedAt, item?.createdAt, item?.startedAt,
+    item?.plannedStartAt, item?.plannedStartTime, item?.updated_at, item?.created_at, item?.started_at]) {
+    const date = new Date(value || '');
+    if (!Number.isNaN(date.getTime())) return localDateKey(date);
+  }
+  return '';
+}
+function productionTaskItems(projection) {
+  const items = array(projection?.items);
+  const tasks = array(projection?.tasks);
+  return items.length || !tasks.length ? items : tasks;
+}
+
+export function renderProductionProgress(projection) {
+  if (projection?.status === 'loading') return '<section class="production-overview-empty" role="status">正在读取生产任务…</section>';
+  if (projection?.status === 'unavailable') return `<section class="production-overview-empty" role="alert"><strong>生产任务暂时无法读取</strong><p>${escapeHtml(projection.error?.message || '请稍后重新读取。')}</p><button class="button secondary compact" type="button" data-incremental-reload>重新读取</button></section>`;
+  const params = new URLSearchParams(window.location.search);
+  const all = productionTaskItems(projection);
+  const q = String(params.get('q') || '').trim().toLocaleLowerCase();
+  const status = params.get('status') || '';
+  const handbook = params.get('handbook') || '';
+  const version = params.get('version') || '';
+  const from = params.get('from') || '';
+  const to = params.get('to') || '';
+  const selectedStage = params.get('stage') || '';
+  const mode = ['list', 'calendar', 'charts'].includes(params.get('mode')) ? params.get('mode') : 'calendar';
+  const calendarView = params.get('calendarView') === 'week' ? 'week' : 'month';
+  const requestedDay = params.get('day') || '';
+  const selectedDay = /^\d{4}-\d{2}-\d{2}$/.test(requestedDay) ? requestedDay : all.map(productionActivityDate).filter(Boolean).sort().at(-1) || localDateKey(new Date());
+  const handbooks = [...new Set(all.map(item => String(item.handbookName || item.handbookId || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'zh-CN'));
+  const versions = [...new Set(all.map(item => String(item.businessVersion || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'zh-CN', { numeric: true }));
+  const matchesFilters = all.filter(item => {
+    const itemStatus = taskStatus(item);
+    const itemHandbook = String(item.handbookName || item.handbookId || '').trim();
+    const itemVersion = String(item.businessVersion || '').trim();
+    const itemDate = productionActivityDate(item);
+    const text = `${item.name || item.title || ''} ${item.id || ''} ${itemHandbook} ${itemVersion} ${itemStatus}`.toLocaleLowerCase();
+    return (!q || text.includes(q)) && (!status || itemStatus === status)
+      && (!handbook || itemHandbook === handbook) && (!version || itemVersion === version)
+      && (!from || (itemDate && itemDate >= from)) && (!to || (itemDate && itemDate <= to))
+      && (!from && !to || itemDate);
   });
-  const rows = [...groups.entries()].map(([version, items]) => {
-    const completed = items.filter(item => item?.completion?.status === 'completed').length;
-    const documentCount = items.reduce((total, item) => total + taskDocumentCount(item), 0);
-    const ordered = [...items].sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
-    const current = ordered.find(item => item?.completion?.status !== 'completed') || ordered[0];
-    const completion = current?.completion;
-    const responsibility = current?.ownerName || current?.owner || current?.assigneeName || '责任人待确认';
-    const nextAction = completion?.status === 'completed' ? '等待后续变更' : completion?.facts?.mergeState === 'opened' ? '等待合并并回读' : '处理当前交付阻断';
-    return { version, taskCount: items.length, documentCount, completed, pending: items.length - completed, current, responsibility, nextAction };
-  }).sort((a, b) => a.version.localeCompare(b.version, 'zh-CN', { numeric: true }));
-  if (!rows.length) return `<section class="production-overview-empty">${emptyState('暂无数据库版本任务', '创建增量任务后会按业务版本汇总显示。')}</section>`;
-  return `<section class="production-overview production-version-overview" aria-label="数据库版本任务汇总"><div class="production-overview-toolbar"><div><strong>数据库版本汇总</strong><p>按任务绑定的业务版本聚合，完成状态沿用公共交付投影。</p></div><span>${rows.length} 个版本</span></div><div class="production-handbook-table-wrap"><table class="production-handbook-table" data-table-view-id="production-versions" data-table-view-schema="1"><caption class="sr-only">数据库版本任务汇总</caption><thead><tr><th>数据库版本</th><th>任务数</th><th>目标文档数</th><th>已完成</th><th>待处理</th><th>当前进展</th></tr></thead><tbody>${rows.map(row => `<tr class="production-handbook-row" tabindex="0" role="link" data-production-handbook-row data-handbook-href="/knowledge-center/production?view=tasks&taskId=${encodeURIComponent(row.current?.id || '')}"><td><strong>${escapeHtml(row.version)}</strong><small>${escapeHtml(row.current?.handbookName || row.current?.handbookId || '手册待确认')}</small></td><td>${row.taskCount}</td><td>${row.documentCount}</td><td><strong>${row.completed}</strong></td><td>${row.pending}</td><td><strong>${escapeHtml(row.current?.completion?.label || row.current?.statusDisplayName || '处理中')}</strong><small>${escapeHtml(`责任：${row.responsibility} · 下一步：${row.nextAction}`)}</small><small>${fmtTime(row.current?.updatedAt)}</small></td></tr>`).join('')}</tbody></table></div></section>`;
+  const stageFiltered = matchesFilters.filter(item => !selectedStage || productionStage(item) === selectedStage);
+  const filtered = mode === 'calendar'
+    ? stageFiltered.filter(item => productionActivityDate(item) === selectedDay)
+    : stageFiltered;
+  const undated = mode === 'calendar' ? stageFiltered.filter(item => !productionActivityDate(item)) : [];
+  const counts = Object.fromEntries(progressStages.map(stage => [stage, matchesFilters.filter(item => productionStage(item) === stage).length]));
+  const form = `<form class="production-progress-filters" data-production-progress-filter><label class="sr-only" for="production-progress-search">搜索任务</label><input id="production-progress-search" name="q" type="search" value="${escapeHtml(params.get('q') || '')}" placeholder="搜索标题或编号"><label class="sr-only" for="production-progress-status">状态</label><select id="production-progress-status" name="status"><option value="">全部状态</option>${[...new Set(all.map(taskStatus))].sort().map(value => `<option value="${escapeHtml(value)}" ${status === value ? 'selected' : ''}>${escapeHtml(value)}</option>`).join('')}</select><label class="sr-only" for="production-progress-handbook">手册</label><select id="production-progress-handbook" name="handbook"><option value="">全部手册</option>${handbooks.map(value => `<option value="${escapeHtml(value)}" ${handbook === value ? 'selected' : ''}>${escapeHtml(value)}</option>`).join('')}</select><label class="sr-only" for="production-progress-version">版本</label><select id="production-progress-version" name="version"><option value="">全部版本</option>${versions.map(value => `<option value="${escapeHtml(value)}" ${version === value ? 'selected' : ''}>${escapeHtml(value)}</option>`).join('')}</select><label class="sr-only" for="production-progress-from">开始日期</label><input id="production-progress-from" name="from" type="date" value="${escapeHtml(from)}"><label class="sr-only" for="production-progress-to">结束日期</label><input id="production-progress-to" name="to" type="date" value="${escapeHtml(to)}"><button class="button secondary compact" type="submit">筛选</button><button class="button tertiary compact" type="button" data-production-progress-clear>清空</button></form>`;
+  const stageTiles = `<nav class="production-progress-stages" aria-label="生产阶段筛选"><button type="button" data-progress-stage="" aria-pressed="${!selectedStage}"><span>全部任务</span><strong>${matchesFilters.length}</strong></button>${progressStages.map(stage => `<button type="button" data-progress-stage="${escapeHtml(stage)}" aria-pressed="${selectedStage === stage}"><span>${stage}</span><strong>${counts[stage]}</strong></button>`).join('')}</nav>`;
+  const modeTabs = `<nav class="production-progress-modes" aria-label="生产进展显示方式" role="tablist"><button type="button" role="tab" data-progress-mode="list" aria-selected="${mode === 'list'}">列表</button><button type="button" role="tab" data-progress-mode="calendar" aria-selected="${mode === 'calendar'}">日历</button><button type="button" role="tab" data-progress-mode="charts" aria-selected="${mode === 'charts'}">图表</button></nav>`;
+  const taskRow = item => {
+    const activityAt = [item.updatedAt, item.updated_at, item.activityAt, item.lastActivityAt, item.createdAt, item.created_at, item.startedAt, item.started_at, item.plannedStartAt, item.plannedStartTime].find(Boolean);
+    return `<button type="button" class="production-progress-row" data-progress-task-summary="${escapeHtml(idOf(item))}"><span><strong>${escapeHtml(item.name || item.title || '未命名任务')}</strong><small>${escapeHtml(item.handbookName || item.handbookId || '手册待确认')}${item.businessVersion ? ` · ${escapeHtml(item.businessVersion)}` : ''} · ${escapeHtml(item.id || '')}</small></span><span class="production-progress-status">${escapeHtml(taskStatus(item))}</span><time>${escapeHtml(activityAt ? fmtTime(activityAt) : '时间未记录')}</time><span class="production-progress-open">查看</span></button>`;
+  };
+  let content;
+  if (mode === 'calendar') {
+    const center = new Date(`${selectedDay}T00:00:00`);
+    const weekStart = new Date(center); weekStart.setDate(center.getDate() - ((center.getDay() + 6) % 7));
+    const monthStart = new Date(center.getFullYear(), center.getMonth(), 1);
+    const gridStart = new Date(monthStart); gridStart.setDate(monthStart.getDate() - ((monthStart.getDay() + 6) % 7));
+    const dayCount = calendarView === 'week' ? 7 : 42;
+    const rangeStart = calendarView === 'week' ? weekStart : gridStart;
+    const days = Array.from({ length: dayCount }, (_, index) => {
+      const date = new Date(rangeStart); date.setDate(rangeStart.getDate() + index);
+      const day = localDateKey(date);
+      const dayTasks = stageFiltered.filter(item => productionActivityDate(item) === day);
+      const dayCount = dayTasks.length;
+      const taskTitles = dayTasks.slice(0, 2).map(item => `<small class="production-calendar-task-title" title="${escapeHtml(item.name || item.title || '未命名任务')}">${escapeHtml(item.name || item.title || '未命名任务')}</small>`).join('');
+      const remainingTasks = dayCount - Math.min(dayCount, 2);
+      const outsideMonth = date.getMonth() !== center.getMonth();
+      const workCalendar = projection?.workCalendars?.[date.getFullYear()];
+      const configured = Boolean(workCalendar?.configured);
+      const kind = configured
+        ? workCalendar.days?.[day] || (date.getDay() === 0 || date.getDay() === 6 ? 'weekend' : 'workday')
+        : 'unconfigured';
+      const adjustedWorkday = kind === 'workday' && configured && (date.getDay() === 0 || date.getDay() === 6);
+      const dayLabel = kind === 'holiday' ? '法定节假日' : adjustedWorkday ? '调休工作日' : kind === 'weekend' ? '周末' : '';
+      const dayClasses = [outsideMonth && calendarView === 'month' ? 'is-outside-month' : '', `is-${kind}`, adjustedWorkday ? 'is-adjusted-workday' : ''].filter(Boolean).join(' ');
+      const accessibleLabel = `${day}，${dayLabel ? `${dayLabel}，` : ''}${dayCount} 项${dayTasks.length ? `，${dayTasks.map(item => item.name || item.title || '未命名任务').join('、')}` : ''}`;
+      return `<button type="button" data-progress-day="${day}" class="${dayClasses}" aria-label="${escapeHtml(accessibleLabel)}" ${day === selectedDay ? 'aria-current="date"' : ''}><strong>${date.getDate()}</strong>${dayLabel ? `<small class="production-calendar-kind">${dayLabel}</small>` : ''}<small class="production-calendar-task-count">${dayCount} 项</small>${taskTitles}${remainingTasks ? `<small class="production-calendar-task-more">+${remainingTasks}</small>` : ''}</button>`;
+    }).join('');
+    const previous = new Date(center.getFullYear(), center.getMonth() - 1, 1);
+    const next = new Date(center.getFullYear(), center.getMonth() + 1, 1);
+    const previousDay = calendarView === 'week' ? localDateKey(new Date(center.getFullYear(), center.getMonth(), center.getDate() - 7)) : localDateKey(previous);
+    const nextDay = calendarView === 'week' ? localDateKey(new Date(center.getFullYear(), center.getMonth(), center.getDate() + 7)) : localDateKey(next);
+    const periodTitle = calendarView === 'week'
+      ? `${localDateKey(weekStart)} 至 ${localDateKey(new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() + 6))}`
+      : center.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long' });
+    const calendarModes = `<nav class="production-calendar-modes" aria-label="日历范围"><button type="button" data-progress-calendar-view="week" aria-pressed="${calendarView === 'week'}">周</button><button type="button" data-progress-calendar-view="month" aria-pressed="${calendarView === 'month'}">月</button></nav>`;
+    const calendarHeader = `<header class="production-calendar-header"><button type="button" data-progress-calendar-nav="${previousDay}" aria-label="上一${calendarView === 'week' ? '周' : '月'}">${uiIcon('calendar.previous')}</button><h2>${escapeHtml(periodTitle)}</h2><button type="button" data-progress-calendar-nav="${nextDay}" aria-label="下一${calendarView === 'week' ? '周' : '月'}">${uiIcon('calendar.next')}</button>${calendarModes}<button type="button" class="production-calendar-today" data-progress-calendar-today>今天</button></header>`;
+    const weekdays = `<div class="production-calendar-weekdays" aria-hidden="true">${['一', '二', '三', '四', '五', '六', '日'].map(day => `<span>${day}</span>`).join('')}</div>`;
+    const agendaTitle = new Date(`${selectedDay}T00:00:00`).toLocaleDateString('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' });
+    const calendarConfigured = Boolean(projection?.workCalendars?.[center.getFullYear()]?.configured);
+    const calendarLegend = calendarConfigured
+      ? '<span class="is-workday">工作日</span><span class="is-weekend">周末</span><span class="is-holiday">法定节假日</span><span class="is-adjusted">调休工作日</span>'
+      : '<span class="is-unconfigured" role="status">该年度工作日历未配置，日期性质未知</span>';
+    const undatedSection = undated.length ? `<section class="production-calendar-undated" aria-label="未记录日期的任务"><h2>未记录活动日期</h2>${undated.map(taskRow).join('')}</section>` : '';
+    content = `<section class="production-calendar" data-calendar-view="${calendarView}">${calendarHeader}<p class="production-calendar-legend" data-calendar-legend>${calendarLegend}</p>${weekdays}<div class="production-calendar-grid">${days}</div><section class="production-calendar-agenda"><h2>${escapeHtml(agendaTitle)}</h2>${filtered.length ? filtered.map(taskRow).join('') : '<p class="production-overview-empty">当天没有符合条件的任务</p>'}</section>${undatedSection}</section>`;
+  } else if (mode === 'charts') {
+    const byStage = progressStages.map(stage => ({ stage, count: stageFiltered.filter(item => productionStage(item) === stage).length }));
+    const maxStage = Math.max(1, ...byStage.map(item => item.count));
+    const byDate = [...new Set(stageFiltered.map(productionActivityDate).filter(Boolean))].sort().slice(-14).map(day => ({ day, count: stageFiltered.filter(item => productionActivityDate(item) === day).length }));
+    const maxDate = Math.max(1, ...byDate.map(item => item.count));
+    content = `<section class="production-progress-charts"><article><h2>当前阶段</h2>${byStage.map(item => `<div class="production-chart-row"><span>${escapeHtml(item.stage)}</span><div class="production-chart-track"><i style="--chart-value:${Math.round(item.count / maxStage * 100)}%"></i></div><strong>${item.count}</strong></div>`).join('')}</article><article><h2>最近更新时间</h2>${byDate.length ? `<div class="production-date-chart" role="img" aria-label="最近14个有更新时间的日期，每日任务更新数量">${byDate.map(item => `<div><i style="--chart-value:${Math.round(item.count / maxDate * 100)}%" title="${item.day}：${item.count} 项"></i><span>${item.day.slice(5)}</span></div>`).join('')}</div>` : '<p class="production-overview-empty">暂无可统计的更新时间</p>'}<p>依据任务最近更新时间统计，不代表状态变更记录。</p></article></section>`;
+  } else {
+    content = filtered.length ? `<section class="production-progress-list" aria-label="生产任务列表">${filtered.map(taskRow).join('')}</section>` : `<section class="production-overview-empty">${emptyState('没有符合条件的任务', '调整筛选条件后重试。')}</section>`;
+  }
+  return `<section class="production-progress-overview"><header class="production-progress-toolbar">${modeTabs}</header>${stageTiles}${form}<div class="production-progress-result"><span>${filtered.length} 项</span></div>${content}</section>`;
 }
 
 function productionTabs(active) {
-  return `<nav class="production-overview-tabs" role="tablist" aria-label="文档生产视图"><button type="button" role="tab" data-production-overview-tab="handbooks" aria-selected="${active === 'handbooks'}">手册视图</button><button type="button" role="tab" data-production-overview-tab="versions" aria-selected="${active === 'versions'}">数据库版本</button><button type="button" role="tab" data-production-overview-tab="tasks" aria-selected="${active === 'tasks'}">任务视图</button><button type="button" role="tab" data-production-overview-tab="generations" aria-selected="${active === 'generations'}">我的生成</button></nav>`;
+  return `<nav class="production-overview-tabs" role="tablist" aria-label="文档生产视图"><button type="button" role="tab" data-production-overview-tab="handbooks" aria-selected="${active === 'handbooks'}">手册视图</button><button type="button" role="tab" data-production-overview-tab="progress" aria-selected="${active === 'progress'}">生产进展</button><button type="button" role="tab" data-production-overview-tab="generations" aria-selected="${active === 'generations'}">我的生成</button></nav>`;
 }
 
 export function renderProduction({ incrementalProjection, assetCatalog, platformAdmin, currentUser, handbookProductionUi, templateProjection }) {
@@ -303,20 +405,21 @@ export function renderProduction({ incrementalProjection, assetCatalog, platform
   const params = new URLSearchParams(window.location.search);
   const requestedView = params.get('view');
   const normalizedView = requestedView === 'todo' ? 'generations' : requestedView;
-  const active = params.get('taskId') ? 'tasks' : (['handbooks', 'versions', 'tasks', 'generations'].includes(normalizedView) ? normalizedView : 'handbooks');
+  const active = params.get('taskId') ? 'tasks' : (['handbooks', 'progress', 'tasks', 'generations'].includes(normalizedView) ? normalizedView : 'handbooks');
   const taskItems = array(projection.items || projection.tasks);
   const unavailable = projection.status === 'unavailable' ? `<section class="incremental-list-state error" role="alert"><strong>增量服务暂时不可用</strong><span>${escapeHtml(projection.error?.message || '请稍后重试')}</span><button class="button secondary compact" type="button" data-incremental-reload>重新读取</button></section>` : '';
   const body = unavailable || (active === 'handbooks'
     ? handbookOverview(projection, assetCatalog)
-    : active === 'versions'
-      ? versionOverview(projection)
+    : active === 'progress'
+          ? renderProductionProgress(projection)
     : active === 'generations'
       ? myGenerations(projection.generations || { status: 'loading', items: [] })
-      : `<div class="incremental-workspace"><aside class="incremental-sidebar" aria-label="增量任务"><header><h2>增量任务</h2><span>${taskItems.length} 项</span></header>${taskList(projection)}</aside><div class="incremental-main">${taskDetail(task, platformAdmin)}</div></div>`);
-  return `<div class="workspace-action-row production-heading"><div class="production-heading-actions"><a class="button secondary" href="/document-generation-workbench.html" target="_blank" rel="noopener">文档生成工作台</a><button class="button" type="button" data-incremental-create-open>创建增量任务</button></div></div>${productionTabs(active)}${body}${createDialog(projection)}`;
+      : `<div class="incremental-workspace"><aside class="incremental-sidebar" aria-label="增量任务"><header><div><h2>增量任务</h2><span>${taskItems.length} 项</span></div></header>${taskList(projection)}</aside><div class="incremental-main">${taskDetail(task, platformAdmin, projection.taskDocuments, projection.taskOutlineStatus)}</div></div>`);
+  const taskBack = active === 'tasks' && params.get('taskId') ? '<button class="button secondary compact" type="button" data-production-back-progress>返回生产进展</button>' : '';
+  return `${active === 'tasks' ? '' : productionTabs(active)}${taskBack}${body}<dialog class="production-task-summary" data-production-task-summary aria-labelledby="production-task-summary-title"><header><h2 id="production-task-summary-title"></h2><button type="button" class="icon-button" data-production-summary-close aria-label="关闭">${uiIcon('action.close')}</button></header><dl><div><dt>手册</dt><dd data-summary-handbook></dd></div><div><dt>版本</dt><dd data-summary-version></dd></div><div><dt>状态</dt><dd data-summary-status></dd></div><div><dt>最近更新</dt><dd data-summary-updated></dd></div></dl><footer><button class="button secondary" type="button" data-production-summary-close>关闭</button><button class="button" type="button" data-progress-enter-task>进入任务</button></footer></dialog>`;
 }
 
 export function renderStages({ incrementalProjection }) {
   const tasks = array(incrementalProjection?.items || incrementalProjection?.tasks);
-  return `<div class="page-intro"><div><h2>生产进展</h2></div><button class="button secondary" data-action="production">返回文档生产</button></div>${tasks.length ? `<div class="incremental-task-list">${tasks.map(task => `<div class="incremental-task-item"><strong>${escapeHtml(task.name || '未命名任务')}</strong><span>${escapeHtml(taskStatus(task))}</span></div>`).join('')}</div>` : emptyState('暂无生产进展', '建立增量任务后将在这里展示真实进展。')}`;
+  return `<div class="page-intro"><div><h2>生产进展</h2></div><button class="button secondary" data-action="production">返回文档生产</button></div>${tasks.length ? `<div class="incremental-task-list">${tasks.map(task => `<div class="incremental-task-item"><strong>${escapeHtml(task.name || '未命名任务')}</strong><span>${escapeHtml(taskStatus(task))}</span></div>`).join('')}</div>` : emptyState('暂无生产进展', '当前没有可查看的任务记录。')}`;
 }

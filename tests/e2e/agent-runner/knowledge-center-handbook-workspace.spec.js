@@ -38,6 +38,21 @@ test.afterEach(async ({ page }, testInfo) => {
     await testInfo.attach('handbook-control-interactions', { body: JSON.stringify(interactions), contentType: 'application/json' });
   }
 });
+test('手册写作占满视口且离开后恢复平台顶栏', async ({ page }) => {
+  await expect(page.locator('.global-header')).toBeHidden();
+  await expect(page.locator('.handbook-production-toolbar')).toBeVisible();
+  const top = await page.locator('.handbook-production-layout').evaluate(node => node.getBoundingClientRect().top);
+  expect(top).toBe(0);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator('.global-header')).toBeHidden();
+  expect(await page.locator('.handbook-production-layout').evaluate(node => node.getBoundingClientRect().top)).toBe(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.locator('.handbook-production-directory [data-handbook-directory-close]').click();
+  await expect(page.locator('.handbook-production-directory')).toBeHidden();
+  await page.locator('[data-handbook-return]').first().click();
+  await expect(page.locator('.global-header')).toBeVisible();
+  await expect(page.locator('[data-global-notification-trigger]')).toBeVisible();
+});
 test('生产页图标复用保留节点属性且重复增强不替换 SVG', async ({ page }) => {
   await page.waitForFunction(() => Boolean(window.lucide?.createElement));
   const source = fs.readFileSync(path.resolve('apps/knowledge-center-web/frontend/knowledge-center/app.js'), 'utf8');
@@ -187,10 +202,31 @@ test('工作台阅读、目录切换、编辑保存与刷新回读', async ({ pa
   const saved = page.waitForResponse(r => r.request().method() === 'PUT' && r.url().includes('/draft'));
   await page.locator('[data-handbook-draft-save]').click();
   expect((await saved).ok()).toBeTruthy();
+  const revisedMark = '历史差异基准验证 ' + Date.now();
+  await input.fill((await input.inputValue()).replace(mark, revisedMark));
+  const revised = page.waitForResponse(r => r.request().method() === 'PUT' && r.url().includes('/draft'));
+  await page.locator('[data-handbook-draft-save]').click();
+  expect((await revised).ok()).toBeTruthy();
   await page.reload();
-  await expect(page.locator('.handbook-production-content')).toContainText(mark);
+  await expect(page.locator('.handbook-production-content')).toContainText(revisedMark);
   await page.locator('.handbook-more-menu > summary').click();
   await expect(page.locator('[data-handbook-history]')).toBeVisible();
+  await page.locator('[data-handbook-history]').click();
+  await expect(page.locator('[data-handbook-history-workspace]')).toBeVisible();
+  await expect(page.locator('[data-handbook-history-select][aria-pressed="true"]')).toContainText('当前');
+  await expect(page.locator('[data-handbook-history-content]')).toContainText(revisedMark);
+  const olderRevision = page.locator('[data-handbook-history-select]').filter({ hasNot: page.locator('.handbook-history-current') }).first();
+  if (await olderRevision.count()) {
+    await olderRevision.click();
+    await page.locator('[data-handbook-history-diff]').check();
+    await expect(page.locator('[data-handbook-history-content]')).toContainText('与当前已保存 v');
+    await expect(page.locator('.handbook-history-diff-removed')).toContainText(mark);
+    await expect(page.locator('.handbook-history-diff-added')).toContainText(revisedMark);
+  }
+  await page.locator('[data-handbook-history-close]').click();
+  await expect(page.locator('.handbook-production-editor')).toBeVisible();
+  await expect(page.locator('.handbook-production-content')).toContainText(revisedMark);
+  await page.locator('.handbook-more-menu > summary').click();
   await page.keyboard.press('Escape');
   await expect(page.locator('.handbook-more-menu')).not.toHaveAttribute('open', '');
   await page.screenshot({ path: path.join(artifacts, 'isolated-read-saved.png') });

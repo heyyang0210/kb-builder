@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
@@ -125,6 +126,76 @@ async function finishConfiguration(page) {
   await closeReferences(page);
   if (await page.locator('[data-ai-settings-panel]').isVisible()) await page.locator('[data-ai-settings-apply]').click();
 }
+
+test('平台来源快照保留正文摘要并处理缺省上下文', async t => {
+  const { page, errors } = await launch(t);
+  const snapshots = await page.evaluate(async () => {
+    const { createPlatformOriginSnapshot } = await import('/knowledge-center/modules/production/origin-snapshot.js');
+    return {
+      complete: await createPlatformOriginSnapshot('# 当前正文', {
+        handbookId: 'HB-1', documentId: 'doc-1', outlineVersionId: 'outline-v1', branch: 'main',
+      }),
+      omitted: await createPlatformOriginSnapshot(null),
+      empty: await createPlatformOriginSnapshot(0, {
+        handbookId: '', documentId: '', outlineVersionId: '', branch: '',
+      }),
+    };
+  });
+  const digest = markdown => crypto.createHash('sha256').update(markdown).digest('hex');
+  assert.equal(snapshots.complete.content, '# 当前正文');
+  assert.deepEqual(snapshots.complete.snapshot, {
+    originType: 'platform', snapshotId: null, contentDigest: digest('# 当前正文'),
+    handbookId: 'HB-1', documentId: 'doc-1', outlineVersionId: 'outline-v1', branch: 'main',
+  });
+  assert.equal(snapshots.omitted.content, '');
+  assert.equal(snapshots.omitted.snapshot.contentDigest, digest(''));
+  assert.equal(snapshots.omitted.snapshot.outlineVersionId, null);
+  assert.equal(snapshots.omitted.snapshot.branch, null);
+  assert.equal(snapshots.empty.content, '0');
+  assert.equal(snapshots.empty.snapshot.outlineVersionId, null);
+  assert.equal(snapshots.empty.snapshot.branch, null);
+  assert.deepEqual(errors, []);
+});
+
+test('数据库 Markdown 渲染处理链接、代码围栏和失败回退', async t => {
+  const { page, errors } = await launch(t);
+  const rendered = await page.evaluate(async () => {
+    const { renderDatabaseMarkdown } = await import('/knowledge-center/common/markdown/markdown-renderer.js');
+    const { marked } = await import('/knowledge-center/common/vendor/marked.esm.js');
+    const render = (markdown, filePath, context) => renderDatabaseMarkdown(() => '<p>legacy fallback</p>', markdown, filePath, context).html;
+    const code = render('```sql\nSELECT 1;\n```\n\n```\nplain\n```', 'docs/sql/query.md', {});
+    const empty = render(null);
+    const relative = render('[手册](../manual.md)', 'docs/sql/query.md');
+    const relativeFallback = render('[手册](./manual.md)', '');
+    const handbook = render('[手册](../manual.md)', 'docs/sql/query.md', { handbookId: 'HB/1', branch: 'main', language: 'en' });
+    const handbookDefaults = render('[手册](./manual.md) ![图片](./image.png)', 'docs/query.md', { handbookId: 'HB-1', branch: '', language: '' });
+    const reviewImage = render('![审核图片](../images/review.png)', 'docs/candidate.md', {
+      reviewResourceContext: { taskId: 'task/1', candidateDigest: 'sha256:abc', documentId: 'doc 1' },
+    });
+    const rejectedImage = render('![外部图片](../../secret.png)', 'query.md', { handbookId: 'HB-1' });
+    const parse = marked.parse;
+    let fallback;
+    try {
+      marked.parse = () => { throw new Error('fixture parser failure'); };
+      fallback = renderDatabaseMarkdown(markdown => `<p>legacy:${markdown}</p>`, 'fallback body', 'docs/fallback.md').html;
+    } finally {
+      marked.parse = parse;
+    }
+    return { code, empty, relative, relativeFallback, handbook, handbookDefaults, reviewImage, rejectedImage, fallback };
+  });
+  assert.match(rendered.code, /data-language="sql"/);
+  assert.match(rendered.code, /class="language-text"/);
+  assert.match(rendered.empty, /data-source-path=""/);
+  assert.match(rendered.relative, /href="docs\/manual\.md"/);
+  assert.match(rendered.relativeFallback, /href="manual\.md"/);
+  assert.match(rendered.handbook, /\/knowledge-center\/assets\/HB%2F1\/repository\?branch=main&lang=en&path=docs%2Fmanual\.md/);
+  assert.match(rendered.handbookDefaults, /\/knowledge-center\/assets\/HB-1\/repository\?branch=&lang=zh&path=docs%2Fmanual\.md/);
+  assert.match(rendered.handbookDefaults, /\/api\/gitlab\/handbooks\/HB-1\/file\?ref=&language=zh&path=docs%2Fimage\.png&raw=1/);
+  assert.match(rendered.reviewImage, /\/knowledge-center\/api\/incremental-tasks\/task%2F1\/resources\?candidateDigest=sha256%3Aabc&documentId=doc%201&path=images%2Freview\.png/);
+  assert.match(rendered.rejectedImage, /<img src="secret\.png"/);
+  assert.match(rendered.fallback, /<p>legacy:fallback body<\/p>/);
+  assert.deepEqual(errors, []);
+});
 
 test('Codex 实际活动在侧栏显示，运行中可原位中断', async t => {
   let execution;
@@ -300,17 +371,16 @@ test('真实编辑器与 HTTP：范围继承、重生成恢复、取消、候选
   await page.locator('[data-ai-start]').click(); await waitCandidate(page);
   assert.equal(calls[0].selectedContent, selected);
   assert.equal((await api.request('GET', suffix + '/draft?' + new URLSearchParams(ctx))).body.data.exists, false);
-  await page.locator('[data-ai-manual-edit]').click();
-  await page.locator('[data-ai-fragment]').fill('人工微调的候选');
-  await page.locator('[data-ai-refine]').click();
-  assert.equal(await page.locator('[data-ai-requirements]').evaluate(el => el === document.activeElement), true);
+  await page.getByRole('button', { name: '编辑第 1 处修改', exact: true }).click();
+  await page.locator('[data-ai-inline-editor]').fill('人工微调的候选');
+  await page.getByRole('button', { name: '保存修改', exact: true }).click();
   await page.locator('[data-ai-requirements]').fill('测试失败');
   await page.locator('[data-ai-start]').click();
   await page.waitForFunction(() => document.querySelector('[data-ai-status]').textContent.includes('上次候选仍保留'));
-  assert.equal(await page.locator('[data-ai-fragment]').inputValue(), '人工微调的候选');
+  assert.match(await page.locator('.handbook-review-added').textContent(), /人工微调的候选/);
   await page.locator('[data-ai-requirements]').fill('等待取消'); await page.locator('[data-ai-start]').click();
   await page.getByRole('button', { name: '中断生成', exact: true }).click();
-  await waitCandidate(page); assert.equal(await page.locator('[data-ai-fragment]').inputValue(), '人工微调的候选');
+  await waitCandidate(page); assert.match(await page.locator('.handbook-review-added').textContent(), /人工微调的候选/);
   release({ content: '迟到内容' });
   await page.locator('[data-ai-requirements]').fill('更简洁'); await page.locator('[data-ai-start]').click(); await waitCandidate(page);
   assert.equal(await page.locator('[data-ai-fragment]').inputValue(), '确认部署环境，并备齐安装文件。');
@@ -318,8 +388,10 @@ test('真实编辑器与 HTTP：范围继承、重生成恢复、取消、候选
   await page.locator('[data-ai-close]').click();
   await page.locator('#open-writing').click(); await page.locator('[data-ai-resume]').click(); await waitCandidate(page);
   assert.equal(await page.locator('[data-ai-before]').inputValue(), selected);
-  await page.locator('[data-ai-manual-edit]').click();
-  await page.locator('[data-ai-fragment]').fill('先确认部署环境，再备齐文件。'); await page.locator('[data-ai-adopt]').click();
+  await page.getByRole('button', { name: '编辑第 1 处修改', exact: true }).click();
+  await page.locator('[data-ai-inline-editor]').fill('先确认部署环境，再备齐文件。');
+  await page.getByRole('button', { name: '保存修改', exact: true }).click();
+  await page.getByRole('button', { name: '接受第 1 处修改', exact: true }).click(); await page.locator('[data-ai-adopt]').click();
   await page.waitForFunction(() => !!window.saved);
   const reread = await api.request('GET', suffix + '/draft?' + new URLSearchParams(ctx));
   assert.equal(reread.status, 200); assert.equal(reread.body.data.draft.revision.markdown, initial.replace(selected, '先确认部署环境，再备齐文件。'));
@@ -330,7 +402,7 @@ test('真实编辑器与 HTTP：范围继承、重生成恢复、取消、候选
   const newer = await api.request('PUT', suffix + '/draft', JSON.stringify({ ...ctx, editVersion: 1, markdown: '其他作者的新正文' }), { 'Content-Type': 'application/json', 'Idempotency-Key': 'writing-conflict' });
   assert.equal(newer.status, 200, JSON.stringify(newer.body));
   await page.locator('[data-ai-adopt]').click();
-  await page.waitForFunction(() => document.querySelector('[data-ai-status]').textContent.includes('采用未完成'));
+  await page.waitForFunction(() => document.querySelector('[data-ai-status]').textContent.includes('保存未完成'));
   assert.match((await api.request('GET', suffix + '/draft?' + new URLSearchParams(ctx))).body.data.draft.revision.markdown, /其他作者的新正文/);
   assert.equal(await page.locator('[data-ai-candidate]').isVisible(), true);
   assert.deepEqual(errors, []);
@@ -572,9 +644,8 @@ test('模板同框搜索、面板图标切换、运行详情和临时断线恢�
   release({ content: '{"markdown":"已生成第一段完成","provenance":[]}', model: 'fixture-model' });
   await waitCandidate(page);
   assert.equal(await page.locator('[data-ai-fragment]').inputValue(), '已生成第一段完成');
-  await page.locator('[data-ai-refine]').click();
-  assert.equal(await page.locator('.handbook-writing-assistant').isVisible(), true);
-  assert.equal(await page.locator('[data-ai-requirements]').evaluate(el => el === document.activeElement), true);
+  await page.getByRole('button', { name: '测试校验', exact: true }).click();
+  assert.equal(await page.locator('[data-ai-quality-result]').textContent(), '功能待完善');
   await page.locator('[data-ai-settings-open]').click();
   assert.equal(await page.locator('[data-ai-template-select]').inputValue(), 'tpl-sql');
   await combo.focus(); await page.keyboard.press('Escape');
@@ -1125,6 +1196,51 @@ test('IMA修订：正文逐处对照、混合接受拒绝和真实HTTP保存回�
   assert.deepEqual(errors, []);
 });
 
+test('候选就地编辑：名称精简、编辑后待确认、测试校验占位及保存回读', async t => {
+  const before = '# 标题\n\n旧段落。\n';
+  const after = '# 标题\n\n新段落。\n';
+  const { api, page, errors } = await launch(t, { generate: async () => ({ content: after, model: 'deterministic-e2e' }) });
+  let qualityRequests = 0;
+  page.on('request', request => { if (/quality/i.test(request.url())) qualityRequests++; });
+  await page.evaluate(value => { window.editor.setValue(value); window.openWriting({ initialRange: null }); }, before);
+  await page.locator('[data-ai-start]:enabled').waitFor();
+  await page.locator('[data-ai-start]').click(); await waitCandidate(page);
+  assert.equal(await page.getByRole('button', { name: '采用并保存草稿', exact: true }).count(), 0);
+  assert.equal(await page.getByRole('button', { name: '手动调整候选', exact: true }).count(), 0);
+  assert.equal(await page.getByRole('button', { name: '调整要求重新生成', exact: true }).count(), 0);
+  assert.equal(await page.getByRole('button', { name: '执行 YashanDB 用例检查', exact: true }).count(), 0);
+  await page.getByRole('button', { name: '测试校验', exact: true }).click();
+  assert.equal(await page.locator('[data-ai-quality-result]').textContent(), '功能待完善');
+  assert.equal(qualityRequests, 0);
+  await page.getByRole('button', { name: '取消', exact: true }).click();
+  assert.equal(await page.locator('[data-ai-candidate]').isVisible(), false);
+  assert.equal(await page.evaluate(() => window.editor.getValue()), before);
+  assert.equal((await api.request('GET', `${suffix}/draft?${new URLSearchParams(ctx)}`)).body.data.exists, false);
+  await page.locator('[data-ai-start]:enabled').click(); await waitCandidate(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  await page.setViewportSize({ width: 1366, height: 900 });
+  await page.getByRole('button', { name: '编辑第 1 处修改', exact: true }).click();
+  await page.locator('[data-ai-inline-editor]').fill('取消时不应保留。');
+  await page.getByRole('button', { name: '取消修改', exact: true }).click();
+  assert.match(await page.locator('.handbook-review-added').textContent(), /新段落/);
+  await page.getByRole('button', { name: '编辑第 1 处修改', exact: true }).click();
+  const editor = page.locator('[data-ai-inline-editor]');
+  assert.equal(await editor.isVisible(), true);
+  await editor.fill('人工修改后的段落。');
+  await page.screenshot({ path: path.join(artifacts, 'candidate-inline-edit.png'), fullPage: true });
+  await page.getByRole('button', { name: '保存修改', exact: true }).click();
+  assert.match(await page.locator('[data-ai-change-count]').textContent(), /待确认 1 处/);
+  assert.match(await page.locator('.handbook-review-added').textContent(), /人工修改后的段落/);
+  await page.getByRole('button', { name: '接受第 1 处修改', exact: true }).click();
+  assert.equal(await page.locator('[data-ai-fragment]').inputValue(), '# 标题\n\n人工修改后的段落。');
+  await page.getByRole('button', { name: '保存', exact: true }).click(); await page.waitForFunction(() => !!window.saved);
+  const reread = await api.request('GET', `${suffix}/draft?${new URLSearchParams(ctx)}`);
+  assert.equal(reread.status, 200);
+  assert.equal(reread.body.data.draft.revision.markdown, before.replace('旧段落。', '人工修改后的段落。'));
+  assert.deepEqual(errors, []);
+});
+
 test('IMA续写：快捷切换即用、引用原文、接在选段之后且不替换原文', async t => {
   let submitted;
   const { api, page, errors } = await launch(t, { generate: async messages => { submitted = JSON.parse(messages.at(-1).content); return { content: '\n\n续写的新内容。', model: 'deterministic-e2e' }; } });
@@ -1253,7 +1369,23 @@ test('双滚动：正文与历史对话互不带动，输入固定且关闭恢�
   assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.handbook-writing-layout')).display), 'grid');
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
   await page.screenshot({ path: path.join(artifacts, 'dual-scroll-1024.png') });
-  await page.locator('.handbook-writing-chat-open').first().click(); await waitCandidate(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const narrowGeometry = await page.evaluate(() => {
+    const page = document.querySelector('.handbook-writing-page');
+    const layout = page.querySelector('.handbook-writing-layout');
+    const assistant = page.querySelector('.handbook-writing-assistant');
+    const conversation = page.querySelector('.handbook-writing-conversation');
+    const input = page.querySelector('.handbook-writing-input-area');
+    const bounds = element => { const box = element.getBoundingClientRect(); return { top: box.top, bottom: box.bottom, height: box.height }; };
+    return { page: bounds(page), layout: bounds(layout), assistant: bounds(assistant), conversation: bounds(conversation), input: bounds(input), scrollHeight: conversation.scrollHeight, clientHeight: conversation.clientHeight, bodyScrollHeight: document.scrollingElement.scrollHeight };
+  });
+  assert.ok(narrowGeometry.page.height <= 844 && narrowGeometry.page.bottom <= 845, JSON.stringify(narrowGeometry));
+  assert.ok(narrowGeometry.assistant.height > 180 && narrowGeometry.assistant.bottom <= narrowGeometry.page.bottom + 1, JSON.stringify(narrowGeometry));
+  assert.ok(narrowGeometry.input.bottom <= narrowGeometry.assistant.bottom + 1, JSON.stringify(narrowGeometry));
+  assert.ok(narrowGeometry.conversation.height > 0 && narrowGeometry.bodyScrollHeight <= 845, JSON.stringify(narrowGeometry));
+  await page.screenshot({ path: path.join(artifacts, 'dual-scroll-mobile-fixed.png') });
+  await page.setViewportSize({ width: 1366, height: 900 });
+  await page.getByRole('button', { name: '查看候选与执行过程' }).first().click(); await waitCandidate(page);
   await page.locator('[data-ai-close]').click();
   assert.equal(await page.locator('.has-writing-assistant').count(), 0); assert.equal(await page.locator('[data-handbook-vditor]').isVisible(), true);
   assert.deepEqual(errors, []);
@@ -1299,8 +1431,8 @@ test('复用工作台编辑器：打开无 Markdown 中间态，关闭后仍为�
   await page.evaluate(() => window.openWriting({ embedded: true, reuseEditor: window.editor,
     reuseEditorElement: window.originalEditorTarget, initialMarkdown: window.editor.getValue(),
     observeEditorInput: listener => { window.reusedInput = listener; return () => { window.reusedInput = null; }; } }));
-  await page.waitForFunction(() => document.querySelector('.handbook-writing-chat-open'));
-  await page.locator('.handbook-writing-chat-open').first().click(); await waitCandidate(page);
+  await page.getByRole('button', { name: '查看候选与执行过程' }).first().waitFor();
+  await page.getByRole('button', { name: '查看候选与执行过程' }).first().click(); await waitCandidate(page);
   assert.equal(await page.evaluate(() => window.editor.getValue()), changed, '查看历史候选不改正文');
   await page.locator('[data-ai-adopt]').click(); await page.waitForFunction(() => !!window.saved);
   assert.equal((await page.evaluate(() => window.editor.getValue())).trim(), '修订候选');
@@ -1402,8 +1534,8 @@ test('知识库可移除：延迟目录不回填、空引用真实生成、历�
   assert.equal(mcpReads, 0); assert.deepEqual(payloads[0].sources, []);
   await page.locator('[data-ai-close]').click();
   await page.locator('#open-writing').click();
-  await page.locator('.handbook-writing-chat-open').first().waitFor();
-  await page.locator('.handbook-writing-chat-open').first().click(); await waitCandidate(page);
+  await page.getByRole('button', { name: '查看候选与执行过程' }).first().waitFor();
+  await page.getByRole('button', { name: '查看候选与执行过程' }).first().click(); await waitCandidate(page);
   await openReferences(page);
   assert.equal(await page.locator('[data-ai-source-list] section').count(), 0, '恢复显式空引用不重加知识库');
   await page.locator('[data-reference-type="knowledge-mcp"]').click();
@@ -1488,7 +1620,9 @@ test('AI 对话来源与回复操作的边界和错误状态', async t => {
   });
   await page.evaluate(async () => {
     const { createAIConversationTools } = await import('/knowledge-center/modules/production/production-chat-evidence.js');
-    const host = document.createElement('section'); document.body.append(host);
+    const pageShell = document.createElement('section'); pageShell.className = 'handbook-writing-page is-conversational';
+    const host = document.createElement('section'); host.className = 'handbook-writing-layout';
+    host.style.cssText = 'position:relative;width:840px;height:600px;'; pageShell.append(host); document.body.append(pageShell);
     const conversation = document.createElement('section'); host.append(conversation);
     const notifications = []; const deleted = []; const opened = []; let current = null; let copied = ''; let clipboardFails = false;
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async value => {
@@ -1496,7 +1630,7 @@ test('AI 对话来源与回复操作的边界和错误状态', async t => {
     } } });
     const tools = createAIConversationTools({ host, conversation,
       context: { handbookId: 'HB-1', documentId: 'doc-1', outlineVersionId: 'outline-v1', branch: 'main' },
-      getCurrentJob: () => current, openHistory: id => opened.push(id), onDeleted: id => deleted.push(id), notify: text => notifications.push(text),
+      getCurrentJob: () => current, openHistory: (id, expanded) => opened.push([id, expanded]), onDeleted: id => deleted.push(id), notify: text => notifications.push(text),
     });
     const history = document.createElement('div'); host.append(history);
     tools.renderHistory([
@@ -1512,9 +1646,22 @@ test('AI 对话来源与回复操作的边界和错误状态', async t => {
         !history.querySelector('[data-chat-job="job-active"] .danger').disabled ||
         history.querySelector('[data-chat-job="job-ok"] [data-feedback-rating="positive"]').getAttribute('aria-pressed') !== 'true')
       throw new Error('历史对话回退或运行中删除权限错误');
-    history.querySelector('[data-chat-job="job-other"] .handbook-writing-chat-open').click();
-    if (opened[0] !== 'job-other') throw new Error('历史打开回调未传 jobId');
+    const openHistoryButton = history.querySelector('[data-chat-job="job-other"] [aria-label="查看候选与执行过程"]');
+    if (!openHistoryButton || openHistoryButton.querySelector('[data-lucide="eye"]') === null || openHistoryButton.textContent.trim())
+      throw new Error('历史候选查看入口应为无可见文字的眼睛图标按钮');
+    openHistoryButton.click();
+    if (opened[0][0] !== 'job-other' || opened[0][1] !== true || history.querySelector('[data-chat-job="job-other"] [aria-label="折叠执行详情"][aria-expanded="true"]') === null)
+      throw new Error('历史打开回调或展开状态错误');
+    history.querySelector('[data-chat-job="job-other"] [aria-label="折叠执行详情"]').click();
+    if (opened[1][0] !== 'job-other' || opened[1][1] !== false || history.querySelector('[data-chat-job="job-other"] [aria-expanded="false"]') === null)
+      throw new Error('再次点击历史眼睛应折叠执行详情');
+    history.querySelector('[data-chat-job="job-ok"] [aria-label="查看候选与执行过程"]').click();
+    if (opened[2][0] !== 'job-ok' || opened[2][1] !== true || history.querySelector('[data-chat-job="job-other"] [aria-expanded="false"]') === null)
+      throw new Error('切换其他历史记录应展开新记录并折叠原记录');
     const drawer = host.querySelector('.handbook-ai-evidence-drawer');
+    const evidenceClose = drawer.querySelector('[data-evidence-close]');
+    if (!evidenceClose.querySelector('svg') && evidenceClose.textContent.trim() !== '×')
+      throw new Error('关闭来源面板图标库不可用时应显示可识别回退');
     current = { jobId: 'job-ok', operation: 'polish', status: 'completed', candidateMarkdown: '候选正文', metadata: {
       sourceSnapshots: [{ sourceId: 1, title: '<不可信标题>', sourceType: '网页', sourceVersion: 'v3', content: '可信原文' }],
       provenance: [{ start: 0, end: 2, evidence: [
@@ -1524,14 +1671,27 @@ test('AI 对话来源与回复操作的边界和错误状态', async t => {
         { sourceId: 'empty', start: 0, end: 1 },
       ] }],
     } };
-    history.querySelector('[data-chat-job="job-ok"] .handbook-ai-evidence-link').click();
+    const evidenceTrigger = history.querySelector('[data-chat-job="job-ok"] .handbook-ai-evidence-link');
+    evidenceTrigger.click();
     await new Promise(resolve => setTimeout(resolve, 0));
-    if (drawer.hidden || drawer.querySelector('[data-evidence-count]').textContent !== '(1)' ||
+    const desktopPanel = drawer.getBoundingClientRect();
+    if (drawer.hidden || drawer.querySelector('[data-evidence-count]').textContent !== '1' ||
         !drawer.textContent.includes('可信原文') || !drawer.textContent.includes('对应候选：候选') || drawer.querySelector('script'))
       throw new Error('引用来源只应展示范围合法的实际引用');
+    if (getComputedStyle(drawer).position !== 'absolute' || Math.abs(desktopPanel.right - host.getBoundingClientRect().right) > 1 || desktopPanel.width > 421)
+      throw new Error('引用来源面板应覆盖在 AI 侧栏内，不得落入正文流布局');
+    host.style.width = '390px';
+    const narrowPanel = drawer.getBoundingClientRect();
+    if (narrowPanel.width > host.clientWidth || drawer.scrollWidth > drawer.clientWidth)
+      throw new Error('窄侧栏引用来源面板发生横向溢出');
+    host.style.width = '840px';
     drawer.querySelector('[data-evidence-close]').click();
+    if (document.activeElement !== evidenceTrigger) throw new Error('关闭来源面板后焦点应返回打开入口');
+    evidenceTrigger.click(); await new Promise(resolve => setTimeout(resolve, 0));
+    drawer.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    if (!drawer.hidden || document.activeElement !== evidenceTrigger) throw new Error('Escape 应关闭来源面板并恢复入口焦点');
     current = null; await tools.showEvidence('job-remote');
-    if (!drawer.textContent.includes('没有可定位的引用原文')) throw new Error('远端无证据 job 应显示空态');
+    if (drawer.querySelector('[data-evidence-count]').textContent !== '0' || !drawer.textContent.includes('没有可定位的引用原文')) throw new Error('远端无证据 job 应显示紧凑空态与零计数');
     current = { jobId: 'job-fallback', fragment: '', sourceSnapshots: [
       { sourceId: 'archive', locator: '归档文件', fetchedAt: '昨日', content: '档案原文' },
       { sourceId: 'untitled', sourceType: '文件', content: '另一段原文' },
@@ -1617,7 +1777,14 @@ test('AI 对话来源与回复操作的边界和错误状态', async t => {
     tools.renderCurrent({ jobId: 'unknown', operation: 'other', status: 'unknown' }, currentView);
     if (!currentView.textContent.includes('AI 写作 · unknown') || !currentView.textContent.includes('执行过程正在更新'))
       throw new Error('未知当前消息应使用稳定回退文案');
-    host.remove();
+    current = { jobId: 'job-no-sources', status: 'completed', candidateMarkdown: '', metadata: { sourceSnapshots: [], provenance: [] } };
+    await tools.showEvidence('job-no-sources');
   });
+  const screenshotDir = path.join(artifacts, 'rea-citation-panel-20261113');
+  fs.mkdirSync(screenshotDir, { recursive: true });
+  const writingLayout = page.locator('.handbook-writing-layout');
+  await writingLayout.screenshot({ path: path.join(screenshotDir, 'desktop-empty-state.png') });
+  await writingLayout.evaluate(node => { node.style.width = '390px'; });
+  await writingLayout.screenshot({ path: path.join(screenshotDir, 'narrow-empty-state.png') });
   assert.deepEqual(errors, []);
 });

@@ -5,10 +5,12 @@ body {
   margin: 0;
   background: var(--color-canvas);
   color: var(--color-text);
-  font: var(--font-size-base)/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+  font: var(--font-size-base)/1.55 var(--font-family-platform);
   letter-spacing: 0;
   text-rendering: optimizeLegibility;
 }
+:where(body *) { font-family: var(--font-family-platform); }
+pre, code, kbd, samp, .vditor-reset pre, .vditor-reset code, .repository-code { font-family: var(--font-family-code) !important; }
 button, input, select { font: inherit; }
 button, a { touch-action: manipulation; }
 button { letter-spacing: 0; }
@@ -60,7 +62,7 @@ select:focus-visible,
 .icon-wrap .icon {
   color: currentColor;
 }
-/* Close controls share one visible icon and one predictable hit target. */
+/* Close and navigation visibility controls are neutral actions, not destructive actions. */
 button.icon-button[aria-label^="关闭"],
 button.sidebar-control[aria-label^="关闭"],
 #sidebar-hide {
@@ -74,15 +76,15 @@ button.sidebar-control[aria-label^="关闭"],
   border-color: transparent;
   border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--color-danger);
+  color: var(--color-icon-default);
 }
 button.icon-button[aria-label^="关闭"] { display: inline-grid; }
 button.icon-button[aria-label^="关闭"]:is(:hover, :focus-visible),
 button.sidebar-control[aria-label^="关闭"]:is(:hover, :focus-visible),
 #sidebar-hide:is(:hover, :focus-visible) {
   border-color: transparent;
-  background: var(--color-danger-subtle);
-  color: var(--color-danger);
+  background: var(--color-surface-subtle);
+  color: var(--color-text-secondary);
 }
 button.icon-button[aria-label^="关闭"] svg,
 button.sidebar-control[aria-label^="关闭"] svg,

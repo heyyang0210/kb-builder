@@ -53,25 +53,36 @@ async function fixture() {
     if (process.env.TEMPLATE_TEST_LOGIN_PASSWORD) await context.request.post(`${url}/knowledge-center/api/auth/admin/login`, { data: { username: process.env.TEMPLATE_TEST_LOGIN_USERNAME || 'admin', password: process.env.TEMPLATE_TEST_LOGIN_PASSWORD } });
     await page.goto(`${url}/knowledge-center/templates`);
     try { await page.locator('[data-template-new]').waitFor({ timeout: 5000 }); } catch (error) { console.error('page URL', page.url()); console.error('page errors', errors); console.error('page excerpt', (await page.locator('body').innerText()).slice(0, 1200)); throw error; }
-    const editorTab = page.locator('[data-template-tab="editor"]');
+    const libraryTab = page.locator('[data-template-tab="library"]');
     const mappingsTab = page.locator('[data-template-tab="mappings"]');
-    assert.equal(await editorTab.getAttribute('tabindex'), '0');
+    assert.equal(await libraryTab.getAttribute('tabindex'), '0');
     assert.equal(await mappingsTab.getAttribute('tabindex'), '-1');
-    await editorTab.focus(); await page.keyboard.press('ArrowRight');
+    assert.equal(await page.locator('.template-catalog-table').isVisible(), true, `默认首屏应是模板库目录。页面内容：${(await page.locator('body').innerText()).slice(0, 800)}`);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.screenshot({ path: '/tmp/template-library-1440.png', fullPage: true });
+    const mobileLibrary = await context.newPage();
+    await mobileLibrary.setViewportSize({ width: 390, height: 844 });
+    await mobileLibrary.goto(`${url}/knowledge-center/templates`);
+    await mobileLibrary.locator('.template-catalog-table').waitFor();
+    assert.ok(await mobileLibrary.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1), '窄屏模板库不应出现横向滚动');
+    await mobileLibrary.screenshot({ path: '/tmp/template-library-390.png', fullPage: true });
+    await mobileLibrary.close();
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await libraryTab.focus(); await page.keyboard.press('ArrowRight');
     await page.waitForFunction(() => document.querySelector('[data-template-tab="mappings"]')?.getAttribute('aria-selected') === 'true');
     assert.equal(await mappingsTab.evaluate(node => document.activeElement === node), true, '异步加载后焦点应留在目标页签');
     await page.keyboard.press('Home');
-    assert.equal(await editorTab.getAttribute('aria-selected'), 'true');
-    assert.equal(await editorTab.evaluate(node => document.activeElement === node), true);
-    const resizer = page.locator('[data-template-list-resizer]');
-    const widthBefore = Number(await resizer.getAttribute('aria-valuenow'));
-    await resizer.focus(); await page.keyboard.press('ArrowRight');
-    assert.equal(await resizer.evaluate(node => document.activeElement === node), true, '键盘调宽不得丢失焦点');
-    assert.equal(Number(await resizer.getAttribute('aria-valuenow')), Math.min(420, widthBefore + 16));
+    assert.equal(await libraryTab.getAttribute('aria-selected'), 'true');
+    assert.equal(await libraryTab.evaluate(node => document.activeElement === node), true);
     await page.locator('[data-template-new]').click();
     await page.locator('[data-template-create-blank]').click();
     assert.equal(await page.locator('[data-template-meta-panel]').isVisible(), true, '新建模板应先显示基本信息');
     await page.locator('[data-template-field="name"]').fill(unique);
+    await page.locator('[data-template-meta-done]').click();
+    await page.locator('[data-template-back]').click();
+    await page.locator('[data-template-draft="new"]').waitFor();
+    await page.locator('[data-template-draft="new"]').click();
+    assert.equal(await page.locator('[data-template-field="name"]').inputValue(), unique, '离开目录后新模板草稿应可恢复');
     await page.locator('[data-template-field="type"]').fill('测试类型');
     await page.locator('[data-template-field="description"]').fill('隔离浏览器测试');
     await page.locator('[data-template-meta-done]').click();
@@ -83,15 +94,19 @@ async function fixture() {
     assert.equal(await page.locator('.template-preview table').count(), 1);
     assert.match(await page.locator('.template-preview').innerText(), /\[图片：示例图片\]/);
     assert.equal(await page.locator('.template-preview img').count(), 0, '模板预览不应自动请求远程图片');
-    const id = await page.locator('.template-list-item.active').getAttribute('data-template-id');
+    const id = (await (await context.request.get(`${url}/knowledge-center/api/templates?summary=1`)).json()).data.find(item => item.name === unique).id;
     assert.equal(await page.locator('.template-history').count(), 0);
+    await page.locator('[data-template-back]').click();
+    assert.equal(await page.locator('.template-catalog-table').isVisible(), true, '正文工作区应能返回模板库');
+    assert.equal(await page.locator(`.template-catalog-open[data-template-id="${id}"]`).count(), 1);
+    await page.locator(`.template-catalog-open[data-template-id="${id}"]`).click();
     await page.locator('[data-template-edit]').click();
     assert.equal(await page.locator('[data-template-meta-panel]').isVisible(), false, '已有模板编辑应直接显示正文');
     const editorTop = (await page.locator('.template-format-row').boundingBox()).y;
     await page.locator('[data-template-meta-toggle]').click();
     assert.equal((await page.locator('.template-format-row').boundingBox()).y, editorTop, '浮层打开不应推动正文');
     await page.locator('[data-template-field="name"]').fill(`${unique}-取消`);
-    await page.locator('[data-template-meta-cancel]').click();
+    await page.getByRole('button', { name: '取消修改' }).click();
     assert.equal(await page.locator('[data-template-meta-panel]').isVisible(), false);
     await page.locator('[data-template-meta-toggle]').click();
     assert.equal(await page.locator('[data-template-field="name"]').inputValue(), unique, '取消修改应恢复本次元信息草稿');
@@ -130,6 +145,8 @@ async function fixture() {
     await page.locator('[data-template-format="markdown"]').click();
     assert.match(await page.locator('[data-template-content]').inputValue(), /可视化补充/);
     await page.locator('[data-template-cancel]').click();
+    await page.locator('[data-template-back]').click();
+    await page.locator(`.template-catalog-open[data-template-id="${id}"]`).click();
     await page.locator('[data-template-edit]').click();
     await page.locator('[data-template-format="markdown"]').click();
     assert.doesNotMatch(await page.locator('[data-template-content]').inputValue(), /可视化补充/, '取消后再次编辑不应残留已放弃正文');
@@ -141,16 +158,19 @@ async function fixture() {
     await page.locator('.template-history-banner').filter({ hasText: 'v1' }).waitFor();
     assert.match(await page.locator('.template-preview').innerText(), /初始正文/);
     assert.equal(await page.locator('[data-template-content]').count(), 0);
+    assert.equal(await page.locator('.template-history').count(), 0, '查看历史内容后应关闭遮挡工作区的模态层');
+    await page.locator('.template-more summary').click(); await page.locator('[data-template-history]').click();
     await page.locator('.template-version').last().locator('summary').click();
     await page.locator('[data-template-compare="1"]').click();
     await page.locator('.template-compare').waitFor();
     assert.match(await page.locator('.template-compare').innerText(), /第二版本正文/);
+    await page.locator('.template-more summary').click(); await page.locator('[data-template-history]').click();
     await page.locator('.template-version').last().locator('summary').click(); await page.locator('[data-template-restore="1"]').click();
     await page.locator('[data-template-status]').filter({ hasText: '历史内容已载入编辑草稿' }).waitFor();
     await page.locator('[data-template-save]').click();
     await page.locator('[data-template-status]').filter({ hasText: '当前版本 v3' }).waitFor();
     await page.reload();
-    await page.locator(`[data-template-id="${id}"]`).click();
+    await page.locator(`.template-catalog-open[data-template-id="${id}"]`).click();
     assert.match(await page.locator('.template-preview').innerText(), /初始正文/);
     // A concurrent writer produces 409; the editor must retain its draft.
     await page.locator('[data-template-edit]').click();
@@ -178,8 +198,8 @@ async function fixture() {
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1));
     await page.screenshot({ path: path.join(root, 'runtime/test-results/template-metadata-20261104/metadata-open-390.png') });
     await page.locator('[data-template-meta-done]').click();
-    const mobileGeometry = await page.evaluate(() => ({ listBottom: document.querySelector('.template-list').getBoundingClientRect().bottom, editorTop: document.querySelector('.template-editor').getBoundingClientRect().top }));
-    assert.ok(mobileGeometry.listBottom <= mobileGeometry.editorTop + 1, '窄屏模板目录不得覆盖正文编辑区');
+    assert.equal(await page.locator('.template-library').count(), 0, '正文工作区不应同时显示模板目录');
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1), '窄屏编辑器不应产生横向溢出');
     await page.screenshot({ path: path.join(root, 'runtime/test-results/template-metadata-20261104/existing-390.png') });
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.locator('[data-template-save]').click();
@@ -188,7 +208,7 @@ async function fixture() {
     assert.equal(metadataSaved.description, '修改后仍保留正文');
     assert.equal(metadataSaved.current.content, '# 冲突仍保留的草稿');
     await page.reload();
-    await page.locator(`[data-template-id="${id}"]`).click();
+    await page.locator(`.template-catalog-open[data-template-id="${id}"]`).click();
     await page.locator('[data-template-edit]').click();
     await page.locator('[data-template-meta-toggle]').click();
     assert.equal(await page.locator('[data-template-field="description"]').inputValue(), '修改后仍保留正文');
@@ -204,6 +224,7 @@ async function fixture() {
     assert.equal(await page.locator('[data-template-field="name"]').evaluate(node => document.activeElement === node), true);
     await page.locator('[data-template-meta-done]').click();
     await page.locator('[data-template-cancel]').click();
+    await page.locator('[data-template-back]').click();
     const templateDir = path.join(root, 'knowledge/templates');
     const uploadFiles = ['01-通用基础模板.md', '07-兼容性差异类模板.md'].map(name => ({ name, mimeType: 'text/markdown', buffer: fs.readFileSync(path.join(templateDir, name)) }));
     const chooser = page.waitForEvent('filechooser');
@@ -213,26 +234,27 @@ async function fixture() {
     try { await page.locator('[data-template-status]').filter({ hasText: '模板上传成功：已保存 2 个 Markdown 模板' }).waitFor({timeout:5000}); } catch(error) { console.error('upload status:', await page.locator('[data-template-status]').innerText()); throw error; }
     assert.match(await page.locator('.template-upload-results').innerText(), /01-通用基础模板\.md.*已保存/);
     assert.match(await page.locator('.template-upload-results').innerText(), /不支持\.txt.*未保存/);
-    assert.equal(await page.locator('.template-list-item').count(), 4);
-    const importedId = await page.locator('.template-list-item.active').getAttribute('data-template-id');
+    await page.locator('[data-template-back]').click();
+    assert.equal(await page.locator('.template-catalog-open').count(), 4);
+    const importedId = await page.locator('.template-catalog-open').filter({ hasText: '01-通用基础模板' }).getAttribute('data-template-id');
     const stored = await context.request.get(`${url}/knowledge-center/api/templates/${importedId}`);
     assert.equal((await stored.json()).data.current.content, uploadFiles[0].buffer.toString('utf8'));
     templateGets = [];
     await page.reload();
-    await page.locator('.template-preview').filter({ hasText: '初始正文' }).waitFor();
-    assert.equal(await page.getByText('暂无正文，请进入 Markdown 编辑或上传文档。', { exact: true }).count(), 0);
+    await page.locator('.template-catalog-open').filter({ hasText: unique }).waitFor();
     assert.equal(templateGets.filter(value => value === '/knowledge-center/api/templates?summary=1').length, 1);
-    assert.equal(templateGets.filter(value => /^\/knowledge-center\/api\/templates\/[^/?]+$/.test(value)).length, 1);
+    assert.equal(templateGets.filter(value => /^\/knowledge-center\/api\/templates\/[^/?]+$/.test(value)).length, 0);
     templateGets = [];
-    await page.locator(`[data-template-id="${importedId}"]`).click();
-    await page.waitForFunction(id => document.querySelector('.template-list-item.active')?.dataset.templateId === id, importedId);
+    await page.locator(`.template-catalog-open[data-template-id="${importedId}"]`).click();
+    await page.waitForFunction(() => document.querySelector('.template-editor h3')?.textContent === '01-通用基础模板');
     assert.match(await page.locator('.template-preview').innerText(), /通用/);
     assert.equal(await page.getByText('暂无正文，请进入 Markdown 编辑或上传文档。', { exact: true }).count(), 0);
     assert.equal(templateGets.filter(value => value === '/knowledge-center/api/templates?summary=1').length, 1);
     assert.equal(templateGets.filter(value => /^\/knowledge-center\/api\/templates\/[^/?]+$/.test(value)).length, 1);
+    await page.locator('[data-template-back]').click();
     // 中文输入法回归：组词期间输入框节点和焦点必须保持，提交中文后再筛选。
     const ime = page.locator('[data-template-search]');
-    const unfilteredCount = await page.locator('.template-list-item').count();
+    const unfilteredCount = await page.locator('.template-catalog-open').count();
     const beforeIme = await ime.evaluate((el) => {
       window.__imeSearchNode = el;
       el.focus();
@@ -244,41 +266,40 @@ async function fixture() {
       return { same: window.__imeSearchNode === document.querySelector('[data-template-search]'), focused: document.activeElement === el };
     });
     assert.deepEqual(beforeIme, { same: true, focused: true });
-    assert.equal(await page.locator('.template-list-item').count(), unfilteredCount);
+    assert.equal(await page.locator('.template-catalog-open').count(), unfilteredCount);
     await ime.evaluate((el) => {
       el.value = '通用';
       el.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: '通用' }));
       el.dispatchEvent(new InputEvent('input', { bubbles: true, data: '通用' }));
     });
     assert.equal(await ime.inputValue(), '通用');
-    await page.waitForFunction(() => document.querySelectorAll('.template-list-item').length === 1);
-    assert.deepEqual(await page.locator('.template-list-item strong').allTextContents(), ['01-通用基础模板']);
+    await page.waitForFunction(() => document.querySelectorAll('.template-catalog-open').length === 1);
+    assert.deepEqual(await page.locator('.template-catalog-open strong').allTextContents(), ['01-通用基础模板']);
     assert.equal(await ime.evaluate(el => el === window.__imeSearchNode && document.activeElement === el), true);
     await ime.fill('');
-    await page.waitForFunction(expected => document.querySelectorAll('.template-list-item').length === expected, unfilteredCount);
-    assert.equal(await page.locator('.template-list-item').count(), unfilteredCount);
+    await page.waitForFunction(expected => document.querySelectorAll('.template-catalog-open').length === expected, unfilteredCount);
+    assert.equal(await page.locator('.template-catalog-open').count(), unfilteredCount);
     // 非 IME 的整段输入（粘贴等）与中英文混合查询仍能即时筛选。
     await ime.evaluate(el => {
       el.value = '兼容性差异';
       el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertFromPaste', data: el.value }));
     });
-    await page.waitForFunction(() => document.querySelectorAll('.template-list-item').length === 1);
-    assert.deepEqual(await page.locator('.template-list-item strong').allTextContents(), ['07-兼容性差异类模板']);
+    await page.waitForFunction(() => document.querySelectorAll('.template-catalog-open').length === 1);
+    assert.deepEqual(await page.locator('.template-catalog-open strong').allTextContents(), ['07-兼容性差异类模板']);
     await page.locator('[data-template-search]').fill(unique);
-    await page.waitForFunction(() => document.querySelectorAll('.template-list-item').length === 1);
-    assert.equal(await page.locator('.template-list-item').count(), 1);
-    await page.locator(`[data-template-id="${id}"]`).click();
+    await page.waitForFunction(() => document.querySelectorAll('.template-catalog-open').length === 1);
+    assert.equal(await page.locator('.template-catalog-open').count(), 1);
+    await page.locator(`.template-catalog-open[data-template-id="${id}"]`).click();
     for (const width of [1440, 768, 375]) {
       await page.setViewportSize({ width, height: 900 });
       await page.waitForFunction(expected => matchMedia(`(max-width: ${expected}px)`).matches, width);
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1));
-      if (width <= 600 && !(await page.locator('[data-template-workspace]').evaluate(node => node.classList.contains('template-list-collapsed')))) {
-        await page.locator('[data-template-list-toggle]').click();
-        await page.locator('[data-template-workspace].template-list-collapsed').waitFor();
-      }
+      assert.equal(await page.locator('.template-editor-only>.template-list').count(), 0, '正文工作区不应保留模板侧栏');
       await page.locator('.template-more summary').click(); await page.locator('[data-template-history]').click();
       assert.ok(await page.locator('.template-history').isVisible());
-      if (width <= 900) assert.ok((await page.locator('.template-history').boundingBox()).width <= 360);
+      const historyBounds = await page.locator('.template-history').boundingBox();
+      assert.ok(Math.abs(historyBounds.x - (width - historyBounds.width) / 2) <= 1, '历史弹窗应水平居中');
+      if (width <= 600) assert.ok(Math.abs(historyBounds.width - width) <= 1, '窄屏历史弹窗应铺满视口');
       await page.screenshot({ path: `/tmp/template-workspace-${width}.png`, fullPage: true });
       await page.keyboard.press('Escape'); assert.equal(await page.locator('.template-history').count(), 0);
     }
@@ -286,11 +307,11 @@ async function fixture() {
       const unnamedControls = await page.locator('[data-template-results] button, [data-template-results] summary, [data-template-results] [role="button"]').evaluateAll(nodes => nodes.filter(node => node.getClientRects().length && !(node.getAttribute('aria-label') || node.getAttribute('title') || node.textContent.trim())).map(node => node.outerHTML.slice(0, 180)));
       assert.deepEqual(unnamedControls, [], '模板工作区操作控件应有可访问名称');
       const readonly = await browser.newContext(); await readonly.addCookies([{ name: 'role', value: 'read-only', url }]);
-      const reader = await readonly.newPage(); await reader.goto(`${url}/knowledge-center/templates`); await reader.locator('.template-list-item').first().waitFor();
+      const reader = await readonly.newPage(); await reader.goto(`${url}/knowledge-center/templates`); await reader.locator('.template-catalog-open').first().waitFor();
       assert.equal(await reader.locator('[data-template-save],[data-template-upload],[data-template-edit]').count(), 0); await readonly.close();
     }
     assert.deepEqual(errors, []);
-    console.log('PASS: create/preview/save/history/restore/refresh/conflict draft/upload/search/narrow drawer/keyboard/read-only. Screenshots: /tmp/template-workspace-{1440,768,375}.png');
+    console.log('PASS: create/preview/save/history/restore/refresh/conflict draft/upload/search/centered dialog/keyboard/read-only. Screenshots: /tmp/template-workspace-{1440,768,375}.png');
     console.log(`Boundary: ${local ? 'production handler and frontend; isolated auth and in-memory aggregate' : 'external HTTP backend; external credentials/configuration'}`);
   } finally { await browser.close(); if (local) await local.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -52,10 +52,25 @@ test('管理员看到必要字段、单一更新时间和真实服务端分页',
 });
 
 test('切换阶段后立即搜索仍保留阶段条件', async ({ page }) => {
+  let releaseStageResponse;
+  let markStageRequestStarted;
+  const stageRequestStarted = new Promise(resolve => { markStageRequestStarted = resolve; });
+  const holdStageResponse = new Promise(resolve => { releaseStageResponse = resolve; });
+  await page.route('**/knowledge-center/api/assets/handbooks*', async route => {
+    const url = new URL(route.request().url());
+    const response = await route.fetch();
+    if (url.searchParams.get('status') === 'content_building' && !url.searchParams.has('q')) {
+      markStageRequestStarted();
+      await holdStageResponse;
+    }
+    await route.fulfill({ response });
+  });
   await page.goto(`${baseUrl}/knowledge-center/assets`);
   await expect(page.locator('.asset-workspace')).toHaveAttribute('data-asset-loaded', 'true');
   await page.locator('[data-asset-stage="content_building"]').click();
+  await stageRequestStarted;
   await page.locator('[data-asset-filter] input[name="q"]').fill('SQL');
+  releaseStageResponse();
   await page.locator('[data-asset-filter] button[type="submit"]').click();
   await expect(page).toHaveURL(/status=content_building/);
   await expect(page).toHaveURL(/q=SQL/);

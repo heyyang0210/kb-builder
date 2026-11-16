@@ -8,8 +8,15 @@ describe('增量构建前端契约', () => {
   const api = () => read('apps/knowledge-center-web/frontend/knowledge-center/common/api/incremental-api.js');
   const app = () => read('apps/knowledge-center-web/frontend/knowledge-center/app.js');
 
+  test('AI 写作在仓库无对应文件时使用平台正文快照', () => {
+    expect(app()).toContain('if (!file?.matched) return createPlatformOriginSnapshot(getMarkdown(), context)');
+    expect(app()).not.toContain("repository.mapped && !file?.matched");
+    expect(read('apps/knowledge-center-web/frontend/knowledge-center/modules/production/origin-snapshot.js')).toContain("originType: 'platform'");
+  });
+
   test('使用后端冻结的资源路由和业务状态', () => {
     expect(api()).toContain("const endpoint = '/knowledge-center/api/incremental-tasks'");
+    expect(api()).not.toContain('createIncrementalTask');
     for (const pathName of ['sources', 'target', 'draft', 'checks', 'candidate', 'reviews', 'publish', 'external-evidence']) expect(api()).toContain(`'${pathName}'`);
     for (const state of ['draft', 'editing', 'checked', 'candidate_ready', 'under_review', 'approved', 'rejected', 'published']) expect(view()).toContain(`${state}:`);
   });
@@ -24,22 +31,33 @@ describe('增量构建前端契约', () => {
   });
 
   test('工作区覆盖平台内闭环并禁止伪造外部成功', () => {
-    for (const label of ['来源材料', '修改范围', '增量草稿', '完整性检查', '按文档审核', '整体发布', '登记外部证据']) expect(view()).toContain(label);
-    expect(view()).toContain('人工选择');
+    for (const label of ['参考资料', '修改范围', '增量草稿', '完整性检查', '按文档审核', '整体发布', '登记外部证据']) expect(view()).toContain(label);
+    expect(view()).toContain('人工提供');
     expect(view()).not.toContain('GitLab（尚未接入）');
     expect(app()).toContain('expectedCandidateDigest: task?.candidate?.digest');
   });
 
-  test('增量生产采用五阶段可操作骨架并诚实标记后端待接入能力', () => {
-    for (const phase of ['建立任务', '确认输入', '生成与修订', '按文档审核', '整体发布']) expect(view()).toContain(phase);
+  test('增量生产五阶段只开放真实接口支持的动作', () => {
+    for (const phase of ['建立任务', '确认输入', '编写草稿', '按文档审核', '整体发布']) expect(view()).toContain(phase);
+    expect(view()).toContain("['generation', '草稿']");
+    expect(view()).toContain('>编写草稿</button>');
     for (const key of ['setup', 'inputs', 'generation', 'review', 'publish']) expect(view()).toContain(`['${key}',`);
     expect(view()).toContain('data-incremental-stage="${key}"');
     expect(view()).toContain('incremental-stage-layout');
     expect(view()).toContain('incremental-context');
-    for (const marker of ['data-incremental-prototype-toggle="markdown"', 'data-incremental-prototype-toggle="pingcode"', 'data-incremental-prototype-form="contract"', 'data-incremental-prototype-generate', 'data-incremental-prototype-publish']) expect(view()).toContain(marker);
-    expect(view()).toContain('当前启动动作只展示待接入反馈');
-    expect(view()).toContain('当前仅展示前端确认，不会改变正式版本');
+    expect(view()).toContain('Agent 自动生成暂未开放');
+    expect(view()).not.toContain('data-incremental-prototype-toggle');
+    expect(view()).not.toContain('data-incremental-prototype-form');
+    expect(view()).not.toContain('data-incremental-prototype-generate');
+    expect(view()).not.toContain('data-incremental-prototype-publish');
+    expect(view()).toContain('taskOutlineStatus === \'unavailable\'');
+    expect(view()).toContain('保存后作为本次任务的来源快照');
+    expect(view()).toContain('发布基线');
+    expect(view()).not.toContain('来源证据</h3>');
+    expect(view()).not.toContain('文档状态</h3>${documentStatusList(task)}');
     expect(app()).toContain("url.searchParams.set('stage', incrementalStage.dataset.incrementalStage)");
+    expect(app()).not.toContain('前端已记录启动意图');
+    expect(app()).not.toContain('前端已暂存大纲和双模板选择');
   });
 
   test('生产页按文档汇总审核状态并复用独立审核工作区', () => {
@@ -65,8 +83,14 @@ describe('增量构建前端契约', () => {
     expect(view()).toContain('data-incremental-revision');
     expect(review).toContain('task?.capabilities?.canReview');
     expect(view()).toContain('task.capabilities?.canRecordEvidence');
-    expect(view()).toContain('data-incremental-load-baselines');
+    expect(view()).not.toContain('data-incremental-load-baselines');
     expect(view()).not.toContain('<input name="baselineVersionId"');
+  });
+
+  test('增量草稿区分候选正文与用于精确变更的操作片段', () => {
+    expect(view()).toContain('候选正文<textarea name="content"');
+    expect(view()).toContain('<fieldset class="incremental-operation-group"><legend>具体变更操作</legend>');
+    expect(view()).toContain('变更后内容<textarea name="afterContent"');
   });
 
   test('增量工作区使用独立响应式样式', () => {
@@ -82,8 +106,14 @@ describe('增量构建前端契约', () => {
     const handbook = read('apps/knowledge-center-web/frontend/knowledge-center/modules/production/handbook-view.js');
     const css = read('apps/knowledge-center-web/frontend/knowledge-center/modules/production/production.css');
     const state = read('apps/knowledge-center-web/frontend/knowledge-center/common/state/app-state.js');
-    for (const label of ['文档目录', '全局预览', '预览', '编辑', '取消', '保存', 'AI 辅助写作', 'Markdown', '校验', '更多', '显示预览', '查看差异']) expect(handbook).toContain(label);
-    for (const marker of ['data-handbook-template', 'data-handbook-focus-toggle', 'data-handbook-ai-action="generate"', 'data-handbook-ai-action="check"', 'data-handbook-markdown-preview-toggle', 'data-handbook-history-compare']) expect(handbook).toContain(marker);
+    for (const label of ['文档目录', '全局预览', '预览', '编辑', '取消', '保存', 'AI 辅助写作', 'Markdown', '校验', '更多', '显示预览', '显示内容差异']) expect(handbook).toContain(label);
+    for (const marker of ['data-handbook-template', 'data-handbook-focus-toggle', 'data-handbook-ai-action="generate"', 'data-handbook-ai-action="check"', 'data-handbook-markdown-preview-toggle', 'data-handbook-history-workspace', 'data-handbook-history-select', 'data-handbook-history-diff']) expect(handbook).toContain(marker);
+    expect(handbook).toContain('与当前已保存 v');
+    expect(handbook).toContain('history.capabilities?.canRestore');
+    expect(app()).toContain('restoreScrollTop: window.scrollY');
+    expect(app()).toContain('editorScrollTop: editorElement?.scrollTop || 0');
+    expect(app()).toContain('并替换当前未保存编辑');
+    expect(app()).toContain('if (!window.confirm(message)) return;');
     expect(handbook).not.toContain('<span>文档模板</span>');
     for (const removed of ['data-handbook-generation-setup', '1 产品', '生成文档结构', 'Markdown / 富文本', 'GitLab 未匹配正文', '来源分支', 'data-handbook-reference-open', 'data-handbook-assistant-tab', 'data-handbook-reference-dialog', '粘贴 Markdown', '文档属性与内容依据']) expect(handbook).not.toContain(removed);
     const writing = read('apps/knowledge-center-web/frontend/knowledge-center/modules/production/production-writing-page.js');
@@ -95,7 +125,8 @@ describe('增量构建前端契约', () => {
     expect(css).toContain('position: sticky');
     expect(css).toContain('.handbook-more-menu');
     expect(css).toContain('.handbook-markdown-workspace.is-previewing');
-    expect(css).toContain('.handbook-history-comparison');
+    expect(css).toContain('.handbook-history-layout');
+    expect(css).toContain('.handbook-history-diff-removed');
     expect(state).toContain('templateByDocument: {}');
     expect(state).toContain('focusMode: false');
     expect(state).toContain('assistantOpen: false');
@@ -106,17 +137,15 @@ describe('增量构建前端契约', () => {
     expect(digest).toContain('return fallbackSha256(bytes)');
   });
 
-  test('文档生产以手册总览为主入口，任务工作区保留兼容视图', () => {
+  test('文档生产以手册总览为主入口，任务详情保留深链且任务视图不再占一级页签', () => {
     const css = read('apps/knowledge-center-web/frontend/knowledge-center/modules/production/production.css');
     expect(view()).toContain('data-production-overview-tab="handbooks"');
-    expect(view()).toContain('data-production-overview-tab="versions"');
-    expect(view()).toContain('data-production-overview-tab="tasks"');
+    expect(view()).not.toContain('data-production-overview-tab="tasks"');
     expect(view()).toContain('data-production-overview-tab="generations"');
     expect(view()).toContain('我的生成');
-    expect(view()).toContain('数据库版本汇总');
-    expect(view()).toContain('data-table-view-id="production-versions"');
-    expect(view()).toContain('item.completion || {}');
-    expect(view()).toContain('交付状态');
+    expect(view()).not.toContain('data-production-overview-tab="versions"');
+    expect(view()).not.toContain('数据库版本汇总');
+    expect(view()).not.toContain('production-version-overview');
     expect(view()).not.toContain('data-production-overview-tab="todo"');
     expect(view()).not.toContain('我的待办');
     expect(api()).toContain("/knowledge-center/api/production/generations?scope=mine");
@@ -129,14 +158,68 @@ describe('增量构建前端契约', () => {
     expect(view()).toContain('current?.completion?.label');
     expect(view()).toContain("task.completion.status !== 'completed'");
     expect(view()).toContain('projection?.outlineCatalog?.status !== \'ok\'');
-    expect(app()).toContain('requestedHandbookId ? Promise.resolve(null) : loadOutlineData()');
+    expect(app()).toContain('needsHandbookCatalog && !taskId ? loadOutlineData() : Promise.resolve(null)');
     expect(app()).toContain('data-production-handbook-search');
     expect(view()).toContain('data-table-column="${key}"');
     expect(view()).toContain('data-production-handbook-row');
-    expect(view()).toContain('href="/document-generation-workbench.html"');
-    expect(view()).toContain('target="_blank" rel="noopener"');
+    expect(view()).not.toContain('href="/document-generation-workbench.html"');
     expect(css).not.toContain('.production-column-picker');
     expect(css).toContain('.production-handbook-row');
+  });
+
+  test('生产进展阶段卡可筛选，未知状态单独呈现，活动日历展示任务标题和活动日期', () => {
+    const css = read('apps/knowledge-center-web/frontend/knowledge-center/modules/production/production.css');
+    expect(view()).toContain("const progressStages = ['待生成', '生成中', '待审核', '退回修订', '待发布', '已完成', '状态待确认']");
+    expect(view()).toContain("if (state === 'published') return '已完成'");
+    expect(view()).toContain('aria-label="${escapeHtml(accessibleLabel)}"');
+    expect(view()).toContain("if (['draft', 'pending', 'queued', 'not_started', 'waiting_generation'].includes(state)) return '待生成'");
+    expect(view()).toContain("return '状态待确认'");
+    expect(view()).toContain('const counts = Object.fromEntries(progressStages.map(stage => [stage, matchesFilters.filter(item => productionStage(item) === stage).length]))');
+    expect(css).toContain('.production-progress-stages { display: flex; gap: 2px; overflow-x: auto;');
+    expect(css).toContain('.production-progress-stages button[aria-pressed="true"] { border-bottom-color: var(--color-brand);');
+    expect(css).toContain('.production-progress-stages button strong { padding: 2px 6px;');
+    expect(view()).toContain('item?.updatedAt');
+    expect(view()).toContain('item?.createdAt');
+    expect(view()).toContain('item?.startedAt');
+    expect(view()).toContain('item?.activityAt');
+    expect(view()).toContain('item?.updated_at');
+    expect(view()).toContain('item?.plannedStartTime');
+    expect(view()).toContain('未记录活动日期');
+    expect(view()).toContain('data-production-overview-tab="progress"');
+    expect(view()).toContain("['list', 'calendar', 'charts'].includes(params.get('mode'))");
+    expect(view()).toContain("const calendarView = params.get('calendarView') === 'week' ? 'week' : 'month'");
+    expect(view()).toContain('Array.from({ length: dayCount }');
+    expect(view()).toContain('function productionActivityDate(item)');
+    expect(view()).toContain('const dayTasks = stageFiltered.filter(item => productionActivityDate(item) === day)');
+    expect(view()).toContain('adjustedWorkday ? \'is-adjusted-workday\'');
+    expect(view()).toContain('production-calendar-task-title');
+    expect(view()).toContain('production-calendar-task-more');
+    expect(view()).toContain('function productionTaskItems(projection)');
+    expect(view()).toContain('data-calendar-view="${calendarView}"');
+    expect(view()).toContain('当天没有符合条件的任务');
+    expect(view()).toContain('data-progress-mode="charts"');
+    expect(view()).toContain('data-progress-task-summary');
+    expect(view()).toContain('data-production-task-summary');
+    expect(view()).not.toContain('data-incremental-create-open');
+    expect(view()).not.toContain('data-incremental-create-dialog');
+    expect(view()).toContain('data-calendar-legend');
+    expect(view()).toContain("        : 'unconfigured'");
+    expect(view()).toContain('该年度工作日历未配置，日期性质未知');
+    expect(view()).toContain('const calendarConfigured = Boolean(projection?.workCalendars?.[center.getFullYear()]?.configured)');
+    expect(css).toContain('.production-calendar-header > button:not(.production-calendar-today) [data-lucide] { width: 14px; height: 14px;');
+    expect(css).toContain('.production-calendar-grid button.is-weekend { border-left: 3px solid var(--color-warning); background: var(--color-warning-subtle);');
+    expect(css).toContain('.production-calendar-grid button.is-holiday { border-left: 3px solid var(--color-danger);');
+    expect(css).toContain('.production-calendar-grid button.is-adjusted-workday { border-left: 3px solid var(--color-success);');
+    expect(css).toContain('.production-calendar-grid button[aria-current="date"] { outline: 2px solid var(--color-brand);');
+    expect(view()).not.toContain('href="${progressUrl(params, { day })}"');
+    expect(app()).toContain('ensureVisibleWorkCalendars');
+    expect(view()).toContain('for (const value of [item?.activityAt, item?.lastActivityAt, item?.updatedAt, item?.createdAt, item?.startedAt');
+    expect(view()).toContain('const activityAt = [item.updatedAt, item.updated_at, item.activityAt, item.lastActivityAt');
+    expect(read('packages/agent-runner-core/lib/incremental-build-service.js')).toContain("'created_at', 'updated_at', 'started_at'");
+    expect(view()).toContain('export function formatProductionTimestamp');
+    expect(app()).toContain('productionOverviewTab.dataset.productionOverviewTab');
+    expect(app()).toContain('data-progress-enter-task');
+    expect(api()).toContain('/knowledge-center/api/production/work-calendar?year=');
   });
 
   test('审核与发布采用三步页面并保留完整差异和行级意见', () => {

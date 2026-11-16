@@ -110,7 +110,7 @@
   color: var(--color-text);
 }
 .my-task-board-head nav button,
-.asset-stage-grid > a,
+.catalog-stage-tabs > a,
 .document-task-tabs button,
 .template-page-tabs button,
 .platform-admin-page .platform-tab,
@@ -120,7 +120,7 @@
   font-size: var(--workspace-action-font-size);
 }
 .my-task-board-head nav button.active,
-.asset-stage-grid > a[aria-current="page"],
+.catalog-stage-tabs > a[aria-current="page"],
 .document-task-tabs button.active,
 .template-page-tabs button[aria-selected="true"],
 .platform-admin-page .platform-tab[aria-current="page"],
@@ -172,14 +172,12 @@
 .metric,
 .task-summary,
 .asset-summary,
-.domain-task-summary-card,
-.outline-list-summary > div {
+.domain-task-summary-card {
   border: 1px solid var(--appearance-border);
   border-radius: var(--appearance-radius);
   background: var(--appearance-surface);
   box-shadow: none;
 }
-.outline-list-summary > div { padding: var(--space-3) var(--space-4); }
 .task-summary-primary { background: var(--appearance-subtle); }
 .task-summary-primary .summary-icon,
 .capability-state > .icon-wrap {

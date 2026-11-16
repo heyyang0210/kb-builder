@@ -44,6 +44,8 @@
   --space-8: 32px;
   --content-max: 1320px;
   --font-size-base: 15.4px;
+  --font-family-platform: "Microsoft YaHei", "微软雅黑", sans-serif;
+  --font-family-code: ui-monospace, "Cascadia Code", "SFMono-Regular", Consolas, monospace;
   --workspace-control-height: 44px;
   --workspace-action-font-size: 14px;
   --workspace-meta-font-size: 13px;

@@ -4,6 +4,7 @@ import { emptyState } from '../../common/components/ui.js';
 import { escapeHtml } from '../../common/utils/dom.js';
 import { safeMarkdown } from '../repository/view.js';
 import { renderDatabaseMarkdown } from '../../common/markdown/markdown-renderer.js';
+import { writingChanges } from './writing-changes.js';
 
 const first = (...values) => values.find(value => value !== undefined && value !== null && value !== '');
 const list = value => Array.isArray(value) ? value : [];
@@ -307,13 +308,35 @@ function reviewDialog() {
   return `<dialog class="asset-dialog handbook-review-dialog" data-handbook-review-dialog aria-labelledby="handbook-review-dialog-title" data-scroll-region="dialog"><form data-handbook-review-form><header class="asset-dialog-heading"><div><h2 id="handbook-review-dialog-title">提交审核</h2><p>提交已保存版本到审核任务；继续编辑不会改变审核内容。审核通过后发布为 GitLab MR。</p></div><button class="icon-button asset-dialog-close" type="button" data-handbook-review-close aria-label="关闭"><i data-lucide="x" aria-hidden="true"></i></button></header><div class="handbook-review-confirmation"><strong data-handbook-review-count>已选择 0 篇文档</strong><label>默认审核人<select name="reviewerId" data-handbook-reviewer required><option value="">请选择审核人（可以是本人）</option></select></label><div class="handbook-review-overrides" data-handbook-review-overrides aria-label="逐篇审核人设置"></div><label>提交说明<textarea name="note" rows="3" maxlength="500"></textarea></label><p role="status" data-handbook-review-dialog-status></p></div><footer><button class="button tertiary" type="button" data-handbook-review-close>取消</button><button class="button" type="submit">确认提交</button></footer></form></dialog>`;
 }
 
+function historyWorkspace(ui) {
+  const history = ui.history;
+  const documentId = history.documentId;
+  const items = list(history.items);
+  const current = ui.serverDrafts?.[documentId]?.draft?.revision || null;
+  const canRestore = history.capabilities?.canRestore ?? ui.serverDrafts?.[documentId]?.capabilities?.canRestore;
+  const selected = items.find(item => item.revisionId === history.selectedRevisionId) || null;
+  const selectedIsCurrent = Boolean(selected && selected.revisionId === current?.revisionId);
+  const repository = repositoryFor(ui);
+  const renderMarkdown = markdown => renderDatabaseMarkdown(safeMarkdown, markdown, repositoryDocument(repository, documentId)?.path || '', { handbookId: repository.handbookId, branch: repository.branch, language: repository.language || 'zh' }).html;
+  const diffText = text => `<pre>${escapeHtml(text)}</pre>`;
+  const content = selected ? history.showDiff && !selectedIsCurrent
+    ? writingChanges(String(selected.markdown || ''), String(current?.markdown || '')).map(segment => segment.type === 'equal'
+      ? `<div class="handbook-history-diff-equal">${diffText(segment.text)}</div>`
+      : `<section class="handbook-history-diff-change"><h4>版本改动</h4>${segment.before ? `<div class="handbook-history-diff-removed"><strong>删除</strong>${diffText(segment.before)}</div>` : ''}${segment.after ? `<div class="handbook-history-diff-added"><strong>新增</strong>${diffText(segment.after)}</div>` : ''}</section>`).join('')
+    : renderMarkdown(String(selected.markdown || '')) : '';
+  const rows = items.map(item => {
+    const isCurrent = item.revisionId === current?.revisionId;
+    const isSelected = item.revisionId === selected?.revisionId;
+    return `<button class="handbook-history-item${isSelected ? ' is-selected' : ''}" type="button" data-handbook-history-select="${escapeHtml(item.revisionId)}" aria-pressed="${isSelected}"><strong>v${escapeHtml(item.version)}</strong>${isCurrent ? '<span class="handbook-history-current">当前</span>' : ''}<span>${escapeHtml(item.createdBy?.displayName || '未知用户')}</span><time>${escapeHtml(new Date(item.createdAt).toLocaleString('zh-CN'))}</time></button>`;
+  }).join('');
+  return `<section class="handbook-history-workspace" data-handbook-history-workspace aria-labelledby="handbook-history-title"><header class="handbook-history-toolbar"><div><h2 id="handbook-history-title" tabindex="-1" data-handbook-history-title>历史版本</h2><p>${escapeHtml(history.documentTitle || '当前文档')}</p></div><div class="handbook-history-actions"><label><input type="checkbox" data-handbook-history-diff ${history.showDiff ? 'checked' : ''} ${!selected || selectedIsCurrent ? 'disabled' : ''}>显示内容差异</label><button class="button secondary" type="button" data-handbook-history-close>返回编辑</button></div></header><div class="handbook-history-layout${history.mobilePane === 'content' ? ' is-mobile-content' : ''}"><nav class="handbook-history-list" aria-label="历史版本列表" data-scroll-region="panel">${history.loading ? '<p role="status">正在读取历史版本…</p>' : history.error ? `<p role="alert">历史版本读取失败：${escapeHtml(history.error)}</p><button class="button secondary" type="button" data-handbook-history-retry>重试</button>` : rows || '<p>暂无历史版本。</p>'}</nav><article class="handbook-history-content" tabindex="-1" data-handbook-history-content data-scroll-region="content">${history.mobilePane === 'content' ? '<button class="handbook-history-back-list" type="button" data-handbook-history-list>返回版本列表</button>' : ''}${selected ? `<header><div><h3>v${escapeHtml(selected.version)}${selectedIsCurrent ? ' · 当前已保存版本' : ''}</h3><p>${escapeHtml(selected.createdBy?.displayName || '未知用户')} · ${escapeHtml(new Date(selected.createdAt).toLocaleString('zh-CN'))}${history.showDiff && !selectedIsCurrent ? ` · 与当前已保存 v${escapeHtml(current?.version || '')} 对比` : ''}</p></div>${!selectedIsCurrent && canRestore !== false ? `<button class="button" type="button" data-handbook-history-restore="${escapeHtml(selected.revisionId)}" ${history.restoring ? 'disabled' : ''}>${history.restoring ? '正在恢复…' : '恢复为新版本'}</button>` : ''}</header>${history.actionError ? `<p role="alert">${escapeHtml(history.actionError)}</p>` : ''}${content}` : !history.loading && !history.error && items.length ? '<p>请选择一个历史版本。</p>' : ''}</article></div><p class="handbook-history-status" role="status" aria-live="polite">${escapeHtml(history.status || '')}</p></section>`;
+}
+
 function draftDialogs(ui) {
   const history = ui.history;
+  if (history) return historyWorkspace(ui);
   const conflict = ui.conflict;
-  const current = history?.documentId ? ui.serverDrafts?.[history.documentId]?.draft?.revision?.markdown || '' : '';
-  const selected = list(history?.items).find(item => item.revisionId === history?.compareRevisionId);
-  const comparison = selected ? `<section class="handbook-history-comparison"><div><h3>当前草稿</h3><pre>${escapeHtml(current)}</pre></div><div><h3>历史 v${selected.version}</h3><pre>${escapeHtml(selected.markdown || '')}</pre></div></section>` : '';
-  return `<dialog class="asset-dialog handbook-history-dialog" data-handbook-history-dialog data-scroll-region="dialog"><div><header class="asset-dialog-heading"><div><h2>历史版本</h2><p>恢复历史版本会创建新的草稿 revision。</p></div><button class="icon-button asset-dialog-close" type="button" data-handbook-history-close aria-label="关闭"><i data-lucide="x"></i></button></header><div class="handbook-history-list" data-scroll-region="panel">${history?.loading ? '<p role="status">正在读取历史…</p>' : list(history?.items).map(item => `<article><div><strong>v${item.version}</strong><span>${escapeHtml(item.createdBy?.displayName || '未知用户')} · ${escapeHtml(new Date(item.createdAt).toLocaleString('zh-CN'))}</span></div><code>${escapeHtml(String(item.contentDigest || '').slice(0, 12))}</code><button class="button tertiary compact" type="button" data-handbook-history-compare="${escapeHtml(item.revisionId)}">查看差异</button><button class="button tertiary compact" type="button" data-handbook-history-restore="${escapeHtml(item.revisionId)}">恢复为新版本</button></article>`).join('') || '<p>暂无历史版本。</p>'}</div>${comparison}</div></dialog><dialog class="asset-dialog handbook-conflict-dialog" data-handbook-conflict-dialog data-scroll-region="dialog"><div><header class="asset-dialog-heading"><div><h2>草稿版本冲突</h2><p>服务器草稿已变化，本地内容已保留。</p></div><button class="icon-button asset-dialog-close" type="button" data-handbook-conflict-close aria-label="关闭"><i data-lucide="x"></i></button></header><div class="handbook-conflict-columns"><label>本地内容<textarea readonly>${escapeHtml(conflict?.localMarkdown || '')}</textarea></label><label>服务器内容<textarea readonly>${escapeHtml(conflict?.serverDraft?.revision?.markdown || '')}</textarea></div><footer><button class="button tertiary" type="button" data-handbook-conflict-copy>复制本地内容</button><button class="button secondary" type="button" data-handbook-conflict-reload>重新载入服务器版本</button><button class="button" type="button" data-handbook-conflict-merge>保留本地并人工合并</button></footer></div></dialog>`;
+  return `<dialog class="asset-dialog handbook-conflict-dialog" data-handbook-conflict-dialog data-scroll-region="dialog"><div><header class="asset-dialog-heading"><div><h2>草稿版本冲突</h2><p>服务器草稿已变化，本地内容已保留。</p></div><button class="icon-button asset-dialog-close" type="button" data-handbook-conflict-close aria-label="关闭"><i data-lucide="x"></i></button></header><div class="handbook-conflict-columns"><label>本地内容<textarea readonly>${escapeHtml(conflict?.localMarkdown || '')}</textarea></label><label>服务器内容<textarea readonly>${escapeHtml(conflict?.serverDraft?.revision?.markdown || '')}</textarea></div><footer><button class="button tertiary" type="button" data-handbook-conflict-copy>复制本地内容</button><button class="button secondary" type="button" data-handbook-conflict-reload>重新载入服务器版本</button><button class="button" type="button" data-handbook-conflict-merge>保留本地并人工合并</button></footer></div></dialog>`;
 }
 
 export function renderHandbookProduction({ projection, currentUser, ui = {}, templateProjection = {}, region = 'page' }) {
@@ -337,6 +360,9 @@ export function renderHandbookProduction({ projection, currentUser, ui = {}, tem
     return `<div class="handbook-production-page"><header class="handbook-production-header"><div><a data-handbook-return href="/knowledge-center/assets?handbookId=${encodeURIComponent(handbookId)}"><i data-lucide="arrow-left" aria-hidden="true"></i>返回进入位置</a><h1>${escapeHtml(handbookName)}</h1></div></header><section class="handbook-production-error" role="status"><h2>当前文档不在“只看我负责”范围</h2><p>这是一项目录过滤条件，不代表文档访问权限。切换到全部文档后可继续查看。</p><a class="button secondary" href="/knowledge-center/production/handbook/${encodeURIComponent(handbookId)}?documentId=${encodeURIComponent(requestedId)}">查看全部文档</a></section></div>`;
   }
   const selected = visible.find(document => document.id === requestedId) || visible[0] || null;
+  if (region === 'page' && ui.history?.documentId && documents.some(document => document.id === ui.history.documentId)) {
+    return `<div class="handbook-production-page is-history-mode">${draftDialogs(ui)}</div>`;
+  }
   if (!ui.directoryInitialized) { ui.directoryDrawerOpen = window.matchMedia('(min-width: 1001px)').matches; ui.directoryInitialized = true; }
   const editorHtml = editor(selected, outline, { ...ui, handbookName, handbookId }, templateProjection);
   const dialogsHtml = `${reviewSelectionDialog(documents, ui)}${reviewDialog()}${draftDialogs(ui)}`;

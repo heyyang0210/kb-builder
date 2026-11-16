@@ -25,7 +25,7 @@ async function startApi() {
     handler(req, res, actor === 'reviewer' ? reviewer : actor === 'readonly' ? readOnly : actor === 'contributor' ? contributor : editor);
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  return { server, baseUrl: `http://127.0.0.1:${server.address().port}` };
+  return { server, service, baseUrl: `http://127.0.0.1:${server.address().port}` };
 }
 
 async function request(baseUrl, method, path, body, key, actor = 'editor') {
@@ -37,15 +37,15 @@ async function request(baseUrl, method, path, body, key, actor = 'editor') {
   return { status: response.status, body: await response.json() };
 }
 
-async function seed(baseUrl) {
-  const task = await request(baseUrl, 'POST', '/knowledge-center/api/incremental-tasks', { name: '阅读意见门禁', handbookId: 'DB-001', businessVersion: '23.4', baselineVersionId: 'reader-baseline' }, 'reading-create');
-  const id = task.body.data.id;
-  await request(baseUrl, 'POST', `/knowledge-center/api/incremental-tasks/${id}/sources`, { sourceType: 'manual', label: '阅读意见', content: '验证物理规格' }, 'reading-source');
-  await request(baseUrl, 'PATCH', `/knowledge-center/api/incremental-tasks/${id}/target`, { documentIds: ['doc/产品规格/物理规格.md'], sectionIds: ['YFS'], language: 'zh-CN' }, 'reading-target');
-  await request(baseUrl, 'PUT', `/knowledge-center/api/incremental-tasks/${id}/draft`, { editVersion: 0, content: '# 物理规格\n\nYFS 参数说明', operations: [{ type: 'update', documentId: 'doc/产品规格/物理规格.md', nodeId: 'YFS', beforeDigest: 'before', after: { content: 'YFS 参数说明' } }] }, 'reading-draft');
-  await request(baseUrl, 'POST', `/knowledge-center/api/incremental-tasks/${id}/checks`, {}, 'reading-checks');
-  const candidate = await request(baseUrl, 'POST', `/knowledge-center/api/incremental-tasks/${id}/candidate`, {}, 'reading-candidate');
-  const review = await request(baseUrl, 'POST', `/knowledge-center/api/incremental-tasks/${id}/reviews`, {}, 'reading-review');
+async function seed(api) {
+  const task = api.service.create(editor, 'reading-create', { name: '阅读意见门禁', handbookId: 'DB-001', businessVersion: '23.4', baselineVersionId: 'reader-baseline' });
+  const id = task.id;
+  await request(api.baseUrl, 'POST', `/knowledge-center/api/incremental-tasks/${id}/sources`, { sourceType: 'manual', label: '阅读意见', content: '验证物理规格' }, 'reading-source');
+  await request(api.baseUrl, 'PATCH', `/knowledge-center/api/incremental-tasks/${id}/target`, { documentIds: ['doc/产品规格/物理规格.md'], sectionIds: ['YFS'], language: 'zh-CN' }, 'reading-target');
+  await request(api.baseUrl, 'PUT', `/knowledge-center/api/incremental-tasks/${id}/draft`, { editVersion: 0, content: '# 物理规格\n\nYFS 参数说明', operations: [{ type: 'update', documentId: 'doc/产品规格/物理规格.md', nodeId: 'YFS', beforeDigest: 'before', after: { content: 'YFS 参数说明' } }] }, 'reading-draft');
+  await request(api.baseUrl, 'POST', `/knowledge-center/api/incremental-tasks/${id}/checks`, {}, 'reading-checks');
+  const candidate = await request(api.baseUrl, 'POST', `/knowledge-center/api/incremental-tasks/${id}/candidate`, {}, 'reading-candidate');
+  const review = await request(api.baseUrl, 'POST', `/knowledge-center/api/incremental-tasks/${id}/reviews`, {}, 'reading-review');
   return { id, digest: candidate.body.data.digest, reviewId: review.body.data.id };
 }
 
@@ -55,7 +55,7 @@ describe('审核阅读页意见闭环 API 门禁', () => {
   afterEach(() => new Promise(resolve => api.server.close(resolve)));
 
   (process.env.PLAYWRIGHT_MODULE ? test : test.skip)('浏览器选区提交、侧栏跨文档定位、刷新与处理页回读真实 API', async () => {
-    const seeded = await seed(api.baseUrl);
+    const seeded = await seed(api);
     const { chromium } = require(process.env.PLAYWRIGHT_MODULE);
     const browser = await chromium.launch({ headless: true, executablePath: process.env.CHROMIUM_PATH });
     try {
@@ -129,7 +129,7 @@ describe('审核阅读页意见闭环 API 门禁', () => {
   }, 60000);
 
   test('阅读页 document_span 意见保留精确定位并出现在同一审核线程', async () => {
-    const seeded = await seed(api.baseUrl);
+    const seeded = await seed(api);
     const result = await request(api.baseUrl, 'POST', `/knowledge-center/api/incremental-tasks/${seeded.id}/reviews/${seeded.reviewId}/comments`, {
       comment: '请核对 YFS 与 23.4 版本依赖', candidateDigest: seeded.digest,
       anchor: {
@@ -146,7 +146,7 @@ describe('审核阅读页意见闭环 API 门禁', () => {
   });
 
   test('候选摘要冲突拒绝意见且不会落库，调用方可保留原输入后重试', async () => {
-    const seeded = await seed(api.baseUrl);
+    const seeded = await seed(api);
     const result = await request(api.baseUrl, 'POST', `/knowledge-center/api/incremental-tasks/${seeded.id}/reviews/${seeded.reviewId}/comments`, { comment: '待重试意见', candidateDigest: 'stale-digest', anchor: { documentId: 'doc/产品规格/物理规格.md', nodeId: 'YFS', anchorKind: 'document_span' } }, 'reading-conflict');
     expect(result.status).toBe(409);
     expect(result.body.error.code).toBe('REVIEW_CANDIDATE_CONFLICT');
@@ -156,14 +156,14 @@ describe('审核阅读页意见闭环 API 门禁', () => {
   });
 
   test('只读阅读角色不能提交意见', async () => {
-    const seeded = await seed(api.baseUrl);
+    const seeded = await seed(api);
     const result = await request(api.baseUrl, 'POST', `/knowledge-center/api/incremental-tasks/${seeded.id}/reviews/${seeded.reviewId}/comments`, { comment: '越权意见', candidateDigest: seeded.digest }, 'reading-forbidden', 'readonly');
     expect(result.status).toBe(403);
     expect(result.body.error.code).toBe('ACTION_FORBIDDEN');
   });
 
   test('知识编辑者可读取审核中候选并提出意见，但不能编辑候选', async () => {
-    const seeded = await seed(api.baseUrl);
+    const seeded = await seed(api);
     const readable = await request(api.baseUrl, 'GET', `/knowledge-center/api/incremental-tasks/${seeded.id}`, undefined, undefined, 'contributor');
     expect(readable).toMatchObject({ status: 200, body: { data: { capabilities: { canComment: true, canEdit: false, canReview: false, canPublish: false } } } });
     const comment = await request(api.baseUrl, 'POST', `/knowledge-center/api/incremental-tasks/${seeded.id}/reviews/${seeded.reviewId}/comments`, { comment: '编辑者提出的普通意见', severity: 'normal', candidateDigest: seeded.digest }, 'contributor-comment', 'contributor');
@@ -173,7 +173,7 @@ describe('审核阅读页意见闭环 API 门禁', () => {
   });
 
   test('具备审核能力的账号可作出审核决定，权限由服务端能力控制', async () => {
-    const seeded = await seed(api.baseUrl);
+    const seeded = await seed(api);
     const result = await request(api.baseUrl, 'POST', `/knowledge-center/api/incremental-tasks/${seeded.id}/reviews/${seeded.reviewId}/decision`, { decision: 'approve', comment: '本人复核通过' }, 'reading-self-review', 'reviewer');
     expect(result.status).toBe(200);
     expect(result.body.data.status).toBe('approved');

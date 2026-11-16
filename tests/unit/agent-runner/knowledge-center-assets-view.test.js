@@ -52,7 +52,7 @@ describe('知识资产工作台前端契约', () => {
     expect(actionPanel).not.toContain('B：');
   });
 
-  test('侧栏按主操作、工作和管理分组，关闭使用 Lucide 图标', () => {
+  test('侧栏按主操作、工作和管理分组，关闭使用中性 Lucide 图标', () => {
     expect(view()).not.toContain('>文档工作<');
     expect(view()).toContain('asset-action-primary');
     expect(view()).toContain('<h3>工作入口</h3>');
@@ -68,7 +68,8 @@ describe('知识资产工作台前端契约', () => {
     expect(base).toContain('button.icon-button[aria-label^="关闭"] svg');
     expect(base).toContain('width: 20px;');
     expect(base).toContain('min-width: 44px;');
-    expect(base).toContain('color: var(--color-danger);');
+    expect(base).toContain('color: var(--color-icon-default);');
+    expect(base).not.toContain('color: var(--color-danger);');
   });
 
   test('静态上下文标签不使用蓝色，新增手册使用蓝色交互样式', () => {

@@ -58,57 +58,46 @@ test('文档生产入口读取真实增量任务列表而非演示数据', async
   await expect(page.locator('#view-root')).not.toContainText('演示数据');
 });
 
-test('文档生产默认展示手册视图，任务视图继续提供增量工作区', async ({ page }) => {
+test('文档生产主流程留在统一工作区，任务视图继续提供增量工作区', async ({ page }) => {
+  await mockPublishedProductionOutline(page, 'main-production-flow-e2e');
+  await page.route('**/knowledge-center/api/assets/handbooks?*', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ success: true, data: { items: [
+      { handbookId: 'main-production-flow-e2e', name: '主流程回归手册', productName: 'YashanDB', ownerAName: '何阳' },
+    ] } }),
+  }));
   await page.goto(`${baseUrl}/knowledge-center/production`);
   await expect(page.getByRole('tab', { name: '手册视图' })).toHaveAttribute('aria-selected', 'true');
-  const generatorEntry = page.locator('a[href="/document-generation-workbench.html"]');
-  await expect(generatorEntry).toHaveCount(1);
-  await expect(generatorEntry).toHaveAttribute('target', '_blank');
-  await expect(generatorEntry).toContainText('文档生成工作台');
+  await expect(page.locator('a[href="/document-generation-workbench.html"]')).toHaveCount(0);
+  const handbookRow = page.locator('[data-production-handbook-row]').filter({ hasText: '主流程回归手册' });
+  await expect(handbookRow).toHaveAttribute('data-handbook-href', '/knowledge-center/production/handbook/main-production-flow-e2e');
+  await handbookRow.click();
+  await expect(page).toHaveURL(/\/knowledge-center\/production\/handbook\/main-production-flow-e2e/);
+  await expect(page.locator('.handbook-production-page')).toBeVisible();
   await page.getByRole('tab', { name: '任务视图' }).click();
   await expect(page.getByRole('tab', { name: '任务视图' })).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('.incremental-sidebar')).toBeVisible();
   await expect(page.locator('.incremental-sidebar')).toContainText('增量任务');
 });
 
-test('数据库版本视图按版本汇总任务和目标文档，并复用完成投影', async ({ page }) => {
-  // 版本行的展示用例完整提供目录及资产夹具，避免混入真实手册规模和冷加载。
+test('旧数据库版本链接回退到手册视图且不再显示数据库版本页', async ({ page }) => {
   await page.route('**/knowledge-center/api/assets/handbooks?*', route => route.fulfill({
     status: 200, contentType: 'application/json',
     body: JSON.stringify({ success: true, data: { items: [] } }),
   }));
   await page.route('**/knowledge-center/api/incremental-tasks*', route => route.fulfill({
-    status: 200,
-    contentType: 'application/json',
-    body: JSON.stringify({ success: true, data: [
-      { id: 'version-task-1', handbookId: 'DB-001', handbookName: '安装手册', businessVersion: '23.4', ownerName: '张三', target: { documentIds: ['d1', 'd2', 'd3', 'd4'] }, completion: { status: 'pending', label: '待合并回读', facts: { mergeState: 'opened' } }, updatedAt: '2026-09-28T08:00:00.000Z' },
-      { id: 'version-task-2', handbookId: 'DB-001', handbookName: '安装手册', businessVersion: '23.4', target: { documentIds: ['d1'] }, completion: { status: 'completed', label: '已完成' }, updatedAt: '2026-09-28T09:00:00.000Z' },
-      { id: 'version-task-4', handbookId: 'DB-003', businessVersion: '25.1', completion: { status: 'completed', label: '已完成' }, updatedAt: '2026-09-28T11:00:00.000Z' },
-      { id: 'version-task-3', handbookId: 'DB-002', handbookName: '运维手册', businessVersion: '24.1', ownerName: '李四', target: { documentIds: ['d9'] }, completion: { status: 'pending', label: '待合并回读', facts: { mergeState: 'opened' } }, updatedAt: '2026-09-28T10:00:00.000Z' },
-    ] }),
+    status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: [] }),
   }));
   await page.route('**/knowledge-center/api/outline/catalog', route => route.fulfill({
     status: 200, contentType: 'application/json',
-    body: JSON.stringify({ success: true, data: { items: [{ id: 'outline-1', handbookId: 'DB-001', state: 'published' }, { id: 'outline-2', handbookId: 'DB-002', state: 'published' }] } }),
+    body: JSON.stringify({ success: true, data: { items: [] } }),
   }));
   await page.goto(`${baseUrl}/knowledge-center/production?view=versions`);
-  await expect(page.getByRole('tab', { name: '数据库版本' })).toHaveAttribute('aria-selected', 'true');
-  await expect(page.locator('.production-version-overview')).toContainText('23.4');
-  await expect(page.locator('.production-version-overview')).toContainText('目标文档数');
-  await expect(page.locator('.production-version-overview')).toContainText('待合并回读');
-  await expect(page.locator('.production-version-overview')).toContainText('责任：李四');
-  await expect(page.locator('.production-version-overview')).toContainText('下一步：等待合并并回读');
-  await expect(page.locator('.production-version-overview tbody tr')).toHaveCount(3);
-  const mixed = page.locator('.production-version-overview tbody tr').filter({ has: page.getByText('23.4', { exact: true }) });
-  await expect(mixed.locator('td').nth(3)).toHaveText('1');
-  await expect(mixed.locator('td').nth(4)).toHaveText('1');
-  await expect(mixed).toContainText('待合并回读');
-  await expect(mixed).not.toContainText('等待后续变更');
-  await expect(mixed).toHaveAttribute('data-handbook-href', '/knowledge-center/production?view=tasks&taskId=version-task-1');
-  const complete = page.locator('.production-version-overview tbody tr').filter({ has: page.getByText('25.1', { exact: true }) });
-  await expect(complete.locator('td').nth(4)).toHaveText('0');
-  await expect(complete).toContainText('等待后续变更');
-  await expect(complete).toHaveAttribute('data-handbook-href', '/knowledge-center/production?view=tasks&taskId=version-task-4');
+  await expect(page.getByRole('tab', { name: '手册视图' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('tab', { name: '数据库版本' })).toHaveCount(0);
+  await expect(page.locator('.production-version-overview')).toHaveCount(0);
+  await expect(page.locator('.production-overview-empty')).toContainText('暂无可生产的手册');
 });
 
 test('文档生产复用公共字段抽屉并迁移旧偏好', async ({ page }) => {

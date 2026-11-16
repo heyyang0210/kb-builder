@@ -36,7 +36,7 @@ function renderStageSummary(catalog) {
   const active = new URLSearchParams(window.location.search).get('status') || '';
   const total = Object.values(values).reduce((sum, value) => sum + (Number(value) || 0), 0);
   const tabs = [['', '全部手册', total || catalog.total || 0], ...stages.map(([key, label]) => [key, label, values[key] ?? 0])];
-  return `<nav class="asset-stage-grid" aria-label="手册阶段筛选">${tabs.map(([key, label, value]) => `<a href="/knowledge-center/assets${key ? `?status=${key}` : ''}" data-asset-stage="${key}" ${active === key ? 'aria-current="page"' : ''}><span>${label}</span><strong>${escapeHtml(value)}</strong></a>`).join('')}</nav>`;
+  return `<nav class="catalog-stage-tabs" aria-label="手册阶段筛选">${tabs.map(([key, label, value]) => `<a href="/knowledge-center/assets${key ? `?status=${key}` : ''}" data-asset-stage="${key}" ${active === key ? 'aria-current="page"' : ''}><span>${label}</span><strong>${escapeHtml(value)}</strong></a>`).join('')}</nav>`;
 }
 
 function renderFilters(catalog, params, inactive) {

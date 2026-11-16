@@ -9,6 +9,7 @@ describe('知识中心动态实体组合选择器契约', () => {
   const app = read('apps/knowledge-center-web/frontend/knowledge-center/app.js');
   const review = read('apps/knowledge-center-web/frontend/knowledge-center/modules/review-publishing/view.js');
   const styles = read('apps/knowledge-center-web/frontend/knowledge-center/common/components.css');
+  const platform = read('apps/knowledge-center-web/frontend/knowledge-center/modules/platform-admin/view.js');
 
   test('使用渐进增强并保留原生表单值和 change 事件', () => {
     expect(component).toContain("root.querySelectorAll('select[data-searchable-select]')");
@@ -84,7 +85,7 @@ describe('知识中心动态实体组合选择器契约', () => {
     expect(design.match(/^\| CB-\d{2} \|/gm)).toHaveLength(32);
   });
 
-  test('用户确认的 31 行下拉框清单逐项有实现证据', () => {
+  test('用户确认的 31 行控件清单逐项有实现证据', () => {
     const files = {
       assets: read('apps/knowledge-center-web/frontend/knowledge-center/modules/assets/view.js'),
       dashboard: read('apps/knowledge-center-web/frontend/knowledge-center/modules/dashboard/view.js'),
@@ -101,7 +102,7 @@ describe('知识中心动态实体组合选择器契约', () => {
       ['assets', 'data-asset-branch', 'combo'], ['assets', 'data-asset-page-size', 'native'],
       ['assets', 'data-mapping-connection-select', 'combo'], ['assets', 'name="ownerA"', 'combo'],
       ['assets', '手册状态<select name="status"', 'native'], ['assets', '所属产品', 'combo'],
-      ['dashboard', 'data-domain-task-assignee', 'combo'], ['outlines', 'data-outline-status-filter', 'native'],
+      ['dashboard', 'data-domain-task-assignee', 'combo'], ['outlines', 'data-outline-stage', 'native'],
       ['outlines', 'data-outline-primary-domain', 'combo'], ['outlines', 'data-outline-node-domain-filter', 'combo'],
       ['outlines', 'data-outline-assignment-domain-filter', 'combo'], ['outlines', 'data-domain-task-assignee', 'combo'],
       ['platform', 'name="timeoutMs"', 'native'], ['platform', 'name="leaderPrincipalId"', 'combo'],
@@ -132,6 +133,20 @@ describe('知识中心动态实体组合选择器契约', () => {
       'name="outlineId"', 'name="sourceType"', 'name="sourceTemplate"',
       'data-review-opinion-filter', 'data-template-filter',
     ]) expect(component).not.toContain(marker);
+  });
+
+  test('负责人配置位于人员管理弹窗，任务规则页不再配置负责人', () => {
+    expect(platform).toContain('data-task-responsibility-dialog');
+    expect(platform).toContain('PingCode 任务负责人');
+    expect(platform).toContain('name="knowledgeCenterOwnerId"');
+    expect(platform).toContain('data-searchable-select');
+    expect(platform).not.toContain('/knowledge-center/document-tasks?tab=config');
+    expect(app).toContain('saveDocumentTaskConfig({');
+    expect(app).toContain('reasonOptions: appState.taskConfig.reasonOptions || []');
+    const taskView = read('apps/knowledge-center-web/frontend/knowledge-center/modules/document-tasks/view.js');
+    expect(taskView).not.toContain('name="defaultOwnerId"');
+    expect(taskView).not.toContain('name="knowledgeCenterOwnerId"');
+    expect(taskView).toContain('<legend>不涉及理由选项</legend>');
   });
 
   test('旧独立文档生成器不接入知识中心公共组件', () => {

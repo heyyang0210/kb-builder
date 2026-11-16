@@ -58,8 +58,12 @@ async function seedTask(api) {
   return task;
 }
 
-test('增量文档构建前端五阶段流程可通过真实任务走通', async ({ page }) => {
+test('增量文档构建只允许真实接口支持的操作且阶段入口保持可回溯', async ({ page }) => {
   const task = await seedTask(page.context().request);
+  const writes = [];
+  page.on('request', request => {
+    if (request.method() !== 'GET' && request.url().includes('/knowledge-center/api/incremental-tasks/')) writes.push(request.url());
+  });
 
   await page.goto(`${baseUrl}/knowledge-center/production?taskId=${encodeURIComponent(task.id)}&stage=setup`);
   await expect(page.getByRole('heading', { name: task.name })).toBeVisible();
@@ -68,23 +72,14 @@ test('增量文档构建前端五阶段流程可通过真实任务走通', async
   await expect(page).toHaveURL(/stage=inputs/);
   await expect(page.getByRole('heading', { name: '确认输入' })).toBeVisible();
   await expect(page.locator('#incremental-source').getByText('E2E 需求来源')).toBeVisible();
-  await page.getByRole('button', { name: '选择文件' }).click();
-  await expect(page.getByLabel('Markdown 文件')).toBeVisible();
-  await page.getByRole('button', { name: '填写链接' }).click();
-  await page.getByLabel('PingCode 页面链接').fill('https://pingcode.example/wiki/e2e');
-  await page.getByRole('button', { name: '检查链接' }).click();
-  await expect(page.getByText('链接格式已检查；正文读取和快照固化等待 PingCode 连接器接入。')).toBeVisible();
-  await page.getByLabel('发布大纲').selectOption('current');
-  await page.getByLabel('原模板').selectOption('baseline');
-  await page.getByLabel('目标模板').selectOption('incremental');
-  await page.getByRole('button', { name: '确认生成输入' }).click();
-  await expect(page.getByText('前端已暂存大纲和双模板选择；正式版本引用等待服务端契约接入。')).toBeVisible();
+  await expect(page.getByRole('button', { name: '编写草稿' })).toBeDisabled();
+  await expect(page.locator('[data-incremental-prototype-toggle], [data-incremental-prototype-form]')).toHaveCount(0);
 
-  await page.getByRole('button', { name: '生成与修订', exact: true }).click();
+  await page.getByRole('button', { name: '编写草稿', exact: true }).click();
   await expect(page).toHaveURL(/stage=generation/);
-  await expect(page.getByRole('heading', { name: '生成与修订' })).toBeVisible();
-  await page.getByRole('button', { name: '启动 Agent 生成' }).click();
-  await expect(page.getByText('前端已记录启动意图；等待真实 Agent 接口接入。')).toBeVisible();
+  await expect(page.getByRole('heading', { name: '编写草稿' })).toBeVisible();
+  await expect(page.getByText('Agent 自动生成暂未开放。')).toBeVisible();
+  await expect(page.getByRole('button', { name: '启动 Agent 生成' })).toHaveCount(0);
 
   await page.getByRole('button', { name: '按文档审核', exact: true }).click();
   await expect(page).toHaveURL(/stage=review/);
@@ -102,8 +97,7 @@ test('增量文档构建前端五阶段流程可通过真实任务走通', async
   await page.getByRole('button', { name: '整体发布', exact: true }).click();
   await expect(page.getByRole('heading', { name: '整体发布' })).toBeVisible();
   await expect(page.getByText('整体原子发布')).toBeVisible();
-  await expect(page.getByText('发布门禁尚未满足')).toBeVisible();
-  await expect(page.getByRole('button', { name: '确认整体发布' })).toHaveCount(0);
-  await page.getByRole('button', { name: '体验发布确认' }).click();
-  await expect(page.getByText('前端已记录发布确认意图；正式发布仍需审核门禁和服务端事务。')).toBeVisible();
+  await expect(page.getByRole('button', { name: '确认整体发布' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: '体验发布确认' })).toHaveCount(0);
+  expect(writes).toEqual([]);
 });

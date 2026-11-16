@@ -9,6 +9,25 @@ const viewports = [
 ];
 
 const evidenceDir = path.resolve(__dirname, '../../../runtime/test-results/navigation-pane-p0');
+const assignmentControlSelector = [
+  '.outline-assignment-directory button', '.outline-assignment-directory details > summary',
+  '.outline-assignment-directory [data-directory-search]', '.outline-assignment-summary button',
+  '.outline-assignment-filters :is(input, select, button)',
+  '.outline-responsibility-table td select', '.outline-assignment-batch select',
+  '.outline-assignment-batch button', '.outline-assignment-workspace .searchable-combobox-input',
+  '.outline-assignment-workspace .searchable-combobox-toggle',
+].join(',');
+
+async function assertAssignmentControlSizes(page) {
+  const controls = await page.locator(`${assignmentControlSelector}:visible`).evaluateAll(nodes => nodes.map(node => ({
+    label: node.innerText.trim() || node.getAttribute('aria-label') || node.name,
+    height: node.getBoundingClientRect().height,
+  })).filter(control => control.height > 0));
+  expect(controls.length).toBeGreaterThan(0);
+  const undersized = controls.filter(control => control.height < 44);
+  expect(undersized, JSON.stringify(undersized)).toEqual([]);
+}
+
 function evidencePath(name, browserName) {
   fs.mkdirSync(evidenceDir, { recursive: true });
   return path.join(evidenceDir, `${name}-${browserName}.png`);
@@ -237,6 +256,7 @@ test('大纲版本标签中的空值不会导致详情视图渲染中断', async
 
   await page.goto(`${baseUrl}/knowledge-center/outlines/null-tags`);
   await expect(page.getByRole('heading', { name: '空版本标签回归手册' })).toBeVisible();
+  await expect(page.locator('.outline-detail-title')).not.toContainText('大纲版本');
   await page.getByText('更多操作', { exact: true }).click();
   await page.getByRole('button', { name: '手册信息' }).click();
   await expect(page.locator('.outline-context')).toContainText('未设置');
@@ -319,7 +339,15 @@ test('文档目录支持鼠标、键盘和触摸长按打开上下文菜单', as
   await page.keyboard.press('Escape');
 });
 
-test('分工管理在团队未配置时提供阻断说明和团队配置入口', async ({ page }) => {
+test('分工管理在团队未配置时提供阻断说明和团队配置入口', async ({ page }, testInfo) => {
+  const shellCss = path.resolve(__dirname, '../../../apps/knowledge-center-web/frontend/knowledge-center/styles.css');
+  const outlinesCss = path.resolve(__dirname, '../../../apps/knowledge-center-web/frontend/knowledge-center/modules/outlines/outlines.css');
+  let shellCssFromWorkspace = false;
+  await page.route(/\/knowledge-center\/styles\.css(?:\?.*)?$/, route => {
+    shellCssFromWorkspace = true;
+    return route.fulfill({ path: shellCss });
+  });
+  await page.route('**/modules/outlines/outlines.css', route => route.fulfill({ path: outlinesCss }));
   await page.goto(`${baseUrl}/knowledge-center/outlines/DB-017?tab=assignments`);
   await expect(page.getByRole('tab', { name: '分工管理' })).toHaveAttribute('aria-selected', 'true');
   const blocked = page.locator('.outline-assignment-blocked');
@@ -339,14 +367,73 @@ test('分工管理在团队未配置时提供阻断说明和团队配置入口',
     await expect(statsDialog).toBeVisible();
     await expect(statsDialog).toContainText('领域负责人');
     await expect(statsDialog).toContainText('主责文档');
-    await expect(statsDialog).toContainText('成员负载');
+    await expect(statsDialog.locator('.outline-assignment-stats-list > div')).toHaveCount(6);
+    await expect(statsDialog.locator('.outline-assignment-stats-summary')).toHaveCount(0);
+    await expect(statsDialog).toContainText('成员分工');
     await statsDialog.getByRole('button', { name: '关闭分工统计' }).click();
     await expect(statsButton).toBeFocused();
+    const assignmentLabels = await page.locator('.outline-assignee-state').allTextContents();
+    expect(assignmentLabels).not.toContain('已分派');
+    await page.locator('[data-outline-assignment-status="assigned"]').click();
+    const visibleRow = page.locator('[data-outline-assignment-row][data-assigned="true"]:visible').first();
+    await expect(visibleRow).toBeVisible();
+    expect((await visibleRow.boundingBox()).height).toBeLessThanOrEqual(72);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.locator('[data-outline-assignment-status="pending"]').click();
+    await expect(page.locator('[data-outline-assignment-row][data-assigned="true"][hidden]')).not.toHaveCount(0);
+    await expect(page.locator('[data-outline-assignment-row][data-assigned="true"]:visible')).toHaveCount(0);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
     const directory = page.locator('.outline-assignment-directory');
     await expect(directory).toBeVisible();
     await expect(directory).toHaveClass(/outline-navigation/);
     await expect(directory.locator('[data-directory-search]')).toBeVisible();
     await expect(directory.locator('details')).not.toHaveCount(0);
+    const directoryTitle = directory.locator(':scope > .outline-navigation-header h3');
+    await expect(directoryTitle).toHaveText('手册目录');
+    const titleLayout = await directoryTitle.evaluate(node => ({
+      width: node.getBoundingClientRect().width,
+      lineHeight: Number.parseFloat(getComputedStyle(node).lineHeight),
+      height: node.getBoundingClientRect().height,
+    }));
+    expect(titleLayout.width).toBeGreaterThanOrEqual(52);
+    expect(titleLayout.height).toBeLessThanOrEqual(titleLayout.lineHeight + 1);
+    const desktopColumns = await page.locator('.outline-assignment-layout').evaluate(node => ({
+      directory: node.querySelector('.outline-assignment-directory').getBoundingClientRect().width,
+      content: node.querySelector('.outline-assignment-content').getBoundingClientRect().width,
+    }));
+    expect(desktopColumns.directory).toBeGreaterThanOrEqual(240);
+    expect(desktopColumns.content).toBeGreaterThanOrEqual(420);
+    await assertAssignmentControlSizes(page);
+    await page.screenshot({ path: evidencePath('assignment-control-sizes-desktop', testInfo.project.name) });
+    const desktopViewport = page.viewportSize();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect.poll(
+      () => page.locator('#sidebar').evaluate(node => node.getBoundingClientRect().right),
+      { timeout: 1200 },
+    ).toBeLessThanOrEqual(0);
+    const mobileShell = await page.evaluate(() => {
+      const sidebar = document.querySelector('#sidebar');
+      const main = document.querySelector('.main-shell');
+      const sidebarRect = sidebar.getBoundingClientRect();
+      const mainRect = main.getBoundingClientRect();
+      return {
+        sidebarOpen: sidebar.classList.contains('open'),
+        sidebarRight: sidebarRect.right,
+        mainLeft: mainRect.left,
+        mainRight: mainRect.right,
+        viewportWidth: innerWidth,
+        documentWidth: document.documentElement.scrollWidth,
+      };
+    });
+    expect(mobileShell.sidebarOpen).toBe(false);
+    expect(shellCssFromWorkspace).toBe(true);
+    expect(mobileShell.sidebarRight).toBeLessThanOrEqual(0);
+    expect(mobileShell.mainLeft).toBe(0);
+    expect(mobileShell.mainRight).toBeLessThanOrEqual(mobileShell.viewportWidth);
+    expect(mobileShell.documentWidth).toBeLessThanOrEqual(mobileShell.viewportWidth);
+    await assertAssignmentControlSizes(page);
+    await page.screenshot({ path: evidencePath('assignment-control-sizes-mobile', testInfo.project.name) });
+    await page.setViewportSize(desktopViewport);
     const resizer = directory.locator('[data-navigation-pane-resizer]');
     await expect(resizer).toHaveAttribute('aria-valuemin', '240');
     await expect(resizer).toHaveAttribute('aria-valuemax', '380');
@@ -506,7 +593,9 @@ test('从详情通过侧栏返回时恢复完整列表和知识资产产品', as
   await expect(page.locator('.outline-table thead')).not.toContainText('产品 / 业务版本');
   await expect(page.locator('.outline-table thead')).not.toContainText('待处理');
   await expect(page.locator('.outline-table thead')).not.toContainText('下一步');
-  await expect(page.locator('.outline-list-summary')).not.toContainText('待处理问题');
+  await expect(page.locator('.outline-list-summary')).toHaveCount(0);
+  await expect(page.locator('.catalog-stage-tabs[aria-label="大纲状态筛选"]')).toBeVisible();
+  await expect(page.locator('.outline-stage-tabs [data-outline-stage="unknown"]')).toBeVisible();
   await expect(page.locator('[data-outline-row] td:nth-child(2)')).toHaveText(catalog.items.map(item => item.productDisplayName || item.productName || '未指定产品'));
 
   const outlineName = page.locator('.outline-list-link').first();

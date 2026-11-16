@@ -73,6 +73,29 @@ test('大纲目录读模型在详情返回后仍保持全量且刷新一致', as
   expect(refreshedIds).toEqual(firstIds);
 });
 
+test('大纲阶段筛选与名称搜索使用紧凑标签栏并保留深链', async ({ page }) => {
+  await page.goto(`${baseUrl}/knowledge-center/outlines?q=手册`);
+  await expect(page.locator('.outline-list-summary')).toHaveCount(0);
+  await expect(page.locator('[data-outline-stage]')).toHaveCount(5);
+  await expect(page.locator('[data-outline-stage=""][aria-current="page"]')).toContainText('全部手册');
+  const search = page.getByRole('searchbox', { name: '搜索手册' });
+  await expect(search).toHaveValue('手册');
+
+  await page.locator('[data-outline-stage="published"]').click();
+  await expect.poll(() => page.evaluate(() => new URL(location.href).searchParams.get('q'))).toBe('手册');
+  await expect.poll(() => page.evaluate(() => new URL(location.href).searchParams.get('status'))).toBe('published');
+  await expect(page.locator('[data-outline-stage="published"]')).toHaveAttribute('aria-current', 'page');
+  await expect(page.locator('[data-outline-row]:visible')).toHaveCount(1);
+  await expect(page.locator('[data-outline-row]:visible')).toContainText('基本数据库管理手册');
+
+  await search.fill('基本数据库');
+  await expect.poll(() => page.evaluate(() => new URL(location.href).searchParams.get('q'))).toBe('基本数据库');
+  await expect.poll(() => page.evaluate(() => new URL(location.href).searchParams.get('status'))).toBe('published');
+  await expect(page.locator('[data-outline-row]:visible')).toHaveCount(1);
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+});
+
 test('详情迟到响应不能覆盖已返回的全量目录', async ({ page }) => {
   let releaseDetail;
   let detailStarted;

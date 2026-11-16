@@ -50,10 +50,8 @@ export function loadMyGenerations() {
   return request('/knowledge-center/api/production/generations?scope=mine');
 }
 
-export function loadIncrementalBaselines(handbookId, businessVersion = '') {
-  const query = new URLSearchParams({ handbookId });
-  if (businessVersion) query.set('businessVersion', businessVersion);
-  return request(`${endpoint}/baselines?${query}`);
+export function loadWorkCalendar(year) {
+  return request(`/knowledge-center/api/production/work-calendar?year=${encodeURIComponent(year)}`);
 }
 
 export const loadIncrementalTask = taskId => request(`${endpoint}/${encodeURIComponent(taskId)}`);
@@ -69,9 +67,7 @@ export function loadReviewBootstrap({ handbookId = '', taskId = '', step = 'read
   if (path) query.set('path', path);
   return request(`/knowledge-center/api/review/bootstrap?${query}`, requestOptions);
 }
-export const createIncrementalTask = body => request(endpoint, { method: 'POST', body: JSON.stringify(body) });
 export const createOnlineReview = body => request(`${endpoint}/online-reviews`, { method: 'POST', body: JSON.stringify(body) });
-export const bootstrapBaseline = body => request(`${endpoint}/bootstrap-baseline`, { method: 'POST', body: JSON.stringify(body) });
 export const addIncrementalSource = (taskId, body) => command(taskId, 'sources', body);
 export const updateIncrementalTarget = (taskId, body) => command(taskId, 'target', body, 'PATCH');
 export const saveIncrementalDraft = (taskId, body) => command(taskId, 'draft', body, 'PUT');

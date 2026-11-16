@@ -1,4 +1,5 @@
 import { collectDocuments, documentStatus, ownedByCurrentUser, outlineNodes, renderHandbookProduction } from './modules/production/handbook-view.js';
+import { formatProductionTimestamp, renderProductionProgress, taskStatus } from './modules/production/view.js';
 import { mountModelAdmin, hasModelDraft, confirmLeavingModels } from './modules/platform-admin/model-admin.js';
 import { mountMcpAdmin, hasMcpDraft, confirmLeavingMcp } from './modules/platform-admin/mcp-admin.js';
 import { retainWritingSelection } from './modules/production/writing-selection.js';
@@ -8,9 +9,10 @@ import { canSaveHandbookDraft, handbookReviewAction } from './modules/production
 import { takeReviewBootstrapPrefetch } from './common/api/review-bootstrap-prefetch.js';
 import { archiveAsset, createAsset, createPrincipal, createTeamGroup, deleteOutline, importOutline, validateOutline, importPrincipals, loadAssets, loadOutlineData, loadPlatformData, loadPrincipals, loadTeamGroups, loadTeamGroup, saveTeamRoster, publishOutlineGovernance, resolveAssetStatus, restoreAsset, saveOutlineGovernance, updateAsset, updateAssetStatus, updateDomainBuildTaskItem, loadDomainBuildTasks as fetchDomainBuildTasks, loadPlatformPermissions, updatePlatformUserPermissions, updatePrincipal, loadDatabaseConnectionStatus, testDatabaseConnection, saveDatabaseConnection, loadTemplates, loadTemplate, loadTemplateMappings } from './common/api/platform-api.js';
 import { disconnectGitLabOAuth, handbookGitLabOAuthHref, gitLabOAuthHref, loadGitLabBranches, loadGitLabConnections, loadGitLabOAuthAccounts, loadGitLabOAuthStatus, loadGitLabOAuthConfig, loadGitLabTree, loadHandbookGitLabAccess, loadHandbookRepository, loadHandbookRepositoryCommits, loadHandbookRepositoryFile, loadHandbookRepositoryMapping, loadHandbookRepositoryStatistics, loadHandbookRepositoryTree, loadReviewRepositoryContext, saveGitLabConnection, saveHandbookRepositoryMapping, createGitLabConnection, updateGitLabConnection, verifyGitLabConnection, disableGitLabConnection, enableGitLabConnection, searchGitLabConnections, loadGitLabVersionMappings, saveGitLabVersionMapping, setGitLabVersionMappingState } from './common/api/gitlab-api.js';
-import { addIncrementalSource, bootstrapBaseline, cancelIncrementalReview, commentIncrementalReview, createIncrementalReview, createIncrementalRevision, createIncrementalTask, createOnlineReview, decideIncrementalReview, decideScopeOpinion, loadCandidateDiff, loadHandbookReviewSummary, loadIncrementalBaselines, loadIncrementalTask, loadIncrementalTasks, loadMyGenerations, loadReviewBootstrap, loadReviewMentionTargets, loadReviewScopeOpinions, publishIncrementalTask, reassignIncrementalReview, recordIncrementalEvidence, reopenIncrementalReviewComment, replyIncrementalReviewComment, resolveIncrementalReviewComment, runIncrementalChecks, saveIncrementalDraft, submitIncrementalCandidate, updateIncrementalTarget } from './common/api/incremental-api.js';
+import { addIncrementalSource, cancelIncrementalReview, commentIncrementalReview, createIncrementalReview, createIncrementalRevision, createOnlineReview, decideIncrementalReview, decideScopeOpinion, loadCandidateDiff, loadHandbookReviewSummary, loadIncrementalTask, loadIncrementalTasks, loadMyGenerations, loadWorkCalendar, loadReviewBootstrap, loadReviewMentionTargets, loadReviewScopeOpinions, publishIncrementalTask, reassignIncrementalReview, recordIncrementalEvidence, reopenIncrementalReviewComment, replyIncrementalReviewComment, resolveIncrementalReviewComment, runIncrementalChecks, saveIncrementalDraft, submitIncrementalCandidate, updateIncrementalTarget } from './common/api/incremental-api.js';
 import { createHandbookIncrementalReview, loadHandbookDraft, loadHandbookDraftRevisions, loadHandbookReviewDrafts, loadHandbookReviewers, restoreHandbookDraftRevision, saveHandbookDraft, uploadHandbookDraftAttachment } from './common/api/handbook-production-api.js';
 import { sha256Text } from './common/utils/sha256.js';
+import { createPlatformOriginSnapshot } from './modules/production/origin-snapshot.js';
 import { bootstrapAuth, consumeRememberedTarget, performLogout, rememberCurrentTarget, startCasLogin, submitAdminLogin } from './common/auth/auth-controller.js';
 import { appState, views } from './common/state/app-state.js';
 import { authState, canAccessView, canPerform, clearSession, displayName, firstAccessibleView, isPlatformAdmin } from './common/state/auth-state.js';
@@ -26,9 +28,9 @@ import { updateReviewWaitingEntry } from './modules/review-publishing/view.js';
 import { initViewportRuntime } from './common/viewport-runtime.js';
 import { initScrollRuntime } from './common/scroll-runtime.js';
 import { initDismissibleMenus } from './common/dismissible-menu.js';
-import { uiIcon } from './common/ui-system.js';
+import { hydrateSemanticIcons, uiIcon } from './common/ui-system.js';
 import { loadDocumentTaskWorkspace, renderDocumentTasks } from './modules/document-tasks/view.js';
-import { loadDocumentTask, taskWrite } from './common/api/document-tasks-api.js';
+import { loadDocumentTask, loadDocumentTaskConfig, saveDocumentTaskConfig, taskWrite } from './common/api/document-tasks-api.js';
 import { loadMyTasks, MY_TASK_SOURCE_COUNT, setRefreshHandler, setResponsibleHandler, setSyncHandler, getMyTaskQueryKey, getSelectedResponsibleId, resetResponsibleSelection, updateMyTasksProjection } from './modules/dashboard/my-tasks.js';
 // 预加载写作页面模块，点击时只等待实例化，不再等待网络加载模块。
 const productionWritingPagePromise = import('./modules/production/production-writing-page.js');
@@ -41,11 +43,12 @@ window.addEventListener('pagehide', event => {
 import { renderReviewPublishing, renderReviewRepositoryRegion } from './modules/review-publishing/view.js';
 
 const globalNotificationRoot = document.querySelector('[data-global-notification]');
+hydrateSemanticIcons(document);
 if (globalNotificationRoot) {
   globalNotificationRoot.querySelector('[data-global-notification-icon]').innerHTML = uiIcon('navigation.notifications');
   globalNotificationRoot.querySelector('[data-global-notification-close-icon]').innerHTML = uiIcon('action.close');
 }
-const globalNotificationState = { loading: false, items: [], unreadCount: 0, error: '' };
+const globalNotificationState = { countStatus: 'idle', listLoading: false, items: [], unreadCount: null, error: '', countError: '' };
 const notificationRoleNames = { handbook_owner: '手册负责人', document_first_owner: '文档首次责任人', knowledge_center_owner: '知识中心负责人' };
 function notificationSafe(value) { return String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char])); }
 function renderGlobalNotifications() {
@@ -54,11 +57,14 @@ function renderGlobalNotifications() {
   const list = globalNotificationRoot.querySelector('[data-global-notification-list]');
   const count = globalNotificationRoot.querySelector('[data-global-notification-count]');
   const badge = globalNotificationRoot.querySelector('[data-global-notification-badge]');
-  const unread = Number(globalNotificationState.unreadCount || 0);
-  count.textContent = `未读 ${unread}`;
+  const unread = Number(globalNotificationState.unreadCount);
+  count.textContent = globalNotificationState.countStatus === 'ready' ? `未读 ${unread}`
+    : globalNotificationState.countStatus === 'error' ? '未读数暂不可用' : '未读数读取中';
   badge.textContent = unread > 99 ? '99+' : String(unread);
-  badge.hidden = unread < 1;
-  if (globalNotificationState.loading) list.innerHTML = '<p class="global-notification-empty" role="status">正在读取通知…</p>';
+  badge.hidden = globalNotificationState.countStatus !== 'ready' || !Number.isFinite(unread) || unread < 1;
+  const trigger = globalNotificationRoot.querySelector('[data-global-notification-trigger]');
+  trigger.setAttribute('aria-label', globalNotificationState.countStatus === 'error' ? '站内通知，未读数读取失败' : globalNotificationState.countStatus === 'ready' ? `站内通知，未读 ${unread}` : '站内通知');
+  if (globalNotificationState.listLoading) list.innerHTML = '<p class="global-notification-empty" role="status">正在读取通知…</p>';
   else if (globalNotificationState.error) list.innerHTML = `<p class="global-notification-error" role="alert">${notificationSafe(globalNotificationState.error)}</p><button type="button" class="button secondary" data-global-notification-retry>重试</button>`;
   else if (!globalNotificationState.items.length) list.innerHTML = '<p class="global-notification-empty">暂无通知</p>';
   else list.innerHTML = `<ul>${globalNotificationState.items.map(item => {
@@ -70,16 +76,39 @@ function renderGlobalNotifications() {
     return `<li class="global-notification-item"><div><strong>${notificationSafe(type)} · ${notificationSafe(subject)}</strong>${detail ? `<small>${notificationSafe(detail)}</small>` : ''}<p>${notificationSafe(item.commentContent || '')}</p></div><span class="global-notification-state">${item.readAt ? '已读' : '未读'}</span><a href="${notificationSafe(item.url)}" data-global-notification-link>${action}</a>${item.readAt ? '' : `<button type="button" data-global-notification-read="${notificationSafe(item.id)}">标记已读</button>`}</li>`;
   }).join('')}</ul>`;
 }
-async function loadGlobalNotifications() {
-  globalNotificationState.loading = true; globalNotificationState.error = ''; renderGlobalNotifications();
+async function fetchNotificationPayload(limit) {
+  const response = await fetch(`/knowledge-center/api/incremental-tasks/notifications?limit=${limit}`, { credentials: 'same-origin', cache: 'no-store' });
+  const payload = await response.json();
+  if (!response.ok || payload.success === false) throw new Error(payload.error?.message || `HTTP ${response.status}`);
+  return payload.data || payload;
+}
+async function loadGlobalNotificationCount() {
+  globalNotificationState.countStatus = 'loading';
+  globalNotificationState.countError = '';
+  renderGlobalNotifications();
   try {
-    const response = await fetch('/knowledge-center/api/incremental-tasks/notifications?limit=20', { credentials: 'same-origin', cache: 'no-store' });
-    const payload = await response.json();
-    if (!response.ok || payload.success === false) throw new Error(payload.error?.message || `HTTP ${response.status}`);
-    globalNotificationState.items = payload.data.items || [];
-    globalNotificationState.unreadCount = payload.data.unreadCount || 0;
+    const payload = await fetchNotificationPayload(1);
+    const unread = Number(payload.unreadCount);
+    if (!Number.isFinite(unread) || unread < 0) throw new Error('通知服务未返回有效未读数');
+    globalNotificationState.unreadCount = unread;
+    globalNotificationState.countStatus = 'ready';
+  } catch (error) {
+    globalNotificationState.countStatus = 'error';
+    globalNotificationState.countError = error.message || '通知读取失败';
+  }
+  renderGlobalNotifications();
+}
+async function loadGlobalNotifications() {
+  globalNotificationState.listLoading = true; globalNotificationState.error = ''; renderGlobalNotifications();
+  try {
+    const payload = await fetchNotificationPayload(20);
+    globalNotificationState.items = payload.items || [];
+    const unread = Number(payload.unreadCount);
+    if (!Number.isFinite(unread) || unread < 0) throw new Error('通知服务未返回有效未读数');
+    globalNotificationState.unreadCount = unread;
+    globalNotificationState.countStatus = 'ready';
   } catch (error) { globalNotificationState.error = error.message || '通知读取失败'; }
-  globalNotificationState.loading = false; renderGlobalNotifications();
+  globalNotificationState.listLoading = false; renderGlobalNotifications();
 }
 document.addEventListener('click', event => {
   if (!globalNotificationRoot) return;
@@ -99,7 +128,11 @@ document.addEventListener('click', event => {
   if (close) { panel.hidden = true; globalNotificationRoot.querySelector('[data-global-notification-trigger]')?.setAttribute('aria-expanded', 'false'); return; }
   if (retry) { loadGlobalNotifications(); return; }
   if (read) {
-    fetch(`/knowledge-center/api/incremental-tasks/notifications/${encodeURIComponent(read.dataset.globalNotificationRead)}/read`, { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': globalThis.crypto?.randomUUID?.() || `notice-${Date.now()}` }, body: '{}' }).then(() => loadGlobalNotifications()).catch(error => { globalNotificationState.error = error.message || '标记已读失败'; renderGlobalNotifications(); });
+    fetch(`/knowledge-center/api/incremental-tasks/notifications/${encodeURIComponent(read.dataset.globalNotificationRead)}/read`, { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': globalThis.crypto?.randomUUID?.() || `notice-${Date.now()}` }, body: '{}' }).then(async response => {
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload.success === false) throw new Error(payload.error?.message || `HTTP ${response.status}`);
+      await loadGlobalNotifications();
+    }).catch(error => { globalNotificationState.error = error.message || '标记已读失败'; renderGlobalNotifications(); });
     return;
   }
   if (link) { panel.hidden = true; globalNotificationRoot.querySelector('[data-global-notification-trigger]')?.setAttribute('aria-expanded', 'false'); return; }
@@ -201,15 +234,54 @@ function scheduleIconLibrary() {
 let templateController = null;
 let cleaningApiPromise = null;
 const cleaningApi = () => cleaningApiPromise ||= import('./common/api/cleaning-api.js');
-let cleaningWorkspaceInFlight;
+const cleaningWorkspaceRequests = new Map();
 const loadCleaningWorkspace = (...args) => {
-  if (!cleaningWorkspaceInFlight) {
+  const key = JSON.stringify(args);
+  if (!cleaningWorkspaceRequests.has(key)) {
     const pending = cleaningApi().then(api => api.loadCleaningWorkspace(...args));
-    cleaningWorkspaceInFlight = pending;
-    pending.finally(() => { if (cleaningWorkspaceInFlight === pending) cleaningWorkspaceInFlight = null; }).catch(() => {});
+    cleaningWorkspaceRequests.set(key, pending);
+    pending.finally(() => { if (cleaningWorkspaceRequests.get(key) === pending) cleaningWorkspaceRequests.delete(key); }).catch(() => {});
   }
-  return cleaningWorkspaceInFlight;
+  return cleaningWorkspaceRequests.get(key);
 };
+const loadCleaningBatchDetail = (...args) => cleaningApi().then(api => api.loadCleaningBatchDetail(...args));
+const loadCleaningDatasetDetail = (...args) => cleaningApi().then(api => api.loadCleaningDatasetDetail(...args));
+async function loadCleaningRoute() {
+  const query = new URLSearchParams(window.location.search);
+  const batchId = query.get('batchId');
+  const datasetId = query.get('datasetId');
+  const routeRequest = (appState.cleaningRouteRequest || 0) + 1;
+  appState.cleaningRouteRequest = routeRequest;
+  if (batchId || datasetId) {
+    const detail = { status: 'loading', type: batchId ? 'batch' : 'dataset', id: batchId || datasetId,
+      batchPage: Math.max(1, Number(query.get('batchPage')) || 1), datasetPage: Math.max(1, Number(query.get('datasetPage')) || 1),
+      filePage: Math.max(1, Number(query.get('filePage')) || 1) };
+    appState.cleaningDetailProjection = detail;
+    render();
+    try {
+      const data = batchId ? await loadCleaningBatchDetail(batchId, detail.filePage) : { dataset: await loadCleaningDatasetDetail(datasetId) };
+      if (appState.cleaningRouteRequest !== routeRequest || appState.activeView !== 'cleaning') return;
+      appState.cleaningDetailProjection = { ...detail, ...data, status: 'ok' };
+    } catch (error) {
+      if (appState.cleaningRouteRequest !== routeRequest || appState.activeView !== 'cleaning') return;
+      appState.cleaningDetailProjection = { ...detail, status: 'unavailable', error: { message: error.message, code: error.code, status: error.status } };
+    }
+    render();
+    return;
+  }
+  appState.cleaningDetailProjection = null;
+  appState.cleaningProjection = { status: 'loading' };
+  render();
+  try {
+    const data = await loadCleaningWorkspace(Math.max(1, Number(query.get('batchPage')) || 1), Math.max(1, Number(query.get('datasetPage')) || 1));
+    if (appState.cleaningRouteRequest !== routeRequest || appState.activeView !== 'cleaning') return;
+    appState.cleaningProjection = { status: 'ok', ...data, asOf: new Date().toISOString() };
+  } catch (error) {
+    if (appState.cleaningRouteRequest !== routeRequest || appState.activeView !== 'cleaning') return;
+    appState.cleaningProjection = { status: 'unavailable', error: { message: error.message, code: error.code } };
+  }
+  render();
+}
 const createUploadSession = (...args) => cleaningApi().then(api => api.createUploadSession(...args));
 const addUploadFile = (...args) => cleaningApi().then(api => api.addUploadFile(...args));
 const uploadChunk = (...args) => cleaningApi().then(api => api.uploadChunk(...args));
@@ -352,16 +424,16 @@ async function openHandbookWriting(operation, aiAction) {
         { code: repository.error?.code || 'AI_ORIGIN_UNAVAILABLE' });
       }
       const file = repository.filesByDocument?.[documentId];
-      if (repository.mapped && !file?.matched) throw new Error('当前文档未匹配到仓库文件，请检查中文仓库路径与文档映射后重新检查。');
-      const content = file?.matched ? repository.contentByDocument?.[documentId] : '';
+      if (!file?.matched) return createPlatformOriginSnapshot(getMarkdown(), context);
+      const content = repository.contentByDocument?.[documentId];
       if (typeof content !== 'string') throw new Error('仓库正文尚未读取完成，请重新检查来源。');
       const contentDigest = await sha256Text(content);
-      return { content, snapshot: file?.matched ? {
+      return { content, snapshot: {
         originType: 'gitlab', snapshotId: file.commitId || file.blobId || contentDigest, contentDigest,
         handbookId: context.handbookId, documentId, outlineVersionId: context.outlineVersionId,
         repository: repository.mapping?.repository || repository.mapping?.project || repository.mapping?.projectId || null,
         branch: repository.branch, path: file.path, commitId: file.commitId || null, blobId: file.blobId || null,
-      } : { originType: 'blank', snapshotId: null, contentDigest, handbookId: context.handbookId, documentId, branch: context.branch } };
+      } };
     };
     const { openProductionWritingPage } = await productionWritingPagePromise;
     openProductionWritingPage({
@@ -472,7 +544,7 @@ function outlineProjectionKey(route = outlineRouteState()) {
   // 全局平台概览错误不应污染审核与发布工作区。审核页有独立的
   // reviewProjection 错误投影，只有该投影明确失败时才展示页面级错误。
   const globalErrorPanel = byId('error-panel');
-  if (globalErrorPanel && appState.activeView === 'review' && appState.reviewProjection?.status !== 'unavailable') globalErrorPanel.hidden = true;
+  if (globalErrorPanel?.dataset.platformStateNotice === 'true' && appState.activeView === 'review' && appState.reviewProjection?.status !== 'unavailable') globalErrorPanel.hidden = true;
   const currentPageTitle = appState.activeView === 'outlines' && outlineRouteState().page === 'recycle' ? '大纲回收站' : appState.activeView === 'outlines' && outlineRouteState().page === 'resources' ? '准备大纲' : views[appState.activeView][1];
   byId('page-title').textContent = currentPageTitle;
   const globalContextTitle = byId('global-context-title');
@@ -510,7 +582,7 @@ function outlineProjectionKey(route = outlineRouteState()) {
         appState.reviewUi.canWrite = canPerform('knowledge:write');
         appState.reviewUi.canManage = canPerform('platform:manage');
       }
-      const viewHtml = measureHandbookPerformance('render.viewHtml', () => renderer({ projection: appState.activeView === 'repository' ? appState.gitlabProjection : appState.projection, templateProjection: appState.templateProjection, cleaningProjection: appState.cleaningProjection, cleaningCanWrite: isPlatformAdmin(), reviewProjection: appState.reviewProjection, reviewUi: appState.reviewUi, outlineProjection, assetCatalog: appState.assetCatalog, principalProjection: appState.principalProjection, principalListState: appState.principalListState, teamGroupProjection: appState.teamGroupProjection, teamGroupView: new URLSearchParams(window.location.search).get('view') || 'people', teamGroupUi: appState.teamGroupUi, incrementalProjection: appState.incrementalProjection, handbookProductionUi: appState.handbookProductionUi, currentUser: { ...(authState.session?.user || {}), displayName: displayName() }, domainBuildTaskProjection: appState.domainBuildTaskProjection, openDomainTaskId, gitlabProjection: appState.gitlabProjection, permissionProjection: appState.permissionProjection, governanceProjection: appState.platformGovernance, databaseConnectionProjection: appState.databaseConnectionProjection, databaseConnectionDrawerOpen: appState.databaseConnectionDrawerOpen, databaseConnectionAdvancedOpen: appState.databaseConnectionAdvancedOpen, databaseConnectionForm: appState.databaseConnectionForm, databaseConnectionStatus: appState.databaseConnectionStatus, selectedPermissionUserId: appState.selectedPermissionUserId, permissionSaveStatus: appState.permissionSaveStatus, permissionUserSearch: appState.permissionUserSearch, permissionListState: appState.permissionListState, gitlabVerification: appState.gitlabVerification, platformAdmin: isPlatformAdmin(), platformTab: appState.platformTab, gitlabListState: appState.gitlabListState, gitlabAddingConnection: appState.gitlabAddingConnection, gitlabEditingConnection: appState.gitlabEditingConnection, outlinePermissions: { create: canPerform('outline:create'), delete: canPerform('outline:delete'), purge: canPerform('outline:purge'), platformAdmin: isPlatformAdmin() }, outlineView }));
+      const viewHtml = measureHandbookPerformance('render.viewHtml', () => renderer({ projection: appState.activeView === 'repository' ? appState.gitlabProjection : appState.projection, templateProjection: appState.templateProjection, cleaningProjection: appState.cleaningProjection, cleaningDetailProjection: appState.cleaningDetailProjection, cleaningCanWrite: isPlatformAdmin(), reviewProjection: appState.reviewProjection, reviewUi: appState.reviewUi, outlineProjection, assetCatalog: appState.assetCatalog, principalProjection: appState.principalProjection, principalListState: appState.principalListState, teamGroupProjection: appState.teamGroupProjection, teamGroupView: new URLSearchParams(window.location.search).get('view') || 'people', teamGroupUi: appState.teamGroupUi, taskConfig: appState.taskConfig, taskConfigStatus: appState.taskConfigStatus, incrementalProjection: appState.incrementalProjection, handbookProductionUi: appState.handbookProductionUi, currentUser: { ...(authState.session?.user || {}), displayName: displayName() }, domainBuildTaskProjection: appState.domainBuildTaskProjection, openDomainTaskId, gitlabProjection: appState.gitlabProjection, permissionProjection: appState.permissionProjection, governanceProjection: appState.platformGovernance, databaseConnectionProjection: appState.databaseConnectionProjection, databaseConnectionDrawerOpen: appState.databaseConnectionDrawerOpen, databaseConnectionAdvancedOpen: appState.databaseConnectionAdvancedOpen, databaseConnectionForm: appState.databaseConnectionForm, databaseConnectionStatus: appState.databaseConnectionStatus, selectedPermissionUserId: appState.selectedPermissionUserId, permissionSaveStatus: appState.permissionSaveStatus, permissionUserSearch: appState.permissionUserSearch, permissionListState: appState.permissionListState, gitlabVerification: appState.gitlabVerification, platformAdmin: isPlatformAdmin(), platformTab: appState.platformTab, gitlabListState: appState.gitlabListState, gitlabAddingConnection: appState.gitlabAddingConnection, gitlabEditingConnection: appState.gitlabEditingConnection, outlinePermissions: { create: canPerform('outline:create'), delete: canPerform('outline:delete'), purge: canPerform('outline:purge'), platformAdmin: isPlatformAdmin() }, outlineView }));
       markHandbookPerformance('render.htmlReady', { htmlLength: viewHtml.length });
       measureHandbookPerformance('render.viewRootReplace', () => { byId('view-root').innerHTML = viewHtml; });
       markHandbookPerformance('render.domReplaced');
@@ -702,8 +774,7 @@ async function navigate(view, updateHistory = true) {
   }
   render();
   if (view === 'cleaning') {
-    appState.cleaningProjection = { status: 'loading' };
-    loadCleaningWorkspace().then(data => { appState.cleaningProjection = { status: 'ok', ...data, asOf: new Date().toISOString() }; render(); }).catch(error => { appState.cleaningProjection = { status: 'unavailable', error: { message: error.message, code: error.code } }; render(); });
+    loadCleaningRoute();
   }
   if (view === 'outlines' && (!appState.outlineProjection || appState.outlineProjection.routeKey !== outlineProjectionKey())) loadOutlines();
   if (view === 'assets') loadAssetCatalog();
@@ -789,8 +860,8 @@ function returnFromHandbook(fallbackHref) {
     return;
   }
   if (!showCachedReturn(view, entry)) { navigate(view, false); return; }
-  // The source DOM is retained so its filters, drawer and scroll position survive.
-  // Refreshing it here would immediately replace the restored page with a loading state.
+  // Restore the cached first frame, then refresh server-owned work state in place.
+  if (view === 'dashboard') loadMyTasksWorkspace({ retain: true });
 }
 
 async function loadTemplateWorkspace(selectedId) {
@@ -937,7 +1008,8 @@ async function loadMyTasksWorkspace({ retain = false } = {}) {
   };
   const ownId = String(authState.session?.user?.principalId || authState.session?.user?.id || '');
   const selectedId = getSelectedResponsibleId() || ownId;
-  const preview = { enabled: Boolean(responsibleDirectory), selectedId, delegated: selectedId !== ownId, displayName: responsibleDirectory?.find(person => person.id === selectedId)?.displayName || '', operatorName: authState.session?.user?.displayName || authState.session?.user?.loginName || '管理员' };
+  const delegated = selectedId !== ownId;
+  const preview = { enabled: Boolean(responsibleDirectory), selectedId, delegated, readOnly: delegated, displayName: responsibleDirectory?.find(person => person.id === selectedId)?.displayName || '', operatorName: authState.session?.user?.displayName || authState.session?.user?.loginName || '管理员' };
   let people = responsibleDirectory || [];
   const publishWithPreview = projection => publish({ ...projection, responsibles: people, preview: { ...preview } });
   publishWithPreview(retain && appState.myTasksProjection?.status === 'ok' && appState.myTasksProjection.queryKey === getMyTaskQueryKey()
@@ -1036,6 +1108,17 @@ function assetCatalogQuery(search = window.location.search) {
   if (params.get('archived') === 'true') query.set('includeArchived', 'true');
   return query;
 }
+function assetFilterDraft() {
+  const form = document.querySelector('[data-asset-filter]');
+  return form ? { q: form.elements.q?.value || '', owner: form.elements.owner?.value || '' } : null;
+}
+function restoreAssetFilterDraft(draft) {
+  if (!draft || appState.activeView !== 'assets') return;
+  const form = document.querySelector('[data-asset-filter]');
+  if (!form) return;
+  form.elements.q.value = draft.q;
+  form.elements.owner.value = draft.owner;
+}
 function principalFromSelect(select) {
   if (!select?.value) return null;
   const option = select.selectedOptions?.[0];
@@ -1057,13 +1140,22 @@ async function loadAssetCatalog() {
   appState.principalProjection = principals?.data || principals || { items: [] };
   appState.gitlabProjection = { ...(appState.gitlabProjection || {}), connections: connections?.items || [] };
   for (const item of appState.assetCatalog?.items || []) if (item.repositoryMapped && preferredAssetBranch(item)) item.statisticsStatus = 'loading';
-  if (appState.activeView === 'assets') render();
+  if (appState.activeView === 'assets') {
+    const filterDraft = assetFilterDraft();
+    render();
+    restoreAssetFilterDraft(filterDraft);
+  }
   await enrichAssetRepositoryStatistics(appState.assetCatalog);
 }
 
 async function loadGitLabAdmin({ onConnectionsReady } = {}) {
   if (!isPlatformAdmin()) return;
   const showConnectionsFirst = appState.activeView === 'platform' && appState.platformTab === 'gitlab' && !appState.gitlabListState.mappingView;
+  const shouldLoadTaskConfig = appState.activeView === 'platform' && appState.platformTab === 'principals' && new URLSearchParams(window.location.search).get('view') !== 'groups' && !appState.taskConfig;
+  if (shouldLoadTaskConfig) {
+    appState.taskConfigLoading = true;
+    appState.taskConfigStatus = { kind: 'loading', message: '正在读取…' };
+  }
   const loadAncillary = () => Promise.all([
     loadGitLabOAuthStatus().catch(() => ({ connected: false, mode: 'unavailable' })),
     loadGitLabOAuthConfig().catch(() => ({ configured: false, devHttp: false })),
@@ -1071,6 +1163,7 @@ async function loadGitLabAdmin({ onConnectionsReady } = {}) {
     loadPrincipals().catch(error => ({ error })),
     loadTeamGroups().catch(error => ({ error })),
     loadGitLabVersionMappings().catch(error => ({ error })),
+    shouldLoadTaskConfig ? loadDocumentTaskConfig().catch(error => ({ error })) : Promise.resolve(null),
   ]);
   const ancillaryPromise = showConnectionsFirst ? null : loadAncillary();
   if (showConnectionsFirst && !appState.gitlabProjection?.connections?.length) {
@@ -1090,7 +1183,7 @@ async function loadGitLabAdmin({ onConnectionsReady } = {}) {
     render();
     onConnectionsReady?.();
   }
-  const [oauthStatus, oauthConfig, permissions, principals, teamGroups, versionMappings] = await (ancillaryPromise || loadAncillary());
+  const [oauthStatus, oauthConfig, permissions, principals, teamGroups, versionMappings, taskConfig] = await (ancillaryPromise || loadAncillary());
   appState.gitlabProjection = { ...(appState.gitlabProjection || {}), connections: gitlab.error ? [] : (gitlab?.items || gitlab?.data?.items || []), oauthStatus, oauthConfig, adminError: gitlab.error?.message, versionMappings: versionMappings.items || [], archivedVersionMappings: versionMappings.archivedItems || [], mappingError: versionMappings.error?.message };
   updatePlatformGovernance(appState.contextProjection, appState.projection, appState.gitlabProjection);
   if (permissions.error) appState.permissionProjection = { status: 'unavailable', error: permissions.error.message };
@@ -1108,7 +1201,36 @@ async function loadGitLabAdmin({ onConnectionsReady } = {}) {
   }
   appState.principalProjection = principals.error ? { status: 'unavailable', error: principals.error.message, items: [] } : { ...(principals?.data || principals || {}), status: 'ok' };
   appState.teamGroupProjection = teamGroups.error ? { status: 'unavailable', error: teamGroups.error.message, errorCode: teamGroups.error.code, statusCode: teamGroups.error.status, items: [] } : { ...(teamGroups?.data || teamGroups || {}), status: 'ok' };
+  if (taskConfig) {
+    appState.taskConfig = taskConfig.error ? null : taskConfig;
+    appState.taskConfigStatus = taskConfig.error ? { kind: 'error', message: taskConfig.error.message } : null;
+    appState.taskConfigLoading = false;
+  }
   if (appState.activeView === 'platform') render();
+}
+
+async function loadTaskResponsibilityConfig() {
+  if (appState.taskConfigLoading) return;
+  const reopenDialog = Boolean(document.querySelector('[data-task-responsibility-dialog]')?.open);
+  appState.taskConfigLoading = true;
+  appState.taskConfigStatus = { kind: 'loading', message: '正在读取…' };
+  try {
+    appState.taskConfig = await loadDocumentTaskConfig();
+    appState.taskConfigStatus = null;
+  } catch (error) {
+    appState.taskConfig = null;
+    appState.taskConfigStatus = { kind: 'error', message: error.message || '负责人配置读取失败。' };
+  } finally {
+    appState.taskConfigLoading = false;
+    if (appState.activeView === 'platform' && appState.platformTab === 'principals') {
+      render();
+      if (reopenDialog) {
+        const dialog = document.querySelector('[data-task-responsibility-dialog]');
+        dialog?.showModal();
+        dialog?.querySelector('select[name="defaultOwnerId"]')?.focus();
+      }
+    }
+  }
 }
 
 async function loadTeamGroupsAdmin() {
@@ -1404,20 +1526,37 @@ async function loadIncrementalWorkspace(preferredTaskId = null) {
   appState.incrementalProjection = { ...(appState.incrementalProjection || {}), status: 'loading', requestedHandbookId };
   render();
   try {
+    const currentView = taskId ? 'tasks' : (params.get('view') || 'handbooks');
+    const needsTaskList = currentView !== 'generations';
+    const needsHandbookCatalog = currentView === 'handbooks';
     const [tasks, assets, handbookOutline, templates, generations, outlineCatalog] = await Promise.all([
-      loadIncrementalTasks(requestedHandbookId ? { handbookId: requestedHandbookId } : {})
-        .catch(error => requestedHandbookId ? [] : Promise.reject(error)),
-      loadAssets(new URLSearchParams({ pageSize: '100' })).catch(() => null),
+      needsTaskList ? loadIncrementalTasks(requestedHandbookId ? { handbookId: requestedHandbookId } : {})
+        .catch(error => requestedHandbookId ? [] : Promise.reject(error)) : Promise.resolve([]),
+      needsHandbookCatalog && !taskId ? loadAssets(new URLSearchParams({ pageSize: '100' })).catch(() => null) : Promise.resolve(null),
       requestedHandbookId ? loadOutlineData(requestedHandbookId) : Promise.resolve(null),
       requestedHandbookId ? loadTemplates({ summary: '1' }).catch(() => ({ data: [] })) : Promise.resolve({ data: [] }),
       requestedHandbookId || !['generations', 'todo'].includes(params.get('view')) ? Promise.resolve(null) : loadMyGenerations()
         .then(data => ({ status: 'ready', items: data?.items || [], generatedAt: data?.generatedAt || null }))
         .catch(error => ({ status: error.status === 403 ? 'forbidden' : 'unavailable', items: [], error: { code: error.code, message: error.message } })),
-      requestedHandbookId ? Promise.resolve(null) : loadOutlineData(),
+      needsHandbookCatalog && !taskId ? loadOutlineData() : Promise.resolve(null),
     ]);
     const items = Array.isArray(tasks) ? tasks : (tasks?.items || []);
     const selectedId = taskId || null;
     const detail = selectedId ? await loadIncrementalTask(selectedId) : null;
+    const taskOutline = detail?.handbookId
+      ? await loadOutlineData(detail.handbookId, null, 'directory').catch(error => ({ status: 'unavailable', error: { message: error.message } }))
+      : null;
+    const outlineNodes = taskOutline?.detail?.nodes || taskOutline?.detail?.tree || taskOutline?.detail?.chapters || taskOutline?.detail?.content?.parts || taskOutline?.detail?.content?.chapters || taskOutline?.detail?.parts || [];
+    const flattenOutlineDocuments = nodes => (Array.isArray(nodes) ? nodes : []).flatMap(item => {
+      const children = item.children || item.nodes || item.chapters || item.documents || item.knowledgePoints || [];
+      const isDocument = item.kind === 'document' || item.legacyKind === 'knowledge_point' || item.type === 'document' || Boolean(item.documentId);
+      return isDocument ? [{
+        id: String(item.id || item.documentId || item.sourceId || ''),
+        title: String(item.title || item.name || item.displayName || item.part || '未命名文档'),
+        path: String(item.path || item.outlinePath || item.directoryPath || ''),
+      }] : flattenOutlineDocuments(children);
+    });
+    const taskDocuments = taskOutline?.status === 'ok' ? flattenOutlineDocuments(outlineNodes) : [];
     let repository = { mapped: false, status: 'not-mapped', filesByDocument: {}, contentByDocument: {} };
     let handbookDocuments = [];
     if (requestedHandbookId && handbookOutline?.status === 'ok') {
@@ -1467,13 +1606,67 @@ async function loadIncrementalWorkspace(preferredTaskId = null) {
       }
     }
     appState.incrementalProjection = {
-      status: 'ok', items, detail,
+      status: 'ok', items, detail, taskDocuments,
+      taskOutlineStatus: taskOutline?.status || (selectedId ? 'unavailable' : 'not-requested'),
       handbooks: assets?.items || assets?.data?.items || [], requestedHandbookId, handbookOutline, generations, outlineCatalog,
     };
   } catch (error) {
     appState.incrementalProjection = { status: 'unavailable', items: [], detail: null, requestedHandbookId, handbookOutline: null, error: { message: error.message } };
   }
   render();
+  if (!requestedHandbookId && appState.incrementalProjection?.status === 'ok'
+      && new URLSearchParams(window.location.search).get('view') === 'progress'
+      && new URLSearchParams(window.location.search).get('mode') !== 'list'
+      && new URLSearchParams(window.location.search).get('mode') !== 'charts') {
+    ensureVisibleWorkCalendars();
+  }
+}
+
+const workCalendarRequests = new Map();
+function visibleCalendarYears() {
+  const params = new URLSearchParams(window.location.search);
+  const activityDate = item => [item?.activityAt, item?.lastActivityAt, item?.updatedAt, item?.createdAt, item?.startedAt, item?.plannedStartAt, item?.plannedStartTime, item?.updated_at, item?.created_at, item?.started_at].map(value => new Date(value || '')).find(value => !Number.isNaN(value.getTime()));
+  const rawDay = params.get('day') || appState.incrementalProjection?.items?.map(activityDate).filter(Boolean).map(value => `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`).sort().at(-1) || new Date().toISOString().slice(0, 10);
+  const center = new Date(`${rawDay}T00:00:00`);
+  const monthStart = new Date(center.getFullYear(), center.getMonth(), 1);
+  const start = params.get('calendarView') === 'week'
+    ? new Date(center.getFullYear(), center.getMonth(), center.getDate() - ((center.getDay() + 6) % 7))
+    : new Date(monthStart.getFullYear(), monthStart.getMonth(), monthStart.getDate() - ((monthStart.getDay() + 6) % 7));
+  const count = params.get('calendarView') === 'week' ? 7 : 42;
+  return [...new Set(Array.from({ length: count }, (_, i) => { const day = new Date(start); day.setDate(start.getDate() + i); return day.getFullYear(); }))];
+}
+function localTodayDateKey() {
+  const today = new Date();
+  return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+}
+function ensureVisibleWorkCalendars() {
+  const projection = appState.incrementalProjection;
+  if (!projection || projection.status !== 'ok') return;
+  const years = visibleCalendarYears();
+  for (const year of years) {
+    if (projection.workCalendars?.[year] || workCalendarRequests.has(year)) continue;
+    const request = loadWorkCalendar(year).then(calendar => {
+      const current = appState.incrementalProjection;
+      if (current?.status !== 'ok') return;
+      current.workCalendars = { ...(current.workCalendars || {}), [year]: calendar };
+      if (appState.activeView === 'production' && new URLSearchParams(window.location.search).get('view') === 'progress') refreshProductionProgressView();
+    }).catch(error => {
+      const current = appState.incrementalProjection;
+      if (current?.status === 'ok') current.workCalendars = { ...(current.workCalendars || {}), [year]: { year, configured: false, error: error.message, days: {} } };
+    }).finally(() => workCalendarRequests.delete(year));
+    workCalendarRequests.set(year, request);
+  }
+}
+
+function refreshProductionProgressView() {
+  const current = document.querySelector('.production-progress-overview');
+  if (!current || appState.activeView !== 'production') { render(); return; }
+  const holder = document.createElement('template');
+  holder.innerHTML = renderProductionProgress(appState.incrementalProjection);
+  const next = holder.content.firstElementChild;
+  if (!next) return;
+  current.replaceWith(next);
+  window.lucide?.createIcons?.({ nodes: [next] });
 }
 
 function handbookUi() {
@@ -1819,18 +2012,69 @@ function discardLocalHandbookChanges(documentId) {
 }
 
 async function openHandbookHistory(documentId) {
-  handbookUi().history = { documentId, loading: true, items: [] };
+  const vditor = activeHandbookVditor(documentId);
+  if (vditor) {
+    handbookUi().drafts[documentId] = vditor.getValue();
+    handbookUi().draftHtml[documentId] = vditor.getHTML();
+  } else {
+    const input = document.querySelector(`[data-handbook-markdown-editor][data-document-id="${CSS.escape(documentId)}"]`);
+    if (input) {
+      handbookUi().drafts[documentId] = input.value;
+      if (input.value !== (handbookUi().serverDrafts?.[documentId]?.draft?.revision?.markdown || '')) {
+        updateHandbookUiList('dirtyDocuments', documentId, true);
+      }
+    }
+  }
+  const trigger = document.querySelector(`[data-handbook-history="${CSS.escape(documentId)}"]`);
+  const editorElement = document.querySelector('[data-handbook-vditor] .vditor-content, [data-handbook-markdown-editor]');
+  handbookUi().history = {
+    documentId,
+    documentTitle: document.querySelector('[data-handbook-document-title]')?.textContent || '当前文档',
+    triggerDocumentId: documentId,
+    restoreScrollTop: window.scrollY,
+    editorScrollTop: editorElement?.scrollTop || 0,
+    markdownSelection: editorElement?.matches?.('[data-handbook-markdown-editor]')
+      ? [editorElement.selectionStart, editorElement.selectionEnd] : null,
+    loading: true,
+    items: [],
+    showDiff: false,
+    mobilePane: 'list',
+  };
+  const pendingHistory = handbookUi().history;
   render();
-  const dialog = document.querySelector('[data-handbook-history-dialog]'); dialog?.showModal();
+  requestAnimationFrame(() => document.querySelector('[data-handbook-history-title]')?.focus());
   try {
     const result = await loadHandbookDraftRevisions(handbookDraftContext(documentId));
-    handbookUi().history = { documentId, loading: false, items: result.items || [] };
+    if (handbookUi().history !== pendingHistory) return;
+    const current = handbookUi().serverDrafts?.[documentId]?.draft?.revision;
+    const items = result.items || [];
+    handbookUi().history = { ...handbookUi().history, loading: false, items, selectedRevisionId: current?.revisionId || items[0]?.revisionId || null, capabilities: result.capabilities || {} };
     render();
-    document.querySelector('[data-handbook-history-dialog]')?.showModal();
+    requestAnimationFrame(() => document.querySelector('.handbook-history-item[aria-pressed="true"]')?.focus() || document.querySelector('[data-handbook-history-title]')?.focus());
   } catch (error) {
-    handbookUi().history = { documentId, loading: false, items: [], error: error.message };
-    render(); document.querySelector('[data-handbook-history-dialog]')?.showModal();
+    if (handbookUi().history !== pendingHistory) return;
+    handbookUi().history = { ...handbookUi().history, loading: false, items: [], error: error.message };
+    render();
   }
+}
+
+async function refreshHandbookHistory() {
+  const history = handbookUi().history;
+  if (!history) return;
+  handbookUi().history = { ...history, loading: true, error: null };
+  const pendingHistory = handbookUi().history;
+  render();
+  try {
+    const result = await loadHandbookDraftRevisions(handbookDraftContext(history.documentId));
+    if (handbookUi().history !== pendingHistory) return;
+    const items = result.items || [];
+    const current = handbookUi().serverDrafts?.[history.documentId]?.draft?.revision;
+    handbookUi().history = { ...handbookUi().history, loading: false, items, capabilities: result.capabilities || {}, selectedRevisionId: items.some(item => item.revisionId === history.selectedRevisionId) ? history.selectedRevisionId : current?.revisionId || items[0]?.revisionId || null, status: '历史版本已更新。' };
+  } catch (error) {
+    if (handbookUi().history !== pendingHistory) return;
+    handbookUi().history = { ...handbookUi().history, loading: false, error: error.message };
+  }
+  render();
 }
 
 async function openHandbookReviewDialog() {
@@ -2060,14 +2304,13 @@ async function runIncrementalAction(control, taskId, operation, successMessage) 
   }
 }
 
-let noticeDismissTimer;
 function showAppNotice(message, options = {}) {
-  clearTimeout(noticeDismissTimer);
-  noticeDismissTimer = undefined;
   const panel = byId('error-panel');
   const tone = options.tone === 'error' ? 'danger' : options.tone || 'warning';
   const action = byId('notice-action');
   panel.className = `notice notice-${tone}`;
+  panel.dataset.platformStateNotice = String(options.scope === 'platform');
+  panel.setAttribute('role', ['danger', 'error'].includes(tone) ? 'alert' : 'status');
   panel.hidden = false;
   byId('error-title').textContent = options.title || '操作提示';
   byId('error-message').textContent = message;
@@ -2079,13 +2322,6 @@ function showAppNotice(message, options = {}) {
   } else {
     action.removeAttribute('href');
     action.textContent = '';
-  }
-  const duration = tone === 'success' ? 3000 : ['error', 'danger'].includes(tone) ? 5000 : 0;
-  if (duration) {
-    noticeDismissTimer = setTimeout(() => {
-      if (panel.classList.contains(`notice-${tone}`)) panel.hidden = true;
-      noticeDismissTimer = undefined;
-    }, duration);
   }
 }
 
@@ -2201,9 +2437,10 @@ function updatePlatformState(context, overview) {
   // 的真实状态决定是否展示错误。
   const isReviewView = appState.activeView === 'review';
   if (unavailable && !isReviewView) {
-    showAppNotice('当前无法读取平台数据，请稍后重新检查。', { title: '平台数据暂时不可用', tone: 'danger', retry: true });
-  } else {
+    showAppNotice('当前无法读取平台数据，请稍后重新检查。', { title: '平台数据暂时不可用', tone: 'danger', retry: true, scope: 'platform' });
+  } else if (byId('error-panel').dataset.platformStateNotice === 'true') {
     byId('error-panel').hidden = true;
+    byId('error-panel').dataset.platformStateNotice = 'false';
   }
 }
 
@@ -2264,11 +2501,6 @@ async function load(scopes = ['context', 'overview']) {
   main.setAttribute('aria-busy', 'true');
   loadInFlight = (async () => {
     const { context, overview, requested } = await loadPlatformData(scopes);
-    if (appState.activeView === 'cleaning' && !appState.cleaningProjection) {
-      appState.cleaningProjection = { status: 'loading' };
-      try { appState.cleaningProjection = { status: 'ok', ...(await loadCleaningWorkspace()), asOf: new Date().toISOString() }; }
-      catch (error) { appState.cleaningProjection = { status: 'unavailable', error: { message: error.message, code: error.code } }; }
-    }
     if (requested.context && context) appState.contextProjection = context;
     if (requested.overview && overview && overview.status !== 'unavailable') appState.projection = overview;
     const currentContext = requested.context ? context : appState.contextProjection;
@@ -2304,6 +2536,97 @@ function applyBrandIcon(icon = {}) {
   const favicon = byId('knowledge-center-favicon'); if (favicon) favicon.href = url;
 }
 
+function refreshOnlineReviewReadiness(form) {
+  const submit = form?.querySelector('button[type="submit"]');
+  if (!submit) return false;
+  const checked = [...form.querySelectorAll('[data-review-online-draft]:checked')];
+  const reviewer = form.elements.reviewerId;
+  const reviewerOption = reviewer?.selectedOptions?.[0];
+  const scope = form.elements.scope?.value;
+  const branches = new Set(checked.map(input => input.dataset.branch));
+  const pathsComplete = checked.every(input => form.querySelector(`[data-review-online-path="${CSS.escape(input.dataset.documentId)}"]`)?.value.trim());
+  const scopeValid = scope === 'handbook' ? checked.length > 0 : scope === 'document' && checked.length === 1;
+  const ready = form.dataset.reviewOnlineState === 'ready'
+    && !form.dataset.reviewOnlineSubmitting
+    && scopeValid
+    && Boolean(reviewer?.value && reviewerOption && !reviewerOption.disabled)
+    && pathsComplete
+    && branches.size === 1;
+  submit.disabled = !ready;
+  return ready;
+}
+
+async function loadOnlineReviewPrerequisites(dialog) {
+  const form = dialog?.querySelector('[data-review-online-form]');
+  if (!dialog?.open || !form) return;
+  const draftsPanel = form.querySelector('[data-review-online-drafts]');
+  const reviewerSelect = form.querySelector('[data-review-online-reviewer]');
+  const generation = Number(form.dataset.reviewOnlineGeneration || 0) + 1;
+  form.dataset.reviewOnlineGeneration = String(generation);
+  form.dataset.reviewOnlineState = 'loading';
+  delete form.dataset.reviewOnlineSubmitting;
+  form.setAttribute('aria-busy', 'true');
+  draftsPanel.innerHTML = '<p role="status">正在读取已保存修改稿…</p>';
+  reviewerSelect.replaceChildren(new Option('正在读取审核人…', ''));
+  reviewerSelect.disabled = true;
+  form.querySelectorAll('[data-review-online-scope] input').forEach(input => { input.disabled = true; });
+  refreshOnlineReviewReadiness(form);
+  try {
+    const [draftResult, reviewerResult] = await Promise.all([
+      loadHandbookReviewDrafts(form.dataset.handbookId), loadHandbookReviewers(form.dataset.handbookId),
+    ]);
+    if (!dialog.open || form.dataset.reviewOnlineGeneration !== String(generation)) return;
+    const branch = form.dataset.branch;
+    const drafts = (draftResult.items || []).filter(item => !branch || item.branch === branch);
+    draftsPanel.innerHTML = drafts.length ? drafts.map(item => {
+      const selected = new URLSearchParams(window.location.search).get('documentId') === item.documentId;
+      return `<div class="review-online-draft"><label><input type="checkbox" data-review-online-draft data-document-id="${escapeHtml(item.documentId)}" data-outline-version-id="${escapeHtml(item.outlineVersionId)}" data-branch="${escapeHtml(item.branch)}" data-revision-id="${escapeHtml(item.draftRevisionId)}" ${selected ? 'checked' : ''}><span>${escapeHtml(item.documentId)} · 已保存 v${escapeHtml(item.editVersion)} · ${escapeHtml(item.branch)}</span></label><label>仓库文件路径<input data-review-online-path="${escapeHtml(item.documentId)}" placeholder="完整仓库路径，例如 docs/00SQL参考手册.md" value="${selected ? escapeHtml(form.dataset.documentPath) : ''}"></label></div>`;
+    }).join('') : `<div role="status"><p>当前分支没有已保存修改稿。</p><a href="/knowledge-center/production/handbook/${encodeURIComponent(form.dataset.handbookId)}">进入编写</a></div>`;
+    const reviewers = reviewerResult.items || [];
+    reviewerSelect.replaceChildren(new Option(reviewers.some(item => !item.disabled) ? '请选择审核人' : '当前没有可用审核人', ''), ...reviewers.map(item => new Option(item.displayName, item.id, false, false)));
+    reviewers.forEach((item, index) => { if (item.disabled) reviewerSelect.options[index + 1].disabled = true; });
+    reviewerSelect.disabled = !reviewers.some(item => !item.disabled);
+    syncSearchableSelect(reviewerSelect);
+    form.querySelectorAll('[data-review-online-scope] input').forEach(input => { input.disabled = false; });
+    form.dataset.reviewOnlineState = drafts.length ? 'ready' : 'empty';
+  } catch (error) {
+    if (!dialog.open || form.dataset.reviewOnlineGeneration !== String(generation)) return;
+    form.dataset.reviewOnlineState = 'error';
+    draftsPanel.innerHTML = `<p role="alert">修改稿读取失败：${escapeHtml(error.message || '请稍后重试')}</p><button class="button secondary" type="button" data-review-online-retry>重试</button>`;
+    reviewerSelect.replaceChildren(new Option('审核人不可用', ''));
+    reviewerSelect.disabled = true;
+  } finally {
+    if (dialog.open && form.dataset.reviewOnlineGeneration === String(generation)) {
+      form.removeAttribute('aria-busy');
+      refreshOnlineReviewReadiness(form);
+    }
+  }
+}
+
+document.addEventListener('input', event => {
+  const form = event.target.closest('[data-review-online-form]');
+  if (!form) return;
+  const error = form.querySelector('[data-review-online-error]');
+  if (error) error.hidden = true;
+  refreshOnlineReviewReadiness(form);
+});
+document.addEventListener('change', event => {
+  const responsibilityForm = event.target.closest('[data-task-responsibility-form]');
+  if (responsibilityForm) {
+    const config = appState.taskConfig || {};
+    const unchanged = String(responsibilityForm.elements.defaultOwnerId.value || '') === String(config.defaultOwnerId || '')
+      && String(responsibilityForm.elements.knowledgeCenterOwnerId.value || '') === String(config.knowledgeCenterOwnerId || '');
+    const submit = responsibilityForm.querySelector('[type="submit"]');
+    if (submit) submit.disabled = config.revision == null || unchanged;
+    return;
+  }
+  const form = event.target.closest('[data-review-online-form]');
+  if (!form) return;
+  const error = form.querySelector('[data-review-online-error]');
+  if (error) error.hidden = true;
+  refreshOnlineReviewReadiness(form);
+});
+
 document.addEventListener('dismissible-menu-close', event => {
   if (event.target.closest('.platform-tab-menu') && platformRenderDeferred
       && !document.querySelector('.platform-tab-menu details[open]')) queueMicrotask(render);
@@ -2312,6 +2635,61 @@ document.addEventListener('dismissible-menu-close', event => {
 document.addEventListener('click', async event => {
   const openOutlineMenu = document.querySelector('[data-outline-context-menu]:not([hidden])');
   if (openOutlineMenu && !openOutlineMenu.contains(event.target)) openOutlineMenu.hidden = true;
+  const cleaningPageButton = event.target.closest('[data-cleaning-page]');
+  if (cleaningPageButton) {
+    const page = Number(cleaningPageButton.dataset.cleaningPage);
+    if (appState.activeView !== 'cleaning' || !Number.isSafeInteger(page) || page < 1) return;
+    const kind = cleaningPageButton.dataset.cleaningPageKind === 'datasets' ? 'datasets' : 'batches';
+    const requestId = (appState.cleaningPageRequest || 0) + 1;
+    appState.cleaningPageRequest = requestId;
+    const navigation = cleaningPageButton.closest('.cleaning-pagination');
+    navigation?.querySelectorAll('button').forEach(button => { button.disabled = true; });
+    cleaningPageButton.textContent = '读取中…';
+    try {
+      const api = await cleaningApi();
+      const pageData = kind === 'datasets' ? await api.loadCleaningDatasets(page) : await api.loadCleaningBatches(page);
+      if (appState.cleaningPageRequest !== requestId) return;
+      appState.cleaningProjection = { ...appState.cleaningProjection, [kind]: pageData, status: 'ok', asOf: new Date().toISOString() };
+      render();
+    } catch (error) {
+      if (appState.cleaningPageRequest !== requestId) return;
+      navigation?.querySelectorAll('button').forEach(button => { button.disabled = false; });
+      cleaningPageButton.textContent = page < Number(appState.cleaningProjection?.[kind]?.page || 1) ? '上一页' : '下一页';
+      showAppNotice(`${kind === 'datasets' ? '知识库版本' : '资料批次'}读取失败：${error.message || '请稍后重试。'}`);
+    }
+    return;
+  }
+  const cleaningRetryButton = event.target.closest('[data-cleaning-retry]');
+  if (cleaningRetryButton) {
+    if (appState.activeView !== 'cleaning') return;
+    if (appState.cleaningDetailProjection) { loadCleaningRoute(); return; }
+    cleaningRetryButton.disabled = true;
+    cleaningRetryButton.textContent = '读取中…';
+    try {
+      const data = await loadCleaningWorkspace(Number(appState.cleaningProjection?.batches?.page || 1), Number(appState.cleaningProjection?.datasets?.page || 1));
+      appState.cleaningProjection = { status: 'ok', ...data, asOf: new Date().toISOString() };
+    } catch (error) {
+      appState.cleaningProjection = { status: 'unavailable', error: { message: error.message, code: error.code } };
+    }
+    render();
+    return;
+  }
+  const cleaningDetailRetryButton = event.target.closest('[data-cleaning-detail-retry]');
+  if (cleaningDetailRetryButton) { if (appState.activeView === 'cleaning') loadCleaningRoute(); return; }
+  const responsibilityOpen = event.target.closest('[data-task-responsibility-open]');
+  if (responsibilityOpen) {
+    const dialog = document.querySelector('[data-task-responsibility-dialog]');
+    dialog?.showModal();
+    if (appState.taskConfigStatus?.kind === 'error') loadTaskResponsibilityConfig();
+    dialog?.querySelector('select[name="defaultOwnerId"]')?.focus();
+    return;
+  }
+  const responsibilityClose = event.target.closest('[data-task-responsibility-close]');
+  if (responsibilityClose) {
+    responsibilityClose.closest('dialog')?.close();
+    document.querySelector('[data-task-responsibility-open]')?.focus();
+    return;
+  }
   const principalOpenCreate = event.target.closest('[data-principal-open-create]');
   if (principalOpenCreate) {
     const dialog = document.querySelector('[data-principal-editor-dialog]');
@@ -2483,6 +2861,7 @@ document.addEventListener('click', async event => {
       appState.gitlabAddingConnection = false;
       window.history.pushState({ view: "platform", tab }, "", pathForView("platform", { tab }));
       render();
+      if (tab === 'principals' && !appState.taskConfig && !appState.taskConfigLoading) loadTaskResponsibilityConfig();
       if (tab === "gitlab" && !appState.gitlabProjection?.connections?.length) loadGitLabAdmin();
       if (tab === "governance" && !appState.databaseConnectionProjection) loadDatabaseConnectionAdmin();
     }
@@ -2830,6 +3209,17 @@ document.addEventListener('click', async event => {
     if (appState.outlineListState.statusFilter) url.searchParams.set('status', appState.outlineListState.statusFilter);
     window.history.pushState({ view: 'outlines', ...appState.outlineListState }, document.title, `${url.pathname}${url.search}`);
     loadOutlines();
+    return;
+  }
+  const outlineStage = event.target.closest('[data-outline-stage]');
+  if (outlineStage) {
+    event.preventDefault();
+    appState.outlineListState.statusFilter = outlineStage.dataset.outlineStage || '';
+    const url = new URL('/knowledge-center/outlines', window.location.origin);
+    if (appState.outlineListState.search) url.searchParams.set('q', appState.outlineListState.search);
+    if (appState.outlineListState.statusFilter) url.searchParams.set('status', appState.outlineListState.statusFilter);
+    window.history.pushState({ ...window.history.state, view: 'outlines', ...appState.outlineListState }, document.title, `${url.pathname}${url.search}`);
+    updateOutlineListFilters();
     return;
   }
   const outlineSubpage = event.target.closest('[data-outline-subpage]');
@@ -3351,29 +3741,62 @@ document.addEventListener('click', async event => {
     event.target.closest('dialog')?.close();
     return;
   }
-  if (event.target.closest('[data-incremental-create-open]')) { document.querySelector('[data-incremental-create-dialog]')?.showModal(); return; }
-  if (event.target.closest('[data-incremental-dialog-close]')) { event.target.closest('dialog')?.close(); return; }
-  const baselineLoader = event.target.closest('[data-incremental-load-baselines]');
-  if (baselineLoader) {
-    const form = baselineLoader.closest('form');
-    const handbookId = form.elements.handbookId.value;
-    const businessVersion = form.elements.businessVersion.value.trim();
-    const status = form.querySelector('.incremental-baseline-status');
-    if (!handbookId || !businessVersion) { status.textContent = '请先选择手册并填写业务版本。'; return; }
-    baselineLoader.disabled = true; status.textContent = '正在读取已发布基线…';
-    try {
-      const result = await loadIncrementalBaselines(handbookId, businessVersion);
-      const baselines = Array.isArray(result) ? result : (result?.items || []);
-      const select = form.elements.baselineVersionId;
-      select.replaceChildren(new Option(baselines.length ? '请选择已发布基线' : '当前版本暂无已发布基线', ''));
-      baselines.forEach(item => select.add(new Option(item.displayName || item.versionName || item.id, item.id)));
-      select.disabled = !baselines.length;
-      status.textContent = baselines.length ? `已读取 ${baselines.length} 个可用基线。` : '无真实已发布基线，不能创建增量任务。';
-    } catch (error) { status.textContent = error.message || '基线读取失败。'; }
-    finally { baselineLoader.disabled = false; }
+  if (event.target.closest('[data-incremental-reload]')) { loadIncrementalWorkspace(); return; }
+  const progressMode = event.target.closest('[data-progress-mode]');
+  const progressStage = event.target.closest('[data-progress-stage]');
+  const progressDay = event.target.closest('[data-progress-day]');
+  const progressCalendarNav = event.target.closest('[data-progress-calendar-nav]');
+  const progressCalendarView = event.target.closest('[data-progress-calendar-view]');
+  const progressTaskSummary = event.target.closest('[data-progress-task-summary]');
+  const progressParams = new URLSearchParams(window.location.search);
+  const updateProgressUrl = changes => {
+    progressParams.set('view', 'progress');
+    for (const [key, value] of Object.entries(changes)) value ? progressParams.set(key, value) : progressParams.delete(key);
+    window.history.replaceState({ ...window.history.state, view: 'production', productionView: 'progress' }, document.title, `${window.location.pathname}?${progressParams.toString()}`);
+    refreshProductionProgressView();
+    if ((progressParams.get('mode') || 'calendar') === 'calendar') ensureVisibleWorkCalendars();
+  };
+  if (event.target.closest('[data-production-progress-clear]')) {
+    for (const key of ['q', 'status', 'handbook', 'version', 'from', 'to']) progressParams.delete(key);
+    window.history.replaceState({ ...window.history.state, view: 'production', productionView: 'progress' }, document.title, `${window.location.pathname}?${progressParams.toString()}`);
+    refreshProductionProgressView();
+    if ((progressParams.get('mode') || 'calendar') === 'calendar') ensureVisibleWorkCalendars();
     return;
   }
-  if (event.target.closest('[data-incremental-reload]')) { loadIncrementalWorkspace(); return; }
+  if (progressMode) { updateProgressUrl({ mode: progressMode.dataset.progressMode, ...(progressMode.dataset.progressMode === 'calendar' ? { calendarView: 'month' } : {}), day: '' }); return; }
+  if (progressStage) { updateProgressUrl({ stage: progressStage.dataset.progressStage }); return; }
+  if (progressDay) { updateProgressUrl({ day: progressDay.dataset.progressDay }); return; }
+  if (progressCalendarNav) { updateProgressUrl({ day: progressCalendarNav.dataset.progressCalendarNav }); return; }
+  if (progressCalendarView) { updateProgressUrl({ calendarView: progressCalendarView.dataset.progressCalendarView }); return; }
+  if (event.target.closest('[data-progress-calendar-today]')) { updateProgressUrl({ day: localTodayDateKey(), calendarView: 'month' }); return; }
+  if (progressTaskSummary) {
+    const task = (appState.incrementalProjection?.items || []).find(item => String(item.id || item.taskId) === progressTaskSummary.dataset.progressTaskSummary);
+    if (!task) return;
+    const dialog = document.querySelector('[data-production-task-summary]');
+    dialog.dataset.taskId = String(task.id || task.taskId);
+    dialog.querySelector('#production-task-summary-title').textContent = task.name || task.title || '增量任务';
+    dialog.querySelector('[data-summary-handbook]').textContent = task.handbookName || task.handbookId || '—';
+    dialog.querySelector('[data-summary-version]').textContent = task.businessVersion || '—';
+    dialog.querySelector('[data-summary-status]').textContent = taskStatus(task);
+    dialog.querySelector('[data-summary-updated]').textContent = formatProductionTimestamp(task.updatedAt);
+    dialog.showModal();
+    return;
+  }
+  if (event.target.closest('[data-production-summary-close]')) { event.target.closest('dialog')?.close(); return; }
+  if (event.target.closest('[data-progress-enter-task]')) {
+    const id = document.querySelector('[data-production-task-summary]')?.dataset.taskId;
+    if (!id) return;
+    document.querySelector('[data-production-task-summary]')?.close();
+    const url = new URL(window.location.href); url.searchParams.set('view', 'tasks'); url.searchParams.set('taskId', id);
+    window.history.pushState({ ...window.history.state, view: 'production', productionView: 'tasks', taskId: id }, document.title, `${url.pathname}${url.search}`);
+    loadIncrementalWorkspace(id);
+    return;
+  }
+  if (event.target.closest('[data-production-back-progress]')) {
+    const url = new URL(window.location.href); url.searchParams.set('view', 'progress'); url.searchParams.delete('taskId'); url.searchParams.delete('stage');
+    window.history.pushState({ ...window.history.state, view: 'production', productionView: 'progress' }, document.title, `${url.pathname}${url.search}`);
+    render(); ensureVisibleWorkCalendars(); return;
+  }
   const productionOverviewTab = event.target.closest('[data-production-overview-tab]');
   if (productionOverviewTab) {
     const view = productionOverviewTab.dataset.productionOverviewTab;
@@ -3388,7 +3811,8 @@ document.addEventListener('click', async event => {
       loadIncrementalWorkspace();
       return;
     }
-    render();
+    refreshProductionProgressView();
+    if (view === 'progress') ensureVisibleWorkCalendars();
     return;
   }
   const productionHandbookRow = event.target.closest('[data-production-handbook-row]');
@@ -3432,32 +3856,17 @@ document.addEventListener('click', async event => {
     dialog.querySelector('[data-review-cancel-title]').textContent = `此操作将终止整个审核任务（包括同一候选的其他文档）：${cancel.dataset.title}。任务历史会保留。`;
     dialog.showModal(); return;
   }
+  if (event.target.closest('[data-review-online-retry]')) {
+    await loadOnlineReviewPrerequisites(event.target.closest('[data-review-online-dialog]'));
+    return;
+  }
   if (event.target.closest('[data-review-online-start]')) {
     const dialog = document.querySelector('[data-review-online-dialog]');
     if (dialog?.showModal) {
       dialog.showModal();
-      const form = dialog.querySelector('[data-review-online-form]');
-      const draftsPanel = dialog.querySelector('[data-review-online-drafts]');
-      const reviewerSelect = dialog.querySelector('[data-review-online-reviewer]');
       const errorPanel = dialog.querySelector('[data-review-online-error]');
       if (errorPanel) errorPanel.hidden = true;
-      try {
-        const [draftResult, reviewerResult] = await Promise.all([
-          loadHandbookReviewDrafts(form.dataset.handbookId), loadHandbookReviewers(form.dataset.handbookId),
-        ]);
-        const branch = form.dataset.branch;
-        const drafts = (draftResult.items || []).filter(item => !branch || item.branch === branch);
-        draftsPanel.innerHTML = drafts.length ? drafts.map(item => {
-          const selected = new URLSearchParams(window.location.search).get('documentId') === item.documentId;
-          return `<div class="review-online-draft"><label><input type="checkbox" data-review-online-draft data-document-id="${escapeHtml(item.documentId)}" data-outline-version-id="${escapeHtml(item.outlineVersionId)}" data-branch="${escapeHtml(item.branch)}" data-revision-id="${escapeHtml(item.draftRevisionId)}" ${selected ? 'checked' : ''}><span>${escapeHtml(item.documentId)} · 已保存 v${escapeHtml(item.editVersion)} · ${escapeHtml(item.branch)}</span></label><label>仓库文件路径<input data-review-online-path="${escapeHtml(item.documentId)}" placeholder="完整仓库路径，例如 docs/00SQL参考手册.md" value="${selected ? escapeHtml(form.dataset.documentPath) : ''}"></label></div>`;
-        }).join('') : '<p>当前分支没有已保存修改稿。请进入文档编写并保存。</p>';
-        reviewerSelect.innerHTML = '<option value="">请选择审核人</option>' + (reviewerResult.items || []).map(item => `<option value="${escapeHtml(item.id)}" ${item.disabled ? 'disabled' : ''}>${escapeHtml(item.displayName)}</option>`).join('');
-        syncSearchableSelect(reviewerSelect);
-      } catch (error) {
-        draftsPanel.textContent = `修改稿读取失败：${error.message}`;
-        reviewerSelect.innerHTML = '<option value="">审核人不可用</option>';
-        syncSearchableSelect(reviewerSelect);
-      }
+      await loadOnlineReviewPrerequisites(dialog);
     }
     return;
   }
@@ -3584,33 +3993,8 @@ document.addEventListener('click', async event => {
     const url = new URL(window.location.href);
     url.searchParams.set('stage', incrementalStage.dataset.incrementalStage);
     window.history.pushState({ view: 'production', taskId: url.searchParams.get('taskId'), stage: incrementalStage.dataset.incrementalStage }, document.title, url);
-    render();
+    refreshProductionProgressView();
     requestAnimationFrame(() => document.querySelector('[data-incremental-stage-main]')?.focus());
-    return;
-  }
-  const prototypeToggle = event.target.closest('[data-incremental-prototype-toggle]');
-  if (prototypeToggle) {
-    const panel = prototypeToggle.closest('article')?.querySelector(`[data-incremental-prototype-panel="${prototypeToggle.dataset.incrementalPrototypeToggle}"]`)
-      || prototypeToggle.closest('article')?.querySelector('[data-incremental-prototype-form]');
-    if (panel) {
-      panel.hidden = !panel.hidden;
-      if (!panel.hidden) panel.querySelector('input')?.focus();
-    }
-    return;
-  }
-  const prototypeGenerate = event.target.closest('[data-incremental-prototype-generate]');
-  if (prototypeGenerate) {
-    const consolePanel = prototypeGenerate.closest('.incremental-generation-console');
-    const status = consolePanel?.querySelector('.incremental-prototype-status');
-    prototypeGenerate.disabled = true;
-    if (status) status.textContent = '前端已记录启动意图；等待真实 Agent 接口接入。';
-    return;
-  }
-  const prototypePublish = event.target.closest('[data-incremental-prototype-publish]');
-  if (prototypePublish) {
-    const status = prototypePublish.parentElement?.querySelector('.incremental-prototype-status');
-    prototypePublish.disabled = true;
-    if (status) status.textContent = '前端已记录发布确认意图；正式发布仍需审核门禁和服务端事务。';
     return;
   }
   const checks = event.target.closest('[data-incremental-checks]');
@@ -3804,10 +4188,38 @@ document.addEventListener('change', async event => {
     form.querySelector('[data-principal-import-status]').textContent = '';
     return;
   }
-  const prototypeFile = event.target.closest('[data-incremental-prototype-file]');
-  if (prototypeFile) {
-    const status = prototypeFile.closest('.incremental-prototype-form')?.querySelector('[role="status"]');
-    if (status) status.textContent = prototypeFile.files?.[0] ? `已选择：${prototypeFile.files[0].name}；等待上传接口接入。` : '尚未选择文件。';
+  const incrementalSourceFile = event.target.closest('[data-incremental-source-file]');
+  if (incrementalSourceFile) {
+    const file = incrementalSourceFile.files?.[0];
+    const form = incrementalSourceFile.closest('[data-incremental-source-form]');
+    const status = form?.querySelector('[data-incremental-source-file-status]');
+    const submit = form?.querySelector('button[type="submit"]');
+    if (!file) return;
+    const supported = /\.(md|markdown|html|htm|txt)$/i.test(file.name);
+    if (!supported) {
+      incrementalSourceFile.value = '';
+      if (status) status.textContent = '只支持 Markdown、HTML 和 TXT 文件。';
+      return;
+    }
+    if (file.size > 512 * 1024) {
+      incrementalSourceFile.value = '';
+      if (status) status.textContent = '文件超过 512 KiB，请拆分后再添加。';
+      return;
+    }
+    if (status) status.textContent = '正在读取文件…';
+    if (submit) submit.disabled = true;
+    try {
+      const content = await file.text();
+      if (!form?.isConnected) return;
+      form.elements.content.value = content;
+      form.elements.label.value ||= file.name;
+      form.elements.sourceType.value = 'local';
+      if (status) status.textContent = `${file.name} 已读取。点击“保存资料”后才会保存到任务。`;
+    } catch (error) {
+      if (status) status.textContent = error.message || '无法读取所选文件。';
+    } finally {
+      if (submit && form?.isConnected) submit.disabled = false;
+    }
     return;
   }
   const taskAssignee = event.target.closest('[data-domain-task-assignee]');
@@ -3937,6 +4349,27 @@ function scheduleOutlineGovernanceSave() {
     button?.click();
   }, 700);
 }
+function updateOutlineListFilters() {
+  const { search, statusFilter } = appState.outlineListState;
+  const query = String(search || '').toLowerCase();
+  document.querySelectorAll('[data-outline-row]').forEach(row => {
+    row.hidden = (Boolean(query) && !row.dataset.outlineSearchText.includes(query))
+      || (Boolean(statusFilter) && row.dataset.outlineState !== statusFilter);
+  });
+  const rows = [...document.querySelectorAll('[data-outline-row]')];
+  const empty = document.querySelector('[data-outline-filter-empty]');
+  if (empty) empty.hidden = rows.some(row => !row.hidden);
+  document.querySelectorAll('[data-outline-stage]').forEach(link => {
+    const value = link.dataset.outlineStage || '';
+    if (value === statusFilter) link.setAttribute('aria-current', 'page');
+    else link.removeAttribute('aria-current');
+    const url = new URL('/knowledge-center/outlines', window.location.origin);
+    if (search) url.searchParams.set('q', search);
+    if (value) url.searchParams.set('status', value);
+    link.href = `${url.pathname}${url.search}`;
+  });
+}
+
 document.addEventListener('input', event => {
   const versionSearch = event.target.closest('[data-version-mapping-search]');
   if (versionSearch) {
@@ -4289,6 +4722,47 @@ document.addEventListener('change', event => {
 });
 
 document.addEventListener('submit', async event => {
+  const responsibilityForm = event.target.closest('[data-task-responsibility-form]');
+  if (responsibilityForm) {
+    event.preventDefault();
+    const status = responsibilityForm.querySelector('[data-task-responsibility-status]');
+    const submit = responsibilityForm.querySelector('[type="submit"]');
+    if (appState.taskConfig?.revision == null) { status.textContent = appState.taskConfigStatus?.message || '任务责任配置读取失败，请关闭后重试。'; return; }
+    submit.disabled = true;
+    status.textContent = '正在保存…';
+    try {
+      appState.taskConfig = await saveDocumentTaskConfig({
+        defaultOwnerId: responsibilityForm.elements.defaultOwnerId.value || null,
+        knowledgeCenterOwnerId: responsibilityForm.elements.knowledgeCenterOwnerId.value || null,
+        reasonOptions: appState.taskConfig.reasonOptions || [],
+        expectedRevision: appState.taskConfig.revision,
+      });
+      appState.taskConfigStatus = null;
+      responsibilityForm.closest('dialog')?.close();
+      render();
+      document.querySelector('[data-task-responsibility-open]')?.focus();
+    } catch (error) {
+      status.textContent = error.message || '负责人配置保存失败。';
+    } finally {
+      submit.disabled = false;
+    }
+    return;
+  }
+  const progressFilter = event.target.closest('[data-production-progress-filter]');
+  if (progressFilter) {
+    event.preventDefault();
+    const values = new FormData(progressFilter);
+    const params = new URLSearchParams(window.location.search);
+    params.set('view', 'progress');
+    for (const key of ['q', 'status', 'handbook', 'version', 'from', 'to']) {
+      const value = String(values.get(key) || '').trim();
+      value ? params.set(key, value) : params.delete(key);
+    }
+    window.history.replaceState({ ...window.history.state, view: 'production', productionView: 'progress' }, document.title, `${window.location.pathname}?${params.toString()}`);
+    refreshProductionProgressView();
+    if ((params.get('mode') || 'calendar') === 'calendar') ensureVisibleWorkCalendars();
+    return;
+  }
   if (event.target.matches('[data-outline-purge-form]')) {
     event.preventDefault();
     event.target.querySelector('[data-outline-purge-confirm]')?.click();
@@ -4441,7 +4915,6 @@ document.addEventListener('submit', async event => {
       if (appState.permissionRoleDraft === submittedDraft) appState.permissionRoleDraft = null;
       appState.permissionSaveStatus = 'saved';
       await loadGitLabAdmin();
-      setTimeout(() => { appState.permissionSaveStatus = null; render(); }, 2000);
     } catch (error) { appState.permissionSaveStatus = { error: error.message || '保存失败，请重试' }; render(); }
     return;
   }
@@ -4543,28 +5016,6 @@ document.addEventListener('submit', async event => {
     finally { button.disabled = false; }
     return;
   }
-  const incrementalCreate = event.target.closest('[data-incremental-create-form]');
-  if (incrementalCreate) {
-    event.preventDefault();
-    const button = incrementalCreate.querySelector('button[type="submit"]');
-    button.disabled = true;
-    incrementalStatus(incrementalCreate, '正在创建…');
-    try {
-      const created = await createIncrementalTask({
-        name: incrementalCreate.elements.name.value.trim(),
-        handbookId: incrementalCreate.elements.handbookId.value,
-        businessVersion: incrementalCreate.elements.businessVersion.value.trim(),
-        baselineVersionId: incrementalCreate.elements.baselineVersionId.value.trim(),
-      });
-      incrementalCreate.closest('dialog').close();
-      const url = new URL(window.location.href);
-      url.searchParams.set('taskId', created.id);
-      url.searchParams.set('stage', 'setup');
-      window.history.pushState({ view: 'production', taskId: created.id }, document.title, url);
-      await loadIncrementalWorkspace(created.id);
-    } catch (error) { incrementalStatus(incrementalCreate, error.message, true); button.disabled = false; }
-    return;
-  }
   const incrementalSource = event.target.closest('[data-incremental-source-form]');
   if (incrementalSource) {
     event.preventDefault();
@@ -4578,29 +5029,13 @@ document.addEventListener('submit', async event => {
     }), '来源已固化');
     return;
   }
-  const prototypePingCode = event.target.closest('[data-incremental-prototype-form="pingcode"]');
-  if (prototypePingCode) {
-    event.preventDefault();
-    const status = prototypePingCode.querySelector('[role="status"]');
-    if (status) status.textContent = '链接格式已检查；正文读取和快照固化等待 PingCode 连接器接入。';
-    return;
-  }
-  const prototypeContract = event.target.closest('[data-incremental-prototype-form="contract"]');
-  if (prototypeContract) {
-    event.preventDefault();
-    const status = prototypeContract.querySelector('[role="status"]');
-    if (status) status.textContent = '前端已暂存大纲和双模板选择；正式版本引用等待服务端契约接入。';
-    return;
-  }
   const incrementalTarget = event.target.closest('[data-incremental-target-form]');
   if (incrementalTarget) {
     event.preventDefault();
     const taskId = incrementalTarget.dataset.taskId;
     const button = incrementalTarget.querySelector('button[type="submit"]');
     const checked = [...incrementalTarget.querySelectorAll('[name="sectionIds"]:checked, [name="chapterIds"]:checked')].map(input => input.value);
-    const documentIds = incrementalTarget.elements.documentIds
-      ? incrementalTarget.elements.documentIds.value.split(/[\n,，]/).map(value => value.trim()).filter(Boolean)
-      : [...incrementalTarget.querySelectorAll('[name="documentIds"]:checked')].map(input => input.value);
+    const documentIds = [...incrementalTarget.querySelectorAll('[name="documentIds"]:checked')].map(input => input.value);
     await runIncrementalAction(button, taskId, () => updateIncrementalTarget(taskId, { documentIds, sectionIds: checked, language: incrementalTarget.elements.language?.value || 'zh-CN' }), '修改范围已确认');
     return;
   }
@@ -4659,9 +5094,11 @@ document.addEventListener('submit', async event => {
   const onlineReviewForm = event.target.closest('[data-review-online-form]');
   if (onlineReviewForm) {
     event.preventDefault();
+    if (!refreshOnlineReviewReadiness(onlineReviewForm)) return;
     const submit = onlineReviewForm.querySelector('button[type="submit"]');
     const errorPanel = onlineReviewForm.querySelector('[data-review-online-error]');
     errorPanel.hidden = true;
+    onlineReviewForm.dataset.reviewOnlineSubmitting = 'true';
     submit.disabled = true;
     try {
       const checked = [...onlineReviewForm.querySelectorAll('[data-review-online-draft]:checked')];
@@ -4698,7 +5135,8 @@ document.addEventListener('submit', async event => {
       errorPanel.hidden = false;
       errorPanel.focus();
     } finally {
-      submit.disabled = false;
+      delete onlineReviewForm.dataset.reviewOnlineSubmitting;
+      refreshOnlineReviewReadiness(onlineReviewForm);
     }
     return;
   }
@@ -4949,7 +5387,7 @@ document.addEventListener('click', async event => {
 
   if (event.target.closest('[data-handbook-assistant-open]')) {
     setHandbookDrawerState('assistant', true);
-    requestAnimationFrame(() => document.querySelector('.handbook-assistant-panel.is-open [role="tab"]')?.focus());
+    requestAnimationFrame(() => requestAnimationFrame(() => document.querySelector('.handbook-assistant-panel.is-open [role="tab"]')?.focus()));
     return;
   }
 
@@ -5057,26 +5495,70 @@ document.addEventListener('click', async event => {
 
   const historyButton = event.target.closest('[data-handbook-history]');
   if (historyButton) { openHandbookHistory(historyButton.dataset.handbookHistory); return; }
-  const historyCompare = event.target.closest('[data-handbook-history-compare]');
-  if (historyCompare) {
+  const historySelect = event.target.closest('[data-handbook-history-select]');
+  if (historySelect) {
     const history = handbookUi().history;
-    if (history) handbookUi().history = { ...history, compareRevisionId: historyCompare.dataset.handbookHistoryCompare };
+    if (!history) return;
+    handbookUi().history = { ...history, selectedRevisionId: historySelect.dataset.handbookHistorySelect, mobilePane: 'content' };
     render();
-    requestAnimationFrame(() => document.querySelector('[data-handbook-history-dialog]')?.showModal());
+    requestAnimationFrame(() => document.querySelector('[data-handbook-history-content]')?.focus());
     return;
   }
-  if (event.target.closest('[data-handbook-history-close]')) { event.target.closest('dialog')?.close(); return; }
+  const historyDiff = event.target.closest('[data-handbook-history-diff]');
+  if (historyDiff) { handbookUi().history = { ...handbookUi().history, showDiff: historyDiff.checked }; render(); return; }
+  if (event.target.closest('[data-handbook-history-list]')) { handbookUi().history = { ...handbookUi().history, mobilePane: 'list' }; render(); return; }
+  if (event.target.closest('[data-handbook-history-retry]')) { refreshHandbookHistory(); return; }
+  if (event.target.closest('[data-handbook-history-close]')) {
+    const { triggerDocumentId: triggerId, restoreScrollTop, editorScrollTop, markdownSelection } = handbookUi().history || {};
+    handbookUi().history = null;
+    render();
+    requestAnimationFrame(() => {
+      window.scrollTo(0, restoreScrollTop || 0);
+      const editor = document.querySelector('[data-handbook-vditor] .vditor-content, [data-handbook-markdown-editor]');
+      if (editor) editor.scrollTop = editorScrollTop || 0;
+      if (markdownSelection && editor?.setSelectionRange) editor.setSelectionRange(...markdownSelection);
+      const trigger = document.querySelector(`[data-handbook-history="${CSS.escape(triggerId || '')}"]`);
+      if (trigger) {
+        trigger.closest('details')?.setAttribute('open', '');
+        trigger.focus();
+      }
+    });
+    return;
+  }
   const historyRestore = event.target.closest('[data-handbook-history-restore]');
   if (historyRestore) {
-    const documentId = handbookUi().history?.documentId;
+    const history = handbookUi().history;
+    const documentId = history?.documentId;
     const current = handbookUi().serverDrafts?.[documentId];
-    restoreHandbookDraftRevision(handbookDraftContext(documentId), { revisionId: historyRestore.dataset.handbookHistoryRestore, editVersion: current?.draft?.editVersion || 0 })
-      .then(result => {
+    const hasUnsaved = handbookUi().dirtyDocuments?.includes(documentId);
+    const message = hasUnsaved
+      ? '恢复会创建新的草稿版本，并替换当前未保存编辑。历史记录会保留。是否继续？'
+      : '恢复会创建新的草稿版本，历史记录会保留。是否继续？';
+    if (!window.confirm(message)) return;
+    handbookUi().history = { ...history, restoring: true, status: '正在恢复历史版本…' };
+    render();
+    try {
+      const result = await restoreHandbookDraftRevision(handbookDraftContext(documentId), { revisionId: historyRestore.dataset.handbookHistoryRestore, editVersion: current?.draft?.editVersion || 0 });
         handbookUi().serverDrafts[documentId] = result;
         handbookUi().drafts[documentId] = result.draft.revision.markdown;
         handbookUi().draftHtml[documentId] = result.draft.revision.htmlSnapshot;
-        handbookUi().history = null; render(); showAppNotice(`已创建草稿 v${result.draft.editVersion}。`, { title: '历史版本已恢复' });
-      }).catch(error => showAppNotice(error.message, { title: '恢复失败' }));
+        handbookUi().draftBranchByDocument[documentId] = result.draft.branch;
+        updateHandbookUiList('dirtyDocuments', documentId, false);
+        handbookUi().draftSaveState[documentId] = { status: 'saved' };
+        handbookUi().history = null;
+        render();
+        requestAnimationFrame(() => document.querySelector('[data-handbook-draft-save], [data-handbook-mode="edit"]')?.focus());
+        showAppNotice(`已创建草稿 v${result.draft.editVersion}。`, { title: '历史版本已恢复' });
+    } catch (error) {
+      if (error.code === 'DRAFT_VERSION_CONFLICT') {
+        handbookUi().history = { ...handbookUi().history, restoring: false, actionError: '服务器草稿已被其他人更新。你的本地编辑仍保留，请刷新历史后重新比较。' };
+        if (error.details?.serverDraft) handbookUi().serverDrafts[documentId] = { exists: true, draft: error.details.serverDraft, capabilities: current?.capabilities || {} };
+        render();
+        return;
+      }
+      handbookUi().history = { ...handbookUi().history, restoring: false, actionError: error.message };
+      render();
+    }
     return;
   }
   if (event.target.closest('[data-handbook-conflict-close]')) { event.target.closest('dialog')?.close(); return; }
@@ -5313,6 +5795,11 @@ function restoreReviewUi() {
 }
 
 document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && handbookUi()?.history) {
+    event.preventDefault();
+    document.querySelector('[data-handbook-history-close]')?.click();
+    return;
+  }
   const gitlabDrawer = document.querySelector('.gitlab-connection-drawer');
   if (gitlabDrawer && event.key === 'Escape') {
     event.preventDefault();
@@ -5593,18 +6080,6 @@ document.addEventListener('change', async event => {
     form.querySelectorAll('[data-operation-field="move"]').forEach(field => { field.hidden = type !== 'move'; field.querySelector('input').required = !field.hidden; });
     return;
   }
-  const baselineDependency = event.target.closest('[data-incremental-create-form] [name="handbookId"], [data-incremental-create-form] [name="businessVersion"]');
-  if (baselineDependency) {
-    const form = baselineDependency.form;
-    const select = form.elements.baselineVersionId;
-    select.replaceChildren(new Option('请重新读取基线', ''));
-    select.disabled = true;
-    form.querySelector('button[type="submit"]').disabled = true;
-    form.querySelector('.incremental-baseline-status').textContent = '手册或业务版本已变更，请重新读取基线。';
-    return;
-  }
-  const baseline = event.target.closest('[data-incremental-create-form] [name="baselineVersionId"]');
-  if (baseline) { baseline.form.querySelector('button[type="submit"]').disabled = !baseline.value; return; }
   const size=event.target.closest('[data-asset-page-size]'); if(!size)return; const url=new URL(window.location.href); url.searchParams.set('pageSize',size.value); url.searchParams.set('page','1'); window.history.pushState({view:'assets'},'',url); loadAssetCatalog();
 });
 
@@ -5682,18 +6157,11 @@ document.addEventListener('input', event => {
   }
   const input = event.target.closest('[data-outline-search]');
   if (!input) return;
-  const query = String(input.value || '').trim().toLowerCase();
   appState.outlineListState.search = input.value.trim();
   const url = new URL(window.location.href);
   appState.outlineListState.search ? url.searchParams.set('q', appState.outlineListState.search) : url.searchParams.delete('q');
   window.history.replaceState({ ...window.history.state, ...appState.outlineListState }, document.title, `${url.pathname}${url.search}`);
-  document.querySelectorAll('[data-outline-row]').forEach(row => {
-    const status = appState.outlineListState.statusFilter;
-    row.hidden = (Boolean(query) && !row.dataset.outlineSearchText.includes(query)) || (Boolean(status) && row.dataset.outlineState !== status);
-  });
-  const rows = [...document.querySelectorAll('[data-outline-row]')];
-  const empty = document.querySelector('[data-outline-filter-empty]');
-  if (empty) empty.hidden = rows.some(row => !row.hidden);
+  updateOutlineListFilters();
 });
 
 document.addEventListener('compositionstart', event => {
@@ -5728,23 +6196,11 @@ document.addEventListener('change', event => {
     updateOutlineNodeRows();
     return;
   }
-  const filter = event.target.closest('[data-outline-status-filter]');
-  if (!filter) return;
-  appState.outlineListState.statusFilter = filter.value;
-  const url = new URL(window.location.href);
-  filter.value ? url.searchParams.set('status', filter.value) : url.searchParams.delete('status');
-  window.history.replaceState({ ...window.history.state, ...appState.outlineListState }, document.title, `${url.pathname}${url.search}`);
-  const query = appState.outlineListState.search.toLowerCase();
-  document.querySelectorAll('[data-outline-row]').forEach(row => {
-    row.hidden = (Boolean(filter.value) && row.dataset.outlineState !== filter.value) || (Boolean(query) && !row.dataset.outlineSearchText.includes(query));
-  });
-  const rows = [...document.querySelectorAll('[data-outline-row]')];
-  const empty = document.querySelector('[data-outline-filter-empty]');
-  if (empty) empty.hidden = rows.some(row => !row.hidden);
 });
 
 byId('skip-to-main').addEventListener('click', () => byId('main').focus());
 byId('retry').addEventListener('click', load);
+byId('notice-dismiss').addEventListener('click', () => { byId('error-panel').hidden = true; });
 byId('auth-retry').addEventListener('click', () => bootstrap());
 byId('cas-login').addEventListener('click', () => {
   try { startCasLogin(); setAuthBusy(true, '正在跳转统一认证'); } catch (error) { showAuth(error); }
@@ -5927,6 +6383,7 @@ window.addEventListener('popstate', event => {
     const directEntry = handbookEntry.get(activeHandbookPath);
     if (directEntry && directEntry.url === location.pathname + location.search && appState.activeView === 'production') {
       if (showCachedReturn(view, directEntry)) {
+        if (view === 'dashboard') loadMyTasksWorkspace({ retain: true });
         return;
       }
     }
@@ -6097,6 +6554,8 @@ async function bootstrap() {
   if (appState.activeView === 'dashboard') loadMyTasksWorkspace();
   if (appState.activeView === 'outlines') loadOutlines();
   if (appState.activeView === 'assets') loadAssetCatalog();
+  if (appState.activeView === 'cleaning') loadCleaningRoute();
+  void loadGlobalNotificationCount();
   if (appState.activeView === 'production') loadIncrementalWorkspace();
   if (appState.activeView === 'documentTasks') loadTaskManagementWorkspace();
   if (appState.activeView === 'review') await loadReviewWorkspace().finally(() => load(['context']));

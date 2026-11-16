@@ -5,6 +5,7 @@ const ICONS = {
   copy: uiIcon('action.copy'),
   good: uiIcon('feedback.positive'),
   bad: uiIcon('feedback.negative'),
+  view: uiIcon('action.view'),
   more: uiIcon('action.more'),
   link: uiIcon('action.references'),
 };
@@ -24,9 +25,24 @@ function evidenceFor(job) {
 
 export function createAIConversationTools({ host, conversation, context, getCurrentJob, openHistory, onDeleted, notify }) {
   const drawer = document.createElement('aside'); drawer.className = 'handbook-ai-evidence-drawer'; drawer.hidden = true;
-  drawer.setAttribute('aria-label', '实际引用来源'); drawer.innerHTML = '<header><strong>引用来源 <span data-evidence-count></span></strong><button type="button" aria-label="关闭引用来源" data-evidence-close>×</button></header><p>只展示本次候选实际使用、可定位的资料原文。</p><div data-evidence-list></div>';
+  drawer.setAttribute('aria-label', '实际引用来源'); drawer.innerHTML = `<header><strong>引用来源 <span data-evidence-count></span></strong><button type="button" class="icon-button handbook-ai-evidence-close" aria-label="关闭引用来源" title="关闭引用来源" data-evidence-close>${uiIcon('action.close')}</button></header><div data-evidence-list></div>`;
   host.append(drawer);
-  drawer.querySelector('[data-evidence-close]').onclick = () => { drawer.hidden = true; host.classList.remove('has-evidence-drawer'); };
+  const closeButton = drawer.querySelector('[data-evidence-close]');
+  window.lucide?.createIcons({ nodes: [drawer] });
+  if (!closeButton.querySelector('svg')) closeButton.textContent = '×';
+  let evidenceTrigger = null;
+  let expandedHistoryJobId = null;
+  let historyItems = [];
+  let historyList = null;
+  const closeEvidence = () => {
+    drawer.hidden = true; host.classList.remove('has-evidence-drawer');
+    if (evidenceTrigger?.isConnected) evidenceTrigger.focus();
+    evidenceTrigger = null;
+  };
+  drawer.querySelector('[data-evidence-close]').onclick = closeEvidence;
+  drawer.addEventListener('keydown', event => {
+    if (event.key === 'Escape') { event.preventDefault(); closeEvidence(); }
+  });
   const feedback = document.createElement('dialog'); feedback.className = 'handbook-ai-feedback-dialog';
   feedback.innerHTML = '<h3>意见反馈</h3><p>请说明这次结果哪里需要改进。反馈不会改变文档内容。</p><textarea maxlength="1000" rows="5" aria-label="反馈内容" placeholder="例如：哪一处引用不准确？"></textarea><footer><button type="button" data-feedback-cancel>取消</button><button type="button" data-feedback-submit>提交反馈</button></footer>';
   host.append(feedback);
@@ -44,7 +60,7 @@ export function createAIConversationTools({ host, conversation, context, getCurr
   confirm.querySelector('[data-delete-cancel]').onclick = () => confirm.close();
   let deleteJobId = null;
   confirm.querySelector('[data-delete-confirm]').onclick = async () => {
-    try { await deleteHandbookAIHistory(context, deleteJobId); confirm.close(); drawer.hidden = true; host.classList.remove('has-evidence-drawer'); onDeleted(deleteJobId); notify('对话已删除'); }
+    try { await deleteHandbookAIHistory(context, deleteJobId); confirm.close(); closeEvidence(); onDeleted(deleteJobId); notify('对话已删除'); }
     catch (error) { notify(`删除失败：${error.message}`); }
   };
 
@@ -52,31 +68,49 @@ export function createAIConversationTools({ host, conversation, context, getCurr
     const current = getCurrentJob();
     return current?.jobId === jobId ? current : loadHandbookAI(context, jobId);
   }
-  async function showEvidence(jobId) {
+  async function showEvidence(jobId, trigger = null) {
     try {
+      evidenceTrigger = trigger;
       const job = await detail(jobId);
       const entries = evidenceFor(job);
-      drawer.querySelector('[data-evidence-count]').textContent = `(${entries.length})`;
+      drawer.querySelector('[data-evidence-count]').textContent = String(entries.length);
       const list = drawer.querySelector('[data-evidence-list]'); list.replaceChildren();
-      if (!entries.length) { const empty = document.createElement('p'); empty.textContent = '本次候选没有可定位的引用原文。已添加的参考文档不等于实际引用。'; list.append(empty); }
+      if (!entries.length) {
+        const empty = document.createElement('div'); empty.className = 'handbook-ai-evidence-empty';
+        const icon = document.createElement('span'); icon.className = 'handbook-ai-evidence-empty-icon'; icon.innerHTML = uiIcon('feedback.info');
+        const title = document.createElement('strong'); title.textContent = '本次候选没有可定位的引用原文';
+        const detail = document.createElement('p'); detail.textContent = '已添加资料不等于实际引用。';
+        empty.append(icon, title, detail); list.append(empty);
+        window.lucide?.createIcons({ nodes: [empty] });
+        if (!icon.querySelector('svg')) icon.hidden = true;
+      }
       entries.forEach(({ source, ref, generated }, index) => {
         const card = document.createElement('article'); card.className = 'handbook-ai-evidence-card';
         const title = document.createElement('strong'); title.textContent = `[${index + 1}] ${source.title || source.locator || '未命名资料'}`;
         const meta = document.createElement('small'); meta.textContent = `${source.sourceType || '资料'} · ${source.sourceVersion ? `版本 ${source.sourceVersion}` : `拉取于 ${source.fetchedAt || '时间未知'}`}`;
         const quote = document.createElement('blockquote'); quote.textContent = String(source.content).slice(ref.start, ref.end);
         card.append(title, meta, quote);
-        if (generated) { const match = document.createElement('p'); match.textContent = `对应候选：${generated}`; card.append(match); }
+        if (generated) { const match = document.createElement('p'); match.className = 'handbook-ai-evidence-match'; match.textContent = `对应候选：${generated}`; card.append(match); }
         list.append(card);
       });
       drawer.hidden = false; host.classList.add('has-evidence-drawer'); drawer.querySelector('[data-evidence-close]').focus();
     } catch (error) { notify(`引用来源读取失败：${error.message}`); }
   }
 
-  function toolbar(jobId, status, rating) {
+  function toolbar(jobId, status, rating, includeView = false) {
     const bar = document.createElement('div'); bar.className = 'handbook-ai-message-actions';
     const button = (name, label, action) => {
       const control = document.createElement('button'); control.type = 'button'; control.className = 'handbook-ai-action-icon'; control.innerHTML = ICONS[name]; control.title = label; control.setAttribute('aria-label', label); control.onclick = action; bar.append(control); return control;
     };
+    if (includeView) {
+      const expanded = expandedHistoryJobId === jobId;
+      const control = button('view', expanded ? '折叠执行详情' : '查看候选与执行过程', () => {
+        expandedHistoryJobId = expandedHistoryJobId === jobId ? null : jobId;
+        drawHistory();
+        openHistory(jobId, expandedHistoryJobId === jobId);
+      });
+      control.setAttribute('aria-expanded', String(expanded));
+    }
     button('copy', '复制本次回复', async () => {
       try { const job = await detail(jobId); await navigator.clipboard.writeText(job.candidateMarkdown || job.fragment || job.executionPreview?.text || ''); notify('已复制本次回复'); }
       catch (error) { notify(`复制失败：${error.message}`); }
@@ -88,7 +122,7 @@ export function createAIConversationTools({ host, conversation, context, getCurr
       });
       control.dataset.feedbackRating = value; control.setAttribute('aria-pressed', String(rating === value));
     }
-    if (status === 'completed') { const refs = document.createElement('button'); refs.type = 'button'; refs.className = 'handbook-ai-evidence-link'; refs.innerHTML = `${ICONS.link}<span>引用来源</span>`; refs.onclick = () => showEvidence(jobId); bar.append(refs); }
+    if (status === 'completed') { const refs = document.createElement('button'); refs.type = 'button'; refs.className = 'handbook-ai-evidence-link'; refs.innerHTML = `${ICONS.link}<span>引用来源</span>`; refs.onclick = event => showEvidence(jobId, event.currentTarget); bar.append(refs); }
     const menu = document.createElement('details'); menu.className = 'handbook-ai-message-more';
     const summary = document.createElement('summary'); summary.innerHTML = ICONS.more; summary.title = '更多操作'; summary.setAttribute('aria-label', '更多操作');
     const options = document.createElement('div');
@@ -98,18 +132,30 @@ export function createAIConversationTools({ host, conversation, context, getCurr
     return bar;
   }
 
-  function renderHistory(items, list) {
+  function drawHistory() {
+    if (!historyList) return;
+    const list = historyList;
     list.replaceChildren();
-    for (const item of [...items].sort((a, b) => String(a.createdAt || '').localeCompare(String(b.createdAt || '')))) {
+    for (const item of [...historyItems].sort((a, b) => String(a.createdAt || '').localeCompare(String(b.createdAt || '')))) {
       const turn = document.createElement('article'); turn.className = 'handbook-writing-chat-turn'; turn.dataset.chatJob = item.jobId;
       const prompt = document.createElement('p'); prompt.className = 'handbook-writing-request'; prompt.textContent = item.requirements || operationNames[item.operation] || 'AI 写作';
       const answer = document.createElement('div'); answer.className = 'handbook-writing-chat-answer';
       const heading = document.createElement('strong'); heading.textContent = `${operationNames[item.operation] || 'AI 写作'} · ${statusNames[item.status] || item.status}`;
       const time = document.createElement('small'); time.textContent = item.createdAt ? new Date(item.createdAt).toLocaleString('zh-CN') : '';
-      const open = document.createElement('button'); open.type = 'button'; open.className = 'handbook-writing-chat-open'; open.textContent = '查看候选与执行过程'; open.onclick = () => openHistory(item.jobId);
-      answer.append(heading, time, open, toolbar(item.jobId, item.status, item.feedback)); turn.append(prompt, answer); list.append(turn);
+      answer.append(heading, time, toolbar(item.jobId, item.status, item.feedback, true)); turn.append(prompt, answer); list.append(turn);
     }
     window.lucide?.createIcons({ nodes: [list] });
+  }
+
+  function renderHistory(items, list) {
+    historyItems = items;
+    historyList = list;
+    drawHistory();
+  }
+
+  function setExpandedHistory(jobId) {
+    expandedHistoryJobId = jobId || null;
+    drawHistory();
   }
 
   function renderCurrent(job, container) {
@@ -121,5 +167,5 @@ export function createAIConversationTools({ host, conversation, context, getCurr
     answer.append(heading, summary, toolbar(job.jobId, job.status, job.userFeedback?.rating)); container.append(answer);
     window.lucide?.createIcons({ nodes: [container] });
   }
-  return { renderHistory, renderCurrent, showEvidence };
+  return { renderHistory, renderCurrent, showEvidence, setExpandedHistory };
 }

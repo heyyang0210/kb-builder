@@ -65,9 +65,9 @@ describe('知识中心公共表格视图配置器', () => {
 
   test('没有配置表格时不刷新页面图标，有表格时保留字段偏好与图标增强', () => {
     const createIcons = jest.fn();
-    const document = { addEventListener: jest.fn() };
+    const document = { addEventListener: jest.fn(), querySelector: () => null, querySelectorAll: () => [] };
     const localStorage = { getItem: () => JSON.stringify({ visible: { title: false, status: false } }) };
-    const enhance = new Function('document', 'window', 'localStorage', `${component.replace('export function enhanceTableViews', 'function enhanceTableViews')}\nreturn enhanceTableViews;`)(document, { lucide: { createIcons } }, localStorage);
+    const enhance = new Function('document', 'window', 'localStorage', 'CSS', `${component.replace('export function enhanceTableViews', 'function enhanceTableViews')}\nreturn enhanceTableViews;`)(document, { lucide: { createIcons } }, localStorage, { escape: value => value });
     enhance({ querySelectorAll: () => [] });
     expect(createIcons).not.toHaveBeenCalled();
     const heads = ['title', 'status'].map(key => ({ dataset: { tableColumn: key }, textContent: key,

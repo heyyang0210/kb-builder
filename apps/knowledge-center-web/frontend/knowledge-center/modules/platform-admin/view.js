@@ -1,4 +1,5 @@
 import { dataNote, panel, pendingState } from '../../common/components/ui.js';
+import { uiIcon } from '../../common/ui-system.js';
 import { escapeHtml } from '../../common/utils/dom.js';
 
 const ROLE_DISPLAY_NAMES = {
@@ -184,7 +185,7 @@ function renderTeamGroupsTab(projection = {}, principals = [], selectedGroupId =
   return `<div role="tabpanel" id="platform-panel-principals" aria-labelledby="platform-tab-principals" class="team-group-page"><header class="principal-page-header"><div><h2>团队小组</h2></div><button class="button primary" type="button" data-team-group-create>添加团队小组</button></header><div class="team-group-workspace"><aside class="team-group-list"><div class="team-group-list-heading"><strong>团队小组</strong><span>${groups.length} 个</span></div><div class="team-group-list-scroll" data-scroll-region="panel">${groups.map(group => `<button type="button" class="team-group-list-item ${String(group.teamGroupId) === String(selected?.teamGroupId) ? 'is-selected' : ''}" data-team-group-view="groups" data-team-group-id="${escapeHtml(group.teamGroupId)}"><span><strong>${escapeHtml(group.groupName || '-')}</strong></span><small>${group.leader ? `${escapeHtml(group.leader.displayName)} · ${Number(group.members?.length || 0)} 名成员` : '未设置负责人'}</small></button>`).join('') || '<div class="team-group-list-empty">暂无团队小组</div>'}</div></aside><section class="team-group-detail">${selected ? `<form data-team-group-form data-team-group-id="${escapeHtml(selected.teamGroupId)}" data-team-group-version="${Number(selected.rowVersion || 1)}" data-current-leader-id="${escapeHtml(leaderId)}"><header class="team-group-detail-header"><h3>${escapeHtml(selected.groupName)}</h3>${selected.techDomainName ? `<p>关联领域：${escapeHtml(selected.techDomainName)}</p>` : ''}</header><div class="team-group-field"><label for="team-group-leader">负责人</label><select id="team-group-leader" name="leaderPrincipalId" required><option value="">请选择人员</option>${people.map(person => `<option value="${escapeHtml(person.principalId)}" ${String(person.principalId) === leaderId ? 'selected' : ''}>${escapeHtml(person.displayName)}</option>`).join('')}</select></div><fieldset class="team-group-member-field"><legend>团队成员</legend><div class="team-member-add"><select data-team-member-candidate aria-label="选择要添加的团队成员"><option value="">请选择人员</option>${people.filter(person => String(person.principalId) !== leaderId && !memberIds.has(String(person.principalId))).map(person => `<option value="${escapeHtml(person.principalId)}" data-display-name="${escapeHtml(person.displayName)}">${escapeHtml(person.displayName)}</option>`).join('')}</select><button class="button secondary" type="button" data-team-member-add>添加成员</button></div><div class="team-member-chips" data-team-member-chips>${memberChips || '<span class="team-member-empty" data-team-member-empty>暂无其他团队成员</span>'}</div></fieldset><p class="team-group-status ${savedStatus?.kind || ''}" data-team-group-status role="status" aria-live="polite">${escapeHtml(savedStatus?.message || '')}</p><footer class="team-group-actions" data-scroll-obstacle><button class="button primary" type="button" data-team-group-save>保存</button><button class="button tertiary" type="button" data-team-group-cancel>取消</button></footer></form>` : '<div class="empty-state"><strong>暂无团队小组</strong></div>'}</section></div><dialog class="principal-dialog" data-team-group-create-dialog aria-labelledby="team-group-create-title" data-scroll-region="dialog"><form data-team-group-create-form><header><h2 id="team-group-create-title">新建团队小组</h2><button class="icon-button" type="button" data-team-group-create-close aria-label="关闭"><i data-lucide="x" aria-hidden="true"></i></button></header><label><span>小组名称 *</span><input name="groupName" required maxlength="255" autocomplete="off"></label><p class="team-group-status" data-team-group-create-status role="status" aria-live="polite"></p><footer><button class="button primary" type="submit">新建</button><button class="button tertiary" type="button" data-team-group-create-close>取消</button></footer></form></dialog></div>`;
 }
 
-export function renderPrincipalsTab(projection = {}, listState = {}, teamGroupProjection = {}, teamGroupView = 'people', teamGroupUi = {}) {
+export function renderPrincipalsTab(projection = {}, listState = {}, teamGroupProjection = {}, teamGroupView = 'people', teamGroupUi = {}, taskConfig = {}, taskConfigStatus = null) {
   if (teamGroupView === 'groups') return renderTeamGroupsTab(teamGroupProjection, projection.items || [], new URLSearchParams(window.location.search).get('groupId') || '', teamGroupUi);
   if (projection.status === 'unavailable') return `<div role="tabpanel" id="platform-panel-principals" aria-labelledby="platform-tab-principals">${pendingState('人员服务暂不可用', projection.error || '请稍后重试。')}</div>`;
   const items = Array.isArray(projection.items) ? projection.items : [];
@@ -219,7 +220,7 @@ export function renderPrincipalsTab(projection = {}, listState = {}, teamGroupPr
     <header class="principal-page-header">
       <div><h2>人员管理</h2><p>管理知识中心可选责任人及其 CAS 账号绑定。</p></div>
       <div class="principal-header-actions">
-        <a class="button secondary" href="/knowledge-center/document-tasks?tab=config">知识中心负责人</a>
+        <button class="button secondary" type="button" data-task-responsibility-open>责任人配置</button>
         <button class="button secondary" type="button" data-principal-open-import>Excel 批量导入</button>
         <button class="button primary" type="button" data-principal-open-create>+  新增人员</button>
       </div>
@@ -239,6 +240,16 @@ export function renderPrincipalsTab(projection = {}, listState = {}, teamGroupPr
       </div>
       <div class="principal-table-wrap"><table class="governance-ops-table principal-table" data-table-view-id="platform-principals" data-table-view-schema="1" data-table-view-label="人员管理"><thead><tr><th data-table-column="name" data-table-column-required="true" data-table-column-label="姓名">姓名</th><th data-table-column="login" data-table-column-label="CAS 登录名">CAS 登录名</th><th data-table-column="binding" data-table-column-label="CAS 绑定状态">CAS 绑定状态</th><th data-table-column="state" data-table-column-label="使用状态">使用状态</th><th data-table-column="manuals" data-table-column-label="手册责任">手册责任</th><th data-table-column="lastLogin" data-table-column-label="最近登录">最近登录</th><th data-table-column="actions" data-table-column-required="true" data-table-column-label="操作">操作</th></tr></thead><tbody>${rows}</tbody></table></div>
     </div>
+    <dialog class="principal-dialog task-responsibility-dialog" data-task-responsibility-dialog aria-labelledby="task-responsibility-title">
+      <form data-task-responsibility-form>
+        <header><div><h2 id="task-responsibility-title">责任人配置</h2></div><button class="icon-button" type="button" data-task-responsibility-close aria-label="关闭责任人配置">${uiIcon('action.close')}</button></header>
+        <div class="task-responsibility-fields">
+          <label><span>PingCode 任务负责人</span><select name="defaultOwnerId" data-searchable-select aria-label="PingCode 任务负责人" ${taskConfig?.revision == null ? 'disabled' : ''}><option value="">请选择人员</option>${items.filter(item => item.state !== 'INACTIVE').map(item => `<option value="${escapeHtml(item.principalId)}" ${String(item.principalId) === String(taskConfig.defaultOwnerId || '') ? 'selected' : ''}>${escapeHtml(item.displayName || '')}${item.casLoginName ? ` · ${escapeHtml(item.casLoginName)}` : ''}</option>`).join('')}</select></label>
+          <label><span>知识中心负责人</span><select name="knowledgeCenterOwnerId" data-searchable-select aria-label="知识中心负责人" ${taskConfig?.revision == null ? 'disabled' : ''}><option value="">请选择人员</option>${items.filter(item => item.state !== 'INACTIVE').map(item => `<option value="${escapeHtml(item.principalId)}" ${String(item.principalId) === String(taskConfig.knowledgeCenterOwnerId || '') ? 'selected' : ''}>${escapeHtml(item.displayName || '')}${item.casLoginName ? ` · ${escapeHtml(item.casLoginName)}` : ''}</option>`).join('')}</select></label>
+        </div>
+        <footer><span data-task-responsibility-status role="status" aria-live="polite">${escapeHtml(taskConfigStatus?.message || '')}</span><button class="button tertiary" type="button" data-task-responsibility-close>取消</button><button class="button primary" type="submit" disabled>保存</button></footer>
+      </form>
+    </dialog>
     <dialog class="principal-dialog" data-principal-editor-dialog data-scroll-region="dialog">
       <form method="dialog" data-principal-editor-form>
         <header><div><h2 data-principal-dialog-title>新增人员</h2><p>人员可在手册和大纲中被选为责任人。</p></div><button class="icon-button" type="button" data-principal-dialog-close aria-label="关闭"><i data-lucide="x" aria-hidden="true"></i></button></header>
@@ -693,6 +704,8 @@ export function renderPlatformAdmin({
   teamGroupProjection,
   teamGroupView,
   teamGroupUi,
+  taskConfig,
+  taskConfigStatus,
   governanceProjection,
   databaseConnectionProjection,
   databaseConnectionDrawerOpen,
@@ -715,7 +728,7 @@ export function renderPlatformAdmin({
   let tabContent;
   switch (activeTab) {
     case 'principals':
-      tabContent = renderPrincipalsTab(principalProjection || {}, principalListState || {}, teamGroupProjection, teamGroupView || 'people', teamGroupUi || {});
+      tabContent = renderPrincipalsTab(principalProjection || {}, principalListState || {}, teamGroupProjection, teamGroupView || 'people', teamGroupUi || {}, taskConfig || {}, taskConfigStatus || null);
       break;
     case 'permissions':
       tabContent = renderPermissionsTab(permissionProjection, selectedPermissionUserId, permissionSaveStatus, permissionUserSearch || '', permissionListState || {});

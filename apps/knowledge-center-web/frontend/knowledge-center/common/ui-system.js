@@ -8,10 +8,14 @@ export const UI_ICONS = Object.freeze({
   'action.download': 'download',
   'action.edit': 'pencil',
   'action.more': 'ellipsis',
+  'action.open': 'arrow-up-right',
+  'action.logout': 'power',
   'action.references': 'link',
   'action.refresh': 'refresh-cw',
   'action.search': 'search',
   'action.upload': 'upload',
+  'action.view': 'eye',
+  'action.toggle': 'power',
   'disclosure.expand': 'chevron-right',
   'feedback.error': 'circle-alert',
   'feedback.info': 'info',
@@ -20,8 +24,13 @@ export const UI_ICONS = Object.freeze({
   'feedback.success': 'circle-check',
   'feedback.warning': 'triangle-alert',
   'navigation.assets': 'library',
+  'navigation.account': 'user-round',
   'navigation.cleaning': 'filter',
+  'navigation.collapse': 'panel-left',
   'navigation.dashboard': 'layout-dashboard',
+  'navigation.hide': 'panel-left-close',
+  'navigation.menu': 'menu',
+  'navigation.mobileclose': 'x',
   'navigation.notifications': 'bell',
   'navigation.outlines': 'list-tree',
   'navigation.platform': 'settings',
@@ -29,7 +38,15 @@ export const UI_ICONS = Object.freeze({
   'navigation.review': 'badge-check',
   'navigation.tasks': 'list-checks',
   'navigation.templates': 'files',
+  'navigation.restore': 'panel-left-open',
+  'brand.knowledge-center': 'book-open-check',
   'state.capability': 'blocks',
+  'source.revision': 'history',
+  'source.state': 'power',
+  'source.sync': 'refresh-cw',
+  'source.type': 'layers',
+  'calendar.previous': 'chevron-left',
+  'calendar.next': 'chevron-right',
 });
 
 const escapeAttribute = value => String(value).replace(/[&<>"']/g, character => ({
@@ -41,10 +58,17 @@ const dataAttributes = data => Object.entries(data).map(([key, value]) => {
   return ` data-${key}="${escapeAttribute(value)}"`;
 }).join('');
 
-export function uiIcon(usage) {
+export function uiIcon(usage, className = 'icon') {
   const name = UI_ICONS[usage];
   if (!name) throw new Error(`未登记的知识中心图标用途：${usage}`);
-  return `<i class="icon" data-lucide="${name}" aria-hidden="true"></i>`;
+  return `<i class="${escapeAttribute(className || 'icon')}" data-lucide="${name}" aria-hidden="true"></i>`;
+}
+
+export function hydrateSemanticIcons(root) {
+  if (!root?.querySelectorAll) return;
+  root.querySelectorAll('[data-ui-icon-usage]').forEach(node => {
+    node.outerHTML = uiIcon(node.dataset.uiIconUsage, node.className);
+  });
 }
 
 export function uiIconButton({ usage, label, disabled = false, data = {} }) {

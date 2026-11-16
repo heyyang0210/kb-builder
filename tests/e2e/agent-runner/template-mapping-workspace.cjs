@@ -165,7 +165,7 @@ async function fixture() {
     await page.locator('[data-map-analyze]').click();
     let pollRequests = 0;
     page.on('request', request => { if (/\/api\/templates\/mappings\/[^/?]+$/.test(new URL(request.url()).pathname)) pollRequests++; });
-    await page.locator('[data-template-tab="editor"]').click();
+    await page.locator('[data-template-tab="library"]').click();
     const beforeLeave = pollRequests;
     await page.waitForTimeout(1200);
     assert.equal(pollRequests, beforeLeave, '离开映射页后不应继续轮询');

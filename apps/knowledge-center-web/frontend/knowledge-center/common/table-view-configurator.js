@@ -208,5 +208,7 @@ export function enhanceTableViews(root = document, options = {}) {
     }
   }
   // No table triggers were created on this page; leave unrelated icons untouched.
-  if (tables.length) window.lucide?.createIcons();
+  if (tables.length) window.lucide?.createIcons({ nodes: [
+    ...document.querySelectorAll('[data-table-view-trigger], [data-table-view-drawer]:not([hidden])'),
+  ] });
 }

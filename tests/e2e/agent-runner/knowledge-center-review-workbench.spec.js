@@ -277,7 +277,7 @@ test('应用导航：移动菜单、侧栏持久化与会话失效', async ({ pa
     await page.locator('#sidebar-collapse').click();
     await expect(page.locator('#app-shell')).toHaveClass(/sidebar-collapsed/);
     await expect(page.locator('#sidebar-collapse')).toHaveAttribute('aria-label', '展开导航');
-    await page.locator('#sidebar-collapse').click();
+    await page.locator('#sidebar-collapse').press('Enter');
     await page.locator('#sidebar-hide').click();
     await expect(page.locator('#app-shell')).toHaveClass(/sidebar-hidden/);
     await page.locator('#sidebar-restore').click();
@@ -465,7 +465,7 @@ test('审核详情：MR 关闭显示真实交付结果，只有作者可进入�
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.screenshot({ path: path.join(screenshots, 'closed-mobile.png'), fullPage: true });
     await page.locator('.review-detail-actions .review-more-menu > summary').click();
-    await expect(page.getByRole('link', { name: /查看 GitLab MR/ })).toHaveAttribute('href', /merge_requests\/661$/);
+    await expect(page.getByRole('link', { name: /MR链接/ })).toHaveAttribute('href', /merge_requests\/661$/);
     await expect(page.getByRole('button', { name: '状态刷新' })).toHaveCount(0);
     f.identity('other');
     await page.reload();
@@ -819,7 +819,7 @@ test('手册生产视图：目录、正文、草稿状态与历史冲突投影�
     const readyDraft = {
       exists: true, capabilities: { canEdit: true, canSubmitReview: true },
       draft: { editVersion: 4, updatedAt: '2026-11-05T01:02:00Z', currentRevisionId: 'revision-4',
-        revision: { markdown: '# 服务器版本' }, reviewState: { reviewStatus: 'rejected', taskState: 'mr_submitted', revisionId: 'revision-3', editVersion: 3, completion: { label: '待人工合并' }, reviewHref: '/knowledge-center/review?taskId=t1', taskId: 't1' } },
+        revision: { revisionId: 'revision-4', version: 4, markdown: '# 服务器版本' }, reviewState: { reviewStatus: 'rejected', taskState: 'mr_submitted', revisionId: 'revision-3', editVersion: 3, completion: { label: '待人工合并' }, reviewHref: '/knowledge-center/review?taskId=t1', taskId: 't1' } },
     };
     const templateProjection = { items: [{ id: 'active-template', name: '标准模板', status: 'active' }, { id: 'off-template', status: 'disabled' }] };
     await render(projection, { repository: { branch: 'main', status: 'ready', filesByDocument: {}, contentByDocument: {} } }, { documentId: 'doc-1' });
@@ -829,7 +829,6 @@ test('手册生产视图：目录、正文、草稿状态与历史冲突投影�
       serverDrafts: { 'doc-1': readyDraft }, draftLoadState: { 'doc-1': 'ready' }, draftSaveState: { 'doc-1': { status: 'failed' } },
       dirtyDocuments: ['doc-1'], drafts: { 'doc-1': '# 本地正文\n\n正文段落' }, selectedForReview: ['doc-1'],
       reviewDraftSummaries: { 'doc-1': { editVersion: 4 } }, reviewSelectionStatus: '请确认所选文档',
-      history: { documentId: 'doc-1', loading: false, compareRevisionId: 'old-1', items: [{ revisionId: 'old-1', version: 2, markdown: '旧内容', createdAt: '2026-01-01T00:00:00Z', createdBy: { displayName: '历史作者' }, contentDigest: 'abcdef0123456789' }] },
       conflict: { localMarkdown: '本地冲突内容', serverDraft: { revision: { markdown: '服务器冲突内容' } } },
     }, { documentId: 'doc-1', templateProjection });
     const host = page.locator('#handbook-render-fixture');
@@ -842,9 +841,15 @@ test('手册生产视图：目录、正文、草稿状态与历史冲突投影�
     await expect(host.locator('[data-handbook-document="doc-1"]')).toContainText('待评审');
     await expect(host.locator('[data-handbook-review-selection-dialog]')).toContainText('请先保存当前修改');
     await expect(host.locator('[data-handbook-review-selection-status]')).toContainText('请确认所选文档');
-    await expect(host.locator('[data-handbook-history-dialog]')).toContainText('历史 v2');
     await expect(host.locator('[data-handbook-conflict-dialog]')).toContainText('服务器冲突内容');
     await expect(host.locator('[data-handbook-template]')).toHaveValue('active-template');
+
+    await render(projection, {
+      serverDrafts: { 'doc-1': readyDraft },
+      history: { documentId: 'doc-1', documentTitle: '部署指南', loading: false, selectedRevisionId: 'old-1', items: [{ revisionId: 'old-1', version: 2, markdown: '旧内容', createdAt: '2026-01-01T00:00:00Z', createdBy: { displayName: '历史作者' }, contentDigest: 'abcdef0123456789' }] },
+    }, { documentId: 'doc-1', templateProjection });
+    await expect(host.locator('[data-handbook-history-workspace]')).toContainText('v2');
+    await expect(host.locator('[data-handbook-history-workspace]')).toContainText('旧内容');
 
     await render(projection, {
       repository: { branch: 'main', status: 'ready', filesByDocument: {}, contentByDocument: {} },
@@ -939,24 +944,12 @@ test('生产总览与增量工作区：投影状态、阶段、权限及交付�
       states.handbookAssetFallback = draw({ status: 'ok', outlineCatalog: { status: 'ok', items: [{ handbookId: 'hb-c', status: 'published' }] }, handbooks: [], items: [] }, '?view=handbooks', { assetCatalog: { items: [{ handbookId: 'hb-c', name: '丙手册', ownerAName: '丁' }, { name: '缺少标识资产' }] } });
       states.handbookRowsFallback = draw({ status: 'ok', outlineCatalog: { status: 'ok', items: [{ handbookId: 'hb-no-name', status: 'published' }, { handbookId: 'hb-single', state: 'published' }] }, handbooks: [{ id: 'hb-no-name', productName: '产品名', publishedVersion: { name: '版本名' }, ownerA: { name: '对象负责人' }, ownerB: { userName: '协作人' } }, { id: 'hb-single', productType: '产品类型', latestPublishedVersionName: '兼容版本' }], items: handbookProjection.items });
       states.noPublishedHandbooks = draw({ status: 'ok', outlineCatalog: { status: 'ok', items: [] }, handbooks: [{ id: 'hb-d', name: '未发布' }] });
-      states.dialogOptions = draw({ status: 'ok', outlineCatalog: { status: 'ok', items: [] }, availableHandbooks: [{ id: 'dlg', name: '对话框手册' }] });
+      states.progressView = draw({ status: 'ok', items: [
+        { id: 'progress-draft', name: '进展待生成', state: 'draft', handbookName: '进展手册', businessVersion: '23.4', updatedAt: '2026-11-16T09:00:00Z' },
+        { id: 'progress-unknown', name: '进展未知状态', state: 'legacy_state' },
+      ], workCalendars: { 2026: { year: 2026, configured: true, days: { '2026-11-16': 'holiday' } } } }, '?view=progress&mode=list');
       states.outlineFallback = draw({ status: 'ok', outlineCatalog: { status: 'offline' } });
       states.invalidView = draw({ status: 'ok', outlineCatalog: { status: 'ok', items: [] } }, '?view=unknown');
-
-      states.versionLoading = draw({ status: 'loading' }, '?view=versions');
-      states.versionUnavailable = draw({ status: 'unavailable' }, '?view=versions');
-      states.versionEmpty = draw({ status: 'ok', items: [] }, '?view=versions');
-      states.versions = draw({ status: 'ok', items: [
-        { id: 'v23-4-2', businessVersion: '23.4.2', handbookId: 'h1', updatedAt: '2026-01-01', ownerName: '责任甲', completion: { status: 'completed', label: '已合并', facts: { mergeState: 'merged' } }, handbookSource: { documents: [{ documentId: 'd1' }, { documentId: 'd1' }] } },
-        { id: 'v23-4-10', businessVersion: '23.4.10', handbookName: '隔离手册', updatedAt: '2026-02-01', completion: { status: 'pending', label: '待合并', facts: { mergeState: 'opened' } }, target: { documentIds: ['d1', 'd1', 'd2'] } },
-        { id: 'v23-4-10-old', businessVersion: '23.4.10', updatedAt: '2026-01-01', owner: '责任乙', target: { documentIds: [] }, candidate: { operations: [{ documentId: 'd3' }, { documentId: 'd3' }, {}] } },
-        { id: 'version-missing', businessVersion: ' ', assigneeName: '责任丙', candidate: { operations: [{ documentId: 'd4' }] } },
-      ] }, '?view=versions');
-      states.versionsTasksFallback = draw({ status: 'ok', tasks: [
-        { id: 'fallback-task', businessVersion: '9.1', statusDisplayName: '状态回退', handbook: { handbookId: 'HB-fallback' }, candidate: { operations: [{ documentId: 'x' }, { documentId: 'y' }] } },
-        { businessVersion: '9.2', handbookId: 'HB-no-id' },
-        { businessVersion: '9.2' },
-      ] }, '?view=versions');
 
       states.generationsLoading = draw({ status: 'ok', generations: { status: 'loading' } }, '?view=generations');
       states.generationsForbidden = draw({ status: 'ok', generations: { status: 'forbidden', error: { message: '无生成记录权限' } } }, '?view=generations');
@@ -980,7 +973,7 @@ test('生产总览与增量工作区：投影状态、阶段、权限及交付�
       states.taskListUnavailable = draw({ status: 'ok', items: [], detail: null }, '?view=tasks');
       states.setup = taskView({ ...base }, 'setup');
       states.inputs = taskView({ ...base, sources: [{ title: '来源甲', sourceType: 'local', reference: 'R-1' }], target: { documentIds: ['d1'], sectionIds: ['s1'], language: 'en-US' }, availableTargets: [{ id: 's1', title: '安装', path: '第一章', documentId: 'd1' }] }, 'inputs');
-      states.inputFallbacks = taskView({ id: 'fallback-input', state: 'editing', status: 'editing', sourceSnapshots: [{ name: '来源名称' }, { sourceType: 'manual' }, {}], targetScope: { sectionIds: ['chapter-a'] }, availableChapters: [{ chapterId: 'chapter-a', name: '章节甲' }, { nodeId: 'chapter-b', documentId: 'd2', documentName: '章节乙', path: '路径乙' }], draftContent: '备用正文' }, 'inputs');
+      states.inputFallbacks = taskView({ id: 'fallback-input', state: 'editing', status: 'editing', sourceSnapshots: [{ name: '来源名称' }, { sourceType: 'manual' }, {}], targetScope: { sectionIds: ['chapter-a'] }, availableChapters: [{ chapterId: 'chapter-a', name: '章节甲', sections: [{ id: 'chapter-a', name: '章节甲' }] }, { nodeId: 'chapter-b', documentId: 'd2', documentName: '章节乙', path: '路径乙' }], draftContent: '备用正文' }, 'inputs');
       states.inputLocked = taskView({ ...base, state: 'rejected', target: { documentIds: ['d-locked'] } }, 'inputs');
       states.inputUnconfirmedLocked = taskView({ id: 'input-locked-empty', state: 'rejected' }, 'inputs');
       states.generation = taskView({ ...base, state: 'checked', sourceSnapshots: [], targetScope: { sectionIds: ['s2'] }, target: { documentIds: ['d2'], sectionIds: [] }, draft: { editVersion: 2, content: '草稿' }, checkReport: { passed: true, issues: [] } }, 'generation');
@@ -1026,7 +1019,8 @@ test('生产总览与增量工作区：投影状态、阶段、权限及交付�
     });
 
     expect(result.loading.text).toContain('正在读取已发布大纲');
-    expect(result.loading.createDisabled).toBe(true);
+    // 加载态只呈现读取状态；创建表单在大纲加载完成后才挂载。
+    expect(result.loading.createDisabled).toBeNull();
     expect(result.unavailable.alert).toContain('任务服务维护中');
     expect(result.unavailable.reload).toBe(true);
     expect(result.outlineError.alert).toContain('大纲读取失败');
@@ -1043,20 +1037,11 @@ test('生产总览与增量工作区：投影状态、阶段、权限及交付�
     expect(result.handbookRowsFallback.text).toContain('未命名手册');
     expect(result.handbookRowsFallback.text).toContain('1 个任务待处理');
     expect(result.noPublishedHandbooks.text).toContain('暂无可生产的手册');
-    expect(result.dialogOptions.dialogHandbookOption).toBe('对话框手册');
-    expect(result.dialogOptions.dialogBaselineEnabled).toBe(true);
+    expect(result.progressView.text).toContain('进展待生成');
+    expect(result.progressView.text).toContain('状态待确认');
+    expect(result.progressView.text).toContain('全部任务');
     expect(result.outlineFallback.alert).toContain('请稍后重新读取');
     expect(result.invalidView.tabs.find(([key]) => key === 'handbooks')[1]).toBe('true');
-    expect(result.versionLoading.status).toContain('正在读取数据库版本任务');
-    expect(result.versionUnavailable.text).toContain('增量服务暂时不可用');
-    expect(result.versionEmpty.text).toContain('暂无数据库版本任务');
-    expect(result.versions.text).toContain('23.4.2');
-    expect(result.versions.text).toContain('23.4.10');
-    expect(result.versions.text).toContain('等待合并并回读');
-    expect(result.versions.text).toContain('版本待核对');
-    expect(result.versionsTasksFallback.text).toContain('状态回退');
-    expect(result.versionsTasksFallback.text).toContain('责任人待确认');
-    expect(result.versionsTasksFallback.text).toContain('9.2');
     expect(result.generationsLoading.status).toContain('正在读取我的生成');
     expect(result.generationsForbidden.alert).toContain('无生成记录权限');
     expect(result.generationsUnavailable.alert).toContain('我的生成暂时无法读取');
@@ -1075,7 +1060,7 @@ test('生产总览与增量工作区：投影状态、阶段、权限及交付�
     expect(result.inputs.sourceForm).toBe(true);
     expect(result.inputs.targetForm).toBe(true);
     expect(result.inputFallbacks.text).toContain('来源名称');
-    expect(result.inputFallbacks.text).toContain('人工固化');
+    expect(result.inputFallbacks.text).toContain('人工提供');
     expect(result.inputFallbacks.checkedSections).toBe(1);
     expect(result.inputLocked.text).toContain('已确认：d-locked');
     expect(result.inputUnconfirmedLocked.text).toContain('未确认修改范围');
@@ -1084,8 +1069,9 @@ test('生产总览与增量工作区：投影状态、阶段、权限及交付�
     expect(result.checksBlocked.text).toContain('当前候选已冻结');
     expect(result.generationRun.text).toContain('生成任务已建立');
     expect(result.generationRun.text).toContain('需要确认');
-    expect(result.generationRunFallback.text).toContain('运行状态待返回');
-    expect(result.review.text).toContain('提交文档审核');
+    expect(result.generationRunFallback.text).toContain('生成状态待确认');
+    expect(result.review.text).toContain('进入审核工作区');
+    expect(result.review.text).not.toContain('提交文档审核');
     expect(result.review.text).toContain('部署指南');
     expect(result.reviewRejected.text).toContain('创建修订草稿');
     expect(result.reviewSingleFallback.text).toContain('已通过');
@@ -1093,10 +1079,11 @@ test('生产总览与增量工作区：投影状态、阶段、权限及交付�
     expect(result.reviewStatuses.text).toContain('审核中');
     expect(result.reviewStatuses.text).toContain('状态待确认');
     expect(result.reviewPublished.text).toContain('已发布');
-    expect(result.reviewCapabilityFallback.text).toContain('提交文档审核');
+    expect(result.reviewCapabilityFallback.text).toContain('进入审核工作区');
+    expect(result.reviewCapabilityFallback.text).not.toContain('提交文档审核');
     expect(result.reviewStatusFallback.text).toContain('状态待确认');
     expect(result.publishDenied.publishDisabled).toBe(null);
-    expect(result.publishDenied.text).toContain('服务端已返回发布版本');
+    expect(result.publishDenied.text).toContain('平台版本已发布');
     expect(result.publishAllowed.text).toContain('确认整体发布');
     expect(result.publishAllowed.evidenceForm).toBe(true);
     expect(result.publishPrivilegedFallback.text).toContain('确认整体发布');
@@ -1578,13 +1565,14 @@ test('生产质量弹窗：报告分项、失败保留、复测下载与关闭�
 test('在线评审发起：修改稿读取恢复、范围校验与提交恢复', async ({ page }) => {
   const f = await fixture(page);
   const requests = [];
-  let draftMode = 'failure', submitMode = 'failure';
+  let draftMode = 'failure', submitMode = 'failure', prerequisiteGate = null, releasePrerequisites = null;
   const drafts = [
     { documentId: 'draft-a', outlineVersionId: 'outline-1', branch: 'main', draftRevisionId: 'rev-a', editVersion: 3 },
     { documentId: 'draft-b', outlineVersionId: 'outline-1', branch: 'main', draftRevisionId: 'rev-b', editVersion: 4 },
     { documentId: 'draft-hidden', outlineVersionId: 'outline-1', branch: 'other', draftRevisionId: 'rev-hidden', editVersion: 1 },
   ];
   const backend = http.createServer(async (req, res) => {
+    if (prerequisiteGate) await prerequisiteGate;
     const chunks = []; for await (const chunk of req) chunks.push(chunk);
     const url = new URL(req.url, 'http://localhost');
     const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : null;
@@ -1617,24 +1605,36 @@ test('在线评审发起：修改稿读取恢复、范围校验与提交恢复',
   const chooseReviewer = () => dialog.locator('[name=reviewerId]').selectOption('author', { force: true });
   try {
     await page.goto(`${f.base}/knowledge-center/review?view=reader&handbookId=HB-1&branch=main`);
+    prerequisiteGate = new Promise(resolve => { releasePrerequisites = resolve; });
     await open();
+    await expect(dialog.locator('[data-review-online-form]')).toHaveAttribute('aria-busy', 'true');
+    await expect(dialog.locator('[data-review-online-form]')).toHaveAttribute('data-review-online-state', 'loading');
+    await expect(dialog.locator('button[type=submit]')).toBeDisabled();
+    releasePrerequisites(); releasePrerequisites = null; prerequisiteGate = null;
     await expect(dialog.locator('[data-review-online-drafts]')).toContainText('修改稿读取失败：隔离评审服务不可用');
     await expect(dialog.locator('[name=reviewerId]')).toContainText('审核人不可用');
+    await expect(dialog.locator('[data-review-online-retry]')).toBeVisible();
+    draftMode = 'ready';
+    await dialog.locator('[data-review-online-retry]').click();
+    await expect(dialog.locator('[data-review-online-draft]')).toHaveCount(2);
+    await expect(dialog.locator('button[type=submit]')).toBeDisabled();
     await dialog.locator('[data-review-online-close]').click();
     draftMode = 'empty'; await open();
     await expect(dialog.locator('[data-review-online-drafts]')).toContainText('当前分支没有已保存修改稿');
+    await expect(dialog.getByRole('link', { name: '进入编写' })).toBeVisible();
+    await expect(dialog.locator('button[type=submit]')).toBeDisabled();
     await dialog.locator('[data-review-online-cancel]').click();
     draftMode = 'ready'; await open();
     await expect(dialog.locator('[data-review-online-draft]')).toHaveCount(2);
     await expect(dialog.locator('[name=reviewerId]')).toContainText('提交者 <审核> & 验证');
     await expect(dialog.locator('[name=reviewerId] option[value=disabled]')).toHaveAttribute('disabled', '');
-    await chooseReviewer(); await submit();
-    await expect(error).toHaveText('请选择至少一篇已保存修改稿'); await expect(error).toBeFocused();
+    await chooseReviewer();
+    await expect(dialog.locator('button[type=submit]')).toBeDisabled();
     await dialog.locator('[data-review-online-draft]').nth(0).check();
     await dialog.locator('[data-review-online-draft]').nth(1).check();
-    await submit(); await expect(error).toHaveText('单篇文档评审只能选择一篇修改稿');
+    await expect(dialog.locator('button[type=submit]')).toBeDisabled();
     await dialog.locator('[name=scope][value=handbook]').check();
-    await submit(); await expect(error).toHaveText('请填写每篇文档的完整仓库文件路径');
+    await expect(dialog.locator('button[type=submit]')).toBeDisabled();
     expect(requests.filter(r => r.method === 'POST')).toHaveLength(0);
     await dialog.locator('[data-review-online-path="draft-a"]').fill(' docs/a.md ');
     await dialog.locator('[data-review-online-path="draft-b"]').fill('docs/b.md');
@@ -1660,6 +1660,7 @@ test('在线评审发起：修改稿读取恢复、范围校验与提交恢复',
     }
     expect(f.gitlabWrites()).toBe(0);
   } finally {
+    releasePrerequisites?.();
     await page.unroute(pattern, handler);
     await new Promise(resolve => { backend.closeAllConnections(); backend.close(resolve); });
     await f.close();

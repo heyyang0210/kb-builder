@@ -35,7 +35,7 @@ describe('审核工作台文档投影契约', () => {
     expect(publisher.completion.status).toBe('pending');
     source.deliveryObservation = { state: 'closed' };
     const closed = service.project(source, session());
-    expect(closed.completion).toMatchObject({ status: 'pending', label: 'MR已关闭，需修订并重新审核', completedAt: null });
+    expect(closed.completion).toMatchObject({ status: 'pending', label: 'MR已关闭', completedAt: null });
     expect(service.project(source, session(), true).completion).toEqual(closed.completion);
     source.deliveryObservation = { state: 'merged', readback: { status: 'consistent', resources: 'repository_relative_images_verified' } };
     expect(service.project(source, session()).completion.status).toBe('completed');

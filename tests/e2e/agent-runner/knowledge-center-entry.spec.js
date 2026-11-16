@@ -86,10 +86,12 @@ test('资料清洗和文档生产使用独立页面语义', async ({ page }) => 
   await page.getByRole('button', { name: '文档生产', exact: true }).click();
   await expect(page.locator('#view-root').getByRole('heading', { name: '文档生产' })).toBeVisible();
   await expect(page.getByRole('tab', { name: '手册视图' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('#view-root').getByRole('button', { name: '创建增量任务' })).toHaveCount(0);
   await page.getByRole('tab', { name: '任务视图' }).click();
   await expect(page.locator('#view-root').getByRole('heading', { name: '增量任务' })).toBeVisible();
   await expect(page.getByRole('tab', { name: '任务视图' })).toHaveAttribute('aria-selected', 'true');
-  await expect(page.locator('#view-root').getByRole('button', { name: '创建增量任务' })).toBeVisible();
+  await expect(page.locator('#view-root').getByRole('button', { name: /创建(增量)?任务/ })).toHaveCount(0);
+  await expect(page.locator('#view-root [data-incremental-create-dialog]')).toHaveCount(0);
 });
 
 test('资料清洗工作区为有写权限用户提供真实上传入口', async ({ page }) => {
@@ -118,13 +120,13 @@ test('工作台以个人待办、处理状态和任务字段组织工作', async
   await expect(root.getByRole('navigation', { name: '工作类别' })).toBeVisible();
   await expect(root.getByRole('group', { name: '处理状态' })).toBeVisible();
   await expect(root.getByRole('button', { name: /待我处理/ })).toBeVisible();
-  await expect(root.getByRole('button', { name: /等待他人/ })).toBeVisible();
+  await expect(root.getByRole('button', { name: /跟进中/ })).toBeVisible();
   await expect(root.getByRole('button', { name: '打印汇报' })).toHaveCount(0);
   await expect(root.getByRole('button', { name: '导出待确认' })).toHaveCount(0);
-  await expect(root.getByRole('columnheader')).toHaveText(['编号', '工作项', '关联范围', '计划截止', '下一步', '详情']);
+  await expect(root.getByRole('columnheader')).toHaveText(['编号', '工作项', '关联范围', '当前状态', '计划截止', '下一步', '详情']);
 });
 
-test('个人工作刷新读取真实待办且数据变更事件触发平台投影重读', async ({ page }) => {
+test('工作台不提供冗余刷新按钮，数据变更事件触发平台投影重读', async ({ page }) => {
   let overviewRequests = 0;
   let contextRequests = 0;
   let myTaskRequests = 0;
@@ -143,8 +145,7 @@ test('个人工作刷新读取真实待办且数据变更事件触发平台投�
   await page.goto(`${baseUrl}/knowledge-center/`);
   await expect.poll(() => contextRequests).toBeGreaterThan(0);
   await expect.poll(() => myTaskRequests).toBeGreaterThan(0);
-  await page.locator('#view-root').getByRole('button', { name: '刷新', exact: true }).click();
-  await expect.poll(() => myTaskRequests).toBeGreaterThan(1);
+  await expect(page.locator('#view-root').getByRole('button', { name: '刷新', exact: true })).toHaveCount(0);
   const initialRequests = overviewRequests;
   const initialContextRequests = contextRequests;
   await page.evaluate(async () => {
