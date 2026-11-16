@@ -1762,6 +1762,12 @@ test('AI 对话来源与回复操作的边界和错误状态', async t => {
     errorConfirm.querySelector('[data-delete-cancel]').click();
     const remove = menu.querySelector('.danger'); remove.click();
     const confirm = host.querySelectorAll('dialog')[1]; confirm.querySelector('[data-delete-cancel]').click();
+    if (!confirm.classList.contains('handbook-ai-delete-dialog')
+      || !confirm.querySelector('[data-delete-cancel] :is([data-lucide="x"], .lucide-x)')
+      || !confirm.querySelector('[data-delete-confirm] :is([data-lucide="trash-2"], .lucide-trash-2)')
+      || !confirm.querySelector('[data-delete-cancel]').classList.contains('secondary')
+      || !confirm.querySelector('[data-delete-confirm]').classList.contains('danger'))
+      throw new Error('删除确认框应使用平台关闭/删除图标和对应按钮语义');
     if (confirm.open) throw new Error('取消删除未关闭确认框');
     remove.click(); confirm.querySelector('[data-delete-confirm]').click(); await new Promise(resolve => setTimeout(resolve, 20));
     if (confirm.open || deleted[0] !== 'job-ok' || !notifications.includes('对话已删除')) throw new Error('删除成功未清理并回调');

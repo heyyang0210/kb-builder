@@ -12,6 +12,21 @@ const ICONS = {
 const operationNames = { generate: '文档生成', polish: '内容修订', continue: '内容续写', rewrite: '内容修订', update: '内容修订' };
 const statusNames = { queued: '等待执行', running: '生成中', completed: '候选已生成', failed: '生成失败', cancelled: '已中断', interrupted: '已中断' };
 
+function paintDialogIcons(root) {
+  const lucide = window.lucide;
+  if (!lucide?.createElement || !lucide?.icons) return;
+  for (const placeholder of root.querySelectorAll('[data-lucide]')) {
+    const name = placeholder.dataset.lucide;
+    const key = name.replace(/(\w)(\w*)(_|-|\s*)/g, (_, first, rest) => first.toUpperCase() + rest.toLowerCase());
+    const definition = lucide.icons[key];
+    if (!definition) continue;
+    const icon = lucide.createElement(definition);
+    icon.setAttribute('class', `lucide lucide-${name}`);
+    icon.setAttribute('aria-hidden', 'true');
+    placeholder.replaceWith(icon);
+  }
+}
+
 function evidenceFor(job) {
   const sources = new Map((job.metadata?.sourceSnapshots || job.sourceSnapshots || []).map(source => [String(source.sourceId), source]));
   const entries = [];
@@ -54,9 +69,10 @@ export function createAIConversationTools({ host, conversation, context, getCurr
     try { await saveHandbookAIFeedback(context, feedbackJobId, { comment }); feedback.close(); notify('意见反馈已提交'); }
     catch (error) { notify(`反馈提交失败：${error.message}`); }
   };
-  const confirm = document.createElement('dialog'); confirm.className = 'handbook-ai-feedback-dialog';
-  confirm.innerHTML = '<h3>删除这条对话？</h3><p>已保存的文档内容不会改变，删除后无法从对话中再次打开本次候选。</p><footer><button type="button" data-delete-cancel>取消</button><button type="button" data-delete-confirm>删除对话</button></footer>';
+  const confirm = document.createElement('dialog'); confirm.className = 'handbook-ai-feedback-dialog handbook-ai-delete-dialog';
+  confirm.innerHTML = `<h3>删除这条对话？</h3><p>已保存的文档内容不会改变，删除后无法从对话中再次打开本次候选。</p><footer><button class="button secondary" type="button" data-delete-cancel>${uiIcon('action.close')}<span>取消</span></button><button class="button danger" type="button" data-delete-confirm>${uiIcon('action.delete')}<span>删除对话</span></button></footer>`;
   host.append(confirm);
+  paintDialogIcons(confirm);
   confirm.querySelector('[data-delete-cancel]').onclick = () => confirm.close();
   let deleteJobId = null;
   confirm.querySelector('[data-delete-confirm]').onclick = async () => {
