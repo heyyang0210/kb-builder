@@ -23,7 +23,8 @@ test('semantic icon and icon button preserve the accessible contract', async () 
   assert.throws(() => uiIconButton({ usage: 'action.close', label: '' }), /中文可访问名称/);
   assert.throws(() => uiIconButton({ usage: 'feedback.error', label: '错误' }), /action 图标用途/);
   assert.throws(() => uiIconButton({ usage: 'action.close', label: '关闭', data: { 'onmouseover=x': 'bad' } }), /无效的 data 属性/);
-  assert.match(uiButton({ label: '查看&处理', variant: 'tertiary', data: { action: 'review' } }), /data-action="review">查看&amp;处理<\/button>/);
+  assert.match(uiButton({ label: '查看&处理', usage: 'action.view', variant: 'tertiary', data: { action: 'review' } }), /data-action="review">.*data-lucide="eye".*<span>查看&amp;处理<\/span><\/button>/);
+  assert.throws(() => uiButton({ label: '查看' }), /指定 action 图标用途/);
   assert.throws(() => uiButton({ label: '删除', variant: 'danger' }), /未登记的按钮变体/);
 });
 

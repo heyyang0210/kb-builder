@@ -77,8 +77,9 @@ export function uiIconButton({ usage, label, disabled = false, data = {} }) {
   return `<button class="icon-button" type="button" aria-label="${escapeAttribute(label)}" title="${escapeAttribute(label)}"${disabled ? ' disabled' : ''}${dataAttributes(data)}>${uiIcon(usage)}</button>`;
 }
 
-export function uiButton({ label, variant = 'primary', disabled = false, data = {} }) {
+export function uiButton({ label, usage, variant = 'primary', disabled = false, data = {} }) {
   if (!['primary', 'secondary', 'tertiary'].includes(variant)) throw new Error(`未登记的按钮变体：${variant}`);
   if (!label?.trim()) throw new Error('按钮必须提供可见名称');
-  return `<button class="button ${variant}" type="button"${disabled ? ' disabled' : ''}${dataAttributes(data)}>${escapeAttribute(label)}</button>`;
+  if (!usage?.startsWith('action.')) throw new Error('按钮必须指定 action 图标用途');
+  return `<button class="button ${variant}" type="button"${disabled ? ' disabled' : ''}${dataAttributes(data)}>${uiIcon(usage)}<span>${escapeAttribute(label)}</span></button>`;
 }

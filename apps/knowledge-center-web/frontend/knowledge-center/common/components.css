@@ -19,7 +19,7 @@
 .button:disabled { opacity: .55; cursor: not-allowed; }
 .button.secondary {
   border-color: var(--color-border-strong);
-  background: var(--color-surface);
+  background: var(--color-surface-subtle);
   color: var(--color-text);
 }
 .button.secondary:hover { border-color: var(--color-brand); color: var(--color-brand); }
@@ -45,10 +45,11 @@
 }
 .button.tertiary {
   border-color: transparent;
-  background: transparent;
+  background: var(--color-brand-subtle);
   color: var(--color-brand);
 }
 .button.tertiary:hover { background: var(--color-brand-subtle); }
+.button > .icon { width: 16px; height: 16px; flex: none; }
 .status {
   min-height: 28px;
   display: inline-flex;

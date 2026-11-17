@@ -23,6 +23,6 @@ export function pendingState(title = '功能准备中', description = '该功能
 export const emptyState = pendingState;
 
 export function capabilityState(title, description, action, view) {
-  const button = action ? uiButton({ label: action, variant: 'tertiary', data: { action: view } }) : '';
+  const button = action ? uiButton({ label: action, usage: 'action.view', variant: 'tertiary', data: { action: view } }) : '';
   return `<div class="capability-state"><span class="icon-wrap">${uiIcon('state.capability')}</span><div><strong>${escapeHtml(title)}</strong><span>${escapeHtml(description)}</span></div>${button}</div>`;
 }
