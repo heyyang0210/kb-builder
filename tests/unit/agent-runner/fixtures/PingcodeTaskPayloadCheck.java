@@ -12,10 +12,12 @@ public final class PingcodeTaskPayloadCheck {
         original.put("decomposition", Map.of("confirmed", true, "handbooks", List.of(Map.of("id", "book-1"))));
         original.put("source", Map.of("sourceOwner", "上游负责人", "description", "旧标题"));
         Map<String, String> latest = Map.of("title", "新标题", "type", "REQUIREMENT",
-            "url", "https://pingcode.yasdb.com/ship/products/YASHAN/baselines/test/ideas");
+            "url", "https://pingcode.yasdb.com/ship/products/YASHAN/baselines/test/ideas",
+            "product", "DB", "version", "27.7.1");
         Map<String, Object> merged = PingcodeTaskRepository.mergeTaskSource(original, latest, "source-1");
         if (!"新标题".equals(merged.get("description")) || !"REQUIREMENT".equals(merged.get("sourceType"))
-            || !"source-1".equals(merged.get("primarySourceId"))) throw new AssertionError("来源字段未更新");
+            || !"source-1".equals(merged.get("primarySourceId")) || !"DB".equals(merged.get("product"))
+            || !"27.7.1".equals(merged.get("version"))) throw new AssertionError("来源字段未更新");
         if (!"person-1".equals(merged.get("ownerId")) || !Integer.valueOf(7).equals(merged.get("revision"))
             || !original.get("decomposition").equals(merged.get("decomposition")))
             throw new AssertionError("业务任务事实被覆盖");

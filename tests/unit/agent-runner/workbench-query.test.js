@@ -18,6 +18,14 @@ test('nested AND/OR queries and queue facets use the same matched population', (
   expect(result.facets).toMatchObject({ all: 1, actionable: 0, waiting: 1 });
 });
 
+test('快捷版本筛选与联合查询取交集，版本选项来自可见任务', () => {
+  const result = queryWorkbench(rows, { scopeVersion: '23.4', filter: { field: 'number', operator: 'contains', value: 'YDB' } });
+  expect(result.items.map(item => item.id)).toEqual(['a']);
+  expect(result.facets).toMatchObject({ all: 2, actionable: 1, waiting: 1 });
+  expect(result.versionOptions).toEqual(['23.4', '24.1']);
+  expect(() => queryWorkbench(rows, { scopeVersion: 'x'.repeat(101) })).toThrow('版本筛选无效');
+});
+
 test('date ranges, paging and stable deduplication', () => {
   const result = queryWorkbench([...rows, rows[0]], { page: 1, pageSize: 1,
     filter: { field: 'plannedStartTime', operator: 'between', value: ['2026-11-01', '2026-11-03'] } });

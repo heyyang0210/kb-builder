@@ -1,4 +1,4 @@
-const test = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
@@ -11,15 +11,35 @@ const coverageCases = process.env.KC_FRONTEND_ISTANBUL_CASE_DIR;
 const frontendRoot = path.resolve('apps/knowledge-center-web/frontend/knowledge-center');
 const coverageKey = '__kc_istanbul_coverage__';
 let coverageCaseNumber = 0;
+const instrumentedSources = new Map();
+const instrumentationStats = {
+  requests: 0, transforms: 0, cacheHits: 0, transformMs: 0, routeFetchMs: 0, sourceBytes: 0,
+  fixtureSetupMs: 0, browserLaunchMs: 0, pageBootstrapMs: 0, coverageSnapshotMs: 0, browserTeardownMs: 0,
+};
+let sharedBrowserPromise;
 fs.mkdirSync(artifacts, { recursive: true });
+after(async () => {
+  if (sharedBrowserPromise) await (await sharedBrowserPromise).close();
+  if (coverageCases && process.env.KC_FRONTEND_ISTANBUL_PROFILE === '1') {
+    console.log(`coverage-instrumentation ${JSON.stringify(instrumentationStats)}`);
+  }
+});
 const ctx = { outlineVersionId: 'outline-v1', branch: 'main' };
 const suffix = '/handbooks/HB-1/documents/doc-1';
 const initial = '# 安装准备\n\n前文相同。\n\n安装前，请确认环境满足部署要求，并准备所需文件。\n\n后文相同。\n';
 const selected = '安装前，请确认环境满足部署要求，并准备所需文件。';
 
 async function launch(t, ai = {}, fixtureOptions = {}) {
+  let startedAt = process.hrtime.bigint();
   const api = await setup(t, { ...fixtureOptions, browser: true, ai });
-  const browser = await chromium.launch({ headless: true });
+  if (coverageCases) instrumentationStats.fixtureSetupMs += Number(process.hrtime.bigint() - startedAt) / 1e6;
+  startedAt = process.hrtime.bigint();
+  const reuseBrowser = coverageCases && process.env.KC_FRONTEND_ISTANBUL_REUSE_BROWSER !== '0';
+  const browser = reuseBrowser
+    ? await (sharedBrowserPromise ||= chromium.launch({ headless: true }))
+    : await chromium.launch({ headless: true });
+  if (coverageCases) instrumentationStats.browserLaunchMs += Number(process.hrtime.bigint() - startedAt) / 1e6;
+  startedAt = process.hrtime.bigint();
   const page = await browser.newPage({ viewport: { width: 1366, height: 900 } });
   if (coverageCases) {
     const { createInstrumenter } = require('istanbul-lib-instrument');
@@ -34,18 +54,40 @@ async function launch(t, ai = {}, fixtureOptions = {}) {
       if (!pathname.startsWith('/knowledge-center/') || !file.startsWith(frontendRoot + path.sep) || relative.split('/').includes('vendor') || !fs.existsSync(file)) {
         return route.continue();
       }
+      const fetchStartedAt = process.hrtime.bigint();
       const response = await route.fetch();
+      instrumentationStats.routeFetchMs += Number(process.hrtime.bigint() - fetchStartedAt) / 1e6;
       if (!response.ok()) return route.fulfill({ response });
-      return route.fulfill({ response, body: instrumenter.instrumentSync(await response.text(), file) });
+      const source = await response.text();
+      const digest = crypto.createHash('sha256').update(source).digest('hex');
+      const cacheKey = `${file}:${digest}`;
+      let body = process.env.KC_FRONTEND_ISTANBUL_CACHE === '0' ? undefined : instrumentedSources.get(cacheKey);
+      instrumentationStats.requests++;
+      instrumentationStats.sourceBytes += Buffer.byteLength(source);
+      if (body === undefined) {
+        const startedAt = process.hrtime.bigint();
+        body = instrumenter.instrumentSync(source, file);
+        instrumentationStats.transformMs += Number(process.hrtime.bigint() - startedAt) / 1e6;
+        instrumentationStats.transforms++;
+        if (process.env.KC_FRONTEND_ISTANBUL_CACHE !== '0') instrumentedSources.set(cacheKey, body);
+      } else {
+        instrumentationStats.cacheHits++;
+      }
+      return route.fulfill({ response, body });
     });
     const caseFile = path.join(coverageCases, `${process.pid}-${++coverageCaseNumber}.json`);
     t.after(async () => {
       try {
+        const snapshotStartedAt = process.hrtime.bigint();
         const coverage = await page.evaluate(key => globalThis[key] || {}, coverageKey);
         fs.mkdirSync(coverageCases, { recursive: true });
         fs.writeFileSync(caseFile, JSON.stringify(coverage));
+        instrumentationStats.coverageSnapshotMs += Number(process.hrtime.bigint() - snapshotStartedAt) / 1e6;
       } finally {
-        await browser.close();
+        const teardownStartedAt = process.hrtime.bigint();
+        if (reuseBrowser) await page.context().close();
+        else await browser.close();
+        instrumentationStats.browserTeardownMs += Number(process.hrtime.bigint() - teardownStartedAt) / 1e6;
       }
     });
   } else {
@@ -76,6 +118,7 @@ async function launch(t, ai = {}, fixtureOptions = {}) {
     });
     document.querySelector('#open-writing').onclick = () => window.openWriting();
   }, { initial, ctx });
+  if (coverageCases) instrumentationStats.pageBootstrapMs += Number(process.hrtime.bigint() - startedAt) / 1e6;
   return { api, page, errors };
 }
 async function selectText(page, text, collapsed = false) {
@@ -278,6 +321,13 @@ test('网页资料多选按作者调整的引用优先级进入生成任务', as
   assert.match(await previewPage.locator('main').textContent(), /甲事实/);
   assert.match(await previewPage.locator('header').textContent(), /甲资料/);
   assert.equal(await previewPage.getByRole('button', { name: '阅读视图' }).getAttribute('aria-pressed'), 'true');
+  const exportPromise = previewPage.waitForEvent('download');
+  await previewPage.getByRole('button', { name: '导出 Markdown：甲资料' }).click();
+  const exported = await exportPromise;
+  assert.equal(exported.suggestedFilename(), '甲资料.md');
+  const exportedPath = path.join(artifacts, 'reference-export.md');
+  await exported.saveAs(exportedPath);
+  assert.match(fs.readFileSync(exportedPath, 'utf8'), /甲事实/);
   await previewPage.locator('#reading img').waitFor({ state: 'attached' });
   if (coverageCases) {
     const imageUrl = await previewPage.locator('#reading img').getAttribute('src');
@@ -371,16 +421,14 @@ test('真实编辑器与 HTTP：范围继承、重生成恢复、取消、候选
   await page.locator('[data-ai-start]').click(); await waitCandidate(page);
   assert.equal(calls[0].selectedContent, selected);
   assert.equal((await api.request('GET', suffix + '/draft?' + new URLSearchParams(ctx))).body.data.exists, false);
-  await page.getByRole('button', { name: '编辑第 1 处修改', exact: true }).click();
   await page.locator('[data-ai-inline-editor]').fill('人工微调的候选');
-  await page.getByRole('button', { name: '保存修改', exact: true }).click();
   await page.locator('[data-ai-requirements]').fill('测试失败');
   await page.locator('[data-ai-start]').click();
   await page.waitForFunction(() => document.querySelector('[data-ai-status]').textContent.includes('上次候选仍保留'));
-  assert.match(await page.locator('.handbook-review-added').textContent(), /人工微调的候选/);
+  assert.match(await page.locator('.handbook-review-added').inputValue(), /人工微调的候选/);
   await page.locator('[data-ai-requirements]').fill('等待取消'); await page.locator('[data-ai-start]').click();
   await page.getByRole('button', { name: '中断生成', exact: true }).click();
-  await waitCandidate(page); assert.match(await page.locator('.handbook-review-added').textContent(), /人工微调的候选/);
+  await waitCandidate(page); assert.match(await page.locator('.handbook-review-added').inputValue(), /人工微调的候选/);
   release({ content: '迟到内容' });
   await page.locator('[data-ai-requirements]').fill('更简洁'); await page.locator('[data-ai-start]').click(); await waitCandidate(page);
   assert.equal(await page.locator('[data-ai-fragment]').inputValue(), '确认部署环境，并备齐安装文件。');
@@ -388,9 +436,7 @@ test('真实编辑器与 HTTP：范围继承、重生成恢复、取消、候选
   await page.locator('[data-ai-close]').click();
   await page.locator('#open-writing').click(); await page.locator('[data-ai-resume]').click(); await waitCandidate(page);
   assert.equal(await page.locator('[data-ai-before]').inputValue(), selected);
-  await page.getByRole('button', { name: '编辑第 1 处修改', exact: true }).click();
   await page.locator('[data-ai-inline-editor]').fill('先确认部署环境，再备齐文件。');
-  await page.getByRole('button', { name: '保存修改', exact: true }).click();
   await page.getByRole('button', { name: '接受第 1 处修改', exact: true }).click(); await page.locator('[data-ai-adopt]').click();
   await page.waitForFunction(() => !!window.saved);
   const reread = await api.request('GET', suffix + '/draft?' + new URLSearchParams(ctx));
@@ -629,6 +675,8 @@ test('模板同框搜索、面板图标切换、运行详情和临时断线恢�
   await page.locator('[data-ai-panel-toggle]').click();
   assert.equal(await page.locator('[data-ai-execution]').isVisible(), true);
   assert.equal(await page.getByRole('button', { name: '中断生成', exact: true }).isEnabled(), true);
+  assert.equal(await page.locator('.handbook-writing-execution-details').getAttribute('open'), null);
+  await page.locator('.handbook-writing-execution-details > summary').click();
   const writer = page.locator('[data-ai-stages] details').filter({ hasText: '生成正文' });
   await writer.locator('summary').click();
   assert.match(await writer.locator('[aria-label="调用输入摘要"]').textContent(), /selectedChars/);
@@ -839,6 +887,7 @@ test('嵌入工作台：目录与命令栏保留、正文编辑、候选采用�
     document.querySelector('[data-handbook-vditor]').before(surface);
     surface.append(document.querySelector('[data-handbook-vditor]'));
     window.openWriting({ embedded: true, loadEditor: async () => window.Vditor, initialRange: { start: 0, end: window.editor.getValue().length } });
+    document.querySelector('#open-writing').remove();
   });
   await page.locator('.handbook-writing-page.is-embedded').waitFor();
   assert.equal(await page.locator('#fixture-commandbar').isVisible(), true);
@@ -1185,7 +1234,7 @@ test('IMA修订：正文逐处对照、混合接受拒绝和真实HTTP保存回�
   assert.equal(await page.locator('[data-ai-change]').count(), 2);
   assert.equal(await page.locator('[data-ai-rich-editor]').isVisible(), false);
   assert.match(await page.locator('.handbook-review-removed').first().textContent(), /旧检查/);
-  assert.match(await page.locator('.handbook-review-added').first().textContent(), /新检查/);
+  assert.match(await page.locator('.handbook-review-added').first().inputValue(), /新检查/);
   await page.screenshot({ path: path.join(artifacts, 'ima-inline-revision.png'), fullPage: true });
   await page.getByRole('button', { name: '拒绝第 1 处修改', exact: true }).click();
   await page.getByRole('button', { name: '接受第 2 处修改', exact: true }).click();
@@ -1220,18 +1269,16 @@ test('候选就地编辑：名称精简、编辑后待确认、测试校验占�
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   await page.setViewportSize({ width: 1366, height: 900 });
-  await page.getByRole('button', { name: '编辑第 1 处修改', exact: true }).click();
-  await page.locator('[data-ai-inline-editor]').fill('取消时不应保留。');
-  await page.getByRole('button', { name: '取消修改', exact: true }).click();
-  assert.match(await page.locator('.handbook-review-added').textContent(), /新段落/);
-  await page.getByRole('button', { name: '编辑第 1 处修改', exact: true }).click();
+  assert.equal(await page.getByRole('button', { name: '编辑第 1 处修改', exact: true }).count(), 0);
+  assert.equal(await page.getByRole('button', { name: '保存修改', exact: true }).count(), 0);
+  assert.equal(await page.getByRole('button', { name: '取消修改', exact: true }).count(), 0);
   const editor = page.locator('[data-ai-inline-editor]');
   assert.equal(await editor.isVisible(), true);
   await editor.fill('人工修改后的段落。');
   await page.screenshot({ path: path.join(artifacts, 'candidate-inline-edit.png'), fullPage: true });
-  await page.getByRole('button', { name: '保存修改', exact: true }).click();
   assert.match(await page.locator('[data-ai-change-count]').textContent(), /待确认 1 处/);
-  assert.match(await page.locator('.handbook-review-added').textContent(), /人工修改后的段落/);
+  assert.match(await page.locator('.handbook-review-added').inputValue(), /人工修改后的段落/);
+  assert.equal(await page.evaluate(() => window.editor.getValue()), before);
   await page.getByRole('button', { name: '接受第 1 处修改', exact: true }).click();
   assert.equal(await page.locator('[data-ai-fragment]').inputValue(), '# 标题\n\n人工修改后的段落。');
   await page.getByRole('button', { name: '保存', exact: true }).click(); await page.waitForFunction(() => !!window.saved);
@@ -1388,6 +1435,63 @@ test('双滚动：正文与历史对话互不带动，输入固定且关闭恢�
   await page.getByRole('button', { name: '查看候选与执行过程' }).first().click(); await waitCandidate(page);
   await page.locator('[data-ai-close]').click();
   assert.equal(await page.locator('.has-writing-assistant').count(), 0); assert.equal(await page.locator('[data-handbook-vditor]').isVisible(), true);
+  assert.deepEqual(errors, []);
+});
+
+test('桌面写作面板：外层不滚动，正文和 AI 对话各自滚动', async t => {
+  const { page, errors } = await launch(t);
+  await page.evaluate(() => {
+    const root = document.querySelector('#view-root');
+    const shell = document.createElement('div'); shell.className = 'main-shell'; shell.style.height = '100vh';
+    const header = document.createElement('header'); header.className = 'global-header'; header.textContent = '知识中心';
+    const main = document.createElement('main'); main.id = 'main'; main.append(root);
+    const trailing = document.createElement('div'); trailing.style.cssText = 'height:160px;flex:0 0 160px'; main.append(trailing);
+    shell.append(header, main); document.body.append(shell);
+    document.documentElement.dataset.scrollMode = 'main';
+    const surface = document.createElement('section'); surface.className = 'handbook-production-writing';
+    document.querySelector('[data-handbook-vditor]').before(surface); surface.append(document.querySelector('[data-handbook-vditor]'));
+    window.editor.setValue('# 长篇文档\n\n' + '用于验证正文可以独立滚动。\n\n'.repeat(180));
+    window.openWriting({ embedded: true, loadEditor: async () => window.Vditor, initialRange: { start: 0, end: window.editor.getValue().length } });
+  });
+  await page.waitForFunction(() => !document.querySelector('[data-ai-start]').disabled);
+  await page.evaluate(() => {
+    const conversation = document.querySelector('.handbook-writing-conversation');
+    for (let index = 0; index < 24; index++) {
+      const turn = document.createElement('article'); turn.className = 'handbook-writing-chat-turn';
+      turn.textContent = `历史对话 ${index + 1}：用于验证 AI 对话的独立滚动。`; conversation.append(turn);
+    }
+  });
+  const measure = () => page.evaluate(() => {
+    const shell = document.querySelector('.main-shell');
+    const doc = document.querySelector('.handbook-writing-document-scroll');
+    const chat = document.querySelector('.handbook-writing-conversation');
+    const assistant = document.querySelector('.handbook-writing-assistant');
+    const rect = element => ({ top: element.getBoundingClientRect().top, bottom: element.getBoundingClientRect().bottom,
+      left: element.getBoundingClientRect().left, right: element.getBoundingClientRect().right });
+    return { shellTop: shell.scrollTop, shellHeight: shell.clientHeight, shellScrollHeight: shell.scrollHeight,
+      shellOverflow: getComputedStyle(shell).overflowY, docTop: doc.scrollTop, docScrollHeight: doc.scrollHeight,
+      docClientHeight: doc.clientHeight, chatTop: chat.scrollTop, chatScrollHeight: chat.scrollHeight,
+      chatClientHeight: chat.clientHeight, assistant: rect(assistant), heading: rect(assistant.querySelector('.asset-dialog-heading')),
+      writing: rect(document.querySelector('.handbook-writing-page')), main: rect(document.querySelector('#main')),
+      input: rect(assistant.querySelector('.handbook-writing-input-area')) };
+  });
+  const before = await measure();
+  await page.screenshot({ path: path.join(artifacts, 'assistant-fixed-desktop.png') });
+  assert.equal(before.shellOverflow, 'hidden');
+  assert.ok(before.shellScrollHeight <= before.shellHeight + 1, JSON.stringify(before));
+  assert.ok(before.docScrollHeight > before.docClientHeight, JSON.stringify(before));
+  assert.ok(before.chatScrollHeight > before.chatClientHeight, JSON.stringify(before));
+  assert.ok(before.input.bottom <= before.assistant.bottom + 1, JSON.stringify(before));
+  assert.ok(before.writing.right >= before.main.right - 1, JSON.stringify(before));
+  assert.ok(Math.abs(before.assistant.right - before.writing.right) <= 1, JSON.stringify(before));
+  await page.locator('.global-header').hover(); await page.mouse.wheel(0, 350); await page.waitForTimeout(100);
+  let after = await measure(); assert.equal(after.shellTop, before.shellTop);
+  await page.locator('.handbook-writing-document-scroll').hover(); await page.mouse.wheel(0, 420); await page.waitForTimeout(100);
+  after = await measure(); assert.ok(after.docTop > before.docTop); assert.equal(after.chatTop, before.chatTop);
+  assert.deepEqual(after.heading, before.heading); assert.deepEqual(after.input, before.input); assert.equal(after.shellTop, before.shellTop);
+  await page.locator('.handbook-writing-conversation').hover(); await page.mouse.wheel(0, 420); await page.waitForTimeout(100);
+  const afterChat = await measure(); assert.ok(afterChat.chatTop > after.chatTop); assert.equal(afterChat.docTop, after.docTop);
+  assert.deepEqual(afterChat.heading, before.heading); assert.deepEqual(afterChat.input, before.input); assert.equal(afterChat.shellTop, before.shellTop);
   assert.deepEqual(errors, []);
 });
 

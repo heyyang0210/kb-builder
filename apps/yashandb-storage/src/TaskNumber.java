@@ -1,4 +1,7 @@
 import java.sql.SQLException;
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 
 /** Numeric database identity for an externally formatted task number. */
 final class TaskNumber {
@@ -36,6 +39,23 @@ final class TaskNumber {
         TaskNumber parsed = parse(external);
         if (!"YASHAN".equals(parsed.prefix)) throw new SQLException("PINGCODE_IR_NUMBER_INVALID");
         return parsed.value;
+    }
+
+    static TaskNumber parseTask(String external) throws SQLException {
+        try {
+            return parse(external);
+        } catch (SQLException invalidNumericIdentity) {
+            if (external == null || external.isBlank() || external.length() > 256)
+                throw invalidNumericIdentity;
+            try {
+                byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest(external.getBytes(StandardCharsets.UTF_8));
+                long value = ByteBuffer.wrap(digest).getLong() & Long.MAX_VALUE;
+                return new TaskNumber("LEGACY", value);
+            } catch (java.security.NoSuchAlgorithmException impossible) {
+                throw new IllegalStateException(impossible);
+            }
+        }
     }
 
     static String sr(long value) { return "YDBRD-" + value; }

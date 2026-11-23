@@ -204,6 +204,9 @@ router.post('/chat/stream', async (req, res) => {
     res.end();
   } catch (error) {
     if (!res.headersSent) {
+      for (const header of ['Content-Type', 'Cache-Control', 'Connection', 'X-Accel-Buffering']) {
+        res.removeHeader(header);
+      }
       return providerError(res, error);
     }
     res.write(`data: ${JSON.stringify({ error: error.message })}\n\n`);

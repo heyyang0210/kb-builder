@@ -32,6 +32,17 @@ test('缓存返回克隆且成功写入清除摘要缓存', () => {
   expect(f.store.list({ summary: true })[0]).toMatchObject({ name: '新名称', currentVersion: 2 });
   expect(f.backing.read).toHaveBeenCalledTimes(count + 1);
 });
+test('已删除模板不进入同步或异步目录，停用模板仍可管理', async () => {
+  const f = fixture({}, true);
+  f.store.create({ id: 'gone', content: '# 删除' });
+  f.store.create({ id: 'paused', content: '# 停用' });
+  f.store.disable('paused', null, false);
+  f.store.remove('gone');
+  expect(f.store.list({ summary: '1' }).map(item => item.id)).toEqual(['paused']);
+  expect((await f.store.listAsync({ status: 'deleted' })).map(item => item.id)).toEqual([]);
+  expect((await f.store.listAsync()).map(item => item.id)).toEqual(['paused']);
+  expect(f.store.get('gone')?.status).toBe('deleted');
+});
 test('零TTL重新读取，缺失当前版本列表返回null', async () => {
   const f = fixture({ templates: [{ id: 'legacy', currentVersion: 3 }], audits: null }, true, { listCacheTtlMs: 0 });
   expect(f.store.list({ summary: true })[0].current).toBeNull();

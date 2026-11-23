@@ -458,6 +458,7 @@ describe('文档任务范围纠偏与发布核对真实 HTTP', () => {
   test('映射读取失败清空可选分支并返回错误，未确认范围不写入', async () => {
     let calls = 0;
     context.resolveVersionMapping = async () => { calls++; throw new Error('未配置版本规则'); };
+    state.tasks[0].product = 'YashanDB'; state.tasks[0].version = '23.4';
     state.tasks[0].decomposition.handbooks[0].confirmed = false;
     seed();
     let r = await request('GET', '/catalog?handbookId=h1&ticketNumber=P-1');

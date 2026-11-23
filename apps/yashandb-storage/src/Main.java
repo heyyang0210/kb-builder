@@ -68,6 +68,7 @@ public final class Main {
     private final JdbcConnectionPool connectionPool;
     private final DraftReadProjection draftReadProjection = new DraftReadProjection();
     private final AtomicBoolean draftProjectionRebuilding = new AtomicBoolean();
+    private volatile long invalidDraftProjectionRevision = -1;
     private final HandbookProjectionRepository handbookProjectionRepository = new HandbookProjectionRepository();
     // The directory is immutable for a given outline edit version. Keep the
     // expensive node/ownership projection briefly while still checking the
@@ -91,9 +92,13 @@ public final class Main {
 
     public static void main(String[] args) throws Exception {
         String command = args.length == 0 ? "serve" : args[0];
-        if (args.length > 1 || !("serve".equals(command) || "migrate".equals(command) || "probe".equals(command) || "verify".equals(command) || "migrate-tasks".equals(command) || "activate-tasks".equals(command))) {
-            throw new IllegalArgumentException("用法：Main [serve|migrate|probe|verify|migrate-tasks|activate-tasks]");
+        boolean taskMigrationCommand = "migrate-tasks".equals(command) || "activate-tasks".equals(command);
+        if ((args.length > 1 && !(taskMigrationCommand && args.length == 3 && "--approval-ref".equals(args[1])))
+            || !("serve".equals(command) || "migrate".equals(command) || "probe".equals(command) || "verify".equals(command) || taskMigrationCommand)) {
+            throw new IllegalArgumentException("用法：Main [serve|migrate|probe|verify|migrate-tasks|activate-tasks] [--approval-ref <引用>]");
         }
+        String approvalRef = args.length == 3 ? args[2] : null;
+        if (taskMigrationCommand) requireTaskMigrationTarget(approvalRef);
         Class.forName(DRIVER);
         Main application = new Main();
         if ("probe".equals(command)) {
@@ -132,7 +137,7 @@ public final class Main {
             try {
                 application.verifyMigrations();
                 application.migrateDocumentTasks();
-                System.out.println("{\"success\":true,\"taskMigration\":\"verified\"}");
+                System.out.println(taskMigrationResult("verified", approvalRef));
             } finally {
                 application.connectionPool.closeAll();
             }
@@ -143,7 +148,7 @@ public final class Main {
             try {
                 application.verifyMigrations();
                 application.activateDocumentTasks();
-                System.out.println("{\"success\":true,\"taskMigration\":\"active\"}");
+                System.out.println(taskMigrationResult("active", approvalRef));
             } finally {
                 application.connectionPool.closeAll();
             }
@@ -210,9 +215,6 @@ public final class Main {
     }
 
     private void migrateDocumentTasks() throws Exception {
-        if (!"personal".equals(env("YASDB_STORAGE_TARGET_CLASS", ""))) {
-            throw new IllegalStateException("旧任务迁移仅允许显式指定个人开发库");
-        }
         String backupPath = env("KC_DOCUMENT_TASK_BACKUP_PATH", "").trim();
         if (backupPath.isEmpty()) throw new IllegalStateException("必须指定旧任务备份路径");
         try (Connection connection = connection()) {
@@ -222,14 +224,32 @@ public final class Main {
     }
 
     private void activateDocumentTasks() throws Exception {
-        if (!"personal".equals(env("YASDB_STORAGE_TARGET_CLASS", "")))
-            throw new IllegalStateException("任务切换仅允许显式指定个人开发库");
         String backupPath = env("KC_DOCUMENT_TASK_BACKUP_PATH", "").trim();
         if (backupPath.isEmpty()) throw new IllegalStateException("必须指定已核验的旧任务备份路径");
         try (Connection connection = connection()) {
             new DocumentTaskMigration().activate(connection, Path.of(backupPath));
             connection.commit();
         }
+    }
+
+    private static void requireTaskMigrationTarget(String approvalRef) {
+        String target = env("YASDB_STORAGE_TARGET_CLASS", "");
+        if ("personal".equals(target)) return;
+        if (!"shared".equals(target) && !"test".equals(target))
+            throw new IllegalStateException("任务迁移目标类别必须显式指定 personal、shared 或 test");
+        if ("shared".equals(target) && (approvalRef == null || !approvalRef.matches("[A-Za-z0-9._:-]{8,128}")))
+            throw new IllegalStateException("共享库任务迁移需要明确的审批引用");
+        if ("test".equals(target) && !env("KNOWLEDGE_CENTER_TEST_RUN_ID", "").matches("[A-Za-z0-9._:-]{8,128}"))
+            throw new IllegalStateException("测试库任务迁移必须绑定本次隔离测试运行");
+        String expectedSchema = env("KC_TASK_MIGRATION_EXPECTED_SCHEMA", "").trim();
+        String actualUser = env("YASDB_USERNAME", "").trim();
+        if (expectedSchema.isBlank() || !expectedSchema.equalsIgnoreCase(actualUser))
+            throw new IllegalStateException("共享库任务迁移目标 Schema 与连接账号不一致");
+    }
+
+    private static String taskMigrationResult(String status, String approvalRef) {
+        return "{\"success\":true,\"taskMigration\":\"" + status + "\""
+            + (approvalRef == null ? "" : ",\"approvalReference\":\"" + approvalRef + "\"") + "}";
     }
 
     /** Executes a read-only validation statement for the AI quality agent. */
@@ -379,9 +399,25 @@ public final class Main {
         try (Connection connection = connection(); PreparedStatement query = connection.prepareStatement(
             "SELECT PAYLOAD, REVISION, DELETED FROM KC_RECORD WHERE NAMESPACE='handbook-production' AND RECORD_KEY='state'")) {
             try (ResultSet row = query.executeQuery()) {
-                if (row.next()) draftReadProjection.publish(row.getLong(2), "Y".equals(row.getString(3))
-                    ? Map.of() : castMap((Map<?, ?>) Json.parse(readClob(row.getClob(1)))));
-                else draftReadProjection.publish(0, Map.of());
+                if (row.next()) {
+                    long revision = row.getLong(2);
+                    if ("Y".equals(row.getString(3))) {
+                        invalidDraftProjectionRevision = -1;
+                        draftReadProjection.publish(revision, Map.of());
+                    } else {
+                        try {
+                            draftReadProjection.publish(revision, castMap((Map<?, ?>) Json.parse(readRecordClob(row.getClob(1)))));
+                            invalidDraftProjectionRevision = -1;
+                        } catch (JsonParseException error) {
+                            invalidDraftProjectionRevision = revision;
+                            LOG.log(Level.SEVERE, "draft_projection.invalid_aggregate revision={0}; 草稿投影不可用，原数据库记录未修改",
+                                revision);
+                        }
+                    }
+                } else {
+                    invalidDraftProjectionRevision = -1;
+                    draftReadProjection.publish(0, Map.of());
+                }
             }
             connection.commit();
         }
@@ -410,6 +446,10 @@ public final class Main {
             connection.commit();
             Object draft = null;
             if (!deleted && revision != 0) {
+                if (invalidDraftProjectionRevision == revision) {
+                    failure(exchange, 503, "DRAFT_STATE_INVALID", "草稿聚合数据格式异常，读取已暂停，原数据未修改");
+                    return;
+                }
                 DraftReadProjection.Snapshot snapshot = draftReadProjection.snapshot();
                 if (snapshot == null || snapshot.revision() != revision) {
                     rebuildDraftReadProjection();
@@ -488,7 +528,9 @@ public final class Main {
                 perf("get_record", requestStarted, sqlStarted, 0);
             }
         } catch (JsonParseException error) {
-            failure(exchange, 503, "DATABASE_UNAVAILABLE", "读取数据库记录失败");
+            if ("handbook-production".equals(namespace) && "state".equals(key))
+                failure(exchange, 503, "DRAFT_STATE_INVALID", "草稿聚合数据格式异常，读取已暂停，原数据未修改");
+            else failure(exchange, 503, "DATABASE_UNAVAILABLE", "读取数据库记录失败");
         } catch (Exception error) {
             failure(exchange, 503, "DATABASE_UNAVAILABLE", "读取数据库记录失败");
         }
@@ -518,6 +560,7 @@ public final class Main {
             long commitStarted = System.nanoTime();
             connection.commit();
             if ("handbook-production".equals(namespace) && "state".equals(key)) {
+                invalidDraftProjectionRevision = -1;
                 draftReadProjection.publish(revision, castMap((Map<?, ?>) Json.parse(payload)));
             }
             if (perfEnabled()) System.err.printf("[perf] put_record commit_ms=%.3f request_total_ms=%.3f%n", (System.nanoTime() - commitStarted) / 1e6, (System.nanoTime() - requestStarted) / 1e6);
@@ -531,6 +574,10 @@ public final class Main {
             ));
         } catch (RevisionConflict error) {
             failure(exchange, 409, "REVISION_CONFLICT", "记录已被其他请求修改");
+        } catch (JsonParseException error) {
+            if ("handbook-production".equals(namespace) && "state".equals(key))
+                failure(exchange, 503, "DRAFT_STATE_INVALID", "草稿聚合数据格式异常，写入已暂停，原数据未修改");
+            else failure(exchange, 503, "DATABASE_UNAVAILABLE", "写入数据库记录失败");
         } catch (OutlineReferenceRejected error) {
             String reason = "OUTLINE_DELETED".equals(error.getMessage()) ? "已删除" : "不存在";
             sendJson(exchange, 409, mapOf("success", false, "error", mapOf(
@@ -1168,6 +1215,7 @@ public final class Main {
                 Map<String, Object> input = readJsonObject(exchange);
                 Map<String, Object> source = pingcodeTaskRepository.createSource(connection,
                     coalesce(input.get("name")), coalesce(input.get("type")), coalesce(input.get("productType")),
+                    coalesce(input.get("businessVersion")),
                     coalesce(input.get("url")), coalesce(input.get("connectionId")), coalesce(input.get("actor")));
                 connection.commit(); sendJson(exchange, 201, mapOf("success", true, "data", source)); return;
             }
@@ -1199,7 +1247,8 @@ public final class Main {
                 Object revision = input.get("revision");
                 if (!(revision instanceof Number)) { failure(exchange, 422, "PINGCODE_SOURCE_REVISION_REQUIRED", "来源版本缺失"); return; }
                 Map<String, Object> source = pingcodeTaskRepository.updateSource(connection, decode(parts[2]),
-                    coalesce(input.get("name")), coalesce(input.get("type")), coalesce(input.get("productType")), coalesce(input.get("url")),
+                    coalesce(input.get("name")), coalesce(input.get("type")), coalesce(input.get("productType")),
+                    coalesce(input.get("businessVersion")), coalesce(input.get("url")),
                     ((Number) revision).longValue());
                 source.put("deletable", pingcodeTaskRepository.deletable(connection, decode(parts[2])));
                 connection.commit(); sendJson(exchange, 200, mapOf("success", true, "data", source)); return;

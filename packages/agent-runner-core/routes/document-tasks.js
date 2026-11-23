@@ -570,14 +570,31 @@ function createDocumentTaskRouter(options = {}) {
       const existingBook = task.decomposition.handbooks.find(book => book.id === id);
       const frozen = existingBook?.versionMapping;
       try {
-        const rule = frozen ? { branch: frozen.targetBranch, id: frozen.mappingId, rowVersion: frozen.mappingRowVersion }
-          : existingBook?.confirmed && existingBook.targetVersion ? { branch: existingBook.targetVersion }
-          : await ctx.resolveVersionMapping(id, task.product, task.version);
-        catalog.versionMapping = rule;
-        catalog.versions = [rule.branch];
+        if (existingBook?.confirmed && existingBook.targetVersion && !frozen && ctx.listVersionBranches) {
+          catalog.versions = await ctx.listVersionBranches(id);
+          catalog.manualVersionSelection = true;
+          if (!catalog.versions.length) catalog.versionMappingError = '该手册没有已启用且可读取的目标分支';
+        } else {
+          const rule = frozen ? { branch: frozen.targetBranch, id: frozen.mappingId, rowVersion: frozen.mappingRowVersion }
+            : existingBook?.confirmed && existingBook.targetVersion ? { branch: existingBook.targetVersion }
+            : await ctx.resolveVersionMapping(id, task.product, task.version);
+          catalog.versionMapping = rule;
+          catalog.versions = [rule.branch];
+        }
       } catch (error) {
-        catalog.versionMappingError = error.message;
-        catalog.versions = [];
+        if (error.code === 'BUSINESS_VERSION_MISSING' && ctx.listVersionBranches) {
+          try {
+            catalog.versions = await ctx.listVersionBranches(id);
+            catalog.manualVersionSelection = true;
+            if (!catalog.versions.length) catalog.versionMappingError = '该手册没有已启用且可读取的目标分支';
+          } catch (branchError) {
+            catalog.versionMappingError = branchError.message;
+            catalog.versions = [];
+          }
+        } else {
+          catalog.versionMappingError = error.message;
+          catalog.versions = [];
+        }
       }
     }
     return catalog;
@@ -966,7 +983,12 @@ function createDocumentTaskRouter(options = {}) {
         ? { id: existingBook.versionMapping.mappingId, rowVersion: existingBook.versionMapping.mappingRowVersion,
             connectionId: existingBook.versionMapping.connectionId, branch: existingBook.versionMapping.targetBranch }
         : existingBook?.confirmed && existingBook.targetVersion ? null
-        : await ctx.resolveVersionMapping(req.params.id, task.product, task.version);
+        : !task.product || !task.version ? null
+          : await ctx.resolveVersionMapping(req.params.id, task.product, task.version);
+      if ((!task.product || !task.version || existingBook?.confirmed && existingBook.targetVersion && !existingBook.versionMapping) && ctx.listVersionBranches) {
+        catalog.versions = await ctx.listVersionBranches(req.params.id);
+        if (!catalog.versions.includes(req.body.targetVersion)) fail('VERSION_INVALID', '请选择该手册已启用且可读取的目标分支');
+      }
     }
     return mutate(req, ctx, state => {
       const task = requireTask(state, ctx, req.params.number); revision(task, req.body);

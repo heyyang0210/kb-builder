@@ -87,6 +87,34 @@ test('任务不可见时拒绝读取来源详情', async () => {
   } finally { await api.close(); }
 });
 
+test('关系表同步变化历史经公开 HTTP 校验默认和显式分页边界', async () => {
+  const requests = [];
+  const api = await fixture({
+    find: async number => ({ number, ownerId: 'owner', decomposition: { handbooks: [] } }),
+    changes: async (number, page, pageSize) => {
+      requests.push({ number, page, pageSize });
+      return { items: [], total: 0, page, pageSize };
+    },
+  });
+  try {
+    expect(await api.get('/YDBRD-1/sync-changes')).toMatchObject({
+      status: 200, body: { data: { page: 1, pageSize: 20, total: 0 } },
+    });
+    expect(await api.get('/YDBRD-1/sync-changes?page=2&pageSize=25')).toMatchObject({
+      status: 200, body: { data: { page: 2, pageSize: 25, total: 0 } },
+    });
+    for (const query of ['?page=0', '?page=-1', '?page=1.5', '?pageSize=0', '?pageSize=101']) {
+      expect(await api.get(`/YDBRD-1/sync-changes${query}`)).toMatchObject({
+        status: 422, body: { success: false, error: { code: 'PINGCODE_CHANGE_PAGE_INVALID' } },
+      });
+    }
+    expect(requests).toEqual([
+      { number: 'YDBRD-1', page: 1, pageSize: 20 },
+      { number: 'YDBRD-1', page: 2, pageSize: 25 },
+    ]);
+  } finally { await api.close(); }
+});
+
 test('隔离关系存储适配器经公开 HTTP 路由编码读写及错误边界', async () => {
   const requests = [];
   let active = true;

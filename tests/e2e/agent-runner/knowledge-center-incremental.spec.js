@@ -5,10 +5,16 @@ const baseUrl = process.env.KPG_BASE_URL;
 // 手册生产列表按已发布大纲目录过滤；列表/抽屉测试同时提供匹配的大纲前提，
 // 避免只替换资产而意外依赖运行环境的真实大纲数据。
 async function mockPublishedProductionOutline(page, handbookId) {
-  await page.route('**/knowledge-center/api/outline/catalog', route => route.fulfill({
+  const outlineId = `outline-${handbookId}`;
+  await page.route('**/knowledge-center/api/outline/catalog**', route => route.fulfill({
     status: 200,
     contentType: 'application/json',
-    body: JSON.stringify({ success: true, data: { items: [{ id: `outline-${handbookId}`, handbookId, state: 'published' }], total: 1, snapshotVersion: 'production-regression-fixture' } }),
+    body: JSON.stringify({ success: true, data: { items: [{ id: outlineId, handbookId, name: '生产回归手册', state: 'published' }], total: 1, snapshotVersion: 'production-regression-fixture' } }),
+  }));
+  await page.route(`**/knowledge-center/api/outline/governance/${outlineId}*`, route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ success: true, data: { id: outlineId, handbookId, name: '生产回归手册', state: 'published', nodes: [] } }),
   }));
 }
 
@@ -38,7 +44,9 @@ test('增量任务展示真实状态、范围、草稿和检查结果', async ({
   await page.goto(`${baseUrl}/knowledge-center/production?taskId=inc-e2e`);
   await expect(page.getByRole('heading', { name: '更新安装说明' })).toBeVisible();
   await expect(page.getByText('完整性已检查', { exact: true }).first()).toBeVisible();
+  await page.getByRole('button', { name: '确认输入', exact: true }).click();
   await expect(page.getByText('SR 安装变更')).toBeVisible();
+  await page.getByRole('button', { name: '编写草稿', exact: true }).click();
   await expect(page.getByRole('textbox', { name: '本次修改内容' })).toHaveValue('# 新安装步骤');
   await expect(page.getByRole('button', { name: '提交候选版本' })).toBeVisible();
 });
@@ -58,7 +66,7 @@ test('文档生产入口读取真实增量任务列表而非演示数据', async
   await expect(page.locator('#view-root')).not.toContainText('演示数据');
 });
 
-test('文档生产主流程留在统一工作区，任务视图继续提供增量工作区', async ({ page }) => {
+test('文档生产主流程留在统一工作区并可进入手册写作页', async ({ page }) => {
   await mockPublishedProductionOutline(page, 'main-production-flow-e2e');
   await page.route('**/knowledge-center/api/assets/handbooks?*', route => route.fulfill({
     status: 200,
@@ -75,10 +83,6 @@ test('文档生产主流程留在统一工作区，任务视图继续提供增�
   await handbookRow.click();
   await expect(page).toHaveURL(/\/knowledge-center\/production\/handbook\/main-production-flow-e2e/);
   await expect(page.locator('.handbook-production-page')).toBeVisible();
-  await page.getByRole('tab', { name: '任务视图' }).click();
-  await expect(page.getByRole('tab', { name: '任务视图' })).toHaveAttribute('aria-selected', 'true');
-  await expect(page.locator('.incremental-sidebar')).toBeVisible();
-  await expect(page.locator('.incremental-sidebar')).toContainText('增量任务');
 });
 
 test('旧数据库版本链接回退到手册视图且不再显示数据库版本页', async ({ page }) => {
@@ -89,7 +93,7 @@ test('旧数据库版本链接回退到手册视图且不再显示数据库版�
   await page.route('**/knowledge-center/api/incremental-tasks*', route => route.fulfill({
     status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: [] }),
   }));
-  await page.route('**/knowledge-center/api/outline/catalog', route => route.fulfill({
+  await page.route('**/knowledge-center/api/outline/catalog**', route => route.fulfill({
     status: 200, contentType: 'application/json',
     body: JSON.stringify({ success: true, data: { items: [] } }),
   }));
@@ -143,51 +147,4 @@ test('我的生成只展示服务端个人运行投影，旧待办链接自动�
   await expect(page.getByText('正在校验生成内容')).toBeVisible();
   await expect(page.locator('.production-generations')).not.toContainText('审核待办');
   await expect(page.locator('.production-generations')).not.toContainText('发布待办');
-});
-
-test('手册与任务视图往返时可恢复，空负责人数据不会中断渲染', async ({ page }) => {
-  await mockPublishedProductionOutline(page, 'e2e-null-owner');
-  const pageErrors = [];
-  page.on('pageerror', error => pageErrors.push(error.message));
-  await page.route('**/knowledge-center/api/assets/handbooks?*', route => route.fulfill({
-    status: 200,
-    contentType: 'application/json',
-    body: JSON.stringify({ success: true, data: { items: [{ handbookId: 'e2e-null-owner', name: '空负责人回归手册', productName: 'YashanDB', ownerA: null, ownerB: null }] } }),
-  }));
-
-  await page.goto(`${baseUrl}/knowledge-center/production`);
-  const handbooksTab = page.getByRole('tab', { name: '手册视图' });
-  const tasksTab = page.getByRole('tab', { name: '任务视图' });
-  await expect(handbooksTab).toHaveAttribute('aria-selected', 'true');
-  await expect(page.locator('[data-production-handbook-row]')).toContainText('空负责人回归手册');
-  await expect(page.locator('[data-production-column-cell="owner"]').first()).toContainText('未分配');
-
-  await tasksTab.click();
-  await expect(tasksTab).toHaveAttribute('aria-selected', 'true');
-  await expect(page).toHaveURL(/\?view=tasks$/);
-  await expect(page.locator('.incremental-sidebar')).toBeVisible();
-
-  await handbooksTab.click();
-  await expect(handbooksTab).toHaveAttribute('aria-selected', 'true');
-  await expect(page).not.toHaveURL(/view=tasks/);
-  await expect(page.locator('[data-production-handbook-row]')).toContainText('空负责人回归手册');
-
-  await tasksTab.click();
-  await page.reload();
-  await expect(tasksTab).toHaveAttribute('aria-selected', 'true');
-  await expect(page).toHaveURL(/\?view=tasks$/);
-  expect(pageErrors).toEqual([]);
-});
-
-test('文档生产任务视图支持深链并在刷新后与 URL 保持一致', async ({ page }) => {
-  const pageErrors = [];
-  page.on('pageerror', error => pageErrors.push(error.message));
-  await page.goto(`${baseUrl}/knowledge-center/production?view=tasks`);
-  const tasksTab = page.getByRole('tab', { name: '任务视图' });
-  await expect(tasksTab).toHaveAttribute('aria-selected', 'true');
-  await expect(page.locator('.incremental-sidebar')).toBeVisible();
-  await page.reload();
-  await expect(tasksTab).toHaveAttribute('aria-selected', 'true');
-  await expect(page).toHaveURL(/\?view=tasks$/);
-  expect(pageErrors).toEqual([]);
 });

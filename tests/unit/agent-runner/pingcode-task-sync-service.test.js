@@ -56,20 +56,24 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
 test('登记来源只做本地格式校验，不在保存请求中读取远端基线', async () => {
   const setup = fixture([]);
   const saved = await setup.service.createSource({ name: '27.1.1 版本需求', type: 'REQUIREMENT',
-    productType: 'DB', url: 'https://pingcode.yasdb.com/ship/products/YASHAN/baselines/Yq_yJCzT/ideas?category=all' }, 'heyang');
+    productType: 'DB', businessVersion: '27.1.1',
+    url: 'https://pingcode.yasdb.com/ship/products/YASHAN/baselines/Yq_yJCzT/ideas?category=all' }, 'heyang');
   expect(saved).toMatchObject({ name: '27.1.1 版本需求', type: 'REQUIREMENT' });
   expect(setup.pageReads).toBe(0);
   expect(setup.calls.filter(call => call.method === 'POST' && call.pathname === '/v1/pingcode-task-sync/sources')).toHaveLength(1);
+  expect(setup.calls.find(call => call.method === 'POST' && call.pathname === '/v1/pingcode-task-sync/sources').body)
+    .toMatchObject({ productType: 'DB', businessVersion: '27.1.1' });
 });
 
 test('来源配置修改沿用 revision 并通过 Storage HTTP 契约执行', async () => {
   const setup = fixture([]);
-  await setup.service.updateSource('source-1', { name: '新名称', type: 'TICKET', productType: 'YCM', url: configured.url, revision: 7 });
+  await setup.service.updateSource('source-1', { name: '新名称', type: 'TICKET', productType: 'YCM',
+    businessVersion: '28.1', url: configured.url, revision: 7 });
   await setup.service.setSourceState('source-1', { state: 'DISABLED', revision: 8 });
   await setup.service.deleteSource('source-1', 9);
   expect(setup.calls.slice(0, 4).map(call => [call.method, call.pathname, call.body])).toEqual([
     ['PATCH', '/v1/pingcode-task-sync/sources/source-1',
-      { name: '新名称', type: 'TICKET', productType: 'YCM', url: configured.url, revision: 7 }],
+      { name: '新名称', type: 'TICKET', productType: 'YCM', businessVersion: '28.1', url: configured.url, revision: 7 }],
     ['GET', '/v1/pingcode-task-sync/sources/source-1/runs', undefined],
     ['PATCH', '/v1/pingcode-task-sync/sources/source-1/state', { state: 'DISABLED', revision: 8 }],
     ['DELETE', '/v1/pingcode-task-sync/sources/source-1', undefined],
@@ -247,10 +251,30 @@ test('管理员可以读取分页预览并按摘要确认，确认内容传至�
   });
 });
 
+test('确认时数值来源版本经存储转成字符串仍可匹配同一版本', async () => {
+  const current = { ...page(0, item(1)), sourceVersion: 1793070540 };
+  const { service, calls, run } = fixture([current]);
+  run.status = 'AWAITING_CONFIRM';
+  run.sourceVersion = '1793070540';
+  await expect(service.confirmRun('run-1', { digest: previewDigest, expectedRevision: 1 }))
+    .resolves.toMatchObject({ status: 'CONFIRMED' });
+  expect(calls.some(call => call.pathname.endsWith('/confirm'))).toBe(true);
+});
+
 test('确认前上游视图已变更时拒绝写入旧预览', async () => {
   const changed = { ...page(0, item(1)), sourceVersion: 'v2' };
   const { service, calls, run } = fixture([changed, page(1, item(2))]);
   run.status = 'AWAITING_CONFIRM';
+  await expect(service.confirmRun('run-1', { digest: previewDigest, expectedRevision: 1 }))
+    .rejects.toMatchObject({ code: 'PREVIEW_STALE', status: 409 });
+  expect(calls.some(call => call.pathname.endsWith('/confirm'))).toBe(false);
+});
+
+test('确认前来源版本缺失时拒绝写入旧预览', async () => {
+  const current = { ...page(0, item(1)), sourceVersion: undefined };
+  const { service, calls, run } = fixture([current]);
+  run.status = 'AWAITING_CONFIRM';
+  run.sourceVersion = undefined;
   await expect(service.confirmRun('run-1', { digest: previewDigest, expectedRevision: 1 }))
     .rejects.toMatchObject({ code: 'PREVIEW_STALE', status: 409 });
   expect(calls.some(call => call.pathname.endsWith('/confirm'))).toBe(false);

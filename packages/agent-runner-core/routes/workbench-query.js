@@ -58,9 +58,11 @@ function queryWorkbench(items, input = {}, meta = {}) {
   const page = input.page ?? 1;
   const pageSize = input.pageSize ?? 20;
   const search = input.search ?? '';
+  const scopeVersion = input.scopeVersion ?? '';
   if (!QUEUES.has(queue) || type !== 'all' && !TYPES.has(type)) invalid('队列或任务类型无效');
   if (!Number.isSafeInteger(page) || page < 1 || !Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 100) invalid('分页参数无效');
   if (typeof search !== 'string' || search.length > 200) invalid('搜索词无效');
+  if (typeof scopeVersion !== 'string' || scopeVersion.length > 100) invalid('版本筛选无效');
   const test = parseFilter(input.filter);
   const needle = search.trim().toLocaleLowerCase();
   const byId = [...new Map(items.map(item => [item.id, item])).values()];
@@ -68,7 +70,9 @@ function queryWorkbench(items, input = {}, meta = {}) {
     .map(item => `${item.number}:${item.subtaskNumber}:${item.kind}`));
   const unique = byId.filter(item => item.queue !== 'waiting' || item.subtaskNumber == null
     || !actionableKeys.has(`${item.number}:${item.subtaskNumber}:${item.kind}`));
-  const matched = unique.filter(item => test(item) && (!needle || `${item.number || ''} ${item.title || ''}`.toLocaleLowerCase().includes(needle)));
+  const versionOptions = [...new Set(unique.map(item => String(item.version || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'zh-CN'));
+  const matched = unique.filter(item => (!scopeVersion || String(item.version || '') === scopeVersion)
+    && test(item) && (!needle || `${item.number || ''} ${item.title || ''}`.toLocaleLowerCase().includes(needle)));
   const facets = { all: matched.length, actionable: 0, waiting: 0, types: {} };
   for (const item of matched) {
     facets[item.queue === 'waiting' ? 'waiting' : 'actionable']++;
@@ -76,7 +80,7 @@ function queryWorkbench(items, input = {}, meta = {}) {
   }
   const filtered = matched.filter(item => (item.queue === 'waiting' ? 'waiting' : 'actionable') === queue && (type === 'all' || item.kind === type));
   filtered.sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')) || String(a.id).localeCompare(String(b.id)));
-  return { items: filtered.slice((page - 1) * pageSize, page * pageSize), total: filtered.length, page, pageSize, facets,
+  return { items: filtered.slice((page - 1) * pageSize, page * pageSize), total: filtered.length, page, pageSize, facets, versionOptions,
     completeness: meta.unavailable?.length ? 'partial' : 'complete', unavailable: meta.unavailable || [], asOf: meta.asOf || new Date().toISOString() };
 }
 module.exports = { queryWorkbench, parseFilter };

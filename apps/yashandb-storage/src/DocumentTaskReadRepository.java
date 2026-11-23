@@ -41,14 +41,19 @@ final class DocumentTaskReadRepository {
 
     Map<String, Object> find(Connection connection, String number) throws SQLException {
         requireActive(connection);
-        TaskNumber identity = TaskNumber.parse(number);
+        TaskNumber identity = TaskNumber.parseTask(number);
         List<Map<String, Object>> tasks = new ArrayList<>();
         try (PreparedStatement query = connection.prepareStatement(
             "SELECT TASK_NUMBER,PAYLOAD,ROW_VERSION,ATTENTION,SOURCE_TYPE,PRIMARY_SOURCE_ID " +
             "FROM KC_DOCUMENT_TASK WHERE TASK_PREFIX=? AND TASK_NUMBER=?")) {
             query.setString(1, identity.prefix); query.setLong(2, identity.value);
             try (ResultSet rows = query.executeQuery()) {
-                if (rows.next()) tasks.add(task(rows));
+                if (rows.next()) {
+                    Map<String, Object> item = task(rows);
+                    if (!number.equals(String.valueOf(item.get("number"))))
+                        throw new SQLException("DOCUMENT_TASK_IDENTITY_COLLISION");
+                    tasks.add(item);
+                }
             }
         }
         attachIr(connection, tasks);
@@ -76,9 +81,12 @@ final class DocumentTaskReadRepository {
         }
         String q = filters.get("q");
         if (q != null && !q.isBlank()) {
-            where.append(" AND (LOWER(T.TASK_PREFIX || '-' || TO_CHAR(T.TASK_NUMBER)) LIKE ? OR LOWER(T.DESCRIPTION) LIKE ?)");
+            where.append(" AND (LOWER(T.TASK_PREFIX || '-' || TO_CHAR(T.TASK_NUMBER)) LIKE ? " +
+                "OR LOWER(T.DESCRIPTION) LIKE ? OR (T.TASK_PREFIX=? AND T.TASK_NUMBER=?))");
             String pattern = "%" + q.toLowerCase() + "%";
+            TaskNumber exact = TaskNumber.parseTask(q);
             parameters.add(pattern); parameters.add(pattern);
+            parameters.add(exact.prefix); parameters.add(exact.value);
         }
         String ir = filters.get("ir");
         if (ir != null && !ir.isBlank()) {
@@ -201,7 +209,7 @@ final class DocumentTaskReadRepository {
         for (Map<String, Object> task : tasks) relations.put(String.valueOf(task.get("number")), new LinkedHashSet<>());
         List<Long> srNumbers = new ArrayList<>();
         for (String number : relations.keySet()) {
-            TaskNumber identity = TaskNumber.parse(number);
+            TaskNumber identity = TaskNumber.parseTask(number);
             if ("YDBRD".equals(identity.prefix)) srNumbers.add(identity.value);
         }
         if (srNumbers.isEmpty()) {

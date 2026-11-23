@@ -183,13 +183,19 @@ for table in "${source_tables[@]}"; do
   [[ "$source_count" == "$target_count" ]] || row_mismatches+=("$table:$source_count:$target_count")
 done
 
-python3 - "$report_file" "$source_user" "$target_user" "$source_server" "$row_report" "${missing_tables[*]:-}" "${row_mismatches[*]:-}" <<'PY'
+active_task_migration=0
+if printf '%s\n' "${target_tables[@]}" | grep -Fxq KC_TASK_MIGRATION; then
+  active_task_migration="$(sql_output "$target_user" "$target_password" "$target_server" "select count(*) from KC_TASK_MIGRATION where MIGRATION_ID='document_tasks_v2' and MIGRATION_STATUS='ACTIVE';" | awk '/^[[:space:]]*[0-9]+[[:space:]]*$/ {gsub(/[[:space:]]/, ""); print; exit}')"
+  [[ "$active_task_migration" =~ ^[0-9]+$ ]] || { echo "无法读取任务迁移状态" >&2; exit 1; }
+fi
+
+python3 - "$report_file" "$source_user" "$target_user" "$source_server" "$row_report" "${missing_tables[*]:-}" "${row_mismatches[*]:-}" "$active_task_migration" <<'PY'
 import json
 import sys
 from datetime import datetime
 from pathlib import Path
 
-report_path, source, target, server, counts_path, missing_text, mismatch_text = sys.argv[1:]
+report_path, source, target, server, counts_path, missing_text, mismatch_text, active_task_migration = sys.argv[1:]
 rows = []
 for line in Path(counts_path).read_text(encoding="utf-8").splitlines():
     table, source_count, target_count = line.split("\t")
@@ -203,6 +209,7 @@ payload = {
     "missingTables": missing_text.split() if missing_text else [],
     "rowMismatches": mismatch_text.split() if mismatch_text else [],
     "rowCounts": rows,
+    "activeTaskMigrationCount": int(active_task_migration),
 }
 payload["passed"] = not payload["missingTables"] and not payload["rowMismatches"]
 Path(report_path).write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

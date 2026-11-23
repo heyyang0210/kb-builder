@@ -1,4 +1,5 @@
 const fs = require('node:fs');
+const crypto = require('node:crypto');
 const http = require('node:http');
 const path = require('node:path');
 const { createKnowledgeCenterHandler } = require('../../../packages/agent-runner-core/routes/knowledge-center');
@@ -38,7 +39,7 @@ describe('工单业务版本映射统一入口真实HTTP', () => {
       stores:{domainStore,knowledgeAssetsStore:{read:()=>({handbooks:[{handbookId:'h1',name:'测试手册',ownerA:{principalId:'writer'}}]})}},
       modules:{auth:{authorize:async()=>session}},handbookProductionService:{},
       documentTasksOptions:{filePath:path.join(root,'tasks.json'),defaultOwnerId:'writer'},
-      documentTaskCatalog:async()=>({versions:['main','legacy'],chapters:[],documents:[]}),
+      documentTaskCatalog:async()=>({versions:['main','legacy'],outlineVersionId:'published-v1',chapters:[],documents:[{id:'d1',name:'测试文档'}]}),
     });
     server=http.createServer(handler);await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
     base=`http://127.0.0.1:${server.address().port}/knowledge-center/api/document-tasks`;
@@ -58,10 +59,30 @@ describe('工单业务版本映射统一入口真实HTTP', () => {
     const preview=await request('/import?preview=true',{tasks});await request('/import',{tasks,digest:preview.digest});
   }
   const catalog=number=>`/catalog?handbookId=h1&ticketNumber=${number}`;
-  test('缺少业务产品或版本时拒绝猜测GitLab分支',async()=>{
+  async function write(suffix, body, status = 200) {
+    const response = await fetch(base + suffix, { method: 'PUT', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': `mapping-write-${crypto.randomUUID()}` }, body: JSON.stringify(body) });
+    const result = await response.json();
+    expect(response.status).toBe(status);
+    return status === 200 ? result.data : result.error;
+  }
+  test('缺少业务产品或版本时提供已启用且可读取分支，不猜测来源业务版本',async()=>{
     await importTasks();
-    for(const number of ['T-no-product','T-no-version'])expect(await request(catalog(number))).toMatchObject({versions:[],versionMappingError:'工单缺少 PingCode 产品或业务版本'});
-    expect(upstreamRequests).toEqual([]);
+    for(const number of ['T-no-product','T-no-version'])expect(await request(catalog(number))).toMatchObject({versions:['main'],manualVersionSelection:true});
+    expect(upstreamRequests).toHaveLength(2);
+  });
+  test('缺来源版本的范围确认只接受当前可读分支，保持业务版本为空', async () => {
+    await importTasks();
+    let task = await request('/T-no-version');
+    task = await write('/T-no-version/decomposition', { expectedRevision: task.revision, confirm: true,
+      ticketImpact: 'involved', handbooks: [{ id: 'h1', ownerId: 'writer' }] });
+    const proposal = { expectedRevision: task.revision, confirm: true, impact: 'involved',
+      documents: [{ id: 'd1', ownerId: 'writer' }] };
+    expect((await write('/T-no-version/handbooks/h1', { ...proposal, targetVersion: 'legacy' }, 422)).code).toBe('VERSION_INVALID');
+    task = await write('/T-no-version/handbooks/h1', { ...proposal, targetVersion: 'main' });
+    expect(task.version).toBeFalsy();
+    expect(task.decomposition.handbooks[0]).toMatchObject({ targetVersion: 'main', confirmed: true });
+    expect(task.decomposition.handbooks[0].versionMapping).toBeUndefined();
+    expect(await request(catalog('T-no-version'))).toMatchObject({ versions: ['main'], manualVersionSelection: true });
   });
   test('映射与连接故障不回退其他版本，恢复后使用真实可读分支',async()=>{
     await importTasks();const validMapping=mapping;

@@ -69,8 +69,9 @@ final class DocumentTaskMigration {
             "SELECT TASK_PREFIX,TASK_NUMBER,PAYLOAD FROM KC_DOCUMENT_TASK ORDER BY TASK_PREFIX,TASK_NUMBER");
              ResultSet rows = query.executeQuery()) {
             while (rows.next()) {
-                String number = rows.getString(1) + "-" + rows.getLong(2);
-                if (!sha256(readClob(rows.getClob(3))).equals(hashes.remove(number)))
+                String taskPayload = readClob(rows.getClob(3));
+                String number = taskNumber(taskPayload);
+                if (!sha256(taskPayload).equals(hashes.remove(number)))
                     throw new SQLException("DOCUMENT_TASK_RECONCILIATION_FAILED");
                 verified++;
             }
@@ -133,6 +134,7 @@ final class DocumentTaskMigration {
         }
         if (existing != 0) throw new SQLException("DOCUMENT_TASK_TARGET_NOT_EMPTY");
         Set<String> numbers = new HashSet<>();
+        Set<String> identities = new HashSet<>();
         try (PreparedStatement insert = connection.prepareStatement(
             "INSERT INTO KC_DOCUMENT_TASK (TASK_PREFIX,TASK_NUMBER,PAYLOAD,OWNER_ID,PRODUCT_CODE,BUSINESS_VERSION," +
             "TASK_STATUS,DESCRIPTION) VALUES (?,?,?,?,?,?,?,?)")) {
@@ -142,7 +144,9 @@ final class DocumentTaskMigration {
                 if (number == null || !numbers.add(number)) {
                     throw new SQLException("DOCUMENT_TASK_NUMBER_INVALID");
                 }
-                TaskNumber identity = TaskNumber.parse(number);
+                TaskNumber identity = TaskNumber.parseTask(number);
+                if (!identities.add(identity.prefix + ":" + identity.value))
+                    throw new SQLException("DOCUMENT_TASK_IDENTITY_COLLISION");
                 String taskPayload = Main.Json.stringify(task);
                 insert.setString(1, identity.prefix); insert.setLong(2, identity.value);
                 insert.setString(3, taskPayload); insert.setString(4, string(task.get("ownerId")));
@@ -173,8 +177,9 @@ final class DocumentTaskMigration {
                 original.put(string(task.get("number")), sha256(Main.Json.stringify(task)));
             }
             while (rows.next()) {
-                String number = rows.getString(1) + "-" + rows.getLong(2);
-                if (!sha256(readClob(rows.getClob(3))).equals(original.remove(number))) {
+                String taskPayload = readClob(rows.getClob(3));
+                String number = taskNumber(taskPayload);
+                if (!sha256(taskPayload).equals(original.remove(number))) {
                     throw new SQLException("DOCUMENT_TASK_RECONCILIATION_FAILED");
                 }
                 verified++;
@@ -190,6 +195,12 @@ final class DocumentTaskMigration {
     }
 
     private static String string(Object value) { return value == null ? null : String.valueOf(value); }
+    private static String taskNumber(String payload) throws Exception {
+        Object parsed = Main.Json.parse(payload);
+        if (!(parsed instanceof Map<?, ?> task) || !(task.get("number") instanceof String number))
+            throw new SQLException("DOCUMENT_TASK_RECONCILIATION_FAILED");
+        return number;
+    }
     private static String readClob(Clob clob) throws Exception {
         if (clob == null) throw new SQLException("DOCUMENT_TASK_CLOB_MISSING");
         long length = clob.length();

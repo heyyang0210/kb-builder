@@ -46,17 +46,16 @@
       "rawLucide": 1
     },
     "apps/knowledge-center-web/frontend/knowledge-center/modules/dashboard/view.js": {
-      "rawLucide": 1,
-      "legacyIcon": 5
+      "legacyIcon": 4
     },
     "apps/knowledge-center-web/frontend/knowledge-center/modules/document-tasks/document-tasks.css": {
-      "rawCssColor": 129
+      "rawCssColor": 125
     },
     "apps/knowledge-center-web/frontend/knowledge-center/modules/document-tasks/plan-calendar.js": {
       "legacyIcon": 4
     },
     "apps/knowledge-center-web/frontend/knowledge-center/modules/document-tasks/view.js": {
-      "legacyIcon": 21
+      "legacyIcon": 13
     },
     "apps/knowledge-center-web/frontend/knowledge-center/modules/outlines/outlines.css": {
       "rawCssColor": 17

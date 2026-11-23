@@ -20,7 +20,7 @@ describe('任务管理真实HTTP契约', () => {
   let serial = 0;
   async function request(method, suffix, body, user = 'owner', key) { const response = await fetch(base + suffix, { method, headers: { 'Content-Type': 'application/json', 'x-test-user': user, 'Idempotency-Key': key || `test-${++serial}` }, body: body === undefined ? undefined : JSON.stringify(body) }); const json = await response.json(); return { status: response.status, ...json }; }
   const get = number => request('GET', '/' + number);
-  async function imported(number = 'P-1') { const tasks = [{ number, title: '连接说明', ownerId: 'writer', status: '关闭', startTime: '2000-01-01' }]; const p = await request('POST', '/import?preview=true', { tasks }); const result = await request('POST', '/import', { tasks, digest: p.data.digest }); expect(result.status).toBe(200); return (await get(number)).data; }
+  async function imported(number = 'P-1', fields = {}) { const tasks = [{ number, title: '连接说明', ownerId: 'writer', status: '关闭', startTime: '2000-01-01', ...fields }]; const p = await request('POST', '/import?preview=true', { tasks }); const result = await request('POST', '/import', { tasks, digest: p.data.digest }); expect(result.status).toBe(200); return (await get(number)).data; }
   async function ticket(task, fields = {}) { return request('PUT', `/${task.number}/decomposition`, { expectedRevision: task.revision, confirm: true, ticketImpact: 'involved', handbooks: [{ id: 'h1', ownerId: 'book-owner' }, { id: 'h2', ownerId: 'book-owner' }], ...fields }); }
   async function book(task, id = 'h1', fields = {}) { return request('PUT', `/${task.number}/handbooks/${id}`, { expectedRevision: task.revision, confirm: true, impact: 'involved', targetVersion: '23.4', documents: [{ id: 'd1', ownerId: 'writer' }], ...fields }, 'book-owner'); }
   test('预览不写入、全局编号去重和错误行', async () => { const preview = await request('POST', '/import?preview=true', { tasks: [{ number: 'P-1' }, { number: 'P-1' }, {}] }); expect(preview.data.summary).toEqual({ created: 1, updated: 0, unchanged: 0, error: 2 }); expect((await request('GET', '')).data.total).toBe(0); expect(fs.existsSync(path.join(directory, 'state.json'))).toBe(false); });
@@ -57,7 +57,7 @@ describe('任务管理真实HTTP契约', () => {
     }
   });
   test('已采纳范围意见关联纠偏事项，不能重复创建活跃事项', async () => {
-    let task = (await ticket(await imported())).data;
+    let task = (await ticket(await imported('P-1', { product: 'YashanDB', version: '23.4' }))).data;
     task = (await book(task)).data;
     reviewState = { id: 'review-task', handbookId: 'h1', state: 'under_review', reviews: [{ id: 'review-1', comments: [{ id: 'comment-1', scopeOpinion: {
       level: 'handbook', status: 'accepted_pending_scope', ticketNumber: 'P-1', handbookId: 'h1',
@@ -149,7 +149,7 @@ describe('任务管理真实HTTP契约', () => {
   test('两个层次独立确认，可保存草稿且不自动生成决定', async () => { let t = await imported(); t = (await ticket(t, { confirm: false, handbooks: [{ id: 'h1' }] })).data; expect(t.status).toBe('pending_scope'); expect(t.decomposition.handbooks[0].impact).toBe(null); t = (await ticket(t)).data; expect(t.startTime).toBeTruthy(); expect(t.decomposition.handbooks.every(b => !b.confirmed)).toBe(true); expect((await get(t.number)).data.nextAction).toMatchObject({ label: '确认文档范围', action: 'book-scope', handbookId: 'h1' }); t = (await book(t)).data; expect(t.decomposition.handbooks[0].confirmed).toBe(true); expect(t.decomposition.handbooks[1].confirmed).toBe(false); });
   test('业务版本自动映射并冻结；规则修改后旧任务仍保留原分支', async () => {
     versionResolver = async () => ({ id: 12, rowVersion: 1, connectionId: 'repo-1', branch: '23.4' });
-    let task = (await ticket(await imported())).data;
+    let task = (await ticket(await imported('P-1', { product: 'YashanDB', version: '23.4' }))).data;
     const catalogResult = await request('GET', `/catalog?handbookId=h1&ticketNumber=${task.number}`);
     expect(catalogResult.data.versionMapping.branch).toBe('23.4');
     task = (await book(task, 'h1', { targetVersion: 'malicious' })).data;

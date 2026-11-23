@@ -350,7 +350,7 @@ function createProductionAIService(options) {
             }
             projected.text = String(event.text || '').slice(0, feedback.maxAgentMessageChars);
           } else if (event.kind === 'error') projected.text = String(event.message || '').slice(0, feedback.maxAgentMessageChars);
-          else { projected.tool = event.tool; projected.status = event.status; projected.itemId = event.itemId; }
+          else { projected.tool = event.tool; projected.status = event.status; projected.itemId = event.itemId; if (Number.isSafeInteger(event.exitCode)) projected.exitCode = event.exitCode; }
           events.push(projected);
           if (events.length > feedback.maxAgentEvents) events.splice(0, events.length - feedback.maxAgentEvents);
         });
@@ -478,11 +478,12 @@ function createProductionAIService(options) {
     } catch (error) {
       // Provider error bodies can contain credentials or source text. Expose only controlled errors.
       const safeProviderCodes = new Set(['AI_PROVIDER_AUTH_FAILED', 'AI_PROVIDER_REGION_UNSUPPORTED', 'AI_PROVIDER_RATE_LIMITED', 'AI_PROVIDER_TIMEOUT', 'AI_PROVIDER_UNAVAILABLE']);
-      const code = ['AI_MODEL_NOT_CONFIGURED', 'AI_EMPTY_RESULT'].includes(error.code)
+      const code = error.code === 'AGENT_RUN_TIMEOUT' ? 'AI_AGENT_TIMEOUT' : ['AI_MODEL_NOT_CONFIGURED', 'AI_EMPTY_RESULT'].includes(error.code)
         ? error.code
         : ['AI_STAGE_CONTRACT_INVALID', 'AI_MCP_RETRIEVAL_FAILED'].includes(error.code) ? error.code
         : safeProviderCodes.has(error.providerCode) ? error.providerCode : 'AI_GENERATION_FAILED';
       const messages = {
+        AI_AGENT_TIMEOUT: 'Codex 运行超时，未收到完成事件',
         AI_PROVIDER_AUTH_FAILED: '模型服务认证失败，请检查平台模型配置',
         AI_PROVIDER_REGION_UNSUPPORTED: '模型服务不支持当前区域，请更换已授权的模型服务',
         AI_PROVIDER_RATE_LIMITED: '模型服务暂时限流，请稍后重试',

@@ -1,16 +1,16 @@
 # YashanDB 存储服务
 
-Pingcode 来源管理使用既有 `KC_PINGCODE_SOURCE.ROW_VERSION` 并发控制；编辑、停用/恢复和删除由 Storage 内部 HTTP 接口执行。来源配置变更与创建运行共享来源行锁，避免运行启动和修改竞争。有运行或任务来源引用时不可物理删除。产品类型字段由新增迁移 `018_pingcode_product_type.sql` 提供，默认 DB 并校验 DB/YCM/YMP/YDC；该迁移尚待单独 Schema 审批，批准和执行前不可启动依赖此字段的生产版本。列表计数和来源已确认任务/正文读取均由 Storage 查询返回。详细规则见[Pingcode 来源同步详细设计](../../.codex/知识中心建设平台/03-详细设计/知识中心-任务管理-Pingcode来源同步-详细设计文档.md)。
+Pingcode 来源管理使用既有 `KC_PINGCODE_SOURCE.ROW_VERSION` 并发控制；编辑、停用/恢复和删除由 Storage 内部 HTTP 接口执行。来源配置变更与创建运行共享来源行锁，避免运行启动和修改竞争。有运行或任务来源引用时不可物理删除。产品类型由 `018_pingcode_product_type.sql` 提供；业务版本和每次运行冻结的来源元数据由 `019_pingcode_source_run_config.sql` 提供。确认同步将运行冻结的产品和版本写入任务结构化列及 payload，任务列表使用既有产品/版本列。来源类型显示“需求/问题单”，可编辑但 URL 必须匹配类型；运行历史读取冻结配置。`019` 对迁移前运行以当前来源配置回填，无法还原旧系统未记录的历史产品/版本。迁移须先在个人开发库验证；共享库仍由项目负责人按目标迁移明确审批并执行。列表计数和来源已确认任务/正文读取均由 Storage 查询返回。详细规则见[Pingcode 来源同步详细设计](../../.codex/知识中心建设平台/03-详细设计/知识中心-任务管理-Pingcode来源同步-详细设计文档.md)。
 
 `handbook-production/state` 聚合写入时，存储层只对本次新增或修改的实体校验大纲版本引用；未变动的历史草稿引用已删除大纲，不会阻断新 AI 任务。新增、修改或恢复软删除的实体仍按原规则校验，旧值读取与写入锁后的版本必须一致，冲突返回 409。其他命名空间继续全量校验。回归用例位于 `tests/unit/agent-runner/fixtures/ProductionReferenceChangesCheck.java`，真实 JDBC 事务回滚验证位于 `ProductionReferenceJdbcCheck.java`，仅允许 `test_hy` 执行。
 
 数据库结构和迁移变更必须遵循 [YashanDB Storage 变更约束](./AGENTS.md)。
 
-Pingcode 来源同步的 `017_pingcode_task_sync.sql` 新增逐 SR 任务、负责人/审核关联索引、来源、运行和快照表。旧任务数据不会随 DDL 自动迁移；`migrate-tasks` 仅允许个人开发库，要求 `YASDB_STORAGE_TARGET_CLASS=personal` 和 `KC_DOCUMENT_TASK_BACKUP_PATH` 指向本仓库 `runtime` 内的新文件。命令先备份旧聚合，再逐条复制、建立人员/审核索引并核对正文哈希和数量，留下 `VERIFIED` 记录；此状态不开放来源确认。结构迁移仍必须使用来自已提交版本的构建产物，且共享库由项目负责人执行。备份以创建时 `0600` 权限写入，不输出凭据或正文到日志。
+Pingcode 来源同步的 `017_pingcode_task_sync.sql` 新增逐 SR 任务、负责人/审核关联索引、来源、运行和快照表。旧任务数据不会随 DDL 自动迁移。个人开发库使用 `YASDB_STORAGE_TARGET_CLASS=personal`；共享库必须由项目负责人明确批准后，使用 `YASDB_STORAGE_TARGET_CLASS=shared` 和 `--approval-ref <审批引用>` 执行 `migrate-tasks` / `activate-tasks`；专用测试库使用 `YASDB_STORAGE_TARGET_CLASS=test`，并设置 `KNOWLEDGE_CENTER_TEST_RUN_ID`。共享与测试目标均要求 `KC_TASK_MIGRATION_EXPECTED_SCHEMA` 与数据库账号一致。所有目标都要求 `KC_DOCUMENT_TASK_BACKUP_PATH` 指向本仓库 `runtime` 内的新文件。命令先备份旧聚合，再逐条复制、建立人员/审核索引并核对正文哈希和数量，留下 `VERIFIED` 记录；此状态不开放来源确认。结构迁移仍必须使用来自已提交版本的构建产物。备份以创建时 `0600` 权限写入，不输出凭据或正文到日志。
 
-任务关系表以 `TASK_PREFIX VARCHAR(16)` 与 `TASK_NUMBER BIGINT` 共同标识任务；固定类型的 Pingcode SR、IR 关系使用 BIGINT 编号，外部接口仍收发完整编号。运行、快照、关系、变化、资源和幂等历史表按 `CREATED_AT` 月度分区，便于按批准的保留策略归档；本次迁移不会自动删除历史。外部不透明 ID、哈希及分类值保留字符类型。`regress` 测试库曾执行旧版 `017`，重建前须保留含数据备份；生产库尚未执行 `017`。
+任务关系表以 `TASK_PREFIX VARCHAR(16)` 与 `TASK_NUMBER BIGINT` 共同标识任务；固定类型的 Pingcode SR、IR 关系使用 BIGINT 编号，外部接口仍收发完整编号。无法拆分成数值后缀的一般历史任务使用 `LEGACY` 前缀及 SHA-256 派生内部数字键，原编号保留在任务 payload 并由 API 原样返回；迁移逐项检查内部键冲突，精确读取再次校验 payload 编号。SR/IR 仍严格拒绝非规范数字编号。运行、快照、关系、变化、资源和幂等历史表按 `CREATED_AT` 月度分区，便于按批准的保留策略归档；本次迁移不会自动删除历史。外部不透明 ID、哈希及分类值保留字符类型。`regress` 测试库曾执行旧版 `017`，重建前须保留含数据备份；生产库 `pf_knowledge` 已完成关系表旧任务迁移和激活，审计信息与回读结果见 `prompt.md` 的 2026-11-16 19:54 记录。
 
-逐任务关系表读取接口为 `GET /v1/document-tasks`、`GET /v1/document-tasks/{number}`、`GET /v1/document-tasks/mine?principalId=` 和 `GET /v1/document-tasks/by-review/{reviewTaskId}`；`PUT /v1/document-tasks/{number}` 使用行版本和幂等键，同事务更新任务与负责人/审核索引。列表分页至多 100 条，可按编号/描述、责任人、产品、版本、类型、状态、IR 和关注级别过滤。仅在迁移记录为 `ACTIVE` 时响应任务数据；`VERIFIED` 仍返回 409。`activate-tasks` 仅允许个人开发库，必须提供原备份路径，并重新核验旧聚合版本、备份摘要和全部任务正文后才切换；激活后旧聚合任务写入返回 409。三个迁移命令都校验 SQL 来自已提交版本。
+逐任务关系表读取接口为 `GET /v1/document-tasks`、`GET /v1/document-tasks/{number}`、`GET /v1/document-tasks/mine?principalId=` 和 `GET /v1/document-tasks/by-review/{reviewTaskId}`；`PUT /v1/document-tasks/{number}` 使用行版本和幂等键，同事务更新任务与负责人/审核索引。列表分页至多 100 条，可按编号/描述、责任人、产品、版本、类型、状态、IR 和关注级别过滤。仅在迁移记录为 `ACTIVE` 时响应任务数据；`VERIFIED` 仍返回 409。`activate-tasks` 必须提供原备份路径，并重新核验旧聚合版本、备份摘要和全部任务正文后才切换；共享库还必须提供审批引用。激活后旧聚合任务写入返回 409。三个迁移命令都校验 SQL 来自已提交版本。
 
 审核任务索引保留当前范围、历史范围和范围意见来源中的审核任务 ID，因此文档撤出后仍可从原审核意见定位工单。索引仅用于历史查找；当前审核、发布和完成门禁仍以任务正文中的当前范围与冻结证据为准，旧审核不会因此重新生效。此扩展不改变表结构，既有关系表任务需经一次受控重写才能重建其历史索引。
 
@@ -201,5 +201,7 @@ HTTP 请求校验并返回 `X-Request-ID`、`X-Correlation-ID`（仅接受 1–1
 `GET /v1/records/:namespace/:key` 的 CLOB 改用批量 `getSubString`，配置 `YASDB_RECORD_CLOB_CHUNK_CHARS`（默认1048576字符）。按实际读取字符推进，空片段中止，保留原记录结构、ETag/304、提交和权限契约。200响应增加 `record_query`、`record_clob`、`record_parse` 的 Server-Timing；不含连接借用与完整序列化，不能当作全链路时间。其他 CLOB 读取入口不在本轮范围；无需DDL或迁移。回退使用原构建 Java 产物，保留进程环境与 SQL 目录。证据见 `runtime/diagnostics/task-performance-fix-20261102/`。
 
 2026-11-04：`handbook-production/state` 写入前校验旧值时，复用同一分块 CLOB 读取函数。隔离 `test_hy` 中 3.6 MB 等长内容的逐流读取为 6.3–9.3 秒，分块读取为 0.31–0.44 秒，正文逐字相等；写入、版本锁、引用校验与记录格式不变。实际平台保存和附件上传仍须在更新存储进程后分别复测。
+
+2026-11-17：启动时预热草稿投影也使用分块 CLOB 读取。对照数据库确认当前 3.53 MB 聚合经流式与分块读取内容完全一致但都不是合法 JSON，属于已持久化载荷损坏。Storage 记录损坏 revision 并继续启动其他 API；对应草稿读写均返回 `DRAFT_STATE_INVALID`/503，不返回空草稿或覆盖原记录，也不修改 Schema。数据恢复需要从经核验的有效备份修复，当前未执行。
 
 后续实际 13510 本人专用数据复测已完成：保存五次 P50/P95 为 842/846.5ms，54 字节附件上传五次为 831.2/914ms，正文及附件回读一致。运行实例已加载候选存储类；数据量扩大和并发性能需另测。原始证据位于 `runtime/diagnostics/workbench-acceptance-20261104/`。

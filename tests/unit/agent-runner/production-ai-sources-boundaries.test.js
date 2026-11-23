@@ -148,6 +148,25 @@ describe('AI 来源公开边界及真实上游 HTTP', () => {
     expect(diagnostic).toMatchObject({ stage: 'snapshot_persistence', upstreamStatus: 200, imageReady: 0, imageFailed: 0 });
   });
 
+  test('PingCode 快照优先使用异步存储事务，避免同步阻塞请求线程', async () => {
+    const original = store;
+    let asyncWrites = 0;
+    store = {
+      read: () => original.read(),
+      transaction: () => { throw new Error('禁止在请求线程执行同步存储事务'); },
+      transactionAsync: async mutator => {
+        asyncWrites += 1;
+        await new Promise(resolve => setTimeout(resolve, 20));
+        return original.transaction(mutator);
+      },
+    };
+    setup();
+    const result = await preview('pingcode-design', 'https://ping.example.test/wiki/spaces/SPACE/pages/PAGE');
+    expect(result).toMatchObject({ title: '设计说明', content: '数据库设计正文' });
+    expect(asyncWrites).toBe(1);
+    expect(store.read().aiSources[result.sourceId].content).toBe('数据库设计正文');
+  });
+
   test.each(['https://[', 'https://other.test/wiki/spaces/SPACE/pages/PAGE', 'https://u:p@ping.example.test/wiki/spaces/SPACE/pages/PAGE', 'https://ping.example.test/wiki/spaces/SPACE/pages/PAGE?q=1', 'SPACE/PAGE/extra', 'SPACE/!'])('PingCode 定位拒绝 %s', async locator => {
     await expect(preview('pingcode-test', locator)).rejects.toMatchObject({ code: 'AI_SOURCE_LOCATOR_INVALID' });
     expect(requests).toHaveLength(0);

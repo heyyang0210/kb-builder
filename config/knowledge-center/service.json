@@ -283,7 +283,7 @@
               "timeout": 180000,
               "temperature": 0.3,
               "max_tokens": 60000,
-              "api_key_encrypted": "3ebfc62410ba7b3171931175883c27ba:402c03bc04cc3f486ddf954f3e80b530:709ab4555528a6a5b69e312233b3871c0a13cb50300d3721b0d39f04b8379ab2e6dcd22d613fdf3d707c6ef722f7fcf975e0bf"
+              "api_key_encrypted": "0df2ce909cc247b3161083d359079ece:3e5e1519e754dd93bfaf5c63643a104b:9bcfa10c99e0f34a28930b34a7bbd0ac97db796224996617efc882ad498741928485cc0b07565c836966fa1ca7c710b6dc5bc6"
             }
           ],
           "defaultSelection": {
@@ -294,7 +294,7 @@
             "updatedAt": "2026-10-26T07:08:31.350Z",
             "updatedBy": "usr_ASn_MlnBfy9geUzR"
           },
-          "api_key_encrypted": "bfc1f40e96468133aa126dbb74e5bef3:014500df32af7c1383c9920ff72f8daa:7048af476be9fd242344b73d3b17e6e1110b61d07bdd01ad417a912faf67f7239b30141c37acf3110712b334856d531a758de3"
+          "api_key_encrypted": "2a2955927dd91414f158ac8f8bb8b909:16aa6912006269dbd7767664dd899de7:6a6ffd5c0db540db8173906f6e2f34bc979c1bc201df5d51a668224ad8bfa35e1a299d516fefc2a17f4e6580cbd6d7a0f6fc2e"
         },
         "mcp": {
           "server_url": "https://knowledgebase.yashandb.com/api/mcp",
@@ -322,7 +322,7 @@
       },
       {
         "id": "agent-739cbffb-ddec-48cf-a32f-8d1cf8885f8f",
-        "name": "Codex 文档生成",
+        "name": "文档生成",
         "executor": "codex",
         "enabled": true,
         "reasoningEffort": "low",
@@ -389,7 +389,7 @@
               "timeout": 180000,
               "temperature": 0.3,
               "max_tokens": 60000,
-              "api_key_encrypted": "4a0495c52b95d534169fb094111df6c0:b8dc2f0e76690e5a918500e5b68c674e:8b539eda1b008885f39d5961c8f939fa1c1ed8f3d8a0820cd6cef3e38cf2bf9343d0c47e87d4be5af75e0ebe535ca4bd90e2b6"
+              "api_key_encrypted": "4d7cd8c4bfc63a9539610248c63b963a:d1cbd930e98d0d7d975e8ff81723a343:82d9b42002d5bbeffd8eef832f7cdd4beec70218b902871af9b95087378a4bf9ee47681d839a0948a92a6a6517ca1b1751a212"
             }
           ],
           "defaultSelection": {
@@ -397,10 +397,10 @@
             "model": "gpt-6-sol"
           },
           "modelGovernance": {
-            "updatedAt": "2026-10-29T10:28:21.050Z",
-            "updatedBy": "codex-implementation"
+            "updatedAt": "2026-11-11T09:43:34.787Z",
+            "updatedBy": "usr_ASn_MlnBfy9geUzR"
           },
-          "api_key_encrypted": "1609db136e7a359c8c245b753851dff3:8dfee6ff962a1002b496c1abe530a840:3aba9b02e6fee55a71e5920b4018548aaf569bd5bb219d62ff9db3b40b9f5fe9143d249793a8f151024ac981a01000bb68a0fb"
+          "api_key_encrypted": "55ab012f8a5ca8eeb95045262a6b80f0:31ad09f2bf5cb6b11df5b1fd6ac4fa2f:9df41e236e704aa44977789a97cac4bd34ef04bc3e62215ae36b5aa285a4b71c8882510dc94bc9a38134233fbe0378402482b5"
         },
         "mcp": {
           "server_url": "https://knowledgebase.yashandb.com/api/mcp",
@@ -425,10 +425,24 @@
             }
           ]
         }
+      },
+      {
+        "id": "dsh-admin-trial",
+        "name": "DeepSeek Harness",
+        "executor": "deepseek",
+        "enabled": false,
+        "reasoningEffort": "medium",
+        "model": {
+          "services": [],
+          "defaultSelection": null
+        },
+        "mcp": {
+          "services": []
+        }
       }
     ],
     "defaultAgentId": "agent-739cbffb-ddec-48cf-a32f-8d1cf8885f8f",
-    "updatedAt": "2026-10-29T11:19:43.621Z",
+    "updatedAt": "2026-11-13T09:43:11.148Z",
     "updatedBy": "usr_ASn_MlnBfy9geUzR"
   }
 }

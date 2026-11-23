@@ -736,11 +736,12 @@ function createKnowledgeCenterHandler(options) {
     await writeManualStatusOverrides(overrides);
   }
 
-  async function queryKnowledgeAssets(payload, searchParams, admin) {
+  async function queryKnowledgeAssets(payload, searchParams, admin, { includeRepositoryMappings = true } = {}) {
     if (!databasePlatformMode) return queryKnowledgeAssetsBase(payload, searchParams, admin, GITLAB_CONFIG_PATH);
     // 数据库配置模式下，连接与映射由平台配置服务提供；不能继续传入文件配置路径，
     // 否则资产目录会把已保存映射投影成 repositoryMapped=false，前端也不会请求统计。
     const result = queryKnowledgeAssetsBase(payload, searchParams, admin, { mappings: [] });
+    if (!includeRepositoryMappings) return result;
     const originals = new Map(payload.handbooks.map(item => [item.handbookId, item]));
     // 只读取当前页，并受控并发加载映射。资产页最多 100 条，全部串行会把
     // 每条映射的 Storage 往返时间叠加到首屏；当前页并发读取不会改变结果顺序。
@@ -958,6 +959,12 @@ function createKnowledgeCenterHandler(options) {
       const diagnostic = { stage: 'context', requestId: traceId };
       const meta = { requestId: traceId, method: req.method };
       res.setHeader('X-Request-ID', traceId);
+      const setSourceTiming = () => {
+        const metrics = Object.entries(diagnostic.timingsMs || {})
+          .filter(([, duration]) => Number.isFinite(duration))
+          .map(([name, duration]) => `${name.replace(/Ms$/, '')};dur=${duration}`);
+        if (metrics.length) res.setHeader('Server-Timing', metrics.join(', '));
+      };
       logger.info('production.source.started', meta);
       try {
         const handbookId = decodeURIComponent(sourceMatch[1]);
@@ -980,10 +987,12 @@ function createKnowledgeCenterHandler(options) {
           const source = await handbookProductionService.ai.sources.preview({ ...body, handbookId, documentId }, session, diagnostic);
           meta.sourceId = source.sourceId;
           meta.contentBytes = Buffer.byteLength(source.content);
+          setSourceTiming();
           sendProductionData(res, source, 201);
         } else { res.writeHead(405, { Allow: 'GET, POST' }); res.end(); }
         logger.info('production.source.completed', { ...meta, ...diagnostic, status: res.statusCode, durationMs: Date.now() - startedAt });
       } catch (error) {
+        setSourceTiming();
         logger.info('production.source.failed', { ...meta, ...diagnostic, status: error.status || 500, errorCode: error.code || 'SOURCE_REQUEST_FAILED', durationMs: Date.now() - startedAt });
         error.details = { ...error.details, requestId: traceId };
         throw error;
@@ -1937,7 +1946,7 @@ function createKnowledgeCenterHandler(options) {
       let projection;
       await measure('review-handbook-projection', async () => {
         do {
-          projection = await queryKnowledgeAssets(reviewCandidates, new URLSearchParams({ pageSize: '100', page: String(page++) }), isPlatformAdmin(session));
+          projection = await queryKnowledgeAssets(reviewCandidates, new URLSearchParams({ pageSize: '100', page: String(page++) }), isPlatformAdmin(session), { includeRepositoryMappings: false });
           reviewHandbooks.push(...projection.items.filter(item => REVIEW_ASSET_STATUSES.has(item.status) || pendingReviewHandbookIds.has(String(item.handbookId))));
         } while (page <= Math.ceil(projection.total / projection.pageSize));
       });
@@ -2541,7 +2550,13 @@ function createKnowledgeCenterHandler(options) {
           const query = isQuery ? await readJsonBody(req) : null;
           const users = await Promise.resolve(authModule?.repository?.listUsers?.() || []);
           if (pathname.endsWith('/responsibles')) {
-            send(200, { success: true, data: users.filter(user => user.enabled !== false).map(user => ({ id: String(user.principalId || user.id || user.userId), displayName: String(user.displayName || user.name || user.loginName || user.id) })).filter(user => user.id) }); return;
+            const responsibles = users.filter(user => user.enabled !== false).map(user => {
+              const id = user.principalId || user.id || user.userId;
+              return id == null || String(id).trim() === ''
+                ? null
+                : { id: String(id), displayName: String(user.displayName || user.name || user.loginName || id) };
+            }).filter(Boolean);
+            send(200, { success: true, data: responsibles }); return;
           }
           const callerId = String(session.user?.principalId || session.user?.id || '');
           const requestedId = isQuery ? String(query?.responsibleId || callerId) : new URL(req.url, 'http://localhost').searchParams.get('responsibleId');
@@ -2691,7 +2706,15 @@ function createKnowledgeCenterHandler(options) {
               }, options));
               return { ...delivery, targetCommit: delivery.targetCommitSha || null, observedAt: new Date().toISOString() };
             },
-            createDocument: (id, proposal) => options.documentTaskCreateDocument(id, proposal, session), resolveVersionMapping: databasePlatformMode ? async (id, product, version) => {
+            createDocument: (id, proposal) => options.documentTaskCreateDocument(id, proposal, session),
+            listVersionBranches: databasePlatformMode ? async id => {
+              const { mapping, connection } = await findMappingAsync(id);
+              if (connection.status !== 'active') throw new GitLabConnectorError('GITLAB_CONNECTION_DISABLED', '仓库连接已停用', 409);
+              const enabled = new Set(mapping.enabledBranches || []);
+              const branches = await gitLabRequestForUser(session, connection, requestOptions => listBranches(connection, requestOptions));
+              return branches.map(branch => branch.name).filter(name => enabled.has(name));
+            } : null,
+            resolveVersionMapping: databasePlatformMode ? async (id, product, version) => {
             if (!product || !version) throw new GitLabConnectorError('BUSINESS_VERSION_MISSING', '工单缺少 PingCode 产品或业务版本', 422);
             const { mapping, connection } = await findMappingAsync(id);
             if (connection.status !== 'active') throw new GitLabConnectorError('GITLAB_CONNECTION_DISABLED', '仓库连接已停用', 409);
@@ -3088,6 +3111,50 @@ function createKnowledgeCenterHandler(options) {
         }));
         sendProductionData(res, { ...result, items });
       }); return;
+    }
+    if (pathname === '/knowledge-center/api/test-fixtures/incremental-baselines' && req.method === 'POST') {
+      if (process.env.KNOWLEDGE_CENTER_ENABLE_E2E_FIXTURES !== '1') {
+        res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify({ success: false, error: { code: 'ROUTE_NOT_FOUND', message: '测试夹具接口不存在' } }));
+        return;
+      }
+      requireSession(req, res, async session => {
+        try {
+          const service = handleIncrementalBuild?.service;
+          if (!service) throw Object.assign(new Error('增量审核服务暂不可用'), { status: 503 });
+          const baseline = service.createSyntheticBaseline(
+            session,
+            req.headers['idempotency-key'],
+            await readJsonBody(req),
+          );
+          sendProductionData(res, baseline, 201);
+        } catch (error) {
+          const status = Number(error.status) || 500;
+          res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+          res.end(JSON.stringify({ success: false, error: { code: error.code || 'TEST_FIXTURE_FAILED', message: error.message || '测试夹具创建失败' } }));
+        }
+      });
+      return;
+    }
+    if (pathname === '/knowledge-center/api/test-fixtures/incremental-tasks' && req.method === 'POST') {
+      if (process.env.KNOWLEDGE_CENTER_ENABLE_E2E_FIXTURES !== '1') {
+        res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify({ success: false, error: { code: 'ROUTE_NOT_FOUND', message: '测试夹具接口不存在' } }));
+        return;
+      }
+      requireSession(req, res, async session => {
+        try {
+          const service = handleIncrementalBuild?.service;
+          if (!service) throw Object.assign(new Error('增量审核服务暂不可用'), { status: 503 });
+          const task = service.create(session, req.headers['idempotency-key'], await readJsonBody(req));
+          sendProductionData(res, task, 201);
+        } catch (error) {
+          const status = Number(error.status) || 500;
+          res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+          res.end(JSON.stringify({ success: false, error: { code: error.code || 'TEST_FIXTURE_FAILED', message: error.message || '测试夹具创建失败' } }));
+        }
+      });
+      return;
     }
     if (pathname === '/knowledge-center/api/incremental-tasks' || pathname.startsWith('/knowledge-center/api/incremental-tasks/')) {
       requireSession(req, res, async session => {

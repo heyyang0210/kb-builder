@@ -11,7 +11,7 @@ final class DocumentTaskWriteRepository {
 
     Map<String, Object> put(Connection connection, String number, Map<String, Object> input) throws SQLException {
         if (!reads.active(connection)) throw new SQLException("DOCUMENT_TASK_MIGRATION_REQUIRED");
-        TaskNumber identity = TaskNumber.parse(number);
+        TaskNumber identity = TaskNumber.parseTask(number);
         String key = string(input.get("idempotencyKey"));
         String digest = string(input.get("requestSha256"));
         if (key == null || key.isBlank()

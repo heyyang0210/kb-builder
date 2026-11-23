@@ -38,6 +38,7 @@ function createTemplateStore(options = {}) {
     const type = String(filters.type || '').trim();
     const status = String(filters.status || '').trim();
     const value = normalize(store.read()).templates
+      .filter(t => t.status !== 'deleted')
       .filter(t => !query || [t.id, t.name, t.description].some(value => String(value || '').toLowerCase().includes(query)))
       .filter(t => !type || String(t.type) === type)
       .filter(t => !status || String(t.status) === status)
@@ -55,7 +56,7 @@ function createTemplateStore(options = {}) {
     if (typeof store.readAsync !== 'function') return list(filters);
     const state = normalize(await store.readAsync());
     const query = String(filters.q || '').trim().toLowerCase(); const type = String(filters.type || '').trim(); const status = String(filters.status || '').trim();
-    return state.templates.filter(t => (!query || [t.id, t.name, t.description].some(value => String(value || '').toLowerCase().includes(query))) && (!type || String(t.type) === type) && (!status || String(t.status) === status)).map(t => { const current = t.versions?.find(v => v.version === t.currentVersion) || null; return filters.summary === '1' || filters.summary === true ? { ...t, versions: undefined, current: current ? { ...current, content: undefined } : null } : { ...t, versions: undefined, current }; });
+    return state.templates.filter(t => t.status !== 'deleted' && (!query || [t.id, t.name, t.description].some(value => String(value || '').toLowerCase().includes(query))) && (!type || String(t.type) === type) && (!status || String(t.status) === status)).map(t => { const current = t.versions?.find(v => v.version === t.currentVersion) || null; return filters.summary === '1' || filters.summary === true ? { ...t, versions: undefined, current: current ? { ...current, content: undefined } : null } : { ...t, versions: undefined, current }; });
   }
   function get(id) { const item = normalize(store.read()).templates.find(t => t.id === id); return item ? { ...item, current: item.versions.find(v => v.version === item.currentVersion) || null } : null; }
   function create(input, actor) {

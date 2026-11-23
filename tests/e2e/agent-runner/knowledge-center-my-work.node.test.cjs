@@ -27,9 +27,9 @@ async function instrumentFrontend(page) {
     const file = path.resolve(frontend, relative);
     if (!pathname.startsWith('/knowledge-center/') || !file.startsWith(frontend + path.sep) ||
         relative.split('/').includes('vendor') || !fs.existsSync(file)) return route.continue();
-    const response = await route.fetch();
-    if (!response.ok()) return route.fulfill({ response });
-    return route.fulfill({ response, body: instrumenter.instrumentSync(await response.text(), file) });
+    const source = fs.readFileSync(file, 'utf8');
+    return route.fulfill({ status: 200, contentType: 'application/javascript; charset=utf-8',
+      body: instrumenter.instrumentSync(source, file) });
   });
   return async () => {
     const coverage = await page.evaluate(key => globalThis[key] || {}, coverageKey);
@@ -39,7 +39,7 @@ async function instrumentFrontend(page) {
   };
 }
 
-async function fixture({ outlineFails = false, outlineDelayMs = 280, mrState = 'opened', syncFails = false, responsiblePreview = false, handbookEntry = false, restrictedMerge = false, notificationActions = ['scope_decide'], longWorkItem = false, unavailableAction = false, cleaningList = false, cleaningFailsFirst = false } = {}) {
+async function fixture({ outlineFails = false, outlineDelayMs = 280, mrState = 'opened', syncFails = false, responsiblePreview = false, handbookEntry = false, restrictedMerge = false, notificationActions = ['scope_decide'], longWorkItem = false, unavailableAction = false, cleaningList = false, cleaningFailsFirst = false, manyTasks = false } = {}) {
   const requests = [];
   const queries = [];
   let noticeRead = false;
@@ -96,13 +96,16 @@ async function fixture({ outlineFails = false, outlineDelayMs = 280, mrState = '
         { id: 'delivery:1', queue: 'actionable', kind: 'merge', title: '同步交付 用户手册改版', number: 'E2E-WB-20261104-HE-YANG', source: '审核与发布', context: 'DB-054 · inc_c28a6030124973d10b4a4812 · 业务版本待校对', lineage: { handbookName: 'DB-054 · 版本待校对', documentName: 'docs/e2e-validation/workbench-heyang-20261104/工作台验收说明.md' }, status: mrState === 'closed' ? 'MR已关闭，待处理' : '待合并回读', url: '/knowledge-center/review?taskId=delivery-1', delivery: { mergeState: mrState, markdownReadback: false, resourceReadback: false }, primaryAction: { code: 'sync_delivery', label: '状态刷新', taskId: 'delivery-1', candidateDigest: 'digest-1' } },
         ...(mrState === 'opened' ? [{ id: 'merge:1', queue: 'actionable', kind: 'merge', title: '合入 用户手册改版', source: 'GitLab 交付', status: '待合入', url: 'https://git.example.test/project/-/merge_requests/73', primaryAction: { code: 'merge_mr', label: 'MR链接', url: 'https://git.example.test/project/-/merge_requests/73', external: true } }] : []),
         { id: 'wait:1', queue: 'waiting', kind: 'review', title: '工作台验收工单', number: 'WB-1', source: '任务管理', status: '等待他人审核', url: '/knowledge-center/document-tasks' },
+        ...(manyTasks ? Array.from({ length: 42 }, (_, index) => ({ id: `batch:${index}`, queue: 'actionable', kind: 'document', number: `WB-${index + 10}`, title: `批量任务 ${index + 1}`, version: index < 20 ? '23.4' : '24.1', status: '待处理', url: '/knowledge-center/production' })) : []),
       ];
       const matched = all.filter(item => item.queue === query.queue && (query.type === 'all' || item.kind === query.type)
+        && (!query.scopeVersion || item.version === query.scopeVersion)
         && (!query.search || `${item.number || ''} ${item.title}`.includes(query.search)));
       await wait(35);
       return send(res, 200, { success: true, data: { items: matched.slice((query.page - 1) * query.pageSize, query.page * query.pageSize), total: matched.length,
         page: query.page, pageSize: query.pageSize, facets: { all: all.length, actionable: all.filter(item => item.queue === 'actionable').length,
           waiting: all.filter(item => item.queue === 'waiting').length, types: Object.fromEntries(['document', 'merge', 'review'].map(kind => [kind, all.filter(item => item.kind === kind).length])) },
+        versionOptions: [...new Set(all.map(item => item.version).filter(Boolean))],
         unavailable: delegated ? ['大纲管理'] : [], completeness: delegated ? 'partial' : 'complete' } });
     }
     if (req.url === '/knowledge-center/api/incremental-tasks/delivery-1/publish' && req.method === 'POST') {
@@ -286,12 +289,12 @@ test('资料清洗批次可翻页并加载未显示的后续记录', async t => 
   assert.ok(await upload.isVisible());
   assert.ok(await upload.evaluate(node => node.getBoundingClientRect().height >= 44));
   assert.equal(await upload.evaluate(node => Boolean(node.compareDocumentPosition(document.querySelector('.cleaning-workspace')) & Node.DOCUMENT_POSITION_FOLLOWING)), true, '上传资料主操作位于数据指标和列表之前');
-  assert.equal((await page.getByRole('navigation', { name: '资料批次分页' }).innerText()).replace(/\s+/g, ' ').trim(), '第 1 / 2 页，共 23 批 上一页 下一页');
+  assert.match((await page.getByRole('navigation', { name: '资料批次分页' }).innerText()).replace(/\s+/g, ' ').trim(), /^第 1 \/ 2 页，共 23 批 上一页 下一页/);
   await page.locator('[data-cleaning-page-kind="batches"][data-cleaning-page="2"]').click();
   await page.getByRole('cell', { name: '资料批次23', exact: true }).waitFor();
   assert.equal(await page.locator('[data-table-view-id="cleaning-batches"] tbody tr').count(), 3);
   assert.ok(service.requests.includes('/knowledge-center/api/cleaning/material-batches?page=2&pageSize=20'));
-  assert.equal((await page.getByRole('navigation', { name: '知识库版本分页' }).innerText()).replace(/\s+/g, ' ').trim(), '第 1 / 3 页，共 45 个版本 上一页 下一页');
+  assert.match((await page.getByRole('navigation', { name: '知识库版本分页' }).innerText()).replace(/\s+/g, ' ').trim(), /^第 1 \/ 3 页，共 45 个版本 上一页 下一页/);
   await page.locator('[data-cleaning-page-kind="datasets"][data-cleaning-page="2"]').click();
   await page.getByRole('cell', { name: '知识库版本21', exact: true }).waitFor();
   assert.ok(service.requests.includes('/knowledge-center/api/cleaning/datasets?page=2&pageSize=20'));
@@ -495,6 +498,42 @@ test('联合查询面板支持嵌套组并将条件保存在 URL', async t => {
   await captureCoverage();
 });
 
+test('工作台可跳至指定页并按关联版本筛选，刷新保留条件', async t => {
+  const service = await fixture({ manyTasks: true });
+  const browser = await chromium.launch({ headless: true });
+  t.after(async () => { await browser.close(); await service.close(); });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  const captureCoverage = await instrumentFrontend(page);
+  await page.goto(`${service.url}/knowledge-center/`);
+  await page.waitForFunction(() => document.querySelector('.my-task-toolbar [role="status"]')?.textContent.includes('项 ·'));
+  await page.locator('[data-kc-page-jump="dashboard"] input').fill('3');
+  await page.locator('[data-kc-page-jump="dashboard"] button').click();
+  await page.waitForFunction(() => document.querySelector('.my-task-toolbar [role="status"]')?.textContent.includes('第 3/'));
+  assert.equal(service.queries.at(-1).page, 3);
+  const beforeInvalid = service.queries.length;
+  await page.locator('[data-kc-page-jump="dashboard"] input').fill('');
+  await page.locator('[data-kc-page-jump="dashboard"] button').click();
+  assert.match(await page.locator('[data-kc-page-jump="dashboard"] [role="alert"]').innerText(), /请输入 1 到/);
+  assert.equal(service.queries.length, beforeInvalid);
+  await page.locator('[data-kc-page-jump="dashboard"] input').fill('99');
+  await page.locator('[data-kc-page-jump="dashboard"] button').click();
+  assert.match(await page.locator('[data-kc-page-jump="dashboard"] [role="alert"]').innerText(), /请输入 1 到/);
+  assert.equal(service.queries.length, beforeInvalid);
+  await page.locator('[data-my-task-version]').selectOption('23.4');
+  await page.waitForFunction(() => JSON.parse(new URL(location.href).searchParams.get('wb')).scopeVersion === '23.4');
+  await page.waitForFunction(() => document.querySelector('.my-task-toolbar [role="status"]')?.textContent.includes('第 1/'));
+  assert.equal(service.queries.at(-1).scopeVersion, '23.4');
+  assert.equal(service.queries.at(-1).page, 1);
+  await captureCoverage();
+  await page.reload();
+  await page.locator('[data-my-task-version]').waitFor();
+  assert.equal(await page.locator('[data-my-task-version]').inputValue(), '23.4');
+  await page.waitForFunction(() => document.querySelector('.my-task-toolbar [role="status"]')?.textContent.includes('项 ·'));
+  assert.equal(service.queries.at(-1).scopeVersion, '23.4');
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  await captureCoverage();
+});
+
 test('已关闭的 MR 仅保留提交人的同步动作，详情显示具体状态', async t => {
   const service = await fixture({ mrState: 'closed' });
   const browser = await chromium.launch({ headless: true });
@@ -582,6 +621,7 @@ test('任务管理动态改派弹窗可搜索人员并保持原生 ID', async t 
   t.after(async () => { await browser.close(); await service.close(); });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await page.goto(`${service.url}/fixture`);
+  await page.addStyleTag({ content: '@import url("/knowledge-center/modules/document-tasks/document-tasks.css");' });
   await page.evaluate(async () => {
     const { renderDocumentTasks } = await import('/knowledge-center/modules/document-tasks/view.js');
     renderDocumentTasks({ documentTaskProjection: {
@@ -602,6 +642,62 @@ test('任务管理动态改派弹窗可搜索人员并保持原生 ID', async t 
   await page.getByRole('option', { name: '其他责任人' }).click();
   assert.equal(await dialog.locator('select[name="ownerId"]').inputValue(), '200');
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+});
+
+test('任务详情隐藏来源同步与导出、移除新增手册入口并保留来源查看', async t => {
+  const service = await fixture();
+  const browser = await chromium.launch({ headless: true });
+  t.after(async () => { await browser.close(); await service.close(); });
+  const evidence = path.join(root, 'runtime/test-results/document-task-page-actions-20261117');
+  fs.mkdirSync(evidence, { recursive: true });
+  for (const width of [1366, 390]) {
+    const page = await browser.newPage({ viewport: { width, height: 844 } });
+    await page.goto(`${service.url}/fixture`);
+    await page.addStyleTag({ content: '@import url("/knowledge-center/common/tokens.css"); @import url("/knowledge-center/common/base.css"); @import url("/knowledge-center/styles.css"); @import url("/knowledge-center/modules/document-tasks/document-tasks.css");' });
+    await page.evaluate(async () => {
+      const { renderDocumentTasks } = await import('/knowledge-center/modules/document-tasks/view.js');
+      renderDocumentTasks({ documentTaskProjection: { status: 'ok', items: [], total: 0,
+        context: { actorId: '178', canAdmin: true, people: [{ id: '178', displayName: '何阳' }], handbooks: [], config: { reasonOptions: [] } },
+        filterOptions: { product: [], version: [] },
+        selected: { number: 'TEST-1', description: '测试任务', ownerId: '178', status: 'pending_scope', canAdmin: true,
+          sourceType: 'TICKET', ir: ['IR-1'],
+          canConfirm: true, pending: [], assignmentHistory: [], decomposition: { confirmed: false, handbooks: [] } } } });
+    });
+    assert.equal(await page.locator('.document-task-tabs, [data-task-tab], .document-task-config').count(), 0);
+    assert.equal(await page.getByText('正在读取任务…', { exact: true }).count(), 0);
+    assert.equal(await page.locator('.task-workspace h2').innerText(), '测试任务');
+    assert.equal(await page.locator('.task-workspace').getByText('确认涉及的手册，并交给负责人', { exact: true }).count(), 0);
+    assert.equal(await page.locator('.task-workspace .task-workspace-description').count(), 0);
+    assert.equal(await page.locator('.task-workspace-progress').count(), 1);
+    assert.ok(await page.locator('.task-workspace-progress').evaluate(node => node.compareDocumentPosition(document.querySelector('.task-next-action')) & Node.DOCUMENT_POSITION_FOLLOWING));
+    assert.match(await page.locator('.task-workspace-progress').innerText(), /工单分派\s+待确认[\s\S]*手册范围\s+0\/0 本已确认[\s\S]*文档处理\s+暂无文档任务/);
+    assert.equal(await page.locator('.task-next-action .task-scope-status').count(), 0);
+    assert.equal(await page.locator('.task-source-actions .task-source-button').count(), 1);
+    assert.ok(await page.locator('.task-source-actions .task-source-button').evaluateAll(buttons => buttons.every(button => getComputedStyle(button).backgroundColor !== 'rgb(255, 255, 255)')));
+    assert.equal(await page.locator('[data-task-action=changes], [data-task-action=source-export], [data-task-action=add-book]').count(), 0);
+    assert.equal(await page.getByRole('button', { name: '新增手册', exact: true }).count(), 0);
+    assert.equal(await page.getByRole('button', { name: '变更责任人', exact: true }).count(), 1);
+    const rectangles = await page.evaluate(() => {
+      const back = document.querySelector('.task-workspace>header>[data-task-action=close]').getBoundingClientRect();
+      const owner = document.querySelector('.task-workspace>header .task-workspace-owner-action').getBoundingClientRect();
+      return { back: { right: back.right, bottom: back.bottom }, owner: { left: owner.left, top: owner.top }, overflow: document.documentElement.scrollWidth > innerWidth };
+    });
+    assert.equal(rectangles.overflow, false);
+    assert.ok(rectangles.back.right <= rectangles.owner.left || rectangles.back.bottom <= rectangles.owner.top,
+      `返回与改派重叠，宽度 ${width}`);
+    await page.screenshot({ path: path.join(evidence, `task-detail-actions-${width}.png`) });
+    const sourceButton = page.locator('.task-source-actions [data-task-action="source-view"]');
+    await sourceButton.evaluate(node => node.scrollIntoView({ block: 'center', inline: 'nearest' }));
+    const sourceButtonBounds = await sourceButton.boundingBox();
+    const viewport = page.viewportSize();
+    assert.ok(sourceButtonBounds && sourceButtonBounds.y >= 0 && sourceButtonBounds.y + sourceButtonBounds.height <= viewport.height,
+      `来源详情按钮应完整显示在 ${width}px 视口内: ${JSON.stringify({ sourceButtonBounds, viewport })}`);
+    await page.screenshot({ path: path.join(evidence, `task-detail-source-${width}.png`) });
+    await page.getByRole('button', { name: '变更责任人', exact: true }).click();
+    await page.getByRole('dialog').getByRole('heading', { name: '变更责任人' }).waitFor();
+    await page.getByRole('dialog').getByRole('button', { name: '取消', exact: true }).click();
+    await page.close();
+  }
 });
 
 test('任务管理窄屏卡片保留责任人、版本、状态与输出件', async t => {
@@ -629,20 +725,14 @@ test('任务管理窄屏卡片保留责任人、版本、状态与输出件', as
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
 });
 
-test('任务管理来源变化与导出入口在窄屏可操作', async t => {
+test('任务管理来源详情保留；同步变化、来源导出和新增手册入口隐藏', async t => {
   const service = await fixture();
   const browser = await chromium.launch({ headless: true });
   t.after(async () => { await browser.close(); await service.close(); });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 }, acceptDownloads: true });
-  await page.route('**/knowledge-center/api/document-tasks/TEST-1/sync-changes*', route => route.fulfill({
-    contentType: 'application/json', body: JSON.stringify({ success: true, data: { page: 1, pageSize: 20,
-      total: 1, items: [{ confirmedAt: '2026-11-12T04:00:00Z', sourceName: '需求基线',
-        field: 'title', before: '旧标题', after: '新标题' }] } }),
-  }));
-  await page.route('**/knowledge-center/api/document-tasks/TEST-1/source-export', route => route.fulfill({
-    contentType: 'text/markdown; charset=utf-8', headers: { 'Content-Disposition': 'attachment; filename="YDBRD-1.md"' },
-    body: '# 来源资料',
-  }));
+  let removedActionRequests = 0;
+  await page.route('**/knowledge-center/api/document-tasks/TEST-1/sync-changes*', route => { removedActionRequests++; return route.fulfill({ status: 204 }); });
+  await page.route('**/knowledge-center/api/document-tasks/TEST-1/source-export', route => { removedActionRequests++; return route.fulfill({ status: 204 }); });
   await page.route('**/knowledge-center/api/document-tasks/TEST-1/source', route => route.fulfill({
     contentType: 'application/json', body: JSON.stringify({ success: true, data: {
       number: 'TEST-1', title: 'SR 的描述字段', markdown: '## 需求描述\n\n业务需求正文\n\n## 测试建议\n\nPingCode 未填写',
@@ -655,6 +745,7 @@ test('任务管理来源变化与导出入口在窄屏可操作', async t => {
     body: '编号\r\nTEST-1\r\n',
   }));
   await page.goto(`${service.url}/fixture`);
+  await page.addStyleTag({ content: '@import url("/knowledge-center/modules/document-tasks/document-tasks.css");' });
   await page.evaluate(async () => {
     const { renderDocumentTasks } = await import('/knowledge-center/modules/document-tasks/view.js');
     renderDocumentTasks({ documentTaskProjection: {
@@ -666,18 +757,22 @@ test('任务管理来源变化与导出入口在窄屏可操作', async t => {
         decomposition: { confirmed: true, handbooks: [] } },
     } });
   });
-  await page.locator('.task-source-actions [data-task-action="changes"]').click();
-  await page.getByRole('cell', { name: '新标题' }).waitFor();
-  await page.locator('.document-task-dialog [data-modal-close]').first().click();
+  const sourceActions = page.locator('.task-source-actions .task-source-button');
+  assert.equal(await sourceActions.count(), 1);
+  assert.equal(await page.locator('[data-task-action=changes], [data-task-action=source-export], [data-task-action=add-book]').count(), 0);
+  assert.equal(await page.getByRole('button', { name: '新增手册', exact: true }).count(), 0);
+  for (const action of await sourceActions.all()) {
+    assert.equal(await action.isVisible(), true);
+    assert.equal(await action.evaluate(node => getComputedStyle(node).backgroundColor), 'rgb(224, 242, 254)');
+  }
   await page.locator('.task-source-actions [data-task-action="source-view"]').click();
   await page.getByText('SR 的描述字段', { exact: true }).waitFor();
   await page.getByText('业务需求正文', { exact: true }).waitFor();
   await page.getByText('PingCode 未填写', { exact: true }).waitFor();
   await page.locator('.document-task-dialog [data-modal-close]').first().click();
-  const sourceDownload = page.waitForEvent('download');
-  await page.locator('.task-source-actions [data-task-action="source-export"]').click();
-  assert.equal((await sourceDownload).suggestedFilename(), 'YDBRD-1.md');
+  assert.equal(removedActionRequests, 0, 'removed page actions must not call their former endpoints');
   await page.getByRole('button', { name: '返回任务列表' }).click();
+  await page.locator('.document-task-more>summary').click();
   const csvDownload = page.waitForEvent('download');
   await page.locator('[data-task-action="export"]').click();
   assert.equal((await csvDownload).suggestedFilename(), 'tasks.csv');

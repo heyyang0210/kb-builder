@@ -151,6 +151,7 @@ public final class StorageDocumentTaskMigrationCommandCheck {
     public static void main(String[] args) throws Exception {
         String scenario = args[0];
         boolean activating = scenario.startsWith("activate");
+        boolean approvedShared = scenario.endsWith("shared-approved");
         if (!activating && !scenario.startsWith("copy"))
             throw new IllegalArgumentException("Expected copy or activate scenario");
         Path sqlDirectory = Path.of(System.getenv("YASDB_STORAGE_SQL_DIR"));
@@ -191,7 +192,8 @@ public final class StorageDocumentTaskMigrationCommandCheck {
         }
         registerDriver();
         String expectedError = switch (scenario) {
-            case "copy-wrong-target" -> "旧任务迁移仅允许显式指定个人开发库";
+            case "copy-wrong-target", "copy-shared-no-approval" -> "共享库任务迁移需要明确的审批引用";
+            case "copy-test-no-run-id" -> "测试库任务迁移必须绑定本次隔离测试运行";
             case "copy-no-backup" -> "必须指定旧任务备份路径";
             case "copy-existing" -> "备份文件已存在";
             case "copy-invalid-legacy" -> "DOCUMENT_TASK_LEGACY_INVALID";
@@ -201,7 +203,8 @@ public final class StorageDocumentTaskMigrationCommandCheck {
             case "activate-bad-backup" -> "DOCUMENT_TASK_BACKUP_HASH_MISMATCH";
             case "activate-no-repo" -> "未指定仓库根目录";
             case "activate-symlink" -> "DOCUMENT_TASK_BACKUP_INVALID";
-            case "activate-wrong-target" -> "任务切换仅允许显式指定个人开发库";
+            case "activate-wrong-target", "activate-shared-no-approval" -> "共享库任务迁移需要明确的审批引用";
+            case "activate-test-no-run-id" -> "测试库任务迁移必须绑定本次隔离测试运行";
             case "activate-no-backup" -> "必须指定已核验的旧任务备份路径";
             case "activate-not-verified" -> "DOCUMENT_TASK_MIGRATION_NOT_VERIFIED";
             case "activate-changed" -> "DOCUMENT_TASK_LEGACY_CHANGED";
@@ -209,7 +212,7 @@ public final class StorageDocumentTaskMigrationCommandCheck {
         };
         if (expectedError != null) {
             try {
-                Main.main(new String[] { activating ? "activate-tasks" : "migrate-tasks" });
+                Main.main(commandArgs(activating, approvedShared));
                 throw new AssertionError("Expected command refusal: " + scenario);
             } catch (Exception error) {
                 if (error.getMessage() == null || !error.getMessage().contains(expectedError)
@@ -235,7 +238,13 @@ public final class StorageDocumentTaskMigrationCommandCheck {
                 System.out.println("PASS: public task migration command " + scenario);
             } catch (Throwable error) { error.printStackTrace(); Runtime.getRuntime().halt(1); }
         }));
-        Main.main(new String[] { activating ? "activate-tasks" : "migrate-tasks" });
+        Main.main(commandArgs(activating, approvedShared));
         throw new AssertionError("One-shot migration command did not exit");
+    }
+
+    private static String[] commandArgs(boolean activating, boolean approvedShared) {
+        String command = activating ? "activate-tasks" : "migrate-tasks";
+        return approvedShared ? new String[] { command, "--approval-ref", "test-approval-reference" }
+            : new String[] { command };
     }
 }

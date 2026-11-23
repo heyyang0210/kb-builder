@@ -69,6 +69,14 @@ test('真实Worker合作取消：HTTP取消后进入cancelled且没有结果', a
   expect(state).not.toHaveProperty('result'); expect(state.events.at(-1).kind).toBe('cancelled');
 });
 
+test('Worker 超时通过 HTTP 返回结构化错误且不返回产物', async () => {
+  mode = 'timeout';
+  const { body } = await request('/agents/isolated/run-test', 'POST');
+  const state = await until(body.data.id, value => value.status === 'failed');
+  expect(state.error).toEqual({ code: 'AGENT_RUN_TIMEOUT', message: 'Codex 运行超时，未收到完成事件' });
+  expect(state).not.toHaveProperty('result');
+});
+
 test('真实Worker不合作取消：强杀隔离进程组后进入cancelled', async () => {
   mode = 'stubborn';
   const { body } = await request('/agents/isolated/run-test', 'POST'); const id = body.data.id;

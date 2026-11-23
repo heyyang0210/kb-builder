@@ -21,7 +21,7 @@ final class DocumentTaskIndex {
     }
 
     static void replace(Connection connection, String number, Map<?, ?> task) throws SQLException {
-        TaskNumber identity = TaskNumber.parse(number);
+        TaskNumber identity = TaskNumber.parseTask(number);
         try (PreparedStatement delete = connection.prepareStatement(
             "DELETE FROM KC_DOCUMENT_TASK_ACTOR WHERE TASK_PREFIX=? AND TASK_NUMBER=?")) {
             delete.setString(1, identity.prefix); delete.setLong(2, identity.value); delete.executeUpdate();

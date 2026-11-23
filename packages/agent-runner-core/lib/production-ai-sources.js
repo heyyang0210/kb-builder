@@ -16,6 +16,18 @@ function createProductionAISources({ store, context, contextKey, actor, requireC
     /(?:wappoc_appmsgcaptcha|captcha|challenge|access[-_/]?denied|login)/i.test(String(source.locator || '')) ||
     /环境异常.{0,40}(验证|访问)|完成验证后.{0,30}(继续|访问)|验证码|人机验证|访问受限|登录后查看|请先登录/i.test(String(source.content || '').slice(0, 16000))
   );
+  const persistSnapshot = async snapshot => {
+    const transaction = store.transactionAsync || store.transaction;
+    return await transaction.call(store, state => {
+      state.aiSources ||= {};
+      state.aiSources[snapshot.sourceId] = snapshot;
+      return structuredClone(snapshot);
+    });
+  };
+  const recordDuration = (diagnostic, name, startedAt) => {
+    diagnostic.timingsMs ||= {};
+    diagnostic.timingsMs[name] = Number((performance.now() - startedAt).toFixed(1));
+  };
 
   async function list(input, session) {
     requireCapability(session, 'canEdit'); context(input);
@@ -102,7 +114,11 @@ function createProductionAISources({ store, context, contextKey, actor, requireC
     const url = new URL(`/api/pingcode/spaces/${encodeURIComponent(spaceKey)}/pages/${encodeURIComponent(pageId)}/reference`, pingcodeBaseURL);
     url.searchParams.set('include_images', 'true');
     diagnostic.stage = 'pingcode_fetch';
-    const response = await fetch(url, { redirect: 'error', signal: AbortSignal.timeout(settings().timeoutMs), headers: { Accept: 'application/json' } });
+    const fetchStartedAt = performance.now();
+    let response;
+    try {
+      response = await fetch(url, { redirect: 'error', signal: AbortSignal.timeout(settings().timeoutMs), headers: { Accept: 'application/json' } });
+    } finally { recordDuration(diagnostic, 'pingcodeFetchMs', fetchStartedAt); }
     diagnostic.upstreamStatus = response.status;
     diagnostic.stage = 'pingcode_response';
     // JSON escaping can expand Markdown; bound the transport and the extracted content separately.
@@ -178,6 +194,7 @@ function createProductionAISources({ store, context, contextKey, actor, requireC
       fail('AI_SOURCE_LOCATOR_REQUIRED', '请填写资料名称或文档网址');
     }
     let document;
+    const sourceReadStartedAt = performance.now();
     try {
       if (input.sourceType === 'url') document = await readURL(input.locator, diagnostic);
       else if (['pingcode-design', 'pingcode-test'].includes(input.sourceType)) document = await readPingCode(input.locator, diagnostic);
@@ -214,25 +231,26 @@ function createProductionAISources({ store, context, contextKey, actor, requireC
       diagnostic.causeCode = String(error.cause?.code || error.code || error.name || 'UNKNOWN').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 80);
       if (error instanceof ErrorType) throw error;
       fail('AI_SOURCE_UNAVAILABLE', '资料读取失败，请检查来源配置、网络和访问权限', 502);
-    }
+    } finally { recordDuration(diagnostic, 'sourceReadMs', sourceReadStartedAt); }
     const snapshot = {
       sourceId: `source-${crypto.randomUUID()}`, sourceType: input.sourceType,
       ...document, contentDigest: crypto.createHash('sha256').update(document.content).digest('hex'),
       fetchedAt: new Date(now()).toISOString(), createdBy: actor(session), context: ctx, contextKey: contextKey(ctx),
     };
     diagnostic.stage = 'image_materialization';
-    const hosted = await images.materialize(document, snapshot, settings());
+    const imageStartedAt = performance.now();
+    let hosted;
+    try { hosted = await images.materialize(document, snapshot, settings()); }
+    finally { recordDuration(diagnostic, 'imageMaterializationMs', imageStartedAt); }
     delete snapshot.authenticatedImages;
     Object.assign(snapshot, hosted, { contentDigest: crypto.createHash('sha256').update(hosted.content).digest('hex') });
     if (Buffer.byteLength(snapshot.content) > settings().maxBytes) fail('AI_SOURCE_TOO_LARGE', '引用资料超过允许的大小', 413);
     diagnostic.imageReady = hosted.imageResources.filter(image => image.status === 'ready').length;
     diagnostic.imageFailed = hosted.imageResources.length - diagnostic.imageReady;
     diagnostic.stage = 'snapshot_persistence';
-    return store.transaction(state => {
-      state.aiSources ||= {};
-      state.aiSources[snapshot.sourceId] = snapshot;
-      return structuredClone(snapshot);
-    });
+    const persistenceStartedAt = performance.now();
+    try { return await persistSnapshot(snapshot); }
+    finally { recordDuration(diagnostic, 'snapshotPersistenceMs', persistenceStartedAt); }
   }
 
   async function previewUpload(input, buffer, fileName, mimeType, session, diagnostic = {}) {
@@ -262,7 +280,7 @@ function createProductionAISources({ store, context, contextKey, actor, requireC
     Object.assign(snapshot, hosted, { contentDigest: crypto.createHash('sha256').update(hosted.content).digest('hex') });
     delete snapshot.authenticatedImages;
     if (Buffer.byteLength(snapshot.content) > config.maxBytes) fail('AI_SOURCE_TOO_LARGE', '解析后的文档超过允许的大小', 413);
-    return store.transaction(state => { state.aiSources ||= {}; state.aiSources[snapshot.sourceId] = snapshot; return structuredClone(snapshot); });
+    return persistSnapshot(snapshot);
   }
 
   function readImage(input, session) {

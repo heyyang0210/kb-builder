@@ -826,13 +826,16 @@ test('AI HTTP verifies GitLab origin against the authorized mapping and server f
     else process.env.GITLAB_TOKEN_PRODUCTION_ORIGIN_TEST = originalToken;
   });
   let fileContent = '原始 GitLab 正文';
+  let fileCommitId = 'commit-1';
+  let fileBlobId = 'blob-1';
+  let filePath = 'docs/doc-1.md';
   let readCount = 0;
   const requestedRefs = [];
   const gitLab = http.createServer((req, res) => {
     readCount++;
     requestedRefs.push(new URL(req.url, 'http://gitlab.test').searchParams.get('ref'));
     res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ file_path: 'docs/doc-1.md', encoding: 'base64', content: Buffer.from(fileContent).toString('base64'), commit_id: 'commit-1', blob_id: 'blob-1' }));
+    res.end(JSON.stringify({ file_path: filePath, encoding: 'base64', content: Buffer.from(fileContent).toString('base64'), commit_id: fileCommitId, blob_id: fileBlobId }));
   });
   await new Promise(resolve => gitLab.listen(0, '127.0.0.1', resolve));
   t.after(() => gitLab.close());
@@ -856,6 +859,28 @@ test('AI HTTP verifies GitLab origin against the authorized mapping and server f
     editVersion: 0, range: { start: 0, end: fileContent.length },
     originSnapshot: { originType: 'gitlab', snapshotId: 'commit-1', contentDigest: digest, handbookId: 'HB-1', documentId: 'doc-1', branch: 'main', path: 'docs/doc-1.md', commitId: 'commit-1', blobId: 'blob-1' },
   };
+  const rejectedSnapshots = [
+    ['mapped handbook requires an origin snapshot', { ...payload, originSnapshot: undefined }, 'AI_ORIGIN_SNAPSHOT_REQUIRED'],
+    ['snapshot handbook identity must match', { ...payload, originSnapshot: { ...payload.originSnapshot, handbookId: 'HB-OTHER' } }, 'AI_ORIGIN_SNAPSHOT_INVALID'],
+    ['snapshot document identity must match', { ...payload, originSnapshot: { ...payload.originSnapshot, documentId: 'doc-other' } }, 'AI_ORIGIN_SNAPSHOT_INVALID'],
+    ['platform origin requires a valid digest', { ...payload, originSnapshot: { originType: 'platform', contentDigest: 'invalid', handbookId: 'HB-1', documentId: 'doc-1' } }, 'AI_ORIGIN_SNAPSHOT_INVALID'],
+    ['platform origin rejects stale content digest', { ...payload, originSnapshot: { originType: 'platform', contentDigest: '0'.repeat(64), handbookId: 'HB-1', documentId: 'doc-1' } }, 'AI_ORIGIN_SNAPSHOT_INVALID'],
+    ['platform origin branch must match the write branch', { ...payload, originSnapshot: { originType: 'platform', contentDigest: crypto.createHash('sha256').update(`${fileContent} working`).digest('hex'), handbookId: 'HB-1', documentId: 'doc-1', branch: 'release' } }, 'AI_ORIGIN_SNAPSHOT_INVALID'],
+    ['mapped handbook cannot use a blank origin', { ...payload, originSnapshot: { originType: 'blank', contentDigest: crypto.createHash('sha256').update('').digest('hex'), handbookId: 'HB-1', documentId: 'doc-1' } }, 'AI_ORIGIN_MAPPING_REQUIRED'],
+    ['GitLab origin requires path branch and revision identity', { ...payload, originSnapshot: { originType: 'gitlab', contentDigest: digest, handbookId: 'HB-1', documentId: 'doc-1' } }, 'AI_ORIGIN_SNAPSHOT_INVALID'],
+    ['GitLab snapshot branch must match the write branch', { ...payload, branch: 'release' }, 'AI_ORIGIN_SNAPSHOT_INVALID'],
+    ['pinned GitLab baseline requires a commit id', { ...payload, originSnapshot: { ...payload.originSnapshot, commitId: undefined, blobId: 'blob-1', pinToCommit: true } }, 'AI_ORIGIN_SNAPSHOT_INVALID'],
+  ];
+  for (const [name, invalidPayload, code] of rejectedSnapshots) {
+    const response = await api.request('POST', pathName, JSON.stringify(invalidPayload), {
+      'content-type': 'application/json', 'idempotency-key': `invalid-origin-${code}-${name}`,
+    });
+    assert.equal(response.status, 409, `${name}: ${JSON.stringify(response.body)}`);
+    assert.equal(response.body.error.code, code, name);
+  }
+  assert.equal(readCount, 0, 'invalid snapshots must be rejected before reading GitLab');
+  assert.equal(calls, 0, 'invalid snapshots must be rejected before invoking AI');
+
   const invalidPath = json({ ...payload, originSnapshot: { ...payload.originSnapshot, path: 'private/doc-1.md' } }, 'blocked-path');
   const forbidden = await api.request('POST', pathName, invalidPath.body, invalidPath.headers);
   assert.equal(forbidden.status, 403, JSON.stringify(forbidden.body));
@@ -882,6 +907,51 @@ test('AI HTTP verifies GitLab origin against the authorized mapping and server f
   const pinned = await api.request('POST', pathName, json({ ...payload, originSnapshot: { ...payload.originSnapshot, pinToCommit: true } }, 'pinned-origin').body, { 'content-type': 'application/json', 'idempotency-key': 'pinned-origin' });
   assert.equal(pinned.status, 202, JSON.stringify(pinned.body));
   assert.equal(requestedRefs.at(-1), 'commit-1', '作者确认保留旧基线后应按不可变 commit 校验');
+
+  fileCommitId = 'commit-2';
+  const changedCommit = await api.request('POST', pathName, json(payload, 'changed-origin-commit').body, { 'content-type': 'application/json', 'idempotency-key': 'changed-origin-commit' });
+  assert.equal(changedCommit.status, 409);
+  assert.equal(changedCommit.body.error.code, 'AI_ORIGIN_BASELINE_CHANGED');
+  assert.equal(calls, 2);
+
+  fileCommitId = 'commit-1';
+  fileBlobId = 'blob-2';
+  const changedBlob = await api.request('POST', pathName, json(payload, 'changed-origin-blob').body, { 'content-type': 'application/json', 'idempotency-key': 'changed-origin-blob' });
+  assert.equal(changedBlob.status, 409);
+  assert.equal(changedBlob.body.error.code, 'AI_ORIGIN_BASELINE_CHANGED');
+  assert.equal(calls, 2);
+
+  fileBlobId = 'blob-1';
+  const changedSnapshotId = await api.request('POST', pathName, json({ ...payload, originSnapshot: { ...payload.originSnapshot, snapshotId: 'stale-snapshot' } }, 'changed-origin-snapshot-id').body, { 'content-type': 'application/json', 'idempotency-key': 'changed-origin-snapshot-id' });
+  assert.equal(changedSnapshotId.status, 409);
+  assert.equal(changedSnapshotId.body.error.code, 'AI_ORIGIN_BASELINE_CHANGED');
+  assert.equal(calls, 2);
+
+  fileCommitId = undefined;
+  fileBlobId = undefined;
+  filePath = undefined;
+  const fallbackSnapshot = { ...payload.originSnapshot, snapshotId: undefined };
+  const fallback = await api.request('POST', pathName, json({ ...payload, originSnapshot: fallbackSnapshot }, 'origin-fallback-fields').body, { 'content-type': 'application/json', 'idempotency-key': 'origin-fallback-fields' });
+  assert.equal(fallback.status, 202, JSON.stringify(fallback.body));
+  const fallbackJob = await api.request('GET', `${pathName}/${fallback.body.data.jobId}${query}`);
+  assert.equal(fallbackJob.body.data.document.origin.path, 'docs/doc-1.md');
+  assert.equal(fallbackJob.body.data.document.origin.commitId, 'commit-1');
+  assert.equal(fallbackJob.body.data.document.origin.blobId, 'blob-1');
+  assert.equal(calls, 3);
+
+  const configWithoutMapping = gitlabConnector.readConfig(gitlabConfigPath);
+  gitlabConnector.writeConfig({ ...configWithoutMapping, mappings: [] }, gitlabConfigPath);
+  const legacyBlank = await api.request('POST', pathName, json({ ...payload, originSnapshot: undefined }, 'legacy-blank-origin').body, { 'content-type': 'application/json', 'idempotency-key': 'legacy-blank-origin' });
+  assert.equal(legacyBlank.status, 202, JSON.stringify(legacyBlank.body));
+  const legacyBlankJob = await api.request('GET', `${pathName}/${legacyBlank.body.data.jobId}${query}`);
+  assert.equal(legacyBlankJob.body.data.document.origin.originType, 'blank');
+  assert.equal(legacyBlankJob.body.data.document.origin.contentDigest, crypto.createHash('sha256').update('').digest('hex'));
+
+  const explicitBlank = await api.request('POST', pathName, json({ ...payload, originSnapshot: { originType: 'blank', contentDigest: crypto.createHash('sha256').update('').digest('hex'), handbookId: 'HB-1', documentId: 'doc-1' } }, 'explicit-blank-origin').body, { 'content-type': 'application/json', 'idempotency-key': 'explicit-blank-origin' });
+  assert.equal(explicitBlank.status, 202, JSON.stringify(explicitBlank.body));
+  const explicitBlankJob = await api.request('GET', `${pathName}/${explicitBlank.body.data.jobId}${query}`);
+  assert.equal(explicitBlankJob.body.data.document.origin.originType, 'blank');
+  assert.equal(calls, 5);
 });
 
 test('已映射手册中的未映射文档可基于平台正文生成，不强制匹配仓库文件', async t => {
@@ -1024,10 +1094,8 @@ test('AI browser dialog uses real HTTP, preserves editor until adoption and read
   // The current writing surface applies the selected polish range automatically.
   await page.locator('[data-ai-start]').click();
   await page.waitForFunction(() => document.querySelector('[data-ai-fragment]')?.value === '浏览器候选');
-  await page.getByRole('button', { name: '编辑第 1 处修改', exact: true }).click();
   assert.equal(await page.evaluate(() => window.editorMarkdown), '前文旧句后文');
   await page.locator('[data-ai-inline-editor]').fill('人工核对后的候选');
-  await page.getByRole('button', { name: '保存修改', exact: true }).click();
   const evidenceDir = path.join(repositoryRoot, 'runtime/test-results/production-ai-browser');
   fs.mkdirSync(evidenceDir, { recursive: true });
   await page.screenshot({ path: path.join(evidenceDir, 'candidate-human-edit.png'), fullPage: true });
@@ -1489,9 +1557,7 @@ test('混合元信息经真实 HTTP 与浏览器预览、人工采用、再次�
   const evidenceDir = path.join(repositoryRoot, 'runtime/test-results/production-ai-provenance'); fs.mkdirSync(evidenceDir, { recursive: true });
   await page.locator('[data-ai-provenance]').scrollIntoViewIfNeeded();
   await page.screenshot({ path: path.join(evidenceDir, 'candidate-provenance.png'), fullPage: true });
-  await page.getByRole('button', { name: '编辑第 1 处修改', exact: true }).click();
   await page.locator('[data-ai-inline-editor]').fill('引用原句。归纳参数。人工补充。');
-  await page.getByRole('button', { name: '保存修改', exact: true }).click();
   await page.locator('[data-ai-adopt]').click(); await page.waitForFunction(() => !!window.adoptedResult);
   const saved = await api.request('GET', `${draftPath()}${query}`);
   const revision = saved.body.data.draft.revision;

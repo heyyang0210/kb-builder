@@ -15,6 +15,7 @@ jest.mock('openai', () => class OpenAITestDouble {
 let server;
 let serverProcess;
 let serviceConfigSnapshot;
+let storageModeSnapshot;
 const BASE_URL = 'http://localhost:4101';
 const SERVICE_CONFIG_PATH = path.resolve(__dirname, '../../../config/knowledge-center/service.json');
 
@@ -53,6 +54,8 @@ function request(method, urlPath, body = null) {
 // 在测试前启动服务
 beforeAll((done) => {
   serviceConfigSnapshot = fs.readFileSync(SERVICE_CONFIG_PATH);
+  storageModeSnapshot = process.env.KNOWLEDGE_STORAGE_MODE;
+  process.env.KNOWLEDGE_STORAGE_MODE = 'file';
   process.env.PORT = '4101';
   process.env.NODE_ENV = 'test';
 
@@ -67,6 +70,8 @@ beforeAll((done) => {
 afterAll((done) => {
   const finish = () => {
     if (serviceConfigSnapshot) fs.writeFileSync(SERVICE_CONFIG_PATH, serviceConfigSnapshot);
+    if (storageModeSnapshot === undefined) delete process.env.KNOWLEDGE_STORAGE_MODE;
+    else process.env.KNOWLEDGE_STORAGE_MODE = storageModeSnapshot;
     done();
   };
   if (server) {

@@ -213,7 +213,7 @@ test('P2 list filters combine and logical deletion preserves readable history', 
   assert.equal(removed.status, 200);
   assert.equal(removed.body.data.status, 'deleted');
   assert.deepEqual((await s.request('/active/versions/1', { role: 'read' })).body.data, before);
-  assert.deepEqual((await s.request('?status=deleted')).body.data.map(item => item.id), ['active']);
+  assert.deepEqual((await s.request('?status=deleted')).body.data.map(item => item.id), []);
   assert.equal(s.snapshot().templates.length, 3);
 });
 

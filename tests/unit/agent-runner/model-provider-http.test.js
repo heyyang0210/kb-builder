@@ -42,6 +42,7 @@ describe('模型网关真实 HTTP 契约', () => {
         return { parsed: { status: 'ok', message: '正常' }, content: '{}', usage: { total_tokens: 5 } };
       }
       async *chatStream() {
+        if (mode === 'stream-failure-before-start') throw new Error('连接流初始化失败');
         yield { content: '第一段' };
         if (mode === 'stream-failure') throw new Error('流中断');
         yield { content: '第二段', finish: 'stop' };
@@ -105,6 +106,11 @@ describe('模型网关真实 HTTP 契约', () => {
     mode = 'stream-failure';
     const interrupted = await request('POST', '/chat/stream', { messages: [{ role: 'user', content: '测试' }] });
     expect(interrupted.body).toContain('流中断');
+    mode = 'stream-failure-before-start';
+    const beforeHeaders = await request('POST', '/chat/stream', { messages: [{ role: 'user', content: '测试' }] });
+    expect(beforeHeaders.status).toBe(502);
+    expect(beforeHeaders.body.error).toBeDefined();
+    expect(beforeHeaders.body.error.code).toBe('MODEL_PROVIDER_CALL_FAILED');
     mode = 'ok';
   });
 
@@ -118,6 +124,9 @@ describe('模型网关真实 HTTP 契约', () => {
     const failed = await request('POST', '/chat', { messages: [{ role: 'user', content: '测试' }] });
     expect(failed.status).toBe(502);
     expect(failed.body.error.code).toBe('MODEL_PROVIDER_CALL_FAILED');
+    const visionFailed = await request('POST', '/vision', { messages: [{ role: 'user', content: '测试' }] });
+    expect(visionFailed.status).toBe(502);
+    expect(visionFailed.body.error.code).toBe('MODEL_PROVIDER_CALL_FAILED');
     mode = 'ok';
   });
 });
