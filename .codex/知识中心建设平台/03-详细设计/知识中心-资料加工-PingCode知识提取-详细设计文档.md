@@ -85,6 +85,8 @@ contentHash + semanticTitle + metadataRuleSetHash + skillVersion + promptHash
 
 非流式预览和 SSE 分析必须从同一模型配置来源读取模型、温度、超时和 Skill 参数，禁止任一路径硬编码模型名称。两条路径对同一输入和同一模型响应必须产生一致的关键词集合、决策统计和状态语义。
 
+复核结果保存在过滤运行的 `review-decisions.json`，采用 `expected_revision` 做乐观并发校验，并为每次修改保留 before/after 审计事件。该文件会随每次批量修改整体重写，因此复核草稿使用紧凑 JSON 降低写入量。一次复核提交依次原子替换复核草稿、完整审计事件和运行摘要；每个临时文件在替换前完成文件 `fsync`，三个替换完成后对同一运行目录执行一次 `fsync`，异常路径也同步已替换的目录项。其他独立写入仍各自同步目录。此优化不改变 Schema、字段、审计事件、读取结果或并发语义；崩溃恢复仍以运行摘要的 revision 为发布边界。
+
 ## 三、Knowledge Extraction Skill 设计
 
 ### 3.1 设计结论

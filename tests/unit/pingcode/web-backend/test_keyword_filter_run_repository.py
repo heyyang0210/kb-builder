@@ -3,6 +3,7 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from app.repositories.keyword_filter_run_repository import (
     KeywordFilterRunAlreadyExistsError,
@@ -158,6 +159,28 @@ class KeywordFilterRunRepositoryTests(unittest.TestCase):
                 self.dataset_id, self.filter_run_id, [], expected_revision=0
             )
         self.assertEqual(context.exception.actual_revision, 1)
+
+    def test_review_batch_syncs_its_directory_once_after_all_replacements(self):
+        self.create_run()
+        original = LocalKeywordFilterRunRepository._fsync_directory
+        synced_paths = []
+
+        def record_sync(path):
+            synced_paths.append(path)
+            original(path)
+
+        with patch.object(LocalKeywordFilterRunRepository, "_fsync_directory", side_effect=record_sync):
+            self.repository.write_review_decisions(
+                self.dataset_id, self.filter_run_id,
+                [{"keywordId": "keyword:0", "finalAction": "keep"}],
+                expected_revision=0,
+                event={"type": "review.updated", "actor": "anonymous"},
+            )
+
+        root = self.root / "datasets" / self.dataset_id / "keyword-filter-runs" / self.filter_run_id
+        self.assertEqual(synced_paths, [root])
+        self.assertEqual(self.repository.read_run(self.dataset_id, self.filter_run_id)["revision"], 1)
+        self.assertEqual(self.repository.read_events(self.dataset_id, self.filter_run_id)[-1]["revision"], 1)
 
     def test_only_one_concurrent_writer_with_same_revision_succeeds(self):
         self.create_run()

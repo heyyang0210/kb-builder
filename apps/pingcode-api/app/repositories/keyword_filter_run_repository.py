@@ -336,16 +336,19 @@ class LocalKeywordFilterRunRepository:
                 raise KeywordFilterRunImmutableSnapshotError(
                     "已应用运行的人工复核草稿不可修改"
                 )
-            self._write_json_atomic(
-                self._run_root(dataset_id, filter_run_id) / self._REVIEW_FILE, decisions
-            )
-            return self._publish_manifest_change(
-                dataset_id,
-                filter_run_id,
-                run,
-                run_updates,
-                event or {"type": "review-decisions.saved", "actor": "anonymous"},
-            )
+            root = self._run_root(dataset_id, filter_run_id)
+            try:
+                self._write_json_atomic(root / self._REVIEW_FILE, decisions, compact=True, sync_directory=False)
+                return self._publish_manifest_change(
+                    dataset_id,
+                    filter_run_id,
+                    run,
+                    run_updates,
+                    event or {"type": "review-decisions.saved", "actor": "anonymous"},
+                    sync_directory=False,
+                )
+            finally:
+                self._fsync_directory(root)
 
     def write_final_decisions(
         self,
@@ -484,6 +487,8 @@ class LocalKeywordFilterRunRepository:
         run: dict[str, Any],
         updates: dict[str, Any] | None,
         event: dict[str, Any] | None,
+        *,
+        sync_directory: bool = True,
     ) -> dict[str, Any]:
         next_run = dict(run)
         for key, value in (updates or {}).items():
@@ -502,8 +507,8 @@ class LocalKeywordFilterRunRepository:
             next_event["revision"] = next_run["revision"]
             next_event["filterRunId"] = filter_run_id
             next_event["datasetId"] = dataset_id
-            self._write_jsonl_atomic(root / self._EVENTS_FILE, [*events, next_event])
-        self._write_json_atomic(root / "run.json", next_run)
+            self._write_jsonl_atomic(root / self._EVENTS_FILE, [*events, next_event], sync_directory=sync_directory)
+        self._write_json_atomic(root / "run.json", next_run, sync_directory=sync_directory)
         return next_run
 
     def _read_and_assert_revision(
@@ -599,17 +604,21 @@ class LocalKeywordFilterRunRepository:
         return value
 
     @staticmethod
-    def _write_json_atomic(path: Path, value: Any) -> None:
-        content = json.dumps(value, ensure_ascii=False, indent=2) + "\n"
-        LocalKeywordFilterRunRepository._write_atomic(path, content)
+    def _write_json_atomic(path: Path, value: Any, *, compact: bool = False, sync_directory: bool = True) -> None:
+        content = (
+            json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+            if compact
+            else json.dumps(value, ensure_ascii=False, indent=2)
+        ) + "\n"
+        LocalKeywordFilterRunRepository._write_atomic(path, content, sync_directory=sync_directory)
 
     @staticmethod
-    def _write_jsonl_atomic(path: Path, values: list[dict[str, Any]]) -> None:
+    def _write_jsonl_atomic(path: Path, values: list[dict[str, Any]], *, sync_directory: bool = True) -> None:
         content = "".join(json.dumps(value, ensure_ascii=False) + "\n" for value in values)
-        LocalKeywordFilterRunRepository._write_atomic(path, content)
+        LocalKeywordFilterRunRepository._write_atomic(path, content, sync_directory=sync_directory)
 
     @staticmethod
-    def _write_atomic(path: Path, content: str) -> None:
+    def _write_atomic(path: Path, content: str, *, sync_directory: bool = True) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.parent / f".{path.name}.{uuid.uuid4().hex}.tmp"
         try:
@@ -617,7 +626,8 @@ class LocalKeywordFilterRunRepository:
             with temporary.open("rb") as handle:
                 os.fsync(handle.fileno())
             os.replace(temporary, path)
-            LocalKeywordFilterRunRepository._fsync_directory(path.parent)
+            if sync_directory:
+                LocalKeywordFilterRunRepository._fsync_directory(path.parent)
         finally:
             if temporary.exists():
                 temporary.unlink(missing_ok=True)
