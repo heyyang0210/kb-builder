@@ -6,7 +6,7 @@
   padding: var(--space-2) 0 var(--space-6);
   border-bottom: 1px solid var(--color-border);
 }
-.dashboard-header h2 { margin: 2px 0 0; font-size: 28px; line-height: 1.25; }
+.dashboard-header h2 { margin: 2px 0 0; font-size: 24px; line-height: 1.25; }
 .dashboard-header p { max-width: 720px; margin: var(--space-2) 0 0; color: var(--color-text-secondary); }
 .dashboard-kicker { color: var(--color-text-secondary); font-size: 12px; font-weight: 700; }
 .task-summary {
@@ -62,12 +62,12 @@
 .domain-task-summary-card { display: grid; gap: 0; border: 1px solid var(--color-border); background: var(--color-surface); }
 .domain-task-summary-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--color-border); }
 .domain-task-summary-heading h4 { margin: 3px 0 0; font-size: 16px; }
-.domain-task-eyebrow { color: var(--color-text-tertiary); font-size: 11px; font-weight: 700; }
-.domain-task-summary-state { flex: 0 0 auto; color: var(--color-text-secondary); font-size: 11px; text-align: right; }
+.domain-task-eyebrow { color: var(--color-text-tertiary); font-size: var(--workspace-meta-font-size); font-weight: 700; }
+.domain-task-summary-state { flex: 0 0 auto; color: var(--color-text-secondary); font-size: var(--workspace-meta-font-size); text-align: right; }
 .domain-task-summary-metrics, .domain-task-dialog-metrics { display: grid; grid-template-columns: minmax(0, 1.4fr) repeat(3, minmax(70px, 1fr)); margin: 0; }
 .domain-task-summary-metrics > div, .domain-task-dialog-metrics > div { min-width: 0; padding: 12px 14px; border-bottom: 1px solid var(--color-border); }
 .domain-task-summary-metrics > div + div, .domain-task-dialog-metrics > div + div { border-left: 1px solid var(--color-border); }
-.domain-task-summary-metrics dt, .domain-task-dialog-metrics dt { color: var(--color-text-tertiary); font-size: 11px; }
+.domain-task-summary-metrics dt, .domain-task-dialog-metrics dt { color: var(--color-text-tertiary); font-size: var(--workspace-meta-font-size); }
 .domain-task-summary-metrics dd, .domain-task-dialog-metrics dd { margin: 4px 0 0; color: var(--color-text); font-size: 14px; font-weight: 650; overflow-wrap: anywhere; }
 .domain-task-summary-metrics dd.is-pending, .domain-task-dialog-metrics dd.is-pending { color: var(--color-warning-text, #92400e); }
 .domain-task-summary-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; }
@@ -250,6 +250,10 @@
 .my-task-filter-add{display:flex;gap:7px;margin-top:9px}
 .my-task-pagination{display:flex;align-items:center;justify-content:flex-end;gap:10px;padding:10px 16px;border-top:1px solid var(--color-border);font-size:13px}
 .my-task-pagination button:disabled{opacity:.45;cursor:default}
+.my-task-pagination form{display:flex;align-items:center;gap:6px;margin:0 0 0 8px}
+.my-task-pagination form label{display:flex;align-items:center;gap:6px;white-space:nowrap}
+.my-task-pagination input{width:64px;min-height:40px;padding:4px 7px;border:1px solid var(--color-border);border-radius:5px;background:var(--color-surface);color:var(--color-text);font:inherit;text-align:center}
+@media(max-width:650px){.my-task-pagination{flex-wrap:wrap}.my-task-pagination form{margin-left:0}}
 @media(max-width:650px){.my-task-filter-panel{padding:10px}.my-task-filter-group .my-task-filter-group{margin-left:8px}.my-task-filter-condition>*{flex:1 1 100%}.my-task-queues{width:100%}.my-task-queues button{flex:1}.my-task-toolbar label{flex:1;min-width:0}}
 .my-task-row-wrap .my-task-row,.my-task-follow-row .my-task-row{border-top:0}
 .my-task-identity{display:flex;align-items:center;gap:6px;min-width:0}
@@ -285,3 +289,4 @@
 .my-task-inbox-item .my-task-inbox-content p{margin:0;color:var(--color-text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .my-task-inbox-item>a{flex:none;white-space:nowrap}
 @media(max-width:650px){.my-task-inbox li{flex-wrap:wrap}.my-task-inbox li a{flex-basis:100%}}
+.my-task-responsible, .my-task-toolbar label, .my-task-state, .my-task-cell.number small, .my-task-group > header span, .my-task-board-head nav small { font-size: var(--workspace-meta-font-size); }

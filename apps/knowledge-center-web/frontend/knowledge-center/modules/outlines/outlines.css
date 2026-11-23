@@ -26,11 +26,11 @@
 .outline-table th:nth-child(3) { width: 22%; }
 .outline-table th:last-child { width: 28%; }
 .outline-table tbody tr:hover { background: var(--color-surface-subtle); }
-.outline-table td small { display: block; margin-top: 5px; color: var(--color-text-tertiary); font-size: 11px; }
+.outline-table td small { display: block; margin-top: 5px; color: var(--color-text-tertiary); font-size: var(--workspace-meta-font-size); }
 .outline-list-link { display: block; font-size: var(--font-size-base); font-weight: inherit; }
 .outline-list-link strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .outline-tags { display: flex; flex-wrap: wrap; gap: 5px; }
-.button.compact { min-height: 44px; padding: 8px 10px; font-size: 12px; white-space: nowrap; }
+.button.compact { min-height: 44px; padding: 8px 10px; font-size: var(--workspace-action-font-size); white-space: nowrap; }
 .outline-row-actions, .outline-tree-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .outline-recycle { margin-top: var(--space-5); }
 .outline-recycle-heading { margin-bottom: var(--space-3); }

@@ -1,5 +1,6 @@
 import { capabilityState, dataNote, formattedTime, panel, section } from '../../common/components/ui.js';
 import { escapeHtml, icon } from '../../common/utils/dom.js';
+import { uiIcon } from '../../common/ui-system.js';
 
 function renderDashboardLegacy({ projection }) {
   const workbench = section(projection, 'workbench');
@@ -10,7 +11,7 @@ function renderDashboardLegacy({ projection }) {
   const hasTaskSummary = ['pending', 'review', 'publishable', 'failed'].every(name => counts[name] != null);
   const riskTone = Number(counts.failed) > 0 ? 'danger' : 'neutral';
   const riskSummary = counts.failed != null
-    ? `<div class="risk-summary"><span class="risk-summary-icon">${icon(riskTone === 'danger' ? 'triangle-alert' : 'info')}</span><div><strong>${escapeHtml(counts.failed)} 个执行失败事项</strong><span>这是当前已接入的风险事实；其他风险类型仍等待手册风险投影。</span></div><button class="button secondary" data-action="production">查看</button></div>`
+    ? `<div class="risk-summary"><span class="risk-summary-icon">${icon(riskTone === 'danger' ? 'triangle-alert' : 'info')}</span><div><strong>${escapeHtml(counts.failed)} 个执行失败事项</strong><span>这是当前已接入的风险事实；其他风险类型仍等待手册风险投影。</span></div><button class="button secondary" data-action="production">${uiIcon('action.view')}查看</button></div>`
     : capabilityState('风险信息暂不可用', '风险类型、影响范围、责任人和恢复动作将在风险投影可用后显示。', '查看生产任务', 'production');
   const taskSummary = hasTaskSummary
     ? `<section class="task-summary" aria-label="当前任务概况"><div class="task-summary-primary"><span class="summary-icon">${icon('inbox')}</span><div><span>需要处理</span><strong>${escapeHtml(counts.pending)}</strong><small>当前待处理任务</small></div></div><div class="task-summary-item"><span>待审核</span><strong>${escapeHtml(counts.review)}</strong><small>需要审核决定</small></div><div class="task-summary-item"><span>可发布</span><strong>${escapeHtml(counts.publishable)}</strong><small>已满足发布条件</small></div><div class="task-summary-item"><span>执行失败</span><strong>${escapeHtml(counts.failed)}</strong><small>需要检查或重试</small></div></section>`
@@ -64,7 +65,7 @@ export function renderDashboard(args) {
       <footer class="domain-task-summary-footer">
         <span>${pending ? '请进入领域明细继续细分责任人。' : '页面均已有当前责任人。'}</span>
         <button class="button tertiary compact" type="button" data-domain-task-open="${escapeHtml(taskId)}" aria-controls="${escapeHtml(dialogId)}">
-          ${icon('list-tree')}查看页面任务
+          ${uiIcon('action.view')}查看页面任务
         </button>
       </footer>
     </article>`;
@@ -79,7 +80,7 @@ export function renderDashboard(args) {
       <div class="domain-task-dialog-shell">
         <header class="domain-task-dialog-header">
           <div><span class="domain-task-eyebrow">领域建设任务</span><h2 id="${escapeHtml(dialogId)}-title">${escapeHtml(task.techDomainName || task.techDomainId || '技术领域')}</h2><p>负责人：${escapeHtml(task.domainLeaderName || '待配置负责人')} · ${total} 个页面</p></div>
-          <button class="icon-button domain-task-dialog-close" type="button" data-domain-task-close aria-label="关闭领域任务明细" title="关闭"><i data-lucide="x" aria-hidden="true"></i></button>
+          <button class="icon-button domain-task-dialog-close" type="button" data-domain-task-close aria-label="关闭领域任务明细" title="关闭">${uiIcon('action.close')}</button>
         </header>
         <dl class="domain-task-dialog-metrics">
           <div><dt>页面总数</dt><dd>${total}</dd></div>
@@ -93,7 +94,7 @@ export function renderDashboard(args) {
             <label class="domain-task-assignee"><span>页面责任人</span><select data-domain-task-assignee data-task-id="${escapeHtml(taskId)}" data-item-id="${escapeHtml(item.id)}">${assigneeOptions(task, item)}</select></label>
           </li>`).join('')}</ul>` : '<p class="muted">当前领域暂无页面建设任务。</p>'}
         </div>
-        <footer class="domain-task-dialog-footer"><span class="domain-task-status" role="status"></span><button class="button tertiary" type="button" data-domain-task-close>关闭</button></footer>
+        <footer class="domain-task-dialog-footer"><span class="domain-task-status" role="status"></span><button class="button tertiary" type="button" data-domain-task-close>${uiIcon('action.close')}关闭</button></footer>
       </div>
     </dialog>`;
   };

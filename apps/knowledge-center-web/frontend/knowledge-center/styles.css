@@ -326,6 +326,13 @@ body.review-focus-mode #sidebar,body.review-focus-mode #sidebar-restore,body.rev
 .asset-workspace-list > .asset-pagination { justify-content: space-between; padding: 12px 14px; border-top: 1px solid var(--color-border); }
 .asset-list-heading { min-height: 36px; padding: 9px 14px; border-bottom: 1px solid var(--color-border); color: var(--color-text-secondary); font-size: 12px; }
 .asset-pagination label { display: flex; align-items: center; gap: 4px; }
+.kc-page-jump { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: 0; color: var(--color-text-secondary); font-size: 12px; }
+.kc-page-jump label { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.kc-page-jump input { width: 58px; min-height: 36px; box-sizing: border-box; padding: 4px 6px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); font: inherit; text-align: center; }
+.kc-page-jump [data-kc-page-jump-error] { color: var(--color-danger); }
+.kc-page-jump [data-kc-page-jump-error]:empty { display: none; }
+.kc-page-jump :is(input, button):focus-visible { outline: 2px solid var(--color-brand); outline-offset: 2px; }
+.kc-page-jump button { min-height: 36px; }
 .asset-pagination select { min-height: 32px; border: 1px solid var(--color-border); background: var(--color-surface); color: inherit; }
 .asset-detail-sections { display: grid; gap: 18px; margin-top: 18px; }
 .asset-detail-sections h3 { margin: 0 0 7px; color: var(--color-text-secondary); font-size: 12px; font-weight: 650; }

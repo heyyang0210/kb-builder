@@ -1,4 +1,5 @@
 import { dataNote, panel, pendingState } from '../../common/components/ui.js';
+import { renderPageJump } from '../../common/page-jump.js';
 import { escapeHtml } from '../../common/utils/dom.js';
 
 function listItems(value) { return Array.isArray(value) ? value : (Array.isArray(value?.items) ? value.items : []); }
@@ -76,7 +77,7 @@ function renderBatchDetail(detail) {
   };
   const previousPage = filesPage > 1 ? `<a class="button tertiary" data-cleaning-files-page="${filesPage - 1}" href="${filePageLink(filesPage - 1)}">上一页</a>` : '<span class="button tertiary is-disabled" aria-disabled="true">上一页</span>';
   const nextPage = filesPage < pages ? `<a class="button tertiary" data-cleaning-files-page="${filesPage + 1}" href="${filePageLink(filesPage + 1)}">下一页</a>` : '<span class="button tertiary is-disabled" aria-disabled="true">下一页</span>';
-  const filePagination = pages > 1 ? `<nav class="cleaning-pagination" aria-label="批次文件分页"><span>第 ${filesPage} / ${pages} 页，共 ${filesTotal} 个文件</span>${previousPage}${nextPage}</nav>` : '';
+  const filePagination = pages > 1 ? `<nav class="cleaning-pagination" aria-label="批次文件分页"><span>第 ${filesPage} / ${pages} 页，共 ${filesTotal} 个文件</span>${previousPage}${nextPage}${renderPageJump(filesPage, pages, 'cleaning-files')}</nav>` : '';
   const recommended = route ? `<a class="button primary" href="${escapeHtml(route)}">${escapeHtml(summary.recommendedAction.label || '继续处理')}</a>` : '';
   const sourceSnapshot = batch.sourceSnapshot || batch.source_snapshot || {};
   const created = batch.createdAt || batch.created_at;
@@ -121,12 +122,12 @@ export function renderCleaning({ cleaningProjection, cleaningDetailProjection = 
   const batchPageSize = Math.max(1, Number(cleaningProjection.batches?.pageSize) || 20);
   const batchTotal = Math.max(0, Number(cleaningProjection.batches?.total) || batches.length);
   const batchPages = Math.max(1, Math.ceil(batchTotal / batchPageSize));
-  const batchPagination = batchPages > 1 ? `<nav class="cleaning-pagination" aria-label="资料批次分页"><span>第 ${batchPage} / ${batchPages} 页，共 ${batchTotal} 批</span><button class="button tertiary" type="button" data-cleaning-page="${batchPage - 1}" data-cleaning-page-kind="batches" ${batchPage <= 1 ? 'disabled' : ''}>上一页</button><button class="button tertiary" type="button" data-cleaning-page="${batchPage + 1}" data-cleaning-page-kind="batches" ${batchPage >= batchPages ? 'disabled' : ''}>下一页</button></nav>` : '';
+  const batchPagination = batchPages > 1 ? `<nav class="cleaning-pagination" aria-label="资料批次分页"><span>第 ${batchPage} / ${batchPages} 页，共 ${batchTotal} 批</span><button class="button tertiary" type="button" data-cleaning-page="${batchPage - 1}" data-cleaning-page-kind="batches" ${batchPage <= 1 ? 'disabled' : ''}>上一页</button><button class="button tertiary" type="button" data-cleaning-page="${batchPage + 1}" data-cleaning-page-kind="batches" ${batchPage >= batchPages ? 'disabled' : ''}>下一页</button>${renderPageJump(batchPage, batchPages, 'cleaning-batches')}</nav>` : '';
   const datasetPage = Math.max(1, Number(cleaningProjection.datasets?.page) || 1);
   const datasetPageSize = Math.max(1, Number(cleaningProjection.datasets?.pageSize) || 20);
   const datasetTotal = Math.max(0, Number(cleaningProjection.datasets?.total) || datasets.length);
   const datasetPages = Math.max(1, Math.ceil(datasetTotal / datasetPageSize));
-  const datasetPagination = datasetPages > 1 ? `<nav class="cleaning-pagination" aria-label="知识库版本分页"><span>第 ${datasetPage} / ${datasetPages} 页，共 ${datasetTotal} 个版本</span><button class="button tertiary" type="button" data-cleaning-page="${datasetPage - 1}" data-cleaning-page-kind="datasets" ${datasetPage <= 1 ? 'disabled' : ''}>上一页</button><button class="button tertiary" type="button" data-cleaning-page="${datasetPage + 1}" data-cleaning-page-kind="datasets" ${datasetPage >= datasetPages ? 'disabled' : ''}>下一页</button></nav>` : '';
+  const datasetPagination = datasetPages > 1 ? `<nav class="cleaning-pagination" aria-label="知识库版本分页"><span>第 ${datasetPage} / ${datasetPages} 页，共 ${datasetTotal} 个版本</span><button class="button tertiary" type="button" data-cleaning-page="${datasetPage - 1}" data-cleaning-page-kind="datasets" ${datasetPage <= 1 ? 'disabled' : ''}>上一页</button><button class="button tertiary" type="button" data-cleaning-page="${datasetPage + 1}" data-cleaning-page-kind="datasets" ${datasetPage >= datasetPages ? 'disabled' : ''}>下一页</button>${renderPageJump(datasetPage, datasetPages, 'cleaning-datasets')}</nav>` : '';
   const indexBody = indexStats?.status === 'unavailable'
     ? pendingState('索引状态暂时不可用', indexStats.error?.message || '资料加工服务未返回索引统计。')
     : `<div class="metric-grid"><div class="metric"><span>索引条目</span><strong>${escapeHtml(indexStats?.total ?? indexStats?.count ?? indexStats?.entries ?? '未提供')}</strong></div><div class="metric"><span>图谱节点</span><strong>${escapeHtml(indexStats?.graphNodes ?? indexStats?.nodes ?? '未提供')}</strong></div><div class="metric"><span>图谱边</span><strong>${escapeHtml(indexStats?.graphEdges ?? indexStats?.edges ?? '未提供')}</strong></div></div><p class="muted">索引与图谱状态来自资料加工服务，不在统一入口重新计算。</p>`;

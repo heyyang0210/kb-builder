@@ -55,8 +55,14 @@ function bindDirectoryTree(tree) {
   const topList = () => [...tree.querySelectorAll('ul')].find(list => !list.parentElement.closest('ul')) || tree;
   const isVisible = item => {
     if (!item || item.hidden || item.closest('[hidden]')) return false;
-    const parentDetails = item.parentElement?.closest('details');
-    return !parentDetails || parentDetails.open;
+    let parentDetails = item.matches('summary')
+      ? item.parentElement?.parentElement?.closest('details')
+      : item.parentElement?.closest('details');
+    while (parentDetails) {
+      if (!parentDetails.open) return false;
+      parentDetails = parentDetails.parentElement?.closest('details');
+    }
+    return true;
   };
   const treeItems = () => [...tree.querySelectorAll('[role="treeitem"]')].filter(isVisible);
   const updateTreeItemState = () => {
@@ -94,8 +100,9 @@ function bindDirectoryTree(tree) {
     const items = treeItems();
     const index = items.indexOf(item);
     if (index < 0) return;
-    const details = item.closest('details');
-    const parentItem = item.closest('li')?.parentElement?.closest('[role="treeitem"]');
+    const details = item.matches('summary') ? item.parentElement : null;
+    const parentDetails = item.closest('li')?.parentElement?.closest('details');
+    const parentItem = parentDetails?.querySelector(':scope > summary[role="treeitem"]');
     const firstChild = details?.querySelector(':scope > ul > li:not([hidden]) [role="treeitem"]');
     switch (event.key) {
       case 'ArrowDown':

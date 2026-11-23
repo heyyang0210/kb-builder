@@ -1,6 +1,7 @@
 import { dataNote, panel, pendingState } from '../../common/components/ui.js';
 import { uiIcon } from '../../common/ui-system.js';
 import { escapeHtml } from '../../common/utils/dom.js';
+import { renderPageJump } from '../../common/page-jump.js';
 
 const ROLE_DISPLAY_NAMES = {
   SUPER_ADMIN: '超级管理员',
@@ -360,6 +361,7 @@ export function renderPermissionResults(permissionProjection = {}, selectedUserI
     <span>第 ${currentPage} / ${totalPages} 页</span>
     <button class="button link compact" type="button" data-permission-page="${currentPage - 1}" ${currentPage <= 1 ? 'disabled' : ''}>上一页</button>
     <button class="button link compact" type="button" data-permission-page="${currentPage + 1}" ${currentPage >= totalPages ? 'disabled' : ''}>下一页</button>
+    ${renderPageJump(currentPage, totalPages, 'permissions')}
   </nav>` : '';
   return { listHtml: `${listHtml}${paginationHtml}`, detailHtml, selectedUserId: selectedUser?.id || null, page: currentPage, total: serverPagination ? Number(serverPagination.total) || 0 : filteredUsers.length, totalPages };
 }
@@ -449,6 +451,7 @@ function renderGitLabTab(gitlabProjection = {}, platformAdmin = false, listState
       <button data-gitlab-page="prev" ${page <= 1 ? 'disabled' : ''}>上一页</button>
       <span>第 ${page} / ${totalPages} 页</span>
       <button data-gitlab-page="next" ${page >= totalPages ? 'disabled' : ''}>下一页</button>
+      ${renderPageJump(page, totalPages, 'gitlab-connections')}
     </div>` : ''}</div>
   </div>`;
   const detailHtml = selected ? `<div class="gitlab-connection-backdrop" data-gitlab-drawer-close></div><aside class="gitlab-detail-panel gitlab-connection-drawer" id="gitlab-detail-container" role="dialog" aria-modal="true" aria-label="${escapeHtml(selected.name || '仓库连接')}详情"><button class="icon-button gitlab-drawer-close" type="button" data-gitlab-drawer-close aria-label="关闭详情" title="关闭详情"><i data-lucide="x" aria-hidden="true"></i></button>${renderGitLabDetail(selected, platformAdmin, transientVerification, gitlabProjection.oauthStatus, gitlabProjection.oauthConfig)}</aside>` : '';
@@ -494,7 +497,7 @@ function renderVersionMappingTab(projection, platformAdmin, state) {
       <div class="gitlab-version-toolbar"><label><i data-lucide="search" aria-hidden="true"></i><input type="search" value="${escapeHtml(state.mappingSearch || '')}" data-version-mapping-search placeholder="搜索产品、版本、仓库或分支" aria-label="搜索版本映射"></label><select data-version-mapping-status aria-label="筛选映射状态"><option value="">全部状态</option>${[['active', '已启用'], ['draft', '草案'], ['disabled', '已停用'], ['superseded', '历史修订']].map(([value, label]) => `<option value="${value}" ${state.mappingStatus === value ? 'selected' : ''}>${label}</option>`).join('')}</select><span>${filtered.length} / ${items.length} 条映射</span>${platformAdmin ? '<button class="icon-button" type="button" data-version-mapping-add title="新增映射" aria-label="新增映射"><i data-lucide="plus" aria-hidden="true"></i></button>' : ''}</div>
       <p class="gitlab-version-feedback" role="status" aria-live="polite">${escapeHtml(state.mappingFeedback || projection.mappingError || '')}</p>${form}
       <div class="gitlab-version-table-wrap"><table class="gitlab-version-table"><thead><tr><th>产品</th><th>PingCode 版本</th><th>GitLab 仓库</th><th>目标分支</th><th>状态</th><th>操作</th></tr></thead><tbody>${rows || `<tr><td colspan="6" class="gitlab-version-empty">${projection.mappingError ? '映射读取失败，请检查数据库迁移和服务状态。' : '暂无映射'}</td></tr>`}</tbody></table></div>
-      <div class="gitlab-version-footer"><span>共 ${items.length} 条映射</span>${pageCount > 1 ? `<nav class="gitlab-version-pagination" aria-label="版本映射分页"><button class="button secondary" type="button" data-version-mapping-page="${page - 1}" ${page === 1 ? 'disabled' : ''}>上一页</button><span>第 ${page} / ${pageCount} 页</span><button class="button secondary" type="button" data-version-mapping-page="${page + 1}" ${page === pageCount ? 'disabled' : ''}>下一页</button></nav>` : `<span>第 ${page} 页</span>`}</div>
+      <div class="gitlab-version-footer"><span>共 ${items.length} 条映射</span>${pageCount > 1 ? `<nav class="gitlab-version-pagination" aria-label="版本映射分页"><button class="button secondary" type="button" data-version-mapping-page="${page - 1}" ${page === 1 ? 'disabled' : ''}>上一页</button><span>第 ${page} / ${pageCount} 页</span><button class="button secondary" type="button" data-version-mapping-page="${page + 1}" ${page === pageCount ? 'disabled' : ''}>下一页</button>${renderPageJump(page, pageCount, 'gitlab-mappings')}</nav>` : `<span>第 ${page} 页</span>`}</div>
       ${archived.length ? `<details class="gitlab-version-archive"><summary><i data-lucide="archive" aria-hidden="true"></i>已归档（${archived.length}）<i data-lucide="chevron-down" aria-hidden="true"></i></summary><div class="gitlab-version-archive-list">${archived.map(item => { const connection = connections.find(value => value.id === item.connectionId); return `<div class="gitlab-version-archive-row"><span><strong>${escapeHtml(item.productCode)}</strong> · ${escapeHtml(item.matchKind === 'ALL' ? '所有版本' : item.version)} · ${escapeHtml(connection?.name || '连接已失效')} / ${escapeHtml(item.branch)}</span>${platformAdmin ? `<button type="button" class="icon-button" data-version-mapping-action="restore" data-version-mapping-id="${item.id}" title="恢复为已停用" aria-label="恢复 ${escapeHtml(item.productCode)} 映射为已停用"><i data-lucide="rotate-ccw" aria-hidden="true"></i></button>` : ''}</div>`; }).join('')}</div></details>` : ''}
     </section>
     <dialog class="gitlab-version-delete-dialog" data-version-mapping-delete-dialog aria-labelledby="version-mapping-delete-title"><h4 id="version-mapping-delete-title">删除草案？</h4><p>删除后，这条草案将不再出现在版本映射列表中。</p><div class="gitlab-version-delete-target" data-version-mapping-delete-target></div><div class="gitlab-version-form-actions"><button class="button secondary" type="button" data-version-mapping-delete-cancel>取消</button><button class="button danger" type="button" data-version-mapping-action="delete">删除草案</button></div></dialog>
@@ -519,7 +522,8 @@ function renderVerificationStatus(connection, transientVerification) {
   if (verification.status === 'pending_auth') return `<div class="gitlab-verification pending" role="status"><strong>连接已保存，待完成 GitLab 授权</strong><span>${escapeHtml(verification.message || '请先完成平台 OAuth 配置。')}</span></div>`;
   const verifiedAt = verification.verifiedAt ? new Date(verification.verifiedAt).toLocaleString('zh-CN', { hour12: false }) : '-';
   if (verification.status === 'verified') {
-    return `<div class="gitlab-verification success" role="status" aria-live="polite"><strong>读取验证成功</strong><span>${escapeHtml(verifiedAt)}</span></div>`;
+    const branches = Number.isInteger(verification.branchCount) && verification.branchCount >= 0 ? `<span>${verification.branchCount} 个分支</span>` : '';
+    return `<div class="gitlab-verification success" role="status" aria-live="polite"><strong>读取验证成功</strong>${branches}<span>${escapeHtml(verifiedAt)}</span></div>`;
   }
   return `<div class="gitlab-verification failure" role="alert"><strong>验证失败</strong><span>${escapeHtml(verification.error?.message || '连接暂时不可用，请重试。')} · ${escapeHtml(verifiedAt)}</span><span>修复建议：${escapeHtml(verification.error?.recovery || '检查连接配置和平台服务日志，修复后重新验证。')}</span></div>`;
 }

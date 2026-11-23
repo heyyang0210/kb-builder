@@ -86,8 +86,10 @@ export function openProductionWritingPage(options) {
           <p data-ai-status role="status" aria-live="polite"></p>
           <p class="handbook-writing-execution-summary"><span data-ai-phase></span> · <span data-ai-elapsed></span></p>
           <p data-ai-preview-wait hidden></p>
-          <ol class="handbook-writing-agent-events" data-ai-agent-events hidden aria-label="Codex 实际活动"></ol>
-          <div data-ai-stages></div>
+          <details class="handbook-writing-execution-details"><summary>执行详情</summary>
+            <ol class="handbook-writing-agent-events" data-ai-agent-events hidden aria-label="Codex 实际活动"></ol>
+            <div data-ai-stages></div>
+          </details>
           <details data-ai-preview-panel hidden open><summary>生成内容预览 · 完成后可比较保存</summary><pre data-ai-preview aria-label="生成内容预览"></pre><p data-ai-preview-notice></p></details>
         </section>
         <section class="handbook-writing-transcript" data-ai-history hidden aria-label="此前的 AI 对话"><div data-ai-history-list></div></section>
@@ -139,7 +141,6 @@ export function openProductionWritingPage(options) {
   find('candidate').querySelector('h3').textContent = '正文修订';
   find('candidate').querySelector('h3').hidden = true;
   find('candidate').querySelector('.handbook-writing-comparison').hidden = true;
-  let editingCandidateIndex = null;
   function changeList() { return reviewSegments.filter(segment => segment.type === 'change'); }
   function syncReviewFragment() { find('fragment').value = assembleWritingChanges(reviewSegments); }
   function moveChange(step) {
@@ -169,28 +170,24 @@ export function openProductionWritingPage(options) {
       const block = document.createElement('section'); block.className = `handbook-review-change is-${segment.decision}`; block.dataset.aiChange = String(index); block.tabIndex = -1;
       block.setAttribute('aria-label', `第 ${index + 1} 处修改`);
       if (segment.decision !== 'accepted' && segment.before) block.append(appendMarkdown(segment.before, segment.decision === 'pending' ? 'handbook-review-removed' : 'handbook-review-context'));
-      if (editingCandidateIndex === index) {
-        const form = document.createElement('div'); form.className = 'handbook-review-inline-editor';
-        const label = document.createElement('label'); label.className = 'sr-only'; label.textContent = '修改候选内容';
-        const editor = document.createElement('textarea'); editor.dataset.aiInlineEditor = ''; editor.rows = 5; editor.setAttribute('aria-label', `修改第 ${index + 1} 处候选内容`); editor.value = segment.after;
-        const editorActions = document.createElement('div'); editorActions.className = 'handbook-review-inline-actions';
-        const save = document.createElement('button'); save.type = 'button'; save.className = 'button'; save.textContent = '保存修改'; save.dataset.aiInlineSave = '';
-        save.onclick = () => { segment.after = editor.value; segment.decision = 'pending'; editingCandidateIndex = null; syncReviewFragment(); renderInlineReview(); controls(); reviewSurface.querySelector(`[data-ai-change="${index}"]`)?.focus({ preventScroll: true }); };
-        const cancelEdit = document.createElement('button'); cancelEdit.type = 'button'; cancelEdit.className = 'button secondary'; cancelEdit.textContent = '取消修改';
-        cancelEdit.onclick = () => { editingCandidateIndex = null; renderInlineReview(); controls(); reviewSurface.querySelector(`[data-ai-change="${index}"]`)?.focus({ preventScroll: true }); };
-        label.append(editor); editorActions.append(save, cancelEdit); form.append(label, editorActions); block.append(form);
-      } else if (segment.decision !== 'rejected' && segment.after) block.append(appendMarkdown(segment.after, 'handbook-review-added'));
-      const actions = document.createElement('div'); actions.className = 'handbook-review-change-actions';
-      if (editingCandidateIndex !== index) {
-        const edit = document.createElement('button'); edit.type = 'button'; edit.className = 'handbook-review-edit'; edit.textContent = '编辑'; edit.setAttribute('aria-label', `编辑第 ${index + 1} 处修改`);
-        edit.disabled = !!job?.adopted || busy; edit.onclick = () => { editingCandidateIndex = index; reviewIndex = index; renderInlineReview(); controls(); reviewSurface.querySelector('[data-ai-inline-editor]')?.focus(); };
-        actions.append(edit);
+      if (segment.decision !== 'rejected') {
+        const editor = document.createElement('textarea'); editor.className = 'handbook-review-added handbook-review-inline-editor'; editor.dataset.aiInlineEditor = ''; editor.rows = 1;
+        editor.setAttribute('aria-label', `第 ${index + 1} 处候选内容`); editor.value = segment.after; editor.disabled = !!job?.adopted || busy;
+        const resize = () => { editor.style.height = 'auto'; editor.style.height = `${editor.scrollHeight}px`; };
+        editor.addEventListener('input', () => {
+          segment.after = editor.value; segment.decision = 'pending'; reviewIndex = index; block.className = 'handbook-review-change is-pending';
+          block.querySelectorAll('[aria-pressed]').forEach(button => button.setAttribute('aria-pressed', 'false'));
+          syncReviewFragment(); renderReviewCount(); resize();
+          provenancePanel.innerHTML = '<p>候选已人工修改；保存时记录修改区间。原候选依据可在恢复任务后查看，修改内容需重新核验。</p>';
+        });
+        block.append(editor); requestAnimationFrame(resize);
       }
+      const actions = document.createElement('div'); actions.className = 'handbook-review-change-actions';
       for (const [decision, symbol, label] of [['accepted', '✓', '接受'], ['rejected', '×', '拒绝']]) {
         const button = document.createElement('button'); button.type = 'button'; button.textContent = symbol; button.setAttribute('aria-label', `${label}第 ${index + 1} 处修改`); button.setAttribute('aria-pressed', String(segment.decision === decision));
-        button.disabled = !!job?.adopted || busy || editingCandidateIndex === index; button.onclick = () => { segment.decision = decision; reviewIndex = index; syncReviewFragment(); renderInlineReview(); reviewSurface.querySelector(`[data-ai-change="${index}"]`)?.focus({ preventScroll: true }); }; actions.append(button);
+        button.disabled = !!job?.adopted || busy; button.onclick = () => { segment.decision = decision; reviewIndex = index; syncReviewFragment(); renderInlineReview(); reviewSurface.querySelector(`[data-ai-change="${index}"]`)?.focus({ preventScroll: true }); }; actions.append(button);
       }
-      if (editingCandidateIndex !== index) block.append(actions); reviewSurface.append(block);
+      block.append(actions); reviewSurface.append(block);
     }
     reviewSurface.append(appendMarkdown(original.slice(range.end), 'handbook-review-context'));
     find('rich-editor').hidden = true; find('markdown').hidden = true; find('format').hidden = true; find('markdown-preview-toggle').hidden = true;
@@ -352,7 +349,7 @@ export function openProductionWritingPage(options) {
   conversation.dataset.scrollRegion = 'panel';
   conversation.tabIndex = 0;
   const currentAnswer = document.createElement('article'); currentAnswer.className = 'handbook-writing-current-answer'; currentAnswer.hidden = true;
-  conversation.append(recommendation, find('history'), requestMessage, find('execution'), currentAnswer, viewCandidate);
+  conversation.append(find('history'), requestMessage, find('execution'), currentAnswer, viewCandidate);
   const chatTools = createAIConversationTools({ host: dialog.querySelector('.handbook-writing-layout'), conversation, context,
     getCurrentJob: () => job, openHistory: (id, expanded) => openHistoryItem(id, expanded),
     onDeleted: id => { if (job?.jobId === id) { resetCandidate(); currentAnswer.hidden = true; } void refreshHistory(); },
@@ -376,7 +373,7 @@ export function openProductionWritingPage(options) {
   const footer = composer.querySelector('.handbook-writing-composer-footer');
   if (footer) footer.remove();
   const inputArea = document.createElement('div'); inputArea.className = 'handbook-writing-input-area';
-  inputArea.append(rangeIndicator, composer);
+  inputArea.append(recommendation, rangeIndicator, composer);
   const tools = document.createElement('div'); tools.className = 'handbook-writing-tools';
   const operationMenu = document.createElement('details'); operationMenu.dataset.aiOperationMenu = '';
   const operationTrigger = document.createElement('summary');
@@ -663,8 +660,7 @@ export function openProductionWritingPage(options) {
     referenceToggle.disabled = !!(busy || running);
     for (const box of find('skill-list').querySelectorAll('input')) box.disabled = busy || running;
     find('origin-recheck').disabled = busy || running || originChecking;
-    const startBlockedReason = editingCandidateIndex !== null ? '请先保存或取消正文中的修改。'
-      : busy ? '正在准备任务，请稍候。'
+    const startBlockedReason = busy ? '正在准备任务，请稍候。'
       : running ? '任务正在生成中，可点击停止图标中断。'
       : originChecking ? '正在检查仓库来源，请稍候。'
       : !originReady ? (find('origin-message').textContent || '请先完成仓库来源检查。')
@@ -737,7 +733,7 @@ export function openProductionWritingPage(options) {
       const item = document.createElement('li');
       item.dataset.kind = event.kind;
       const label = event.kind === 'progress' ? 'Codex' : event.kind === 'error' ? '运行错误' : event.tool === 'mcpToolCall' ? '知识库工具' : event.tool === 'commandExecution' ? '命令执行' : event.tool === 'fileChange' ? '文件写入' : event.tool === 'webSearch' ? '网页检索' : '知识库工具';
-      const detail = event.kind === 'progress' || event.kind === 'error' ? event.text : `${event.tool && !['mcpToolCall', 'commandExecution', 'fileChange', 'webSearch'].includes(event.tool) ? `${event.tool} · ` : ''}${event.kind === 'tool-started' ? '调用中' : event.status === 'failed' ? '调用失败' : '调用完成'}`;
+      const detail = event.kind === 'progress' || event.kind === 'error' ? event.text : `${event.tool && !['mcpToolCall', 'commandExecution', 'fileChange', 'webSearch'].includes(event.tool) ? `${event.tool} · ` : ''}${event.kind === 'tool-started' ? '调用中' : event.status === 'failed' ? '调用失败' : '调用完成'}${Number.isSafeInteger(event.exitCode) ? ` · 退出码 ${event.exitCode}` : ''}`;
       const heading = document.createElement('strong'); heading.textContent = label;
       const content = document.createElement('span'); content.textContent = detail || '';
       item.append(heading, content); return item;
@@ -965,7 +961,16 @@ export function openProductionWritingPage(options) {
     const modes = doc.createElement('div'); modes.className = 'modes'; modes.setAttribute('role', 'group'); modes.setAttribute('aria-label', '预览模式');
     const readingButton = doc.createElement('button'); readingButton.type = 'button'; readingButton.textContent = '阅读视图'; readingButton.setAttribute('aria-pressed', 'true');
     const rawButton = doc.createElement('button'); rawButton.type = 'button'; rawButton.textContent = '原始内容'; rawButton.setAttribute('aria-pressed', 'false');
-    modes.append(readingButton, rawButton); header.append(title, origin, imageStatus, modes);
+    const exportButton = doc.createElement('button'); exportButton.type = 'button'; exportButton.className = 'handbook-reference-export'; exportButton.textContent = '导出 Markdown';
+    exportButton.setAttribute('aria-label', `导出 Markdown：${source.title || '参考资料'}`);
+    exportButton.onclick = () => {
+      const safeName = String(source.title || '参考资料').replace(/[\\/:*?"<>|\x00-\x1f]/g, '_').trim().slice(0, 100) || '参考资料';
+      const blob = new page.Blob([String(source.content || '')], { type: 'text/markdown;charset=utf-8' });
+      const href = page.URL.createObjectURL(blob);
+      const link = doc.createElement('a'); link.href = href; link.download = `${safeName}.md`; link.hidden = true;
+      doc.body.append(link); link.click(); link.remove(); page.setTimeout(() => page.URL.revokeObjectURL(href), 1000);
+    };
+    modes.append(readingButton, rawButton); header.append(title, origin, imageStatus, modes, exportButton);
     const main = doc.createElement('main'); const reading = doc.createElement('article'); reading.id = 'reading'; reading.innerHTML = previewMarkdown.parse(String(source.content || ''));
     for (const image of reading.querySelectorAll('img')) image.addEventListener('error', () => {
       const fallback = doc.createElement('span'); fallback.textContent = `[图片未能读取：${image.alt || '图片'}]`; image.replaceWith(fallback);
@@ -1144,7 +1149,7 @@ export function openProductionWritingPage(options) {
   }
   for (const event of ['select', 'keyup', 'pointerup']) find('original').addEventListener(event, trackMarkdownSelection);
   document.addEventListener('selectionchange', trackSelection);
-  function resetCandidate() { clearInterval(feedbackTimer); feedbackJob = null; job = null; fallbackCandidate = null; pendingStart = null; editingCandidateIndex = null; remember(null); find('candidate').hidden = true; currentAnswer.hidden = true; requestMessage.hidden = true; dialog.classList.remove('is-reviewing'); find('format').hidden = false; setWritingMode(writingMode, false); reviewSegments = []; find('quality-result').textContent = ''; controls(); }
+  function resetCandidate() { clearInterval(feedbackTimer); feedbackJob = null; job = null; fallbackCandidate = null; pendingStart = null; remember(null); find('candidate').hidden = true; currentAnswer.hidden = true; requestMessage.hidden = true; dialog.classList.remove('is-reviewing'); find('format').hidden = false; setWritingMode(writingMode, false); reviewSegments = []; find('quality-result').textContent = ''; controls(); }
   find('operation').onchange = () => {
     resetCandidate();
     pendingStart = null;

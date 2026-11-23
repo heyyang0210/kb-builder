@@ -29,6 +29,7 @@ import { initViewportRuntime } from './common/viewport-runtime.js';
 import { initScrollRuntime } from './common/scroll-runtime.js';
 import { initDismissibleMenus } from './common/dismissible-menu.js';
 import { hydrateSemanticIcons, uiIcon } from './common/ui-system.js';
+import { readPageJump } from './common/page-jump.js';
 import { loadDocumentTaskWorkspace, renderDocumentTasks } from './modules/document-tasks/view.js';
 import { loadDocumentTask, loadDocumentTaskConfig, saveDocumentTaskConfig, taskWrite } from './common/api/document-tasks-api.js';
 import { loadMyTasks, MY_TASK_SOURCE_COUNT, setRefreshHandler, setResponsibleHandler, setSyncHandler, getMyTaskQueryKey, getSelectedResponsibleId, resetResponsibleSelection, updateMyTasksProjection } from './modules/dashboard/my-tasks.js';
@@ -2632,6 +2633,40 @@ document.addEventListener('dismissible-menu-close', event => {
       && !document.querySelector('.platform-tab-menu details[open]')) queueMicrotask(render);
 });
 
+document.addEventListener('submit', async event => {
+  const form = event.target.closest('[data-kc-page-jump]');
+  if (!form || !['assets', 'cleaning-batches', 'cleaning-datasets', 'cleaning-files', 'permissions', 'gitlab-connections', 'gitlab-mappings', 'review'].includes(form.dataset.kcPageJump)) return;
+  event.preventDefault();
+  const page = readPageJump(form, Number(form.elements.page.max));
+  if (!page) return;
+  const url = new URL(window.location.href);
+  if (form.dataset.kcPageJump === 'assets' && appState.activeView === 'assets') {
+    url.searchParams.set('page', String(page));
+    history.pushState({ view: 'assets' }, '', url);
+    await loadAssetCatalog();
+  } else if (form.dataset.kcPageJump.startsWith('cleaning-') && appState.activeView === 'cleaning') {
+    const param = { 'cleaning-batches': 'batchPage', 'cleaning-datasets': 'datasetPage', 'cleaning-files': 'filePage' }[form.dataset.kcPageJump];
+    if (!param) return;
+    url.searchParams.set(param, String(page));
+    history.pushState({ view: 'cleaning' }, '', url);
+    await loadCleaningRoute();
+  } else if (form.dataset.kcPageJump === 'permissions' && appState.activeView === 'platform') {
+    appState.permissionListState.page = page;
+    await loadGitLabAdmin();
+  } else if (form.dataset.kcPageJump === 'gitlab-connections' && appState.activeView === 'platform') {
+    appState.gitlabListState.page = page;
+    render();
+  } else if (form.dataset.kcPageJump === 'gitlab-mappings' && appState.activeView === 'platform') {
+    appState.gitlabListState.mappingPage = page;
+    render();
+  } else if (form.dataset.kcPageJump === 'review') {
+    const targetUrl = new URL(form.action, window.location.href);
+    for (const [key, value] of new FormData(form)) targetUrl.searchParams.set(key, value);
+    targetUrl.searchParams.set('page', String(page));
+    window.location.assign(targetUrl);
+  }
+});
+
 document.addEventListener('click', async event => {
   const openOutlineMenu = document.querySelector('[data-outline-context-menu]:not([hidden])');
   if (openOutlineMenu && !openOutlineMenu.contains(event.target)) openOutlineMenu.hidden = true;
@@ -3214,6 +3249,8 @@ document.addEventListener('click', async event => {
   const outlineStage = event.target.closest('[data-outline-stage]');
   if (outlineStage) {
     event.preventDefault();
+    const search = document.querySelector('[data-outline-search]')?.value?.trim();
+    if (search !== undefined) appState.outlineListState.search = search;
     appState.outlineListState.statusFilter = outlineStage.dataset.outlineStage || '';
     const url = new URL('/knowledge-center/outlines', window.location.origin);
     if (appState.outlineListState.search) url.searchParams.set('q', appState.outlineListState.search);

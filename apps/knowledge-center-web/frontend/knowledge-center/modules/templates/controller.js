@@ -145,16 +145,18 @@ export function createTemplateController({ appState, render, canPerform }) {
     try {
       const result = await api.loadTemplates({ summary: '1' });
       if (ticket !== request) return;
-      const items = result.data || [];
+      const items = (result.data || []).filter(item => item.status !== 'deleted');
       const shouldOpenTemplate = Boolean(id) || ui.tab === 'editor' && ui.draftKey && ui.draftKey !== 'new';
-      const target = id || (shouldOpenTemplate ? ui.draftKey || items.find(item => item.status === 'active')?.id || items[0]?.id : null);
+      const target = id ? (items.some(item => item.id === id) ? id : null)
+        : shouldOpenTemplate && items.some(item => item.id === ui.draftKey) ? ui.draftKey
+          : shouldOpenTemplate ? items.find(item => item.status === 'active')?.id || items[0]?.id : null;
       // summary=1 只提供列表元数据；仅非摘要对象才能直接作为选中详情使用。
       const listed = items.find(item => item.id === target);
       const detail = !target ? null : hasContent(listed) ? listed : (await api.loadTemplate(target)).data;
       if (ticket !== request) return;
       if (target && !hasContent(detail)) throw new Error('模板详情未返回正文，请刷新后重试。');
       appState.templateProjection = { items, selected: detail };
-      if (id) ui.tab = 'editor';
+      if (id) ui.tab = target === id ? 'editor' : 'library';
       if ((id || ui.tab === 'editor') && ui.draftKey !== 'new') ensureDraft(detail);
       ui.historyVersion = null; ui.versions = detail?.versions || [];
       render();

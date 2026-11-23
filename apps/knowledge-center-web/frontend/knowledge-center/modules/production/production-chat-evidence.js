@@ -142,8 +142,8 @@ export function createAIConversationTools({ host, conversation, context, getCurr
     const menu = document.createElement('details'); menu.className = 'handbook-ai-message-more';
     const summary = document.createElement('summary'); summary.innerHTML = ICONS.more; summary.title = '更多操作'; summary.setAttribute('aria-label', '更多操作');
     const options = document.createElement('div');
-    const feedbackButton = document.createElement('button'); feedbackButton.type = 'button'; feedbackButton.textContent = '意见反馈'; feedbackButton.onclick = () => { menu.open = false; feedbackJobId = jobId; feedback.querySelector('textarea').value = ''; feedback.showModal(); feedback.querySelector('textarea').focus(); };
-    const deleteButton = document.createElement('button'); deleteButton.type = 'button'; deleteButton.textContent = '删除对话'; deleteButton.className = 'danger'; deleteButton.disabled = ['queued', 'running'].includes(status); deleteButton.onclick = () => { menu.open = false; deleteJobId = jobId; confirm.showModal(); };
+    const feedbackButton = document.createElement('button'); feedbackButton.type = 'button'; feedbackButton.innerHTML = `${uiIcon('action.feedback')}<span>意见反馈</span>`; feedbackButton.onclick = () => { menu.open = false; feedbackJobId = jobId; feedback.querySelector('textarea').value = ''; feedback.showModal(); feedback.querySelector('textarea').focus(); };
+    const deleteButton = document.createElement('button'); deleteButton.type = 'button'; deleteButton.innerHTML = `${uiIcon('action.delete')}<span>删除对话</span>`; deleteButton.className = 'danger'; deleteButton.disabled = ['queued', 'running'].includes(status); deleteButton.onclick = () => { menu.open = false; deleteJobId = jobId; confirm.showModal(); };
     options.append(feedbackButton, deleteButton); menu.append(summary, options); bar.append(menu);
     return bar;
   }

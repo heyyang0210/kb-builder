@@ -1,4 +1,5 @@
 import { pendingState } from '../../common/components/ui.js';
+import { renderPageJump } from '../../common/page-jump.js';
 import { escapeHtml } from '../../common/utils/dom.js';
 
 const stages = [['asset_created','待创建'],['outline_editing','完善大纲'],['outline_published','大纲已发布'],['content_building','内容构建中'],['handbook_published','已发布']];
@@ -83,7 +84,7 @@ function renderActionPanel(item, admin) {
 
 function renderPagination(catalog) {
   const page=Number(catalog.page||1), pageSize=Number(catalog.pageSize||20), total=Number(catalog.total||0), pages=Math.max(1,Math.ceil(total/pageSize));
-  return `<nav class="asset-pagination" aria-label="手册分页"><span>第 ${page} / ${pages} 页，共 ${total} 本</span><button class="button tertiary compact" type="button" data-asset-page="${page-1}" ${page<=1?'disabled':''}>上一页</button><button class="button tertiary compact" type="button" data-asset-page="${page+1}" ${page>=pages?'disabled':''}>下一页</button><label>每页<select data-asset-page-size><option value="10" ${pageSize===10?'selected':''}>10</option><option value="20" ${pageSize===20?'selected':''}>20</option><option value="50" ${pageSize===50?'selected':''}>50</option></select></label></nav>`;
+  return `<nav class="asset-pagination" aria-label="手册分页"><span>第 ${page} / ${pages} 页，共 ${total} 本</span><button class="button tertiary compact" type="button" data-asset-page="${page-1}" ${page<=1?'disabled':''}>上一页</button><button class="button tertiary compact" type="button" data-asset-page="${page+1}" ${page>=pages?'disabled':''}>下一页</button>${renderPageJump(page, pages, 'assets')}<label>每页<select data-asset-page-size><option value="10" ${pageSize===10?'selected':''}>10</option><option value="20" ${pageSize===20?'selected':''}>20</option><option value="50" ${pageSize===50?'selected':''}>50</option></select></label></nav>`;
 }
 
 

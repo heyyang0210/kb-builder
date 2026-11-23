@@ -1,4 +1,5 @@
 import { markDynamicSelects, cleanupSearchableSelects } from '../../common/searchable-combobox.js';
+import { renderPageJump, readPageJump } from '../../common/page-jump.js';
 
 const TYPES = {
   assign: { name: '任务分派', short: '任务分派' },
@@ -29,28 +30,29 @@ export async function loadMyTasks() {
   if (!response.ok || payload.success === false) throw new Error(payload.error?.message || `HTTP ${response.status}`);
   return { status: 'ok', ...payload.data, queryKey: JSON.stringify(body), timings: { totalMs: +(performance.now() - started).toFixed(1) } };
 }
-const state = { kind: 'all', queue: 'actionable', query: '', page: 1, pageSize: 20, filter: null, filterOpen: false, selectedId: null, expanded: new Set() };
+const state = { kind: 'all', queue: 'actionable', query: '', scopeVersion: '', page: 1, pageSize: 20, filter: null, filterOpen: false, selectedId: null, expanded: new Set() };
 function restoreUrl() {
   if (typeof window === 'undefined' || !/^\/knowledge-center\/?$/.test(window.location.pathname)) return;
   const raw = new URL(window.location.href).searchParams.get('wb');
-  if (!raw) { state.kind = 'all'; state.queue = 'actionable'; state.query = ''; state.page = 1; state.filter = null; selectedResponsibleId = ''; return; }
+  if (!raw) { state.kind = 'all'; state.queue = 'actionable'; state.query = ''; state.scopeVersion = ''; state.page = 1; state.filter = null; selectedResponsibleId = ''; return; }
   try {
     const value = JSON.parse(raw);
-    state.kind = 'all'; state.queue = 'actionable'; state.query = ''; state.page = 1; state.filter = null; selectedResponsibleId = '';
+    state.kind = 'all'; state.queue = 'actionable'; state.query = ''; state.scopeVersion = ''; state.page = 1; state.filter = null; selectedResponsibleId = '';
     if (['all', ...Object.keys(TYPES)].includes(value.kind)) state.kind = value.kind;
     if (['actionable', 'waiting'].includes(value.queue)) state.queue = value.queue;
     if (Number.isSafeInteger(value.page) && value.page > 0) state.page = value.page;
     if (typeof value.query === 'string') state.query = value.query.slice(0, 200);
+    if (typeof value.scopeVersion === 'string') state.scopeVersion = value.scopeVersion.slice(0, 100);
     if (value.filter && typeof value.filter === 'object') state.filter = value.filter;
     if (typeof value.responsibleId === 'string') selectedResponsibleId = value.responsibleId.slice(0, 128);
   } catch (_) { /* Invalid shared URL falls back to default view. */ }
 }
 function saveUrl() {
   const url = new URL(window.location.href);
-  url.searchParams.set('wb', JSON.stringify({ kind: state.kind, queue: state.queue, page: state.page, query: state.query, filter: state.filter, responsibleId: selectedResponsibleId || null }));
+  url.searchParams.set('wb', JSON.stringify({ kind: state.kind, queue: state.queue, page: state.page, query: state.query, scopeVersion: state.scopeVersion, filter: state.filter, responsibleId: selectedResponsibleId || null }));
   window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}`);
 }
-function queryState() { return { queue: state.queue, type: state.kind, search: state.query, page: state.page, pageSize: state.pageSize, filter: state.filter }; }
+function queryState() { return { queue: state.queue, type: state.kind, search: state.query, scopeVersion: state.scopeVersion, page: state.page, pageSize: state.pageSize, filter: state.filter }; }
 export function getMyTaskQueryKey() { return JSON.stringify({ ...queryState(), ...(selectedResponsibleId ? { responsibleId: selectedResponsibleId } : {}) }); }
 restoreUrl();
 let refreshHandler = null;
@@ -148,7 +150,7 @@ export function renderMyTasks(projection) {
   const facets = projection?.facets || { all: 0, actionable: 0, waiting: 0, types: {} };
   const selected = items.find(item => item.id === state.selectedId);
   const tabCount = kind => facets.types?.[kind] || 0;
-  const hasFilters = Boolean(state.query || state.filter);
+  const hasFilters = Boolean(state.query || state.scopeVersion || state.filter);
   const preview = projection?.preview;
   const empty = loading
     ? '<div class="my-task-empty" role="status"><strong>正在读取工作…</strong></div>'
@@ -164,9 +166,12 @@ export function renderMyTasks(projection) {
   const details = selected ? taskDetails(selected, preview) : '';
   const filterPanel = state.filterOpen ? `<div class="my-task-filter-panel" role="group" aria-label="联合查询条件"><div class="my-task-filter-head"><strong>查询条件</strong><button type="button" data-filter-clear>清空</button></div>${filterGroup(draftFilter || { op: 'and', children: [conditionTemplate()] })}<div class="my-task-filter-footer"><span data-filter-error role="alert"></span><button type="button" data-filter-apply>应用查询</button></div></div>` : '';
   const pageCount = Math.max(1, Math.ceil((projection?.total || 0) / (projection?.pageSize || state.pageSize)));
+  const versionOptions = [...new Set([...(projection?.versionOptions || []), state.scopeVersion].filter(Boolean))];
   const controls = noticePreview || selector ? `<div class="workspace-action-row my-tasks-title my-task-page-heading">${noticePreview}<div class="my-task-title-actions">${selector}</div></div>` : '';
   const visibleRowCount = items.length;
-  return `<section class="my-tasks">${controls}${notice}<p class="my-task-action-feedback" role="status" ${actionFeedback ? '' : 'hidden'}>${safe(actionFeedback)}</p><section class="my-task-board" aria-label="个人工作"><header class="my-task-board-head"><nav aria-label="工作类别">${tabs}</nav></header><div class="my-task-toolbar"><div class="my-task-queues" role="group" aria-label="处理状态"><button type="button" data-my-task-queue="actionable" class="${state.queue === 'actionable' ? 'active' : ''}">待我处理 ${facets.actionable || 0}</button><button type="button" data-my-task-queue="waiting" class="${state.queue === 'waiting' ? 'active' : ''}">跟进中 ${facets.waiting || 0}</button></div><label>搜索<input type="search" data-my-task-query placeholder="编号或标题" value="${safe(state.query)}"></label><button type="button" class="my-task-filter-trigger" data-filter-toggle aria-expanded="${state.filterOpen}">查询条件${state.filter ? ' · 已应用' : ''}</button><span role="status">${loading ? '读取中' : `${projection?.total || 0} 项 · 第 ${state.page}/${pageCount} 页`}</span></div>${filterPanel}<div class="my-task-list my-task-table" role="table" aria-label="个人工作列表" aria-colcount="${COLUMNS.length}" aria-rowcount="${visibleRowCount + 1}">${tableHeader()}${items.map((item, index) => taskRow(item, preview, index)).join('')}</div>${items.length ? '' : empty}<footer class="my-task-pagination"><button type="button" data-my-task-page="${state.page - 1}" ${state.page <= 1 || loading ? 'disabled' : ''}>上一页</button><span>第 ${state.page}/${pageCount} 页</span><button type="button" data-my-task-page="${state.page + 1}" ${state.page >= pageCount || loading ? 'disabled' : ''}>下一页</button></footer></section>${details}</section>`;
+  const versions = `<label>关联范围<select data-my-task-version aria-label="按业务版本筛选关联范围"><option value="">全部版本</option>${versionOptions.map(version => `<option value="${safe(version)}" ${version === state.scopeVersion ? 'selected' : ''}>${safe(version)}</option>`).join('')}</select></label>`;
+  const pagination = `<footer class="my-task-pagination"><button type="button" data-my-task-page="${state.page - 1}" ${state.page <= 1 || loading ? 'disabled' : ''}>上一页</button><span>第 ${state.page}/${pageCount} 页</span><button type="button" data-my-task-page="${state.page + 1}" ${state.page >= pageCount || loading ? 'disabled' : ''}>下一页</button>${loading ? '' : renderPageJump(state.page, pageCount, 'dashboard')}</footer>`;
+  return `<section class="my-tasks">${controls}${notice}<p class="my-task-action-feedback" role="status" ${actionFeedback ? '' : 'hidden'}>${safe(actionFeedback)}</p><section class="my-task-board" aria-label="个人工作"><header class="my-task-board-head"><nav aria-label="工作类别">${tabs}</nav></header><div class="my-task-toolbar"><div class="my-task-queues" role="group" aria-label="处理状态"><button type="button" data-my-task-queue="actionable" class="${state.queue === 'actionable' ? 'active' : ''}">待我处理 ${facets.actionable || 0}</button><button type="button" data-my-task-queue="waiting" class="${state.queue === 'waiting' ? 'active' : ''}">跟进中 ${facets.waiting || 0}</button></div><label>搜索<input type="search" data-my-task-query placeholder="编号或标题" value="${safe(state.query)}"></label>${versions}<button type="button" class="my-task-filter-trigger" data-filter-toggle aria-expanded="${state.filterOpen}">查询条件${state.filter ? ' · 已应用' : ''}</button><span role="status">${loading ? '读取中' : `${projection?.total || 0} 项 · 第 ${state.page}/${pageCount} 页`}</span></div>${filterPanel}<div class="my-task-list my-task-table" role="table" aria-label="个人工作列表" aria-colcount="${COLUMNS.length}" aria-rowcount="${visibleRowCount + 1}">${tableHeader()}${items.map((item, index) => taskRow(item, preview, index)).join('')}</div>${items.length ? '' : empty}${pagination}</section>${details}</section>`;
 }
 export function updateMyTasksProjection(projection) {
   const root = document.querySelector('#view-root .my-tasks');
@@ -244,7 +249,7 @@ document.addEventListener('click', event => {
   const page = event.target.closest('[data-my-task-page]');
   if (page) { state.page = Number(page.dataset.myTaskPage); saveUrl(); refreshHandler?.(); return; }
   if (event.target.closest('[data-my-task-self]')) { selectedResponsibleId = ''; state.selectedId = null; responsibleHandler?.(); return; }
-  if (event.target.closest('[data-my-task-clear]')) { state.query = ''; state.filter = null; applyQuery(); return; }
+  if (event.target.closest('[data-my-task-clear]')) { state.query = ''; state.scopeVersion = ''; state.filter = null; applyQuery(); return; }
   if (event.target.closest('[data-my-task-retry]')) { refreshHandler?.(); return; }
   if (event.target.closest('[data-filter-toggle]')) { state.filterOpen = !state.filterOpen; draftFilter = structuredClone(state.filter || { op: 'and', children: [conditionTemplate()] }); updateLocal(); return; }
   if (event.target.closest('[data-filter-clear]')) { state.filter = null; state.filterOpen = false; draftFilter = null; applyQuery(); return; }
@@ -276,9 +281,10 @@ document.addEventListener('input', event => {
   if (event.target.matches('[data-filter-value]')) filterAt(event.target.dataset.filterValue).value = event.target.value;
 });
 document.addEventListener('change', event => {
+  if (event.target.matches('[data-my-task-version]')) { state.scopeVersion = event.target.value; applyQuery(); return; }
   if (event.target.matches('[data-my-task-responsible]')) {
     selectedResponsibleId = event.target.value;
-    state.kind = 'all'; state.query = ''; state.filter = null; state.page = 1; state.selectedId = null; state.expanded.clear(); saveUrl();
+    state.kind = 'all'; state.query = ''; state.scopeVersion = ''; state.filter = null; state.page = 1; state.selectedId = null; state.expanded.clear(); saveUrl();
     responsibleHandler?.(); return;
   }
   if (event.target.matches('[data-filter-op]')) { filterAt(event.target.dataset.filterOp).op = event.target.value; return; }
@@ -295,6 +301,16 @@ document.addEventListener('change', event => {
     const item = filterAt(start === undefined ? event.target.dataset.filterDateEnd : start);
     item.value[start === undefined ? 1 : 0] = event.target.value;
   }
+});
+document.addEventListener('submit', event => {
+  const form = event.target.closest('[data-kc-page-jump="dashboard"]');
+  if (!form) return;
+  event.preventDefault();
+  const page = readPageJump(form, Number(form.elements.page.max));
+  if (!page) return;
+  state.page = page;
+  saveUrl();
+  refreshHandler?.();
 });
 document.addEventListener('close', event => { if (event.target.matches('[data-my-task-dialog]')) { state.selectedId = null; updateLocal(); } }, true);
 window.addEventListener('popstate', () => { if (/^\/knowledge-center\/?$/.test(location.pathname)) { restoreUrl(); refreshHandler?.(); } });

@@ -5,6 +5,7 @@ import { planCell, openPlanCalendar } from './plan-calendar.js';
 import { markDynamicSelects, cleanupSearchableSelects } from '../../common/searchable-combobox.js';
 import { uiIcon } from '../../common/ui-system.js';
 import { renderSourceRecord } from '../../common/safe-source-markdown.js';
+import { renderPageJump, readPageJump } from '../../common/page-jump.js';
 const e = value => escapeHtml(String(value ?? ''));
 const labels = { pending_scope: '待处理', in_progress: '处理中', completed: '已完成' };
 const timestamp = value => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '—';
@@ -58,8 +59,7 @@ export async function loadDocumentTaskWorkspace() {
 }
 export function renderDocumentTasks({ documentTaskProjection }) {
   const root = document.querySelector('#view-root');
-  const activeTab = root.querySelector('.document-task-page [data-task-tab].active')?.dataset.taskTab || (new URLSearchParams(window.location.search).get('tab') === 'config' ? 'config' : 'list');
-  const state = { ...documentTaskProjection, tab: activeTab, selected: documentTaskProjection.selected || null, activeBookId: new URLSearchParams(window.location.search).get('handbookId'), filters: { page: 1, pageSize: 20, q: new URLSearchParams(window.location.search).get('task') || '', attention: 'normal' }, preview: null, file: null, feedbackMessage: documentTaskProjection.error?.message || '', feedbackIsError: Boolean(documentTaskProjection.error) };
+  const state = { ...documentTaskProjection, selected: documentTaskProjection.selected || null, activeBookId: new URLSearchParams(window.location.search).get('handbookId'), filters: { page: 1, pageSize: 20, q: new URLSearchParams(window.location.search).get('task') || '', attention: 'normal' }, preview: null, file: null, feedbackMessage: documentTaskProjection.error?.message || '', feedbackIsError: Boolean(documentTaskProjection.error) };
   const name = id => state.context?.people.find(p => p.id === id)?.displayName || id || '待指派';
   const options = (items, selected, blank = '请选择') => `<option value="">${blank}</option>${items.map(p => `<option value="${e(p.id)}" ${p.id === selected ? 'selected' : ''}>${e(p.displayName || p.name)}</option>`).join('')}`;
   const person = (field, selected) => `<select name="${e(field)}" data-searchable-select aria-label="责任人">${options(state.context?.people || [], selected)}</select>`;
@@ -83,15 +83,28 @@ export function renderDocumentTasks({ documentTaskProjection }) {
   function bookState(book, scope) {
     return !scope.confirmed ? '草稿未转交' : !book.confirmed ? '待手册负责人确认' : book.impact === 'not_involved' ? `不涉及 · ${reasonText(book.reason)}` : `${book.targetVersion || '未指定版本'} · ${book.completed ? '已完成' : '处理中'}`;
   }
-  function flow(task) {
-    if (!task) return '<p class="task-empty">请选择一项任务查看真实进度。</p>';
-    const s = task.decomposition;
-    return `<div class="task-role-flow"><section><h3>${icon('user')}工单责任人</h3><article><strong>${e(task.number)}</strong><p>${e(name(task.ownerId))}</p><p>${!s.confirmed ? '待处理 · 尚未转交' : s.ticketImpact === 'not_involved' ? `不涉及 · ${e(reasonText(s.ticketReason))}` : `已转交 ${s.handbooks.length} 本手册`}</p></article></section><section><h3>${icon('book-open')}手册负责人</h3>${(s.handbooks || []).map(b => `<article><strong>${e(b.name)}</strong><p>${e(name(b.ownerId))}</p><p>${e(bookState(b, s))}</p></article>`).join('') || '<p>尚无手册任务</p>'}</section><section><h3>${icon('file-text')}文档负责人</h3>${(s.handbooks || []).flatMap(b => (b.documents || []).map(d => `<article><small>${e(b.name)}</small><p><strong>${e(d.name)}</strong></p><p>${e(name(d.ownerId))}</p><p>${!s.confirmed || !b.confirmed ? '草稿未分派' : e(d.completion?.label || '待处理')}</p></article>`)).join('') || '<p>尚无文档任务</p>'}</section></div><p class="task-flow-result">${e(labels[task.status])} · ${e(task.pending.join('；') || '必要处理已完成')}</p>`;
-  }
   function render() {
     const ctx = state.context || {};
-    root.innerHTML = `<section class="document-task-page"><header class="document-task-page-header"><h1>任务管理</h1><div class="document-task-actions">${button('refresh', icon('refresh-cw') + '刷新')}${button('export', icon('download') + '导出 CSV')}${ctx.canAdmin ? button('import', icon('upload') + '导入工单') : ''}<input type="file" accept=".json,.xlsx" hidden data-task-file></div></header><p role="alert" data-task-message ${state.error ? '' : 'hidden'}>${e(state.error?.message)}</p><nav class="document-task-tabs" aria-label="任务管理视图">${[['list', '任务列表'], ['secondary', '次要事项'], ['flow', '流程流转'], ...(ctx.canAdmin ? [['config', '任务配置']] : [])].map(([id, label]) => `<button data-task-tab="${id}" class="${state.tab === id ? 'active' : ''}" aria-selected="${state.tab === id}">${label}</button>`).join('')}</nav><div data-task-list ${!['list', 'secondary'].includes(state.tab) ? 'hidden' : ''}><form class="document-task-toolbar" data-task-filters><label class="task-search">${icon('search')}<input name="q" aria-label="搜索编号或描述" placeholder="搜索编号或描述" value="${e(state.filters.q)}"></label><input name="ir" aria-label="IR 编号" placeholder="IR 编号" value="${e(state.filters.ir || '')}"><select name="type" aria-label="任务类型"><option value="">全部类型</option><option value="REQUIREMENT" ${state.filters.type === 'REQUIREMENT' ? 'selected' : ''}>需求</option><option value="TICKET" ${state.filters.type === 'TICKET' ? 'selected' : ''}>工单</option></select><select name="ownerId" aria-label="责任人筛选">${options(ctx.people || [], state.filters.ownerId, '全部责任人')}</select><select name="product" aria-label="产品筛选">${options((state.filterOptions?.product || []).map(v => ({ id: v, name: v })), state.filters.product, "全部产品")}</select><select name="version" aria-label="版本筛选">${options((state.filterOptions?.version || []).map(v => ({ id: v, name: v })), state.filters.version, "全部版本")}</select><select name="status" aria-label="状态筛选"><option value="">全部状态</option>${Object.entries(labels).map(([id, label]) => `<option value="${id}" ${state.filters.status === id ? 'selected' : ''}>${label}</option>`).join('')}</select><button class="button secondary">筛选</button></form><div class="document-task-table-wrap"><table class="document-task-table"><thead><tr>${['编号', 'IR', '描述', '责任人', '产品', '版本', '状态', '开始时间', '结束时间', '输出件', '类型', '来源'].map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>${(state.items || []).map(t => `<tr class="task-data-row"><td><button class="task-number" data-task-open="${e(t.number)}">${e(t.number)}</button></td><td>${e(t.ir?.[0] || '—')}${t.ir?.length > 1 ? ` +${t.ir.length - 1}` : ''}</td><td>${e(t.description)}</td><td>${e(t.ownerName)}</td><td>${e(t.product || '未指定')}</td><td>${e(t.version || '未指定')}</td><td><span class="document-task-status ${t.status}">${e(labels[t.status])}</span></td><td>${planCell(t, "plannedStartTime")}</td><td>${planCell(t, "plannedEndTime")}</td><td class="task-output-cell">${outputCell(t)}</td><td>${e(t.sourceType === 'REQUIREMENT' ? '需求' : t.sourceType === 'TICKET' ? '工单' : '—')}</td><td>${t.sourceUrl ? `<a href="${e(t.sourceUrl)}" target="_blank" rel="noopener noreferrer">PingCode ${icon('external-link')}</a>` : '—'}</td></tr>`).join('') || `<tr><td colspan="12">${state.status === 'loading' ? '正在读取任务…' : state.error ? '任务读取失败，请点击刷新重试' : state.tab === 'secondary' ? '暂无次要事项' : '暂无任务，请导入工单清单'}</td></tr>`}</tbody></table></div><footer class="task-pagination"><span>共 ${state.total || 0} 条 · 第 ${state.filters.page} 页</span>${button('previous', '上一页', state.filters.page <= 1 ? 'disabled' : '')}${button('next', '下一页', state.filters.page * state.filters.pageSize >= (state.total || 0) ? 'disabled' : '')}</footer></div><section ${state.tab !== 'flow' ? 'hidden' : ''}><h2>${e(state.selected?.number || '流程流转')}</h2>${flow(state.selected)}</section>${ctx.canAdmin ? `<section ${state.tab !== 'config' ? 'hidden' : ''} class="document-task-config"><h2>任务配置</h2><form data-task-config><fieldset><legend>不涉及理由选项</legend>${(ctx.config?.reasonOptions || []).map(r => `<label>${e(r.id === "other" ? "其他" : r.label)}<input name="reasonLabel:${e(r.id)}" value="${e(r.label)}" required aria-label="${e(r.id)}理由名称"></label>`).join('')}</fieldset><button class="button">保存</button><span role="status"></span></form></section>` : ''}<div data-task-drawer-host></div><div data-task-modal-host></div></section>`;
-    if (state.selected && ['list', 'secondary'].includes(state.tab)) renderDrawer();
+    const rows = (state.items || []).map(t => `<tr class="task-data-row"><td><button class="task-number" data-task-open="${e(t.number)}">${e(t.number)}</button></td><td>${e(t.ir?.[0] || '—')}${t.ir?.length > 1 ? ` +${t.ir.length - 1}` : ''}</td><td>${e(t.description)}</td><td>${e(t.ownerName)}</td><td>${e(t.product || '未指定')}</td><td>${e(t.version || '未指定')}</td><td><span class="document-task-status ${t.status}">${e(labels[t.status])}</span></td><td>${planCell(t, "plannedStartTime")}</td><td>${planCell(t, "plannedEndTime")}</td><td class="task-output-cell">${outputCell(t)}</td><td>${e(t.sourceType === 'REQUIREMENT' ? '需求' : t.sourceType === 'TICKET' ? '问题单' : '—')}</td><td>${t.sourceUrl ? `<a href="${e(t.sourceUrl)}" target="_blank" rel="noopener noreferrer">PingCode ${icon('external-link')}</a>` : '—'}</td></tr>`).join('');
+    const empty = state.error ? '任务读取失败，请点击刷新重试' : state.status === 'loading' ? '' : '暂无任务，请导入工单清单';
+    root.innerHTML = `<section class="document-task-page"><header class="document-task-page-header"><h1>任务管理</h1><div class="document-task-actions">${button('refresh', icon('refresh-cw') + '刷新')}${button('export', icon('download') + '导出 CSV')}${ctx.canAdmin ? button('import', icon('upload') + '导入工单') : ''}<input type="file" accept=".json,.xlsx" hidden data-task-file></div></header><p role="alert" data-task-message ${state.error ? '' : 'hidden'}>${e(state.error?.message)}</p><div data-task-list><form class="document-task-toolbar" data-task-filters><label class="task-search">${icon('search')}<input name="q" aria-label="搜索编号或描述" placeholder="搜索编号或描述" value="${e(state.filters.q)}"></label><input name="ir" aria-label="IR 编号" placeholder="IR 编号" value="${e(state.filters.ir || '')}"><select name="type" aria-label="任务类型"><option value="">全部类型</option><option value="REQUIREMENT" ${state.filters.type === 'REQUIREMENT' ? 'selected' : ''}>需求</option><option value="TICKET" ${state.filters.type === 'TICKET' ? 'selected' : ''}>问题单</option></select><select name="ownerId" aria-label="责任人筛选">${options(ctx.people || [], state.filters.ownerId, '全部责任人')}</select><select name="product" aria-label="产品筛选">${options((state.filterOptions?.product || []).map(v => ({ id: v, name: v })), state.filters.product, "全部产品")}</select><select name="version" aria-label="版本筛选">${options((state.filterOptions?.version || []).map(v => ({ id: v, name: v })), state.filters.version, "全部版本")}</select><select name="status" aria-label="状态筛选"><option value="">全部状态</option>${Object.entries(labels).map(([id, label]) => `<option value="${id}" ${state.filters.status === id ? 'selected' : ''}>${label}</option>`).join('')}</select><button class="button secondary">筛选</button></form><div class="document-task-table-wrap"><table class="document-task-table"><thead><tr>${['编号', 'IR', '描述', '责任人', '产品', '版本', '状态', '开始时间', '结束时间', '输出件', '类型', '来源'].map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>${rows || `<tr><td colspan="12">${empty}</td></tr>`}</tbody></table></div><footer class="task-pagination"><span>共 ${state.total || 0} 条 · 第 ${state.filters.page} 页</span>${button('previous', '上一页', state.filters.page <= 1 ? 'disabled' : '')}${button('next', '下一页', state.filters.page * state.filters.pageSize >= (state.total || 0) ? 'disabled' : '')}</footer></div><div data-task-drawer-host></div><div data-task-modal-host></div></section>`;
+    root.querySelector('.document-task-page-header h1')?.remove();
+    const taskActions = root.querySelector('.document-task-actions');
+    const importAction = taskActions?.querySelector('[data-task-action="import"]');
+    const exportAction = taskActions?.querySelector('[data-task-action="export"]');
+    if (taskActions && (importAction || exportAction)) {
+      const more = document.createElement('details');
+      more.className = 'document-task-more';
+      more.innerHTML = `<summary class="button secondary" aria-label="更多操作" title="更多操作">${uiIcon('action.more')}</summary><div class="document-task-more-menu"></div>`;
+      const menu = more.querySelector('.document-task-more-menu');
+      if (exportAction) menu.append(exportAction);
+      if (importAction) menu.append(importAction);
+      taskActions.append(more);
+      window.lucide?.createIcons({ nodes: [more] });
+    }
+    const taskPages = Math.max(1, Math.ceil(Number(state.total || 0) / Number(state.filters.pageSize || 20)));
+    root.querySelector('.task-pagination')?.insertAdjacentHTML('beforeend', renderPageJump(state.filters.page, taskPages, 'document-tasks'));
+    if (state.selected) renderDrawer();
     cleanupSearchableSelects();
     markDynamicSelects(root);
     window.lucide?.createIcons({ nodes: [root] });
@@ -99,12 +112,12 @@ export function renderDocumentTasks({ documentTaskProjection }) {
   }
   function reasonText(value) { if (!value) return '待确认'; return `${state.context.config.reasonOptions.find(r => r.id === value.id)?.label || value.id}${value.detail ? `：${value.detail}` : ''}`; }
   function renderHistory(events) {
-    const titles = { import: '导入任务', source_update: '同步来源信息', owner: '改派工单负责人', handbook_owner: '调整手册负责人', document_owner: '调整文档负责人', plan: '调整计划时间', ticket_scope: '确认手册分派', handbook_scope: '确认文档范围', review_link: '关联审核与交付', new_document_prepare: '创建大纲候选', new_document_link: '关联新增文档', migration: '迁移历史任务', no_change_complete: '确认不涉及并完成', scope_correction_reported: '发起范围调整', scope_correction_cancelled: '取消范围调整', scope_correction_confirmed: '确认范围调整', publication_check: '核对已发布内容' };
+    const titles = { import: '导入任务', source_update: '同步来源信息', owner: '变更工单责任人', handbook_owner: '变更手册责任人', document_owner: '变更文档责任人', plan: '调整计划时间', ticket_scope: '确认手册分派', handbook_scope: '确认文档范围', review_link: '关联审核与交付', new_document_prepare: '创建大纲候选', new_document_link: '关联新增文档', migration: '迁移历史任务', no_change_complete: '确认不涉及并完成', scope_correction_reported: '发起范围调整', scope_correction_cancelled: '取消范围调整', scope_correction_confirmed: '确认范围调整', publication_check: '核对已发布内容' };
     const bookName = id => state.context.handbooks.find(book => book.id === id)?.name || '相关手册';
-    return events.slice().reverse().map(event => {
+    const rows = events.slice().reverse().map(event => {
       const next = event.next || {}, previous = event.previous || {};
       let detail = '';
-      if (event.type === 'owner') detail = `工单负责人由${name(typeof previous === 'string' ? previous : previous.ownerId)}调整为${name(typeof next === 'string' ? next : next.ownerId)}`;
+      if (event.type === 'owner') detail = `工单责任人由${name(typeof previous === 'string' ? previous : previous.ownerId)}调整为${name(typeof next === 'string' ? next : next.ownerId)}`;
       else if (['handbook_owner', 'document_owner'].includes(event.type)) detail = `${bookName(next.handbookId)}${event.type === 'document_owner' ? '的文档' : ''}负责人调整为${name(next.ownerId)}`;
       else if (['ticket_scope', 'scope_correction_confirmed'].includes(event.type)) {
         const books = next.handbooks || [];
@@ -116,19 +129,21 @@ export function renderDocumentTasks({ documentTaskProjection }) {
       } else if (event.type === 'handbook_scope') detail = `${next.name || bookName(next.id)}：${next.impact === 'not_involved' ? '不涉及文档变更' : `确认${(next.documents || []).length}篇文档${next.targetVersion ? '，目标版本 ' + next.targetVersion : ''}`}`;
       else if (event.type === 'plan') detail = `计划开始：${timestamp(next.plannedStartTime)}；计划结束：${timestamp(next.plannedEndTime)}`;
       else if (event.type === 'review_link') detail = '已关联文档审核与交付记录';
-      return `<article class="task-audit"><strong>${e(titles[event.type] || '更新任务记录')}</strong><p>${e(name(event.operatorId))} · ${e(timestamp(event.at))}</p>${detail ? `<p>${e(detail)}</p>` : ''}${event.reason ? `<p>原因：${e(event.reason)}</p>` : ''}</article>`;
-    }).join('') || '<p>暂无操作记录</p>';
+      return `<tr><td>${e(titles[event.type] || '更新任务记录')}</td><td>${e(name(event.operatorId))}</td><td>${e(timestamp(event.at))}</td><td>${e([detail, event.reason && `原因：${event.reason}`].filter(Boolean).join('；') || '—')}</td></tr>`;
+    }).join('');
+    return rows ? `<div class="task-assignment-history-table"><table><thead><tr><th>处理节点</th><th>处理人</th><th>处理时间</th><th>处理内容</th></tr></thead><tbody>${rows}</tbody></table></div>` : '<p>暂无操作记录</p>';
   }
   function renderDrawer() {
     const t = state.selected, s = t.decomposition;
     const returnFocus = document.activeElement;
     // Relational task projections do not include the legacy aggregate audit array.
     if (!Array.isArray(t.assignmentHistory)) t.assignmentHistory = [];
-    root.querySelector('[data-task-drawer-host]').innerHTML = `<aside class="task-drawer" aria-label="任务详情"><header><div><h2>${e(t.number)}</h2><p>${e(t.description)}</p></div>${button('close', icon('x'), 'aria-label="关闭详情"')}</header><div class="task-drawer-body"><dl class="task-facts"><dt>责任人</dt><dd>${e(name(t.ownerId))} ${t.canAdmin ? button('owner', '改派') : ''}</dd><dt>状态</dt><dd>${e(labels[t.status])}</dd><dt>PingCode 状态</dt><dd>${e(t.sourceStatus || '未指定')}</dd><dt>来源责任人</dt><dd>${e(t.source?.sourceOwner || '未指定')}</dd><dt>来源创建时间</dt><dd>${e(t.sourceCreatedAt || '未指定')}</dd><dt>开始时间</dt><dd>${planCell(t, "plannedStartTime")}</dd><dt>结束时间</dt><dd>${planCell(t, "plannedEndTime")}</dd><dt>实际开始 / 完成</dt><dd>${timestamp(t.startTime)} / ${timestamp(t.endTime)}</dd></dl><section class="task-next-action"><h3>${icon('arrow-right')}下一步</h3>${t.nextAction ? `<a class="button primary" href="${e(t.nextAction.url)}">${e(t.nextAction.label)}</a>` : `<p>${e(t.pending[0] || '必要处理已完成')}</p>`}</section><section><div class="task-section-heading"><h3>处理范围</h3><span>${s.handbooks.filter(b => b.completed).length} / ${s.handbooks.length} 本手册完成</span></div><h3>工单范围</h3><p>${!s.confirmed ? '草稿 · 待责任人确认，尚未转交' : s.ticketImpact === 'not_involved' ? `不涉及 · ${e(reasonText(s.ticketReason))}` : `涉及 ${s.handbooks.length} 本手册`}</p>${t.canConfirm ? button('ticket-scope', '确认 / 调整手册范围') : ''}</section>${s.handbooks.map(b => `<section class="task-book"><div class="task-section-heading"><h3>${icon('book-open')}${e(b.name)}</h3></div><p>${e(name(b.ownerId))} · ${e(bookState(b, s))}</p>${b.documents.map(d => `<div class="task-document"><div class="task-section-heading"><strong>${icon('file-text')}${e(d.name)}${d.kind === 'new' ? '<span class="task-kind">新增</span>' : ''}</strong>${d.canAssign ? button('document-owner', '改派文档责任人', `data-book="${e(b.id)}" data-doc="${e(d.id)}"`) : ''}</div><p>${e(name(d.ownerId))} · ${!s.confirmed || !b.confirmed ? '草稿未分派' : e(d.completion?.label || '待处理')}</p>${d.canEdit && b.confirmed ? `${d.writingUrl ? `<a class="button secondary" href="${e(d.writingUrl)}">进入编写</a>` : d.kind === 'new' ? button('new-document', '创建 / 关联新增文档', `data-book="${e(b.id)}" data-doc="${e(d.id)}"`) : ''}${button('link', '关联审核与交付', `data-book="${e(b.id)}" data-doc="${e(d.id)}"`)}` : ''}${d.reviewTaskId ? `<a href="/knowledge-center/review?taskId=${encodeURIComponent(d.reviewTaskId)}">查看审核</a>` : ''}${d.completion?.mergeRequest?.webUrl ? `<a href="${e(d.completion.mergeRequest.webUrl)}" target="_blank" rel="noopener noreferrer">MR链接</a>` : ''}</div>`).join('')}</section>`).join('')}<section><h3>待办</h3><ul>${t.pending.map(p => `<li>${e(p)}</li>`).join('') || '<li>必要处理已完成</li>'}</ul>${t.canConfirm && t.pending.some(p => p.includes('确认') && p.includes('完成')) ? button('complete', '确认不涉及并完成') : ''}</section><details><summary>操作历史（${t.assignmentHistory.length}）</summary>${renderHistory(t.assignmentHistory)}</details></div></aside>`;
+    root.querySelector('[data-task-drawer-host]').innerHTML = `<aside class="task-drawer" aria-label="任务详情"><header><div><h2>${e(t.number)}</h2><p>${e(t.description)}</p></div>${button('close', icon('x'), 'aria-label="关闭详情"')}</header><div class="task-drawer-body"><dl class="task-facts"><dt>责任人</dt><dd>${e(name(t.ownerId))} ${t.canAdmin ? button('owner', '变更责任人') : ''}</dd><dt>状态</dt><dd>${e(labels[t.status])}</dd><dt>PingCode 状态</dt><dd>${e(t.sourceStatus || '未指定')}</dd><dt>来源责任人</dt><dd>${e(t.source?.sourceOwner || '未指定')}</dd><dt>来源创建时间</dt><dd>${e(t.sourceCreatedAt || '未指定')}</dd><dt>开始时间</dt><dd>${planCell(t, "plannedStartTime")}</dd><dt>结束时间</dt><dd>${planCell(t, "plannedEndTime")}</dd><dt>实际开始 / 完成</dt><dd>${timestamp(t.startTime)} / ${timestamp(t.endTime)}</dd></dl><section class="task-next-action"><h3>${icon('arrow-right')}下一步</h3>${t.nextAction ? `<a class="button primary" href="${e(t.nextAction.url)}">${e(t.nextAction.label)}</a>` : `<p>${e(t.pending[0] || '必要处理已完成')}</p>`}</section><section><div class="task-section-heading"><h3>处理范围</h3><span>${s.handbooks.filter(b => b.completed).length} / ${s.handbooks.length} 本手册完成</span></div><h3>工单范围</h3><p>${!s.confirmed ? '草稿 · 待责任人确认，尚未转交' : s.ticketImpact === 'not_involved' ? `不涉及 · ${e(reasonText(s.ticketReason))}` : `涉及 ${s.handbooks.length} 本手册`}</p>${t.canConfirm ? button('ticket-scope', '确认 / 调整手册范围') : ''}</section>${s.handbooks.map(b => `<section class="task-book"><div class="task-section-heading"><h3>${icon('book-open')}${e(b.name)}</h3></div><p>${e(name(b.ownerId))} · ${e(bookState(b, s))}</p>${b.documents.map(d => `<div class="task-document"><div class="task-section-heading"><strong>${icon('file-text')}${e(d.name)}${d.kind === 'new' ? '<span class="task-kind">新增</span>' : ''}</strong>${d.canAssign ? button('document-owner', '变更文档责任人', `data-book="${e(b.id)}" data-doc="${e(d.id)}"`) : ''}</div><p>${e(name(d.ownerId))} · ${!s.confirmed || !b.confirmed ? '草稿未分派' : e(d.completion?.label || '待处理')}</p>${d.canEdit && b.confirmed ? `${d.writingUrl ? `<a class="button secondary" href="${e(d.writingUrl)}">进入编写</a>` : d.kind === 'new' ? button('new-document', '创建 / 关联新增文档', `data-book="${e(b.id)}" data-doc="${e(d.id)}"`) : ''}${button('link', '关联审核与交付', `data-book="${e(b.id)}" data-doc="${e(d.id)}"`)}` : ''}${d.reviewTaskId ? `<a href="/knowledge-center/review?taskId=${encodeURIComponent(d.reviewTaskId)}">查看审核</a>` : ''}${d.completion?.mergeRequest?.webUrl ? `<a href="${e(d.completion.mergeRequest.webUrl)}" target="_blank" rel="noopener noreferrer">MR链接</a>` : ''}</div>`).join('')}</section>`).join('')}<section><h3>待办</h3><ul>${t.pending.map(p => `<li>${e(p)}</li>`).join('') || '<li>必要处理已完成</li>'}</ul>${t.canConfirm && t.pending.some(p => p.includes('确认') && p.includes('完成')) ? button('complete', '确认不涉及并完成') : ''}</section><details><summary>操作历史（${t.assignmentHistory.length}）</summary>${renderHistory(t.assignmentHistory)}</details></div></aside>`;
     if (t.sourceType) {
       const section = document.createElement('section');
       section.className = 'task-source-actions';
-      section.innerHTML = `<h3>Pingcode 来源</h3><p>${e(t.sourceType === 'REQUIREMENT' ? '需求' : '工单')}${t.ir?.length ? ` · 关联 IR ${e(t.ir.join('、'))}` : ''}</p><div>${button('source-view', '查看来源详情')}${button('changes', icon('history') + '同步变化')}${button('source-export', icon('download') + '导出来源资料')}</div>`;
+      section.innerHTML = `<h3>Pingcode 来源</h3><p>${e(t.sourceType === 'REQUIREMENT' ? '需求' : '问题单')}${t.ir?.length ? ` · 关联 IR ${e(t.ir.join('、'))}` : ''}</p><div>${button('source-view', uiIcon('action.view'), 'aria-label="查看来源详情" title="查看来源详情"')}</div>`;
+      section.querySelectorAll('[data-task-action]').forEach(action => action.classList.add('task-source-button'));
       root.querySelector('.task-drawer-body').append(section);
     }
     if (t.scopeChecks?.length) {
@@ -191,6 +206,9 @@ export function renderDocumentTasks({ documentTaskProjection }) {
     const page = root.querySelector('.document-task-page');
     const workspace = root.querySelector('.task-drawer');
     const body = workspace.querySelector('.task-drawer-body');
+    const action = body.querySelector('.task-next-action');
+    const scope = body.querySelector(':scope > section:not(.task-next-action):not(.task-book)');
+    const pending = [...body.querySelectorAll(':scope > section')].find(section => section.querySelector(':scope > h3')?.textContent === '待办');
     page.classList.add('task-focus-mode');
     workspace.classList.add('task-workspace');
     const preferred = books.find(book => book.id === t.nextAction?.handbookId)
@@ -201,81 +219,108 @@ export function renderDocumentTasks({ documentTaskProjection }) {
     const active = books.find(book => book.id === state.activeBookId);
     page.dataset.taskRole = active?.ownerId === state.context.actorId ? 'book'
       : t.ownerId === state.context.actorId ? 'ticket' : 'observer';
-    const title = !t.decomposition.confirmed && t.canConfirm ? '确认涉及的手册，并交给负责人'
-      : active?.canEdit && !active.confirmed ? '确定文档范围'
-        : t.nextAction?.label || '查看任务进度';
+    const title = t.description || t.number;
     const heading = workspace.querySelector('header > div');
     heading.insertAdjacentHTML('afterbegin', `<span class="task-workspace-eyebrow">${e(t.number)} / ${active?.canEdit ? '手册任务' : t.canConfirm ? '工单任务' : '任务进度'}</span>`);
     heading.querySelector('h2').textContent = title;
-    heading.querySelector('p').classList.add('task-workspace-description');
+    heading.querySelector('p')?.remove();
     heading.insertAdjacentHTML('beforeend', `<span class="task-workspace-owner">责任人：${e(name(t.ownerId))} · ${e(labels[t.status])}</span>`);
     const back = workspace.querySelector('header [data-task-action=close]');
     back.innerHTML = `${icon('arrow-left')}<span>返回任务列表</span>`;
     back.setAttribute('aria-label', '返回任务列表');
     const facts = body.querySelector('.task-facts');
     const ownerAction = facts.querySelector('[data-task-action=owner]');
-    if (ownerAction) { ownerAction.classList.add('task-workspace-owner-action'); workspace.querySelector('header').append(ownerAction); }
-    const more = document.createElement('details');
-    more.className = 'task-workspace-more';
-    more.innerHTML = '<summary>来源、时间与任务信息</summary>';
-    more.append(facts);
-    const history = body.querySelector(':scope > details');
-    body.append(more);
-    if (history) history.classList.add('task-workspace-history');
-    const action = body.querySelector('.task-next-action');
-    action.querySelector('h3').textContent = '当前操作';
-    action.hidden = !t.nextAction;
-    const scope = body.querySelector(':scope > section:not(.task-next-action):not(.task-book)');
-    scope?.classList.add('task-ticket-scope');
-    if (scope) {
-      scope.querySelector('.task-section-heading h3').textContent = '工单分派';
-      scope.querySelector('[data-task-action=ticket-scope]')?.remove();
-      scope.querySelector(':scope > h3')?.remove();
-      if (t.decomposition.confirmed && t.canConfirm && active?.canEdit && !active.confirmed) {
-        const secondary = document.createElement('details');
-        secondary.className = 'task-secondary-scope';
-        secondary.innerHTML = '<summary>工单范围与分派</summary>';
-        scope.before(secondary);
-        secondary.append(scope);
-      }
+    const header = workspace.querySelector('header');
+    const headerActions = document.createElement('div');
+    headerActions.className = 'task-workspace-header-actions';
+    if (t.canConfirm && !s.confirmed) headerActions.insertAdjacentHTML('beforeend', button('ticket-scope', '手册分派'));
+    if (ownerAction || (t.canConfirm && s.confirmed)) {
+      const more = document.createElement('details');
+      more.className = 'document-task-more';
+      more.innerHTML = `<summary class="button secondary" aria-label="更多操作" title="更多操作">${uiIcon('action.more')}</summary><div class="document-task-more-menu"></div>`;
+      const menu = more.querySelector('.document-task-more-menu');
+      if (ownerAction) { ownerAction.innerHTML = `${uiIcon('action.change-owner')}<span>变更责任人</span>`; ownerAction.setAttribute('aria-label', '变更责任人'); ownerAction.title = '变更责任人'; menu.append(ownerAction); }
+      if (t.canConfirm && s.confirmed) menu.insertAdjacentHTML('beforeend', button('ticket-scope', `${uiIcon('action.adjust-ticket-scope')}<span>调整工单范围</span>`, 'aria-label="调整工单范围" title="调整工单范围"'));
+      headerActions.append(more);
     }
+    headerActions.insertAdjacentHTML('beforeend', button('close', uiIcon('action.close'), 'aria-label="关闭窗口" title="关闭窗口"'));
+    header.append(headerActions);
+    const basicInfo = document.createElement('details');
+    basicInfo.className = 'task-assignment-basic-info';
+    basicInfo.innerHTML = '<summary>基本信息</summary>';
+    basicInfo.append(facts);
+    const history = body.querySelector(':scope > details');
+    body.prepend(basicInfo);
+    if (history) {
+      const historySection = document.createElement('details');
+      historySection.className = 'task-workspace-history';
+      historySection.innerHTML = `<summary>处理记录</summary>${renderHistory(t.assignmentHistory)}`;
+      history.replaceWith(historySection);
+    }
+    scope?.classList.add('task-ticket-scope');
+    scope?.remove();
     const bookNodes = [...body.querySelectorAll(':scope > .task-book')];
     bookNodes.forEach((node, index) => {
       node.hidden = books[index].id !== state.activeBookId;
       node.querySelector(':scope > p')?.remove();
+      node.querySelectorAll('.task-document button, .task-document a.button').forEach(control => {
+        const label = control.textContent.trim();
+        const usage = control.dataset.taskAction === 'document-owner' ? 'action.change-owner' : control.dataset.taskAction === 'link' ? 'action.references' : control.dataset.taskAction === 'new-document' ? 'action.add' : 'action.edit';
+        control.setAttribute('aria-label', label);
+        control.title = label;
+        control.classList.add('task-document-icon-action');
+        control.innerHTML = uiIcon(usage);
+      });
     });
     const scopeState = book => !s.confirmed ? '待工单分派确认' : !book.confirmed
       ? '负责人已分配 · 文档范围待确认' : book.impact === 'not_involved'
         ? '文档范围已确认 · 不涉及' : book.completed ? '文档处理已完成' : '文档范围已确认 · 处理中';
+    action.classList.replace('task-next-action', 'task-assignment-content');
     action.hidden = false;
-    action.innerHTML = `<div class="task-section-heading"><h3>当前操作</h3><span class="task-scope-status">${e(!s.confirmed ? '工单分派待确认' : books.some(book => !book.confirmed) ? '负责人已分配 · 文档范围待确认' : '文档范围已确认')}</span></div><table class="task-handbook-table"><thead><tr><th>手册名称</th><th>产品类型</th><th>操作</th></tr></thead><tbody>${books.map(book => `<tr><td data-label="手册名称"><button type="button" class="task-handbook-name" data-task-book-select="${e(book.id)}" aria-pressed="${book.id === state.activeBookId}">${e(book.name)}</button><small>${e(scopeState(book))}</small></td><td data-label="产品类型">${e(state.context.handbooks.find(item => item.id === book.id)?.productType || '未配置')}</td><td data-label="操作"><div class="task-handbook-actions">${book.canEdit ? button('book-scope', book.confirmed ? '调整文档范围' : '确认文档范围', `data-book="${e(book.id)}"`) : '<span>等待手册负责人处理</span>'}${t.canConfirm ? button('remove-book', '移除', `data-book="${e(book.id)}"`) : ''}</div></td></tr>`).join('') || '<tr><td colspan="3">尚未添加手册</td></tr>'}</tbody></table>${t.canConfirm ? button('add-book', '新增手册') + button('ticket-scope', s.confirmed ? '调整工单范围' : '确认手册分派') : ''}`;
+    action.innerHTML = `<div class="task-section-heading"><h3>分派内容</h3></div><div class="task-assignment-result-table"><table class="task-handbook-table"><thead><tr><th>手册名称</th><th>产品类型</th><th>目标分支</th><th>文档名称</th><th>状态</th><th>操作</th></tr></thead><tbody>${books.map(book => {
+      const product = state.context.handbooks.find(item => item.id === book.id)?.productType || '未配置';
+      const docs = book.confirmed ? (book.documents || []).map(doc => doc.name).join('、') : '待手册负责人确认';
+      const scopeLabel = book.confirmed ? '调整文档范围' : '确认文档范围';
+      return `<tr><td data-label="手册名称"><button type="button" class="task-handbook-name" data-task-book-select="${e(book.id)}" aria-pressed="${book.id === state.activeBookId}">${e(book.name)}</button></td><td data-label="产品类型">${e(product)}</td><td data-label="目标分支" data-assignment-version="${e(book.id)}">${e(book.versionMapping?.targetBranch || book.targetVersion || '待匹配')}</td><td data-label="文档名称">${e(docs || '无文档变更')}</td><td data-label="状态">${e(scopeState(book))}</td><td data-label="操作"><div class="task-handbook-actions">${button('book-scope', uiIcon('action.confirm-document-scope'), `data-book="${e(book.id)}" aria-label="${scopeLabel}" title="${scopeLabel}" ${book.canEdit ? '' : 'disabled'}`)}${button('remove-book', uiIcon('action.delete'), `data-book="${e(book.id)}" aria-label="移除" title="移除" ${t.canConfirm ? '' : 'disabled'}`)}</div></td></tr>`;
+    }).join('') || '<tr><td colspan="6">尚未添加手册</td></tr>'}</tbody></table></div>`;
     const documents = books.flatMap(book => book.impact === 'involved' ? book.documents || [] : []);
     const completedDocuments = documents.filter(document => document.completion?.status === 'completed').length;
-    const progress = document.createElement('div');
-    progress.className = 'task-workspace-progress';
-    progress.setAttribute('aria-label', '任务流转进度');
-    progress.innerHTML = `<span>${icon('list-checks')} 工单分派 <strong>${t.decomposition.confirmed ? '已确认' : '待确认'}</strong></span><span>${icon('book-open')} 手册范围 <strong>${books.filter(book => book.confirmed).length}/${books.length} 本已确认</strong></span><span>${icon('file-text')} 文档处理 <strong>${documents.length ? `${completedDocuments}/${documents.length} 篇完成` : '暂无文档任务'}</strong></span>`;
-    action.after(progress);
-    if (t.decomposition.confirmed && books.length) {
-      const summary = document.createElement('section');
-      summary.className = 'task-assignment-result';
-      summary.innerHTML = `<h3>分派结果</h3><div class="task-assignment-result-table"><table><thead><tr><th>手册名称</th><th>产品类型</th><th>目标分支</th><th>文档名称</th></tr></thead><tbody>${books.map(book => {
-        const product = state.context.handbooks.find(item => item.id === book.id)?.productType || '未配置';
-        const docs = book.confirmed ? (book.documents || []).map(doc => doc.name).join('、') : '待手册负责人确认';
-        return `<tr><td>${e(book.name)}</td><td>${e(product)}</td><td data-assignment-version="${e(book.id)}">${e(book.versionMapping?.targetBranch || book.targetVersion || '待匹配')}</td><td>${e(docs || '无文档变更')}</td></tr>`;
-      }).join('')}</tbody></table></div>`;
-      progress.after(summary);
+    const booksComplete = books.length > 0 && books.every(book => book.confirmed);
+    const documentsComplete = documents.length > 0 && completedDocuments === documents.length;
+    const noDocumentWork = books.length > 0 && booksComplete && books.every(book => book.impact === 'not_involved');
+    const stageStates = [
+      { label: '工单分派', complete: s.confirmed, detail: s.confirmed ? '已确认' : '待处理' },
+      { label: '手册范围', complete: booksComplete || noDocumentWork, detail: books.length ? `${books.filter(book => book.confirmed).length}/${books.length} 本已确认` : '待分派' },
+      { label: '文档处理', complete: documentsComplete || noDocumentWork, detail: documents.length ? `${completedDocuments}/${documents.length} 篇完成` : '暂无文档任务' },
+      { label: '执行完成', complete: t.status === 'completed', detail: labels[t.status] || '处理中' },
+    ];
+    let currentStage = stageStates.findIndex(stage => !stage.complete);
+    if (currentStage < 0) currentStage = stageStates.length;
+    const timeline = document.createElement('ol');
+    timeline.className = 'task-assignment-timeline task-workspace-progress';
+    timeline.setAttribute('aria-label', '任务处理进度');
+    timeline.innerHTML = stageStates.map((stage, index) => {
+      const stateName = stage.complete ? 'complete' : index === currentStage ? 'current' : 'pending';
+      const marker = stage.complete ? icon('check') : String(index + 1);
+      return `<li class="${stateName}"><span class="task-assignment-marker">${marker}</span><span class="task-assignment-stage-copy"><strong>${e(stage.label)}</strong><small>${e(stage.detail)}</small></span></li>`;
+    }).join('');
+    basicInfo.before(timeline);
+    const footer = document.createElement('footer');
+    footer.className = 'task-assignment-footer task-next-action';
+    const completionAction = pending?.querySelector('[data-task-action="complete"]');
+    const footerStatus = active ? scopeState(active) : !s.confirmed ? '等待确认工单分派' : '当前没有待处理的手册';
+    footer.innerHTML = `<span class="task-assignment-footer-status">${e(footerStatus)}</span><div class="task-assignment-footer-actions"></div>`;
+    const footerActions = footer.querySelector('.task-assignment-footer-actions');
+    if (t.nextAction?.action && t.nextAction.action !== 'book-scope') {
+      const nextButton = action.querySelector(`[data-task-action="${CSS.escape(t.nextAction.action)}"]`);
+      if (nextButton) footerActions.append(nextButton);
     }
-    const pending = [...body.querySelectorAll(':scope > section')].find(section => section.querySelector(':scope > h3')?.textContent === '待办');
-    if (pending) {
-      const complete = pending.querySelector('[data-task-action=complete]');
-      if (complete) { pending.replaceChildren(complete); }
-      else pending.remove();
-    }
+    if (completionAction) footerActions.append(completionAction);
+    if (pending) pending.remove();
+    body.append(footer);
 
   }
   async function refresh({ context = false, detail = true } = {}) {
-    status('正在读取任务…');
     root.setAttribute('aria-busy', 'true');
     try {
       const [list, nextContext, selected] = await Promise.all([
@@ -286,23 +331,6 @@ export function renderDocumentTasks({ documentTaskProjection }) {
       Object.assign(state, list, { context: nextContext, selected, status: 'ok', error: null });
       render();
     } finally { root.removeAttribute('aria-busy'); }
-  }
-  async function showSyncChanges(taskNumber, page = 1) {
-    const result = await taskRequest(`/${encodeURIComponent(taskNumber)}/sync-changes?page=${page}&pageSize=20`);
-    const fieldLabels = { title: '标题', description: '描述', source_status: '来源状态', ir: '关联 IR', type: '类型', source_removed: '来源移除', source_restored: '来源恢复' };
-    const value = input => {
-      if (input == null || input === '') return '—';
-      try { const parsed = JSON.parse(input); return e(typeof parsed === 'string' ? parsed : JSON.stringify(parsed)); }
-      catch { return e(input); }
-    };
-    const rows = result.items.map(item => `<tr><td>${e(timestamp(item.confirmedAt))}</td><td>${e(item.sourceName || '—')}</td><td>${e(fieldLabels[item.field] || item.field)}</td><td>${value(item.before)}</td><td>${value(item.after)}</td></tr>`).join('');
-    const content = `<div class="task-change-table-wrap"><table class="task-change-table"><thead><tr><th>同步时间</th><th>来源</th><th>字段</th><th>上次</th><th>本次</th></tr></thead><tbody>${rows || '<tr><td colspan="5">暂无同步变化</td></tr>'}</tbody></table></div><div class="task-change-pagination"><span>第 ${page} 页 · 共 ${result.total} 条</span><button type="button" class="button secondary" data-change-page="${page - 1}" ${page <= 1 ? 'disabled' : ''}>上一页</button><button type="button" class="button secondary" data-change-page="${page + 1}" ${page * 20 >= result.total ? 'disabled' : ''}>下一页</button></div>`;
-    const dialog = modal(`${taskNumber} · 同步变化`, content, () => {}, { confirm: false });
-    dialog.querySelectorAll('[data-change-page]').forEach(button => button.onclick = async () => {
-      button.disabled = true;
-      try { dialog.close(); await showSyncChanges(taskNumber, Number(button.dataset.changePage)); }
-      catch (error) { status(error.message, true); }
-    });
   }
   function modal(title, content, onSubmit, { confirm = true, confirmLabel = '确认', inline = false } = {}) {
     const host = root.querySelector('[data-task-modal-host]');
@@ -345,6 +373,12 @@ export function renderDocumentTasks({ documentTaskProjection }) {
   function decorateScope(dialog, task, level, book) {
     dialog.classList.add('task-scope-dialog');
     dialog.dataset.scopeLevel = level;
+    if (level === 'document') {
+      const cancel = dialog.querySelector('footer [data-modal-close]');
+      cancel.setAttribute('aria-label', '取消'); cancel.title = '取消'; cancel.innerHTML = uiIcon('action.cancel');
+      dialog.querySelector('button[value=confirm]').innerHTML = uiIcon('action.confirm');
+      window.lucide?.createIcons({ nodes: [dialog] });
+    }
     if (level === 'handbook') return;
     const current = 1;
     const steps = level === 'handbook' ? ['影响判断', '选择手册', '转交手册负责人'] : ['工单已转交', '本手册影响判断', '分派文档负责人'];
@@ -359,7 +393,10 @@ export function renderDocumentTasks({ documentTaskProjection }) {
     const update = () => {
       const impact = dialog.querySelector('[name=impact]:checked')?.value;
       const confirmButton = dialog.querySelector('button[value=confirm]');
-      confirmButton.textContent = ['handbook', 'assignment'].includes(dialog.dataset.scopeLevel) ? '确认' : impact === 'not_involved' ? '确认不涉及' : '确认文档范围';
+      const confirmLabel = ['handbook', 'assignment'].includes(dialog.dataset.scopeLevel) ? '确认' : impact === 'not_involved' ? '确认不涉及' : '确认文档范围';
+      if (dialog.dataset.scopeLevel === 'document') {
+        confirmButton.setAttribute('aria-label', confirmLabel); confirmButton.title = confirmLabel;
+      } else confirmButton.textContent = confirmLabel;
       const impactStep = dialog.querySelector('[data-scope-step="0"]');
       if (impactStep && dialog.querySelector('[data-scope-step="1"][aria-current]')) { impactStep.classList.toggle('done', Boolean(impact)); impactStep.querySelector('span').textContent = impact ? '✓' : '1'; }
       dialog.querySelector('[data-reasons]').hidden = impact !== 'not_involved';
@@ -447,39 +484,24 @@ export function renderDocumentTasks({ documentTaskProjection }) {
     const reason = dialog.querySelector('[name=scopeChangeReason]');
     if (reason) reason.value = change.reason || '';
   }
-  function editHandbooks(removeId = null) {
+  function removeHandbook(removeId) {
     const t = state.selected, s = t.decomposition;
-    const available = state.context.handbooks.filter(book => !s.handbooks.some(old => old.id === book.id));
     const removed = s.handbooks.find(book => book.id === removeId);
-    if (removeId && s.handbooks.length === 1) {
-      ticketScope();
-      const error = root.querySelector('.document-task-dialog [data-modal-error]');
-      error.textContent = '移除最后一本手册时，请明确选择新的手册，或确认工单不涉及并填写理由。';
-      error.hidden = false;
+    if (!removed) return;
+    if (s.handbooks.length === 1) {
+      ticketScope({ notInvolved: true });
       return;
     }
-    const content = removed ? `<p>确定将“${e(removed.name)}”移出本任务的手册范围？</p>`
-      : available.length ? `<label>手册名称<select name="handbookId" required>${options(available, null)}</select></label><label>手册负责人${person('newBookOwner', null)}</label>` : '<p>所有可用手册均已添加。</p>';
+    const content = `<p>确定将“${e(removed.name)}”移出本任务的手册范围？</p>`;
     const reason = s.confirmed ? '<label>范围调整原因<textarea name="scopeChangeReason" rows="2" required></textarea></label>' : '';
-    const dialog = modal(removed ? '移除手册' : '新增手册', content + reason, async form => {
+    const dialog = modal('移除手册', content + reason, async form => {
       const handbooks = s.handbooks.filter(book => book.id !== removeId).map(book => ({ id: book.id, ownerId: book.ownerId }));
-      if (!removed) {
-        const id = form.get('handbookId'), ownerId = form.get('newBookOwner');
-        if (!id || !ownerId) throw new Error('请选择手册和手册负责人');
-        handbooks.push({ id, ownerId });
-      }
       const proposed = { ticketImpact: 'involved', handbooks };
       if (s.confirmed) return saveScopeWithPreview(form, dialog, t, 'ticket', null, proposed);
       return taskWrite(`/${encodeURIComponent(t.number)}/decomposition`, { expectedRevision: t.revision, confirm: false, ...proposed });
-    }, { confirm: Boolean(removed || available.length), confirmLabel: removed ? '预览并移除' : '新增手册' });
-    if (!removed) dialog.querySelector('[name=handbookId]')?.addEventListener('change', event => {
-      const owner = state.context.handbooks.find(book => book.id === event.target.value)?.ownerId;
-      const select = dialog.querySelector('[name=newBookOwner]');
-      select.value = state.context.people.some(person => person.id === owner) ? owner : '';
-      select.dispatchEvent(new Event('change', { bubbles: true }));
-    });
+    }, { confirm: true, confirmLabel: '预览并移除' });
   }
-  function ticketScope() {
+  function ticketScope({ notInvolved = false } = {}) {
     const t = state.selected, s = t.decomposition;
     const reasonField = s.confirmed ? '<label>范围调整原因<textarea name="scopeChangeReason" required rows="2" placeholder="说明为什么需要增减手册"></textarea></label>' : '';
     const facts = `<div class="task-assignment-facts"><strong>${e(t.number)}</strong><span>${e(t.description)}</span><span>${e(t.product || '产品未指定')} · ${e(t.version || '版本未指定')}</span></div>`;
@@ -515,6 +537,7 @@ export function renderDocumentTasks({ documentTaskProjection }) {
     dialog.querySelectorAll('[name=selected]:checked').forEach(input => loadMapping(input.closest('[data-choice]')));
     bindLinkedScopeChange(dialog, linkedScopeChange(t, 'ticket', null));
     decorateScope(dialog, t, 'handbook');
+    if (notInvolved) dialog.querySelector('[name=impact][value=not_involved]').checked = true;
     bindScope(dialog);
   }
   function scopeDirectoryTree(catalog, docs, renderDocument) {
@@ -549,7 +572,7 @@ export function renderDocumentTasks({ documentTaskProjection }) {
       if (item.document) return `<li data-choice data-search-text="${e([...ancestors, item.document.name].join(' / '))}">${renderDocument(item.document)}</li>`;
       const path = [...ancestors, item.name];
       const canAdd = addable.has(item.id) && item.kind !== 'part';
-      return `<li data-folder="${e(item.id)}" data-folder-path="${e(path.join(' / '))}"><details ${depth < 2 ? 'open' : ''}><summary role="treeitem" tabindex="0">${icon('folder')}<span>${e(item.name)}</span></summary><ul>${render(item.children, depth + 1, path)}</ul></details>${canAdd ? `<button type="button" class="task-folder-menu-button" data-folder-menu aria-label="${e(item.name)}：更多操作" title="${e(item.name)}：更多操作" aria-expanded="false">${icon('ellipsis')}</button><div class="task-folder-menu" hidden><button type="button" data-folder-add>新增文档</button></div>` : ''}</li>`;
+      return `<li data-folder="${e(item.id)}" data-folder-path="${e(path.join(' / '))}"><details ${depth < 2 ? 'open' : ''}><summary role="treeitem" tabindex="0">${icon('folder')}<span>${e(item.name)}</span></summary><ul>${render(item.children, depth + 1, path)}</ul></details>${canAdd ? `<button type="button" class="task-folder-menu-button" data-folder-menu aria-label="${e(item.name)}：更多操作" title="${e(item.name)}：更多操作" aria-expanded="false">${uiIcon('action.more')}</button><div class="task-folder-menu" hidden><button type="button" data-folder-add>${uiIcon('action.add')}<span>新增文档</span></button></div>` : ''}</li>`;
     }).join('');
     return `<div class="task-directory-tree" data-scope-tree><ul role="tree">${render(roots)}</ul><p data-tree-empty hidden>没有匹配的目录或文档</p></div>`;
   }
@@ -567,8 +590,10 @@ export function renderDocumentTasks({ documentTaskProjection }) {
     const tree = scopeDirectoryTree(catalog, [...(catalog.outlineVersionId ? catalog.documents : []), ...newDocs], choice);
     const versionField = catalog.versionMapping
       ? `<label>PingCode ${e(t.product || '')} · ${e(t.version || '')} → 目标分支<input name="targetVersion" value="${e(catalog.versionMapping.branch)}" readonly></label>`
+      : catalog.manualVersionSelection && catalog.versions?.length
+        ? `<label>目标分支<select name="targetVersion" required>${options(catalog.versions.map(v => ({ id: v, name: v })), book.targetVersion)}</select></label>`
       : catalog.versionMappingError
-        ? `<p class="task-outline-alert" role="alert">映射不可用：${e(catalog.versionMappingError)}。请联系平台管理员配置 GitLab 版本映射。</p>`
+        ? `<p class="task-outline-alert" role="alert">映射不可用：${e(catalog.versionMappingError)}。请联系平台管理员检查手册仓库及版本映射。</p>`
         : `<label>目标版本<select name="targetVersion">${options(catalog.versions.map(v => ({ id: v, name: v })), book.targetVersion)}</select></label>`;
     const reasonField = book.confirmed ? '<label>范围调整原因<textarea name="scopeChangeReason" required rows="2" placeholder="说明为什么需要增减或调整文档"></textarea></label>' : '';
     const dialog = modal(`${book.name} · 文档范围`, `${book.confirmed ? '<p>已分派文档需要先预览审核、MR 和交付影响，再确认变更。</p>' : ''}${reasonField}${decision(book.impact, book.reason)}<div data-involved>${versionField}<label>搜索目录或文档<input type="search" data-scope-search></label><p data-selected-count></p>${catalog.outlineVersionId ? '' : '<p class="task-outline-alert" role="alert">未找到已发布大纲，无法选择存量文档</p>'}<div class="task-choices">${tree}</div></div>`, async (form, confirm) => {
@@ -640,10 +665,10 @@ export function renderDocumentTasks({ documentTaskProjection }) {
     bindScope(dialog);
   }
   let reading = false;
-  async function readWithFeedback(operation) {
+  async function readWithFeedback(operation, { silent = false } = {}) {
     if (reading) return;
     reading = true;
-    status('正在读取，请稍候…');
+    if (!silent) status('正在读取，请稍候…');
     root.setAttribute('aria-busy', 'true');
     try { const result = await operation(); status(''); return result; }
     finally { reading = false; root.removeAttribute('aria-busy'); }
@@ -651,22 +676,12 @@ export function renderDocumentTasks({ documentTaskProjection }) {
   root.onclick = async event => {
     if (event.target.closest('[data-task-dismiss-message]')) { status(''); return; }
     if (reading) return;
-    const tab = event.target.closest('[data-task-tab]'); if (tab) {
-      const previousAttention = state.filters.attention;
-      state.tab = tab.dataset.taskTab;
-      state.filters.attention = state.tab === 'secondary' ? 'secondary' : 'normal';
-      if (previousAttention !== state.filters.attention) {
-        state.filters.page = 1;
-        try { await refresh({ detail: false }); } catch (error) { status(error.message, true); }
-      } else render();
-      return;
-    }
     const bookSwitch = event.target.closest('[data-task-book-select]');
     if (bookSwitch && state.selected) { state.activeBookId = bookSwitch.dataset.taskBookSelect; renderDrawer(); root.querySelector(`[data-task-book-select="${CSS.escape(state.activeBookId)}"]`)?.focus(); return; }
     const row = event.target.closest('[data-task-open]');
     try {
       if (row) {
-        state.selected = await readWithFeedback(() => loadDocumentTask(row.dataset.taskOpen));
+        state.selected = await readWithFeedback(() => loadDocumentTask(row.dataset.taskOpen), { silent: true });
         state.activeBookId = null;
         renderDrawer();
         return;
@@ -700,27 +715,21 @@ export function renderDocumentTasks({ documentTaskProjection }) {
           if (source && state.selected?.number === number) modal(`${number} · 来源详情`, `<div class="task-source-content">${renderSourceRecord(source.title, source.markdown)}</div>`, () => {}, { confirm: false });
           break;
         }
-        case 'source-export':
-          await readWithFeedback(() => downloadDocumentTaskFile(`/${encodeURIComponent(t.number)}/source-export`));
-          break;
-        case 'changes': await readWithFeedback(() => showSyncChanges(t.number)); break;
         case 'import': root.querySelector('[data-task-file]').click(); break;
         case 'close': root.querySelector('.task-detail-dialog')?.close(); state.selected = null; break;
         case 'previous': state.filters.page--; await refresh({ detail: false }); break;
         case 'next': state.filters.page++; await refresh({ detail: false }); break;
-        case 'add-book': editHandbooks(); break;
-        case 'remove-book': editHandbooks(id); break;
+        case 'remove-book': removeHandbook(id); break;
         case 'ticket-scope': ticketScope(); break;
         case 'book-scope': await readWithFeedback(() => bookScope(id)); break;
-        case 'show-flow': state.tab = 'flow'; render(); root.querySelector('[data-task-drawer-host]').innerHTML = ''; break;
         case 'document-owner': {
           const book = t.decomposition.handbooks.find(b => b.id === id);
           const doc = book.documents.find(d => d.id === docId);
           const isDocument = action.dataset.taskAction === 'document-owner';
-          modal(isDocument ? '改派文档责任人' : '改派手册责任人', `<p>${e(isDocument ? doc.name : book.name)}</p><label>责任人${person('ownerId', isDocument ? doc.ownerId : book.ownerId)}</label>`, form => taskWrite(`/${encodeURIComponent(t.number)}/${isDocument ? 'documents/' + encodeURIComponent(docId) : 'handbooks/' + encodeURIComponent(id)}/owner`, { expectedRevision: t.revision, handbookId: id, ownerId: form.get('ownerId') }));
+          modal(isDocument ? '变更文档责任人' : '变更手册责任人', `<p>${e(isDocument ? doc.name : book.name)}</p><label>责任人${person('ownerId', isDocument ? doc.ownerId : book.ownerId)}</label>`, form => taskWrite(`/${encodeURIComponent(t.number)}/${isDocument ? 'documents/' + encodeURIComponent(docId) : 'handbooks/' + encodeURIComponent(id)}/owner`, { expectedRevision: t.revision, handbookId: id, ownerId: form.get('ownerId') }));
           break;
         }
-        case 'owner': modal('改派责任人', `<label>责任人${person('ownerId', t.ownerId)}</label>`, form => taskWrite(`/${encodeURIComponent(t.number)}/owner`, { expectedRevision: t.revision, ownerId: form.get('ownerId'), reason: form.get('reason') })); break;
+        case 'owner': modal('变更责任人', `<label>责任人${person('ownerId', t.ownerId)}</label>`, form => taskWrite(`/${encodeURIComponent(t.number)}/owner`, { expectedRevision: t.revision, ownerId: form.get('ownerId'), reason: form.get('reason') })); break;
         case 'complete': modal('确认不涉及并完成', '<p>已确认全部必要的不涉及理由，完成后保留决定与操作记录。</p>', () => taskWrite(`/${encodeURIComponent(t.number)}/complete`, { expectedRevision: t.revision }, 'POST')); break;
         case 'publication-check': {
           const check = (t.scopeChecks || []).find(item => item.id === action.dataset.check);
@@ -764,8 +773,13 @@ export function renderDocumentTasks({ documentTaskProjection }) {
     } catch (error) { status(error.message, true); }
   };
   root.onsubmit = async event => {
-    if (event.target.matches('[data-task-filters]')) { event.preventDefault(); state.filters = { ...Object.fromEntries(new FormData(event.target)), attention: state.tab === 'secondary' ? 'secondary' : 'normal', page: 1, pageSize: 20 }; try { await refresh({ detail: false }); } catch (error) { status(error.message, true); } }
-    if (event.target.matches('[data-task-config]')) { event.preventDefault(); const output = event.target.querySelector('[role=status]'); try { const form = new FormData(event.target); state.context.config = await taskWrite('/config', { defaultOwnerId: state.context.config.defaultOwnerId, knowledgeCenterOwnerId: state.context.config.knowledgeCenterOwnerId, reasonOptions: state.context.config.reasonOptions.map(r => ({ id: r.id, label: form.get('reasonLabel:' + r.id) })), expectedRevision: state.context.config.revision }); output.textContent = '配置已保存'; } catch (error) { output.textContent = error.message; } }
+    if (event.target.matches('[data-kc-page-jump="document-tasks"]')) {
+      event.preventDefault();
+      const target = readPageJump(event.target, Math.max(1, Math.ceil(Number(state.total || 0) / state.filters.pageSize)));
+      if (target) { state.filters.page = target; try { await refresh({ detail: false }); } catch (error) { status(error.message, true); } }
+      return;
+    }
+    if (event.target.matches('[data-task-filters]')) { event.preventDefault(); state.filters = { ...Object.fromEntries(new FormData(event.target)), attention: 'normal', page: 1, pageSize: 20 }; try { await refresh({ detail: false }); } catch (error) { status(error.message, true); } }
   };
   root.onkeydown = event => { if (event.key === 'Escape' && !root.querySelector('dialog[open]') && state.selected) { state.selected = null; render(); } };
   render();
