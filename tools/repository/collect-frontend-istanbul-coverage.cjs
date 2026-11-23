@@ -162,7 +162,7 @@ async function exerciseGlobalNotifications(page) {
 async function runWritingCoverage(caseDirectory) {
   fs.mkdirSync(caseDirectory, { recursive: true });
   const testFile = 'tests/e2e/agent-runner/production-writing.test.cjs';
-  const env = { ...process.env, WRITING_LIVE_MODEL: '0' };
+  const env = { ...process.env, WRITING_LIVE_MODEL: '0', KC_FRONTEND_ISTANBUL_PROFILE: '1', KC_FRONTEND_ISTANBUL_REUSE_BROWSER: '1' };
   delete env.KC_FRONTEND_ISTANBUL_CASE_DIR;
   await runWritingTest(['--test', '--test-name-pattern=网页资料多选', testFile], env,
     path.join(caseDirectory, 'image-preview.log'), '无注入图片预览');
@@ -185,7 +185,7 @@ async function runDocumentTaskCoverage(caseDirectory) {
 
 async function runMyWorkCoverage(caseDirectory) {
   fs.mkdirSync(caseDirectory, { recursive: true });
-  const pattern = '工作台统一|联合查询面板|已关闭的 MR|同步失败保留待办|管理员切换他人工作|代看合入负责人';
+  const pattern = '工作台统一|联合查询面板|工作台可跳至指定页|已关闭的 MR|同步失败保留待办|管理员切换他人工作|代看合入负责人';
   await runWritingTest(['--test', `--test-name-pattern=${pattern}`, 'tests/e2e/agent-runner/knowledge-center-my-work.node.test.cjs'],
     { ...process.env, KC_FRONTEND_ISTANBUL_CASE_DIR: caseDirectory },
     path.join(caseDirectory, 'my-work-test.log'), '我的工作真实 HTTP 浏览器覆盖率测试');
@@ -503,8 +503,9 @@ async function exerciseView(page, view) {
     }
   }
   if (view === 'documentTasks') {
-    for (const tab of ['list', 'secondary', 'flow']) {
-      await activateTab(page, `[data-task-tab="${tab}"]`, `[data-task-tab="${tab}"][aria-selected="true"]`);
+    await page.locator('.document-task-page [data-task-list]').waitFor({ state: 'visible' });
+    if (await page.locator('.document-task-tabs, [data-task-tab], .document-task-config').count()) {
+      throw new Error('任务管理已收敛为单一列表，不应渲染旧视图入口');
     }
   }
   if (view === 'production') {
@@ -900,6 +901,55 @@ async function exerciseDirectoryTree(page) {
     noSearchTree.querySelector('[data-directory-search]').value = '叶节点';
     noSearchTree.querySelector('[data-directory-search]').dispatchEvent(new Event('input', { bubbles: true }));
     noSearchTree.querySelector('button').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    const navigation = document.createElement('div');
+    navigation.dataset.directoryTree = '';
+    navigation.innerHTML = renderDirectoryTree([
+      { id: 'first', name: '首项' }, { id: 'last', name: '末项' },
+    ], { renderLeaf: node => `<li><button data-tree-item="${node.id}">${node.name}</button></li>` });
+    host.append(navigation);
+    enhanceDirectoryTrees();
+    enhanceDirectoryTrees();
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    const firstLeaf = navigation.querySelector('[data-tree-item="first"]');
+    const lastLeaf = navigation.querySelector('[data-tree-item="last"]');
+    const press = (item, key) => item.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+    firstLeaf.focus();
+    press(firstLeaf, 'ArrowUp');
+    assert(document.activeElement === firstLeaf, '首项向上应保持焦点');
+    press(firstLeaf, 'End');
+    assert(document.activeElement === lastLeaf, 'End 应聚焦末项');
+    press(lastLeaf, 'ArrowDown');
+    assert(document.activeElement === lastLeaf, '末项向下应保持焦点');
+    press(lastLeaf, 'Home');
+    assert(document.activeElement === firstLeaf, 'Home 应聚焦首项');
+    let activated = 0;
+    firstLeaf.addEventListener('click', () => activated++);
+    press(firstLeaf, 'Enter');
+    press(firstLeaf, ' ');
+    assert(activated === 2, 'Enter 和空格应各激活一次叶节点');
+    assert(press(firstLeaf, 'Escape'), '未处理的 Escape 不应被拦截');
+    rootDetails.open = false;
+    rootSummary.focus();
+    press(rootSummary, 'ArrowRight');
+    assert(rootDetails.open && document.activeElement === rootSummary, `向右应先展开目录：open=${rootDetails.open}, focus=${document.activeElement?.outerHTML}`);
+    press(rootSummary, 'ArrowRight');
+    assert(document.activeElement === tree.querySelector('[data-tree-item="leaf"]'), '展开目录向右应聚焦首个子项');
+    press(rootSummary, 'ArrowLeft');
+    assert(!rootDetails.open, '向左应折叠展开的目录');
+    rootSummary.click();
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    assert(rootSummary.getAttribute('aria-expanded') === 'true', '点击目录标题后应刷新展开状态');
+    const rootLeaf = tree.querySelector('[data-tree-item="leaf"]');
+    rootLeaf.focus();
+    press(rootLeaf, 'ArrowLeft');
+    assert(document.activeElement === rootSummary, '向左应从子项聚焦父目录');
+    const secondSummary = tree.querySelector('li[data-directory-key="second"] > details > summary');
+    const deepSummary = tree.querySelector('li[data-directory-key="deep"] > details > summary');
+    secondSummary.parentElement.open = false;
+    deepSummary.parentElement.open = true;
+    rootSummary.focus();
+    press(rootSummary, 'End');
+    assert(document.activeElement === secondSummary, '折叠祖先内的展开子目录及叶节点不应进入键盘导航');
     host.remove();
   });
 }
@@ -1109,16 +1159,104 @@ async function exerciseViewportRuntime(page) {
   });
 }
 
+async function exerciseRepositoryImagesContract(page) {
+  await page.evaluate(async () => {
+    const { repositoryImageURL, observeRepositoryImages } = await import('/knowledge-center/common/markdown/repository-images.js');
+    const assert = (condition, message) => { if (!condition) throw new Error(message); };
+    const url = repositoryImageURL('../images/setup%20guide.webp', 'docs/setup/readme.md', {
+      handbookId: 'HB-1', branch: '', language: '',
+    });
+    assert(url && url.includes('ref=&language=zh') && url.includes('path=docs%2Fimages%2Fsetup%20guide.webp'),
+      '相对图片路径应按 Markdown 所在目录和缺省上下文解析');
+    assert(repositoryImageURL('image.png', 'docs/readme.md') === null, '缺省 context 应安全回退');
+    assert(repositoryImageURL('', 'docs/readme.md', { handbookId: 'HB-1' }) === null, '空 href 应拒绝');
+    assert(repositoryImageURL('%E0%A4%A', 'docs/readme.md', { handbookId: 'HB-1' }) === null,
+      '非法百分号编码应拒绝');
+    assert(repositoryImageURL('../image.png', 'readme.md', { handbookId: 'HB-1' }) === null,
+      '相对路径不能越过仓库根目录');
+
+    const host = document.createElement('div');
+    const untracked = document.createElement('img');
+    untracked.setAttribute('src', '#external');
+    const removable = document.createElement('img');
+    removable.src = 'images/first.png';
+    const restorable = document.createElement('img');
+    restorable.src = 'images/second.png';
+    restorable.srcset = 'fallback.png 2x';
+    host.append(untracked, removable, restorable);
+    const stop = observeRepositoryImages(host, 'docs/readme.md', { handbookId: 'HB-1', branch: 'main' });
+    assert(!untracked.hasAttribute('srcset'), '初始无效图片不应创建预览 srcset');
+    assert(removable.srcset.includes('path=docs%2Fimages%2Ffirst.png'), '初次扫描应转换相对图片');
+    assert(restorable.srcset.includes('path=docs%2Fimages%2Fsecond.png'), '初次扫描应保存原 srcset');
+
+    const direct = document.createElement('img');
+    direct.src = 'images/inserted.png';
+    host.append(direct);
+    host.append(document.createTextNode('not an element'));
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert(direct.srcset.includes('path=docs%2Fimages%2Finserted.png'), 'observer 应扫描直接新增的 img');
+
+    removable.setAttribute('src', '#external');
+    restorable.src = '';
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert(!removable.hasAttribute('srcset'), '没有原 srcset 时应移除观察器生成值');
+    assert(restorable.srcset === 'fallback.png 2x', '有原 srcset 时应恢复原值');
+    stop();
+  });
+}
+
+async function exerciseProductionAIDialogBodyFallback(page) {
+  await page.evaluate(async () => {
+    const { openProductionAIDialog } = await import('/knowledge-center/modules/production/production-ai-dialog.js');
+    const assert = (condition, message) => { if (!condition) throw new Error(message); };
+    const root = document.getElementById('view-root');
+    if (!root) throw new Error('固定页面缺少 view-root 根节点');
+    const before = document.querySelectorAll('.handbook-writing-page').length;
+    root.removeAttribute('id');
+    let opened;
+    try {
+      opened = openProductionAIDialog({
+        context: { handbookId: 'HB-COVERAGE', documentId: 'dialog-fallback', branch: 'main' },
+        getMarkdown: () => '',
+      });
+      assert(typeof opened?.close === 'function', '兼容写作入口应返回关闭控制');
+      assert(document.body.querySelectorAll('.handbook-writing-page').length === before + 1,
+        '没有 view-root 时写作页应回退挂载到 body');
+      opened.close();
+      opened = null;
+      assert(document.querySelectorAll('.handbook-writing-page').length === before,
+        '关闭 body 回退写作页后不应残留 DOM');
+    } finally {
+      opened?.close();
+      root.id = 'view-root';
+    }
+  });
+}
+
 async function exerciseDatabaseEnhancer(page) {
   await page.evaluate(async () => {
     const { enhanceDatabaseMarkdown } = await import('/knowledge-center/common/markdown/database-enhancer.js');
     const assert = (condition, message) => { if (!condition) throw new Error(message); };
+    const emptyWarnings = [];
+    const warn = console.warn;
+    try {
+      console.warn = (...args) => emptyWarnings.push(args);
+      const plain = '<p>普通正文</p>';
+      const unchanged = enhanceDatabaseMarkdown(plain);
+      assert(unchanged.html === plain && unchanged.hits.length === 0 && emptyWarnings.length === 0,
+        '没有代码块的正文不应产生语义标记或增强失败告警');
+    } finally {
+      console.warn = warn;
+    }
     const enhanced = enhanceDatabaseMarkdown('<p>SELECT max_connections YAS-1234</p><pre class="repository-code"><code class="language-sql">SELECT 1</code></pre>');
     assert(enhanced.hits.some(hit => hit.id === 'sql.select')
       && enhanced.hits.some(hit => hit.id === 'parameter.max_connections')
       && enhanced.hits.some(hit => hit.id === 'error.code'), '数据库正文语义标记未识别 SQL、参数和错误码');
     assert(enhanced.html.includes('db-code-block') && enhanced.html.includes('data-db-code-language="sql"')
       && enhanced.html.includes('data-db-code-lines="1"'), '代码块未生成复制工具栏');
+    const fallback = enhanceDatabaseMarkdown('<pre class="repository-code"><code class="language-">SELECT 1</code></pre>');
+    assert(fallback.html.includes('data-db-code-language=""') && fallback.html.includes('<span>text</span>'),
+      '空代码语言应回退到 text 工具栏文案');
     const marked = '<p><mark class="existing">SELECT</mark></p>';
     assert(enhanceDatabaseMarkdown(marked).html === marked, '已有标记的正文不应重复标注');
     const inline = '<p><strong>SELECT</strong></p>';
@@ -1195,16 +1333,42 @@ async function exerciseProductionProvenance(page) {
   });
 }
 
+async function exerciseWritingChangesContract(page) {
+  await page.evaluate(async () => {
+    const { writingChanges, assembleWritingChanges } = await import('/knowledge-center/modules/production/writing-changes.js');
+    const assert = (condition, message) => { if (!condition) throw new Error(message); };
+    const unchanged = writingChanges('保留正文\n', '保留正文\n');
+    assert(unchanged.length === 1 && unchanged[0].type === 'equal'
+      && assembleWritingChanges(unchanged) === '保留正文\n', '相同正文未走无差异快捷路径');
+    const original = '安装检查旧说明';
+    const changes = writingChanges(original, '安装检查新内容');
+    assert(changes.filter(item => item.type === 'change').length === 1
+      && assembleWritingChanges(changes) === '安装检查新内容', '无公共后缀修订未完整生成候选');
+    changes.find(item => item.type === 'change').decision = 'rejected';
+    assert(assembleWritingChanges(changes) === original, '拒绝修订未逐字恢复原文');
+    const retainedTail = writingChanges('旧段落\n相同尾段\n', '新段落\n相同尾段\n');
+    assert(assembleWritingChanges(retainedTail) === '新段落\n相同尾段\n', '修订候选丢失公共尾段');
+    retainedTail.find(item => item.type === 'change').decision = 'rejected';
+    assert(assembleWritingChanges(retainedTail) === '旧段落\n相同尾段\n', '拒绝修订未保留公共尾段');
+    const largeOriginal = '旧段落\n'.repeat(501);
+    const largeCandidate = '新段落\n'.repeat(500);
+    const largeChanges = writingChanges(largeOriginal, largeCandidate);
+    assert(largeChanges.filter(item => item.type === 'change').length === 1
+      && assembleWritingChanges(largeChanges) === largeCandidate, '超限 LCS 矩阵回退未完整保留候选正文');
+  });
+}
+
 async function exerciseAuthController(page) {
   await page.evaluate(async () => {
     const auth = await import('/knowledge-center/common/auth/auth-controller.js');
     const authApi = await import('/knowledge-center/common/api/auth-api.js');
-    const { authState } = await import('/knowledge-center/common/state/auth-state.js');
+    const authStateModule = await import('/knowledge-center/common/state/auth-state.js');
+    const { authState } = authStateModule;
     const assert = (condition, message) => { if (!condition) throw new Error(message); };
     const originalFetch = window.fetch;
     const originalUrl = window.location.pathname + window.location.search + window.location.hash;
     const originalAuthState = { ...authState };
-    const response = (status, body) => ({ ok: status >= 200 && status < 300, status, headers: new Headers(), json: async () => body });
+    const response = (status, body, headers = new Headers()) => ({ ok: status >= 200 && status < 300, status, headers, json: async () => body });
     let mode = 'anonymous';
     window.fetch = async (input, options) => {
       const path = new URL(input, window.location.href).pathname;
@@ -1215,6 +1379,18 @@ async function exerciseAuthController(page) {
         return response(200, { data: { casEnabled: true, loginUrl: '/cas/login', serviceId: 'kc-service', serviceUrl: '/callback' } });
       }
       if (path.endsWith('/auth/session')) {
+        if (mode === 'session-content-envelope') return response(200, { content: { responseShape: 'content' } });
+        if (mode === 'session-raw-payload') return response(200, { responseShape: 'payload' });
+        if (mode === 'session-empty-payload') return response(200, null);
+        if (mode === 'session-malformed-error') return {
+          ok: false,
+          status: 502,
+          headers: new Headers({ 'x-request-id': 'auth-fallback-502' }),
+          json: async () => { throw new SyntaxError('invalid JSON'); },
+        };
+        if (mode === 'session-payload-fallback') return response(503, {
+          message: 'session payload fallback', code: 'SESSION_GATEWAY',
+        });
         if (mode === 'session-error') return response(401, { error: { message: 'expired' } });
         if (mode === 'session-unavailable') return response(503, { error: { message: 'session unavailable' } });
         if (mode === 'authenticated' || mode === 'config-error') return response(200, { data: { authenticated: true, user: { id: 'coverage' }, allowedActions: ['knowledge:read'] } });
@@ -1236,6 +1412,48 @@ async function exerciseAuthController(page) {
       return originalFetch(input, options);
     };
     try {
+      const defaultAuthError = new authApi.AuthApiError('default auth error');
+      assert(defaultAuthError.status === 0 && defaultAuthError.code === 'AUTH_REQUEST_FAILED'
+        && defaultAuthError.details === null, '认证 API 错误默认字段不正确');
+      authStateModule.clearSession();
+      assert(authState.status === 'anonymous' && !authStateModule.canAccessView('dashboard')
+        && authStateModule.firstAccessibleView() === null
+        && authStateModule.displayName() === '已登录用户', '匿名状态视图或用户名称默认值错误');
+      authStateModule.setAuthState({ status: 'authenticated', session: {
+        authenticated: true, visibleModules: null, loginMethod: 'cas', user: {}, roles: [],
+      } });
+      assert(authStateModule.canAccessView('dashboard') && !authStateModule.canAccessView('platform'),
+        '未提供模块清单时的普通用户视图范围错误');
+      assert(authStateModule.displayName() === '已登录用户', '用户名称缺省值错误');
+      authStateModule.setAuthState({ session: { ...authState.session, loginMethod: 'admin' } });
+      assert(authStateModule.canAccessView('platform'), '管理员未提供模块清单时应可访问平台管理');
+      authStateModule.setAuthState({ session: {
+        authenticated: true, visibleModules: ['assets'], user: { name: '资源维护员' }, roles: [],
+      } });
+      assert(authStateModule.canAccessView('repository') && !authStateModule.canAccessView('cleaning')
+        && authStateModule.firstAccessibleView() === 'assets'
+        && authStateModule.displayName() === '资源维护员', '模块白名单、首个视图或用户名称回退错误');
+      authStateModule.setAuthState({ session: {
+        authenticated: true, visibleModules: ['cleaning'], user: { username: 'cleaner' }, roles: ['PLATFORM_ADMIN'],
+        allowedActions: null,
+      } });
+      assert(authStateModule.canAccessView('cleaning') && authStateModule.isPlatformAdmin()
+        && authStateModule.displayName() === 'cleaner'
+        && !authStateModule.canAccessView('platform'), '平台管理员视图或用户动作来源错误');
+      authStateModule.setAuthState({ session: {
+        authenticated: true, visibleModules: ['*'], user: { displayName: '系统管理员' }, roles: ['SUPER_ADMIN'],
+        allowedActions: ['knowledge:read'],
+      } });
+      assert(authStateModule.canAccessView('repository') && authStateModule.canAccessView('platform')
+        && authStateModule.firstAccessibleView() === 'dashboard'
+        && authStateModule.displayName() === '系统管理员'
+        && authStateModule.canPerform('knowledge:read') && !authStateModule.canPerform('knowledge:write'),
+      '通配模块、首选视图、显示名或动作检查错误');
+      authStateModule.setAuthState({ session: {
+        authenticated: true, visibleModules: [], user: { allowedActions: ['knowledge:write'] }, roles: [],
+      } });
+      assert(authStateModule.firstAccessibleView() === null
+        && authStateModule.canPerform('knowledge:write'), '空模块集或用户级动作回退错误');
       mode = 'network-error';
       try { await authApi.getSession(); throw new Error('认证网络错误未抛出'); }
       catch (error) {
@@ -1244,6 +1462,30 @@ async function exerciseAuthController(page) {
           && error.details instanceof TypeError && error.details.message === 'isolated auth network failure',
         '认证网络故障未保留错误类型、代码与原始原因');
       }
+      mode = 'session-malformed-error';
+      let malformedResponseError;
+      try { await authApi.getSession(); } catch (error) { malformedResponseError = error; }
+      assert(malformedResponseError instanceof authApi.AuthApiError
+        && malformedResponseError.status === 502
+        && malformedResponseError.code === 'AUTH_HTTP_502'
+        && malformedResponseError.message === '认证请求未完成'
+        && malformedResponseError.details.requestId === 'auth-fallback-502',
+      '不可解析认证错误响应未使用状态码、文案和请求 ID 回退');
+      mode = 'session-payload-fallback';
+      let payloadFallbackError;
+      try { await authApi.getSession(); } catch (error) { payloadFallbackError = error; }
+      assert(payloadFallbackError instanceof authApi.AuthApiError
+        && payloadFallbackError.status === 503
+        && payloadFallbackError.code === 'SESSION_GATEWAY'
+        && payloadFallbackError.message === 'session payload fallback'
+        && payloadFallbackError.details.requestId === '',
+      '认证错误响应未保留 payload 文案/代码或空请求 ID 回退');
+      mode = 'session-content-envelope';
+      assert((await authApi.getSession()).responseShape === 'content', '认证 API 未兼容 content 包装响应');
+      mode = 'session-raw-payload';
+      assert((await authApi.getSession()).responseShape === 'payload', '认证 API 未兼容直接对象响应');
+      mode = 'session-empty-payload';
+      assert(Object.keys(await authApi.getSession()).length === 0, '认证 API 空响应未回退为空对象');
       assert(auth.sanitizeReturnTo(null) === '/knowledge-center/', '空返回地址未使用安全默认值');
       assert(auth.sanitizeReturnTo('http://[') === '/knowledge-center/', '非法返回地址未使用安全默认值');
       mode = 'anonymous';
@@ -1309,6 +1551,82 @@ async function exerciseAuthController(page) {
       history.replaceState(history.state, '', originalUrl);
       sessionStorage.removeItem('knowledge-center-return-to');
       Object.assign(authState, originalAuthState);
+    }
+  });
+}
+
+async function exerciseTaskResponsibilityConfig(page) {
+  await page.evaluate(async () => {
+    const { appState } = await import('/knowledge-center/common/state/app-state.js');
+    const originalFetch = window.fetch;
+    const originalConfirm = window.confirm;
+    const originalUrl = location.pathname + location.search + location.hash;
+    const originalHistoryState = history.state;
+    const previousState = {
+      taskConfig: appState.taskConfig,
+      taskConfigStatus: appState.taskConfigStatus,
+      taskConfigLoading: appState.taskConfigLoading,
+      activeView: appState.activeView,
+      platformTab: appState.platformTab,
+    };
+    let configCalls = 0;
+    const assert = (condition, message) => { if (!condition) throw new Error(message); };
+    const waitFor = async (predicate, message) => {
+      for (let attempt = 0; attempt < 80; attempt++) {
+        if (predicate()) return;
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+      throw new Error(message);
+    };
+    window.confirm = () => true;
+    window.fetch = async (input, options) => {
+      const url = new URL(typeof input === 'string' ? input : input.url, location.href);
+      if (url.pathname === '/knowledge-center/api/document-tasks/config') {
+        configCalls++;
+        if (configCalls === 1) return new Response(JSON.stringify({
+          success: false, error: { message: '负责人配置服务暂不可用' },
+        }), { status: 503, headers: { 'Content-Type': 'application/json' } });
+        if (configCalls === 2) return new Response(JSON.stringify({
+          success: true, data: { revision: 7, defaultOwnerId: null, knowledgeCenterOwnerId: null },
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        throw new Error('');
+      }
+      return originalFetch(input, options);
+    };
+    try {
+      appState.taskConfig = null;
+      appState.taskConfigStatus = null;
+      appState.taskConfigLoading = false;
+      history.pushState({ view: 'platform', tab: 'principals' }, '', '/knowledge-center/platform?tab=principals');
+      window.dispatchEvent(new PopStateEvent('popstate', { state: history.state }));
+      await waitFor(() => appState.taskConfigStatus?.kind === 'error' && !appState.taskConfigLoading,
+        '负责人配置初次失败后未显示错误状态');
+      assert(configCalls === 1 && document.querySelector('[data-task-responsibility-open]'),
+        '负责人配置初次加载请求或入口缺失');
+
+      document.querySelector('[data-task-responsibility-open]').click();
+      await waitFor(() => appState.taskConfig?.revision === 7 && appState.taskConfigStatus === null,
+        '负责人配置重试未成功恢复配置');
+      let dialog = document.querySelector('[data-task-responsibility-dialog]');
+      assert(configCalls === 2 && dialog?.open
+        && document.activeElement === dialog.querySelector('select[name="defaultOwnerId"]'),
+      '负责人配置重试成功后未重开弹窗并恢复焦点');
+
+      dialog.close();
+      appState.taskConfig = null;
+      appState.taskConfigStatus = { kind: 'error', message: '再次读取' };
+      appState.taskConfigLoading = false;
+      document.querySelector('[data-task-responsibility-open]').click();
+      await waitFor(() => configCalls === 3 && appState.taskConfigStatus?.message === '负责人配置读取失败。',
+        '负责人配置重试的空错误文案未回退为中文提示');
+      dialog = document.querySelector('[data-task-responsibility-dialog]');
+      assert(dialog?.open && !appState.taskConfigLoading, '负责人配置失败后未恢复弹窗和加载状态');
+    } finally {
+      window.fetch = originalFetch;
+      window.confirm = originalConfirm;
+      document.querySelector('[data-task-responsibility-dialog]')?.close();
+      Object.assign(appState, previousState);
+      history.replaceState(originalHistoryState, '', originalUrl);
     }
   });
 }
@@ -3195,22 +3513,31 @@ async function exerciseReviewInlineComment(page) {
 async function exerciseNavigationState(page) {
   const result = await page.evaluate(async () => {
     const navigation = await import('/knowledge-center/common/state/navigation.js');
+    const { startReviewBootstrapPrefetch } = await import('/knowledge-center/common/api/review-bootstrap-prefetch.js');
+    const bootstrapReads = () => performance.getEntriesByType('resource').filter(entry => entry.name.includes('/review/bootstrap')).length;
+    const beforeTicketRoute = bootstrapReads();
+    startReviewBootstrapPrefetch({ pathname: '/knowledge-center/review', search: '?ticket=fixture-ticket' });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    const ticketPrefetchSkipped = bootstrapReads() === beforeTicketRoute;
     return {
       unknownView: navigation.pathForView('missing'),
       validPlatform: navigation.pathForView('platform', { tab: 'models' }),
       invalidPlatform: navigation.pathForView('platform', { tab: 'missing' }),
       repository: navigation.viewFromPath('/knowledge-center/assets/HB/repository/'),
+      rootPath: navigation.viewFromPath('/'),
       handbook: navigation.viewFromPath('/knowledge-center/production/handbook/HB'),
       unknownPath: navigation.viewFromPath('/knowledge-center/unknown'),
       validTab: navigation.platformTabFromSearch('?tab=mcp'),
       defaultTab: navigation.platformTabFromSearch(''),
       invalidTab: navigation.platformTabFromSearch('?tab=missing'),
+      ticketPrefetchSkipped,
     };
   });
   if (result.unknownView !== '/knowledge-center/' || result.validPlatform !== '/knowledge-center/platform?tab=models'
       || result.invalidPlatform !== '/knowledge-center/platform?tab=governance'
-      || result.repository !== 'repository' || result.handbook !== 'production' || result.unknownPath !== null
-      || result.validTab !== 'mcp' || result.defaultTab !== 'governance' || result.invalidTab !== 'governance') {
+      || result.repository !== 'repository' || result.rootPath !== null || result.handbook !== 'production' || result.unknownPath !== null
+      || result.validTab !== 'mcp' || result.defaultTab !== 'governance' || result.invalidTab !== 'governance'
+      || !result.ticketPrefetchSkipped) {
     throw new Error(`导航状态边界结果错误：${JSON.stringify(result)}`);
   }
 }
@@ -3978,7 +4305,13 @@ async function main() {
     const targetedScenario = process.env.KC_FRONTEND_ISTANBUL_SCENARIO;
     if (targetedScenario) {
       const scenarios = {
+        'directory-tree': exerciseDirectoryTree,
         'auth-controller': exerciseAuthController,
+        'database-enhancer': exerciseDatabaseEnhancer,
+        'production-ai-dialog': exerciseProductionAIDialogBodyFallback,
+        'repository-images': exerciseRepositoryImagesContract,
+        'writing-changes': exerciseWritingChangesContract,
+        'task-responsibility-config': exerciseTaskResponsibilityConfig,
         'handbook-drawers': exerciseHandbookDrawers,
         'handbook-writing-entry': exerciseHandbookWritingEntry,
         'document-task-tabs': async page => {
@@ -4000,10 +4333,12 @@ async function main() {
     const globalNotificationCases = await exerciseGlobalNotifications(page);
     if (globalNotificationCases !== 4) throw new Error(`站内通知场景计数应为 4，实际 ${globalNotificationCases}`);
     const uiSystemContractCases = await page.evaluate(async () => {
-      const { UI_ICONS, uiButton, uiIcon, uiIconButton } = await import('/knowledge-center/common/ui-system.js');
+      const { UI_ICONS, uiButton, uiIcon, uiIconButton, hydrateSemanticIcons } = await import('/knowledge-center/common/ui-system.js');
       const { panel, section, formattedTime, pendingState, capabilityState } = await import('/knowledge-center/common/components/ui.js');
       const assert = (condition, message) => { if (!condition) throw new Error(message); };
       let cases = 0;
+      assert(hydrateSemanticIcons(null) === undefined, '缺少图标根节点时应安全返回');
+      cases++;
       for (const usage of Object.keys(UI_ICONS)) {
         assert(uiIcon(usage).includes(`data-lucide="${UI_ICONS[usage]}"`), `图标映射错误：${usage}`);
         cases++;
@@ -4173,8 +4508,12 @@ async function main() {
     const cleaningUploadHttpCases = await exerciseCleaningUploadHttp(page);
     if (cleaningUploadHttpCases !== 7) throw new Error('资料上传HTTP场景计数不完整');
     await exerciseDatabaseEnhancer(page);
+    await exerciseRepositoryImagesContract(page);
+    await exerciseProductionAIDialogBodyFallback(page);
     await exerciseProductionProvenance(page);
+    await exerciseWritingChangesContract(page);
     await exerciseAuthController(page);
+    await exerciseTaskResponsibilityConfig(page);
     await exerciseHandbookWritingEntry(page);
     const writingAdoptionHttpCases = await exerciseWritingAdoptionHttp(page);
     if (writingAdoptionHttpCases !== 3) throw new Error('写作候选采用HTTP场景计数不完整');
@@ -4290,7 +4629,7 @@ async function main() {
     const myWorkDirectory = path.join(output, 'my-work-cases', `${Date.now()}-${process.pid}`);
     await runMyWorkCoverage(myWorkDirectory);
     const myWorkFiles = fs.readdirSync(myWorkDirectory).filter(name => name.endsWith('.json'));
-    if (myWorkFiles.length !== 8) throw new Error(`我的工作计数文件应为 8 个，实际 ${myWorkFiles.length}`);
+    if (myWorkFiles.length !== 10) throw new Error(`我的工作计数文件应为 10 个，实际 ${myWorkFiles.length}`);
     for (const name of myWorkFiles) {
       const snapshot = JSON.parse(fs.readFileSync(path.join(myWorkDirectory, name), 'utf8'));
       const entries = Object.values(snapshot || {});

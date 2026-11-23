@@ -164,7 +164,7 @@ class RepositoryTestRunnerTests(unittest.TestCase):
             RUNNER.classify_node_runner(RUNNER.NODE_TEST_ROOT / "config-validator.test.js"),
         )
         self.assertEqual(
-            "python-script",
+            "unittest",
             RUNNER.classify_python_runner(RUNNER.PYTHON_TEST_ROOT / "pingcode" / "test_api_client.py"),
         )
         self.assertEqual(
@@ -375,6 +375,8 @@ class RepositoryTestRunnerTests(unittest.TestCase):
                 self.assertIn("2 / 0 / 1", content)
                 self.assertIn('href="details/tasks/task.log"', content)
                 self.assertIn('data-search-pagination', content)
+                self.assertIn('href="report.md">Markdown 报告 ↗', content)
+                self.assertIn('href="details/report.json">原始 JSON ↗', content)
                 self.assertIn("window.addEventListener('load'", content)
                 self.assertIn("script.async=true", content)
                 self.assertNotIn('<link rel="preload"', content)
@@ -402,6 +404,33 @@ class RepositoryTestRunnerTests(unittest.TestCase):
         self.assertNotIn("<script>alert", content)
         self.assertNotIn("outside.log", content)
         self.assertIn("失败与阻塞", content)
+
+    def test_html_report_scene_pages_keep_relative_artifact_links(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory)
+            details = run_dir / "details"
+            details.mkdir()
+            payload = RUNNER.report_payload("unit", [RUNNER.TaskResult(
+                "unit", "场景任务", "pytest", "PASS", 0.1, 0, 1,
+                test_total=1, test_passed=1, test_failed=0, test_skipped=0,
+                cases=({"name": "case", "status": "PASS"},),
+            )], 0.1)
+            (details / "report.json").write_text(json.dumps(payload), encoding="utf-8")
+            report = RUNNER.write_html_report(run_dir, page_size=1)
+            scene = (run_dir / "scenes" / "scene-1-1.html").read_text(encoding="utf-8")
+            self.assertIn('href="../report.md">Markdown 报告 ↗', scene)
+            self.assertIn('href="../details/report.json">原始 JSON ↗', scene)
+            self.assertNotIn(str(run_dir), report.read_text(encoding="utf-8"))
+
+    def test_html_report_removes_terminal_sequences_but_preserves_html_escaping(self):
+        self.assertEqual("plain red title", RUNNER.report_text("plain \x1b[31mred\x1b[0m title"))
+        self.assertEqual("visible", RUNNER.report_text("\x1b]0;hidden\x07visible"))
+        payload = {"command": "unit", "tasks": [{"suite": "unit", "label": "ANSI", "framework": "jest",
+                   "status": "FAIL", "test_total": 1, "test_passed": 0, "test_failed": 1, "test_skipped": 0,
+                   "cases": [{"name": "failing", "status": "FAIL", "detail": "\x1b[31m<script>bad</script>\x1b[0m"}]}]}
+        content = RUNNER.render_html_report(payload)
+        self.assertIn("&lt;script&gt;bad&lt;/script&gt;", content)
+        self.assertNotIn("\x1b[", content)
 
     def test_html_report_triages_failures_without_losing_abnormal_cases(self):
         cases = [{"name": f"case {index}", "status": "TIMEOUT" if index == 1 else "INTERRUPTED" if index == 2 else "FAIL",
@@ -432,6 +461,59 @@ class RepositoryTestRunnerTests(unittest.TestCase):
                         overview.index("fast", overview.index("耗时较长的用例")))
         scene = RUNNER.report_scene_page(payload, model, "unit", model["scenes"]["unit"], 1)
         self.assertIn("失败 1", scene)
+
+    def test_html_report_overview_navigation_reaches_sections_and_tasks(self):
+        tasks = [{"suite": "unit", "label": "同名 <任务>", "framework": "jest", "status": "PASS",
+                  "duration_seconds": duration, "test_total": 1, "test_passed": 1,
+                  "test_failed": 0, "test_skipped": 0, "cases": []} for duration in (1, 3)]
+        content = RUNNER.render_html_report({"command": "unit", "passed": True, "tasks": tasks})
+        for section in ("failures", "scenes", "coverage", "tasks", "slow-tasks"):
+            self.assertIn(f'href="#{section}"', content)
+            self.assertIn(f'id="{section}"', content)
+        self.assertIn('<tr id="task-1">', content)
+        self.assertIn('<tr id="task-2">', content)
+        slow = content[content.index('id="slow-tasks"'):]
+        self.assertLess(slow.index('href="#task-2"'), slow.index('href="#task-1"'))
+        self.assertIn('同名 &lt;任务&gt;', slow)
+
+    def test_html_report_surfaces_coverage_gate_without_inventing_measurements(self):
+        payload = {"command": "full", "passed": False, "tasks": [], "coverageTargets": {
+            "node": {"lines": 100, "branches": 95}}, "coverage": {"status": "FAIL", "runtime_metrics": {
+                "node": {"source_files": 2, "summary": {"lines": {"covered": 9, "total": 10},
+                                                         "branches": {"covered": 19, "total": 20}}}}}}
+        failed = RUNNER.render_html_report(payload)
+        self.assertIn('class="coverage-summary fail" href="#coverage">覆盖率门禁：未达标</a>', failed)
+        self.assertIn('class="bar fail"', failed)
+        self.assertIn('class="bar pass"', failed)
+        self.assertIn('9/10 · 目标 100%', failed)
+        self.assertIn('19/20 · 目标 95%', failed)
+        self.assertIn('aria-label="各运行时覆盖率快照"', failed)
+        self.assertIn('<strong>90.00%</strong>', failed)
+        self.assertIn('<strong>95.00%</strong>', failed)
+        self.assertIn('coverage-snapshot-state">未达标</span>', failed)
+        payload["coverage"]["status"] = "PASS"
+        self.assertIn('覆盖率门禁：达标</a>', RUNNER.render_html_report(payload))
+        del payload["coverage"]
+        uncollected = RUNNER.render_html_report(payload)
+        self.assertIn('覆盖率门禁：未采集</a>', uncollected)
+        self.assertIn('本次未启用覆盖率采集', uncollected)
+        self.assertNotIn('各运行时覆盖率快照', uncollected)
+
+    def test_html_coverage_snapshot_marks_missing_measurements_and_targets(self):
+        payload = {"command": "full", "tasks": [], "coverage": {"status": "FAIL", "runtime_metrics": {
+            "frontend": {"summary": {"lines": {"covered": 8, "total": 10},
+                                     "branches": {"covered": 0, "total": 0}}},
+            "java": {"summary": {"lines": {"covered": 10, "total": 10},
+                                 "branches": {"covered": 19, "total": 20}}}}},
+            "coverageTargets": {"frontend": {"lines": 100, "branches": 95}}}
+        content = RUNNER.render_html_report(payload)
+        self.assertIn('coverage-snapshot-name">frontend', content)
+        self.assertIn('coverage-snapshot-state">未统计</span>', content)
+        self.assertIn('coverage-snapshot-name">java', content)
+        self.assertIn('coverage-snapshot-state">目标未配置</span>', content)
+        self.assertIn('class="badge ">目标未配置</span>', content)
+        self.assertIn('class="badge ">未统计</span>', content)
+        self.assertNotIn('class="bar fail"', content[content.index('<strong>java</strong>'):content.index('</tr>', content.index('<strong>java</strong>'))])
 
     def test_test_environment_targets_the_instance_prepared_by_runner(self):
         self.assertEqual(RUNNER.KNOWLEDGE_CENTER_BASE_URL, RUNNER.test_environment()["KPG_BASE_URL"])
@@ -506,12 +588,35 @@ class RepositoryTestRunnerTests(unittest.TestCase):
         service_start = source.index('[str(KNOWLEDGE_CENTER_SCRIPT), *arguments]')
         self.assertLess(sync_call, migration_call)
         self.assertLess(migration_call, service_start)
+        self.assertIn('for command in ("migrate-tasks", "activate-tasks"):', source)
+        self.assertIn('"YASDB_STORAGE_TARGET_CLASS": "test"', source)
+        self.assertIn('"KC_TASK_MIGRATION_EXPECTED_SCHEMA": "test_hy"', source)
+        self.assertIn('"KC_DOCUMENT_TASK_BACKUP_PATH": str(output_dir / "document-tasks-legacy.json")', source)
         self.assertIn("sync-e2e-yashandb-schema.sh", source)
         self.assertIn("expected_source=\"${YASDB_E2E_SOURCE_SCHEMA:-pf_knowledge}\"", sync_script)
         self.assertIn("expected_target=\"${YASDB_E2E_TARGET_SCHEMA:-test_hy}\"", sync_script)
         self.assertIn("SyncYashanDbSchemaData", sync_script)
         self.assertNotIn("FROMUSER=", sync_script)
         self.assertNotIn("TOUSER=", sync_script)
+
+    def test_e2e_reuses_a_task_projection_copied_with_the_source_snapshot(self):
+        active_projection = {"activeTaskMigrationCount": 1, "rowCounts": [
+            {"table": "KC_DOCUMENT_TASK", "sourceRows": 531, "targetRows": 531},
+            {"table": "KC_TASK_MIGRATION", "sourceRows": 1, "targetRows": 1},
+        ]}
+        empty_projection = {"rowCounts": [
+            {"table": "KC_DOCUMENT_TASK", "sourceRows": 0, "targetRows": 0},
+            {"table": "KC_TASK_MIGRATION", "sourceRows": 0, "targetRows": 0},
+        ]}
+        mismatched_projection = {"rowCounts": [
+            {"table": "KC_DOCUMENT_TASK", "sourceRows": 531, "targetRows": 530},
+            {"table": "KC_TASK_MIGRATION", "sourceRows": 1, "targetRows": 1},
+        ]}
+        self.assertTrue(RUNNER.task_projection_is_seeded_from_source(active_projection))
+        self.assertFalse(RUNNER.task_projection_is_seeded_from_source({**active_projection, "activeTaskMigrationCount": 0}))
+        self.assertFalse(RUNNER.task_projection_is_seeded_from_source({"rowCounts": active_projection["rowCounts"]}))
+        self.assertFalse(RUNNER.task_projection_is_seeded_from_source(empty_projection))
+        self.assertFalse(RUNNER.task_projection_is_seeded_from_source(mismatched_projection))
 
     def test_dirty_migrations_are_rejected_for_every_schema(self):
         storage_script = RUNNER.YASHANDB_STORAGE_SCRIPT.read_text(encoding="utf-8")
@@ -562,6 +667,16 @@ class RepositoryTestRunnerTests(unittest.TestCase):
 
 
 class HtmlCaseReportIntegrationTests(unittest.TestCase):
+    def test_report_timestamp_is_readable_and_retains_machine_value(self):
+        self.assertEqual("2026-11-16 15:52:52 UTC+08:00", RUNNER.format_report_timestamp("2026-11-16T15:52:52+08:00"))
+        self.assertEqual("2026-11-16 07:52:52 UTC+00:00", RUNNER.format_report_timestamp("2026-11-16T07:52:52Z"))
+        self.assertEqual("<script>", RUNNER.format_report_timestamp("<script>"))
+        self.assertEqual("未记录", RUNNER.format_report_timestamp(None))
+        payload = {"command": "smoke", "generatedAt": "2026-11-16T15:52:52+08:00", "passed": True, "tasks": []}
+        content = RUNNER.render_html_report(payload)
+        self.assertEqual(2, content.count('<time datetime="2026-11-16T15:52:52+08:00">2026-11-16 15:52:52 UTC+08:00</time>'))
+        self.assertEqual('<time datetime="&lt;script&gt;">&lt;script&gt;</time>', RUNNER.report_time_element("<script>"))
+
     def test_real_node_and_unittest_cases_and_static_pagination(self):
         runtime = REPOSITORY_ROOT / "runtime" / "test-results"
         runtime.mkdir(parents=True, exist_ok=True)

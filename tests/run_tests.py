@@ -692,6 +692,7 @@ def isolated_knowledge_center_environment(context: RunContext) -> tuple[dict[str
         "KNOWLEDGE_CENTER_ENV": "test",
         "KNOWLEDGE_CENTER_ENVIRONMENT": "test",
         "KNOWLEDGE_CENTER_TEST_RUN_ID": context.run_id,
+        "KNOWLEDGE_CENTER_ENABLE_E2E_FIXTURES": "1",
         "KNOWLEDGE_CENTER_E2E_INITIALIZE_PRODUCTION": "1",
         "KNOWLEDGE_CENTER_E2E_INITIALIZATION_DIR": str(service_root / "production-initialization"),
         "YASDB_CONFIG_DIR": str(TEST_DATABASE_CONFIG_DIR),
@@ -750,6 +751,19 @@ def synchronize_e2e_database(context: RunContext, lock) -> str:
     return completed.stdout.strip()
 
 
+def task_projection_is_seeded_from_source(sync_report: dict[str, Any]) -> bool:
+    rows = {row.get("table"): row for row in sync_report.get("rowCounts", [])}
+    tasks = rows.get("KC_DOCUMENT_TASK", {})
+    migration = rows.get("KC_TASK_MIGRATION", {})
+    return (
+        tasks.get("sourceRows", 0) > 0
+        and tasks.get("sourceRows") == tasks.get("targetRows")
+        and migration.get("sourceRows") == 1
+        and migration.get("targetRows") == 1
+        and sync_report.get("activeTaskMigrationCount") == 1
+    )
+
+
 def migrate_e2e_database(context: RunContext, environment: dict[str, str]) -> str:
     """Build the worktree and apply only committed migrations to locked test_hy."""
     for required in (KNOWLEDGE_CENTER_BUILD_SCRIPT, YASHANDB_STORAGE_SCRIPT):
@@ -793,6 +807,44 @@ def migrate_e2e_database(context: RunContext, environment: dict[str, str]) -> st
     )
     if migration.returncode != 0:
         raise RuntimeError(migration.stdout.strip() or "test_hy 当前工作树迁移失败")
+    sync_report_path = context.details_dir / "database-sync" / "report.json"
+    sync_report = json.loads(sync_report_path.read_text(encoding="utf-8"))
+    if task_projection_is_seeded_from_source(sync_report):
+        report.update({"taskMigration": {"mode": "reused_source_projection"}, "passed": True})
+        (output_dir / "report.json").write_text(
+            json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+        return migration.stdout.strip()
+
+    task_environment = environment.copy()
+    task_environment.update({
+        "YASDB_STORAGE_TARGET_CLASS": "test",
+        "KC_TASK_MIGRATION_EXPECTED_SCHEMA": "test_hy",
+        "KC_DOCUMENT_TASK_BACKUP_PATH": str(output_dir / "document-tasks-legacy.json"),
+    })
+    task_results = {}
+    for command in ("migrate-tasks", "activate-tasks"):
+        completed = subprocess.run(
+            [str(YASHANDB_STORAGE_SCRIPT), command],
+            cwd=REPOSITORY_ROOT,
+            env=task_environment,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        (output_dir / f"{command}.log").write_text(completed.stdout, encoding="utf-8")
+        task_results[command] = completed.returncode == 0
+        if completed.returncode != 0:
+            report.update({"taskMigration": task_results, "passed": False})
+            (output_dir / "report.json").write_text(
+                json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            )
+            raise RuntimeError(completed.stdout.strip() or f"test_hy {command} 失败")
+    report.update({"taskMigration": task_results, "passed": True})
+    (output_dir / "report.json").write_text(
+        json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
     return migration.stdout.strip()
 
 
@@ -1053,6 +1105,42 @@ def report_escape(value: Any) -> str:
     return html.escape(str(value), quote=True)
 
 
+def report_text(value: Any) -> str:
+    text = str(value or "")
+    text = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", text)
+    return re.sub(r"\x1b\][^\x07]*(?:\x07|\x1b\\)", "", text)
+
+
+def format_report_timestamp(value: Any) -> str:
+    raw = str(value or "")
+    if not raw:
+        return "未记录"
+    normalized = raw[:-1] + "+00:00" if raw.endswith("Z") else raw
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return raw
+    rendered = parsed.strftime("%Y-%m-%d %H:%M:%S")
+    offset = parsed.utcoffset()
+    if offset is None:
+        return rendered
+    seconds = int(offset.total_seconds())
+    sign = "+" if seconds >= 0 else "-"
+    hours, remainder = divmod(abs(seconds), 3600)
+    minutes, seconds = divmod(remainder, 60)
+    zone = f"UTC{sign}{hours:02d}:{minutes:02d}"
+    if seconds:
+        zone += f":{seconds:02d}"
+    return f"{rendered} {zone}"
+
+
+def report_time_element(value: Any) -> str:
+    raw = str(value or "")
+    if not raw:
+        return "未记录"
+    return f'<time datetime="{report_escape(raw)}">{report_escape(format_report_timestamp(raw))}</time>'
+
+
 def report_badge(status: str, large: bool = False) -> str:
     tone = "pass" if status == "PASS" else "fail" if status in {"FAIL", "TIMEOUT", "INTERRUPTED"} else "skip" if status == "SKIP" else ""
     return f'<span class="badge {tone}{" large" if large else ""}">{report_escape(CASE_STATUS_LABELS.get(status, status or "未知"))}</span>'
@@ -1069,6 +1157,16 @@ def report_log_link(task: dict[str, Any], prefix: str = "") -> str:
     if not raw or path.is_absolute() or ".." in path.parts or path.parts[:2] != ("details", "tasks") or "\\" in raw:
         return "—"
     return f'<a class="table-link" href="{report_escape(prefix + quote(path.as_posix(), safe="/"))}">任务日志 ↗</a>'
+
+
+def report_artifact_links(prefix: str = "") -> str:
+    """Keep human and machine report artifacts reachable from every HTML page."""
+    return (
+        f'<span class="artifact-links" aria-label="报告产物">'
+        f'<a href="{report_escape(prefix + "report.md")}">Markdown 报告 ↗</a>'
+        f'<a href="{report_escape(prefix + "details/report.json")}">原始 JSON ↗</a>'
+        '</span>'
+    )
 
 
 def report_model(payload: dict[str, Any], page_size: int) -> dict[str, Any]:
@@ -1105,6 +1203,7 @@ def report_search() -> str:
 
 def report_shell(payload: dict[str, Any], model: dict[str, Any], body: str, *, title: str, active: str = "overview", prefix: str = "", subtitle: str = "运行总览") -> str:
     escape = report_escape
+    generated_at = report_time_element(payload.get("generatedAt"))
     nav = f'<a href="{prefix}report.html"' + (' aria-current="page"' if active == "overview" else '') + '>运行总览</a>'
     for scene, group in model["scenes"].items():
         current = ' aria-current="page"' if active == scene else ''
@@ -1116,7 +1215,17 @@ def report_shell(payload: dict[str, Any], model: dict[str, Any], body: str, *, t
 <div class="brand"><span class="brand-mark" aria-hidden="true">✓</span>知识中心 · 测试报告</div>
 <p class="side-caption">本次运行</p><nav aria-label="测试场景">{nav}</nav><div class="side-footer">离线报告<br>结果、用例与执行证据</div></aside>
 <main class="workspace" id="main"><header class="topbar"><span><a href="{prefix}report.html">测试报告</a> / {escape(subtitle)}</span><span class="tag">{escape(payload.get("command") or "测试")} · 本次运行</span></header>
-{body}<footer class="footer"><span>知识中心管理平台 · 统一测试报告<br>生成于 {escape(payload.get("generatedAt") or "未记录")}</span><a href="{prefix}details/report.json">原始 JSON ↗</a></footer></main><script>window.addEventListener('load',function(){{var script=document.createElement('script');script.src=(document.body.dataset.prefix||'')+'assets/report.js';script.async=true;document.body.append(script);}},{{once:true}});</script></body></html>'''
+{body}<footer class="footer"><span>知识中心管理平台 · 统一测试报告<br>生成于 {generated_at}</span>{report_artifact_links(prefix)}</footer></main><script>window.addEventListener('load',function(){{var script=document.createElement('script');script.src=(document.body.dataset.prefix||'')+'assets/report.js';script.async=true;document.body.append(script);}},{{once:true}});</script></body></html>'''
+
+
+def report_runtime_coverage_state(result: dict[str, Any], target: dict[str, Any]) -> str:
+    values = [((result.get('summary') or {}).get(metric) or {}, target.get(metric))
+              for metric in ('lines', 'branches')]
+    if any(not counts.get('total') for counts, _ in values):
+        return '未统计'
+    if any(goal is None for _, goal in values):
+        return '目标未配置'
+    return '达标' if all(counts.get('covered', 0) * 100 >= counts['total'] * goal for counts, goal in values) else '未达标'
 
 
 def report_coverage(payload: dict[str, Any]) -> str:
@@ -1130,24 +1239,21 @@ def report_coverage(payload: dict[str, Any]) -> str:
     for runtime, result in (coverage.get("runtime_metrics") or {}).items():
         cells = [f'<strong>{escape(runtime)}</strong><small>{escape(result.get("source_files", "未统计"))} 个源文件</small>']
         deficits = []
-        measured = True
-        runtime_passed = True
         for metric, label in (("lines", "行"), ("branches", "分支")):
             value = (result.get("summary") or {}).get(metric) or {}
             covered, total = value.get("covered", 0), value.get("total", 0)
             target = (targets.get(runtime) or {}).get(metric)
             if not total:
                 cells.append('未统计')
-                measured = False
             else:
                 pct = covered / total * 100
                 gate = target is not None and covered * 100 >= total * target
-                runtime_passed = runtime_passed and gate
                 needed = max(0, -(-(total * target) // 100) - covered) if target is not None else None
                 if needed:
                     deficits.append(f'{label}还差 {needed} 项')
-                cells.append(f'<strong class="{"" if gate else "fail-text"}">{pct:.2f}%</strong><div class="bar" aria-hidden="true"><span style="width:{min(100, max(0, pct)):.2f}%"></span></div><div class="coverage-detail">{covered}/{total} · 目标 {escape(str(target) + "%" if target is not None else "未提供")}</div>')
-        state = '未采集' if not measured else '达标' if runtime_passed else '未达标'
+                tone = 'pass' if gate else 'fail' if target is not None else ''
+                cells.append(f'<strong class="{"fail-text" if tone == "fail" else ""}">{pct:.2f}%</strong><div class="bar {tone}" aria-hidden="true"><span style="width:{min(100, max(0, pct)):.2f}%"></span></div><div class="coverage-detail">{covered}/{total} · 目标 {escape(str(target) + "%" if target is not None else "未提供")}</div>')
+        state = report_runtime_coverage_state(result, targets.get(runtime) or {})
         tone = 'pass' if state == '达标' else 'fail' if state == '未达标' else ''
         cells.append(f'<span class="badge {tone}">{state}</span><small>{escape("；".join(deficits))}</small>')
         rows.append('<tr>' + ''.join(f'<td>{cell}</td>' for cell in cells) + '</tr>')
@@ -1155,6 +1261,25 @@ def report_coverage(payload: dict[str, Any]) -> str:
         metrics = coverage.get("metrics") or {}
         rows.append('<tr><td>汇总</td><td>' + escape(metrics.get('lines', '未统计')) + '</td><td>' + escape(metrics.get('branches', '未统计')) + '</td><td>未提供运行时明细</td></tr>')
     return heading + '<div class="panel-body">' + report_badge(coverage.get('status', '')) + '<p class="muted long-text">' + escape(coverage.get('diagnostic') or '按原始计数检查门禁，不以显示值四舍五入判定。') + '</p></div><div class="table-wrap" role="region" aria-label="覆盖率门禁表" tabindex="0"><table><thead><tr><th>运行时</th><th>行覆盖率</th><th>分支覆盖率</th><th>门禁与缺口</th></tr></thead><tbody>' + ''.join(rows) + '</tbody></table></div></section>'
+
+
+def report_coverage_snapshot(payload: dict[str, Any]) -> str:
+    coverage = payload.get('coverage') or {}
+    runtimes = coverage.get('runtime_metrics') or {}
+    if not runtimes:
+        return ''
+    targets = payload.get('coverageTargets') or {}
+    items = []
+    for runtime, result in runtimes.items():
+        values = []
+        for metric, label in (('lines', '行'), ('branches', '分支')):
+            counts = (result.get('summary') or {}).get(metric) or {}
+            covered, total = counts.get('covered', 0), counts.get('total', 0)
+            values.append(f'<span><small>{label}</small><strong>{covered / total * 100:.2f}%</strong></span>' if total else f'<span><small>{label}</small><strong>未统计</strong></span>')
+        state = report_runtime_coverage_state(result, targets.get(runtime) or {})
+        tone = 'pass' if state == '达标' else 'fail' if state == '未达标' else ''
+        items.append(f'<a class="coverage-snapshot-item {tone}" href="#coverage"><span class="coverage-snapshot-name">{report_escape(runtime)}</span><span class="coverage-snapshot-values">{"".join(values)}</span><span class="coverage-snapshot-state">{state}</span></a>')
+    return '<section class="coverage-snapshot" aria-label="各运行时覆盖率快照"><div class="coverage-snapshot-heading"><strong>覆盖率快照</strong><a href="#coverage">查看门禁明细</a></div><div class="coverage-snapshot-list">' + ''.join(items) + '</div></section>'
 
 
 def render_html_report(payload: dict[str, Any], model: dict[str, Any] | None = None) -> str:
@@ -1171,12 +1296,22 @@ def render_html_report(payload: dict[str, Any], model: dict[str, Any] | None = N
     preview = bool(tasks) and all(task.get('status') == 'DRY-RUN' for task in tasks)
     status = 'DRY-RUN' if preview else 'PASS' if payload.get('passed') and tasks else 'FAIL' if tasks else 'NOT_RUN'
     heading = '运行仅预览' if preview else '本次测试全部通过' if status == 'PASS' else '本次运行存在失败或阻塞' if tasks else '本次没有测试任务'
+    generated_at = report_time_element(payload.get("generatedAt"))
     stats = (("已识别用例", total if known else "未统计", f"{len(model['records'])} 条逐条明细"),
              ("用例通过率", f"{passed / total * 100:.1f}%" if total else "—", f"通过 / 失败 / 跳过：{passed} / {failed} / {skipped}" if known else "用例数量未统计"),
              ("通过任务", f"{success_tasks} / {len(tasks)}", f"测试文件 {sum(task.get('file_count') or 0 for task in tasks)} 个"),
              ("运行耗时", report_duration(payload.get('durationSeconds')), "本次运行总耗时"))
     cards = ''.join(f'<div class="metric-card"><div class="metric-label">{escape(label)}</div><div class="metric-value">{escape(value)}</div><div class="metric-note">{escape(note)}</div></div>' for label, value, note in stats)
-    body = f'<div class="hero"><div><div class="eyebrow">测试质量 / {escape(str(payload.get("command") or "测试").upper())}</div><h1>测试运行总览</h1><div class="hero-meta"><span>{escape(payload.get("generatedAt") or "时间未记录")}</span><span>{escape(heading)}</span></div></div>{report_badge(status, True)}</div><div class="metrics">{cards}</div>'
+    coverage = payload.get('coverage')
+    coverage_state = '未采集' if not coverage else '达标' if coverage.get('status') == 'PASS' else '未达标' if coverage.get('status') == 'FAIL' else '未完成'
+    coverage_tone = 'pass' if coverage_state == '达标' else 'fail' if coverage_state == '未达标' else ''
+    coverage_link = f'<a class="coverage-summary {coverage_tone}" href="#coverage">覆盖率门禁：{coverage_state}</a>'
+    body = f'<div class="hero"><div><div class="eyebrow">测试质量 / {escape(str(payload.get("command") or "测试").upper())}</div><h1>测试运行总览</h1><div class="hero-meta"><span>{generated_at}</span><span>{escape(heading)}</span>{coverage_link}</div></div>{report_badge(status, True)}</div><div class="metrics">{cards}</div>'
+    body += report_coverage_snapshot(payload)
+    sections = (("failures", "失败与阻塞"), ("scenes", "测试场景"), ("coverage", "覆盖率门禁"),
+                ("tasks", "任务结果"), ("slow-tasks", "耗时任务"))
+    body += '<nav class="overview-nav" aria-label="总览区块导航"><span>快速查看</span>' + ''.join(
+        f'<a href="#{section}">{label}</a>' for section, label in sections) + '</nav>'
     unknown = len(tasks) - len(known)
     if unknown:
         body += f'<p class="alert">统计范围：{unknown} 个任务未提供可靠用例数量；上方用例数字仅包含已识别结果。任务异常请查看“失败与阻塞”和原始日志。</p>'
@@ -1193,15 +1328,16 @@ def render_html_report(payload: dict[str, Any], model: dict[str, Any] | None = N
     legend = ''.join(f'<div class="legend-row"><span><i class="dot {tone}" aria-hidden="true"></i>{label}</span><strong>{value}</strong></div>' for label, value, tone in (("通过", passed, 'pass'), ("失败", failed, 'fail'), ("跳过", skipped, 'skip'), ("其他 / 未执行", pending, '')))
     distribution = f'<section class="panel"><div class="panel-head"><h2>用例结果分布</h2><small>已识别用例</small></div><div class="panel-body distribution"><div class="donut" style="--ring:{ring}" role="img" aria-label="通过{passed}，失败{failed}，跳过{skipped}，其他{pending}"><div class="donut-hole"><strong>{total if known else "—"}</strong><small>用例总数</small></div></div><div class="legend">{legend}</div></div></section>'
     task_rows = []
+    task_ids = {id(task): f'task-{index}' for index, task in enumerate(tasks, 1)}
     for task in tasks:
-        task_rows.append('<tr>' + ''.join(f'<td>{cell}</td>' for cell in (
+        task_rows.append(f'<tr id="{task_ids[id(task)]}">' + ''.join(f'<td>{cell}</td>' for cell in (
             report_badge(task.get('status', '')), f'<strong>{escape(task.get("label") or "未命名任务")}</strong><small>{escape(SCENE_LABELS.get(task.get("suite"), task.get("suite") or "—"))}</small>',
             escape(task.get('framework') or '—'), escape(task.get('test_total') if task.get('test_total') is not None else '未统计'), escape(report_duration(task.get('duration_seconds'))), report_log_link(task))) + '</tr>')
     failures = []
     case_failures = [record for record in model['records'] if record['case'].get('status') in {'FAIL', 'TIMEOUT', 'INTERRUPTED'}]
     for record in case_failures[:8]:
         case = record['case']
-        first_line = next((line.strip() for line in (case.get('detail') or '').splitlines() if line.strip()), '')
+        first_line = next((line.strip() for line in report_text(case.get('detail')).splitlines() if line.strip()), '')
         diagnostic = f'<p class="failure-diagnostic">{escape(first_line[:240])}{"…" if len(first_line) > 240 else ""}</p>' if first_line else ''
         failures.append(f'<li><div class="failure-title">{report_badge(case.get("status", "FAIL"))}<a href="{escape(record["href"])}">{escape(case.get("name") or "未命名用例")}</a></div><small>{escape(record["scene"])} · {escape(case.get("file") or record["task"].get("framework") or "")}</small>{diagnostic}</li>')
     if len(case_failures) > 8:
@@ -1225,8 +1361,8 @@ def render_html_report(payload: dict[str, Any], model: dict[str, Any] | None = N
     body += report_coverage(payload)
     body += '<section class="panel" id="tasks"><div class="panel-head"><h2>任务结果</h2><small>框架执行结果与原始日志</small></div><div class="table-wrap" role="region" aria-label="任务结果表" tabindex="0"><table class="task-table"><thead><tr><th>状态</th><th>任务 / 场景</th><th>框架</th><th>用例</th><th>耗时</th><th>执行证据</th></tr></thead><tbody>' + ''.join(task_rows) + '</tbody></table></div></section>'
     slow = sorted(tasks, key=lambda task: task.get('duration_seconds') or 0, reverse=True)[:5]
-    slow_rows = ''.join(f'<tr><td>{escape(task.get("label") or "未命名任务")}</td><td>{escape(report_duration(task.get("duration_seconds")))}</td><td>{report_badge(task.get("status", ""))}</td></tr>' for task in slow)
-    body += '<section class="panel"><div class="panel-head"><h2>耗时较长的任务</h2><small>按任务耗时降序 · 最多 5 项</small></div><div class="table-wrap" role="region" aria-label="耗时较长的任务表" tabindex="0"><table><thead><tr><th>任务</th><th>耗时</th><th>状态</th></tr></thead><tbody>' + slow_rows + '</tbody></table></div></section>'
+    slow_rows = ''.join(f'<tr><td><a href="#{task_ids[id(task)]}">{escape(task.get("label") or "未命名任务")}</a></td><td>{escape(report_duration(task.get("duration_seconds")))}</td><td>{report_badge(task.get("status", ""))}</td></tr>' for task in slow)
+    body += '<section class="panel" id="slow-tasks"><div class="panel-head"><h2>耗时较长的任务</h2><small>按任务耗时降序 · 最多 5 项</small></div><div class="table-wrap" role="region" aria-label="耗时较长的任务表" tabindex="0"><table><thead><tr><th>任务</th><th>耗时</th><th>状态</th></tr></thead><tbody>' + slow_rows + '</tbody></table></div></section>'
     timed_cases = [record for record in model['records'] if isinstance(record['case'].get('duration_seconds'), (int, float)) and record['case']['duration_seconds'] >= 0]
     if timed_cases:
         slow_cases = sorted(timed_cases, key=lambda record: record['case']['duration_seconds'], reverse=True)[:10]
@@ -1288,7 +1424,7 @@ def write_html_report(run_dir: Path, page_size: int = 50) -> Path:
         (assets / name).write_bytes((REPOSITORY_ROOT / 'tests/report_assets' / name).read_bytes())
     index = [{"name": record['case'].get('name') or '', "status": record['case'].get('status') or '',
               "file": record['case'].get('file') or '', "framework": record['task'].get('framework') or '',
-              "scene": record['scene'], "detail": (record['case'].get('detail') or '')[:4000], "href": record['href']} for record in model['records']]
+              "scene": record['scene'], "detail": report_text(record['case'].get('detail'))[:4000], "href": record['href']} for record in model['records']]
     (assets / 'case-index.js').write_text('globalThis.KC_REPORT_CASES = ' + json.dumps(index, ensure_ascii=False).replace('<', '\\u003c').replace('\u2028', '\\u2028').replace('\u2029', '\\u2029') + ';\n', encoding='utf-8')
     pages_dir = run_dir / 'scenes'
     pages_dir.mkdir(exist_ok=True)

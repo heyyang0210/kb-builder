@@ -91,20 +91,22 @@ function createCodexRunner(options = {}) {
         settled = true; clearTimeout(timer); clearTimeout(killTimer); execution.signal?.removeEventListener('abort', abort);
         state.status = execution.signal?.aborted ? 'cancelled' : error ? 'failed' : 'completed';
         fs.rmSync(path.join(directory, 'codex-home', 'auth.json'), { force: true });
-        if (error) state.error = { message: 'Codex 运行未完成，请检查连接或运行事件' };
+        if (error) state.error = error.code === 'AGENT_RUN_TIMEOUT'
+          ? { code: error.code, message: 'Codex 运行超时，未收到完成事件' }
+          : { message: 'Codex 运行未完成，请检查连接或运行事件' };
         if (!error && !execution.signal?.aborted) state.result = { model: value.model, ...JSON.parse(value.content) };
         append({ kind: state.status }); active.delete(id);
         if (execution.signal?.aborted) reject(Object.assign(new Error('任务已取消'), { code: 'AGENT_RUN_CANCELLED' }));
         else error ? reject(error) : resolve(value);
       };
-      const timer = setTimeout(() => { abort(); kill(); finish(new Error('Codex 任务超时')); }, rules.timeoutMs + 10000);
+      const timer = setTimeout(() => { abort(); kill(); finish(Object.assign(new Error('Codex 任务超时'), { code: 'AGENT_RUN_TIMEOUT' })); }, rules.timeoutMs + 10000);
       worker.on('error', () => finish(new Error('无法启动 Codex Worker')));
       worker.on('message', message => {
         if (settled) return;
         if (message.type === 'child') childPid = message.pid;
         if (message.type === 'event') { append(message.event); }
         if (message.type === 'result') finish(null, message.value);
-        if (message.type === 'error') finish(new Error(message.message));
+        if (message.type === 'error') finish(Object.assign(new Error(message.message), message.code === 'AGENT_RUN_TIMEOUT' ? { code: message.code } : {}));
       });
       // Wait for IPC to drain before treating a missing terminal message as interruption.
       worker.on('close', code => finish(new Error(`Codex Worker 中断（${code}）`)));

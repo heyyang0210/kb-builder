@@ -17,10 +17,14 @@ FIXTURES = ROOT / "tests/unit/agent-runner/fixtures"
 DEFAULT_TOOLS = ROOT / "runtime/test-results/quality-fix-coverage/tools"
 TASK_MIGRATION_SCENARIOS = ("copy", "activate", "copy-existing", "copy-invalid-legacy",
                             "copy-duplicate", "copy-bad-readback", "copy-wrong-target", "copy-no-backup",
+                            "copy-shared-no-approval", "copy-shared-approved",
+                            "copy-test-no-run-id", "copy-test-target",
                             "activate-bad-backup",
                             "activate-not-verified", "activate-changed", "activate-duplicate",
                             "activate-bad-row", "activate-missing-row", "activate-no-repo",
                             "activate-wrong-target", "activate-no-backup",
+                            "activate-shared-no-approval", "activate-shared-approved",
+                            "activate-test-no-run-id", "activate-test-target",
                             "activate-symlink")
 
 
@@ -150,7 +154,9 @@ def main():
         command_env = {**env, "YASDB_STORAGE_SQL_DIR": str(command_directory / "sql"),
                        "KC_DOCUMENT_TASK_BACKUP_PATH": "" if scenario.endswith("no-backup") else str(command_directory / "backup.json"),
                        "KNOWLEDGE_CENTER_REPO_ROOT": "" if scenario == "activate-no-repo" else str(ROOT),
-                       "YASDB_STORAGE_TARGET_CLASS": "shared" if scenario.endswith("wrong-target") else "personal"}
+                       "YASDB_STORAGE_TARGET_CLASS": "shared" if "shared" in scenario or scenario.endswith("wrong-target") else "test" if "test-" in scenario else "personal",
+                       "KC_TASK_MIGRATION_EXPECTED_SCHEMA": "fixture",
+                       "KNOWLEDGE_CENTER_TEST_RUN_ID": "" if scenario.endswith("no-run-id") else "fixture-test-run-0001"}
         command_log = run(["java", f"-javaagent:{agent}=destfile={execution},append=true", "-cp", classpath,
                            "StorageDocumentTaskMigrationCommandCheck", scenario], env=command_env)
         if f"PASS: public task migration command {scenario}" not in command_log:

@@ -31,7 +31,7 @@ function notification(method, params) {
 }
 function waitForTurn() {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('Codex 运行超时')), process.env.KC_CODEX_TIMEOUT_MS || 180000);
+    const timer = setTimeout(() => reject(Object.assign(new Error('Codex 运行超时'), { code: 'AGENT_RUN_TIMEOUT' })), process.env.KC_CODEX_TIMEOUT_MS || 180000);
     const done = status => { clearTimeout(timer); status === 'completed' ? resolve() : reject(new Error(`Codex 任务${status === 'interrupted' ? '已中断' : '失败'}`)); };
     process.once('codex-turn-completed', done);
   });
@@ -61,6 +61,7 @@ function handle(message) {
         kind: message.method === 'item/started' ? 'tool-started' : 'tool-completed',
         itemId: String(item.id || '').slice(0, 80), tool,
         status: message.method === 'item/completed' ? (item.status === 'failed' ? 'failed' : 'completed') : 'running',
+        ...(type === 'commandExecution' && message.method === 'item/completed' && Number.isSafeInteger(item.exitCode) ? { exitCode: item.exitCode } : {}),
       } });
     }
   }
@@ -138,7 +139,7 @@ process.on('message', async message => {
   }
   if (message.type !== 'run') return;
   try { reply({ type: 'result', value: await run(message.task) }); }
-  catch (error) { reply({ type: 'error', message: error.message }); }
+  catch (error) { reply({ type: 'error', message: error.message, ...(error.code === 'AGENT_RUN_TIMEOUT' ? { code: error.code } : {}) }); }
   finally {
     stopChild(); bridge?.close();
     if (message.task?.home) fs.rmSync(path.join(message.task.home, 'auth.json'), { force: true });

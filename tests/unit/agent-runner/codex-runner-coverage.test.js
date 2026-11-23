@@ -21,6 +21,7 @@ process.on('message', message => {
   const mode = message.task.messages[0]?.content;
   process.send({ type: 'event', event: { kind: 'progress', text: 'fixture-secret' } });
   if (mode === 'wait') return;
+  if (mode === 'timeout') { process.send({ type: 'error', message: 'Codex 运行超时', code: 'AGENT_RUN_TIMEOUT' }, () => process.exit(0)); return; }
   if (mode === 'error') process.send({ type: 'error', message: '受控 Worker 失败' }, () => process.exit(0));
   else process.send({ type: 'result', value: { model: 'fixture-model', content: JSON.stringify({ markdown: '# 已生成', provenance: [] }) } }, () => process.exit(0));
 });
@@ -57,6 +58,10 @@ test('受控子进程成功时保存运行清单和脱敏事件，失败时不�
     await expect(f.runner.run([{ role: 'user', content: 'error' }], model, { runId: failedId })).rejects.toThrow('受控 Worker 失败');
     expect(f.runner.get(failedId)).toMatchObject({ status: 'failed', error: { message: 'Codex 运行未完成，请检查连接或运行事件' } });
     expect(f.runner.get(failedId).result).toBeUndefined();
+
+    const timeoutId = crypto.randomUUID();
+    await expect(f.runner.run([{ role: 'user', content: 'timeout' }], model, { runId: timeoutId })).rejects.toMatchObject({ code: 'AGENT_RUN_TIMEOUT' });
+    expect(f.runner.get(timeoutId)).toMatchObject({ status: 'failed', error: { code: 'AGENT_RUN_TIMEOUT', message: 'Codex 运行超时，未收到完成事件' } });
   } finally { f.close(); }
 });
 

@@ -6,7 +6,7 @@ const { PassThrough, Writable } = require('node:stream');
 const workerModule = '../../../packages/agent-runner-core/lib/agent-runtime/codex-worker';
 const runtimeRoot = path.resolve(__dirname, '../../../runtime/test-results');
 
-function harness() {
+function harness({ complete = true } = {}) {
   fs.mkdirSync(runtimeRoot, { recursive: true });
   const root = fs.mkdtempSync(path.join(runtimeRoot, 'codex-worker-coverage-'));
   const messages = [];
@@ -28,7 +28,7 @@ function harness() {
           child.stdout.write(JSON.stringify({ id: request.id, result }) + '\n');
           if (request.method === 'turn/start') {
             child.stdout.write(JSON.stringify({ method: 'item/agentMessage/delta', params: { delta: '正文生成中' } }) + '\n');
-            child.stdout.write(JSON.stringify({ method: 'turn/completed', params: { turn: { status: 'completed' } } }) + '\n');
+            if (complete) child.stdout.write(JSON.stringify({ method: 'turn/completed', params: { turn: { status: 'completed' } } }) + '\n');
           }
         });
       }
@@ -102,7 +102,7 @@ test('Worker 拒绝服务端审批并将工具、错误和 stderr 事件安全�
     const events = [
       { id: 42, method: 'item/requestApproval', params: {} },
       { method: 'item/started', params: { item: { type: 'mcpToolCall', id: 'tool-1', tool: 'search' } } },
-      { method: 'item/completed', params: { item: { type: 'commandExecution', id: 'tool-2', status: 'failed' } } },
+      { method: 'item/completed', params: { item: { type: 'commandExecution', id: 'tool-2', status: 'failed', exitCode: 7 } } },
       { method: 'error', params: { error: { message: '受控失败' } } },
     ];
     for (const event of events) f.child.stdout.write(JSON.stringify(event) + '\n');
@@ -112,7 +112,7 @@ test('Worker 拒绝服务端审批并将工具、错误和 stderr 事件安全�
     expect(f.messages).toEqual(expect.arrayContaining([
       { type: 'event', event: { kind: 'approval-denied', method: 'item/requestApproval' } },
       { type: 'event', event: { kind: 'tool-started', itemId: 'tool-1', tool: 'search', status: 'running' } },
-      { type: 'event', event: { kind: 'tool-completed', itemId: 'tool-2', tool: 'commandExecution', status: 'failed' } },
+      { type: 'event', event: { kind: 'tool-completed', itemId: 'tool-2', tool: 'commandExecution', status: 'failed', exitCode: 7 } },
       { type: 'event', event: { kind: 'error', message: '受控失败' } },
     ]));
     const stderr = f.messages.find(message => message.event?.kind === 'stderr-tail').event.text;
@@ -122,4 +122,20 @@ test('Worker 拒绝服务端审批并将工具、错误和 stderr 事件安全�
     await f.handlers.message({ type: 'cancel' });
     expect(f.calls.at(-1).method).toBe('turn/interrupt');
   } finally { f.restore(); }
+});
+
+test('已有产物但未收到完成事件时返回超时，不将产物视为成功', async () => {
+  const previous = process.env.KC_CODEX_TIMEOUT_MS;
+  process.env.KC_CODEX_TIMEOUT_MS = '30';
+  const f = harness({ complete: false });
+  try {
+    fs.mkdirSync(f.task.workspace, { recursive: true });
+    fs.writeFileSync(path.join(f.task.workspace, 'output.json'), JSON.stringify({ markdown: '# 未完成', provenance: [] }));
+    await f.handlers.message({ type: 'run', task: f.task });
+    expect(f.messages.at(-1)).toEqual({ type: 'error', message: 'Codex 运行超时', code: 'AGENT_RUN_TIMEOUT' });
+    expect(f.messages.some(message => message.type === 'result')).toBe(false);
+  } finally {
+    if (previous === undefined) delete process.env.KC_CODEX_TIMEOUT_MS; else process.env.KC_CODEX_TIMEOUT_MS = previous;
+    f.restore();
+  }
 });
