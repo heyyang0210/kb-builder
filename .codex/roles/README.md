@@ -1,59 +1,34 @@
-# YashanDB 项目开发团队角色契约
+# 通用团队角色契约
 
-`.codex/roles/` 定义整个项目开发团队的稳定职责、权限、状态和证据边界。具体工作方法在未来经评估后可下沉为 `.codex/plugins/` 中的 Skill，但未批准 Skill 不是当前 Role 的运行依赖。
+`.codex/roles/` 描述可跨项目复用的责任、权限和证据原则。角色是可组合的责任契约，不是固定技术栈、工具链、项目目录或流程。
 
-现行分工见[角色协作原则](<../../.codex/知识中心建设平台/12-开发原则 & 术语/知识中心-平台-Role Contract v1与角色治理-治理规范文档.md>)。是否启用角色由[任务路由原则](<../../.codex/知识中心建设平台/12-开发原则 & 术语/知识中心-平台-Task Routing Contract v1与最小执行路径-治理规范文档.md>)决定；人工审批只依据[人工审批原则](<../../.codex/知识中心建设平台/12-开发原则 & 术语/知识中心-平台-Approval Boundary v1人工审批边界-治理规范文档.md>)。原始字段和状态机见[设计归档](<../../.codex/知识中心建设平台/07-决策与风险/知识中心-平台-Role Contract v1与角色治理-设计归档.md>)。
+目标项目的路径、语言、框架、数据库、命令、审批规则、状态机和文档格式，由当前任务或项目权威约定提供。角色不得将本仓库示例或历史惯例推定为新项目事实。
 
-## 路由优先
+## 使用原则
 
-- 团队目标是人类治理下的边界自治；Role 和 Skill 都不能授予业务决策权或残余风险接受权。
-- 九个角色是完整团队的职责目录，不是每个任务的固定运行实例。
-- 直接处理不实例化角色；标准开发只加载完成设计、实施或验证所需的角色。
-- Project Manager、Independent Reviewer 和完整治理状态只用于治理任务、项目级推进或用户明确要求。
-- 每增加一个角色必须带来独立设计、验证、反证、协调或治理价值。
+- 只有任务需要该责任时才加载角色；角色名不会自动扩大权限。
+- 开始前核对目标、验收、输入、授权范围和适用的项目约定。
+- 区分观察事实、推断、假设和建议；依据证据形成结论。
+- 关键事实冲突、授权不足、契约缺口或待审批事项影响当前动作时，停止受影响的操作并说明升级条件。
+- 方法和工具按任务风险与目标项目规则选择。审批、状态、格式和数值门槛以目标项目的权威来源为准。
 
-## 上下文装载
+## 角色目录
 
-角色文档是按需参考，不是每次任务的固定 Prompt。直接处理通常只读取任务目标、相关文件和最小验收信息；标准开发按需加载相关 Role；审批和治理角色只在治理任务中加载。
-
-## 角色地图
-
-| `roleId` | 角色 | 拥有的核心事实 | 不拥有 |
+| `roleId` | 角色 | 核心责任 | 主要权限边界 |
 |---|---|---|---|
-| `architect` | Architect | 问题、产品与架构契约 | 排期、受限决策审批、验收 |
-| `planner` | Planner | 任务图、依赖、文件归属和 `draft` 任务卡 | 计划批准、进度事实、验收 |
-| `project-manager` | Project Manager | 计划基线、门禁、风险和任务事实状态 | 产品/架构产出、实施、测试证据 |
-| `backend-worker` | Backend Worker | 后端实施与自测证据 | 架构审批、独立验证、接受 |
-| `frontend-worker` | Frontend Worker | 前端实施与自测/视觉证据 | API 契约变更、独立验证、接受 |
-| `test-engineer` | Test Engineer | 测试设计、验证证据与 `verified/rejected` | 产品契约、残余风险接受 |
-| `independent-reviewer` | Independent Reviewer | 独立质疑记录与审查结论 | 待审产物、任务状态、最终裁决 |
-| `doc-writer` | Doc Writer | 文档表达、同步与导航质量 | 产品/架构决策、验收 |
-| `reporter` | Reporter | 进度、风险和下一步投影 | 任务事实、计划、验收和风险裁决 |
-| `database-architect` | Database Architect | YashanDB 表结构、DDL、索引和性能设计 | 产品审批、业务实现、验收和风险接受 |
+| `architect` | Architect | 目标澄清与领域/系统设计 | 不替代产品批准、实施和验证 |
+| `planner` | Planner | 工作分解与依赖建议 | 不批准计划或编造进度 |
+| `project-manager` | Project Manager | 经授权的计划、协调和状态管理 | 不替代产品决定、实施和验证 |
+| `backend-worker` | Backend Worker | 服务端行为实施与自检 | 不批准契约或自称独立验证 |
+| `frontend-worker` | Frontend Worker | 用户界面行为实施与自检 | 不擅自改变产品/API 契约 |
+| `test-engineer` | Test Engineer | 测试设计、执行与验证证据 | 不改产品规则或接受残余风险 |
+| `independent-reviewer` | Independent Reviewer | 独立质疑和证据审查 | 不修改待审产物或裁决业务 |
+| `doc-writer` | Doc Writer | 文档表达、结构与来源追溯 | 不创造产品或实现事实 |
+| `reporter` | Reporter | 事实进展、风险和下一步摘要 | 不创造事实或验收结论 |
+| `database-architect` | Database Architect | 数据结构、访问与演进设计 | 不批准产品决定或执行未授权操作 |
 
-## 公共输入与结果
+## 项目扩展
 
-角色开始前确认与本次责任相关的最小输入：任务目标、输入产物、允许文件和路由结论；若任务触及审批边界，再补充 `approvalRequired`、`approvalReason` 和 `approvalRefs`。影响事实不完整时补充 `approvalAssessment`；不需要的字段不要求模型重复生成。
+具体路由、审批、状态迁移、交付模板和运行时字段由目标项目自己的治理文档定义。项目扩展只在其声明的范围内适用，不改变通用角色的固有权限，也不能让角色自行获得批准权。
 
-标准开发结果只需包含实际产物、验证证据、已知限制和需要升级的事项。治理任务再增加任务 ID、审批引用、审查结论和状态迁移；Role、Skill 和模型判断都不能创建或扩大人工授权。
-
-## 治理任务状态所有权
-
-```text
-draft -> pending -> in_progress -> ready_for_test
-ready_for_test -> verified | rejected
-verified -> accepted
-```
-
-- Planner 创建 `draft`。
-- Project Manager 执行准入、阻塞管理和流程状态迁移；是否接受产品结果或残余风险仍按任务实际边界由有权人决定，不因角色名称自动获得批准权。
-- Worker 只请求 `in_progress` 和 `ready_for_test`。
-- Test Engineer 输出 `verified/rejected`。
-- Reporter 只投影已存在事实。
-- 历史 `completed` 暂作为 `accepted` 的兼容别名；本轮不改写历史数据或运行时。
-
-上述状态机只适用于治理任务。普通标准开发只走“设计检查 -> 实施 -> 验证”，不创建这些状态。
-
-## Skill 候选边界
-
-当前没有 Role 将未批准 Skill 声明为必需依赖。只有经代表任务、反例、权限、成本、证据完整性和回退评估后，才能将稳定的“如何做”从 Role 迁移到 `.codex/plugins/` 中的 Skill。
+本仓库治理细则仅供此项目使用：[角色协作原则](<../../.codex/知识中心建设平台/12-开发原则 & 术语/知识中心-平台-Role Contract v1与角色治理-治理规范文档.md>)、[任务路由原则](<../../.codex/知识中心建设平台/12-开发原则 & 术语/知识中心-平台-Task Routing Contract v1与最小执行路径-治理规范文档.md>)、[人工审批原则](<../../.codex/知识中心建设平台/12-开发原则 & 术语/知识中心-平台-Approval Boundary v1人工审批边界-治理规范文档.md>)。这些细则不构成跨项目角色契约。

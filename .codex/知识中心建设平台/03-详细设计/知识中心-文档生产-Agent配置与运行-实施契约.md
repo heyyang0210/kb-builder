@@ -38,6 +38,8 @@ run.json 保存不含凭据的清单：执行器版本、Agent/模型版本、�
 
 ## 2026-10-30 写作页 Codex 运行事件
 
+2026-11-17 故障诊断补充：Worker 的 turn 等待超时必须以 `AGENT_RUN_TIMEOUT` 传递至 Runner 和写作任务，使用固定中文说明；不得把原始异常或工具输出暴露给页面。命令完成事件可携带整数退出码，写作任务保留该结构化字段。其他异常继续使用通用错误。超时不收集未完成 turn 的产物，也不自动重试或延长时限。验证超时、成功、取消和未知错误的边界，并通过真实 HTTP 查询状态。
+
 写作任务沿用既有 Job 读取和取消 API。Codex Worker 将 app-server 的 Agent 消息增量、工具项开始/完成和错误投影为有限的用户可见事件；只保留工具类别、知识库工具名、状态和简短消息，不传命令正文、工具参数、原始协议包或凭据。Runner 在事件落盘后通知写作任务，任务记录保留有上限的事件窗口与单调序号；页面轮询同一 Job 展示真实轨迹，重开时可回读。每篇文档提供生成历史列表，历史任务按创建时间保留并可重新打开查看阶段、预览和事件；重试不清空旧事件。生成中主按钮切换为停止图标，停止请求进入既有取消链路。工具调用与模型推理过程不能推断或编造；非 Codex 执行器只展示已有阶段/正文预览。
 
 伪代码：appServerNotification → safeProjection → runnerAppendAndRedact → writerJobAppendIfRunning → GET Job → sidebarTimeline；cancel → AbortController → turn/interrupt → Job cancelled；lateEvent → ignore。候选仍由 output.json 校验后进入现有对照与采用流程。验收包含受控 Codex 通知、HTTP 回读、取消后迟到事件拒绝和页面展示；真实公司模型仅在可用时作补充验证。
