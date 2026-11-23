@@ -1,0 +1,16 @@
+{
+  "sourceDatabase": {
+    "host": "192.168.23.136",
+    "port": 1688,
+    "username": "pf_knowledge",
+    "password": "pf_knowledge123.",
+    "owner": "pf_knowledge"
+  },
+  "personalDatabase": {
+    "host": "172.22.69.74",
+    "port": 1688,
+    "username": "regress",
+    "password": "regress",
+    "owner": "regress"
+  }
+}
