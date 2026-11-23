@@ -14,6 +14,7 @@ from playwright.sync_api import Page
 MAX_WORK_ITEM_DETAILS_PER_PAGE = 500
 MAX_BROWSER_FETCH_CONCURRENCY = 50
 MAX_TASK_SOURCE_RELATIONS = 5000
+PAGE_TREE_FETCH_CONCURRENCY = 8
 
 
 class PingCodeAPIClient:
@@ -55,6 +56,30 @@ class PingCodeAPIClient:
         )
         return self._page_tree_data(result)
 
+    def get_page_tree_children_batch(self, space_id: str, page_indexes: list[int]) -> list[dict]:
+        """在浏览器会话内并发读取一组目录分页，保留 Cookie 与权限上下文。"""
+        paths = [
+            f'/api/wiki/spaces/{space_id}/page-tree-v2?scene=simple&only_fetch=child&pi={index}'
+            for index in page_indexes
+        ]
+        results = self.page.evaluate("""async ({paths}) => Promise.all(paths.map(async path => {
+            const response = await fetch(path, { credentials: 'same-origin' });
+            if (!response.ok) throw new Error(`PingCode 页面目录 HTTP ${response.status}`);
+            return response.json();
+        }))""", {"paths": paths})
+        if not isinstance(results, list) or len(results) != len(page_indexes):
+            raise RuntimeError('页面树分页响应数量不完整')
+        pages = [self._page_tree_data(result) for result in results]
+        for result, page, expected in zip(results, pages, page_indexes):
+            data = result.get('data', {}) if isinstance(result, dict) else {}
+            pagination = data.get('meta', {}).get('pagination', {}) if isinstance(data, dict) else {}
+            reported_index = data.get('page_index', pagination.get('page_index')) if isinstance(data, dict) else None
+            if reported_index is not None and int(reported_index) != expected:
+                raise RuntimeError('页面树分页序号与请求不一致')
+            if reported_index is None:
+                page['page_index'] = expected
+        return pages
+
     def get_complete_page_tree(
         self,
         space_id: str,
@@ -68,21 +93,22 @@ class PingCodeAPIClient:
             item['_id']: item for item in root_page['value'] if item.get('_id')
         }
 
-        for page_index in range(page_count):
-            child_page = self.get_page_tree_children(space_id, page_index)
-            if child_page['count'] != reported_total:
-                raise RuntimeError(
-                    '目录同步期间页面总数发生变化：'
-                    f'{reported_total} -> {child_page["count"]}'
-                )
-            for item in child_page['value']:
-                if item.get('_id'):
-                    pages_by_id[item['_id']] = item
-            if progress_callback:
-                progress_callback(
-                    page_index + 1, page_count, len(pages_by_id), reported_total
-                )
-
+        for offset in range(0, page_count, PAGE_TREE_FETCH_CONCURRENCY):
+            indexes = list(range(offset, min(offset + PAGE_TREE_FETCH_CONCURRENCY, page_count)))
+            child_pages = self.get_page_tree_children_batch(space_id, indexes)
+            for page_index, child_page in zip(indexes, child_pages):
+                if child_page['count'] != reported_total or child_page['page_count'] not in (0, page_count):
+                    raise RuntimeError(
+                        '目录同步期间页面总数或分页数发生变化：'
+                        f'{reported_total}/{page_count} -> {child_page["count"]}/{child_page["page_count"]}'
+                    )
+                for item in child_page['value']:
+                    if item.get('_id'):
+                        pages_by_id[item['_id']] = item
+                if progress_callback:
+                    progress_callback(
+                        page_index + 1, page_count, len(pages_by_id), reported_total
+                    )
         return {
             'value': list(pages_by_id.values()),
             'count': reported_total,

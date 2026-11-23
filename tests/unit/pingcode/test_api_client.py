@@ -13,6 +13,7 @@ API 客户端测试用例
 import json
 import os
 import sys
+import unittest
 from pathlib import Path
 from bootstrap import ROOT
 
@@ -25,6 +26,85 @@ from pingcode_core.client import PingCodeClient
 from pingcode_core.api_client import PingCodeAPIClient
 from pingcode_core.tree_builder import TreeBuilder
 from pingcode_core.content_parser import ContentParser
+
+
+class CompletePageTreeContractTest(unittest.TestCase):
+    class Page:
+        def __init__(self):
+            self.batch_calls = []
+
+        def evaluate(self, script, payload=None):
+            if payload is None:
+                return {"data": {"value": [{"_id": "page-0"}], "count": 11, "page_count": 10}}
+            paths = payload["paths"]
+            self.batch_calls.append(paths)
+            return [
+                {"data": {"count": 11, "page_index": index, "page_count": 10,
+                          "value": [{"_id": f"page-{index + 1}"}]}}
+                for index in [int(path.rsplit("pi=", 1)[1]) for path in paths]
+            ]
+
+    def test_complete_tree_fetches_child_pages_in_bounded_batches(self):
+        page = self.Page()
+        api = PingCodeAPIClient(page, "https://pingcode.example")
+
+        result = api.get_complete_page_tree("space-id")
+
+        self.assertTrue(result["complete"])
+        self.assertEqual(11, result["count"])
+        self.assertEqual({f"page-{index}" for index in range(11)}, {item["_id"] for item in result["value"]})
+        self.assertEqual([
+            [f"/api/wiki/spaces/space-id/page-tree-v2?scene=simple&only_fetch=child&pi={index}" for index in range(8)],
+            [f"/api/wiki/spaces/space-id/page-tree-v2?scene=simple&only_fetch=child&pi={index}" for index in range(8, 10)],
+        ], page.batch_calls)
+
+    def test_complete_tree_rejects_a_failed_child_page(self):
+        page = self.Page()
+        def evaluate(script, payload=None):
+            if payload is None:
+                return {"data": {"value": [{"_id": "page-0"}], "count": 3, "page_count": 2}}
+            return [{"data": {"count": 3, "page_index": 0, "page_count": 2, "value": [{"_id": "page-1"}]}}]
+        page.evaluate = evaluate
+        api = PingCodeAPIClient(page, "https://pingcode.example")
+
+        with self.assertRaises(RuntimeError):
+            api.get_complete_page_tree("space-id")
+
+    def test_complete_tree_accepts_child_pages_without_optional_pagination_fields(self):
+        page = self.Page()
+        original = page.evaluate
+        def evaluate(script, payload=None):
+            result = original(script, payload)
+            if payload is not None:
+                for item in result:
+                    item["data"].pop("page_index", None)
+                    item["data"].pop("page_count", None)
+            return result
+        page.evaluate = evaluate
+        api = PingCodeAPIClient(page, "https://pingcode.example")
+
+        result = api.get_complete_page_tree("space-id")
+
+        self.assertTrue(result["complete"])
+        self.assertEqual(11, result["count"])
+        self.assertEqual(11, len(result["value"]))
+
+    def test_complete_tree_reports_missing_ids_without_claiming_completeness(self):
+        page = self.Page()
+        original = page.evaluate
+        def evaluate(script, payload=None):
+            result = original(script, payload)
+            if payload is not None and "pi=9" in payload["paths"][-1]:
+                result[-1]["data"]["value"] = []
+            return result
+        page.evaluate = evaluate
+        api = PingCodeAPIClient(page, "https://pingcode.example")
+
+        result = api.get_complete_page_tree("space-id")
+
+        self.assertFalse(result["complete"])
+        self.assertEqual(10, len(result["value"]))
+        self.assertEqual(11, result["count"])
 
 
 def test_api_client():

@@ -21,7 +21,7 @@ final class PingcodeTaskRepository {
         List<Map<String, Object>> items = new ArrayList<>();
         try (PreparedStatement query = connection.prepareStatement(
             "SELECT P.SOURCE_ID,P.SOURCE_NAME,P.SOURCE_TYPE,P.SOURCE_URL,P.CONNECTION_ID,P.SOURCE_STATE,P.ROW_VERSION," +
-            "P.LAST_CONFIRMED_RUN,P.CREATED_BY,P.CREATED_AT,P.UPDATED_AT,P.PRODUCT_TYPE," +
+            "P.LAST_CONFIRMED_RUN,P.CREATED_BY,P.CREATED_AT,P.UPDATED_AT,P.PRODUCT_TYPE,P.BUSINESS_VERSION," +
             "(SELECT COUNT(DISTINCT T.SR_NUMBER) FROM KC_PINGCODE_TASK_SOURCE T " +
             "JOIN KC_PINGCODE_RUN R ON R.RUN_ID=T.LAST_RUN_ID WHERE T.SOURCE_ID=P.SOURCE_ID " +
             "AND T.PRESENT='Y' AND R.RUN_STATUS IN ('CONFIRMED','CONFIRMED_MISSING_IMAGES')) " +
@@ -36,7 +36,7 @@ final class PingcodeTaskRepository {
     Map<String, Object> findSource(Connection connection, String id) throws SQLException {
         try (PreparedStatement query = connection.prepareStatement(
             "SELECT SOURCE_ID,SOURCE_NAME,SOURCE_TYPE,SOURCE_URL,CONNECTION_ID,SOURCE_STATE,ROW_VERSION," +
-            "LAST_CONFIRMED_RUN,CREATED_BY,CREATED_AT,UPDATED_AT,PRODUCT_TYPE,0 FROM KC_PINGCODE_SOURCE WHERE SOURCE_ID=?")) {
+            "LAST_CONFIRMED_RUN,CREATED_BY,CREATED_AT,UPDATED_AT,PRODUCT_TYPE,BUSINESS_VERSION,0 FROM KC_PINGCODE_SOURCE WHERE SOURCE_ID=?")) {
             query.setString(1, id);
             try (ResultSet rows = query.executeQuery()) { return rows.next() ? source(rows) : null; }
         }
@@ -45,27 +45,27 @@ final class PingcodeTaskRepository {
     private Map<String, Object> lockSource(Connection connection, String id) throws SQLException {
         try (PreparedStatement query = connection.prepareStatement(
             "SELECT SOURCE_ID,SOURCE_NAME,SOURCE_TYPE,SOURCE_URL,CONNECTION_ID,SOURCE_STATE,ROW_VERSION," +
-            "LAST_CONFIRMED_RUN,CREATED_BY,CREATED_AT,UPDATED_AT,PRODUCT_TYPE,0 FROM KC_PINGCODE_SOURCE WHERE SOURCE_ID=? FOR UPDATE")) {
+            "LAST_CONFIRMED_RUN,CREATED_BY,CREATED_AT,UPDATED_AT,PRODUCT_TYPE,BUSINESS_VERSION,0 FROM KC_PINGCODE_SOURCE WHERE SOURCE_ID=? FOR UPDATE")) {
             query.setString(1, id);
             try (ResultSet rows = query.executeQuery()) { return rows.next() ? source(rows) : null; }
         }
     }
 
     Map<String, Object> updateSource(Connection connection, String id, String name, String type,
-                                     String productType, String url, long revision) throws SQLException {
+                                     String productType, String businessVersion, String url, long revision) throws SQLException {
         Map<String, Object> current = lockSource(connection, id);
         if (current == null) throw new SQLException("PINGCODE_SOURCE_NOT_FOUND");
         if (((Number) current.get("revision")).longValue() != revision) throw new SQLException("ROW_VERSION_CONFLICT");
         if (name == null || name.isBlank() || name.length() > 255 || !"REQUIREMENT".equals(type)
-            && !"TICKET".equals(type) || !validProductType(productType) || url == null || url.length() > 2000 || !validSourceUrl(type, url))
+            && !"TICKET".equals(type) || !validProductType(productType) || businessVersion != null
+            && businessVersion.length() > 128 || url == null || url.length() > 2000 || !validSourceUrl(type, url))
             throw new SQLException("PINGCODE_SOURCE_INVALID");
-        if (hasRuns(connection, id) && (!type.equals(current.get("type")) || !url.equals(current.get("url"))))
-            throw new SQLException("PINGCODE_SOURCE_HISTORY_LOCKED");
+        if (hasCollectingRun(connection, id)) throw new SQLException("PINGCODE_SOURCE_RUNNING");
         try (PreparedStatement update = connection.prepareStatement(
-            "UPDATE KC_PINGCODE_SOURCE SET SOURCE_NAME=?,SOURCE_TYPE=?,SOURCE_URL=?,PRODUCT_TYPE=?,ROW_VERSION=ROW_VERSION+1," +
+            "UPDATE KC_PINGCODE_SOURCE SET SOURCE_NAME=?,SOURCE_TYPE=?,SOURCE_URL=?,PRODUCT_TYPE=?,BUSINESS_VERSION=?,ROW_VERSION=ROW_VERSION+1," +
             "UPDATED_AT=CURRENT_TIMESTAMP WHERE SOURCE_ID=? AND ROW_VERSION=?")) {
             update.setString(1, name); update.setString(2, type); update.setString(3, url); update.setString(4, productType);
-            update.setString(5, id); update.setLong(6, revision);
+            update.setString(5, businessVersion); update.setString(6, id); update.setLong(7, revision);
             if (update.executeUpdate() != 1) throw new SQLException("ROW_VERSION_CONFLICT");
         } catch (SQLException error) {
             if (isConstraintViolation(error)) throw new SQLException("PINGCODE_SOURCE_CONFLICT", error);
@@ -125,11 +125,13 @@ final class PingcodeTaskRepository {
         }
     }
 
-    Map<String, Object> createSource(Connection connection, String name, String type, String productType, String url,
+    Map<String, Object> createSource(Connection connection, String name, String type, String productType,
+                                     String businessVersion, String url,
                                       String connectionId, String actor) throws SQLException {
         if (name == null || name.isBlank() || name.length() > 255 || url == null || url.length() > 2000
             || !"REQUIREMENT".equals(type) && !"TICKET".equals(type)
-            || !validProductType(productType) || connectionId == null || connectionId.isBlank() || actor == null || actor.isBlank()
+            || !validProductType(productType) || businessVersion != null && businessVersion.length() > 128
+            || connectionId == null || connectionId.isBlank() || actor == null || actor.isBlank()
             || !validSourceUrl(type, url)) {
             throw new SQLException("PINGCODE_SOURCE_INVALID");
         }
@@ -142,10 +144,11 @@ final class PingcodeTaskRepository {
         }
         String id = UUID.randomUUID().toString();
         try (PreparedStatement insert = connection.prepareStatement(
-            "INSERT INTO KC_PINGCODE_SOURCE (SOURCE_ID,SOURCE_NAME,SOURCE_TYPE,PRODUCT_TYPE,SOURCE_URL,CONNECTION_ID,CREATED_BY)" +
-            " VALUES (?,?,?,?,?,?,?)")) {
+            "INSERT INTO KC_PINGCODE_SOURCE (SOURCE_ID,SOURCE_NAME,SOURCE_TYPE,PRODUCT_TYPE,BUSINESS_VERSION,SOURCE_URL,CONNECTION_ID,CREATED_BY)" +
+            " VALUES (?,?,?,?,?,?,?,?)")) {
             insert.setString(1, id); insert.setString(2, name); insert.setString(3, type);
-            insert.setString(4, productType); insert.setString(5, url); insert.setString(6, connectionId); insert.setString(7, actor);
+            insert.setString(4, productType); insert.setString(5, businessVersion); insert.setString(6, url);
+            insert.setString(7, connectionId); insert.setString(8, actor);
             insert.executeUpdate();
         } catch (SQLException error) {
             if (isConstraintViolation(error)) throw new SQLException("PINGCODE_SOURCE_CONFLICT", error);
@@ -173,10 +176,12 @@ final class PingcodeTaskRepository {
         if (((Number) source.get("revision")).longValue() != revision) throw new SQLException("ROW_VERSION_CONFLICT");
         String id = UUID.randomUUID().toString();
         try (PreparedStatement insert = connection.prepareStatement(
-            "INSERT INTO KC_PINGCODE_RUN (RUN_ID,SOURCE_ID,SOURCE_REVISION,RUN_STATUS,CREATED_BY)" +
-            " VALUES (?,?,?,'COLLECTING',?)")) {
+            "INSERT INTO KC_PINGCODE_RUN (RUN_ID,SOURCE_ID,SOURCE_REVISION,RUN_STATUS,SOURCE_NAME,SOURCE_TYPE," +
+            "SOURCE_URL,PRODUCT_TYPE,BUSINESS_VERSION,CREATED_BY) VALUES (?,?,?,'COLLECTING',?,?,?,?,?,?)")) {
             insert.setString(1, id); insert.setString(2, sourceId); insert.setLong(3, revision);
-            insert.setString(4, actor); insert.executeUpdate();
+            insert.setString(4, (String) source.get("name")); insert.setString(5, (String) source.get("type"));
+            insert.setString(6, (String) source.get("url")); insert.setString(7, (String) source.get("productType"));
+            insert.setString(8, (String) source.get("businessVersion")); insert.setString(9, actor); insert.executeUpdate();
         }
         return findRun(connection, id);
     }
@@ -200,7 +205,8 @@ final class PingcodeTaskRepository {
             "SELECT RUN_ID,SOURCE_ID,SOURCE_REVISION,RUN_STATUS,SOURCE_VERSION,CRITERIA_SHA256," +
             "PREVIEW_DIGEST,TASK_REVISION_DIGEST,PAGE_COUNT,ROW_COUNT,SR_COUNT,NEW_COUNT,CHANGED_COUNT,UNCHANGED_COUNT," +
             "REMOVED_COUNT,IR_COUNT,UNLINKED_IR_COUNT,PAGES_READ,ROWS_READ,ERROR_CODE,CREATED_BY," +
-            "CREATED_AT,FINISHED_AT,CONFIRMED_AT FROM KC_PINGCODE_RUN WHERE RUN_ID=?")) {
+            "CREATED_AT,FINISHED_AT,CONFIRMED_AT,SOURCE_NAME,SOURCE_TYPE,SOURCE_URL,PRODUCT_TYPE," +
+            "BUSINESS_VERSION FROM KC_PINGCODE_RUN WHERE RUN_ID=?")) {
             query.setString(1, id);
             try (ResultSet rows = query.executeQuery()) {
                 if (!rows.next()) return null;
@@ -217,6 +223,9 @@ final class PingcodeTaskRepository {
                 item.put("rowsRead", rows.getLong(19)); item.put("errorCode", rows.getString(20));
                 item.put("createdBy", rows.getString(21)); item.put("createdAt", timestamp(rows, 22));
                 item.put("finishedAt", timestamp(rows, 23)); item.put("confirmedAt", timestamp(rows, 24));
+                item.put("sourceName", rows.getString(25)); item.put("sourceType", rows.getString(26));
+                item.put("sourceUrl", rows.getString(27)); item.put("productType", rows.getString(28));
+                item.put("businessVersion", rows.getString(29));
                 return item;
             }
         }
@@ -414,8 +423,8 @@ final class PingcodeTaskRepository {
     Map<String, Object> sourceSnapshot(Connection connection, String number) throws SQLException {
         try (PreparedStatement query = connection.prepareStatement(
             "SELECT S.RUN_ID,S.TITLE,S.BODY_MARKDOWN,S.BODY_SHA256,S.SOURCE_UPDATED_AT," +
-            "S.RESOURCE_VERSION,S.RESOURCE_STATE,P.SOURCE_ID,P.SOURCE_NAME,P.SOURCE_TYPE,P.SOURCE_URL," +
-            "R.CONFIRMED_AT FROM KC_PINGCODE_TASK_SOURCE T " +
+            "S.RESOURCE_VERSION,S.RESOURCE_STATE,P.SOURCE_ID,R.SOURCE_NAME,R.SOURCE_TYPE,R.SOURCE_URL," +
+            "R.PRODUCT_TYPE,R.BUSINESS_VERSION,R.CONFIRMED_AT FROM KC_PINGCODE_TASK_SOURCE T " +
             "JOIN KC_PINGCODE_SOURCE P ON P.SOURCE_ID=T.SOURCE_ID " +
             "JOIN KC_PINGCODE_RUN R ON R.RUN_ID=T.LAST_RUN_ID " +
             "JOIN KC_PINGCODE_SNAPSHOT S ON S.RUN_ID=R.RUN_ID AND S.SR_NUMBER=T.SR_NUMBER " +
@@ -432,7 +441,8 @@ final class PingcodeTaskRepository {
                 result.put("resourceVersion", rows.getLong(6)); result.put("resourceState", rows.getString(7));
                 result.put("sourceId", rows.getString(8)); result.put("sourceName", rows.getString(9));
                 result.put("type", rows.getString(10)); result.put("sourceUrl", rows.getString(11));
-                result.put("confirmedAt", timestamp(rows, 12));
+                result.put("productType", rows.getString(12)); result.put("businessVersion", rows.getString(13));
+                result.put("confirmedAt", timestamp(rows, 14));
                 result.put("ir", irNumbers(connection, runId, number));
                 result.put("resources", resources(connection, runId, number));
                 return result;
@@ -520,8 +530,8 @@ final class PingcodeTaskRepository {
         long srNumber = TaskNumber.sr(number);
         try (PreparedStatement query = connection.prepareStatement(
             "SELECT S.TITLE,S.BODY_MARKDOWN,S.BODY_SHA256,S.SOURCE_UPDATED_AT,S.RESOURCE_VERSION,S.RESOURCE_STATE," +
-            "P.SOURCE_ID,P.SOURCE_NAME,P.SOURCE_TYPE,P.SOURCE_URL FROM KC_PINGCODE_SNAPSHOT S " +
-            "JOIN KC_PINGCODE_RUN R ON R.RUN_ID=S.RUN_ID JOIN KC_PINGCODE_SOURCE P ON P.SOURCE_ID=R.SOURCE_ID " +
+            "R.SOURCE_ID,R.SOURCE_NAME,R.SOURCE_TYPE,R.SOURCE_URL,R.PRODUCT_TYPE,R.BUSINESS_VERSION " +
+            "FROM KC_PINGCODE_SNAPSHOT S JOIN KC_PINGCODE_RUN R ON R.RUN_ID=S.RUN_ID " +
             "WHERE S.RUN_ID=? AND S.SR_NUMBER=?")) {
             query.setString(1, runId); query.setLong(2, srNumber);
             try (ResultSet rows = query.executeQuery()) {
@@ -532,6 +542,7 @@ final class PingcodeTaskRepository {
                 result.put("resourceVersion", rows.getLong(5)); result.put("resourceState", rows.getString(6));
                 result.put("sourceId", rows.getString(7)); result.put("sourceName", rows.getString(8));
                 result.put("type", rows.getString(9)); result.put("sourceUrl", rows.getString(10));
+                result.put("productType", rows.getString(11)); result.put("businessVersion", rows.getString(12));
                 result.put("confirmedAt", run.get("confirmedAt")); result.put("ir", irNumbers(connection, runId, number));
                 result.put("resources", resources(connection, runId, number)); return result;
             }
@@ -542,7 +553,8 @@ final class PingcodeTaskRepository {
         long srNumber = TaskNumber.sr(number);
         try (PreparedStatement query = connection.prepareStatement(
             "SELECT S.RUN_ID,S.TITLE,S.BODY_MARKDOWN,S.BODY_SHA256,S.SOURCE_UPDATED_AT,S.RESOURCE_VERSION," +
-            "S.RESOURCE_STATE,P.SOURCE_ID,P.SOURCE_NAME,P.SOURCE_TYPE,P.SOURCE_URL,R.CONFIRMED_AT " +
+            "S.RESOURCE_STATE,P.SOURCE_ID,R.SOURCE_NAME,R.SOURCE_TYPE,R.SOURCE_URL,R.PRODUCT_TYPE," +
+            "R.BUSINESS_VERSION,R.CONFIRMED_AT " +
             "FROM KC_PINGCODE_TASK_SOURCE T JOIN KC_PINGCODE_SOURCE P ON P.SOURCE_ID=T.SOURCE_ID " +
             "JOIN KC_PINGCODE_RUN R ON R.RUN_ID=T.LAST_RUN_ID " +
             "JOIN KC_PINGCODE_SNAPSHOT S ON S.RUN_ID=T.LAST_RUN_ID AND S.SR_NUMBER=T.SR_NUMBER " +
@@ -557,7 +569,8 @@ final class PingcodeTaskRepository {
                 result.put("sourceUpdatedAt", rows.getString(5)); result.put("resourceVersion", rows.getLong(6));
                 result.put("resourceState", rows.getString(7)); result.put("sourceId", rows.getString(8));
                 result.put("sourceName", rows.getString(9)); result.put("type", rows.getString(10));
-                result.put("sourceUrl", rows.getString(11)); result.put("confirmedAt", timestamp(rows, 12));
+                result.put("sourceUrl", rows.getString(11)); result.put("productType", rows.getString(12));
+                result.put("businessVersion", rows.getString(13)); result.put("confirmedAt", timestamp(rows, 14));
                 result.put("ir", irNumbers(connection, runId, number)); result.put("resources", resources(connection, runId, number));
                 return result;
             }
@@ -598,9 +611,9 @@ final class PingcodeTaskRepository {
         List<Map<String, Object>> items = new ArrayList<>();
         try (PreparedStatement query = connection.prepareStatement(
             "SELECT C.RUN_ID,C.FIELD_NAME,C.BEFORE_VALUE,C.AFTER_VALUE,R.CONFIRMED_AT," +
-            "P.SOURCE_ID,P.SOURCE_NAME,P.SOURCE_TYPE,P.SOURCE_URL FROM KC_PINGCODE_CHANGE C " +
+            "R.SOURCE_ID,R.SOURCE_NAME,R.SOURCE_TYPE,R.SOURCE_URL,R.PRODUCT_TYPE,R.BUSINESS_VERSION " +
+            "FROM KC_PINGCODE_CHANGE C " +
             "JOIN KC_PINGCODE_RUN R ON R.RUN_ID=C.RUN_ID " +
-            "JOIN KC_PINGCODE_SOURCE P ON P.SOURCE_ID=R.SOURCE_ID " +
             "WHERE C.SR_NUMBER=? AND R.RUN_STATUS IN ('CONFIRMED','CONFIRMED_MISSING_IMAGES') " +
             "ORDER BY R.CONFIRMED_AT DESC,C.FIELD_NAME OFFSET ? ROWS FETCH NEXT ? ROWS ONLY")) {
             query.setLong(1, TaskNumber.sr(number)); query.setInt(2, (page - 1) * pageSize);
@@ -612,7 +625,8 @@ final class PingcodeTaskRepository {
                     item.put("before", rows.getString(3)); item.put("after", rows.getString(4));
                     item.put("confirmedAt", timestamp(rows, 5)); item.put("sourceId", rows.getString(6));
                     item.put("sourceName", rows.getString(7)); item.put("type", rows.getString(8));
-                    item.put("sourceUrl", rows.getString(9)); items.add(item);
+                    item.put("sourceUrl", rows.getString(9)); item.put("productType", rows.getString(10));
+                    item.put("businessVersion", rows.getString(11)); items.add(item);
                 }
             }
         }
@@ -877,15 +891,19 @@ final class PingcodeTaskRepository {
     private Map<String, String> selectedSnapshot(Connection connection, String sourceId, String pendingRun,
                                                   String number) throws SQLException {
         try (PreparedStatement query = connection.prepareStatement(
-            "SELECT S.TITLE,P.SOURCE_TYPE,P.SOURCE_URL FROM KC_PINGCODE_SOURCE P " +
-            "JOIN KC_PINGCODE_SNAPSHOT S ON S.RUN_ID=COALESCE(?,P.LAST_CONFIRMED_RUN) " +
+            "SELECT S.TITLE,R.SOURCE_TYPE,R.SOURCE_URL,R.PRODUCT_TYPE,R.BUSINESS_VERSION " +
+            "FROM KC_PINGCODE_SOURCE P JOIN KC_PINGCODE_RUN R ON R.RUN_ID=COALESCE(?,P.LAST_CONFIRMED_RUN) " +
+            "JOIN KC_PINGCODE_SNAPSHOT S ON S.RUN_ID=R.RUN_ID " +
             "WHERE P.SOURCE_ID=? AND S.SR_NUMBER=?")) {
             query.setString(1, pendingRun); query.setString(2, sourceId);
             query.setLong(3, TaskNumber.sr(number));
             try (ResultSet rows = query.executeQuery()) {
                 if (!rows.next()) throw new SQLException("PRIMARY_SOURCE_SNAPSHOT_MISSING");
-                return Map.of("title", rows.getString(1) == null ? "" : rows.getString(1),
-                    "type", rows.getString(2), "url", rows.getString(3));
+                Map<String, String> selected = new LinkedHashMap<>();
+                selected.put("title", rows.getString(1) == null ? "" : rows.getString(1));
+                selected.put("type", rows.getString(2)); selected.put("url", rows.getString(3));
+                selected.put("product", rows.getString(4)); selected.put("version", rows.getString(5));
+                return selected;
             }
         }
     }
@@ -901,11 +919,13 @@ final class PingcodeTaskRepository {
                     Map<String, Object> payload = mergeTaskSource(parseTaskPayload(rows.getString(1)), selected, primary);
                     try (PreparedStatement update = connection.prepareStatement(
                         "UPDATE KC_DOCUMENT_TASK SET PAYLOAD=?,DESCRIPTION=?,SOURCE_TYPE=?,PRIMARY_SOURCE_ID=?," +
+                        "PRODUCT_CODE=?,BUSINESS_VERSION=?," +
                         "ATTENTION='NORMAL',UPDATED_AT=CURRENT_TIMESTAMP,ROW_VERSION=ROW_VERSION+1 " +
                         "WHERE TASK_PREFIX='YDBRD' AND TASK_NUMBER=?")) {
                         update.setString(1, Main.Json.stringify(payload)); update.setString(2, selected.get("title"));
                         update.setString(3, selected.get("type")); update.setString(4, primary);
-                        update.setLong(5, TaskNumber.sr(number)); update.executeUpdate();
+                        update.setString(5, selected.get("product")); update.setString(6, selected.get("version"));
+                        update.setLong(7, TaskNumber.sr(number)); update.executeUpdate();
                     }
                     return;
                 }
@@ -916,16 +936,19 @@ final class PingcodeTaskRepository {
         source.put("sourceUrl", selected.get("url"));
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("number", number); payload.put("description", selected.get("title"));
+        payload.put("product", selected.get("product")); payload.put("version", selected.get("version"));
         payload.put("source", source); payload.put("ownerId", defaultOwnerId);
         payload.put("sourceType", selected.get("type")); payload.put("primarySourceId", primary);
         payload.put("decomposition", Map.of("ticketImpact", "", "confirmed", false, "handbooks", List.of()));
         payload.put("revision", 0);
         try (PreparedStatement insert = connection.prepareStatement(
             "INSERT INTO KC_DOCUMENT_TASK (TASK_PREFIX,TASK_NUMBER,PAYLOAD,TASK_STATUS,OWNER_ID," +
-            "SOURCE_TYPE,PRIMARY_SOURCE_ID,DESCRIPTION) VALUES ('YDBRD',?,?,'PENDING_SCOPE',?,?,?,?)")) {
+            "PRODUCT_CODE,BUSINESS_VERSION,SOURCE_TYPE,PRIMARY_SOURCE_ID,DESCRIPTION) " +
+            "VALUES ('YDBRD',?,?,'PENDING_SCOPE',?,?,?,?,?,?)")) {
             insert.setLong(1, TaskNumber.sr(number)); insert.setString(2, Main.Json.stringify(payload));
-            insert.setString(3, defaultOwnerId); insert.setString(4, selected.get("type"));
-            insert.setString(5, primary); insert.setString(6, selected.get("title")); insert.executeUpdate();
+            insert.setString(3, defaultOwnerId); insert.setString(4, selected.get("product"));
+            insert.setString(5, selected.get("version")); insert.setString(6, selected.get("type"));
+            insert.setString(7, primary); insert.setString(8, selected.get("title")); insert.executeUpdate();
         }
         DocumentTaskIndex.replace(connection, number, payload);
     }
@@ -934,6 +957,7 @@ final class PingcodeTaskRepository {
                                                 Map<String, String> selected, String primary) {
         Map<String, Object> result = new LinkedHashMap<>(payload);
         result.put("description", selected.get("title"));
+        result.put("product", selected.get("product")); result.put("version", selected.get("version"));
         result.put("sourceType", selected.get("type"));
         result.put("primarySourceId", primary);
         Map<String, Object> source = new LinkedHashMap<>();
@@ -1166,8 +1190,8 @@ final class PingcodeTaskRepository {
         item.put("connectionId", rows.getString(5)); item.put("state", rows.getString(6));
         item.put("revision", rows.getLong(7)); item.put("lastConfirmedRun", rows.getString(8));
         item.put("createdBy", rows.getString(9)); item.put("createdAt", timestamp(rows, 10));
-        item.put("updatedAt", timestamp(rows, 11));
-        item.put("productType", rows.getString(12)); item.put("syncedTaskCount", rows.getLong(13));
+        item.put("updatedAt", timestamp(rows, 11)); item.put("productType", rows.getString(12));
+        item.put("businessVersion", rows.getString(13)); item.put("syncedTaskCount", rows.getLong(14));
         return item;
     }
 

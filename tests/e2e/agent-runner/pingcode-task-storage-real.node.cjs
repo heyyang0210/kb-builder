@@ -27,7 +27,7 @@ test('隔离库：来源同步、次要事项、幂等重放与版本冲突', { 
   const suffix = Date.now();
   const number = `YDBRD-${suffix}`;
   const source = await ok('POST', '/v1/pingcode-task-sync/sources', {
-    name: `隔离自动验收-${suffix}`, type: 'TICKET',
+    name: `隔离自动验收-${suffix}`, type: 'TICKET', productType: 'DB',
     url: `https://pingcode.yasdb.com/pjm/projects/YDBRD/defect/test-${suffix}`,
     connectionId: 'isolated-test', actor: config.defaultOwnerId,
   });
@@ -108,7 +108,7 @@ test('隔离库：来源同步、次要事项、幂等重放与版本冲突', { 
   assert.equal((await ok('GET', `/v1/document-tasks/${number}`)).attention, 'NORMAL');
 
   const requirement = await ok('POST', '/v1/pingcode-task-sync/sources', {
-    name: `隔离需求-${suffix}`, type: 'REQUIREMENT',
+    name: `隔离需求-${suffix}`, type: 'REQUIREMENT', productType: 'DB',
     url: `https://pingcode.yasdb.com/ship/products/YASHAN/baselines/test-${suffix}/ideas?category=all`,
     connectionId: 'isolated-test', actor: config.defaultOwnerId,
   });
@@ -167,6 +167,67 @@ test('隔离库：来源同步、次要事项、幂等重放与版本冲突', { 
   assert.ok(changes.items.every(item => item.confirmedAt && item.sourceName));
 });
 
+test('隔离库：来源产品版本写入任务，类型修改不改写既有运行快照', { skip: !enabled }, async () => {
+  const config = await ok('GET', '/v1/document-tasks/config');
+  assert.ok(config.defaultOwnerId, '隔离库需要先配置默认责任人');
+  const suffix = Date.now() + 3;
+  const number = `YDBRD-${suffix}`;
+  const source = await ok('POST', '/v1/pingcode-task-sync/sources', {
+    name: `隔离版本映射-${suffix}`, type: 'TICKET', productType: 'DB', businessVersion: '27.7.1',
+    url: `https://pingcode.yasdb.com/pjm/projects/YDBRD/defect/version-${suffix}`,
+    connectionId: 'isolated-test', actor: config.defaultOwnerId,
+  });
+  const run = await ok('POST', `/v1/pingcode-task-sync/sources/${source.id}/runs`,
+    { revision: source.revision, actor: config.defaultOwnerId });
+  await ok('POST', `/v1/pingcode-task-sync/runs/${run.id}/pages`, {
+    pageIndex: 0, pageCount: 1, count: 1, sourceVersion: 'source-config-v1',
+    criteriaSha256: hash('source-config'), sourceType: 'ticket',
+    items: [{ number, id: `source-config-${suffix}`, shortId: `source-config-${suffix}`,
+      title: '配置快照工单', description: '原始业务版本' }],
+  });
+  const ready = await ok('POST', `/v1/pingcode-task-sync/runs/${run.id}/finish`, { digest: hash('source-config-run') });
+  await ok('POST', `/v1/pingcode-task-sync/runs/${run.id}/confirm`,
+    { digest: ready.digest, expectedRevision: source.revision, primarySources: {} });
+  const firstTask = await ok('GET', `/v1/document-tasks/${number}`);
+  assert.equal(firstTask.product, 'DB');
+  assert.equal(firstTask.version, '27.7.1');
+  const firstSnapshot = await ok('GET', `/v1/pingcode-task-sync/runs/${run.id}/items/${number}`);
+  assert.equal(firstSnapshot.type, 'TICKET');
+  assert.equal(firstSnapshot.businessVersion, '27.7.1');
+
+  const edited = await ok('PATCH', `/v1/pingcode-task-sync/sources/${source.id}`, {
+    name: source.name, type: 'REQUIREMENT', productType: 'YCM', businessVersion: '28.1',
+    url: `https://pingcode.yasdb.com/ship/products/YASHAN/baselines/revised-${suffix}/ideas?category=all`,
+    revision: source.revision,
+  });
+  const nextRun = await ok('POST', `/v1/pingcode-task-sync/sources/${source.id}/runs`,
+    { revision: edited.revision, actor: config.defaultOwnerId });
+  const ir = `YASHAN-${suffix}`;
+  await ok('POST', `/v1/pingcode-task-sync/runs/${nextRun.id}/pages`, {
+    pageIndex: 0, pageCount: 1, count: 1, sourceVersion: 'source-config-v2',
+    criteriaSha256: hash('source-config-v2'), sourceType: 'requirement',
+    items: [{ ir, irId: `idea-${suffix}`, workItems: [{ number,
+      id: `source-config-${suffix}`, shortId: `source-config-${suffix}`,
+      title: '配置快照工单', description: '原始业务版本' }] }],
+  });
+  const nextReady = await ok('POST', `/v1/pingcode-task-sync/runs/${nextRun.id}/finish`, { digest: hash('source-config-run-v2') });
+  await ok('POST', `/v1/pingcode-task-sync/runs/${nextRun.id}/confirm`, {
+    digest: nextReady.digest, expectedRevision: edited.revision, primarySources: { [number]: source.id },
+  });
+  const updatedTask = await ok('GET', `/v1/document-tasks/${number}`);
+  assert.equal(updatedTask.product, 'YCM');
+  assert.equal(updatedTask.version, '28.1');
+  const oldSnapshot = await ok('GET', `/v1/pingcode-task-sync/runs/${run.id}/items/${number}`);
+  assert.equal(oldSnapshot.type, 'TICKET');
+  assert.equal(oldSnapshot.sourceUrl, source.url);
+  assert.equal(oldSnapshot.productType, 'DB');
+  assert.equal(oldSnapshot.businessVersion, '27.7.1');
+  const newSnapshot = await ok('GET', `/v1/pingcode-task-sync/runs/${nextRun.id}/items/${number}`);
+  assert.equal(newSnapshot.type, 'REQUIREMENT');
+  assert.equal(newSnapshot.productType, 'YCM');
+  assert.equal(newSnapshot.businessVersion, '28.1');
+});
+
 test('隔离库：缺图确认后只修复资源，不修改已确认正文', { skip: !enabled }, async () => {
   const config = await ok('GET', '/v1/document-tasks/config');
   const suffix = Date.now() + 1;
@@ -174,7 +235,7 @@ test('隔离库：缺图确认后只修复资源，不修改已确认正文', { 
   const imageUrl = 'https://pingcode.yasdb.com/atlas/files/public/test-image.png';
   const imageId = hash(imageUrl);
   const source = await ok('POST', '/v1/pingcode-task-sync/sources', {
-    name: `隔离缺图-${suffix}`, type: 'TICKET',
+    name: `隔离缺图-${suffix}`, type: 'TICKET', productType: 'DB',
     url: `https://pingcode.yasdb.com/pjm/projects/YDBRD/defect/test-image-${suffix}`,
     connectionId: 'isolated-test', actor: config.defaultOwnerId,
   });

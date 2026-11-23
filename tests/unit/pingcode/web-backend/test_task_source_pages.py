@@ -144,24 +144,34 @@ class TaskSourcePageTest(unittest.TestCase):
             {'_id': 'idea-2', 'version_id': 'v2', 'whole_identifier': 'YASHAN-2', 'relation_data': {'work_item': 1}},
             {'_id': 'idea-3', 'version_id': 'v3', 'whole_identifier': 'YASHAN-3', 'relation_data': {'work_item': 1}},
         ]}}]
+        self.service._relation_concurrency = 2
         shared = {'_id': 'work-1', 'whole_identifier': 'YDBRD-10', 'short_id': 'short-1', 'project_id': 'project-1'}
         self.api.get_idea_work_items_batch.side_effect = None
-        self.api.get_idea_work_items_batch.return_value = [
-            {'data': {'value': [shared]}}, {'data': {'value': [shared]}}, {'data': {'value': []}},
+        relations_by_idea = {'idea-1': [shared], 'idea-2': [shared], 'idea-3': []}
+        self.api.get_idea_work_items_batch.side_effect = lambda batch, concurrency: [
+            {'data': {'value': relations_by_idea[idea_id]}} for idea_id, _version_id in batch
         ]
         self.api.get_work_items.return_value = [{**shared, 'title': 'SR', 'description': '<p>正文</p>', 'properties': {}}]
 
-        result = self.service.read_task_source_pages(
-            'https://pingcode.yasdb.com/ship/products/YASHAN/baselines/baseline-1/ideas?category=all')
+        with self.assertLogs('app.pingcode_service', level='INFO') as logs:
+            result = self.service.read_task_source_pages(
+                'https://pingcode.yasdb.com/ship/products/YASHAN/baselines/baseline-1/ideas?category=all')
 
         self.assertEqual([0, 1], [page['pageIndex'] for page in result['pages']])
         self.assertEqual(['YDBRD-10', 'YDBRD-10'], [page['items'][0]['workItems'][0]['number'] for page in result['pages']])
         self.assertEqual(['YASHAN-3'], result['unlinkedIrNumbers'])
         self.assertEqual(1, result['pages'][1]['unlinkedIrCount'])
         self.api.get_baseline_ideas_pages.assert_called_once_with('product-1', 'baseline-1', 2, suite_id='')
-        self.api.get_idea_work_items_batch.assert_called_once_with(
-            [('idea-1', 'v1'), ('idea-2', 'v2'), ('idea-3', 'v3')], concurrency=10)
+        self.assertEqual([
+            [('idea-1', 'v1'), ('idea-2', 'v2')], [('idea-3', 'v3')],
+        ], [call.args[0] for call in self.api.get_idea_work_items_batch.call_args_list])
+        self.assertEqual([2, 2], [call.kwargs['concurrency']
+                                  for call in self.api.get_idea_work_items_batch.call_args_list])
         self.api.get_work_items.assert_called_once_with(['short-1'], concurrency=10)
+        self.assertTrue(any('pingcode.task_source_pages.completed' in line
+                            and 'detailFetchDurationMs=' in line
+                            and 'baselineValidationDurationMs=' in line
+                            and 'detailMappingDurationMs=' in line for line in logs.output))
 
     def test_requirement_snapshot_rejects_source_changed_during_batch(self):
         self.api.get_product.return_value = {'data': {'value': {'identifier': 'YASHAN', '_id': 'product-1'}}}
@@ -183,6 +193,31 @@ class TaskSourcePageTest(unittest.TestCase):
                 'https://pingcode.yasdb.com/ship/products/YASHAN/baselines/baseline-1/ideas')
 
         self.assertEqual('PINGCODE_SOURCE_CHANGED', raised.exception.code)
+
+    def test_requirement_snapshot_stops_after_a_failed_relation_batch(self):
+        self.service._relation_concurrency = 2
+        self.api.get_product.return_value = {'data': {'value': {'identifier': 'YASHAN', '_id': 'product-1'}}}
+        self.api.get_baseline.return_value = {'data': {'value': {
+            'short_id': 'baseline-1', 'scope': 'product-1', 'updated_at': 10,
+        }}}
+        self.api.get_agile_project.return_value = {'data': {'value': {'identifier': 'YDBRD', '_id': 'project-1'}}}
+        self.api.get_baseline_ideas.return_value = {'data': {'count': 3, 'page_count': 1, 'value': [
+            {'_id': f'idea-{index}', 'version_id': f'v{index}', 'whole_identifier': f'YASHAN-{index}',
+             'relation_data': {'work_item': 1}}
+            for index in range(1, 4)
+        ]}}
+        self.api.get_baseline_ideas_pages.return_value = []
+        self.api.get_idea_work_items_batch.side_effect = [
+            [{'data': {'value': []}}, {'data': {'value': []}}],
+            RuntimeError('relation batch failed'),
+        ]
+
+        with self.assertRaisesRegex(RuntimeError, 'relation batch failed'):
+            self.service.read_task_source_pages(
+                'https://pingcode.yasdb.com/ship/products/YASHAN/baselines/baseline-1/ideas')
+
+        self.assertEqual(2, self.api.get_idea_work_items_batch.call_count)
+        self.api.get_work_items.assert_not_called()
 
     def test_baseline_rejects_work_item_detail_identity_mismatch(self):
         self.api.get_product.return_value = {'data': {'value': {'identifier': 'YASHAN', '_id': 'product-1'}}}

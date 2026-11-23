@@ -11,6 +11,7 @@ PYTHONPATH=apps/pingcode-api:packages/pingcode-core \
 
 真实 PingCode/CAS 集成脚本默认跳过外部访问。准备好隔离测试账号和配置后，通过
 `RUN_PINGCODE_LIVE_TESTS=1` 显式启用。
+应用生命周期关闭 PingCode 浏览器服务时，并发或重复关闭会等待同一次会话清理完成；清理期间的新读取等待关闭结束后再重建线程池。回归见 `tests/unit/pingcode/web-backend/test_pingcode_reference.py`。
 
 
 参考正文读取：`GET /api/pingcode/spaces/{space_key}/pages/{page_id}/reference` 复用现有账号浏览器会话、页面详情客户端和 Slate→Markdown 解析器，先核对页面属于该空间，再返回正文、标题、原始地址及上游实际提供的版本信息。资料服务启动后异步预热账号会话，不预读空间目录或页面；首次引用继续核验目标空间和页面。`include_images=true` 时按知识中心来源图片策略下载有界公共图片，以 `source-image:` 内部标识和 base64 结果交给平台托管；响应不包含签名图片 URL。图片下载仅允许当前主机的 `/atlas/files/public/` 起点及同源 `/pc-public/` 受限跳转。不创建下载批次或下载附件；缺失页面返回404、正文无效422、上游失败502，错误响应不包含凭证或上游原始异常。该接口沿用资料服务现有网络与认证边界，知识中心入口另行校验作者权限、来源域名和文档作用域。
@@ -38,3 +39,5 @@ KNOWLEDGE_CENTER_PINGCODE_API_PORT=18010 node tools/repository/probe-production-
 补充核对：原始空间索引字段为 short_id，树响应展示为 identifier；解析同时兼容这两个字段，仍要求空间内唯一匹配。
 
 2026-11-13 性能改造：新增 `POST /api/internal/pingcode/task-source-pages`，限内部同步令牌和需求基线来源。一个已认证浏览器会话并发读取全部分页、IR 关系与去重 SR 详情，返回逐页记录，Node 仍逐页验证和写入 Storage。边界为最多 100 页、5000 IR、500 个唯一 SR；超过边界明确失败。接口验证全部来源分页版本/总数、关联数量和稳定身份；空关系保留未关联 IR 编号，其余完整性错误拒绝。关系/详情并发默认 50，可由 `KNOWLEDGE_CENTER_PINGCODE_RELATION_CONCURRENCY`、`KNOWLEDGE_CENTER_PINGCODE_DETAIL_CONCURRENCY` 覆盖，范围 1–50。真实实例 10→50 对照仍需约 56.6–64.1 秒完成连接器全量读取，说明并发不是 3 秒目标的充分方案；见 `runtime/test-results/pingcode-baseline-3s-benchmark-20261113.md`。
+
+2026-11-17 关系结果集分段：全页路径已读取全部 IR 分页后，将 IR 关系请求按 `relationConcurrency` 分段；每段最多 relationConcurrency 条，段内仍使用相同并发，顺序合并后再执行原有关联核验，并统一去重读取所有 SR 详情。关系日志增加 `relationBatchCount`、`relationConcurrency`、`relationFetchDurationMs` 和 `relationValidationDurationMs`；详情日志增加 `detailFetchDurationMs`、`baselineValidationDurationMs`、`detailMappingDurationMs`，分别拆分 API 调用、末尾基线复核、本地身份校验/Markdown 转换/组装。API 调用时间仍混合上游、响应处理与 Playwright 回传，不是纯网络耗时。单次分段失败即终止，不返回部分快照。2026-11-17 同会话交替 5 轮关系 A/B 样本的单批/50条分段中位数分别为 41.666/29.022 秒，但各轮关系响应摘要变化，不能确认逐项输出等价；仅作为分段有性能信号，不能宣称性能目标已达成。详见同步详细设计和性能诊断报告。

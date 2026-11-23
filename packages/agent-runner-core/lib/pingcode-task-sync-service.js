@@ -171,7 +171,8 @@ function createPingcodeTaskSyncService({ storage, pingcodeUrl, readPage: provide
     const type = input?.type === 'REQUIREMENT' ? 'requirement' : input?.type === 'TICKET' ? 'ticket' : null;
     if (!type || !input?.url || !input?.name || !['DB', 'YCM', 'YMP', 'YDC'].includes(input?.productType)) throw Object.assign(new Error('请填写来源名称、类型、产品类型和 URL'),
       { code: 'PINGCODE_SOURCE_INVALID', status: 422 });
-    return (await request('POST', '/sources', { name: input.name, type: input.type, productType: input.productType, url: input.url,
+    return (await request('POST', '/sources', { name: input.name, type: input.type, productType: input.productType,
+      businessVersion: input.businessVersion, url: input.url,
       connectionId: new URL(pingcodeUrl).host, actor })).data;
   }
   async function source(id) { return (await request('GET', `/sources/${encodeURIComponent(id)}`)).data; }
@@ -180,7 +181,8 @@ function createPingcodeTaskSyncService({ storage, pingcodeUrl, readPage: provide
       || !['DB', 'YCM', 'YMP', 'YDC'].includes(input?.productType))
       throw Object.assign(new Error('请填写完整的来源信息并刷新最新版本'), { code: 'PINGCODE_SOURCE_INVALID', status: 422 });
     return (await request('PATCH', `/sources/${encodeURIComponent(id)}`, {
-      name: input.name, type: input.type, productType: input.productType, url: input.url, revision: input.revision,
+      name: input.name, type: input.type, productType: input.productType,
+      businessVersion: input.businessVersion, url: input.url, revision: input.revision,
     })).data;
   }
   async function setSourceState(id, input) {
@@ -238,7 +240,9 @@ function createPingcodeTaskSyncService({ storage, pingcodeUrl, readPage: provide
     if (run.status === 'AWAITING_CONFIRM') {
       const configured = await source(run.sourceId);
       const current = await readPage(configured, 0);
-      if (current.sourceVersion !== run.sourceVersion || sha256(current.criteria || null) !== run.criteriaSha256
+      if (current.sourceVersion == null || run.sourceVersion == null
+        || String(current.sourceVersion) !== String(run.sourceVersion)
+        || sha256(current.criteria || null) !== run.criteriaSha256
         || current.count !== run.rowCount || current.pageCount !== run.pageCount
         || current.sourceType !== configured.type.toLowerCase()) {
         throw Object.assign(new Error('来源内容或筛选条件已变化，请重新预览'),

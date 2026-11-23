@@ -1,4 +1,5 @@
 import threading
+from concurrent.futures import ThreadPoolExecutor
 import base64
 import time
 import unittest
@@ -11,6 +12,29 @@ from app.pingcode_service import PingCodeService
 
 
 class PingCodeReferenceTest(unittest.TestCase):
+    def test_concurrent_close_waits_for_cleanup_before_reopening(self):
+        service = PingCodeService()
+        service._isolate_asyncio = lambda callback, *args: callback(*args)
+        entered = threading.Event()
+        release = threading.Event()
+        cleanup = Mock(side_effect=lambda: (entered.set(), release.wait(2)))
+        service._close_sync = cleanup
+        try:
+            with ThreadPoolExecutor(max_workers=3) as workers:
+                first = workers.submit(service.close)
+                self.assertTrue(entered.wait(1))
+                second = workers.submit(service.close)
+                request = workers.submit(service._submit, lambda: "ready")
+                self.assertFalse(request.done())
+                release.set()
+                first.result(timeout=2)
+                second.result(timeout=2)
+                self.assertEqual(request.result(timeout=2), "ready")
+            cleanup.assert_called_once_with()
+        finally:
+            release.set()
+            service.close()
+
     def test_prewarm_initializes_browser_in_background_and_keeps_requests_available(self):
         service = PingCodeService()
         service._isolate_asyncio = lambda callback, *args: callback(*args)
@@ -49,16 +73,18 @@ class PingCodeReferenceTest(unittest.TestCase):
         service = PingCodeService.__new__(PingCodeService)
         service._lock = threading.RLock()
         service._space_cache = {"space1": (None, [], {})}
+        service._space_identity_cache = {}
         service.config = SimpleNamespace(base_url="https://pingcode.example")
         service._submit = lambda callback, *args: callback(*args)
         service._pages_for_batch_sync = Mock(return_value=[{"_id": "page1", "name": "设计文档"}])
         service.api = Mock()
         service._ensure_api = Mock(return_value=service.api)
         service.api.get_page.return_value = {"data": {"value": {
-            "_id": "page1", "name": "设计说明", "version": 7,
+            "_id": "page1", "space_id": "space-internal-id", "name": "设计说明", "version": 7,
             "updated_at": "2026-10-22T10:00:00Z",
             "document": [{"type": "paragraph", "children": [{"text": "真实解析正文"}]}],
         }}}
+        service.api.get_space.return_value = {"data": {"value": {"_id": "space-internal-id"}}}
         return service
 
     def test_shared_parser_and_exact_page_metadata(self):
@@ -68,25 +94,50 @@ class PingCodeReferenceTest(unittest.TestCase):
         self.assertEqual("设计说明", result["title"])
         self.assertEqual(7, result["sourceVersion"])
         self.assertEqual("https://pingcode.example/wiki/spaces/space1/pages/page1", result["originalUrl"])
-        service._pages_for_batch_sync.assert_called_once_with("space1", ["page1"])
+        service._pages_for_batch_sync.assert_not_called()
         service.api.get_page.assert_called_once_with("page1")
 
-    def test_nonmember_page_never_calls_remote_detail(self):
+    def test_page_not_found_falls_back_to_space_membership_index(self):
         service = self.service()
+        service.api.get_page.side_effect = RuntimeError("API 请求失败：页面详情 HTTP 404")
         service._pages_for_batch_sync.return_value = []
         with self.assertRaises(KeyError): service.read_reference("space1", "page1")
-        service.api.get_page.assert_not_called()
+        service.api.get_page.assert_called_once_with("page1")
 
     def test_short_identifier_is_resolved_within_space(self):
         service = self.service()
-        service._pages_for_batch_sync.return_value = []
-        service._space_cache["space1"] = (None, [{"_id": "page1", "short_id": "short1"}], {})
+        service.api.get_page.return_value["data"]["value"]["short_id"] = "short1"
         result = service.read_reference("space1", "short1")
         self.assertEqual("short1", result["pageId"])
         self.assertEqual("page1", result["canonicalPageId"])
+        service.api.get_page.assert_called_once_with("short1")
+
+    def test_direct_page_lookup_rejects_a_page_from_another_space(self):
+        service = self.service()
+        service.api.get_page.return_value["data"]["value"]["space_id"] = "other-space"
+
+        with self.assertRaises(KeyError):
+            service.read_reference("space1", "page1")
+
         service.api.get_page.assert_called_once_with("page1")
-        service._space_cache["space1"][1].append({"_id": "other", "short_id": "short1"})
-        with self.assertRaises(KeyError): service.read_reference("space1", "short1")
+        service._pages_for_batch_sync.assert_not_called()
+
+    def test_missing_short_identifier_rebuilds_an_incomplete_cached_index_once(self):
+        service = self.service()
+        service._pages_for_batch_sync.return_value = []
+        service._space_cache["space1"] = (None, [{"_id": "other", "short_id": "other-short"}], {"reportedTotal": 2})
+        service.api.get_page.side_effect = [RuntimeError("API 请求失败：页面详情 HTTP 404"), service.api.get_page.return_value]
+        def refresh(space_key, refresh=False):
+            self.assertEqual("space1", space_key)
+            self.assertTrue(refresh)
+            service._space_cache[space_key] = (None, [{"_id": "page1", "short_id": "short1"}], {"reportedTotal": 1})
+        service._get_space_tree_sync = Mock(side_effect=refresh)
+
+        result = service.read_reference("space1", "short1")
+
+        self.assertEqual("page1", result["canonicalPageId"])
+        service._get_space_tree_sync.assert_called_once_with("space1", refresh=True)
+        self.assertEqual([call.args for call in service.api.get_page.call_args_list], [("short1",), ("page1",)])
 
     def test_invalid_locator_does_not_enter_browser(self):
         service = self.service()

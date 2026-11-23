@@ -106,6 +106,8 @@ class PingCodeService:
         self._client: PingCodeClient | None = None
         self._api: PingCodeAPIClient | None = None
         self._lock = threading.RLock()
+        self._close_condition = threading.Condition(self._lock)
+        self._closing = False
         self._executor: ThreadPoolExecutor | None = self._new_executor()
         self._closed = False
         self._relation_concurrency = self._configured_concurrency('PINGCODE_RELATION_CONCURRENCY')
@@ -114,6 +116,7 @@ class PingCodeService:
         self._space_cache: dict[
             str, tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]]
         ] = {}
+        self._space_identity_cache: dict[str, str] = {}
         self._index_dir = settings.data_root / "space-indexes"
         self._index_dir.mkdir(parents=True, exist_ok=True)
 
@@ -141,7 +144,9 @@ class PingCodeService:
         return callback(*args)
 
     def _submit(self, callback, *args):
-        with self._lock:
+        with self._close_condition:
+            while self._closing:
+                self._close_condition.wait()
             if self._executor is None or self._closed:
                 self._executor = self._new_executor()
                 self._closed = False
@@ -179,8 +184,8 @@ class PingCodeService:
 
     def prewarm(self) -> None:
         """启动时异步建立账号会话，不阻塞 API 启动或读取空间目录。"""
-        with self._lock:
-            if not self._closed and self._executor is not None:
+        with self._close_condition:
+            if not self._closed and not self._closing and self._executor is not None:
                 self._executor.submit(self._isolate_asyncio, self._prewarm_sync)
 
     def _prewarm_sync(self) -> None:
@@ -195,15 +200,25 @@ class PingCodeService:
                 self._invalidate_client()
 
     def close(self) -> None:
-        executor = self._executor
-        if executor is None:
-            return
-        executor.submit(self._close_sync).result()
-        executor.shutdown(wait=True)
-        with self._lock:
-            if self._executor is executor:
-                self._executor = None
-            self._closed = True
+        with self._close_condition:
+            if self._closing:
+                while self._closing:
+                    self._close_condition.wait()
+                return
+            executor = self._executor
+            if executor is None:
+                return
+            self._closing = True
+        try:
+            executor.submit(self._close_sync).result()
+        finally:
+            executor.shutdown(wait=True)
+            with self._close_condition:
+                if self._executor is executor:
+                    self._executor = None
+                self._closed = True
+                self._closing = False
+                self._close_condition.notify_all()
 
     def _close_sync(self) -> None:
         with self._lock:
@@ -559,11 +574,23 @@ class PingCodeService:
             raise ValueError('基线分页总数不完整')
         pages_duration_ms = (time.perf_counter() - phase) * 1000
 
-        phase = time.perf_counter()
-        relations = api.get_idea_work_items_batch(
-            [(idea['_id'], idea['version_id']) for idea in all_ideas], concurrency=self._relation_concurrency)
+        relation_phase_started = time.perf_counter()
+        relation_requests = [(idea['_id'], idea['version_id']) for idea in all_ideas]
+        relations = []
+        relation_batch_count = 0
+        relation_fetch_started = time.perf_counter()
+        for offset in range(0, len(relation_requests), self._relation_concurrency):
+            relation_batch = relation_requests[offset:offset + self._relation_concurrency]
+            batch_relations = api.get_idea_work_items_batch(
+                relation_batch, concurrency=self._relation_concurrency)
+            if len(batch_relations) != len(relation_batch):
+                raise ValueError('需求关系响应数量不一致')
+            relations.extend(batch_relations)
+            relation_batch_count += 1
+        relation_fetch_duration_ms = (time.perf_counter() - relation_fetch_started) * 1000
         if len(relations) != len(all_ideas):
             raise ValueError('需求关系响应数量不一致')
+        relation_validation_started = time.perf_counter()
         related_by_idea = []
         unique_related = {}
         unlinked_numbers = []
@@ -599,18 +626,24 @@ class PingCodeService:
             first_issue = relation_incomplete[0]
             raise PingcodeTaskSourceError('PINGCODE_RELATION_INCOMPLETE', '需求关联工作项数量与详情不一致',
                 sourceNumber=first_issue['number'], expectedCount=first_issue['expected'], actualCount=first_issue['actual'])
-        relation_duration_ms = (time.perf_counter() - phase) * 1000
+        relation_validation_duration_ms = (time.perf_counter() - relation_validation_started) * 1000
+        relation_duration_ms = (time.perf_counter() - relation_phase_started) * 1000
 
-        phase = time.perf_counter()
+        detail_phase_started = time.perf_counter()
         short_ids = list(unique_related)
+        detail_fetch_started = time.perf_counter()
         details = _get_work_item_details(api, short_ids, self._detail_concurrency)
+        detail_fetch_duration_ms = (time.perf_counter() - detail_fetch_started) * 1000
         if len(details) != len(short_ids):
             raise ValueError('关联工作项详情响应数量不一致')
         details_by_short_id = dict(zip(short_ids, details))
+        baseline_validation_started = time.perf_counter()
         latest_baseline = api.get_baseline(product_id, baseline_id).get('data', {}).get('value', {})
         if (latest_baseline.get('short_id') != baseline_id or latest_baseline.get('scope') != product_id
                 or latest_baseline.get('updated_at') != baseline.get('updated_at')):
             raise PingcodeTaskSourceError('PINGCODE_SOURCE_CHANGED', '采集期间 Pingcode 基线版本已变化')
+        baseline_validation_duration_ms = (time.perf_counter() - baseline_validation_started) * 1000
+        detail_mapping_started = time.perf_counter()
         related_by_idea_id = {idea['_id']: work_items for idea, work_items in related_by_idea}
         pages = []
         for page_index, ideas in enumerate(ideas_by_page):
@@ -636,12 +669,19 @@ class PingCodeService:
                 'sourceVersion': baseline.get('updated_at'), 'count': count, 'pageIndex': page_index,
                 'pageCount': page_count, 'unlinkedIrCount': sum(
                     1 for idea in ideas if idea['whole_identifier'] in unlinked_numbers), 'items': page_items})
-        detail_duration_ms = (time.perf_counter() - phase) * 1000
+        detail_mapping_duration_ms = (time.perf_counter() - detail_mapping_started) * 1000
+        detail_duration_ms = (time.perf_counter() - detail_phase_started) * 1000
         logger.info('pingcode.task_source_pages.completed sourceId=%s pageCount=%s rowCount=%s srCount=%s '
             'unlinkedIrCount=%s metadataDurationMs=%.1f pagesDurationMs=%.1f relationRequests=%s '
-            'relationDurationMs=%.1f detailRequests=%s detailDurationMs=%.1f durationMs=%.1f',
+            'relationBatchCount=%s relationConcurrency=%s relationFetchDurationMs=%.1f '
+            'relationValidationDurationMs=%.1f relationDurationMs=%.1f detailRequests=%s '
+            'detailFetchDurationMs=%.1f baselineValidationDurationMs=%.1f '
+            'detailMappingDurationMs=%.1f detailDurationMs=%.1f durationMs=%.1f',
             baseline_id, page_count, count, len(short_ids), len(unlinked_numbers), metadata_duration_ms,
-            pages_duration_ms, len(all_ideas), relation_duration_ms, len(short_ids), detail_duration_ms,
+            pages_duration_ms, len(all_ideas), relation_batch_count, self._relation_concurrency,
+            relation_fetch_duration_ms, relation_validation_duration_ms, relation_duration_ms,
+            len(short_ids), detail_fetch_duration_ms, baseline_validation_duration_ms,
+            detail_mapping_duration_ms, detail_duration_ms,
             (time.perf_counter() - started_at) * 1000)
         return {'pages': pages, 'pageCount': page_count, 'count': count,
                 'unlinkedIrNumbers': sorted(set(unlinked_numbers))}
@@ -966,68 +1006,124 @@ class PingCodeService:
             }
 
     def _read_reference_sync(self, space_key: str, page_id: str, include_images: bool = False) -> dict[str, Any]:
-        with self._lock:
-            pages = self._pages_for_batch_sync(space_key, [page_id])
-            if not pages:
-                # The web URL uses identifier; resolve only inside the verified space.
-                pages = [page for page in self._space_cache[space_key][1]
-                         if page_id in (str(page.get("short_id") or ""), str(page.get("identifier") or ""))]
-            if len(pages) != 1:
-                raise KeyError("空间中不存在唯一匹配的页面")
-            canonical_id = str(pages[0]["_id"])
-            response = self._ensure_api(space_key).get_page(canonical_id)
-            value = response.get("data", {}).get("value", {})
-            if not isinstance(value, dict) or not value.get("document"):
-                raise ValueError("页面没有可引用的正文")
-            if value.get("_id") and str(value["_id"]) != canonical_id:
-                raise ValueError("页面详情与请求不一致")
-            parser = ContentParser()
-            image_resources = []
-            image_urls = {}
-            if include_images:
-                policy_path = REPOSITORY_ROOT / "config" / "knowledge-center" / "content-rules.json"
-                policy = json.loads(policy_path.read_text(encoding="utf-8"))["productionAI"]["sources"]["images"]
-                total_bytes = 0
-                deadline = time.monotonic() + policy["timeoutMs"] / 1000
-                for index, image in enumerate(parser.extract_images(value["document"])):
-                    source_url = image.get("originUrl") or image.get("thumbUrl") or image.get("url")
-                    reference = "source-image:" + hashlib.sha256(f"{index}:{source_url}".encode()).hexdigest()
-                    image_urls[id(image)] = reference
-                    resource = {"reference": reference, "status": "failed"}
-                    image_resources.append(resource)
-                    remaining_ms = int((deadline - time.monotonic()) * 1000)
-                    if index >= policy["maxCount"] or total_bytes >= policy["maxTotalBytes"] or remaining_ms <= 0:
-                        resource["errorCode"] = "AI_SOURCE_IMAGE_LIMIT"
-                        continue
-                    try:
-                        data, content_type = self._ensure_api(space_key).download_public_image(
-                            image, max_bytes=min(policy["maxBytes"], policy["maxTotalBytes"] - total_bytes),
-                            timeout_ms=remaining_ms)
-                        if content_type not in policy["contentTypes"]:
-                            resource["errorCode"] = "AI_SOURCE_IMAGE_FORMAT"
+        started = time.perf_counter()
+        stage = "page_index"
+        timings = {}
+        try:
+            with self._lock:
+                stage = "page_detail"
+                detail_started = time.perf_counter()
+                api = self._ensure_api(space_key)
+                response = None
+                try:
+                    response = api.get_page(page_id)
+                except RuntimeError as exc:
+                    if "HTTP 404" not in str(exc):
+                        raise
+                timings["pageDetailMs"] = round((time.perf_counter() - detail_started) * 1000, 1)
+                value = response.get("data", {}).get("value", {}) if response else {}
+                canonical_id = str(value.get("_id") or "") if isinstance(value, dict) else ""
+                if response and canonical_id and value.get("space_id"):
+                    stage = "space_validation"
+                    validation_started = time.perf_counter()
+                    space_id = self._space_identity_cache.get(space_key)
+                    cached = self._space_cache.get(space_key)
+                    if not space_id and cached and cached[0]:
+                        space_id = cached[0].get("data", {}).get("value", {}).get("_id")
+                    if not space_id:
+                        space_id = api.get_space(space_key).get("data", {}).get("value", {}).get("_id")
+                    if not space_id or str(value["space_id"]) != str(space_id):
+                        raise KeyError("空间中不存在唯一匹配的页面")
+                    self._space_identity_cache[space_key] = str(space_id)
+                    timings["spaceValidationMs"] = round((time.perf_counter() - validation_started) * 1000, 1)
+                    candidates = [{"_id": canonical_id, "name": value.get("name")}]
+                else:
+                    stage = "page_index"
+                    index_started = time.perf_counter()
+                    pages = self._pages_for_batch_sync(space_key, [page_id])
+                    cache = self._space_cache.get(space_key)
+                    candidates = pages or [page for page in (cache[1] if cache else [])
+                                           if page_id in (str(page.get("short_id") or ""), str(page.get("identifier") or ""))]
+                    metadata = cache[2] if cache else {}
+                    reported_total = int(metadata.get("reportedTotal", len(cache[1]) if cache else 0))
+                    if not candidates and cache and len(cache[1]) != reported_total:
+                        self._get_space_tree_sync(space_key, refresh=True)
+                        refreshed = self._space_cache[space_key][1]
+                        candidates = [page for page in refreshed
+                                      if page_id in (str(page.get("_id") or ""), str(page.get("short_id") or ""), str(page.get("identifier") or ""))]
+                    timings["pageIndexMs"] = round((time.perf_counter() - index_started) * 1000, 1)
+                    if len(candidates) != 1:
+                        raise KeyError("空间中不存在唯一匹配的页面")
+                    canonical_id = str(candidates[0]["_id"])
+                    detail_started = time.perf_counter()
+                    response = api.get_page(canonical_id)
+                    timings["pageDetailMs"] = round((time.perf_counter() - detail_started) * 1000, 1)
+                    value = response.get("data", {}).get("value", {})
+                value = response.get("data", {}).get("value", {})
+                if not isinstance(value, dict) or not value.get("document"):
+                    raise ValueError("页面没有可引用的正文")
+                if value.get("_id") and str(value["_id"]) != canonical_id:
+                    raise ValueError("页面详情与请求不一致")
+                parser = ContentParser()
+                image_resources = []
+                image_urls = {}
+                if include_images:
+                    policy_path = REPOSITORY_ROOT / "config" / "knowledge-center" / "content-rules.json"
+                    policy = json.loads(policy_path.read_text(encoding="utf-8"))["productionAI"]["sources"]["images"]
+                    total_bytes = 0
+                    deadline = time.monotonic() + policy["timeoutMs"] / 1000
+                    image_started = time.perf_counter()
+                    for index, image in enumerate(parser.extract_images(value["document"])):
+                        source_url = image.get("originUrl") or image.get("thumbUrl") or image.get("url")
+                        reference = "source-image:" + hashlib.sha256(f"{index}:{source_url}".encode()).hexdigest()
+                        image_urls[id(image)] = reference
+                        resource = {"reference": reference, "status": "failed"}
+                        image_resources.append(resource)
+                        remaining_ms = int((deadline - time.monotonic()) * 1000)
+                        if index >= policy["maxCount"] or total_bytes >= policy["maxTotalBytes"] or remaining_ms <= 0:
+                            resource["errorCode"] = "AI_SOURCE_IMAGE_LIMIT"
                             continue
-                        total_bytes += len(data)
-                        resource.update({"status": "ready", "dataBase64": base64.b64encode(data).decode("ascii")})
-                    except Exception:
-                        resource["errorCode"] = "AI_SOURCE_IMAGE_UNAVAILABLE"
-            content = parser.parse_document(value["document"], image_resolver=lambda image: image_urls.get(id(image), "") if include_images else None) if include_images else parser.parse_document(value["document"])
-            if not content.strip():
-                raise ValueError("页面没有可引用的正文")
-            result = {
-                "content": content,
-                "title": value.get("name") or pages[0].get("name") or page_id,
-                "spaceKey": space_key,
-                "pageId": page_id,
-                "canonicalPageId": canonical_id,
-                "originalUrl": f"{self.config.base_url.rstrip('/')}/wiki/spaces/{space_key}/pages/{page_id}",
-            }
-            if include_images:
-                result["imageResources"] = image_resources
-            if isinstance(value.get("version"), (str, int)):
-                result["sourceVersion"] = value["version"]
-            if isinstance(value.get("updated_at"), str):
-                result["sourceUpdatedAt"] = value["updated_at"]
+                        try:
+                            data, content_type = self._ensure_api(space_key).download_public_image(
+                                image, max_bytes=min(policy["maxBytes"], policy["maxTotalBytes"] - total_bytes),
+                                timeout_ms=remaining_ms)
+                            if content_type not in policy["contentTypes"]:
+                                resource["errorCode"] = "AI_SOURCE_IMAGE_FORMAT"
+                                continue
+                            total_bytes += len(data)
+                            resource.update({"status": "ready", "dataBase64": base64.b64encode(data).decode("ascii")})
+                        except Exception:
+                            resource["errorCode"] = "AI_SOURCE_IMAGE_UNAVAILABLE"
+                    timings["imageDownloadMs"] = round((time.perf_counter() - image_started) * 1000, 1)
+                stage = "content_parse"
+                parse_started = time.perf_counter()
+                content = parser.parse_document(value["document"], image_resolver=lambda image: image_urls.get(id(image), "") if include_images else None) if include_images else parser.parse_document(value["document"])
+                timings["contentParseMs"] = round((time.perf_counter() - parse_started) * 1000, 1)
+                if not content.strip():
+                    raise ValueError("页面没有可引用的正文")
+                result = {
+                    "content": content,
+                    "title": value.get("name") or candidates[0].get("name") or page_id,
+                    "spaceKey": space_key,
+                    "pageId": page_id,
+                    "canonicalPageId": canonical_id,
+                    "originalUrl": f"{self.config.base_url.rstrip('/')}/wiki/spaces/{space_key}/pages/{page_id}",
+                }
+                if include_images:
+                    result["imageResources"] = image_resources
+                if isinstance(value.get("version"), (str, int)):
+                    result["sourceVersion"] = value["version"]
+                if isinstance(value.get("updated_at"), str):
+                    result["sourceUpdatedAt"] = value["updated_at"]
+            logger.info("pingcode.reference.completed space=%s pageId=%s contentChars=%s imageCount=%s durationMs=%.1f timings=%s",
+                        space_key, page_id, len(result["content"]), len(image_resources),
+                        (time.perf_counter() - started) * 1000, timings)
             return result
+        except Exception as exc:
+            logger.info("pingcode.reference.failed space=%s pageId=%s stage=%s errorType=%s durationMs=%.1f timings=%s",
+                        space_key, page_id, stage, type(exc).__name__,
+                        (time.perf_counter() - started) * 1000, timings)
+            raise
 
     def _api_call_sync(self, callback, space_key: str | None = None):
         with self._lock:

@@ -40,14 +40,17 @@ test('插件来源表格支持筛选、同步工作区全流程；窄屏不溢�
   app.get(route + '/sources/source-1/items', (_req, res) => res.json({ success: true, data: {
     items: confirmedSourceItems, total: confirmedSourceItems.length, page: 1, pageSize: 50,
   } }));
+  const previousRun = { id: 'run-previous', sourceId: source.id, status: 'AWAITING_CONFIRM',
+    createdAt: new Date(Date.now() - 62_000).toISOString(), finishedAt: new Date(Date.now() - 2_000).toISOString() };
   app.get(route + '/sources/source-1/runs', (req, res) => {
     runListRequests++;
-    res.json({ success: true, data: run ? [run] : [] });
+    res.json({ success: true, data: run ? [run, previousRun] : [previousRun] });
   });
   app.post(route + '/sources/source-1/runs', (req, res) => {
     runCreateRequests++;
     run = { id: 'run-1', sourceId: source.id, status: failNextRun ? 'FAILED' : 'COLLECTING',
-      errorCode: failNextRun ? 'PINGCODE_RELATION_INCOMPLETE' : null, rowsRead: 0, createdAt: new Date().toISOString() };
+      errorCode: failNextRun ? 'PINGCODE_RELATION_INCOMPLETE' : null, rowsRead: 1, rowCount: 2,
+      pageCount: 2, pagesRead: 1, srCount: 1, createdAt: new Date().toISOString() };
     failNextRun = false;
     res.json({ success: true, data: run });
   });
@@ -77,7 +80,7 @@ test('插件来源表格支持筛选、同步工作区全流程；窄屏不溢�
     source.syncedTaskCount = 1;
     confirmedSourceItems = [{ number: 'YDBRD-12', title: '测试任务', ir: ['YASHAN-1'], confirmedAt: new Date().toISOString() }];
     run = { ...run, status: 'CONFIRMED_MISSING_IMAGES' };
-    res.json({ success: true, data: run });
+    setTimeout(() => res.json({ success: true, data: run }), 1200);
   });
   app.get(route + '/runs/run-1/resources', (req, res) => res.json({ success: true, data: {
     total: retried ? 0 : 1, items: retried ? [] : [{ number: 'YDBRD-12', errorCode: 'PINGCODE_IMAGE_UNAVAILABLE' }],
@@ -144,7 +147,9 @@ test('插件来源表格支持筛选、同步工作区全流程；窄屏不溢�
       && response.url().endsWith('/sources/source-1/runs'));
     await page.locator('[data-pc-workspace-sync]').click();
     assert.equal(await page.locator('[data-pc-workspace-sync]').innerText(), '同步中…');
-    await page.getByText('正在同步 PingCode 并比较任务快照，完成后显示差异。').waitFor();
+    await page.getByText('已完成 1/2 页，读取 1/2 条 IR，发现 1 个 SR。', { exact: false }).waitFor();
+    await page.getByText('同来源最近 1 次完整同步中位数约 60 秒。', { exact: false }).waitFor();
+    await page.getByText(/已运行 \d+ 秒。/).waitFor();
     assert.equal((await runCreated).status(), 200);
     assert.equal(runCreateRequests, 1, '点击刷新必须创建一次运行请求');
     const unlinkedWarning = page.getByRole('status').getByText('1 条需求暂未关联工单，已跳过，不影响本次同步。');
@@ -152,7 +157,9 @@ test('插件来源表格支持筛选、同步工作区全流程；窄屏不溢�
     await page.getByText('未关联 IR（1）').click();
     await page.getByText('采集时 PingCode 的结构化关系接口返回空列表', { exact: false }).waitFor();
     await page.locator('.pingcode-unlinked-irs code').getByText('YASHAN-1', { exact: true }).waitFor();
-    await unlinkedWarning.waitFor({ state: 'detached', timeout: 4500 });
+    await unlinkedWarning.waitFor();
+    await page.getByRole('button', { name: '关闭提示' }).last().click();
+    await unlinkedWarning.waitFor({ state: 'detached' });
     assert.equal(await page.locator('.pingcode-preview').count(), 0, '差异不应追加在同步工作区末尾');
     await page.getByRole('button', { name: '查看任务变化' }).click();
     await page.getByRole('heading', { name: '同步任务变化' }).waitFor();
@@ -189,6 +196,7 @@ test('插件来源表格支持筛选、同步工作区全流程；窄屏不溢�
     await page.getByRole('tab', { name: '来源冲突' }).click();
     await page.getByRole('combobox', { name: 'YDBRD-12 的主来源' }).selectOption('source-2');
     await page.locator('[data-pc-confirm]').click();
+    await page.getByText(/正在写入并校验任务列表，已运行 \d+ 秒。/).waitFor();
     await page.getByText('已同步到任务管理').waitFor();
     assert.equal(await page.getByRole('button', { name: '同步任务列表' }).count(), 0,
       '确认成功后不可再次同步同一运行');
@@ -259,11 +267,14 @@ test('添加来源提交表单后回到来源列表并显示登记成功', async
     const form = page.locator('[data-pc-form]');
     await form.locator('[name="name"]').fill('YASHAN Yq_yJCzT 需求基线');
     await form.locator('[name="type"]').selectOption('REQUIREMENT');
+    await form.locator('[name="productType"]').selectOption('DB');
+    await form.locator('[name="businessVersion"]').fill('27.7.1');
     await form.locator('[name="url"]').fill('https://pingcode.yasdb.com/ship/products/YASHAN/baselines/Yq_yJCzT/ideas?category=all');
     const response = page.waitForResponse(item => item.request().method() === 'POST'
       && item.url().endsWith('/platform/plugins/pingcode/sources'), { timeout: 5000 });
     await form.getByRole('button', { name: '保存来源' }).click();
     assert.equal((await response).status(), 201);
+    assert.equal(created.businessVersion, '27.7.1');
     await page.getByText('来源已添加', { exact: true }).waitFor();
     assert.equal(createRequests, 1);
     assert.equal(await page.locator('[data-pc-source="source-added"]').count(), 1);
@@ -313,11 +324,12 @@ test('来源列表提供直达编辑、启停和受保护删除入口', async ()
   app.use('/frontend', express.static(frontend));
   const route = '/knowledge-center/api/platform/plugins/pingcode';
   let current = { ...source, revision: 1, deletable: true };
-  let patchCount = 0, deleteCount = 0, failNextState = false;
+  let patchCount = 0, deleteCount = 0, failNextState = false, savedSource = null;
   app.get(route + '/sources', (req, res) => res.json({ success: true, data: current ? [current] : [] }));
   app.get(route + '/sources/source-1', (req, res) => res.json({ success: true, data: current }));
   app.get(route + '/sources/source-1/runs', (req, res) => res.json({ success: true, data: [] }));
   app.patch(route + '/sources/source-1', (req, res) => {
+    savedSource = req.body;
     patchCount++; current = { ...current, ...req.body, revision: current.revision + 1 };
     res.json({ success: true, data: current });
   });
@@ -353,11 +365,19 @@ test('来源列表提供直达编辑、启停和受保护删除入口', async ()
     assert.equal(await page.locator('[data-pc-detail-dialog]').count(), 0);
     const edit = page.locator('[data-pc-edit-form]');
     assert.deepEqual(await edit.locator('[name="productType"] option').allTextContents(), ['DB', 'YCM', 'YMP', 'YDC']);
+    assert.deepEqual(await edit.locator('[name="type"] option').allTextContents(), ['需求', '问题单']);
+    assert.equal(await edit.locator('[name="type"]').isEnabled(), true);
+    assert.equal(await edit.locator('[name="businessVersion"]').count(), 1);
     await edit.locator('[name="name"]').fill('变更后的需求来源');
+    await edit.locator('[name="type"]').selectOption('TICKET');
+    await edit.locator('[name="url"]').fill('https://pingcode.yasdb.com/pjm/projects/YDBRD/defect/updated');
+    await edit.locator('[name="businessVersion"]').fill('27.7.1');
     const edited = page.waitForResponse(item => item.request().method() === 'PATCH'
       && item.url().endsWith('/sources/source-1'));
-    await edit.getByRole('button', { name: '保存修改' }).click();
+    await edit.getByRole('button', { name: '保存', exact: true }).click();
     assert.equal((await edited).status(), 200);
+    assert.equal(savedSource.type, 'TICKET');
+    assert.equal(savedSource.businessVersion, '27.7.1');
     await page.getByText('来源已更新', { exact: true }).waitFor();
     const disabled = page.waitForResponse(item => item.request().method() === 'PATCH'
       && item.url().endsWith('/sources/source-1/state'));
@@ -489,7 +509,7 @@ test('同步内容入口显示来源任务分页、产品类型和确认快照�
   app.get(route + '/sources/source-1/items/YDBRD-21', (_req, res) => res.json({ success: true, data: {
     number: 'YDBRD-21', title: '存量需求', markdown: '# 已确认正文\n正文内容', ir: ['YASHAN-5'], resources: [],
   } }));
-  let runReads = 0, activeRun = { id: 'run-preview', sourceId: 'source-1', status: 'COLLECTING',
+  let runReads = 0, rejectConfirmForMigration = true, activeRun = { id: 'run-preview', sourceId: 'source-1', status: 'COLLECTING',
     rowsRead: 0, createdAt: '2026-11-13T03:00:00Z' };
   app.get(route + '/sources/source-1/runs', (_req, res) => res.json({ success: true, data: [activeRun] }));
   app.post(route + '/sources/source-1/runs', (_req, res) => res.json({ success: true, data: activeRun }));
@@ -509,6 +529,9 @@ test('同步内容入口显示来源任务分页、产品类型和确认快照�
       sources: [{ id: 'source-1', name: '版本需求', primary: true }] }],
   } }));
   app.post(route + '/runs/run-preview/confirm', (_req, res) => {
+    if (rejectConfirmForMigration) return res.status(409).json({ success: false, error: {
+      code: 'PINGCODE_TASK_MIGRATION_REQUIRED', message: 'PINGCODE_TASK_MIGRATION_REQUIRED',
+    } });
     activeRun = { ...activeRun, status: 'CONFIRMED' }; res.json({ success: true, data: activeRun });
   });
   app.get(route + '/runs/run-preview/resources', (_req, res) => res.json({ success: true, data: { total: 0, items: [] } }));
@@ -539,7 +562,15 @@ test('同步内容入口显示来源任务分页、产品类型和确认快照�
     const confirmed = page.waitForResponse(response => response.request().method() === 'POST'
       && response.url().endsWith('/runs/run-preview/confirm'));
     await page.locator('[data-pc-confirm]').click();
-    assert.equal((await confirmed).status(), 200);
+    assert.equal((await confirmed).status(), 409);
+    await page.getByRole('alert').getByText(/任务数据尚未完成迁移和校验，暂不能写入任务管理/).waitFor();
+    assert.equal(await page.locator('[data-pc-confirm]').count(), 1,
+      '迁移门禁拒绝后应保留确认入口供迁移完成后重试');
+    rejectConfirmForMigration = false;
+    const confirmedAfterMigration = page.waitForResponse(response => response.request().method() === 'POST'
+      && response.url().endsWith('/runs/run-preview/confirm'));
+    await page.locator('[data-pc-confirm]').click();
+    assert.equal((await confirmedAfterMigration).status(), 200);
     await page.getByText('已同步到任务管理', { exact: true }).waitFor();
   } finally { await browser.close(); await new Promise(resolve => server.close(resolve)); }
 });
