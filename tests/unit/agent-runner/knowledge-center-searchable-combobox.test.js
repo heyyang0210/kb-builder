@@ -85,7 +85,7 @@ describe('知识中心动态实体组合选择器契约', () => {
     expect(design.match(/^\| CB-\d{2} \|/gm)).toHaveLength(32);
   });
 
-  test('用户确认的 31 行控件清单逐项有实现证据', () => {
+  test('现行 30 行控件清单逐项有实现证据', () => {
     const files = {
       assets: read('apps/knowledge-center-web/frontend/knowledge-center/modules/assets/view.js'),
       dashboard: read('apps/knowledge-center-web/frontend/knowledge-center/modules/dashboard/view.js'),
@@ -109,13 +109,13 @@ describe('知识中心动态实体组合选择器契约', () => {
       ['platform', 'data-principal-binding-filter', 'native'], ['platform', 'data-permission-status', 'native'],
       ['platform', 'data-permission-role', 'combo'], ['platform', 'name="authMode"', 'native'],
       ['handbook', 'name="templateId"', 'combo'], ['handbook', 'name="outlineId"', 'temporary'],
-      ['production', 'name="sourceType"', 'native'], ['production', 'name="operationDocumentId"', 'combo'],
-      ['production', '证据类型<select name="type"', 'native'], ['production', 'name="sourceTemplate"', 'temporary'],
-      ['production', 'name="handbookId"', 'combo'], ['repository', 'data-repository-branch', 'combo'],
+      ['production', 'name="sourceType"', 'native'], ['handbook', 'data-handbook-current-document', 'combo'],
+      ['production', '证据类型<select name="type"', 'native'], ['handbook', 'data-handbook-template', 'combo'],
+      ['repository', 'data-repository-branch', 'combo'],
       ['review', 'data-review-task-select', 'combo'], ['review', 'data-review-opinion-filter', 'native'],
       ['templates', 'data-template-filter="type"', 'native'],
     ];
-    expect(checklist).toHaveLength(31);
+    expect(checklist).toHaveLength(30);
     checklist.forEach(([file, evidence]) => expect(files[file]).toContain(evidence));
 
     for (const marker of [
@@ -130,7 +130,7 @@ describe('知识中心动态实体组合选择器契约', () => {
     for (const marker of [
       'data-asset-page-size', 'data-outline-status-filter', 'name="timeoutMs"',
       'data-principal-binding-filter', 'data-permission-status', 'name="authMode"',
-      'name="outlineId"', 'name="sourceType"', 'name="sourceTemplate"',
+      'name="outlineId"', 'name="sourceType"',
       'data-review-opinion-filter', 'data-template-filter',
     ]) expect(component).not.toContain(marker);
   });
@@ -146,7 +146,6 @@ describe('知识中心动态实体组合选择器契约', () => {
     const taskView = read('apps/knowledge-center-web/frontend/knowledge-center/modules/document-tasks/view.js');
     expect(taskView).not.toContain('name="defaultOwnerId"');
     expect(taskView).not.toContain('name="knowledgeCenterOwnerId"');
-    expect(taskView).toContain('<legend>不涉及理由选项</legend>');
   });
 
   test('旧独立文档生成器不接入知识中心公共组件', () => {

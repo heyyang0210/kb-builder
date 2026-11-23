@@ -193,7 +193,7 @@ describe('统一入口清洗与任务上下文真实HTTP边界', () => {
     await start();
     expect(await request('/document-tasks/context')).toMatchObject({ status: 200, data: {
       people: [{ id: 'display', displayName: '显示名' }, { id: 'name', displayName: '姓名' }, { id: 'login', displayName: '登录名' }, { id: 'fallback', displayName: 'fallback' }],
-      handbooks: [{ id: 'h1', ownerId: 'display' }, { id: 'h2', ownerId: null }, { id: 'h3', ownerId: null }],
+      handbooks: [{ id: 'h1', ownerId: 'display', productType: null }, { id: 'h2', ownerId: null, productType: null }, { id: 'h3', ownerId: null, productType: null }],
       actorId: 'reader', canWrite: true,
     } });
     session.allowedActions.push('platform:manage');
@@ -203,7 +203,7 @@ describe('统一入口清洗与任务上下文真实HTTP边界', () => {
     expect(invalid).toMatchObject({ status: 422, error: { code: 'PERSON_INVALID' } });
     session.user.visibleHandbookIds = ['h2'];
     const scoped = await request('/document-tasks/context');
-    expect(scoped.data.handbooks).toEqual([{ id: 'h2', name: '无责任人', ownerId: null }]);
+    expect(scoped.data.handbooks).toEqual([{ id: 'h2', name: '无责任人', ownerId: null, productType: null }]);
     directory = {};
     assets = { generatedAt: '2026-11-10' };
     expect(await request('/document-tasks/context')).toMatchObject({ status: 200, data: { people: [], handbooks: [] } });

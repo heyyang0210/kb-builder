@@ -77,4 +77,16 @@ describe('知识资产 API 投影', () => {
       repository: { status: 'confirmed', defaultBranch: 'master', enabledBranches: ['master'] },
     });
   });
+
+  test('GitLab 映射配置结构异常时继续返回未关联资产', () => {
+    const result = queryKnowledgeAssets(
+      { handbooks: [handbook({ handbookId: 'DB-005' })] },
+      new URLSearchParams('pageSize=20'),
+      false,
+      { mappings: {} },
+    );
+
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]).toMatchObject({ handbookId: 'DB-005', repositoryMapped: false, repository: null });
+  });
 });

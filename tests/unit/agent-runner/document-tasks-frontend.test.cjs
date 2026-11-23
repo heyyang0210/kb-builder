@@ -29,8 +29,11 @@ test('实际模块与真实HTTP：导入、独立两级范围、新增提案、�
   fs.mkdirSync(scratch, { recursive: true });
   const directory = fs.mkdtempSync(path.join(scratch, 'task-browser-'));
   const app = express(); let user = 'owner';
-  let delayDetail = false, detailReads = 0, outlinePublished = true, linkedReview = null;
+  let delayDetail = false, delayList = false, detailReads = 0, outlinePublished = true, linkedReview = null;
   app.use((req, res, next) => {
+    if (delayList && req.method === 'GET' && req.path === '/knowledge-center/api/document-tasks') {
+      setTimeout(next, 300); return;
+    }
     if (delayDetail && req.method === 'GET' && req.path === '/knowledge-center/api/document-tasks/PC-1') {
       detailReads++; setTimeout(next, 300); return;
     }
@@ -91,7 +94,7 @@ test('实际模块与真实HTTP：导入、独立两级范围、新增提案、�
   const reload = async () => { await navigate(base); await page.locator('.document-task-page').waitFor(); };
   const open = async number => timed('打开任务详情', async () => { await page.getByRole('button', { name: number, exact: true }).click(); await page.getByLabel('任务详情').waitFor(); });
   const assertWorkspaceTouchTargets = async () => {
-    const heights = await page.locator('.task-workspace :is([data-task-action=close], .task-next-action .button, .task-ticket-scope>.button, .task-book .task-section-heading button):visible, .task-scope-dialog footer button:visible, .task-inline-dialog footer button:visible').evaluateAll(nodes => nodes.map(node => ({ label: node.innerText.trim() || node.getAttribute('aria-label'), height: node.getBoundingClientRect().height })));
+    const heights = await page.locator('.task-workspace :is([data-task-action=close], .task-next-action .button, .task-ticket-scope>.button, .task-book .task-section-heading button, .task-secondary-actions>summary):visible, .task-scope-dialog footer button:visible, .task-inline-dialog footer button:visible').evaluateAll(nodes => nodes.map(node => ({ label: node.innerText.trim() || node.getAttribute('aria-label'), height: node.getBoundingClientRect().height })));
     assert.ok(heights.length > 0, 'workspace should expose an actionable control');
     assert.ok(heights.every(item => item.height >= 44), `workspace touch targets must be at least 44px: ${JSON.stringify(heights)}`);
   };
@@ -106,14 +109,32 @@ test('实际模块与真实HTTP：导入、独立两级范围、新增提案、�
   };
   try {
     await reload();
+    assert.equal(await page.locator('.document-task-page-header h1').count(), 0);
+    assert.equal(await page.locator('.document-task-more>summary[aria-label="更多操作"]').count(), 1);
+    const filterHeights = await page.locator('.document-task-toolbar input:not([type=hidden]),.document-task-toolbar select:not(.searchable-combobox-native),.document-task-toolbar>button').evaluateAll(nodes => nodes.map(node => Math.round(node.getBoundingClientRect().height)));
+    assert.ok(filterHeights.length && filterHeights.every(height => height === 44), `filter control height should match platform token: ${filterHeights}`);
+    const desktopFilterRows = await page.locator('.document-task-toolbar>*:not(select.searchable-combobox-native)').evaluateAll(nodes => new Set(nodes.map(node => Math.round(node.getBoundingClientRect().top))).size);
+    assert.equal(desktopFilterRows, 1, 'desktop filters should stay on one compact row');
+    await page.screenshot({ path: path.join(output, '00-task-list-layout.png') });
+    assert.equal(await page.locator('.document-task-tabs, [data-task-tab], .document-task-config').count(), 0);
+    assert.equal(await page.getByText('正在读取任务…', { exact: true }).count(), 0);
+    delayList = true;
+    await page.locator('[data-task-action=refresh]').click();
+    await page.waitForFunction(() => document.querySelector('#view-root[aria-busy=true]'));
+    assert.equal(await page.getByText('正在读取任务…', { exact: true }).count(), 0);
+    assert.equal(await page.locator('[data-task-message]:visible').count(), 0);
+    delayList = false;
+    await page.waitForFunction(() => !document.querySelector('#view-root[aria-busy=true]'));
     const sourceMarkdown = await page.evaluate(async () => {
-      const { renderSourceMarkdown } = await import('/frontend/knowledge-center/common/safe-source-markdown.js');
+      const { renderSourceMarkdown, renderSourceRecord } = await import('/frontend/knowledge-center/common/safe-source-markdown.js');
       return {
         empty: renderSourceMarkdown(null),
         unsafeHtml: renderSourceMarkdown('<img src=x onerror=alert(1)>'),
         safeLink: renderSourceMarkdown('[参考](https://example.test/source)'),
         unsafeLink: renderSourceMarkdown('[危险](javascript:alert(1))'),
         image: renderSourceMarkdown('![图<&](https://example.test/image.png)'),
+        emptyRecord: renderSourceRecord(null, null),
+        unsafeTitleRecord: renderSourceRecord('<img src=x onerror=alert(1)>', '正文'),
       };
     });
     assert.match(sourceMarkdown.empty, /暂无详情内容/);
@@ -125,10 +146,17 @@ test('实际模块与真实HTTP：导入、独立两级范围、新增提案、�
     assert.match(sourceMarkdown.unsafeLink, /危险/);
     assert.match(sourceMarkdown.image, /pingcode-image-note/);
     assert.match(sourceMarkdown.image, /图&lt;&amp;/);
+    assert.match(sourceMarkdown.emptyRecord, /PingCode 未填写/);
+    assert.match(sourceMarkdown.emptyRecord, /暂无详情内容/);
+    assert.match(sourceMarkdown.unsafeTitleRecord, /&lt;img src=x onerror=alert\(1\)&gt;/);
+    assert.doesNotMatch(sourceMarkdown.unsafeTitleRecord, /<p><img/);
     await page.locator('[data-task-file]').setInputFiles({ name: 'tasks.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify([{ number: 'PC-1', title: '跨两本手册更新', sourceUrl: 'https://pingcode.yasdb.com/pjm/workitems/opaque' }, { number: 'PC-2', title: '无文档变更' }])) });
     await page.getByRole('dialog', { name: '导入预览' }).waitFor();
     assert.equal(JSON.parse(fs.existsSync(path.join(directory, 'tasks.json')) ? fs.readFileSync(path.join(directory, 'tasks.json')) : '{"tasks":[]}').tasks.length, 0);
     await page.screenshot({ path: path.join(output, '01-import-preview.png') }); await confirm();
+    await page.locator('.document-task-more>summary').click();
+    assert.equal(await page.locator('.document-task-more-menu [data-task-action=export]').count(), 1);
+    assert.equal(await page.locator('.document-task-more-menu [data-task-action=import]').count(), 1);
     const csvDownloadPromise = page.waitForEvent('download');
     await page.locator('[data-task-action=export]').click();
     const csvDownload = await csvDownloadPromise;
@@ -141,6 +169,20 @@ test('实际模块与真实HTTP：导入、独立两级范围、新增提案、�
     }), { times: 1 });
     await page.locator('[data-task-action=export]').click();
     await page.getByRole('alert').filter({ hasText: '导出服务暂不可用' }).waitFor();
+    await page.unroute('**/knowledge-center/api/document-tasks/export.csv**');
+    await page.route('**/knowledge-center/api/document-tasks/export.csv**', route => route.fulfill({
+      status: 502, contentType: 'application/json', body: 'invalid response body',
+    }), { times: 1 });
+    await page.locator('[data-task-action=export]').click();
+    await page.locator('[data-task-message]').filter({ hasText: '下载失败（HTTP 502）' }).waitFor();
+    await page.unroute('**/knowledge-center/api/document-tasks/export.csv**');
+    await page.route('**/knowledge-center/api/document-tasks/export.csv**', route => route.fulfill({
+      status: 200, contentType: 'text/csv; charset=utf-8', body: '编号,描述\nPC-1,导出回退',
+    }), { times: 1 });
+    const fallbackDownloadPromise = page.waitForEvent('download');
+    await page.locator('[data-task-action=export]').click();
+    const fallbackDownload = await fallbackDownloadPromise;
+    assert.equal(fallbackDownload.suggestedFilename(), 'download.csv');
     await page.unroute('**/knowledge-center/api/document-tasks/export.csv**');
     const browserOpenSamples = await page.evaluate(async () => {
       const waitFor = count => new Promise((resolve, reject) => {
@@ -211,7 +253,7 @@ test('实际模块与真实HTTP：导入、独立两级范围、新增提案、�
 
     delayDetail = true;
     await page.getByRole('button', { name: 'PC-1', exact: true }).evaluate(el => { el.click(); el.click(); });
-    await page.getByText('正在读取，请稍候…', { exact: true }).waitFor();
+    assert.equal(await page.getByText('正在读取，请稍候…', { exact: true }).count(), 0);
     assert.equal(await page.locator('#view-root').getAttribute('aria-busy'), 'true');
     await page.getByLabel('任务详情').waitFor();
     assert.equal(detailReads, 1, 'pending detail click must not issue duplicate requests');
@@ -231,36 +273,29 @@ test('实际模块与真实HTTP：导入、独立两级范围、新增提案、�
     await page.locator('[name=selected][value=H2]').check(); await page.locator('[name="owner:H2"]').selectOption('book');
     assert.equal(await page.locator('dialog button[value=draft]').count(), 0);
     await page.screenshot({ path: path.join(output, '02-handbook-scope.png') }); await confirm();
-    assert.equal(await page.locator('.task-secondary-scope > summary').innerText(), '工单范围与分派');
-    assert.equal(await page.locator('.task-secondary-scope > .task-ticket-scope').isVisible(), false);
-    assert.ok(await page.locator('.task-next-action [data-task-action=book-scope]').count());
+    assert.equal(await page.locator('.task-secondary-scope, .task-ticket-scope').count(), 0);
+    assert.equal(await page.locator('.task-handbook-table [data-task-action=book-scope]').count(), 2);
+    assert.equal(await page.locator('.task-handbook-table [data-task-action=remove-book]').count(), 2);
+    assert.equal(await page.locator('.task-assignment-basic-info').getAttribute('open'), null);
+    assert.equal(await page.locator('.task-workspace-history').getAttribute('open'), null);
+    assert.equal(await page.locator('.task-drawer-body').evaluate(el => getComputedStyle(el).overflowY), 'visible');
     await assertWorkspaceTouchTargets();
-    assert.match(await page.locator('.task-workspace-progress').innerText(), /文档处理\s+暂无文档任务/);
+    assert.match(await page.locator('.task-assignment-timeline').innerText(), /文档处理\s+暂无文档任务/);
     assert.equal(await page.locator('.task-workspace-pending').count(), 0);
     assert.equal(await page.locator('[data-task-action=book-owner]').count(), 0);
     assert.match(await page.locator('.task-next-action').innerText(), /负责人已分配 · 文档范围待确认/);
-    assert.deepEqual(await page.locator('.task-handbook-table th').allTextContents(), ['手册名称', '产品类型', '操作']);
-    assert.equal(await page.locator('.task-workspace h2').innerText(), '确定文档范围');
+    assert.deepEqual(await page.locator('.task-handbook-table th').allTextContents(), ['手册名称', '产品类型', '目标分支', '文档名称', '状态', '操作']);
+    assert.equal(await page.locator('.task-workspace h2').innerText(), '跨两本手册更新');
+    assert.equal(await page.locator('.task-assignment-timeline').count(), 1, 'task detail should use the approval-detail stage timeline');
+    assert.equal(await page.locator('.task-assignment-basic-info').count(), 1, 'task detail should group core facts in a basic information section');
+    assert.equal(await page.locator('.task-assignment-content').count(), 1, 'task detail should group handbook assignments in an assignment content section');
+    assert.equal(await page.locator('.task-assignment-history-table').count(), 1, 'task detail should present assignment history as a table');
+    assert.equal(await page.locator('.task-assignment-footer').count(), 1, 'task detail should keep available actions in a footer');
+    assert.equal(await page.locator('.task-workspace .task-drawer-body').evaluate(element => getComputedStyle(element).display), 'block', 'desktop task assignment details should follow the approval page single-column reading order');
+    assert.equal(await page.getByRole('button', { name: '返回任务列表' }).count(), 1, 'task detail should show one return-to-list entry');
     assert.equal(await page.locator('.task-workspace-history pre').count(), 0);
-    await page.locator('[data-task-action=remove-book][data-book=H2]').click();
-    await page.locator('.document-task-dialog [name=scopeChangeReason]').fill('测试误加手册移除');
-    await page.locator('.document-task-dialog button[value=confirm]').click();
-    await page.locator('.task-scope-impact-preview').waitFor();
-    await page.locator('.document-task-dialog button[value=confirm]').click();
-    await page.locator('.document-task-dialog').waitFor({ state: 'detached' });
-    await page.waitForFunction(() => !document.querySelector('#view-root[aria-busy=true]'));
-    assert.equal(await page.locator('.task-handbook-table tbody tr').count(), 1);
-    assert.ok(!(await (await page.request.get(base + '/knowledge-center/api/document-tasks/PC-1')).json()).data.decomposition.handbooks.some(book => book.id === 'H2'));
-    await page.locator('[data-task-action=add-book]').click();
-    await page.locator('.document-task-dialog [name=handbookId]').selectOption('H2');
-    await page.locator('.document-task-dialog [name=newBookOwner]').selectOption('book');
-    assert.equal(await page.locator('.document-task-dialog [name=newBookOwner]').inputValue(), 'book');
-    await page.locator('.document-task-dialog [name=scopeChangeReason]').fill('测试漏加手册补录');
-    await page.locator('.document-task-dialog button[value=confirm]').click();
-    await page.locator('.task-scope-impact-preview').waitFor();
-    await page.locator('.document-task-dialog button[value=confirm]').click();
-    await page.locator('.document-task-dialog').waitFor({ state: 'detached' });
-    await page.waitForFunction(() => !document.querySelector('#view-root[aria-busy=true]'));
+    assert.equal(await page.locator('[data-task-action=add-book]').count(), 0);
+    assert.equal(await page.getByRole('button', { name: '新增手册', exact: true }).count(), 0);
     assert.equal(await page.locator('.task-handbook-table tbody tr').count(), 2);
     assert.ok((await (await page.request.get(base + '/knowledge-center/api/document-tasks/PC-1')).json()).data.decomposition.handbooks.some(book => book.id === 'H2'));
     assert.equal(await page.locator('.task-workspace-history pre').count(), 0);
@@ -276,7 +311,10 @@ test('实际模块与真实HTTP：导入、独立两级范围、新增提案、�
     await open('PC-1');
     assert.ok((await page.getByLabel('任务详情').innerText()).includes('负责人已分配'));
     assert.equal(await page.getByLabel('任务详情').count(), 1);
-    assert.equal(await page.locator('.task-drawer details > summary').filter({ hasText: '操作历史（0）' }).count(), 1);
+    await page.locator('.task-workspace-history summary').click();
+    assert.match(await page.locator('.task-workspace-history').innerText(), /处理记录\s+暂无操作记录/);
+    assert.equal(await page.locator('.task-handbook-table [data-task-action=book-scope]').count(), 2);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth), false, 'task detail must not overflow horizontally');
     assert.ok((await page.getByLabel('任务详情').innerText()).includes('文档范围待确认'));
     user = 'book'; await reload(); assert.equal(await page.locator('[data-task-action=plan]').count(), 0);
     const nextActionSecondBook = async route => {
@@ -293,9 +331,9 @@ test('实际模块与真实HTTP：导入、独立两级范围、新增提案、�
     assert.equal(await page.locator('[data-task-book-select=H1]').getAttribute('aria-pressed'), 'false');
     await page.locator('[data-task-book-select=H1]').click();
     await page.locator('[data-task-book-select=H1][aria-pressed=true]').waitFor();
-    assert.equal(await page.locator('.task-ticket-scope').isVisible(), false);
+    assert.equal(await page.locator('.task-ticket-scope').count(), 0);
     assert.equal(await page.locator('[data-task-book-select]').count(), 2);
-    assert.ok(await page.locator('.task-next-action [data-task-action=book-scope]').count());
+    assert.equal(await page.locator('.task-handbook-table [data-task-action=book-scope]').count(), 2);
     assert.equal(await page.locator('.task-handbook-table').isVisible(), true);
     await page.screenshot({ path: path.join(output, '16-handbook-owner-workspace.png') });
     await assertWorkspaceTouchTargets();
@@ -319,7 +357,9 @@ test('实际模块与真实HTTP：导入、独立两级范围、新增提案、�
     await page.getByRole('dialog').getByRole('button', { name: '取消', exact: true }).click();
     outlinePublished = true;
     await timed('打开文档范围（目录API）', async () => { await page.locator('[data-task-action=book-scope][data-book=H1]').click(); await page.getByRole('dialog').waitFor(); }); await page.getByRole('radio', { name: '涉及', exact: true }).check();
-    assert.equal(await page.locator('dialog button[value=confirm]').innerText(), '确认文档范围');
+    assert.equal(await page.locator('dialog button[value=confirm]').getAttribute('aria-label'), '确认文档范围');
+    assert.equal(await page.locator('dialog footer [aria-label="取消"] svg.lucide-undo-2').count(), 1);
+    assert.equal(await page.locator('dialog footer button[value=confirm] svg.lucide-check').count(), 1);
     assert.equal(await page.locator('[name="owner:D1"]').inputValue(), 'writer');
     assert.equal(await page.getByText('按大纲主责匹配').count(), 0);
     assert.equal(await page.getByText('每篇文档由一名责任人处理').count(), 0);
@@ -409,8 +449,9 @@ test('实际模块与真实HTTP：导入、独立两级范围、新增提案、�
     await reload(); await open('PC-1'); assert.ok((await page.getByLabel('任务详情').innerText()).includes('新负责人'));
     await page.locator('[data-task-action=document-owner][data-doc=D1]').click(); await page.locator('dialog [name=ownerId]').selectOption('writer'); await confirm();
     assert.equal(await page.locator('.task-workspace').count(), 1);
-    assert.equal(await page.locator('.task-workspace-more').getAttribute('open'), null);
-    assert.equal(await page.locator('.task-workspace-history').getAttribute('open'), null);
+    assert.equal(await page.locator('.task-assignment-basic-info').count(), 1);
+    assert.equal(await page.locator('.task-workspace-history details').count(), 0);
+    assert.equal(await page.locator('.task-workspace-history').isVisible(), true);
     await timed('切换手册任务', async () => { await page.locator('[data-task-book-select=H2]').click(); await page.locator('[data-task-book-select=H2][aria-pressed=true]').waitFor(); });
     assert.equal(await page.locator('.task-book').nth(0).isVisible(), false);
     assert.equal(await page.locator('.task-book').nth(1).isVisible(), true);
@@ -418,10 +459,7 @@ test('实际模块与真实HTTP：导入、独立两级范围、新增提案、�
     await page.locator('[data-task-book-select=H1]').click();
     await page.screenshot({ path: path.join(output, '08-assigned-detail.png') });
     await page.getByRole('button', { name: '返回任务列表' }).click();
-    await timed('切换流程视图', async () => { await page.locator('[data-task-tab=flow]').click(); await page.locator('[data-task-tab=flow][aria-selected=true]').waitFor(); });
-    assert.equal(await page.locator('.task-role-flow').count(), 0, '关闭任务后不应残留已关闭任务的流程数据');
-    assert.ok((await page.locator('#view-root').innerText()).includes('请选择一项任务查看真实进度'));
-    await page.screenshot({ path: path.join(output, '09-flow.png') });
+    assert.equal(await page.locator('.document-task-tabs, [data-task-tab], .document-task-config').count(), 0);
     user = 'writer';
     const writerItems = (await (await page.request.get(base + '/knowledge-center/api/document-tasks/mine')).json()).data.items;
     const newDocument = writerItems.find(item => item.url.includes('action=new-document'));
@@ -454,23 +492,17 @@ test('实际模块与真实HTTP：导入、独立两级范围、新增提案、�
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     await page.screenshot({ path: path.join(output, '12-closed-mr-recovery-mobile.png') });
     await page.setViewportSize({ width: 1440, height: 900 });
-    await page.getByRole('button', { name: '返回任务列表' }).click(); await page.getByRole('button', { name: '流程流转', exact: true }).click(); assert.ok((await page.locator('#view-root').innerText()).includes('请选择一项任务'));
+    await page.getByRole('button', { name: '返回任务列表' }).click();
+    assert.equal(await page.locator('.document-task-tabs, [data-task-tab], .document-task-config').count(), 0);
     user = 'owner'; await reload(); await open('PC-2'); await timed('打开工单范围', async () => { await page.locator('[data-task-action=ticket-scope]').last().click(); await page.getByRole('dialog').waitFor(); }); await page.getByRole('radio', { name: '不涉及', exact: true }).check(); await page.locator('[name=reasonId]').selectOption('other'); await page.locator('[name=reasonDetail]').fill('仅调整监控阈值'); await confirm();
     await navigate(`${base}/?task=PC-2&action=complete`);
     await page.getByRole('dialog', { name: '确认不涉及并完成' }).waitFor();
     await confirm(); assert.ok((await page.getByLabel('任务详情').innerText()).includes('已完成'));
     await reload(); await open('PC-2'); assert.ok((await page.getByLabel('任务详情').innerText()).includes('已完成'));
-    await page.getByRole('button', { name: '返回任务列表' }).click();
-    await page.getByRole('button', { name: '任务配置', exact: true }).click();
-    assert.equal(await page.locator('[name=defaultOwnerId]').count(), 0);
-    await page.locator('[name="reasonLabel:covered"]').fill('已有文档覆盖');
-    await page.getByRole('button', { name: '保存', exact: true }).click();
-    await page.getByText('配置已保存', { exact: true }).waitFor();
-    await reload(); await page.getByRole('button', { name: '任务配置', exact: true }).click();
-    assert.equal(await page.locator('[name=defaultOwnerId]').count(), 0);
-    assert.equal(await page.locator('[name="reasonLabel:covered"]').inputValue(), '已有文档覆盖');
-    await page.getByRole('button', { name: '任务列表', exact: true }).click(); await open('PC-2');
-    await page.getByRole('button', { name: '改派', exact: true }).click();
+    await page.getByRole('button', { name: '返回任务列表' }).click(); await open('PC-2');
+    await page.locator('.task-workspace-header-actions summary').click();
+    await page.getByRole('button', { name: '变更责任人', exact: true }).click();
+    await page.getByRole('dialog').getByRole('heading', { name: '变更责任人' }).waitFor();
     assert.equal(await page.locator('dialog [name=reason]').count(), 0);
     await page.locator('dialog [name=ownerId]').selectOption('next'); await confirm();
     await reload(); await open('PC-2');
@@ -489,6 +521,7 @@ test('实际模块与真实HTTP：导入、独立两级范围、新增提案、�
 
     user = 'next'; await reload(); await open('PC-2');
     await page.setViewportSize({ width: 390, height: 844 });
+    await page.locator('.task-workspace-header-actions summary').click();
     await page.locator('[data-task-action=ticket-scope]').last().click(); await page.getByRole('dialog').waitFor();
     await assertWorkspaceTouchTargets();
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);

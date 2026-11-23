@@ -51,7 +51,7 @@ test.beforeEach(async ({ page }) => {
 
 test('大纲目录读模型在详情返回后仍保持全量且刷新一致', async ({ page }) => {
   await page.goto(`${baseUrl}/knowledge-center/outlines`);
-  await expect(page.getByRole('heading', { name: '大纲管理', level: 2 })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '手册大纲列表', level: 2 })).toBeVisible();
 
   const rows = page.locator('[data-outline-row]:visible');
   await expect(rows).toHaveCount(3);
@@ -75,7 +75,7 @@ test('大纲目录读模型在详情返回后仍保持全量且刷新一致', as
 
 test('大纲阶段筛选与名称搜索使用紧凑标签栏并保留深链', async ({ page }) => {
   await page.goto(`${baseUrl}/knowledge-center/outlines?q=手册`);
-  await expect(page.locator('.outline-list-summary')).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: '手册大纲列表', level: 2 })).toBeVisible();
   await expect(page.locator('[data-outline-stage]')).toHaveCount(5);
   await expect(page.locator('[data-outline-stage=""][aria-current="page"]')).toContainText('全部手册');
   const search = page.getByRole('searchbox', { name: '搜索手册' });

@@ -218,7 +218,7 @@ test('刷新首帧恢复收缩导航且隐藏导航恢复入口不覆盖页面�
   await page.getByRole('button', { name: '展开导航' }).click();
   await page.getByRole('button', { name: '完全隐藏导航' }).click();
   const restore = page.getByRole('button', { name: '展开导航' });
-  const heading = page.getByRole('heading', { name: '大纲管理', level: 2 });
+  const heading = page.getByRole('heading', { name: '手册大纲列表', level: 2 });
   await expect(restore).toBeVisible();
   await expect(restore.locator('span')).toHaveCSS('position', 'absolute');
   const [restoreBox, headingBox] = await Promise.all([restore.boundingBox(), heading.boundingBox()]);
@@ -267,7 +267,7 @@ test('大纲列表与详情独立，返回后恢复筛选', async ({ page }) => 
   const pageErrors = [];
   page.on('pageerror', error => pageErrors.push(error.message));
   await page.goto(`${baseUrl}/knowledge-center/outlines`);
-  await expect(page.getByRole('heading', { name: '大纲管理', level: 2 })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '手册大纲列表', level: 2 })).toBeVisible();
   await expect(page.locator('.outline-detail-shell')).toHaveCount(0);
   const search = page.getByLabel('搜索手册');
   const firstName = await page.locator('[data-outline-row]:visible').first().locator('td').first().locator('strong').textContent();
@@ -340,6 +340,7 @@ test('文档目录支持鼠标、键盘和触摸长按打开上下文菜单', as
 });
 
 test('分工管理在团队未配置时提供阻断说明和团队配置入口', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
   const shellCss = path.resolve(__dirname, '../../../apps/knowledge-center-web/frontend/knowledge-center/styles.css');
   const outlinesCss = path.resolve(__dirname, '../../../apps/knowledge-center-web/frontend/knowledge-center/modules/outlines/outlines.css');
   let shellCssFromWorkspace = false;

@@ -88,6 +88,11 @@ describe('增量审核辅助接口真实HTTP边界', () => {
       commitSha: 'commit-1', filePath: 'docs/manual.md', branch: 'main' };
     const response = await rootRequest('POST', 'bootstrap-baseline', body, 'baseline-create');
     expect(response.status).toBe(404);
+    const fixtureResponse = await fetch(`${base}/knowledge-center/api/test-fixtures/incremental-baselines`, {
+      method: 'POST', headers: { 'content-type': 'application/json', 'idempotency-key': 'baseline-fixture' },
+      body: JSON.stringify(body),
+    });
+    expect(fixtureResponse.status).toBe(404);
     expect(repository.read().publishedVersions).toEqual(existing);
     expect(repository.read().audits).toEqual([]);
   });

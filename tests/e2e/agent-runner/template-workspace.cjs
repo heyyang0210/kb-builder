@@ -16,6 +16,8 @@ async function fixture() {
   let state = { schemaVersion: 1, templates: [], audits: [] };
   const templateStore = createTemplateStore({ store: { read: () => structuredClone(state), transaction(fn) { const next = structuredClone(state); const result = fn(next); state = next; return structuredClone(result); } } });
   templateStore.create({ id: 'browser-initial', name: '初始测试模板', type: '数据库', description: '浏览器验证', content: '# 初始正文\n\n测试段落' }, { user: { id: 'seed' } });
+  templateStore.create({ id: 'browser-deleted', name: '已删除测试模板', type: '数据库', content: '# 已删除' });
+  templateStore.remove('browser-deleted');
   const auth = http.createServer((req, res) => json(res, { content: session((req.headers.cookie || '').includes('read-only') ? ['template:read'] : edit) }));
   await new Promise(resolve => auth.listen(0, '127.0.0.1', resolve));
   const handler = createKnowledgeCenterHandler({ config: { KNOWLEDGE_CENTER_PREFIX: '/knowledge-center', KNOWLEDGE_CENTER_ROOT: web, KNOWLEDGE_CENTER_ENTRY: 'knowledge-center-management.html', OUTLINE_TEMPLATE_PATH: path.join(root, 'knowledge/outlines/大纲模板.xlsx'), OUTLINE_SAMPLE_PATH: path.join(root, 'knowledge/outlines/基本数据库管理手册大纲示例.xlsx'), AUTH_API_HOST: '127.0.0.1', AUTH_API_PORT: auth.address().port, PLATFORM_CONTEXT_TIMEOUT_MS: 1000 }, stores: { templateStore, knowledgeAssetsStore: { read: () => ({ handbooks: [] }) } }, sendFile() {}, proxyAuth() {}, proxyCleaning() {}, proxyOutline() {}, proxyPermission() {}, handleIncrementalBuild() {} });
@@ -58,12 +60,18 @@ async function fixture() {
     assert.equal(await libraryTab.getAttribute('tabindex'), '0');
     assert.equal(await mappingsTab.getAttribute('tabindex'), '-1');
     assert.equal(await page.locator('.template-catalog-table').isVisible(), true, `默认首屏应是模板库目录。页面内容：${(await page.locator('body').innerText()).slice(0, 800)}`);
+    if (local) {
+      assert.equal(await page.getByText('已删除测试模板').count(), 0, '已删除模板不应出现在桌面目录');
+      const listed = (await (await context.request.get(`${url}/knowledge-center/api/templates?summary=1`)).json()).data;
+      assert.equal(listed.some(item => item.id === 'browser-deleted'), false, '已删除模板不应出现在列表 API');
+    }
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.screenshot({ path: '/tmp/template-library-1440.png', fullPage: true });
     const mobileLibrary = await context.newPage();
     await mobileLibrary.setViewportSize({ width: 390, height: 844 });
     await mobileLibrary.goto(`${url}/knowledge-center/templates`);
     await mobileLibrary.locator('.template-catalog-table').waitFor();
+    if (local) assert.equal(await mobileLibrary.getByText('已删除测试模板').count(), 0, '已删除模板不应出现在窄屏目录');
     assert.ok(await mobileLibrary.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1), '窄屏模板库不应出现横向滚动');
     await mobileLibrary.screenshot({ path: '/tmp/template-library-390.png', fullPage: true });
     await mobileLibrary.close();

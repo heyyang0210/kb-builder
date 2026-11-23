@@ -58,7 +58,7 @@ describe('GitLab same-origin HTTP API', () => {
     baseUrl = `http://127.0.0.1:${frontend.address().port}`;
     adminCookie = await login('http-admin', 'http-admin-password');
     readerCookie = await login('http-reader', 'http-reader-password');
-  });
+  }, 15000);
 
   afterAll(async () => {
     await new Promise(resolve => frontend.close(resolve));

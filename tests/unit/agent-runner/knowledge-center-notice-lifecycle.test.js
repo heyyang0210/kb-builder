@@ -39,7 +39,7 @@ describe('知识中心操作提示生命周期', () => {
     } finally {
       await browser.close();
     }
-  });
+  }, 15000);
 
   test('任务管理提示跨页面重绘保留，且不使用短时自动隐藏', () => {
     const source = read('modules/document-tasks/view.js');

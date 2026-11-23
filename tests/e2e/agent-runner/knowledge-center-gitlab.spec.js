@@ -29,6 +29,7 @@ test('未连接 OAuth 时展示授权入口并阻止无效验证', async ({ page
   await page.route('**/knowledge-center/api/gitlab/oauth/config', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: { configured: true, devHttp: true } }) }));
   await page.route('**/knowledge-center/api/gitlab/connections', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: { items: [{ id: 'gitlab-yasdoc', name: 'yasdoc', baseUrl: 'https://git-tools.yasdb.com', projectPath: 'cod-doc/yasdoc', mode: 'production', authMode: 'user_oauth', purpose: 'read', status: 'pending' }] } }) }));
   await page.goto(`${baseUrl}/knowledge-center/platform?tab=gitlab`);
+  await page.getByRole('button', { name: '查看 yasdoc 详情' }).click();
   await expect(page.getByText('我的 GitLab 账号尚未连接')).toBeVisible();
   await expect(page.getByRole('link', { name: '连接我的 GitLab 账号' })).toHaveAttribute('href', /connectionId=gitlab-yasdoc/);
   await expect(page.getByRole('button', { name: '验证连接' })).toBeDisabled();
@@ -44,6 +45,7 @@ test('验证连接展示进行中、成功结果并在刷新数据后保留', as
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: { connectionId: 'gitlab-yasdoc', status: 'verified', branchCount: 3, verifiedAt: '2026-09-04T08:00:00.000Z' } }) });
   });
   await page.goto(`${baseUrl}/knowledge-center/platform?tab=gitlab`);
+  await page.getByRole('button', { name: '查看 yasdoc 详情' }).click();
   await page.getByRole('button', { name: '验证连接' }).click();
   await expect(page.getByText('正在验证连接…')).toBeVisible();
   await expect(page.getByText('3 个分支', { exact: false })).toBeVisible();
@@ -54,6 +56,7 @@ test('验证失败显示原因并允许重新验证', async ({ page }) => {
   await page.route('**/knowledge-center/api/gitlab/oauth/status', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: { connected: true } }) }));
   await page.route('**/knowledge-center/api/gitlab/connections', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: { items: [{ id: 'gitlab-yasdoc', name: 'yasdoc', baseUrl: 'https://git-tools.yasdb.com', projectPath: 'cod-doc/yasdoc', mode: 'production', authMode: 'user_oauth', purpose: 'read', status: 'failed', lastVerification: { status: 'failed', verifiedAt: '2026-09-04T08:00:00.000Z', error: { code: 'GITLAB_FORBIDDEN', message: '没有仓库读取权限' } } }] } }) }));
   await page.goto(`${baseUrl}/knowledge-center/platform?tab=gitlab`);
+  await page.getByRole('button', { name: '查看 yasdoc 详情' }).click();
   await expect(page.getByRole('alert')).toContainText('没有仓库读取权限');
   await expect(page.getByRole('button', { name: '重新验证' })).toBeEnabled();
 });
@@ -63,6 +66,7 @@ for (const failed of [false, true]) {
     await page.route('**/knowledge-center/api/gitlab/connections', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: { items: [{ id: 'test-repo', name: '测试仓库', authMode: 'service_account', status: 'pending', lastVerification: null }] } }) }));
     await page.route('**/knowledge-center/api/gitlab/connections/test-repo/verify', route => route.fulfill({ status: failed ? 403 : 200, contentType: 'application/json', body: JSON.stringify(failed ? { success: false, error: { code: 'GITLAB_FORBIDDEN', message: '没有仓库读取权限', details: { recovery: '请项目管理员授予仓库读取权限，然后重新验证。' } } } : { success: true, data: { connectionId: 'test-repo', status: 'verified', branchCount: 2, verifiedAt: '2026-10-12T04:00:00Z' } }) }));
     await page.goto(`${baseUrl}/knowledge-center/platform?tab=gitlab`);
+    await page.getByRole('button', { name: '查看 测试仓库 详情' }).click();
     await page.getByRole('button', { name: '验证连接', exact: true }).click();
     if (failed) {
       await expect(page.locator('.gitlab-verification.failure')).toContainText('没有仓库读取权限');

@@ -1,5 +1,10 @@
 const { test, expect } = require('@playwright/test');
 
+async function expectPageTitle(page, title) {
+  await expect(page.locator('#global-context-title')).toHaveText(title);
+  await expect(page.locator('#page-title')).toHaveText(title);
+}
+
 const baseUrl = process.env.KPG_BASE_URL;
 const viewports = [
   { name: 'desktop', width: 1440, height: 900 },
@@ -79,19 +84,18 @@ for (const viewport of viewports) {
 test('资料清洗和文档生产使用独立页面语义', async ({ page }) => {
   await page.goto(`${baseUrl}/knowledge-center/`);
   await page.getByRole('button', { name: '资料清洗', exact: true }).click();
-  await expect(page.locator('#view-root').getByRole('heading', { name: '资料清洗' })).toBeVisible();
+  await expectPageTitle(page, '资料清洗');
   await expect(page.locator('#view-root')).not.toContainText('资料清洗待建设');
   await expect(page.locator('#view-root')).toContainText(/资料批次|资料加工服务暂时不可用/);
   await expect(page.locator('#view-root')).toContainText(/知识库版本|资料加工服务暂时不可用/);
   await page.getByRole('button', { name: '文档生产', exact: true }).click();
-  await expect(page.locator('#view-root').getByRole('heading', { name: '文档生产' })).toBeVisible();
+  await expectPageTitle(page, '文档生产');
   await expect(page.getByRole('tab', { name: '手册视图' })).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('#view-root').getByRole('button', { name: '创建增量任务' })).toHaveCount(0);
-  await page.getByRole('tab', { name: '任务视图' }).click();
-  await expect(page.locator('#view-root').getByRole('heading', { name: '增量任务' })).toBeVisible();
-  await expect(page.getByRole('tab', { name: '任务视图' })).toHaveAttribute('aria-selected', 'true');
-  await expect(page.locator('#view-root').getByRole('button', { name: /创建(增量)?任务/ })).toHaveCount(0);
-  await expect(page.locator('#view-root [data-incremental-create-dialog]')).toHaveCount(0);
+  await expect(page.getByRole('tab', { name: '生产进展' })).toBeVisible();
+  await page.getByRole('tab', { name: '生产进展' }).click();
+  await expect(page.getByRole('tab', { name: '生产进展' })).toHaveAttribute('aria-selected', 'true');
+  await expectPageTitle(page, '文档生产');
 });
 
 test('资料清洗工作区为有写权限用户提供真实上传入口', async ({ page }) => {
@@ -116,7 +120,7 @@ test('审核与发布默认入口读取真实手册工作台并支持我的审�
 test('工作台以个人待办、处理状态和任务字段组织工作', async ({ page }) => {
   await page.goto(`${baseUrl}/knowledge-center/`);
   const root = page.locator('#view-root');
-  await expect(root.getByRole('heading', { name: '我的工作' })).toBeVisible();
+  await expectPageTitle(page, '工作台');
   await expect(root.getByRole('navigation', { name: '工作类别' })).toBeVisible();
   await expect(root.getByRole('group', { name: '处理状态' })).toBeVisible();
   await expect(root.getByRole('button', { name: /待我处理/ })).toBeVisible();
@@ -159,17 +163,17 @@ test('工作台不提供冗余刷新按钮，数据变更事件触发平台投�
 test('模块路由支持深链、刷新恢复和浏览器后退', async ({ page }) => {
   await page.goto(`${baseUrl}/knowledge-center/assets`);
   await expect(page).toHaveURL(`${baseUrl}/knowledge-center/assets`);
-  await expect(page.locator('#view-root').getByRole('heading', { name: '知识资产' })).toBeVisible();
+  await expectPageTitle(page, '知识资产');
   await page.reload();
-  await expect(page.locator('#view-root').getByRole('heading', { name: '知识资产' })).toBeVisible();
+  await expectPageTitle(page, '知识资产');
   await page.getByRole('button', { name: '资料清洗', exact: true }).click();
   await expect(page).toHaveURL(`${baseUrl}/knowledge-center/cleaning`);
   await page.goBack();
   await expect(page).toHaveURL(`${baseUrl}/knowledge-center/assets`);
-  await expect(page.locator('#view-root').getByRole('heading', { name: '知识资产' })).toBeVisible();
+  await expectPageTitle(page, '知识资产');
   await page.goto(`${baseUrl}/knowledge-center/unknown-module`);
   await expect(page).toHaveURL(`${baseUrl}/knowledge-center/`);
-  await expect(page.locator('#view-root').getByRole('heading', { name: '我的工作' })).toBeVisible();
+  await expectPageTitle(page, '工作台');
 });
 
 test('全部数据不可用时显示可恢复错误且不冒充实时数据', async ({ page }) => {

@@ -19,7 +19,7 @@ test('平台管理真实页面：各页签布局、权限筛选和服务折叠',
         expect(first.x + first.width).toBeLessThanOrEqual(second.x);
       }
     }
-    if (tab === 'gitlab') await expect(page.locator('.platform-section-heading [data-gitlab-add-connection]')).toBeVisible();
+    if (tab === 'gitlab') await expect(page.locator('[data-gitlab-add-connection]')).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath(`${tab}-desktop.png`), fullPage: true });
     await page.setViewportSize({ width: 390, height: 844 });
     await page.screenshot({ path: testInfo.outputPath(`${tab}-mobile.png`), fullPage: true });

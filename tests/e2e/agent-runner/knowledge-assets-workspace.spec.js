@@ -19,7 +19,8 @@ test('管理员看到必要字段、单一更新时间和真实服务端分页',
   });
   await page.goto(`${baseUrl}/knowledge-center/assets?pageSize=10`);
   const root = page.locator('#view-root');
-  await expect(root.getByRole('heading', { name: '知识资产' })).toBeVisible();
+  await expect(page.locator('#global-context-title')).toHaveText('知识资产');
+  await expect(page.locator('#page-title')).toHaveText('知识资产');
   await expect(root.getByRole('columnheader', { name: '手册名称' })).toBeVisible();
   await expect(root.getByRole('columnheader', { name: '产品' })).toBeVisible();
   await expect(root.getByRole('columnheader', { name: '责任人' })).toBeVisible();

@@ -206,7 +206,8 @@ describe('知识资产 GitLab 阅读前端契约', () => {
     expect(admin).toContain('访问能力');
     expect(admin).toContain('正在验证连接');
     expect(admin).toContain('验证失败');
-    expect(admin).not.toContain('个分支');
+    expect(admin).toContain('verification.branchCount');
+    expect(admin).toContain('个分支');
     expect(admin).toContain('读取验证成功');
     expect(admin).toContain('<option value="read">只读</option>');
     expect(admin).toContain('<option value="read_write">读写</option>');

@@ -36,7 +36,7 @@ async function ensureBaseline(api) {
   let baselines = await call(api, 'GET', '/knowledge-center/api/incremental-tasks/baselines?handbookId=DB-001&businessVersion=23.4');
   let current = baselines.find(item => item.current)?.id;
   if (!current) {
-    await call(api, 'POST', '/knowledge-center/api/incremental-tasks/bootstrap-baseline', {
+    await call(api, 'POST', '/knowledge-center/api/test-fixtures/incremental-baselines', {
       handbookId: 'DB-001', businessVersion: '23.4',
       content: '# 安装手册\n\n## 参数说明\n\nYAS_PORT 必须与数据库版本一致。',
       commitSha: 'e2e-bootstrap', filePath: 'doc/install.md', branch: 'master',
@@ -51,7 +51,7 @@ async function ensureBaseline(api) {
 async function seedUnderReview(api) {
   await login(api, 'test', 'test');
   const baselineVersionId = await ensureBaseline(api);
-  const task = await call(api, 'POST', '/knowledge-center/api/incremental-tasks', {
+  const task = await call(api, 'POST', '/knowledge-center/api/test-fixtures/incremental-tasks', {
     name: `E2E 审核 ${Date.now()}`,
     handbookId: 'DB-001', businessVersion: '23.4', baselineVersionId,
   }, `e2e-create-${Date.now()}`);
@@ -74,7 +74,7 @@ async function seedUnderReview(api) {
 async function seedCandidateReady(api) {
   await login(api, 'test', 'test');
   const baselineVersionId = await ensureBaseline(api);
-  const task = await call(api, 'POST', '/knowledge-center/api/incremental-tasks', {
+  const task = await call(api, 'POST', '/knowledge-center/api/test-fixtures/incremental-tasks', {
     name: `E2E 待提交候选 ${Date.now()}`,
     handbookId: 'DB-001', businessVersion: '23.4', baselineVersionId,
   }, `e2e-direct-create-${Date.now()}`);

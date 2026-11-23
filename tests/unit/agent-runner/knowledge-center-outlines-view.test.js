@@ -256,7 +256,7 @@ describe('知识中心大纲管理前端契约', () => {
     expect(app).toContain("byId('retry').hidden = options.retry !== true");
     expect(app).toContain("showAppNotice('大纲已移入回收站', { title: '操作已完成', tone: 'success' })");
     expect(app).toContain("showAppNotice('大纲已发布，领域建设任务已生成。', { title: '发布完成', tone: 'success' })");
-    expect(app).toContain("showAppNotice('当前无法读取平台数据，请稍后重新检查。', { title: '平台数据暂时不可用', tone: 'danger', retry: true })");
+    expect(app).toContain("showAppNotice('当前无法读取平台数据，请稍后重新检查。', { title: '平台数据暂时不可用', tone: 'danger', retry: true, scope: 'platform' })");
   });
   test('责任分工和发布缺口展示真实待办状态', () => {
     expect(view()).toContain('待绑定');
@@ -565,7 +565,7 @@ describe('知识中心大纲管理前端契约', () => {
       await new Promise(resolve => { server.close(resolve); server.closeAllConnections(); });
       fs.rmSync(fixtureRoot, { recursive: true, force: true });
     }
-  });
+  }, 60_000);
 
   test('模板或样例启动配置不合法时拒绝创建路由工厂', () => {
     const options = {

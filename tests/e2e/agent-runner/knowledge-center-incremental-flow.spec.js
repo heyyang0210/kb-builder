@@ -22,7 +22,7 @@ async function ensureBaseline(api) {
   let baselines = await call(api, 'GET', '/knowledge-center/api/incremental-tasks/baselines?handbookId=DB-001&businessVersion=23.4');
   let baseline = baselines.find(item => item.current);
   if (!baseline) {
-    await call(api, 'POST', '/knowledge-center/api/incremental-tasks/bootstrap-baseline', {
+    await call(api, 'POST', '/knowledge-center/api/test-fixtures/incremental-baselines', {
       handbookId: 'DB-001', businessVersion: '23.4',
       content: '# 安装手册\n\n## 参数说明\n\nYAS_PORT 必须与数据库版本一致。',
       commitSha: `e2e-flow-${Date.now()}`, filePath: 'doc/install.md', branch: 'master',
@@ -38,7 +38,7 @@ async function seedTask(api) {
   await login(api);
   const baselineVersionId = await ensureBaseline(api);
   const suffix = Date.now();
-  const task = await call(api, 'POST', '/knowledge-center/api/incremental-tasks', {
+  const task = await call(api, 'POST', '/knowledge-center/api/test-fixtures/incremental-tasks', {
     name: `E2E 前端流程 ${suffix}`,
     handbookId: 'DB-001', businessVersion: '23.4', baselineVersionId,
   }, `e2e-flow-create-${suffix}`);
@@ -72,7 +72,7 @@ test('增量文档构建只允许真实接口支持的操作且阶段入口保�
   await expect(page).toHaveURL(/stage=inputs/);
   await expect(page.getByRole('heading', { name: '确认输入' })).toBeVisible();
   await expect(page.locator('#incremental-source').getByText('E2E 需求来源')).toBeVisible();
-  await expect(page.getByRole('button', { name: '编写草稿' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: '编写草稿' })).toBeEnabled();
   await expect(page.locator('[data-incremental-prototype-toggle], [data-incremental-prototype-form]')).toHaveCount(0);
 
   await page.getByRole('button', { name: '编写草稿', exact: true }).click();
@@ -81,7 +81,7 @@ test('增量文档构建只允许真实接口支持的操作且阶段入口保�
   await expect(page.getByText('Agent 自动生成暂未开放。')).toBeVisible();
   await expect(page.getByRole('button', { name: '启动 Agent 生成' })).toHaveCount(0);
 
-  await page.getByRole('button', { name: '按文档审核', exact: true }).click();
+  await page.locator('.incremental-steps [data-incremental-stage="review"]').click();
   await expect(page).toHaveURL(/stage=review/);
   await expect(page.getByRole('heading', { name: '按文档审核' })).toBeVisible();
   await expect(page.getByText('审核中', { exact: true }).first()).toBeVisible();

@@ -12,6 +12,8 @@ process.on('message', message => {
   if (task.config.model === 'complete') {
     for (let i = 0; i < 5; i++) process.send({ type: 'event', event: { kind: 'progress', message: `step-${i} ${task.config.api_key}` } });
     process.send({ type: 'result', value: { model: 'complete', content: JSON.stringify({ markdown: '# 隔离进程完成' }) } }, () => process.exit(0));
+  } else if (task.config.model === 'timeout') {
+    process.send({ type: 'error', code: 'AGENT_RUN_TIMEOUT', message: 'Codex 运行超时' }, () => process.exit(0));
   } else if (task.config.model === 'stubborn') {
     const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' });
     process.send({ type: 'child', pid: child.pid });

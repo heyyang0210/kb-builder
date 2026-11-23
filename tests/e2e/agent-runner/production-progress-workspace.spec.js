@@ -95,7 +95,7 @@ test.describe('生产进展单页视图', () => {
     expect(listSwitchMs.handlerMs, `列表切换事件耗时 ${listSwitchMs.handlerMs.toFixed(1)}ms`).toBeLessThan(100);
     expect(listSwitchMs.paintMs, `列表切换到画面稳定耗时 ${listSwitchMs.paintMs.toFixed(1)}ms`).toBeLessThan(100);
     console.info(`[生产进展时序] 列表切换 ${listSwitchMs.handlerMs.toFixed(1)}ms / ${listSwitchMs.paintMs.toFixed(1)}ms（处理器 / 两帧绘制）`);
-    await expect(page.locator('[data-progress-task-summary]')).toHaveCount(3);
+    await expect(page.locator('[data-progress-task-summary]')).toHaveCount(tasks.length);
     await expect(page.locator('[data-progress-task-summary="progress-fixture-1"]')).toBeVisible();
     const requestCountAfterLoad = taskRequests;
     const summaryOpenMs = await clickAndMeasurePaint(page, '[data-progress-task-summary="progress-fixture-1"]');

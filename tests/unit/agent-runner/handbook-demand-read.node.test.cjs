@@ -99,6 +99,21 @@ test('Java 当前草稿投影保留最新正文，拒绝迟到快照覆盖并清
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('Storage 启动预热分块读取，并隔离格式损坏的草稿聚合 revision', () => {
+  const root = path.resolve(__dirname, '../../..');
+  const source = fs.readFileSync(path.join(root, 'apps/yashandb-storage/src/Main.java'), 'utf8');
+  const start = source.indexOf('private void warmDraftReadProjection()');
+  const end = source.indexOf('\n    private void rebuildDraftReadProjection()', start);
+  assert.notEqual(start, -1);
+  const warmup = source.slice(start, end);
+  assert.match(warmup, /Json\.parse\(readRecordClob\(row\.getClob\(1\)\)\)/);
+  assert.doesNotMatch(warmup, /Json\.parse\(readClob\(/);
+  assert.match(warmup, /catch \(JsonParseException error\)/);
+  assert.match(warmup, /invalidDraftProjectionRevision = revision/);
+  assert.match(source, /"DRAFT_STATE_INVALID", "草稿聚合数据格式异常，读取已暂停，原数据未修改"/);
+  assert.match(source, /"DRAFT_STATE_INVALID", "草稿聚合数据格式异常，写入已暂停，原数据未修改"/);
+});
+
 test('目录先于慢草稿和仓库显示；切换文档后迟到响应不覆盖新工作区', async () => {
   const vm = require('node:vm');
   const source = fs.readFileSync(path.resolve(__dirname, '../../../apps/knowledge-center-web/frontend/knowledge-center/app.js'), 'utf8');

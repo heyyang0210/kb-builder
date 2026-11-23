@@ -26,7 +26,8 @@ test('模板管理员可新建模板、保存 v1 并在刷新后回读正文', a
   });
   try {
     await page.goto(`${baseUrl}/knowledge-center/templates`);
-    await expect(page.locator('#view-root').getByRole('heading', { name: '模板管理' })).toBeVisible();
+    await expect(page.locator('#global-context-title')).toHaveText('模板管理');
+    await expect(page.locator('#page-title')).toHaveText('模板管理');
     await listReady;
     await expect(page.getByRole('button', { name: '新建模板' })).toBeDisabled();
   } finally {
@@ -37,7 +38,7 @@ test('模板管理员可新建模板、保存 v1 并在刷新后回读正文', a
 
   const name = `E2E 模板 ${Date.now()}`;
   await page.getByRole('button', { name: '新建模板' }).click();
-  await page.getByRole('button', { name: '空白创建' }).click();
+  await page.getByRole('button', { name: '空白模板' }).click();
   const metadata = page.getByRole('dialog', { name: '基本信息' });
   await metadata.getByRole('textbox', { name: '模板名称' }).fill(name);
   await metadata.getByRole('textbox', { name: '类型' }).fill('E2E 回归');

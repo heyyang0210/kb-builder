@@ -136,9 +136,7 @@ async function runRound(round) {
     step('返回全部分类', '[data-my-task-kind="all"]', S('[data-my-task-kind="all"]', { attribute: ['aria-current', 'true'] })),
   ]);
   await journey('任务管理', round, () => goto('assets'), [
-    nav('documentTasks', S('.document-task-page [data-task-tab="list"]', { enabled: true })),
-    step('切换流程流转', '[data-task-tab="flow"]', absent('[data-task-list]:not([hidden])')),
-    step('返回任务列表', '[data-task-tab="list"]', S('[data-task-list]:not([hidden])')),
+    nav('documentTasks', S('.document-task-page [data-task-list]', { enabled: true })),
   ]);
   await journey('知识资产', round, () => goto(''), [
     nav('assets', S('[data-asset-loaded="true"] [data-asset-id]')),
